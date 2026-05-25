@@ -54,6 +54,37 @@ export interface MigrationRunnerOptions {
   verbose?: boolean;
 }
 
+const MIGRATION_INFRASTRUCTURE_SQL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at INTEGER NOT NULL,
+  checksum TEXT NOT NULL,
+  execution_time_ms INTEGER,
+  rollback_sql TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_migrations_applied_at
+  ON schema_migrations(applied_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_schema_migrations_checksum
+  ON schema_migrations(checksum);
+
+CREATE TABLE IF NOT EXISTS migration_metadata (
+  id TEXT PRIMARY KEY DEFAULT 'global',
+  current_version INTEGER NOT NULL DEFAULT 0,
+  last_migration_at INTEGER,
+  environment TEXT DEFAULT 'development',
+  metadata_json TEXT
+);
+
+INSERT INTO migration_metadata (id, current_version, environment)
+SELECT 'global', 0, 'development'
+WHERE NOT EXISTS (
+  SELECT 1 FROM migration_metadata WHERE id = 'global'
+);
+`;
+
 /**
  * Migration Runner
  *
@@ -76,13 +107,7 @@ export class MigrationRunner {
       if (!result) {
         console.log('📦 Initializing migration infrastructure...');
 
-        // Read and execute 000_schema_migrations.sql
-        const initSql = readFileSync(
-          join(process.cwd(), 'migrations', '000_schema_migrations.sql'),
-          'utf-8'
-        );
-
-        await this.db.exec(renderPortableMigrationSql(initSql, 'sqlite'));
+        await this.db.exec(renderPortableMigrationSql(MIGRATION_INFRASTRUCTURE_SQL, 'sqlite'));
         console.log('✅ Migration infrastructure initialized');
       }
     } catch (error) {

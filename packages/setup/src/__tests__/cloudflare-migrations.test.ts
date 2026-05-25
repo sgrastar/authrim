@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   buildRecordMigrationSql,
   buildRuntimeProfileSeedSql,
@@ -31,6 +32,41 @@ function runSqlite(sqlite3Path: string, dbPath: string, sql: string): void {
 
 function readSqlite(sqlite3Path: string, dbPath: string, sql: string): string {
   return execFileSync(sqlite3Path, [dbPath, sql], { encoding: 'utf-8' }).trim();
+}
+
+const rootMigrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
+const coreMigrationExclusions = new Set(['admin', 'archive', 'external', 'pii']);
+
+function activeCoreMigrationFiles(): string[] {
+  return listD1MigrationSqlFiles(rootMigrationsDir, {
+    excludeTopLevelDirectories: coreMigrationExclusions,
+  });
+}
+
+function activeAdminMigrationFiles(): string[] {
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin')).map((file) => `admin/${file}`);
+}
+
+function activePiiMigrationFiles(): string[] {
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii')).map((file) => `pii/${file}`);
+}
+
+function activeD1MigrationFiles(): string[] {
+  return [...activeCoreMigrationFiles(), ...activeAdminMigrationFiles(), ...activePiiMigrationFiles()];
+}
+
+function readMigration(relativePath: string): string {
+  return readFileSync(join(rootMigrationsDir, relativePath), 'utf-8');
+}
+
+function readMigrations(relativePaths: string[]): string {
+  return relativePaths.map((relativePath) => readMigration(relativePath)).join('\n');
+}
+
+function runMigrationFiles(sqlite3Path: string, dbPath: string, relativePaths: string[]): void {
+  for (const relativePath of relativePaths) {
+    runSqlite(sqlite3Path, dbPath, renderPortableMigrationSql(readMigration(relativePath), 'sqlite'));
+  }
 }
 
 function insertOAuthClientSql(tenantId: string, clientId: string, clientName: string): string {
@@ -160,121 +196,90 @@ describe('listD1MigrationSqlFiles', () => {
 
 describe('migration seed SQL portability', () => {
   it('keeps seed migrations free of INSERT OR IGNORE', () => {
-    const migrationFiles = [
-      new URL('../../../../migrations/057_add_tenants_table.sql', import.meta.url),
-      new URL('../../../../migrations/pii/001_pii_initial.sql', import.meta.url),
-      new URL('../../../../migrations/admin/002_admin_rbac.sql', import.meta.url),
-      new URL('../../../../migrations/admin/005_admin_abac_rebac.sql', import.meta.url),
-      new URL('../../../../migrations/admin/008_admin_rebac_definitions.sql', import.meta.url),
-    ];
+    const migrationFiles = activeD1MigrationFiles();
+    expect(migrationFiles.length).toBeGreaterThan(0);
 
-    for (const fileUrl of migrationFiles) {
-      const sql = readFileSync(fileUrl, 'utf-8');
+    for (const migrationFile of migrationFiles) {
+      const sql = readMigration(migrationFile);
       expect(sql).not.toContain('INSERT OR IGNORE');
-      expect(sql).toContain('WHERE NOT EXISTS');
     }
+
+    expect(readMigrations(migrationFiles)).toContain('WHERE NOT EXISTS');
   });
 
-  it('keeps oauth_clients device secret policy columns in fresh schemas', () => {
-    const migrationFiles = [new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url)];
+  it('keeps oauth_clients device secret policy columns in the core baseline', () => {
+    const sql = readMigrations(activeCoreMigrationFiles());
 
-    for (const fileUrl of migrationFiles) {
-      const sql = readFileSync(fileUrl, 'utf-8');
-      expect(sql).toContain('device_secret_revoke_enabled INTEGER');
-      expect(sql).toContain('device_secret_revoke_trust_groups TEXT');
-      expect(sql).toContain('device_secret_introspection_enabled INTEGER');
-      expect(sql).toContain('device_secret_introspection_trust_groups TEXT');
-    }
+    expect(sql).toContain('device_secret_revoke_enabled INTEGER');
+    expect(sql).toContain('device_secret_revoke_trust_groups TEXT');
+    expect(sql).toContain('device_secret_introspection_enabled INTEGER');
+    expect(sql).toContain('device_secret_introspection_trust_groups TEXT');
   });
 
   it('keeps Admin role assignment scope normalization independent from timestamp columns', () => {
-    const migrationFiles = [
-      new URL(
-        '../../../../migrations/admin/016_admin_role_assignment_scope_normalization.sql',
-        import.meta.url
-      ),
-    ];
+    const sql = readMigrations(activeAdminMigrationFiles());
+    const updateStatement = sql.match(/UPDATE admin_role_assignments[\s\S]*?;/)?.[0];
 
-    for (const fileUrl of migrationFiles) {
-      const sql = readFileSync(fileUrl, 'utf-8');
-      expect(sql).toContain('UPDATE admin_role_assignments');
-      expect(sql).toContain('SET scope_id = tenant_id');
-      expect(sql).not.toContain('updated_at');
-      expect(sql).not.toContain("strftime('%s', 'now')");
-    }
+    expect(updateStatement).toBeDefined();
+    expect(updateStatement).toContain('SET scope_id = tenant_id');
+    expect(updateStatement).not.toContain('updated_at');
+    expect(updateStatement).not.toContain("strftime('%s', 'now')");
   });
 
   it('replaces backend-specific epoch helpers in migration assets', () => {
-    const migrationFiles = [
-      new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
-      new URL('../../../../migrations/052_consent_management.sql', import.meta.url),
-      new URL('../../../../migrations/057_add_tenants_table.sql', import.meta.url),
-      new URL('../../../../migrations/061_seed_default_claim_schemas.sql', import.meta.url),
-      new URL('../../../../migrations/admin/002_admin_rbac.sql', import.meta.url),
-      new URL('../../../../migrations/admin/005_admin_abac_rebac.sql', import.meta.url),
-      new URL('../../../../migrations/admin/008_admin_rebac_definitions.sql', import.meta.url),
-    ];
+    const migrationFiles = activeD1MigrationFiles();
+    const migrationsWithEpochHelpers: string[] = [];
 
-    for (const fileUrl of migrationFiles) {
-      const sql = readFileSync(fileUrl, 'utf-8');
+    for (const migrationFile of migrationFiles) {
+      const sql = readMigration(migrationFile);
       expect(sql).not.toContain("strftime('%s', 'now')");
       expect(sql).not.toContain("datetime('now')");
-      expect(sql).toMatch(/__AUTHRIM_NOW_EPOCH_(SECONDS|MILLISECONDS)__/);
+      if (/__AUTHRIM_NOW_EPOCH_(SECONDS|MILLISECONDS)__/.test(sql)) {
+        migrationsWithEpochHelpers.push(migrationFile);
+      }
     }
+
+    expect(migrationsWithEpochHelpers.length).toBeGreaterThan(0);
   });
 
   it('uses deterministic claim schema IDs instead of sqlite randomblob seeds', () => {
-    const sql = readFileSync(
-      new URL('../../../../migrations/061_seed_default_claim_schemas.sql', import.meta.url),
-      'utf-8'
-    );
+    const sql = readMigration('006_core_extended_operations.sql');
 
-    expect(sql).not.toContain('randomblob(');
+    const claimSeedSql = sql.slice(sql.indexOf('Migration 061: Seed default OIDC claim schemas'));
+    expect(claimSeedSql).not.toContain('randomblob(');
     expect(sql).toContain("'system_claim_' || t.id || '_name'");
     expect(sql).toContain("'system_claim_' || t.id || '_address_country'");
   });
 
   it('removes partial indexes from migration assets in the current gate', () => {
-    const migrationFiles = [
-      new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
-      new URL('../../../../migrations/052_consent_management.sql', import.meta.url),
-      new URL('../../../../migrations/053_custom_claim_schemas.sql', import.meta.url),
-      new URL('../../../../migrations/057_add_tenants_table.sql', import.meta.url),
-      new URL('../../../../migrations/058_add_tenant_domain_mappings.sql', import.meta.url),
-      new URL('../../../../migrations/064_add_tenant_vanity_domains.sql', import.meta.url),
-    ];
-
     const partialIndexPattern = /CREATE(?: UNIQUE)? INDEX[\s\S]{0,120}?WHERE\b/;
 
-    for (const fileUrl of migrationFiles) {
-      const sql = readFileSync(fileUrl, 'utf-8');
+    for (const migrationFile of activeD1MigrationFiles()) {
+      const sql = readMigration(migrationFile);
       expect(sql).not.toMatch(partialIndexPattern);
     }
   });
 
-  it('scopes OAuth client identifiers by tenant in fresh schema assets', () => {
-    const migrationFiles = [new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url)];
+  it('scopes OAuth client identifiers by tenant in the core baseline', () => {
+    const sql = readMigrations(activeCoreMigrationFiles());
 
-    for (const fileUrl of migrationFiles) {
-      const sql = readFileSync(fileUrl, 'utf-8');
-      expect(sql).not.toContain('client_id TEXT PRIMARY KEY');
-      expect(sql).toContain('PRIMARY KEY (tenant_id, client_id)');
-      expect(sql).toContain(
-        'FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id)'
-      );
-      expect(sql).toContain('UNIQUE (tenant_id, user_id, client_id)');
-      expect(sql).toContain('UNIQUE (tenant_id, session_id, client_id)');
-      expect(sql).toContain('CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id)');
-      expect(sql).toContain(
-        'CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id)'
-      );
-      expect(sql).toContain(
-        'CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id)'
-      );
-    }
+    expect(sql).not.toContain('client_id TEXT PRIMARY KEY');
+    expect(sql).toContain('PRIMARY KEY (tenant_id, client_id)');
+    expect(sql).toContain(
+      'FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id)'
+    );
+    expect(sql).toContain('UNIQUE (tenant_id, user_id, client_id)');
+    expect(sql).toContain('UNIQUE (tenant_id, session_id, client_id)');
+    expect(sql).toContain('CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id)');
+    expect(sql).toContain(
+      'CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id)'
+    );
+    expect(sql).toContain(
+      'CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id)'
+    );
   });
 
-  it('applies the tenant-scoped OAuth client migration in SQLite', () => {
+  it('applies the consolidated core baseline in SQLite', () => {
     const sqlite3Path = findSqlite3();
     if (!sqlite3Path) {
       return;
@@ -284,31 +289,21 @@ describe('migration seed SQL portability', () => {
     const dbPath = join(tempDir, 'test.db');
 
     try {
-      runSqlite(
-        sqlite3Path,
-        dbPath,
-        `
-PRAGMA foreign_keys = ON;
-CREATE TABLE users_core (id TEXT PRIMARY KEY);
-CREATE TABLE consent_statements (id TEXT PRIMARY KEY);
-CREATE TABLE sessions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default');
-`
-      );
-
-      const migrationSql = readFileSync(
-        new URL(
-          '../../../../migrations/077_oauth_client_tenant_scoped_identity.sql',
-          import.meta.url
-        ),
-        'utf-8'
-      );
-      runSqlite(sqlite3Path, dbPath, migrationSql);
+      runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
 
       runSqlite(
         sqlite3Path,
         dbPath,
         `
 PRAGMA foreign_keys = ON;
+INSERT INTO tenants (id, tenant_code, tenant_key, name, created_at, updated_at)
+VALUES ('tenant-a', 'tenant-a', 'tenant-key-a', 'Tenant A', 1, 1);
+INSERT INTO tenants (id, tenant_code, tenant_key, name, created_at, updated_at)
+VALUES ('tenant-b', 'tenant-b', 'tenant-key-b', 'Tenant B', 1, 1);
+INSERT INTO users_core (id, tenant_id, created_at, updated_at)
+VALUES ('user-a', 'tenant-a', 1, 1);
+INSERT INTO sessions (id, tenant_id, user_id, expires_at, created_at)
+VALUES ('session-a', 'tenant-a', 'user-a', 9999999999, 1);
 ${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Tenant A Mobile')}
 ${insertOAuthClientSql('tenant-b', 'shared-mobile', 'Tenant B Mobile')}
 `
@@ -380,49 +375,6 @@ INSERT INTO session_clients (
 `
         )
       ).toThrow();
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it('restores oauth_clients device secret policy columns after tenant-scoped rebuild', () => {
-    const sqlite3Path = findSqlite3();
-    if (!sqlite3Path) {
-      return;
-    }
-
-    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-oauth-client-device-policy-'));
-    const dbPath = join(tempDir, 'test.db');
-
-    try {
-      runSqlite(
-        sqlite3Path,
-        dbPath,
-        `
-PRAGMA foreign_keys = ON;
-CREATE TABLE users_core (id TEXT PRIMARY KEY);
-CREATE TABLE consent_statements (id TEXT PRIMARY KEY);
-CREATE TABLE sessions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default');
-`
-      );
-
-      const tenantScopedMigrationSql = readFileSync(
-        new URL(
-          '../../../../migrations/077_oauth_client_tenant_scoped_identity.sql',
-          import.meta.url
-        ),
-        'utf-8'
-      );
-      const restoreDevicePolicySql = readFileSync(
-        new URL(
-          '../../../../migrations/085_restore_oauth_client_device_secret_policy_columns.sql',
-          import.meta.url
-        ),
-        'utf-8'
-      );
-
-      runSqlite(sqlite3Path, dbPath, tenantScopedMigrationSql);
-      runSqlite(sqlite3Path, dbPath, restoreDevicePolicySql);
 
       runSqlite(
         sqlite3Path,
@@ -466,6 +418,11 @@ INSERT INTO oauth_clients (
           "SELECT device_secret_revoke_enabled || ':' || device_secret_introspection_enabled FROM oauth_clients WHERE tenant_id = 'tenant-a' AND client_id = 'device-policy-client';"
         )
       ).toBe('1:1');
+
+      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_secrets;')).toBe('0');
+      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_installations;')).toBe(
+        '0'
+      );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

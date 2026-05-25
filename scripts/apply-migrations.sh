@@ -90,7 +90,7 @@ parse_migration_file() {
         VERSION=0
     fi
 
-    # Extract name (e.g., "001_initial_schema" -> "initial_schema")
+    # Extract name (e.g., "001_core_foundation" -> "core_foundation")
     NAME=$(echo "$basename" | sed 's/^[0-9]*_//')
 }
 

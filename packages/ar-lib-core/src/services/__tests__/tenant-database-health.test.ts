@@ -105,12 +105,12 @@ describe('tenant database health', () => {
       adapterWithHealth(
         { healthy: true, latencyMs: 1, type: 'd1' },
         {
-          migrations: ['000_fresh_schema.sql', '087_saml_attribute_presets.sql', 'invalid.sql'],
+          migrations: ['001_core_foundation.sql', '006_core_extended_operations.sql', 'invalid.sql'],
         }
       )
     );
 
-    expect(version).toBe(87);
+    expect(version).toBe(6);
   });
 
   it('reports deep health as healthy when registry and database schema versions match', async () => {
@@ -119,19 +119,19 @@ describe('tenant database health', () => {
         adapterWithHealth(
           { healthy: true, latencyMs: 12, type: 'd1' },
           {
-            migrations: ['087_saml_attribute_presets.sql'],
+            migrations: ['006_core_extended_operations.sql'],
           }
         ),
         'active',
-        87
+        6
       ),
       '2026-05-16T00:00:00.000Z'
     );
 
     expect(result).toMatchObject({
       severity: 'healthy',
-      registrySchemaVersion: 87,
-      databaseSchemaVersion: 87,
+      registrySchemaVersion: 6,
+      databaseSchemaVersion: 6,
       schemaDrift: 'none',
     });
   });
@@ -142,21 +142,21 @@ describe('tenant database health', () => {
         adapterWithHealth(
           { healthy: true, latencyMs: 12, type: 'd1' },
           {
-            migrations: ['086_add_oauth_client_description.sql'],
+            migrations: ['005_core_indexes_and_log_objects.sql'],
           }
         ),
         'active',
-        87
+        6
       ),
       '2026-05-16T00:00:00.000Z'
     );
 
     expect(result).toMatchObject({
       severity: 'failed',
-      registrySchemaVersion: 87,
-      databaseSchemaVersion: 86,
+      registrySchemaVersion: 6,
+      databaseSchemaVersion: 5,
       schemaDrift: 'behind_registry',
-      error: 'tenant_database_schema_version_too_old:86<87',
+      error: 'tenant_database_schema_version_too_old:5<6',
     });
   });
 

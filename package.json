@@ -43,7 +43,7 @@
     "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts",
     "migrate:create": "tsx scripts/create-migration.ts",
-    "migrate:info": "echo '\n📋 Migration Commands:\n\n  migrate:create <name>  - Create new migration file\n  \nFor applying migrations, use wrangler:\n  wrangler d1 migrations list authrim-db\n  wrangler d1 migrations apply authrim-db\n\nFor local development:\n  wrangler d1 execute authrim-db --local --file=migrations/000_schema_migrations.sql\n  wrangler d1 execute authrim-db --local --file=migrations/001_initial_schema.sql\n'",
+    "migrate:info": "echo '\n📋 Migration Commands:\n\n  migrate:create <name>  - Create a new migration file\n\nFresh installs are applied by @authrim/setup from the baseline files in migrations/.\nFor manual local checks, apply migrations/[0-9][0-9][0-9]_*.sql in lexical order.\n'",
     "setup": "tsx packages/setup/src/index.ts",
     "setup:init": "tsx packages/setup/src/index.ts init",
     "setup:manage": "tsx packages/setup/src/index.ts manage",

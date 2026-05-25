@@ -519,10 +519,12 @@ setup_d1_databases() {
       log_success "  $DB_NAME: Created (ID: $db_id)"
     fi
 
-    # Run migrations (if migrations/0001_initial.sql exists)
-    if [[ -f "migrations/0001_initial.sql" ]]; then
+    # Run consolidated baseline migrations when present.
+    if ls migrations/[0-9][0-9][0-9]_*.sql >/dev/null 2>&1; then
       log_info "  Running migrations..."
-      wrangler d1 execute "$DB_NAME" --file=./migrations/0001_initial.sql || true
+      for migration_file in migrations/[0-9][0-9][0-9]_*.sql; do
+        wrangler d1 execute "$DB_NAME" --file="./$migration_file" || true
+      done
     fi
 
     # Add to configuration file

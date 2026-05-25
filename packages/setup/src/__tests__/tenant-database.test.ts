@@ -230,11 +230,11 @@ describe('tenant database setup helpers', () => {
   it('reads the latest numeric migration version from a migrations directory', () => {
     const dir = mkdtempSync(join(tmpdir(), 'authrim-tenant-migrations-'));
     try {
-      writeFileSync(join(dir, '000_fresh_schema.sql'), '-- fresh');
-      writeFileSync(join(dir, '087_saml_attribute_presets.sql'), '-- migration');
+      writeFileSync(join(dir, '001_core_foundation.sql'), '-- foundation');
+      writeFileSync(join(dir, '006_core_extended_operations.sql'), '-- migration');
       writeFileSync(join(dir, 'README.md'), '# ignored');
 
-      expect(getLatestMigrationVersionFromDirectory(dir)).toBe(87);
+      expect(getLatestMigrationVersionFromDirectory(dir)).toBe(6);
       expect(getLatestMigrationVersionFromDirectory(join(dir, 'missing'))).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
