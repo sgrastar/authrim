@@ -18,25 +18,46 @@ import { randomBytes } from 'node:crypto';
 import {
   isWranglerInstalled,
   checkAuth,
+  getSetupCapabilityDiagnostics,
+  deriveSetupCapabilityEstimate,
+  deriveSetupCapabilityStatuses,
+  ensureWildcardDnsForMultiTenant,
   provisionResources,
+  provisionR2Buckets,
+  buildR2BucketProvisioningStatus,
   detectEnvironments,
   deleteEnvironment,
   getWorkersSubdomain,
   checkAdminSetupStatus,
   generateAndStoreSetupToken,
   runMigrationsForEnvironment,
+  ensureInitialAdminRolesInD1,
+  ensureAdminUiBffMachineAccessInD1,
+  cleanupSetupMachineAccessInD1,
+  ensureSetupMachineAccessInD1,
+  ensureInitialTenantInD1,
+  queryD1Rows,
+  seedRuntimeProfiles,
   getWorkerDeployments,
+  listR2Buckets,
   type CloudflareAuth,
 } from '../core/cloudflare.js';
+import { isWildcardDnsPermissionError } from '../core/wildcard-dns-manual-action.js';
 import {
   AuthrimConfigSchema,
   createDefaultConfig,
   D1LocationSchema,
   D1JurisdictionSchema,
+  ProfileIdSchema,
   type AuthrimConfig,
 } from '../core/config.js';
-import { generateAllSecrets, saveKeysToDirectory, keysExistForEnvironment } from '../core/keys.js';
-import { createLockFile, saveLockFile } from '../core/lock.js';
+import {
+  ensureSupplementalKeyFiles,
+  generateAllSecrets,
+  saveKeysToDirectory,
+  keysExistForEnvironment,
+} from '../core/keys.js';
+import { createLockFile, loadLockFileAuto, mergeLockFiles, saveLockFile } from '../core/lock.js';
 import {
   getEnvironmentPaths,
   getExternalKeysDir,
@@ -44,34 +65,67 @@ import {
   resolvePaths,
   listEnvironments,
   findAuthrimBaseDir,
+  findLegacyConfigPath,
+  AUTHRIM_DIR,
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../core/paths.js';
-import { generateWranglerConfig, toToml } from '../core/wrangler.js';
-import { syncWranglerConfigs } from '../core/wrangler-sync.js';
-import { buildUrlsConfig } from '../core/url-config.js';
+import { generateWranglerConfig, toToml, buildResourceIdsFromLock } from '../core/wrangler.js';
+import { saveMasterWranglerConfigs, syncWranglerConfigs } from '../core/wrangler-sync.js';
+import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
+import {
+  buildInitialAdminSetupUrl,
+  buildUrlsConfig,
+  resolveApiBaseUrlCandidates,
+  resolveIssuerUrl,
+  validateDomainRoutingConfig,
+} from '../core/url-config.js';
 import { normalizeTenantConfigForApiDomain } from '../core/tenant-mode.js';
+import {
+  ensureInitialTenantD1Resources,
+  publishInitialTenantD1RuntimeSnapshot,
+} from '../core/tenant-d1-bootstrap.js';
 import {
   deployAll,
   uploadSecrets,
   buildApiPackages,
-  deployAllPages,
-  deployPagesComponent,
+  deployAllUiWorkers,
+  deployUiWorkerBindingTargets,
+  deployUiWorkerComponent,
   deployWorker,
-  PAGES_COMPONENTS,
+  DEFAULT_INTER_DEPLOY_DELAY_MS,
+  UI_WORKER_COMPONENTS,
+  updateLockWithDeployments,
   type DeployResult,
-  type PagesComponent,
+  type UiWorkerComponent,
 } from '../core/deploy.js';
-import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
+import {
+  getD1DatabaseName,
+  getEnabledComponents,
+  WORKER_COMPONENTS,
+  type WorkerComponent,
+} from '../core/naming.js';
 import {
   getLocalPackageVersions,
   compareVersions,
   getComponentsToUpdate,
 } from '../core/version.js';
 import { completeInitialSetup } from '../core/admin.js';
-import { resolveUiDeploymentSettings } from '../core/ui-deployment.js';
+import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
+import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
-import { writeFile, chmod, mkdir } from 'node:fs/promises';
+import { validateSetupDomainInputs } from './domain-form-state.js';
+import {
+  buildWorkerHttpReadinessTargets,
+  waitForRouterWorkerReady,
+  waitForWorkerDeploymentsReady,
+  waitForWorkerHttpReady,
+} from '../core/worker-readiness.js';
+import {
+  configureDownstreamIntrospectionDeployment,
+  resolveDownstreamIntrospectionKeysDir,
+} from '../core/downstream-introspection-deploy.js';
+import { appendFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 
 // =============================================================================
@@ -136,6 +190,12 @@ interface SetupState {
   progress: string[];
   error: string | null;
   deployResults: DeployResult[];
+  logPath: string | null;
+}
+
+interface ProgressLogState {
+  filePath: string;
+  writeChain: Promise<void>;
 }
 
 const state: SetupState = {
@@ -145,10 +205,266 @@ const state: SetupState = {
   progress: [],
   error: null,
   deployResults: [],
+  logPath: null,
 };
 
+let progressLogState: ProgressLogState | null = null;
+
+function buildDomainRoutingValidationResult(config: AuthrimConfig) {
+  const conflicts = validateDomainRoutingConfig({
+    apiDomain: config.urls?.api?.custom,
+    loginUiDomain: config.urls?.loginUi?.custom,
+    adminUiDomain: config.urls?.adminUi?.custom,
+    multiTenant: config.tenant.multiTenant,
+    nakedDomain: config.tenant.nakedDomain,
+  });
+
+  const routingConflicts = conflicts.map((conflict) => ({
+    path: conflict.field === 'loginUiDomain' ? 'urls.loginUi.custom' : 'urls.adminUi.custom',
+    message: conflict.message,
+  }));
+
+  const depthConflicts = validateSetupDomainInputs({
+    apiDomain: config.tenant.multiTenant
+      ? config.tenant.baseDomain || ''
+      : config.urls?.api?.custom || '',
+    loginUiDomain: config.urls?.loginUi?.custom,
+    adminUiDomain: config.urls?.adminUi?.custom,
+    tenantName: config.tenant.name,
+  }).map((issue) => ({
+    path:
+      issue.field === 'apiDomain'
+        ? config.tenant.multiTenant
+          ? 'tenant.baseDomain'
+          : 'urls.api.custom'
+        : issue.field === 'loginUiDomain'
+          ? 'urls.loginUi.custom'
+          : 'urls.adminUi.custom',
+    message: issue.suggestion
+      ? `${issue.message} Suggested host: ${issue.suggestion}`
+      : issue.message,
+  }));
+
+  return [...routingConflicts, ...depthConflicts];
+}
+
+function formatLogTimestamp(date = new Date()): string {
+  const pad = (value: number, len = 2) => String(value).padStart(len, '0');
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-` +
+    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}-` +
+    `${pad(date.getMilliseconds(), 3)}`
+  );
+}
+
+function resolveProgressLogKeysDir(env: string): string {
+  const baseDir = findAuthrimBaseDir(process.cwd());
+  const foundKeys = findKeysDirectory({
+    env,
+    sourceDir: baseDir,
+    keysBaseDir: process.cwd(),
+  });
+  if (foundKeys) {
+    return foundKeys.path;
+  }
+
+  const resolved = resolvePaths({ baseDir, env });
+  if (resolved.type === 'legacy') {
+    return (resolved.paths as LegacyPaths).keys;
+  }
+
+  return getExternalKeysDir(env, process.cwd());
+}
+
+async function beginProgressLog(
+  env: string,
+  operation: 'provision' | 'deploy' | 'delete'
+): Promise<string | null> {
+  await flushProgressLog();
+  progressLogState = null;
+
+  try {
+    const logsDir =
+      operation === 'delete'
+        ? join(findAuthrimBaseDir(process.cwd()), AUTHRIM_DIR, 'logs', env)
+        : join(resolveProgressLogKeysDir(env), 'logs');
+    await mkdir(logsDir, { recursive: true, mode: 0o700 });
+    const filePath = join(logsDir, `${formatLogTimestamp()}-${operation}.log`);
+    await writeFile(filePath, '', { encoding: 'utf-8', mode: 0o600 });
+    progressLogState = {
+      filePath,
+      writeChain: Promise.resolve(),
+    };
+    state.logPath = filePath;
+    return filePath;
+  } catch {
+    state.logPath = null;
+    return null;
+  }
+}
+
+function appendProgressLogLine(line: string): void {
+  if (!progressLogState) {
+    return;
+  }
+
+  progressLogState.writeChain = progressLogState.writeChain
+    .then(() => appendFile(progressLogState!.filePath, line, 'utf-8'))
+    .catch(() => {
+      // Ignore log persistence failures so setup can continue
+    });
+}
+
+async function flushProgressLog(): Promise<void> {
+  if (!progressLogState) {
+    return;
+  }
+
+  await progressLogState.writeChain.catch(() => {
+    // Ignore log persistence failures so setup can continue
+  });
+}
+
 function addProgress(message: string): void {
+  const timestamp = new Date().toISOString();
   state.progress.push(message);
+  appendProgressLogLine(`[${timestamp}] ${message}\n`);
+}
+
+async function loadEnvironmentConfigForUpdate(
+  baseDir: string,
+  env: string
+): Promise<{
+  envPaths: EnvironmentPaths;
+  config: AuthrimConfig;
+}> {
+  const envPaths = getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() });
+
+  if (!existsSync(envPaths.config)) {
+    throw new Error(`Config file not found for environment "${env}"`);
+  }
+
+  const configContent = await readFile(envPaths.config, 'utf-8');
+  return {
+    envPaths,
+    config: AuthrimConfigSchema.parse(JSON.parse(configContent)),
+  };
+}
+
+async function saveEnvironmentConfig(
+  envPaths: EnvironmentPaths,
+  config: AuthrimConfig
+): Promise<void> {
+  await mkdir(envPaths.root, { recursive: true });
+  await writeFile(envPaths.config, JSON.stringify(config, null, 2));
+}
+
+async function saveEmailBootstrapFiles(
+  envPaths: EnvironmentPaths,
+  options: {
+    provider: 'cloudflare' | 'resend' | 'sendgrid' | 'ses';
+    fromAddress: string;
+    fromName?: string;
+    apiKey?: string;
+  }
+): Promise<void> {
+  await mkdir(envPaths.keys, { recursive: true, mode: 0o700 });
+
+  await writeFile(envPaths.keyFiles.emailFrom, options.fromAddress.trim());
+  await chmod(envPaths.keyFiles.emailFrom, 0o600);
+
+  const emailFromNamePath = join(envPaths.keys, 'email_from_name.txt');
+  const normalizedFromName = options.fromName?.trim();
+  if (normalizedFromName) {
+    await writeFile(emailFromNamePath, normalizedFromName);
+    await chmod(emailFromNamePath, 0o600);
+  } else if (existsSync(emailFromNamePath)) {
+    await writeFile(emailFromNamePath, '');
+    await chmod(emailFromNamePath, 0o600);
+  }
+
+  if (options.provider === 'resend' && options.apiKey?.trim()) {
+    await writeFile(envPaths.keyFiles.resendApiKey, options.apiKey.trim());
+    await chmod(envPaths.keyFiles.resendApiKey, 0o600);
+  }
+}
+
+function resolveWebDeploymentKeysDir(rootDir: string, env: string): string {
+  return resolveDownstreamIntrospectionKeysDir({
+    env,
+    rootDir,
+    keysBaseDir: process.cwd(),
+  });
+}
+
+async function ensureSupplementalKeysForWebDeploy(keysDir: string): Promise<void> {
+  if (!existsSync(keysDir)) {
+    return;
+  }
+
+  const result = await ensureSupplementalKeyFiles(keysDir);
+  if (result.createdFiles.length === 0) {
+    return;
+  }
+
+  addProgress(`Created ${result.createdFiles.length} supplemental key file(s) in ${keysDir}`);
+  for (const filePath of result.createdFiles) {
+    addProgress(`  - ${filePath.replace(`${keysDir}/`, '')}`);
+  }
+}
+
+async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
+  env: string;
+  rootDir: string;
+  config?: Partial<AuthrimConfig> | null;
+  components: string[];
+  dryRun?: boolean;
+}): Promise<void> {
+  const { env, rootDir, config, components, dryRun } = options;
+  if (dryRun || !components.includes('ar-userinfo')) {
+    return;
+  }
+
+  const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+  const downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+    env,
+    rootDir,
+    keysDir,
+    apiBaseUrl: resolveIssuerUrl(config, { env }),
+    apiBaseUrls: resolveApiBaseUrlCandidates(config, { env, purpose: 'tenant-scoped-admin' }),
+    tenantId: config?.tenant?.name,
+    dryRun,
+    onProgress: addProgress,
+  });
+
+  if (!downstreamSetupResult.success) {
+    addProgress(
+      `⚠️ Downstream introspection client setup skipped: ${downstreamSetupResult.error ?? 'Unknown error'}`
+    );
+    for (const error of downstreamSetupResult.secretUploadErrors ?? []) {
+      addProgress(`⚠️ ${error}`);
+    }
+    return;
+  }
+
+  if (!downstreamSetupResult.redeployResult?.deployedAt) {
+    return;
+  }
+
+  const { loadLockFileAuto } = await import('../core/lock.js');
+  const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+
+  if (!currentLock || !lockPath) {
+    addProgress('⚠️ Downstream introspection setup completed, but lock file was not available');
+    return;
+  }
+
+  const updatedLock = updateLockWithDeployments(currentLock, [
+    downstreamSetupResult.redeployResult,
+  ]);
+  await saveLockFile(updatedLock, lockPath);
+  addProgress(`✓ ${downstreamSetupResult.redeployResult.workerName} redeployed successfully`);
+  addProgress(`Lock file updated: ${lockPath}`);
 }
 
 function clearProgress(): void {
@@ -165,6 +481,20 @@ function sanitizeError(error: unknown): string {
     .replace(/\/[^\s:]+/g, '[path]')
     .replace(/\\[^\s:]+/g, '[path]')
     .replace(/[a-f0-9]{32,}/gi, '[redacted]');
+}
+
+function getWildcardDnsManualActionPayload(
+  cfg: Partial<AuthrimConfig> | null | undefined
+): { kind: 'wildcard-dns'; baseDomain: string } | null {
+  const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
+  if (!baseDomain) {
+    return null;
+  }
+
+  return {
+    kind: 'wildcard-dns',
+    baseDomain,
+  };
 }
 
 // =============================================================================
@@ -190,12 +520,15 @@ export function createApiRoutes(): Hono {
   api.use('/config', validateSession);
   api.use('/config/*', validateSession);
   api.use('/keys/*', validateSession);
+  api.use('/email/*', validateSession);
   api.use('/provision', validateSession);
   api.use('/wrangler/*', validateSession);
   api.use('/deploy', validateSession);
   api.use('/reset', validateSession);
   api.use('/admin/*', validateSession);
   api.use('/cloudflare/*', validateSession);
+  api.use('/tenant-d1/*', validateSession);
+  api.use('/r2/*', validateSession);
 
   // ==========================================================================
   // Cloudflare Zone Check
@@ -220,7 +553,19 @@ export function createApiRoutes(): Hono {
       return c.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      return c.json({ found: false, error: message }, 500);
+      return c.json(
+        {
+          found: false,
+          error: message,
+          diagnostic: {
+            code: 'api_error',
+            severity: 'error',
+            allowBinding: false,
+            actions: ['retry_check', 'reload_page'],
+          },
+        },
+        500
+      );
     }
   });
 
@@ -234,6 +579,13 @@ export function createApiRoutes(): Hono {
     const wranglerInstalled = await isWranglerInstalled();
     const auth = await checkAuth();
     const workersSubdomain = auth.isLoggedIn ? await getWorkersSubdomain() : null;
+    const capabilityDiagnostics = await getSetupCapabilityDiagnostics(
+      auth,
+      wranglerInstalled,
+      workersSubdomain
+    );
+    const capabilities = deriveSetupCapabilityEstimate(capabilityDiagnostics);
+    const capabilityStatuses = deriveSetupCapabilityStatuses(capabilityDiagnostics);
 
     state.auth = auth;
 
@@ -241,6 +593,9 @@ export function createApiRoutes(): Hono {
       wranglerInstalled,
       auth,
       workersSubdomain,
+      capabilityDiagnostics,
+      capabilities,
+      capabilityStatuses,
       cwd: process.cwd(),
     });
   });
@@ -276,7 +631,7 @@ export function createApiRoutes(): Hono {
         }
       }
       if (!configPath || !existsSync(configPath)) {
-        configPath = 'authrim-config.json';
+        configPath = findLegacyConfigPath(baseDir);
         structureType = 'legacy';
       }
     }
@@ -344,6 +699,14 @@ export function createApiRoutes(): Hono {
         });
       }
 
+      const conflicts = buildDomainRoutingValidationResult(parseResult.data);
+      if (conflicts.length > 0) {
+        return c.json({
+          valid: false,
+          errors: conflicts,
+        });
+      }
+
       return c.json({ valid: true, config: parseResult.data });
     } catch (error) {
       if (error instanceof SyntaxError) {
@@ -360,6 +723,10 @@ export function createApiRoutes(): Hono {
       try {
         const body = await c.req.json();
         const config = AuthrimConfigSchema.parse(body);
+        const conflicts = buildDomainRoutingValidationResult(config);
+        if (conflicts.length > 0) {
+          return c.json({ success: false, errors: conflicts }, 400);
+        }
         const baseDir = findAuthrimBaseDir(process.cwd());
         const env = config.environment.prefix;
 
@@ -401,6 +768,7 @@ export function createApiRoutes(): Hono {
           components,
           zoneId,
           customDomainBinding,
+          profiles,
         } = body;
 
         const config = createDefaultConfig(env);
@@ -420,12 +788,26 @@ export function createApiRoutes(): Hono {
           customDomainBinding: customDomainBinding ?? false,
         });
 
+        const conflicts = buildDomainRoutingValidationResult(config);
+        if (conflicts.length > 0) {
+          return c.json({ success: false, errors: conflicts }, 400);
+        }
+
         // Update components if provided
         if (components) {
           config.components = {
             ...config.components,
             ...components,
+            saml: true,
+            async: true,
+            vc: true,
+            bridge: true,
+            policy: true,
           };
+        }
+
+        if (profiles) {
+          config.profiles = AuthrimConfigSchema.parse({ ...config, profiles }).profiles;
         }
 
         state.config = config;
@@ -483,11 +865,21 @@ export function createApiRoutes(): Hono {
     });
   });
 
+  // Common environment name validation schema
+  const EnvNameSchema = z
+    .string()
+    .min(1)
+    .max(32)
+    .regex(
+      /^[a-z][a-z0-9-]*$/,
+      'Environment name must start with lowercase letter and contain only lowercase alphanumeric and hyphens'
+    );
+
   // Save email provider configuration (with lock)
   const EmailConfigSchema = z.object({
     env: z.string().min(1).max(32),
-    provider: z.enum(['resend', 'sendgrid', 'ses']),
-    apiKey: z.string().min(1),
+    provider: z.enum(['cloudflare', 'resend', 'sendgrid', 'ses']),
+    apiKey: z.string().optional(),
     fromAddress: z.string().email(),
     fromName: z.string().optional(),
   });
@@ -513,7 +905,17 @@ export function createApiRoutes(): Hono {
         const { env, provider, apiKey, fromAddress, fromName } = parseResult.data;
 
         // Validate Resend API key format
-        if (provider === 'resend' && !apiKey.startsWith('re_')) {
+        if (provider === 'resend' && !apiKey) {
+          return c.json(
+            {
+              success: false,
+              error: 'Resend API key is required when Resend is selected',
+            },
+            400
+          );
+        }
+
+        if (provider === 'resend' && apiKey && !apiKey.startsWith('re_')) {
           // Warning but not an error - just log it
           addProgress('Warning: Resend API key should start with "re_"');
         }
@@ -526,23 +928,53 @@ export function createApiRoutes(): Hono {
 
         // Ensure directory exists with restrictive permissions
         await mkdir(keysDir, { recursive: true, mode: 0o700 });
+        await saveEmailBootstrapFiles(envPaths, {
+          provider,
+          fromAddress,
+          fromName,
+          apiKey,
+        });
 
-        // Save API key with restrictive permissions
-        await writeFile(envPaths.keyFiles.resendApiKey, apiKey.trim());
-        await chmod(envPaths.keyFiles.resendApiKey, 0o600);
-        addProgress(`Saved ${provider} API key to ${envPaths.keyFiles.resendApiKey}`);
+        const emailConfig = {
+          provider,
+          fromAddress: fromAddress.trim(),
+          fromName: fromName?.trim() || undefined,
+          configured: true,
+        };
 
-        // Save from address with restrictive permissions
-        await writeFile(envPaths.keyFiles.emailFrom, fromAddress.trim());
-        await chmod(envPaths.keyFiles.emailFrom, 0o600);
+        if (existsSync(envPaths.config)) {
+          const currentConfig = AuthrimConfigSchema.parse(
+            JSON.parse(await readFile(envPaths.config, 'utf-8'))
+          );
+          const updatedConfig = AuthrimConfigSchema.parse({
+            ...currentConfig,
+            updatedAt: new Date().toISOString(),
+            features: {
+              ...currentConfig.features,
+              email: emailConfig,
+            },
+          });
+          await saveEnvironmentConfig(envPaths, updatedConfig);
+          state.config = updatedConfig;
+          addProgress(`Updated config: ${envPaths.config}`);
+        } else if (state.config) {
+          const defaultFeatures = createDefaultConfig(env).features;
+          state.config = {
+            ...state.config,
+            features: {
+              queue: state.config.features?.queue ?? defaultFeatures.queue,
+              r2: state.config.features?.r2 ?? defaultFeatures.r2,
+              email: emailConfig,
+            },
+          };
+        }
+
+        if (provider === 'resend' && apiKey) {
+          addProgress(`Saved ${provider} API key to ${envPaths.keyFiles.resendApiKey}`);
+        }
         addProgress(`Saved email from address to ${envPaths.keyFiles.emailFrom}`);
-
-        // Save from name if provided
         if (fromName) {
-          const fromNameFile = join(keysDir, 'email_from_name.txt');
-          await writeFile(fromNameFile, fromName.trim());
-          await chmod(fromNameFile, 0o600);
-          addProgress(`Saved email from name to ${fromNameFile}`);
+          addProgress(`Saved email from name to ${join(keysDir, 'email_from_name.txt')}`);
         }
 
         addProgress('Email configuration saved successfully');
@@ -560,15 +992,191 @@ export function createApiRoutes(): Hono {
     });
   });
 
-  // Common environment name validation schema
-  const EnvNameSchema = z
-    .string()
-    .min(1)
-    .max(32)
-    .regex(
-      /^[a-z][a-z0-9-]*$/,
-      'Environment name must start with lowercase letter and contain only lowercase alphanumeric and hyphens'
-    );
+  const EnableCloudflareEmailSchema = z.object({
+    env: EnvNameSchema,
+    fromAddress: z.string().email(),
+    fromName: z.string().optional(),
+  });
+
+  api.use('/env/email/*', validateSession);
+
+  api.post('/env/email/cloudflare/enable', async (c) => {
+    return withLock(async () => {
+      try {
+        const parseResult = EnableCloudflareEmailSchema.safeParse(await c.req.json());
+        if (!parseResult.success) {
+          return c.json(
+            {
+              success: false,
+              error:
+                'Invalid request: ' +
+                parseResult.error.issues.map((issue) => issue.message).join(', '),
+            },
+            400
+          );
+        }
+
+        const { env, fromAddress, fromName } = parseResult.data;
+        const rootDir = process.cwd();
+        const baseDir = findAuthrimBaseDir(rootDir);
+
+        state.status = 'deploying';
+        state.error = null;
+        state.logPath = await beginProgressLog(env, 'deploy');
+        clearProgress();
+        addProgress(`Enabling Cloudflare Email Service for environment: ${env}`);
+
+        const { envPaths, config } = await loadEnvironmentConfigForUpdate(baseDir, env);
+        const { loadLockFileAuto, saveLockFile: saveLock } = await import('../core/lock.js');
+        const { lock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+
+        if (!lock || !lockPath) {
+          state.status = 'error';
+          state.error = `Environment "${env}" lock file not found`;
+          return c.json({ success: false, error: state.error }, 404);
+        }
+
+        const updatedConfig = AuthrimConfigSchema.parse({
+          ...config,
+          features: {
+            ...config.features,
+            email: {
+              provider: 'cloudflare',
+              fromAddress: fromAddress.trim(),
+              fromName: fromName?.trim() || undefined,
+              configured: true,
+            },
+          },
+        });
+
+        await saveEnvironmentConfig(envPaths, updatedConfig);
+        addProgress(`Updated config: ${envPaths.config}`);
+
+        await saveEmailBootstrapFiles(envPaths, {
+          provider: 'cloudflare',
+          fromAddress,
+          fromName,
+        });
+        addProgress(`Saved email bootstrap files to ${envPaths.keys}`);
+
+        const resourceIds = buildResourceIdsFromLock(lock);
+        addProgress('Refreshing generated wrangler configs...');
+        const masterResult = await saveMasterWranglerConfigs(updatedConfig, resourceIds, {
+          baseDir: rootDir,
+          env,
+          dryRun: false,
+          onProgress: addProgress,
+        });
+
+        if (!masterResult.success) {
+          state.status = 'error';
+          state.error = `Wrangler config generation failed: ${masterResult.errors.join(', ')}`;
+          await flushProgressLog();
+          return c.json({ success: false, error: state.error }, 500);
+        }
+
+        addProgress('Syncing wrangler configs...');
+        const syncResult = await syncWranglerConfigs({
+          baseDir: rootDir,
+          env,
+          packagesDir: join(rootDir, 'packages'),
+          force: true,
+          dryRun: false,
+          onProgress: addProgress,
+        });
+
+        if (!syncResult.success && syncResult.errors.length > 0) {
+          state.status = 'error';
+          state.error = `Wrangler config sync failed: ${syncResult.errors.join(', ')}`;
+          await flushProgressLog();
+          return c.json({ success: false, error: state.error }, 500);
+        }
+
+        addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
+
+        addProgress('Uploading email bootstrap secrets...');
+        const secretResult = await uploadSecrets(
+          {
+            EMAIL_FROM: fromAddress.trim(),
+            EMAIL_FROM_NAME: fromName?.trim() || '',
+          },
+          {
+            env,
+            rootDir: resolve(rootDir),
+            onProgress: addProgress,
+          },
+          ['ar-auth', 'ar-management']
+        );
+
+        if (!secretResult.success) {
+          state.status = 'error';
+          state.error = `Secret upload failed: ${secretResult.errors.join(', ')}`;
+          await flushProgressLog();
+          return c.json({ success: false, error: state.error }, 500);
+        }
+
+        addProgress('Building packages...');
+        const buildResult = await buildApiPackages({
+          rootDir: resolve(rootDir),
+          onProgress: addProgress,
+        });
+
+        if (!buildResult.success) {
+          state.status = 'error';
+          state.error = `Build failed: ${buildResult.error}`;
+          await flushProgressLog();
+          return c.json({ success: false, error: state.error }, 500);
+        }
+
+        const deployResults: DeployResult[] = [];
+        for (const component of ['ar-auth', 'ar-management'] as const) {
+          const result = await deployWorker(component, {
+            env,
+            rootDir: resolve(rootDir),
+            onProgress: addProgress,
+          });
+          deployResults.push(result);
+
+          if (!result.success) {
+            state.status = 'error';
+            state.error = `${component} deployment failed: ${result.error || 'Unknown error'}`;
+            await flushProgressLog();
+            return c.json(
+              {
+                success: false,
+                error: state.error,
+                progress: state.progress,
+              },
+              500
+            );
+          }
+        }
+
+        const updatedLock = updateLockWithDeployments(lock, deployResults);
+        await saveLock(updatedLock, lockPath);
+        addProgress(`Lock file updated: ${lockPath}`);
+
+        state.status = 'complete';
+        addProgress('Cloudflare Email Service is now enabled.');
+        await flushProgressLog();
+
+        return c.json({
+          success: true,
+          env,
+          config: updatedConfig,
+          deployedComponents: deployResults.map((result) => result.component),
+          progress: state.progress,
+          logPath: state.logPath,
+        });
+      } catch (error) {
+        state.status = 'error';
+        state.error = sanitizeError(error);
+        addProgress(`❌ Failed to enable Cloudflare Email Service: ${state.error}`);
+        await flushProgressLog();
+        return c.json({ success: false, error: state.error, progress: state.progress }, 500);
+      }
+    });
+  });
 
   // Provision request schema (with database config validation)
   const ProvisionRequestSchema = z.object({
@@ -591,6 +1199,7 @@ export function createApiRoutes(): Hono {
       .optional(),
     createQueues: z.boolean().optional(),
     createR2: z.boolean().optional(),
+    storageProfileId: ProfileIdSchema.optional(),
   });
 
   // Provision Cloudflare resources (with lock)
@@ -612,12 +1221,31 @@ export function createApiRoutes(): Hono {
           );
         }
 
-        const { env, databaseConfig, createQueues, createR2 } = parseResult.data;
+        const { env, databaseConfig, createQueues, createR2, storageProfileId } = parseResult.data;
 
         state.status = 'provisioning';
+        state.error = null;
+        state.logPath = await beginProgressLog(env, 'provision');
         clearProgress();
 
         addProgress(`Provisioning Cloudflare resources for ${env}...`);
+
+        if (storageProfileId || databaseConfig) {
+          const baseConfig = state.config ?? createDefaultConfig(env);
+          state.config = AuthrimConfigSchema.parse({
+            ...baseConfig,
+            database: databaseConfig
+              ? { ...baseConfig.database, ...databaseConfig }
+              : baseConfig.database,
+            profiles: {
+              ...baseConfig.profiles,
+              defaults: {
+                ...baseConfig.profiles?.defaults,
+                storage: storageProfileId ?? baseConfig.profiles?.defaults?.storage,
+              },
+            },
+          });
+        }
 
         const resources = await provisionResources({
           env,
@@ -629,6 +1257,7 @@ export function createApiRoutes(): Hono {
           runMigrations: true,
           onProgress: addProgress,
           databaseConfig,
+          config: state.config ?? undefined,
         });
 
         addProgress('Creating lock file...');
@@ -692,44 +1321,40 @@ export function createApiRoutes(): Hono {
 
         // Generate wrangler.toml files
         addProgress('Generating wrangler.toml files...');
-        const resourceIds = {
-          d1: lock.d1,
-          kv: Object.fromEntries(
-            Object.entries(lock.kv).map(([k, v]) => [k, { id: v.id, name: v.name }])
-          ),
-          queues: lock.queues,
-          r2: lock.r2,
-        };
+        const resourceIds = buildResourceIdsFromLock(lock);
 
-        const enabledComponents = getEnabledComponents({
-          saml: config.components?.saml,
-          async: config.components?.async,
-          vc: config.components?.vc,
-          bridge: config.components?.bridge,
-          policy: config.components?.policy,
+        const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+          baseDir: rootDir,
+          env,
+          dryRun: false,
+          onProgress: addProgress,
         });
 
-        for (const component of enabledComponents) {
-          const componentDir = join(rootDir, 'packages', component);
-          if (!existsSync(componentDir)) {
-            continue;
-          }
-
-          const wranglerConfig = generateWranglerConfig(
-            component,
-            config,
-            resourceIds,
-            workersSubdomain ?? undefined
+        if (!masterResult.success) {
+          throw new Error(
+            `Failed to save master wrangler configs: ${masterResult.errors.join(', ')}`
           );
-          const tomlContent = toToml(wranglerConfig, env);
-          const tomlPath = join(componentDir, 'wrangler.toml');
-          await writeFile(tomlPath, tomlContent, 'utf-8');
+        }
+
+        const syncResult = await syncWranglerConfigs({
+          baseDir: rootDir,
+          env,
+          packagesDir: join(rootDir, 'packages'),
+          force: true,
+          dryRun: false,
+          onProgress: addProgress,
+        });
+
+        if (!syncResult.success && syncResult.errors.length > 0) {
+          throw new Error(`Failed to sync wrangler configs: ${syncResult.errors.join(', ')}`);
         }
 
         state.status = 'configuring';
         addProgress('Provisioning complete!');
         addProgress(`📁 Config saved: ${envPaths.config}`);
         addProgress(`📁 Lock saved:   ${envPaths.lock}`);
+        addProgress(`📝 Progress log saved: ${state.logPath}`);
+        await flushProgressLog();
 
         return c.json({
           success: true,
@@ -740,12 +1365,15 @@ export function createApiRoutes(): Hono {
             config: envPaths.config,
             lock: envPaths.lock,
             root: envPaths.root,
+            log: state.logPath,
           },
         });
       } catch (error) {
         state.status = 'error';
         state.error = sanitizeError(error);
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        addProgress(`❌ Provisioning failed: ${state.error}`);
+        await flushProgressLog();
+        return c.json({ success: false, error: sanitizeError(error), logPath: state.logPath }, 500);
       }
     });
   });
@@ -833,6 +1461,8 @@ export function createApiRoutes(): Hono {
   // Deploy (with lock - long-running operation)
   api.post('/deploy', async (c) => {
     return withLock(async () => {
+      let cleanupEnv: string | undefined;
+      let cleanupKeysDir: string | undefined;
       try {
         const body = await c.req.json();
         const {
@@ -843,8 +1473,11 @@ export function createApiRoutes(): Hono {
           skipBuild = false,
           runMigrations = true,
         } = body;
+        cleanupEnv = env;
 
         state.status = 'deploying';
+        state.error = null;
+        state.logPath = await beginProgressLog(env, 'deploy');
         clearProgress();
 
         // Debug: Log the resolved rootDir for migrations
@@ -860,10 +1493,13 @@ export function createApiRoutes(): Hono {
           if (!buildResult.success) {
             state.status = 'error';
             state.error = `Build failed: ${buildResult.error}`;
+            addProgress(`❌ ${state.error}`);
+            await flushProgressLog();
             return c.json(
               {
                 success: false,
                 error: `Build failed: ${sanitizeError(new Error(buildResult.error))}`,
+                logPath: state.logPath,
               },
               500
             );
@@ -871,10 +1507,35 @@ export function createApiRoutes(): Hono {
           addProgress('Packages built successfully');
         }
 
-        // Upload secrets first (secrets are read but not stored in state)
-        // Check external (.authrim-keys/), new (.authrim/{env}/keys/), and legacy (.keys/{env}/) structures
         const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
+        let enabledComponents: WorkerComponent[] | undefined = components;
+        let cfg = state.config;
+
+        if (!enabledComponents && !cfg) {
+          try {
+            const configPath =
+              resolved.type === 'new'
+                ? (resolved.paths as EnvironmentPaths).config
+                : (resolved.paths as LegacyPaths).config;
+
+            if (existsSync(configPath)) {
+              const configContent = await readFile(configPath, 'utf-8');
+              cfg = JSON.parse(configContent);
+              state.config = cfg;
+              addProgress(`Loaded config from ${configPath}`);
+            }
+          } catch (configErr) {
+            addProgress(`Warning: Could not load config.json: ${sanitizeError(configErr)}`);
+          }
+        }
+
+        if (!enabledComponents && cfg) {
+          enabledComponents = Array.from(getEnabledComponents({}));
+        }
+
+        // Upload secrets first (secrets are read but not stored in state)
+        // Check external (.authrim-keys/), new (.authrim/{env}/keys/), and legacy (.keys/{env}/) structures
         let keysDir: string;
         const foundKeys = findKeysDirectory({
           env,
@@ -888,8 +1549,10 @@ export function createApiRoutes(): Hono {
         } else {
           keysDir = (resolved.paths as LegacyPaths).keys;
         }
+        cleanupKeysDir = keysDir;
 
         if (!dryRun && existsSync(keysDir)) {
+          await ensureSupplementalKeysForWebDeploy(keysDir);
           addProgress(`Uploading secrets from ${keysDir}...`);
 
           const secrets: Record<string, string> = {};
@@ -897,11 +1560,34 @@ export function createApiRoutes(): Hono {
             { file: join(keysDir, 'private.pem'), name: 'PRIVATE_KEY_PEM' },
             { file: join(keysDir, 'public.jwk.json'), name: 'PUBLIC_JWK_JSON' },
             { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
+            {
+              file: join(keysDir, 'object_encryption_root_key.txt'),
+              name: 'OBJECT_ENCRYPTION_ROOT_KEY',
+            },
+            { file: join(keysDir, 'version_manager_secret.txt'), name: 'VERSION_MANAGER_SECRET' },
+            {
+              file: join(keysDir, 'logging_cursor_hmac_secret.txt'),
+              name: 'LOGGING_CURSOR_HMAC_SECRET',
+            },
+            {
+              file: join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'),
+              name: 'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
+            },
+            {
+              file: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
+              name: 'TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID',
+            },
+            {
+              file: join(keysDir, 'tenant_runtime_registry_verify.jwks.json'),
+              name: 'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
+            },
             { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
             { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
+            { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
             // Email provider secrets (optional)
             { file: join(keysDir, 'resend_api_key.txt'), name: 'RESEND_API_KEY' },
             { file: join(keysDir, 'email_from.txt'), name: 'EMAIL_FROM' },
+            { file: join(keysDir, 'email_from_name.txt'), name: 'EMAIL_FROM_NAME' },
           ];
 
           for (const { file, name } of secretFiles) {
@@ -911,138 +1597,147 @@ export function createApiRoutes(): Hono {
           }
 
           if (Object.keys(secrets).length > 0) {
-            await uploadSecrets(secrets, {
-              env,
-              rootDir: resolve(rootDir),
-              onProgress: addProgress,
-            });
+            await uploadSecrets(
+              secrets,
+              {
+                env,
+                rootDir: resolve(rootDir),
+                onProgress: addProgress,
+              },
+              enabledComponents
+            );
             // Note: secrets object goes out of scope here and will be garbage collected
           }
         } else if (!dryRun) {
           addProgress(`Warning: Keys directory not found at ${keysDir}`);
         }
 
-        // Validate wrangler.toml files against lock file before deploying
-        // This prevents deployment failures due to stale resource IDs
+        // Regenerate wrangler.toml files from the current config/lock before deploying.
+        // This keeps bindings such as send_email aligned even when setup logic evolves.
         if (!dryRun) {
           const { loadLockFileAuto } = await import('../core/lock.js');
-          const { lock } = await loadLockFileAuto(rootDir, env);
+          const { lock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
           if (lock) {
-            const { validateWranglerConfigs, generateWranglerConfig, toToml } =
-              await import('../core/wrangler.js');
-            const { getEnabledComponents } = await import('../core/naming.js');
             const { getWorkersSubdomain } = await import('../core/cloudflare.js');
 
-            // Build resource IDs from lock file
-            const lockResourceIds = {
-              d1: lock.d1,
-              kv: Object.fromEntries(
-                Object.entries(lock.kv).map(([k, v]) => [k, { id: v.id, name: v.name }])
-              ),
-              queues: lock.queues,
-              r2: lock.r2,
-            };
-
             // Get enabled components
-            const cfg = state.config || {};
             const enabledForValidation = getEnabledComponents({
-              saml: cfg.components?.saml,
-              async: cfg.components?.async,
-              vc: cfg.components?.vc,
-              bridge: cfg.components?.bridge,
-              policy: cfg.components?.policy,
+              saml: cfg?.components?.saml,
+              async: cfg?.components?.async,
+              vc: cfg?.components?.vc,
+              bridge: cfg?.components?.bridge,
+              policy: cfg?.components?.policy,
             });
+            addProgress('Refreshing wrangler.toml files from current configuration...');
 
-            // Validate wrangler.toml files
-            const enabledComponentsArray = [...enabledForValidation];
-            const validation = await validateWranglerConfigs(
-              resolve(rootDir),
-              env,
-              lockResourceIds,
-              enabledComponentsArray
-            );
-
-            if (!validation.valid) {
-              addProgress(
-                `⚠️ Detected outdated wrangler.toml files (${validation.mismatches.length} mismatches)`
-              );
-              addProgress('Regenerating wrangler.toml files with correct resource IDs...');
-
-              // Regenerate wrangler.toml files
-              const workersSubdomain = await getWorkersSubdomain();
-              let config: AuthrimConfig;
-              if (state.config) {
-                config = AuthrimConfigSchema.parse(state.config);
-              } else {
-                config = createDefaultConfig(env);
-              }
-
-              for (const component of enabledForValidation) {
-                const componentDir = join(resolve(rootDir), 'packages', component);
-                if (!existsSync(componentDir)) {
-                  continue;
-                }
-
-                const wranglerConfig = generateWranglerConfig(
-                  component,
-                  config,
-                  lockResourceIds,
-                  workersSubdomain ?? undefined
-                );
-                const tomlContent = toToml(wranglerConfig, env);
-                const tomlPath = join(componentDir, 'wrangler.toml');
-                await writeFile(tomlPath, tomlContent, 'utf-8');
-              }
-
-              addProgress('✓ wrangler.toml files regenerated');
+            const workersSubdomain = await getWorkersSubdomain();
+            let config: AuthrimConfig;
+            if (state.config) {
+              config = AuthrimConfigSchema.parse(state.config);
+            } else {
+              config = createDefaultConfig(env);
             }
+
+            const tenantD1BootstrapResult = await ensureInitialTenantD1Resources({
+              env,
+              config,
+              lock,
+              rootDir: resolve(rootDir),
+              onProgress: addProgress,
+            });
+            if (!tenantD1BootstrapResult.success) {
+              throw new Error(
+                `Initial tenant D1 bootstrap failed: ${tenantD1BootstrapResult.error || 'unknown error'}`
+              );
+            }
+            if (!tenantD1BootstrapResult.skipped && lockPath) {
+              const { saveLockFile: saveLock } = await import('../core/lock.js');
+              await saveLock(lock, lockPath);
+              addProgress(
+                `✓ Initial tenant D1 bindings ready (${tenantD1BootstrapResult.createdCount ?? 0} created)`
+              );
+            }
+
+            const lockResourceIds = buildResourceIdsFromLock(lock);
+
+            for (const component of enabledForValidation) {
+              const componentDir = join(resolve(rootDir), 'packages', component);
+              if (!existsSync(componentDir)) {
+                continue;
+              }
+
+              const wranglerConfig = generateWranglerConfig(
+                component,
+                config,
+                lockResourceIds,
+                workersSubdomain ?? undefined
+              );
+              const tomlContent = toToml(wranglerConfig, env);
+              const tomlPath = join(componentDir, 'wrangler.toml');
+              await writeFile(tomlPath, tomlContent, 'utf-8');
+            }
+
+            addProgress('✓ wrangler.toml files refreshed');
           }
         }
 
         addProgress('Deploying workers...');
 
-        // Determine enabled components from config (same logic as CLI)
-        // Load config from file if state.config is not set (e.g., after page reload)
-        let enabledComponents: WorkerComponent[] | undefined = components;
-        let cfg = state.config;
-
-        if (!enabledComponents && !cfg) {
-          // Try to load config.json from disk
+        if (!dryRun) {
           try {
-            const configPath =
-              resolved.type === 'new'
-                ? (resolved.paths as EnvironmentPaths).config
-                : (resolved.paths as LegacyPaths).config;
-
-            if (existsSync(configPath)) {
-              const configContent = await readFile(configPath, 'utf-8');
-              cfg = JSON.parse(configContent);
-              state.config = cfg; // Cache for later use
-              addProgress(`Loaded config from ${configPath}`);
+            await ensureWildcardDnsForMultiTenant(cfg, addProgress);
+          } catch (error) {
+            const manualAction = getWildcardDnsManualActionPayload(cfg);
+            if (manualAction && isWildcardDnsPermissionError(error)) {
+              state.status = 'error';
+              state.error = 'Manual wildcard DNS setup required';
+              addProgress('⚠️ Automatic wildcard DNS setup is unavailable.');
+              addProgress('⚠️ Create the wildcard DNS record manually, then rerun deploy.');
+              await flushProgressLog();
+              return c.json(
+                {
+                  success: false,
+                  error: 'Manual wildcard DNS setup required',
+                  manualAction,
+                  logPath: state.logPath,
+                },
+                409
+              );
             }
-          } catch (configErr) {
-            addProgress(`Warning: Could not load config.json: ${sanitizeError(configErr)}`);
+            throw error;
           }
         }
 
-        if (!enabledComponents && cfg) {
-          enabledComponents = [
-            'ar-lib-core',
-            'ar-discovery',
-            'ar-auth',
-            'ar-token',
-            'ar-userinfo',
-            'ar-management',
-          ];
-          // Add optional components based on config
-          if (cfg.components?.saml) enabledComponents.push('ar-saml');
-          if (cfg.components?.async) enabledComponents.push('ar-async');
-          if (cfg.components?.vc) enabledComponents.push('ar-vc');
-          if (cfg.components?.bridge) enabledComponents.push('ar-bridge');
-          if (cfg.components?.policy) enabledComponents.push('ar-policy');
-          // Router is always last
-          enabledComponents.push('ar-router');
+        if (
+          (cfg?.components?.loginUi || cfg?.components?.adminUi) &&
+          enabledComponents?.includes('ar-router')
+        ) {
+          const placeholderSummary = await deployUiWorkerBindingTargets(
+            {
+              env,
+              rootDir: resolve(rootDir),
+              dryRun,
+              apiBaseUrl: resolveIssuerUrl(cfg, { env }),
+              onProgress: addProgress,
+            },
+            {
+              loginUi: cfg?.components?.loginUi ?? true,
+              adminUi: cfg?.components?.adminUi ?? true,
+            }
+          );
+
+          if (placeholderSummary.failedCount > 0) {
+            addProgress(
+              `⚠️ UI Worker pre-deploy failed: ${placeholderSummary.successCount}/${placeholderSummary.results.length} succeeded`
+            );
+            for (const result of placeholderSummary.results) {
+              if (!result.success) {
+                addProgress(`  ✗ ${result.component}: ${result.error || 'unknown error'}`);
+              }
+            }
+            addProgress('  ar-router may fail if it references missing UI Worker bindings.');
+          }
         }
 
         const summary = await deployAll(
@@ -1050,6 +1745,7 @@ export function createApiRoutes(): Hono {
             env,
             rootDir: resolve(rootDir),
             dryRun,
+            interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
             onProgress: addProgress,
             onError: (comp, error) => {
               addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -1060,113 +1756,22 @@ export function createApiRoutes(): Hono {
 
         state.deployResults = summary.results;
 
-        // Deploy Pages (ar-login-ui, ar-admin-ui) if loginUi or adminUi is enabled
-        let pagesSummary = null;
-        // Note: cfg is already loaded above (from state.config or config.json file)
-        if (cfg?.components?.loginUi || cfg?.components?.adminUi) {
-          addProgress('Deploying Login/Admin UI to Cloudflare Pages...');
-
-          // Determine the API base URL for the UI to connect to
-          // Priority: custom API domain > workers.dev domain
-          const apiBaseUrl =
-            cfg?.urls?.api?.custom ||
-            cfg?.urls?.api?.auto ||
-            `https://${env}-ar-router.workers.dev`;
-
-          let loginUiClientId: string | undefined;
-          if (cfg?.components?.loginUi && !dryRun) {
-            const loginUiUrl =
-              cfg?.urls?.loginUi?.custom ||
-              cfg?.urls?.loginUi?.auto ||
-              `https://${env}-ar-login-ui.pages.dev`;
-            const foundKeys = findKeysDirectory({
-              env,
-              sourceDir: rootDir,
-              keysBaseDir: process.cwd(),
-            });
-            const adminApiSecretPath = foundKeys
-              ? join(foundKeys.path, 'admin_api_secret.txt')
-              : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
-
-            const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
-            const clientResult = await ensureLoginUiClient({
-              apiBaseUrl,
-              loginUiUrl,
-              adminApiSecretPath,
-              onProgress: addProgress,
-            });
-
-            if (clientResult.success && clientResult.clientId) {
-              loginUiClientId = clientResult.clientId;
-              if (clientResult.alreadyExists) {
-                addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
-              } else {
-                addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
-              }
-            } else {
-              addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
-            }
-          }
-
-          const loginUiSettings = resolveUiDeploymentSettings({
-            component: 'ar-login-ui',
-            config: cfg as AuthrimConfig,
-            apiBaseUrl,
-            loginUiClientId,
-          });
-          const adminUiSettings = resolveUiDeploymentSettings({
-            component: 'ar-admin-ui',
-            config: cfg as AuthrimConfig,
-            apiBaseUrl,
-          });
-
-          pagesSummary = await deployAllPages(
-            {
-              env,
-              rootDir: resolve(rootDir),
-              dryRun,
-              onProgress: addProgress,
-              apiBaseUrl,
-              perComponent: {
-                'ar-login-ui': {
-                  apiBaseUrl: loginUiSettings.apiBaseUrl,
-                  runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
-                  uiEnvConfig: loginUiSettings.uiEnv,
-                  serviceBindingName: loginUiSettings.serviceBindingName,
-                },
-                'ar-admin-ui': {
-                  apiBaseUrl: adminUiSettings.apiBaseUrl,
-                  runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
-                  uiEnvConfig: adminUiSettings.uiEnv,
-                  serviceBindingName: adminUiSettings.serviceBindingName,
-                },
-              },
-            },
-            {
-              loginUi: cfg?.components?.loginUi ?? true,
-              adminUi: cfg?.components?.adminUi ?? true,
-            }
-          );
-
-          if (pagesSummary.failedCount === 0) {
-            addProgress('✓ All UI packages deployed to Pages');
-            for (const result of pagesSummary.results) {
-              addProgress(`  • ${result.component}: ${result.projectName}`);
-            }
-          } else {
-            addProgress(
-              `✗ Pages deployment: ${pagesSummary.successCount}/${pagesSummary.results.length} succeeded`
-            );
-            for (const result of pagesSummary.results) {
-              if (!result.success) {
-                addProgress(`  ✗ ${result.component}: ${result.error}`);
-              }
-            }
-          }
-        }
+        let uiWorkersSummary = null;
 
         const workersSuccess = summary.failedCount === 0;
-        const pagesSuccess = pagesSummary ? pagesSummary.failedCount === 0 : true;
+        let setupMachineAccessCleanupDone = false;
+        const cleanupEphemeralSetupMachineAccess = async (): Promise<void> => {
+          if (setupMachineAccessCleanupDone || dryRun) {
+            return;
+          }
+          setupMachineAccessCleanupDone = true;
+          const cleanupResult = await cleanupSetupMachineAccessInD1(env, keysDir, addProgress);
+          if (!cleanupResult.success) {
+            addProgress(
+              `⚠️ Setup machine access cleanup failed: ${cleanupResult.error || 'unknown error'}`
+            );
+          }
+        };
 
         // Update lock file with deployed workers information
         if (workersSuccess && !dryRun && summary.successCount > 0) {
@@ -1213,14 +1818,164 @@ export function createApiRoutes(): Hono {
           }
         }
 
+        const apiBaseUrl = resolveIssuerUrl(cfg, { env });
+
+        if (workersSuccess && !dryRun) {
+          const workerDeploymentResult = await waitForWorkerDeploymentsReady({
+            targets: summary.results
+              .filter((result) => result.success)
+              .map((result) => ({
+                workerName: result.workerName,
+                deployedAt: result.deployedAt,
+              })),
+            onProgress: addProgress,
+          });
+          if (!workerDeploymentResult.ready) {
+            throw new Error(
+              `Worker deployments did not become visible: ${workerDeploymentResult.error || 'unknown verification error'}`
+            );
+          }
+
+          const workersSubdomain = await getWorkersSubdomain();
+          const workerHttpTargets = buildWorkerHttpReadinessTargets(
+            summary.results.filter((result) => result.success),
+            workersSubdomain,
+            { workersDevEnabled: !cfg?.urls?.api?.custom }
+          );
+          if (workerHttpTargets.length > 0) {
+            const workerHttpResult = await waitForWorkerHttpReady({
+              targets: workerHttpTargets,
+              onProgress: addProgress,
+            });
+            if (!workerHttpResult.ready) {
+              throw new Error(
+                `Worker HTTP health checks failed: ${workerHttpResult.error || 'unknown health check error'}`
+              );
+            }
+          }
+
+          const readinessResult = await waitForRouterWorkerReady({
+            apiBaseUrl,
+            onProgress: addProgress,
+          });
+          if (!readinessResult.ready) {
+            throw new Error(
+              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+            );
+          }
+        }
+
         // Run D1 migrations after deployment (if enabled and not dry-run)
         let migrationsResult = null;
+        let initialTenantResult = null;
+        let initialAdminRolesResult = null;
+        let setupMachineAccessResult = null;
+        let adminUiBffMachineAccessResult = null;
+        let runtimeProfileSeedResult = null;
         if (runMigrations && !dryRun && workersSuccess) {
+          const bootstrapConfig = cfg ? AuthrimConfigSchema.parse(cfg) : createDefaultConfig(env);
           addProgress('📜 Running D1 database migrations...');
-          migrationsResult = await runMigrationsForEnvironment(env, resolve(rootDir), addProgress);
+          migrationsResult = await runMigrationsForEnvironment(
+            env,
+            resolve(rootDir),
+            addProgress,
+            state.config ?? undefined
+          );
 
           if (migrationsResult.success) {
             addProgress('✅ Database migrations completed successfully');
+            addProgress(`🔧 Ensuring initial tenant exists (${bootstrapConfig.tenant.name})...`);
+            initialTenantResult = await ensureInitialTenantInD1(env, bootstrapConfig, addProgress);
+            if (initialTenantResult.success) {
+              addProgress(`✅ Initial tenant ready: ${bootstrapConfig.tenant.name}`);
+            } else {
+              addProgress(
+                `⚠️ Initial tenant bootstrap failed: ${initialTenantResult.error || 'unknown error'}`
+              );
+            }
+
+            addProgress(
+              `🔧 Ensuring initial admin roles exist (${bootstrapConfig.tenant.name})...`
+            );
+            initialAdminRolesResult = await ensureInitialAdminRolesInD1(
+              env,
+              bootstrapConfig,
+              addProgress
+            );
+            if (initialAdminRolesResult.success) {
+              addProgress(`✅ Initial admin roles ready: ${bootstrapConfig.tenant.name}`);
+            } else {
+              addProgress(
+                `⚠️ Initial admin role bootstrap failed: ${initialAdminRolesResult.error || 'unknown error'}`
+              );
+            }
+
+            addProgress('🔧 Ensuring setup machine access exists...');
+            setupMachineAccessResult = await ensureSetupMachineAccessInD1(
+              env,
+              bootstrapConfig,
+              keysDir,
+              addProgress
+            );
+            if (setupMachineAccessResult.success) {
+              addProgress('✅ Setup machine access ready');
+            } else {
+              addProgress(
+                `⚠️ Setup machine access bootstrap failed: ${setupMachineAccessResult.error || 'unknown error'}`
+              );
+            }
+
+            if (bootstrapConfig.components.adminUi ?? true) {
+              addProgress('🔧 Ensuring Admin UI BFF machine access exists...');
+              adminUiBffMachineAccessResult = await ensureAdminUiBffMachineAccessInD1(
+                env,
+                bootstrapConfig,
+                keysDir,
+                addProgress
+              );
+              if (adminUiBffMachineAccessResult.success) {
+                addProgress('✅ Admin UI BFF machine access ready');
+              } else {
+                addProgress(
+                  `⚠️ Admin UI BFF machine access bootstrap failed: ${adminUiBffMachineAccessResult.error || 'unknown error'}`
+                );
+              }
+            }
+
+            addProgress('🔧 Seeding runtime profiles...');
+            runtimeProfileSeedResult = await seedRuntimeProfiles(env, bootstrapConfig, addProgress);
+            if (runtimeProfileSeedResult.success) {
+              addProgress(
+                `✅ Runtime profiles ready (${runtimeProfileSeedResult.seededCount} seeded to ${runtimeProfileSeedResult.backend})`
+              );
+            } else {
+              addProgress(
+                `⚠️ Runtime profile seed failed: ${runtimeProfileSeedResult.error || 'unknown error'}`
+              );
+            }
+
+            const { lock: latestLock } = await import('../core/lock.js').then((module) =>
+              module.loadLockFileAuto(rootDir, env)
+            );
+            const tenantD1SnapshotResult = await publishInitialTenantD1RuntimeSnapshot({
+              env,
+              config: bootstrapConfig,
+              lock: latestLock ?? createLockFile(env, { d1: [], kv: [], queues: [], r2: [] }),
+              rootDir: resolve(rootDir),
+              keysDir,
+              onProgress: addProgress,
+            });
+            if (tenantD1SnapshotResult.success) {
+              if (!tenantD1SnapshotResult.skipped) {
+                addProgress('✅ Initial tenant D1 runtime snapshot ready');
+              }
+            } else {
+              throw new Error(
+                `Initial tenant D1 runtime snapshot failed: ${
+                  tenantD1SnapshotResult.error || 'unknown error'
+                }`
+              );
+            }
           } else {
             addProgress(
               `⚠️ Some migrations failed - core: ${migrationsResult.core.error || 'ok'}, pii: ${migrationsResult.pii.error || 'ok'}, admin: ${migrationsResult.admin.error || 'ok'}`
@@ -1229,17 +1984,175 @@ export function createApiRoutes(): Hono {
         }
 
         const migrationsSuccess = migrationsResult ? migrationsResult.success : true;
+        const initialTenantSuccess = initialTenantResult ? initialTenantResult.success : true;
+        const initialAdminRolesSuccess = initialAdminRolesResult
+          ? initialAdminRolesResult.success
+          : true;
+        const setupMachineAccessSuccess = setupMachineAccessResult
+          ? setupMachineAccessResult.success
+          : true;
+        const adminUiBffMachineAccessSuccess = adminUiBffMachineAccessResult
+          ? adminUiBffMachineAccessResult.success
+          : true;
+        const runtimeProfileSeedSuccess = runtimeProfileSeedResult
+          ? runtimeProfileSeedResult.success
+          : true;
 
-        if (workersSuccess && pagesSuccess && migrationsSuccess) {
+        const bootstrapSuccess =
+          migrationsSuccess &&
+          initialTenantSuccess &&
+          initialAdminRolesSuccess &&
+          setupMachineAccessSuccess &&
+          adminUiBffMachineAccessSuccess &&
+          runtimeProfileSeedSuccess;
+
+        if (workersSuccess && bootstrapSuccess) {
+          await maybeConfigureDownstreamIntrospectionForWebDeploy({
+            env,
+            rootDir: resolve(rootDir),
+            config: cfg,
+            components: enabledComponents ?? [],
+            dryRun,
+          });
+        }
+
+        // Deploy UI Workers only after database and tenant bootstrap work has completed.
+        if (
+          workersSuccess &&
+          bootstrapSuccess &&
+          (cfg?.components?.loginUi || cfg?.components?.adminUi)
+        ) {
+          addProgress('Deploying Login/Admin UI to Cloudflare Workers...');
+
+          let loginUiClientId: string | undefined;
+          if (cfg?.components?.loginUi && !dryRun) {
+            const loginUiUrl =
+              cfg?.urls?.loginUi?.custom ||
+              cfg?.urls?.loginUi?.auto ||
+              `https://${env}-ar-login-ui.workers.dev`;
+            const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+
+            const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
+            const clientResult = await ensureLoginUiClient({
+              apiBaseUrl,
+              loginUiUrl,
+              adminApiSecretPath,
+              keysDir,
+              tenantId: cfg?.tenant?.name,
+              onProgress: addProgress,
+            });
+
+            if (clientResult.success && clientResult.clientId) {
+              loginUiClientId = clientResult.clientId;
+              if (clientResult.alreadyExists) {
+                addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
+              } else {
+                addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
+              }
+            } else {
+              await cleanupEphemeralSetupMachineAccess();
+              throw new Error(
+                `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+              );
+            }
+          }
+
+          await cleanupEphemeralSetupMachineAccess();
+
+          const loginUiSettings = resolveUiDeploymentSettings({
+            component: 'ar-login-ui',
+            config: cfg as AuthrimConfig,
+            apiBaseUrl,
+            loginUiClientId,
+          });
+          const adminUiSettings = resolveUiDeploymentSettings({
+            component: 'ar-admin-ui',
+            config: cfg as AuthrimConfig,
+            apiBaseUrl,
+          });
+          const adminUiBffSecrets =
+            (cfg?.components?.adminUi ?? true) && !dryRun
+              ? await loadAdminUiBffWorkerSecrets(keysDir)
+              : undefined;
+          if ((cfg?.components?.adminUi ?? true) && adminUiSettings.adminUiApiMode) {
+            addProgress(
+              `Admin UI API mode: ${adminUiSettings.adminUiApiMode} - ${describeAdminUiApiMode(
+                adminUiSettings.adminUiApiMode
+              )}`
+            );
+          }
+
+          uiWorkersSummary = await deployAllUiWorkers(
+            {
+              env,
+              rootDir: resolve(rootDir),
+              dryRun,
+              onProgress: addProgress,
+              apiBaseUrl,
+              perComponent: {
+                'ar-login-ui': {
+                  apiBaseUrl: loginUiSettings.apiBaseUrl,
+                  runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
+                  uiEnvConfig: loginUiSettings.uiEnv,
+                  serviceBindingName: loginUiSettings.serviceBindingName,
+                  workersDev: loginUiSettings.workersDev,
+                  routes: loginUiSettings.routes,
+                },
+                'ar-admin-ui': {
+                  apiBaseUrl: adminUiSettings.apiBaseUrl,
+                  runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
+                  uiEnvConfig: adminUiSettings.uiEnv,
+                  serviceBindingName: adminUiSettings.serviceBindingName,
+                  workersDev: adminUiSettings.workersDev,
+                  routes: adminUiSettings.routes,
+                  adminUiBffSecrets,
+                },
+              },
+            },
+            {
+              loginUi: cfg?.components?.loginUi ?? true,
+              adminUi: cfg?.components?.adminUi ?? true,
+            }
+          );
+
+          if (uiWorkersSummary.failedCount === 0) {
+            addProgress('✓ All UI packages deployed to Workers');
+            for (const result of uiWorkersSummary.results) {
+              addProgress(`  • ${result.component}: ${result.projectName}`);
+            }
+          } else {
+            addProgress(
+              `✗ UI Worker deployment: ${uiWorkersSummary.successCount}/${uiWorkersSummary.results.length} succeeded`
+            );
+            for (const result of uiWorkersSummary.results) {
+              if (!result.success) {
+                addProgress(`  ✗ ${result.component}: ${result.error}`);
+              }
+            }
+          }
+        }
+
+        await cleanupEphemeralSetupMachineAccess();
+
+        const uiWorkersSuccess = uiWorkersSummary ? uiWorkersSummary.failedCount === 0 : true;
+
+        if (
+          workersSuccess &&
+          uiWorkersSuccess &&
+          migrationsSuccess &&
+          initialTenantSuccess &&
+          initialAdminRolesSuccess &&
+          runtimeProfileSeedSuccess
+        ) {
           state.status = 'complete';
           addProgress('Deployment complete!');
         } else {
           state.status = 'error';
           if (!workersSuccess) {
             state.error = `${summary.failedCount} components failed to deploy`;
-          } else if (!pagesSuccess) {
-            const failedPages = pagesSummary?.results.filter((r) => !r.success) ?? [];
-            state.error = `Pages deployment failed: ${failedPages.map((r) => `${r.component}: ${r.error}`).join(', ')}`;
+          } else if (!uiWorkersSuccess) {
+            const failedUiWorkers = uiWorkersSummary?.results.filter((r) => !r.success) ?? [];
+            state.error = `UI Worker deployment failed: ${failedUiWorkers.map((r) => `${r.component}: ${r.error}`).join(', ')}`;
           } else if (!migrationsSuccess) {
             const errors = [];
             if (migrationsResult?.core.error) errors.push(`core: ${migrationsResult.core.error}`);
@@ -1247,19 +2160,48 @@ export function createApiRoutes(): Hono {
             if (migrationsResult?.admin.error)
               errors.push(`admin: ${migrationsResult.admin.error}`);
             state.error = `Migrations failed: ${errors.join(', ')}`;
+          } else if (!initialTenantSuccess) {
+            state.error = `Initial tenant bootstrap failed: ${initialTenantResult?.error || 'unknown error'}`;
+          } else if (!initialAdminRolesSuccess) {
+            state.error = `Initial admin role bootstrap failed: ${initialAdminRolesResult?.error || 'unknown error'}`;
+          } else if (!runtimeProfileSeedSuccess) {
+            state.error = `Runtime profile seed failed: ${runtimeProfileSeedResult?.error || 'unknown error'}`;
           }
+          addProgress(`❌ ${state.error}`);
         }
 
+        addProgress(`📝 Progress log saved: ${state.logPath}`);
+        await flushProgressLog();
+
         return c.json({
-          success: workersSuccess && pagesSuccess && migrationsSuccess,
+          success:
+            workersSuccess &&
+            uiWorkersSuccess &&
+            migrationsSuccess &&
+            initialTenantSuccess &&
+            initialAdminRolesSuccess &&
+            runtimeProfileSeedSuccess,
           summary,
-          pagesResult: pagesSummary,
+          uiWorkersResult: uiWorkersSummary,
           migrationsResult,
+          initialTenantResult,
+          initialAdminRolesResult,
+          runtimeProfileSeedResult,
+          logPath: state.logPath,
         });
       } catch (error) {
+        try {
+          if (cleanupEnv && cleanupKeysDir) {
+            await cleanupSetupMachineAccessInD1(cleanupEnv, cleanupKeysDir, addProgress);
+          }
+        } catch {
+          // Cleanup is best-effort in the error path; the primary deploy error is more useful.
+        }
         state.status = 'error';
         state.error = sanitizeError(error);
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        addProgress(`❌ Deployment failed: ${state.error}`);
+        await flushProgressLog();
+        return c.json({ success: false, error: sanitizeError(error), logPath: state.logPath }, 500);
       }
     });
   });
@@ -1271,17 +2213,21 @@ export function createApiRoutes(): Hono {
       progress: state.progress,
       error: state.error,
       results: state.deployResults,
+      logPath: state.logPath,
     });
   });
 
   // Reset state (with lock)
   api.post('/reset', async (c) => {
     return withLock(async () => {
+      await flushProgressLog();
+      progressLogState = null;
       state.status = 'idle';
       state.config = null;
       state.progress = [];
       state.error = null;
       state.deployResults = [];
+      state.logPath = null;
 
       return c.json({ success: true });
     });
@@ -1312,11 +2258,25 @@ export function createApiRoutes(): Hono {
             ? (resolved.paths as LegacyPaths).keyFiles.setupToken
             : (resolved.paths as EnvironmentPaths).keyFiles.setupToken;
 
+        let resolvedBaseUrl = baseUrl;
+        try {
+          const configPath =
+            resolved.type === 'new'
+              ? (resolved.paths as EnvironmentPaths).config
+              : (resolved.paths as LegacyPaths).config;
+          if (existsSync(configPath)) {
+            const cfg = AuthrimConfigSchema.parse(JSON.parse(await readFile(configPath, 'utf-8')));
+            resolvedBaseUrl = resolveIssuerUrl(cfg, { env });
+          }
+        } catch {
+          // Config resolution failed, use the provided baseUrl
+        }
+
         addProgress(
-          `Admin setup request: env=${env}, baseUrl=${baseUrl}, structure=${resolved.type}`
+          `Admin setup request: env=${env}, baseUrl=${resolvedBaseUrl}, structure=${resolved.type}`
         );
 
-        if (!env || !baseUrl) {
+        if (!env || !resolvedBaseUrl) {
           addProgress('Error: env and baseUrl are required');
           return c.json({ success: false, error: 'env and baseUrl are required' }, 400);
         }
@@ -1326,7 +2286,7 @@ export function createApiRoutes(): Hono {
 
         const result = await completeInitialSetup({
           env,
-          baseUrl,
+          baseUrl: resolvedBaseUrl,
           baseDir,
           keysBaseDir: process.cwd(),
           legacy: isLegacy,
@@ -1428,20 +2388,17 @@ export function createApiRoutes(): Hono {
                 ? (resolved.paths as EnvironmentPaths).config
                 : (resolved.paths as LegacyPaths).config;
             if (existsSync(configPath)) {
-              const cfg = JSON.parse(await readFile(configPath, 'utf-8'));
-              const configBaseUrl = cfg?.urls?.api?.custom || cfg?.urls?.api?.auto;
-              if (configBaseUrl) {
-                resolvedBaseUrl = configBaseUrl;
-              }
+              const cfg = AuthrimConfigSchema.parse(
+                JSON.parse(await readFile(configPath, 'utf-8'))
+              );
+              resolvedBaseUrl = resolveIssuerUrl(cfg, { env: envName });
             }
           } catch {
             // Config not available, use the provided baseUrl
           }
         }
 
-        // Construct setup URL
-        const cleanBaseUrl = resolvedBaseUrl.replace(/\/+$/, '');
-        const setupUrl = `${cleanBaseUrl}/admin-init-setup?token=${result.token}`;
+        const setupUrl = buildInitialAdminSetupUrl(resolvedBaseUrl, result.token);
 
         return c.json({
           success: true,
@@ -1462,19 +2419,298 @@ export function createApiRoutes(): Hono {
   // List all detected Authrim environments (no auth required - read-only)
   api.get('/environments', async (c) => {
     try {
-      clearProgress();
-      addProgress('Scanning Cloudflare account for Authrim environments...');
+      const progress: string[] = [];
+      const addLocalProgress = (message: string) => {
+        progress.push(message);
+      };
+      addLocalProgress('Scanning Cloudflare account for Authrim environments...');
 
-      const environments = await detectEnvironments(addProgress);
+      const environments = await detectEnvironments(addLocalProgress);
 
       return c.json({
         success: true,
         environments,
-        progress: state.progress,
+        progress,
       });
     } catch (error) {
       return c.json({ success: false, error: sanitizeError(error) }, 500);
     }
+  });
+
+  interface TenantD1PoolCountRow extends Record<string, unknown> {
+    state: string;
+    count: number | string;
+  }
+
+  interface TenantD1PoolSlotRow extends Record<string, unknown> {
+    slot_number: number;
+    slot_id: string;
+    state: string;
+    assigned_tenant_id: string | null;
+    updated_at: number | string;
+  }
+
+  function countValue(value: unknown): number {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
+    return 0;
+  }
+
+  async function loadEnvironmentConfigForWeb(env: string): Promise<{
+    config: AuthrimConfig | null;
+    configPath: string;
+  }> {
+    const baseDir = findAuthrimBaseDir(process.cwd());
+    const envPaths = getEnvironmentPaths({ baseDir, env });
+    if (!existsSync(envPaths.config)) {
+      return { config: null, configPath: envPaths.config };
+    }
+    const config = AuthrimConfigSchema.parse(JSON.parse(await readFile(envPaths.config, 'utf-8')));
+    return { config, configPath: envPaths.config };
+  }
+
+  api.get('/tenant-d1/pool/:env/status', async (c) => {
+    try {
+      const envParam = c.req.param('env');
+      const parseResult = EnvNameSchema.safeParse(envParam);
+      if (!parseResult.success) {
+        return c.json({ success: false, error: 'Invalid environment name' }, 400);
+      }
+      const env = parseResult.data;
+      const { config, configPath } = await loadEnvironmentConfigForWeb(env);
+      if (!config) {
+        return c.json({ success: false, error: `Config file not found: ${configPath}` }, 404);
+      }
+
+      const storageProfile = config.profiles?.defaults?.storage ?? 'builtin:storage:shared-d1';
+      if (storageProfile !== 'builtin:storage:tenant-d1') {
+        return c.json({
+          success: true,
+          env,
+          storageProfile,
+          tenantD1Pool: {
+            enabled: false,
+            tableReady: false,
+            capacity: 0,
+            available: null,
+            counts: {},
+            slots: [],
+          },
+          message: 'Shared D1 mode does not require tenant D1 pool operations.',
+        });
+      }
+
+      const adminDbName = getD1DatabaseName(env, 'admin-db');
+      try {
+        const [counts, slots] = await Promise.all([
+          queryD1Rows<TenantD1PoolCountRow>(
+            adminDbName,
+            'SELECT state, COUNT(*) AS count FROM tenant_database_slots GROUP BY state ORDER BY state;'
+          ),
+          queryD1Rows<TenantD1PoolSlotRow>(
+            adminDbName,
+            `SELECT slot_number, slot_id, state, assigned_tenant_id, updated_at
+               FROM tenant_database_slots
+              ORDER BY slot_number ASC;`
+          ),
+        ]);
+        const summary = Object.fromEntries(counts.map((row) => [row.state, countValue(row.count)]));
+        const capacity = Object.values(summary).reduce((total, count) => total + count, 0);
+
+        return c.json({
+          success: true,
+          env,
+          storageProfile,
+          tenantD1Pool: {
+            enabled: true,
+            tableReady: true,
+            configuredSlots: config.tenantD1?.preallocatedSlots ?? 3,
+            capacity,
+            available: summary.available ?? 0,
+            counts: summary,
+            slots,
+          },
+        });
+      } catch (error) {
+        return c.json({
+          success: true,
+          env,
+          storageProfile,
+          tenantD1Pool: {
+            enabled: true,
+            tableReady: false,
+            configuredSlots: config.tenantD1?.preallocatedSlots ?? 3,
+            capacity: 0,
+            available: null,
+            counts: {},
+            slots: [],
+          },
+          warning: sanitizeError(error),
+        });
+      }
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.post('/tenant-d1/pool/:env/expand', async (c) => {
+    return withLock(async () => {
+      try {
+        const envParam = c.req.param('env');
+        const parseResult = EnvNameSchema.safeParse(envParam);
+        if (!parseResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
+        const env = parseResult.data;
+        const body = await c.req.json();
+        const addSlots = Number.parseInt(String(body?.addSlots ?? '0'), 10);
+        if (!Number.isInteger(addSlots) || addSlots < 1) {
+          return c.json({ success: false, error: 'addSlots must be a positive integer' }, 400);
+        }
+
+        const { config, configPath } = await loadEnvironmentConfigForWeb(env);
+        if (!config) {
+          return c.json({ success: false, error: `Config file not found: ${configPath}` }, 404);
+        }
+        if (config.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
+          return c.json(
+            {
+              success: false,
+              error: 'Tenant D1 pool is not enabled for this environment.',
+              storageProfile: config.profiles?.defaults?.storage ?? 'unknown',
+            },
+            409
+          );
+        }
+
+        const currentSlots = config.tenantD1?.preallocatedSlots ?? 3;
+        const nextSlots = currentSlots + addSlots;
+        if (nextSlots > 500) {
+          return c.json(
+            {
+              success: false,
+              error: `Tenant D1 slot hard limit exceeded: ${nextSlots}/500`,
+              currentSlots,
+              maxAddSlots: Math.max(0, 500 - currentSlots),
+            },
+            400
+          );
+        }
+
+        const updatedConfig: AuthrimConfig = {
+          ...config,
+          tenantD1: {
+            ...(config.tenantD1 ?? { preallocatedSlots: currentSlots }),
+            preallocatedSlots: nextSlots,
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        await writeFile(configPath, `${JSON.stringify(updatedConfig, null, 2)}\n`, 'utf-8');
+        state.config = updatedConfig;
+        addProgress(`Tenant D1 pool config updated: ${currentSlots} -> ${nextSlots} slots`);
+
+        return c.json({
+          success: true,
+          env,
+          currentSlots,
+          addSlots,
+          nextSlots,
+          configPath,
+          deployRequired: true,
+          message:
+            'Tenant D1 pool capacity was updated. Run deploy to create D1 slots, refresh bindings, and publish slot inventory.',
+        });
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
+  });
+
+  api.get('/r2/:env/status', async (c) => {
+    try {
+      const envParam = c.req.param('env');
+      const parseResult = EnvNameSchema.safeParse(envParam);
+      if (!parseResult.success) {
+        return c.json({ success: false, error: 'Invalid environment name' }, 400);
+      }
+      const env = parseResult.data;
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const { lock } = await loadLockFileAuto(baseDir, env);
+      const cloudflareBucketNames = new Set(
+        (await listR2Buckets({ throwOnError: true })).map((bucket) => bucket.name)
+      );
+      const status = buildR2BucketProvisioningStatus(env, lock?.r2, cloudflareBucketNames);
+
+      return c.json({
+        success: true,
+        ...status,
+      });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.post('/r2/:env/provision', async (c) => {
+    return withLock(async () => {
+      try {
+        const envParam = c.req.param('env');
+        const parseResult = EnvNameSchema.safeParse(envParam);
+        if (!parseResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
+        const env = parseResult.data;
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const envPaths = getEnvironmentPaths({ baseDir, env });
+        if (!existsSync(envPaths.config)) {
+          return c.json(
+            { success: false, error: `Config file not found: ${envPaths.config}` },
+            404
+          );
+        }
+
+        const { lock, path: lockPath } = await loadLockFileAuto(baseDir, env);
+        if (!lock || !lockPath) {
+          return c.json({ success: false, error: `Lock file not found for ${env}` }, 404);
+        }
+
+        const config = AuthrimConfigSchema.parse(
+          JSON.parse(await readFile(envPaths.config, 'utf-8'))
+        ) as AuthrimConfig;
+        addProgress(`Provisioning dedicated R2 buckets for ${env}...`);
+        const buckets = await provisionR2Buckets(env, {
+          existing: lock.r2,
+          onProgress: addProgress,
+        });
+        const updatedLock = mergeLockFiles(lock, {
+          r2: Object.fromEntries(buckets.map((bucket) => [bucket.binding, { name: bucket.name }])),
+        });
+        await saveLockFile(updatedLock, lockPath);
+
+        const updatedConfig: AuthrimConfig = {
+          ...config,
+          features: {
+            ...config.features,
+            r2: { enabled: true },
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        await writeFile(envPaths.config, `${JSON.stringify(updatedConfig, null, 2)}\n`, 'utf-8');
+        state.config = updatedConfig;
+        addProgress(`Dedicated R2 buckets configured: ${buckets.length}`);
+
+        return c.json({
+          success: true,
+          env,
+          buckets,
+          configPath: envPaths.config,
+          deployRequired: true,
+          message:
+            'Dedicated R2 buckets were created or verified. Run deploy to publish Worker bindings.',
+        });
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
   });
 
   // Apply session validation to environment delete
@@ -1496,7 +2732,11 @@ export function createApiRoutes(): Hono {
         } = body;
 
         state.status = 'provisioning'; // Reuse provisioning status
+        state.error = null;
+        state.deployResults = [];
         clearProgress();
+        state.logPath = await beginProgressLog(env, 'delete');
+        addProgress(`Preparing to delete environment: ${env}`);
 
         const result = await deleteEnvironment({
           env,
@@ -1509,6 +2749,22 @@ export function createApiRoutes(): Hono {
           onProgress: addProgress,
         });
 
+        const cleanupResult = await cleanupLocalEnvironmentArtifacts({
+          baseDir: findAuthrimBaseDir(process.cwd()),
+          env,
+          packagesDir: join(findAuthrimBaseDir(process.cwd()), 'packages'),
+          keysBaseDir: process.cwd(),
+          onProgress: addProgress,
+        });
+        if (cleanupResult.errors.length > 0) {
+          result.errors.push(...cleanupResult.errors);
+        }
+        result.success = result.errors.length === 0;
+
+        if (state.logPath) {
+          addProgress(`📝 Progress log saved: ${state.logPath}`);
+        }
+        await flushProgressLog();
         state.status = result.success ? 'complete' : 'error';
         if (!result.success) {
           state.error = result.errors.join(', ');
@@ -1519,11 +2775,13 @@ export function createApiRoutes(): Hono {
           deleted: result.deleted,
           errors: result.errors,
           progress: state.progress,
+          logPath: state.logPath,
         });
       } catch (error) {
         state.status = 'error';
         state.error = sanitizeError(error);
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        await flushProgressLog();
+        return c.json({ success: false, error: sanitizeError(error), logPath: state.logPath }, 500);
       }
     });
   });
@@ -1703,19 +2961,44 @@ export function createApiRoutes(): Hono {
 
         addProgress(`${componentsToUpdate.length} worker(s) need updating`);
 
-        // Sync wrangler configs before building (copies from .authrim/{env}/wrangler/ to packages/)
+        // Refresh master/package wrangler configs before building so new bindings
+        // such as send_email are reflected even in existing environments.
+        const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
+        if (!existsSync(envPaths.config)) {
+          state.status = 'error';
+          state.error = `Config file not found: ${envPaths.config}`;
+          return c.json({ success: false, error: state.error }, 500);
+        }
+
+        const configContent = await readFile(envPaths.config, 'utf-8');
+        const config = AuthrimConfigSchema.parse(JSON.parse(configContent));
+        const resourceIds = buildResourceIdsFromLock(lock);
+
+        addProgress('Refreshing generated wrangler configs...');
+        const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+          baseDir: rootDir,
+          env,
+          dryRun: false,
+          onProgress: addProgress,
+        });
+
+        if (!masterResult.success) {
+          state.status = 'error';
+          state.error = `Wrangler config generation failed: ${masterResult.errors.join(', ')}`;
+          return c.json({ success: false, error: state.error }, 500);
+        }
+
         addProgress('Syncing wrangler configs...');
         const syncResult = await syncWranglerConfigs({
           baseDir: rootDir,
           env,
           packagesDir: join(rootDir, 'packages'),
-          force: true, // Overwrite any changes in packages/
+          force: true,
           dryRun: false,
           onProgress: addProgress,
         });
 
         if (!syncResult.success && syncResult.errors.length > 0) {
-          // If master wrangler configs don't exist, we can't proceed
           state.status = 'error';
           state.error = `Wrangler config sync failed: ${syncResult.errors.join(', ')}`;
           return c.json({ success: false, error: state.error }, 500);
@@ -1736,12 +3019,43 @@ export function createApiRoutes(): Hono {
           return c.json({ success: false, error: state.error }, 500);
         }
 
+        if (
+          (config.components.loginUi || config.components.adminUi) &&
+          componentsToUpdate.includes('ar-router')
+        ) {
+          const placeholderSummary = await deployUiWorkerBindingTargets(
+            {
+              env,
+              rootDir: resolve(rootDir),
+              apiBaseUrl: resolveIssuerUrl(config, { env }),
+              onProgress: addProgress,
+            },
+            {
+              loginUi: config.components.loginUi ?? true,
+              adminUi: config.components.adminUi ?? true,
+            }
+          );
+
+          if (placeholderSummary.failedCount > 0) {
+            addProgress(
+              `⚠️ UI Worker pre-deploy failed: ${placeholderSummary.successCount}/${placeholderSummary.results.length} succeeded`
+            );
+            for (const result of placeholderSummary.results) {
+              if (!result.success) {
+                addProgress(`  ✗ ${result.component}: ${result.error || 'unknown error'}`);
+              }
+            }
+            addProgress('  ar-router may fail if it references missing UI Worker bindings.');
+          }
+        }
+
         // Deploy workers
         addProgress('Deploying workers...');
         const summary = await deployAll(
           {
             env,
             rootDir: resolve(rootDir),
+            interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
             onProgress: addProgress,
             onError: (comp, error) => {
               addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -1771,6 +3085,63 @@ export function createApiRoutes(): Hono {
 
           await saveLock(updatedLock, lockPath);
           addProgress(`Lock file updated: ${lockPath}`);
+        }
+
+        if (summary.failedCount === 0) {
+          const workerDeploymentResult = await waitForWorkerDeploymentsReady({
+            targets: summary.results
+              .filter((result) => result.success)
+              .map((result) => ({
+                workerName: result.workerName,
+                deployedAt: result.deployedAt,
+              })),
+            onProgress: addProgress,
+          });
+          if (!workerDeploymentResult.ready) {
+            throw new Error(
+              `Worker deployments did not become visible: ${workerDeploymentResult.error || 'unknown verification error'}`
+            );
+          }
+
+          const workersSubdomain = await getWorkersSubdomain();
+          const workerHttpTargets = buildWorkerHttpReadinessTargets(
+            summary.results.filter((result) => result.success),
+            workersSubdomain,
+            { workersDevEnabled: !config.urls?.api?.custom }
+          );
+          if (workerHttpTargets.length > 0) {
+            const workerHttpResult = await waitForWorkerHttpReady({
+              targets: workerHttpTargets,
+              onProgress: addProgress,
+            });
+            if (!workerHttpResult.ready) {
+              throw new Error(
+                `Worker HTTP health checks failed: ${workerHttpResult.error || 'unknown health check error'}`
+              );
+            }
+          }
+        }
+
+        if (summary.failedCount === 0 && componentsToUpdate.includes('ar-router')) {
+          const apiBaseUrl = resolveIssuerUrl(config, { env });
+          const readinessResult = await waitForRouterWorkerReady({
+            apiBaseUrl,
+            onProgress: addProgress,
+          });
+          if (!readinessResult.ready) {
+            throw new Error(
+              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+            );
+          }
+        }
+
+        if (summary.failedCount === 0) {
+          await maybeConfigureDownstreamIntrospectionForWebDeploy({
+            env,
+            rootDir: resolve(rootDir),
+            config,
+            components: componentsToUpdate,
+          });
         }
 
         state.status = summary.failedCount === 0 ? 'complete' : 'error';
@@ -1832,7 +3203,7 @@ export function createApiRoutes(): Hono {
   // Apply session validation to component deploy
   api.use('/deploy/component/*', validateSession);
 
-  // Deploy a single component (worker or Pages UI)
+  // Deploy a single component (worker or UI Worker)
   api.post('/deploy/component/:name', async (c) => {
     return withLock(async () => {
       try {
@@ -1852,22 +3223,24 @@ export function createApiRoutes(): Hono {
         clearProgress();
         addProgress(`Deploying component: ${componentName}`);
 
-        // Check if it's a Pages component (UI) or Worker component
-        const isPagesComponent = PAGES_COMPONENTS.includes(componentName as PagesComponent);
+        // Check if it's a UI Worker component or API Worker component.
+        const isUiWorkerComponent = UI_WORKER_COMPONENTS.includes(
+          componentName as UiWorkerComponent
+        );
         const isWorkerComponent = WORKER_COMPONENTS.includes(componentName as WorkerComponent);
 
-        if (!isPagesComponent && !isWorkerComponent) {
+        if (!isUiWorkerComponent && !isWorkerComponent) {
           state.status = 'error';
           return c.json(
             {
               success: false,
-              error: `Unknown component: ${componentName}. Valid components: ${[...WORKER_COMPONENTS, ...PAGES_COMPONENTS].join(', ')}`,
+              error: `Unknown component: ${componentName}. Valid components: ${[...WORKER_COMPONENTS, ...UI_WORKER_COMPONENTS].join(', ')}`,
             },
             400
           );
         }
 
-        // Load config for API URL (needed for Pages deployment)
+        // Load config for API URL (needed for UI Worker deployment)
         const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
         let cfg = state.config;
@@ -1887,14 +3260,17 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        if (isPagesComponent) {
-          // Deploy Pages component (ar-admin-ui or ar-login-ui)
-          // deployPagesComponent is already imported at the top
+        if (isUiWorkerComponent) {
+          // Deploy UI Worker component (ar-admin-ui or ar-login-ui).
+          // deployUiWorkerComponent is kept as an internal compatibility alias.
+          const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+          if (!dryRun) {
+            await ensureSupplementalKeysForWebDeploy(keysDir);
+          }
 
           // Build first (unless skipped)
           if (!skipBuild && !dryRun) {
             addProgress(`Building ${componentName}...`);
-            const { execa } = await import('execa');
             const uiDir = join(rootDir, 'packages', componentName);
 
             if (!existsSync(uiDir)) {
@@ -1902,55 +3278,99 @@ export function createApiRoutes(): Hono {
               return c.json({ success: false, error: `Package not found: ${componentName}` }, 404);
             }
 
-            // Get API base URL
-            const apiBaseUrl =
-              cfg?.urls?.api?.custom ||
-              cfg?.urls?.api?.auto ||
-              `https://${env}-ar-router.workers.dev`;
+            // Get the tenant-aware API base URL.
+            const apiBaseUrl = resolveIssuerUrl(cfg, { env });
 
             let loginUiClientId: string | undefined;
             if (componentName === 'ar-login-ui' && !dryRun) {
-              const loginUiUrl =
-                cfg?.urls?.loginUi?.custom ||
-                cfg?.urls?.loginUi?.auto ||
-                `https://${env}-ar-login-ui.pages.dev`;
-              const foundKeys = findKeysDirectory({
-                env,
-                sourceDir: rootDir,
-                keysBaseDir: process.cwd(),
-              });
-              const adminApiSecretPath = foundKeys
-                ? join(foundKeys.path, 'admin_api_secret.txt')
-                : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
-
-              const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
-              const clientResult = await ensureLoginUiClient({
-                apiBaseUrl,
-                loginUiUrl,
-                adminApiSecretPath,
-                onProgress: addProgress,
-              });
-
-              if (clientResult.success && clientResult.clientId) {
-                loginUiClientId = clientResult.clientId;
-                if (clientResult.alreadyExists) {
-                  addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
-                } else {
-                  addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
+              let setupMachineReady = false;
+              try {
+                const setupMachineResult = await ensureSetupMachineAccessInD1(
+                  env,
+                  cfg as AuthrimConfig,
+                  keysDir,
+                  addProgress
+                );
+                if (!setupMachineResult.success) {
+                  throw new Error(
+                    `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
+                  );
                 }
-              } else {
-                addProgress(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`);
+                setupMachineReady = true;
+
+                const readinessResult = await waitForRouterWorkerReady({
+                  apiBaseUrl,
+                  onProgress: addProgress,
+                });
+                if (!readinessResult.ready) {
+                  throw new Error(
+                    `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+                  );
+                }
+
+                const loginUiUrl =
+                  cfg?.urls?.loginUi?.custom ||
+                  cfg?.urls?.loginUi?.auto ||
+                  `https://${env}-ar-login-ui.workers.dev`;
+                const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+
+                const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
+                const clientResult = await ensureLoginUiClient({
+                  apiBaseUrl,
+                  loginUiUrl,
+                  adminApiSecretPath,
+                  keysDir,
+                  tenantId: cfg?.tenant?.name,
+                  onProgress: addProgress,
+                });
+
+                if (clientResult.success && clientResult.clientId) {
+                  loginUiClientId = clientResult.clientId;
+                  if (clientResult.alreadyExists) {
+                    addProgress(`  ✓ Login UI client exists: ${loginUiClientId}`);
+                  } else {
+                    addProgress(`  ✓ Login UI client created: ${loginUiClientId}`);
+                  }
+                } else {
+                  throw new Error(
+                    `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+                  );
+                }
+              } finally {
+                if (setupMachineReady) {
+                  const cleanupResult = await cleanupSetupMachineAccessInD1(
+                    env,
+                    keysDir,
+                    addProgress
+                  );
+                  if (!cleanupResult.success) {
+                    addProgress(
+                      `⚠️ Setup machine access cleanup failed: ${cleanupResult.error || 'unknown error'}`
+                    );
+                  }
+                }
               }
             }
 
             const uiSettings = resolveUiDeploymentSettings({
-              component: componentName as PagesComponent,
+              component: componentName as UiWorkerComponent,
               config: cfg as AuthrimConfig,
               apiBaseUrl,
               loginUiClientId,
             });
+            if (componentName === 'ar-admin-ui' && uiSettings.adminUiApiMode) {
+              addProgress(
+                `Admin UI API mode: ${uiSettings.adminUiApiMode} - ${describeAdminUiApiMode(
+                  uiSettings.adminUiApiMode
+                )}`
+              );
+            }
+            const adminUiBffSecrets =
+              componentName === 'ar-admin-ui' && !dryRun
+                ? await loadAdminUiBffWorkerSecrets(keysDir)
+                : undefined;
 
-            const result = await deployPagesComponent(componentName as PagesComponent, {
+            const result = await deployUiWorkerComponent(componentName as UiWorkerComponent, {
               env,
               rootDir,
               dryRun,
@@ -1958,6 +3378,9 @@ export function createApiRoutes(): Hono {
               runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
               uiEnvConfig: uiSettings.uiEnv,
               serviceBindingName: uiSettings.serviceBindingName,
+              workersDev: uiSettings.workersDev,
+              routes: uiSettings.routes,
+              adminUiBffSecrets,
               onProgress: addProgress,
             });
 
@@ -1967,7 +3390,7 @@ export function createApiRoutes(): Hono {
               return c.json({
                 success: true,
                 component: componentName,
-                type: 'pages',
+                type: 'ui-worker',
                 projectName: result.projectName,
                 deployedAt: result.deployedAt,
               });
@@ -1977,7 +3400,7 @@ export function createApiRoutes(): Hono {
                 {
                   success: false,
                   component: componentName,
-                  type: 'pages',
+                  type: 'ui-worker',
                   error: result.error,
                 },
                 500
@@ -1985,33 +3408,51 @@ export function createApiRoutes(): Hono {
             }
           }
 
-          // Dry run for Pages
+          // Dry run for UI Worker
           state.status = 'complete';
           return c.json({
             success: true,
             component: componentName,
-            type: 'pages',
+            type: 'ui-worker',
             dryRun: true,
-            message: `Would deploy ${componentName} to Pages`,
+            message: `Would deploy ${componentName} to Workers`,
           });
         } else {
           // Deploy Worker component
           // deployWorker and buildApiPackages are already imported at the top
 
-          // Sync wrangler configs before deploying (required for the environment to exist)
-          addProgress('Syncing wrangler configs...');
+          // Refresh master/package wrangler configs before deploying.
+          // The .authrim/{env}/wrangler master copy is the source of truth.
+          addProgress('Refreshing generated wrangler configs...');
           try {
-            const { syncWranglerConfigs } = await import('../core/wrangler-sync.js');
-            const { generateWranglerConfig, toToml } = await import('../core/wrangler.js');
             const { loadLockFileAuto } = await import('../core/lock.js');
             const { getEnvironmentPaths } = await import('../core/paths.js');
-            const { getWorkersSubdomain } = await import('../core/cloudflare.js');
             const { AuthrimConfigSchema } = await import('../core/config.js');
 
             const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
+            const { lock: currentLock } = await loadLockFileAuto(rootDir, env);
 
-            // Try to sync from master wrangler configs first
-            if (existsSync(envPaths.wrangler)) {
+            if (!existsSync(envPaths.config) || !currentLock) {
+              addProgress('Warning: No lock file or config found, wrangler config may be missing');
+            } else {
+              const configContent = await readFile(envPaths.config, 'utf-8');
+              const parsedConfig = AuthrimConfigSchema.parse(JSON.parse(configContent));
+              const resourceIds = buildResourceIdsFromLock(currentLock);
+
+              const masterResult = await saveMasterWranglerConfigs(parsedConfig, resourceIds, {
+                baseDir: rootDir,
+                env,
+                dryRun: false,
+                onProgress: addProgress,
+              });
+
+              if (!masterResult.success && masterResult.errors.length > 0) {
+                addProgress(
+                  `Warning: Master wrangler generation had errors: ${masterResult.errors.join(', ')}`
+                );
+              }
+
+              addProgress('Syncing wrangler configs...');
               const syncResult = await syncWranglerConfigs({
                 baseDir: rootDir,
                 env,
@@ -2025,55 +3466,6 @@ export function createApiRoutes(): Hono {
                 addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
               } else if (syncResult.errors.length > 0) {
                 addProgress(`Warning: Sync had errors: ${syncResult.errors.join(', ')}`);
-              }
-            } else {
-              // No master configs, try to generate from lock file
-              const { lock: currentLock } = await loadLockFileAuto(rootDir, env);
-
-              if (currentLock && cfg) {
-                addProgress('Generating wrangler config from lock file...');
-
-                // Build resource IDs from lock file
-                const resourceIds: {
-                  d1: Record<string, { id: string; name: string }>;
-                  kv: Record<string, { id: string; name: string }>;
-                } = {
-                  d1: {},
-                  kv: {},
-                };
-
-                for (const [key, value] of Object.entries(currentLock.d1 || {})) {
-                  resourceIds.d1[key] = { id: value.id, name: value.name };
-                }
-                for (const [key, value] of Object.entries(currentLock.kv || {})) {
-                  resourceIds.kv[key] = { id: value.id, name: value.name };
-                }
-
-                // Get workers subdomain
-                const workersSubdomain = await getWorkersSubdomain();
-
-                // Parse config
-                const parsedConfig = AuthrimConfigSchema.parse(cfg);
-
-                // Generate wrangler config for this component
-                const componentDir = join(rootDir, 'packages', componentName);
-                if (existsSync(componentDir)) {
-                  const wranglerConfig = generateWranglerConfig(
-                    componentName as WorkerComponent,
-                    parsedConfig,
-                    resourceIds,
-                    workersSubdomain ?? undefined
-                  );
-                  const tomlContent = toToml(wranglerConfig, env);
-                  const tomlPath = join(componentDir, 'wrangler.toml');
-
-                  await writeFile(tomlPath, tomlContent, 'utf-8');
-                  addProgress(`Generated wrangler.toml for ${componentName}`);
-                }
-              } else {
-                addProgress(
-                  'Warning: No lock file or config found, wrangler config may be missing'
-                );
               }
             }
           } catch (syncError) {
@@ -2092,6 +3484,31 @@ export function createApiRoutes(): Hono {
             if (!buildResult.success) {
               state.status = 'error';
               return c.json({ success: false, error: `Build failed: ${buildResult.error}` }, 500);
+            }
+          }
+
+          if (!dryRun && componentName === 'ar-router') {
+            try {
+              await ensureWildcardDnsForMultiTenant(cfg, addProgress);
+            } catch (error) {
+              const manualAction = getWildcardDnsManualActionPayload(cfg);
+              if (manualAction && isWildcardDnsPermissionError(error)) {
+                state.status = 'error';
+                state.error = 'Manual wildcard DNS setup required';
+                addProgress('⚠️ Automatic wildcard DNS setup is unavailable.');
+                addProgress('⚠️ Create the wildcard DNS record manually, then rerun deploy.');
+                return c.json(
+                  {
+                    success: false,
+                    component: componentName,
+                    type: 'worker',
+                    error: 'Manual wildcard DNS setup required',
+                    manualAction,
+                  },
+                  409
+                );
+              }
+              throw error;
             }
           }
 
@@ -2132,6 +3549,16 @@ export function createApiRoutes(): Hono {
           }
 
           if (result.success) {
+            await maybeConfigureDownstreamIntrospectionForWebDeploy({
+              env,
+              rootDir,
+              config: cfg,
+              components: [componentName],
+              dryRun,
+            });
+          }
+
+          if (result.success) {
             state.status = 'complete';
             addProgress(`✓ ${componentName} deployed successfully`);
             return c.json({
@@ -2166,12 +3593,12 @@ export function createApiRoutes(): Hono {
   // Get list of all deployable components
   api.get('/components', async (c) => {
     const { WORKER_COMPONENTS } = await import('../core/naming.js');
-    const { PAGES_COMPONENTS } = await import('../core/deploy.js');
+    const { UI_WORKER_COMPONENTS } = await import('../core/deploy.js');
 
     return c.json({
       workers: WORKER_COMPONENTS,
-      pages: PAGES_COMPONENTS,
-      all: [...WORKER_COMPONENTS, ...PAGES_COMPONENTS],
+      uiWorkers: UI_WORKER_COMPONENTS,
+      all: [...WORKER_COMPONENTS, ...UI_WORKER_COMPONENTS],
     });
   });
 
@@ -2196,7 +3623,12 @@ export function createApiRoutes(): Hono {
         clearProgress();
         addProgress(`📜 Running D1 migrations for environment: ${env}`);
 
-        const result = await runMigrationsForEnvironment(env, rootDir, addProgress);
+        const result = await runMigrationsForEnvironment(
+          env,
+          rootDir,
+          addProgress,
+          state.config ?? undefined
+        );
 
         if (result.success) {
           addProgress('✅ All migrations completed successfully');

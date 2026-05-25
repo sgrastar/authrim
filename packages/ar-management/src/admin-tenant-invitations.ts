@@ -13,16 +13,17 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
-  buildIssuerUrl,
   getLogger,
   getPluginContext,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
+import { getCanonicalTenantBaseUrl } from './request-issuer';
+import { requireTenantResourceAccess } from './admin-tenant-access';
 
 // =============================================================================
 // Constants
@@ -115,6 +116,10 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
   if (blocked) {
     return blocked;
   }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
 
   try {
     const body = await c.req.json();
@@ -126,7 +131,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     const { invited_email, role_id, org_id, max_uses, expires_in_hours } = parsed.data;
 
     // Verify tenant exists
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const tenant = await adapter.queryOne<{ id: string; name: string }>(
       'SELECT id, name FROM tenants WHERE id = ?',
       [tenantId]
@@ -160,7 +165,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       ]
     );
 
-    const inviteUrl = `${buildIssuerUrl(c.env, tenantId)}/invite?token=${token}`;
+    const inviteUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/discover?invite_token=${token}`;
 
     // Conditionally send email if invited_email is specified and email plugin is available
     let emailSent = false;
@@ -237,13 +242,17 @@ export async function listTenantInvitationsHandler(c: Context<{ Bindings: Env }>
   if (blocked) {
     return blocked;
   }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
 
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const includeExpired = c.req.query('include_expired') === 'true';
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [
@@ -291,9 +300,13 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
   if (blocked) {
     return blocked;
   }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     const invitation = await adapter.queryOne<{ id: string }>(
       'SELECT id FROM tenant_invitations WHERE id = ? AND tenant_id = ?',
@@ -303,7 +316,10 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await adapter.execute('DELETE FROM tenant_invitations WHERE id = ?', [invId]);
+    await adapter.execute('DELETE FROM tenant_invitations WHERE id = ? AND tenant_id = ?', [
+      invId,
+      tenantId,
+    ]);
 
     await createAuditLogFromContext(c, 'tenant_invitation.cancel', 'tenant_invitation', invId, {
       tenant_id: tenantId,

@@ -7,6 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
+import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
 
 /**
  * Issuer Metadata Response
@@ -53,8 +54,8 @@ interface IssuerDisplay {
  * Returns the Issuer's metadata including supported credential types.
  */
 export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const issuerIdentifier = c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
-  const baseUrl = new URL(c.req.url).origin;
+  const issuerIdentifier = getRequestIssuerIdentifier(c);
+  const baseUrl = getRequestIssuerUrl(c);
 
   const metadata: IssuerMetadata = {
     credential_issuer: issuerIdentifier,

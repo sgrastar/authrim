@@ -10,6 +10,9 @@ import type { JWK, CryptoKey, JWTPayload } from 'jose';
 import { generateSecureRandomString } from './crypto';
 import type { IDTokenClaims } from '../types/oidc';
 
+const MAX_JWT_SIZE_BYTES = 16 * 1024;
+const MAX_JWT_SEGMENT_SIZE_BYTES = 8 * 1024;
+
 /**
  * Access Token claims interface
  */
@@ -23,6 +26,7 @@ export interface AccessTokenClaims extends JWTPayload {
   scope: string; // Granted scopes
   client_id: string; // Client identifier
   claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
+  claims_request_protected?: boolean; // Whether claims came from PAR or signed JAR
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
 }
 
@@ -186,6 +190,7 @@ export async function verifyToken(
  * @returns Decoded payload (unverified)
  */
 export function parseToken(token: string): JWTPayload {
+  assertJwtSize(token);
   const parts = token.split('.');
   if (parts.length !== 3) {
     throw new Error('Invalid JWT format');
@@ -222,6 +227,7 @@ export interface JWTHeader {
  * @returns Decoded header (unverified)
  */
 export function parseTokenHeader(token: string): JWTHeader {
+  assertJwtSize(token);
   const parts = token.split('.');
   if (parts.length !== 3) {
     throw new Error('Invalid JWT format');
@@ -239,6 +245,18 @@ export function parseTokenHeader(token: string): JWTHeader {
   const decoded = atob(base64);
 
   return JSON.parse(decoded) as JWTHeader;
+}
+
+function assertJwtSize(token: string): void {
+  if (new TextEncoder().encode(token).byteLength > MAX_JWT_SIZE_BYTES) {
+    throw new Error('Invalid JWT format: exceeds maximum size');
+  }
+
+  for (const segment of token.split('.')) {
+    if (new TextEncoder().encode(segment).byteLength > MAX_JWT_SEGMENT_SIZE_BYTES) {
+      throw new Error('Invalid JWT format: segment exceeds maximum size');
+    }
+  }
 }
 
 /**
@@ -365,6 +383,7 @@ export interface RefreshTokenClaims extends JWTPayload {
   jti: string; // JWT ID (unique token identifier)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
   rtv?: number; // Refresh Token Version (V2) - for theft detection
 }
 

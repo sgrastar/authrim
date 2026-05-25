@@ -12,13 +12,15 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   type DatabaseAdapter,
   getSessionStoreBySessionId,
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  safeFetchJson,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -62,7 +64,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
   const log = getLogger(c).module('BACKCHANNEL-LOGOUT');
   const providerIdOrSlug = c.req.param('provider');
   if (!providerIdOrSlug) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-  const tenantId = c.req.query('tenant_id') || 'default';
+  const tenantId = getTenantIdFromContext(c);
 
   try {
     // 1. Get provider configuration
@@ -91,7 +93,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     const claims = await validateLogoutToken(c.env, provider, logoutToken);
 
     // 4. Find and invalidate sessions/tokens for the subject
-    const result = await invalidateUserSessions(c.env, provider.id, claims, log);
+    const result = await invalidateUserSessions(c.env, tenantId, provider.id, claims, log);
 
     log.info('Backchannel logout processed', {
       provider: provider.name,
@@ -128,11 +130,15 @@ async function validateLogoutToken(
 ): Promise<LogoutTokenClaims> {
   // Fetch JWKS from provider
   const jwksUri = provider.jwksUri || `${provider.issuer}/.well-known/jwks.json`;
-  const jwksResponse = await fetch(jwksUri);
-  if (!jwksResponse.ok) {
-    throw new Error(`Failed to fetch JWKS from ${jwksUri}`);
+  let jwks: jose.JSONWebKeySet;
+  try {
+    jwks = await safeFetchJson<jose.JSONWebKeySet>(jwksUri, {
+      timeoutMs: 5000,
+      maxResponseSize: 256 * 1024,
+    });
+  } catch {
+    throw new Error('Failed to fetch provider JWKS');
   }
-  const jwks: jose.JSONWebKeySet = await jwksResponse.json();
   const JWKS = jose.createLocalJWKSet(jwks);
 
   // Verify signature and decode
@@ -194,6 +200,7 @@ async function validateLogoutToken(
  */
 async function invalidateUserSessions(
   env: Env,
+  tenantId: string,
   providerId: string,
   claims: LogoutTokenClaims,
   log: ReturnType<ReturnType<typeof getLogger>['module']>
@@ -203,14 +210,19 @@ async function invalidateUserSessions(
 
   // Find linked identities for this provider and subject
   if (claims.sub) {
-    const identities = await findLinkedIdentitiesByProviderSub(env, providerId, claims.sub);
+    const identities = await findLinkedIdentitiesByProviderSub(
+      env,
+      tenantId,
+      providerId,
+      claims.sub
+    );
 
     for (const identity of identities) {
       identitiesAffected++;
 
       // Mark the linked identity as requiring re-authentication
       // We do this by clearing the tokens
-      await updateLinkedIdentity(env, identity.id, {
+      await updateLinkedIdentity(env, identity.tenantId, identity.id, {
         tokens: {
           access_token: '', // Clear tokens
           token_type: 'Bearer',
@@ -220,20 +232,25 @@ async function invalidateUserSessions(
 
     // Terminate sessions that were created via this provider and subject
     // Query D1 for sessions with matching external_provider_id and external_provider_sub
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      `bridge-backchannel-logout:${tenantId}`,
+      { tenantId }
+    );
     const sessions = await coreAdapter.query<{ id: string }>(
       `SELECT id FROM sessions
        WHERE external_provider_id = ?
          AND external_provider_sub = ?
+         AND tenant_id = ?
          AND expires_at > ?`,
-      [providerId, claims.sub, Date.now()]
+      [providerId, claims.sub, tenantId, Date.now()]
     );
 
     for (const session of sessions) {
       // Terminate session in Durable Object
       if (isShardedSessionId(session.id)) {
         try {
-          const { stub: sessionStore } = getSessionStoreBySessionId(env, session.id);
+          const { stub: sessionStore } = getSessionStoreBySessionId(env, session.id, tenantId);
           await sessionStore.fetch(
             new Request(`https://session-store/session/${session.id}`, {
               method: 'DELETE',
@@ -251,8 +268,9 @@ async function invalidateUserSessions(
       await coreAdapter.execute(
         `DELETE FROM sessions
          WHERE external_provider_id = ?
-           AND external_provider_sub = ?`,
-        [providerId, claims.sub]
+           AND external_provider_sub = ?
+           AND tenant_id = ?`,
+        [providerId, claims.sub, tenantId]
       );
     }
   }

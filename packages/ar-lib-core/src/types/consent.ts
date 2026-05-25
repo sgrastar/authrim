@@ -391,6 +391,8 @@ export type DataExportSection = 'profile' | 'consents' | 'sessions' | 'audit_log
 export interface DataExportRequest {
   /** Request ID */
   id: string;
+  /** Opaque public artifact identifier for materialized exports */
+  publicArtifactId?: string;
   /** User ID */
   userId: string;
   /** Export status */
@@ -409,6 +411,8 @@ export interface DataExportRequest {
   expiresAt?: number;
   /** File size in bytes */
   fileSize?: number;
+  /** Materialized formats currently available for download */
+  availableFormats?: DataExportFormat[];
   /** Error message if failed */
   errorMessage?: string;
 }

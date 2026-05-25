@@ -16,35 +16,52 @@ import type { Env, SAMLIdPConfig } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
-  D1Adapter,
-  type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
   shouldUseBuiltinForms,
   createConfigurationError,
-  getTenantIdFromContext,
   buildIssuerUrl,
+  usesNakedDomainIssuer,
   getLogger,
   createLogger,
 } from '@authrim/ar-lib-core';
 import {
-  parseLogoutRequestPost,
-  parseLogoutRequestRedirect,
   parseLogoutResponsePost,
   parseLogoutResponseRedirect,
+  parseLogoutRequestXml,
   buildLogoutResponse,
   buildLogoutRequest,
   encodeForPostBinding,
   type ParsedLogoutRequest,
   type ParsedLogoutResponse,
 } from '../common/slo-messages';
-import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
+import {
+  decodePostBindingMessage,
+  inflateRedirectBindingMessage,
+  parsePostBindingFormDataWithLimit,
+} from '../common/message-limits';
+import { base64Decode, generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import { STATUS_CODES, DEFAULTS } from '../common/constants';
 import { signXml, verifyXmlSignature, hasSignature } from '../common/signature';
-import { getSigningKey, getSigningCertificate } from '../common/key-utils';
+import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfigByEntityId } from '../admin/providers';
+import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user-store';
+import { requireSAMLTenantId, resolveSAMLTenantIdFromContext } from '../common/tenant';
+import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
+import {
+  SAMLIdPLogoutRequestSignatureValidationError,
+  validateSAMLIdPLogoutRequestSignature,
+} from './logout-request-signature';
+import type { SAMLRedirectSignatureInput } from '../idp/authn-request-signature';
+import {
+  consumeSAMLOutboundLogoutRequest,
+  storeSAMLOutboundLogoutRequest,
+  SAMLLogoutResponseCorrelationError,
+} from '../idp/slo-state';
+import { assertSAMLRelayStateSize } from '../common/relay-state';
 
 /**
  * Handle SP Single Logout (both POST and GET)
@@ -53,7 +70,7 @@ export async function handleSPSLO(c: Context<{ Bindings: Env }>): Promise<Respon
   const env = c.env;
   const method = c.req.method;
   const log = getLogger(c).module('SAML-SP');
-  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
+  const { issuerUrl } = await getSAMLLocalEntityIds(env, resolveSAMLTenantIdFromContext(c));
 
   try {
     if (method === 'GET') {
@@ -75,14 +92,21 @@ async function handlePostBinding(
   env: Env,
   issuerUrl: string
 ): Promise<Response> {
-  const formData = await c.req.formData();
+  const formData = await parsePostBindingFormDataWithLimit(c.req);
   const samlRequest = formData.get('SAMLRequest') as string | null;
   const samlResponse = formData.get('SAMLResponse') as string | null;
   const relayState = formData.get('RelayState') as string | null;
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
-    const logoutRequest = parseLogoutRequestPost(samlRequest);
-    return processLogoutRequest(c, env, issuerUrl, logoutRequest, relayState, 'post', samlRequest);
+    const xml = decodePostBindingMessage(samlRequest, 'SAML LogoutRequest');
+    const logoutRequest = parseLogoutRequestXml(xml);
+    return processLogoutRequest(c, env, issuerUrl, {
+      logoutRequest,
+      relayState,
+      binding: 'post',
+      xml,
+    });
   } else if (samlResponse) {
     const logoutResponse = parseLogoutResponsePost(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState, samlResponse);
@@ -105,10 +129,23 @@ async function handleRedirectBinding(
   const samlRequest = url.searchParams.get('SAMLRequest');
   const samlResponse = url.searchParams.get('SAMLResponse');
   const relayState = url.searchParams.get('RelayState');
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
-    const logoutRequest = parseLogoutRequestRedirect(samlRequest);
-    return processLogoutRequest(c, env, issuerUrl, logoutRequest, relayState, 'redirect');
+    const xml = inflateRedirectBindingMessage(samlRequest, 'SAML LogoutRequest');
+    const logoutRequest = parseLogoutRequestXml(xml);
+    return processLogoutRequest(c, env, issuerUrl, {
+      logoutRequest,
+      relayState,
+      binding: 'redirect',
+      xml,
+      redirectSignature: {
+        samlMessage: getRawQueryParam(url.search, 'SAMLRequest') ?? encodeURIComponent(samlRequest),
+        relayState: getRawQueryParam(url.search, 'RelayState'),
+        signature: url.searchParams.get('Signature') || undefined,
+        sigAlg: url.searchParams.get('SigAlg') || undefined,
+      },
+    });
   } else if (samlResponse) {
     const logoutResponse = parseLogoutResponseRedirect(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState);
@@ -122,41 +159,54 @@ async function handleRedirectBinding(
 /**
  * Process LogoutRequest from IdP
  */
+interface ParsedIdPLogoutRequestInput {
+  logoutRequest: ParsedLogoutRequest;
+  relayState: string | null;
+  binding: 'post' | 'redirect';
+  xml: string;
+  redirectSignature?: SAMLRedirectSignatureInput;
+}
+
 async function processLogoutRequest(
   c: Context<{ Bindings: Env }>,
   env: Env,
   issuerUrl: string,
-  logoutRequest: ParsedLogoutRequest,
-  relayState: string | null,
-  binding: 'post' | 'redirect',
-  samlBase64?: string
+  input: ParsedIdPLogoutRequestInput
 ): Promise<Response> {
   const log = getLogger(c).module('SAML-SP');
+  const { logoutRequest, relayState, binding } = input;
 
   // Get IdP configuration
-  const idpConfig = await getIdPConfigByEntityId(env, logoutRequest.issuer);
+  const idpConfig = await getIdPConfigByEntityId(
+    env,
+    resolveSAMLTenantIdFromContext(c),
+    logoutRequest.issuer
+  );
 
   if (!idpConfig) {
     log.error('Unknown IdP', { issuer: logoutRequest.issuer });
     return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
   }
 
-  // Verify signature if present (for POST binding with embedded signature)
-  if (samlBase64) {
-    const decodedXml = atob(samlBase64);
-    if (hasSignature(decodedXml)) {
-      try {
-        // Use expectedId and strictXswProtection to prevent XSW attacks
-        verifyXmlSignature(decodedXml, {
-          certificateOrKey: idpConfig.certificate,
-          expectedId: logoutRequest.id,
-          strictXswProtection: true,
-        });
-      } catch (error) {
-        log.error('LogoutRequest signature verification failed', { binding }, error as Error);
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
+  try {
+    await validateSAMLIdPLogoutRequestSignature({
+      logoutRequest,
+      idpConfig,
+      binding,
+      xml: input.xml,
+      redirectSignature: input.redirectSignature,
+    });
+  } catch (error) {
+    if (error instanceof SAMLIdPLogoutRequestSignatureValidationError) {
+      log.warn('IdP LogoutRequest signature policy failed', {
+        tenantId: resolveSAMLTenantIdFromContext(c),
+        idpEntityId: idpConfig.entityId,
+        logoutRequestId: logoutRequest.id,
+        failureKind: error.failureKind,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    throw error;
   }
 
   // Validate LogoutRequest
@@ -184,6 +234,13 @@ async function processLogoutRequest(
   );
 }
 
+function getRawQueryParam(search: string, name: string): string | undefined {
+  const prefix = `${name}=`;
+  const query = search.startsWith('?') ? search.slice(1) : search;
+  const match = query.split('&').find((part) => part.startsWith(prefix));
+  return match ? match.slice(prefix.length) : undefined;
+}
+
 /**
  * Process LogoutResponse from IdP (for SP-initiated logout)
  */
@@ -196,12 +253,18 @@ async function processLogoutResponse(
 ): Promise<Response> {
   const log = getLogger(c).module('SAML-SP');
 
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+
   // Get IdP configuration
-  const idpConfig = await getIdPConfigByEntityId(env, logoutResponse.issuer);
+  const idpConfig = await getIdPConfigByEntityId(env, tenantId, logoutResponse.issuer);
+  if (!idpConfig) {
+    log.warn('Unknown IdP LogoutResponse issuer', { issuer: logoutResponse.issuer });
+    return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
+  }
 
   // Verify signature if present
-  if (idpConfig && samlBase64) {
-    const decodedXml = atob(samlBase64);
+  if (samlBase64) {
+    const decodedXml = base64Decode(samlBase64);
     if (hasSignature(decodedXml)) {
       try {
         // Use expectedId and strictXswProtection to prevent XSW attacks
@@ -215,6 +278,43 @@ async function processLogoutResponse(
         // Log but continue - some IdPs may not sign LogoutResponses
       }
     }
+  }
+
+  try {
+    if (!env.STATE_STORE) {
+      throw new SAMLLogoutResponseCorrelationError(
+        'STATE_STORE is required for SP LogoutResponse correlation',
+        {
+          idp_entity_id: idpConfig.entityId,
+        }
+      );
+    }
+    const outboundLogoutRequest = await consumeSAMLOutboundLogoutRequest(env.STATE_STORE, {
+      tenantId,
+      spEntityId: idpConfig.entityId,
+      inResponseTo: logoutResponse.inResponseTo,
+    });
+    if (relayState && relayState !== outboundLogoutRequest.requestId) {
+      throw new SAMLLogoutResponseCorrelationError(
+        'LogoutResponse RelayState does not match outbound LogoutRequest',
+        {
+          idp_entity_id: idpConfig.entityId,
+          relay_state: relayState,
+          request_id: outboundLogoutRequest.requestId,
+        }
+      );
+    }
+    relayState = outboundLogoutRequest.relayState ?? relayState;
+  } catch (error) {
+    if (error instanceof SAMLLogoutResponseCorrelationError) {
+      log.warn('SP LogoutResponse correlation failed', {
+        tenantId,
+        idpEntityId: idpConfig.entityId,
+        logoutResponseId: logoutResponse.id,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+    throw error;
   }
 
   // Check status
@@ -291,12 +391,14 @@ async function terminateSessionByNameId(
     // If sessionIndex is provided and is a valid sharded session ID, delete that specific session
     if (sessionIndex && isShardedSessionId(sessionIndex)) {
       try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionIndex);
-        const response = await sessionStore.fetch(
-          new Request(`https://session-store/session/${sessionIndex}`, {
-            method: 'DELETE',
-          })
+        const { stub: sessionStore } = getSessionStoreBySessionId(
+          env,
+          sessionIndex,
+          resolveSAMLTenantIdFromContext(c)
         );
+        const response = await sessionStore.fetch(`https://session-store/session/${sessionIndex}`, {
+          method: 'DELETE',
+        });
         if (response.ok) {
           log.info('Terminated session', { sessionIndex });
           return;
@@ -313,28 +415,8 @@ async function terminateSessionByNameId(
     // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
     // Log warning for debugging
     // PII/Non-PII DB separation: search email in PII DB
-    const tenantId = 'default';
-    let user: { id: string } | null = null;
-    const piiAdapter: DatabaseAdapter | null = env.DB_PII
-      ? new D1Adapter({ db: env.DB_PII })
-      : null;
-    if (piiAdapter) {
-      const userPII = await piiAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-        [tenantId, nameId]
-      );
-      if (userPII) {
-        // Verify user exists in Core DB
-        const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-        const userCore = await coreAdapter.queryOne<{ id: string }>(
-          'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-          [userPII.id]
-        );
-        if (userCore) {
-          user = { id: userCore.id };
-        }
-      }
-    }
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const user = await findActiveSamlUserByEmail(env, tenantId, nameId);
     if (user) {
       // PII Protection: Do not log NameID (may contain email/PII)
       log.warn(
@@ -371,7 +453,8 @@ async function sendLogoutResponse(
 
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const responseId = generateSAMLId();
-  const issuer = `${issuerUrl}/saml/sp`;
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const issuer = (await getSAMLLocalEntityIds(env, tenantId)).spEntityId;
 
   // Build LogoutResponse
   let responseXml = buildLogoutResponse({
@@ -388,8 +471,12 @@ async function sendLogoutResponse(
 
   // Sign the response
   try {
-    const { privateKeyPem } = await getSigningKey(env);
-    const certificate = await getSigningCertificate(env);
+    const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+      tenantId,
+      role: 'sp',
+      counterpartyEntityId: idpConfig.entityId,
+      policy: getSAMLSigningPolicy(idpConfig),
+    });
 
     responseXml = signXml(responseXml, {
       privateKey: privateKeyPem,
@@ -417,31 +504,18 @@ function sendPostBindingResponse(
   cookieHeader: string
 ): Response {
   const encodedResponse = encodeForPostBinding(responseXml);
+  const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
+  if (relayState) {
+    assertSAMLRelayStateSize(relayState);
+    fields.push({ name: 'RelayState', value: relayState });
+  }
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML Logout</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(destination)}">
-    <input type="hidden" name="SAMLResponse" value="${escapeHtml(encodedResponse)}" />
-    ${relayState ? `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue</button>
-    </noscript>
-  </form>
-</body>
-</html>`;
-
-  return new Response(html, {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+  return buildSAMLPostBindingResponse({
+    title: 'SAML Logout',
+    actionUrl: destination,
+    fields,
+    buttonText: 'Continue',
+    additionalHeaders: {
       'Set-Cookie': cookieHeader,
     },
   });
@@ -456,25 +530,29 @@ export async function initiateSPLogout(
   idpConfig: SAMLIdPConfig,
   sessionIndex?: string,
   returnUrl?: string,
-  tenantId = 'default'
+  tenantId?: string
 ): Promise<{ html: string }> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SP-initiated SLO tenant');
   // Get user info for NameID (PII/Non-PII DB separation)
-  let nameId: string | null = null;
-  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
-  if (piiAdapter) {
-    const userPII = await piiAdapter.queryOne<{ email: string }>(
-      'SELECT email FROM users_pii WHERE id = ?',
-      [userId]
-    );
-    nameId = userPII?.email || null;
-  }
+  const nameId = await getSamlUserNameIdById(env, resolvedTenantId, userId);
 
   if (!nameId) {
     throw new Error('Logout request could not be processed');
   }
-  const issuer = `${buildIssuerUrl(env, tenantId)}/saml/sp`;
+  const issuer = (await getSAMLLocalEntityIds(env, resolvedTenantId)).spEntityId;
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const requestId = generateSAMLId();
+
+  if (!env.STATE_STORE) {
+    throw new Error('STATE_STORE is required for SP-initiated SLO correlation');
+  }
+  await storeSAMLOutboundLogoutRequest(env.STATE_STORE, {
+    tenantId: resolvedTenantId,
+    spEntityId: idpConfig.entityId,
+    requestId,
+    relayState: returnUrl,
+    ttlSeconds: DEFAULTS.REQUEST_VALIDITY_SECONDS,
+  });
 
   // Build LogoutRequest
   let logoutRequestXml = buildLogoutRequest({
@@ -489,8 +567,12 @@ export async function initiateSPLogout(
 
   // Sign the request
   try {
-    const { privateKeyPem } = await getSigningKey(env);
-    const certificate = await getSigningCertificate(env);
+    const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+      tenantId: resolvedTenantId,
+      role: 'sp',
+      counterpartyEntityId: idpConfig.entityId,
+      policy: getSAMLSigningPolicy(idpConfig),
+    });
 
     logoutRequestXml = signXml(logoutRequestXml, {
       privateKey: privateKeyPem,
@@ -506,29 +588,19 @@ export async function initiateSPLogout(
 
   // Encode for POST binding
   const encodedRequest = encodeForPostBinding(logoutRequestXml);
+  const fields = [{ name: 'SAMLRequest', value: encodedRequest }];
+  if (returnUrl) {
+    fields.push({ name: 'RelayState', value: requestId });
+  }
 
-  // Build auto-submit form
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML Logout</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(destination)}">
-    <input type="hidden" name="SAMLRequest" value="${escapeHtml(encodedRequest)}" />
-    ${returnUrl ? `<input type="hidden" name="RelayState" value="${escapeHtml(returnUrl)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue to Logout</button>
-    </noscript>
-  </form>
-</body>
-</html>`;
+  const response = buildSAMLPostBindingResponse({
+    title: 'SAML Logout',
+    actionUrl: destination,
+    fields,
+    buttonText: 'Continue to Logout',
+  });
 
-  return { html };
+  return { html: await response.text() };
 }
 
 /**
@@ -543,7 +615,7 @@ async function buildLogoutCompleteUrlForSP(
   c: Context<{ Bindings: Env }>,
   env: Env
 ): Promise<LogoutCompleteResultSP> {
-  const tenantId = getTenantIdFromContext(c);
+  const tenantId = resolveSAMLTenantIdFromContext(c);
 
   // Conformance mode: use built-in path
   if (await shouldUseBuiltinForms(env)) {
@@ -561,19 +633,7 @@ async function buildLogoutCompleteUrlForSP(
     uiConfig,
     'logoutComplete',
     {},
-    tenantId !== 'default' ? tenantId : undefined
+    usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
   );
   return { type: 'redirect', url };
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }

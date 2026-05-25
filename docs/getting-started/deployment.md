@@ -1,3 +1,15 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-05
+description: "This guide covers deploying Authrim to Cloudflare Workers for a production-ready OpenID Connect Provider."
+type: guide
+tags:
+  - authrim
+  - oidc
+  - deployment
+  - cloudflare-workers
+---
 # Deployment Guide
 
 This guide covers deploying Authrim to Cloudflare Workers for a production-ready OpenID Connect Provider.
@@ -193,21 +205,23 @@ Features:
 
 ## UI Deployment
 
-Deploy the SvelteKit login/consent UI to Cloudflare Pages:
+Deploy the SvelteKit Login UI and Admin UI as Cloudflare Workers with static assets:
 
 ```bash
-pnpm run deploy:ui -- --env=prod
+pnpm run deploy -- --env=prod
 ```
 
-Project naming:
+Worker naming:
 
-- `prod` → `authrim-ui`
-- Other envs → `{env}-authrim-ui`
+- Login UI: `{env}-ar-login-ui`
+- Admin UI: `{env}-ar-admin-ui`
 
-For interactive domain configuration:
+The setup tool generates Workers static asset configuration and runs `wrangler deploy` for each UI worker. Pages projects are not part of the supported deployment path.
+
+For interactive domain configuration and deployment:
 
 ```bash
-./scripts/deploy-remote-ui.sh
+authrim-setup deploy --env prod
 ```
 
 ---
@@ -249,7 +263,7 @@ wrangler tail
 
 # View version status
 curl "$ISSUER_URL/api/internal/version-manager/status" \
-  -H "Authorization: Bearer $ADMIN_API_SECRET"
+  -H "Authorization: Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}"
 ```
 
 ---

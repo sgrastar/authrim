@@ -42,6 +42,8 @@ const DEFAULT_SETTINGS: NativeSSOSettings = {
   maxDeviceSecretsPerUser: 10,
   maxUseCountPerSecret: 10, // Replay attack prevention
   maxSecretsBehavior: 'revoke_oldest',
+  deviceSecretRotationPolicy: 'disabled',
+  deviceSecretRotationOverlapSeconds: 0,
   allowCrossClientNativeSSO: false,
   rateLimit: {
     maxAttemptsPerMinute: 10,

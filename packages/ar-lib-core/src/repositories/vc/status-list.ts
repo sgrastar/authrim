@@ -29,7 +29,9 @@ export class D1StatusListRepository implements IStatusListRepository {
     purpose: StatusListPurpose
   ): Promise<StatusListRecord | null> {
     return this.adapter.queryOne<StatusListRecord>(
-      `SELECT * FROM status_lists
+      `SELECT internal_id, public_id AS id, tenant_id, purpose, encoded_list,
+              current_index, capacity, used_count, state, sealed_at, created_at, updated_at
+       FROM status_lists
        WHERE tenant_id = ? AND purpose = ? AND state = 'active'
        ORDER BY created_at DESC
        LIMIT 1`,
@@ -40,10 +42,14 @@ export class D1StatusListRepository implements IStatusListRepository {
   /**
    * Find status list by ID
    */
-  async findById(listId: string): Promise<StatusListRecord | null> {
-    return this.adapter.queryOne<StatusListRecord>('SELECT * FROM status_lists WHERE id = ?', [
-      listId,
-    ]);
+  async findById(tenantId: string, listId: string): Promise<StatusListRecord | null> {
+    return this.adapter.queryOne<StatusListRecord>(
+      `SELECT internal_id, public_id AS id, tenant_id, purpose, encoded_list,
+              current_index, capacity, used_count, state, sealed_at, created_at, updated_at
+       FROM status_lists
+       WHERE tenant_id = ? AND public_id = ?`,
+      [tenantId, listId]
+    );
   }
 
   /**
@@ -53,12 +59,13 @@ export class D1StatusListRepository implements IStatusListRepository {
     const now = new Date().toISOString();
     const sql = `
       INSERT INTO status_lists (
-        id, tenant_id, purpose, encoded_list, current_index,
+        internal_id, public_id, tenant_id, purpose, encoded_list, current_index,
         capacity, used_count, state, sealed_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
+      record.internal_id,
       record.id,
       record.tenant_id,
       record.purpose,
@@ -77,6 +84,7 @@ export class D1StatusListRepository implements IStatusListRepository {
    * Update status list
    */
   async update(
+    tenantId: string,
     listId: string,
     updates: Partial<Pick<StatusListRecord, 'encoded_list' | 'used_count' | 'state' | 'sealed_at'>>
   ): Promise<void> {
@@ -101,27 +109,27 @@ export class D1StatusListRepository implements IStatusListRepository {
       values.push(updates.sealed_at);
     }
 
-    values.push(listId);
+    values.push(tenantId, listId);
 
-    const sql = `UPDATE status_lists SET ${setClauses.join(', ')} WHERE id = ?`;
+    const sql = `UPDATE status_lists SET ${setClauses.join(', ')} WHERE tenant_id = ? AND public_id = ?`;
     await this.adapter.execute(sql, values);
   }
 
   /**
    * Increment used_count and return new count (atomic)
    */
-  async incrementUsedCount(listId: string): Promise<number> {
+  async incrementUsedCount(tenantId: string, listId: string): Promise<number> {
     const now = new Date().toISOString();
 
     // D1 doesn't support RETURNING, so we need two queries
     await this.adapter.execute(
-      'UPDATE status_lists SET used_count = used_count + 1, updated_at = ? WHERE id = ?',
-      [now, listId]
+      'UPDATE status_lists SET used_count = used_count + 1, updated_at = ? WHERE tenant_id = ? AND public_id = ?',
+      [now, tenantId, listId]
     );
 
     const result = await this.adapter.queryOne<{ used_count: number }>(
-      'SELECT used_count FROM status_lists WHERE id = ?',
-      [listId]
+      'SELECT used_count FROM status_lists WHERE tenant_id = ? AND public_id = ?',
+      [tenantId, listId]
     );
 
     if (!result) {
@@ -150,7 +158,11 @@ export class D1StatusListRepository implements IStatusListRepository {
       values.push(options.state);
     }
 
-    const sql = `SELECT * FROM status_lists WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`;
+    const sql = `SELECT internal_id, public_id AS id, tenant_id, purpose, encoded_list,
+                        current_index, capacity, used_count, state, sealed_at, created_at, updated_at
+                 FROM status_lists
+                 WHERE ${conditions.join(' AND ')}
+                 ORDER BY created_at DESC`;
     return this.adapter.query<StatusListRecord>(sql, values);
   }
 

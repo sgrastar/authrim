@@ -9,6 +9,7 @@
  * // In your worker entry point
  * const factory = new ContextFactory({
  *   coreAdapter: createD1Adapter(env.DB, 'core'),
+ *   tenantId,
  *   defaultPiiAdapter: createD1Adapter(env.DB_PII, 'pii'),
  *   partitionRouter: createPIIPartitionRouter(coreAdapter, piiAdapter, env.AUTHRIM_CONFIG),
  * });
@@ -54,6 +55,14 @@ import {
   MapRequestScopedCache,
 } from './types';
 
+function requireFactoryTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 // =============================================================================
 // Context Factory
 // =============================================================================
@@ -79,7 +88,7 @@ export class ContextFactory implements IContextFactory {
     this.coreAdapter = options.coreAdapter;
     this.defaultPiiAdapter = options.defaultPiiAdapter ?? null;
     this.partitionRouter = options.partitionRouter ?? null;
-    this.tenantId = options.tenantId ?? 'default';
+    this.tenantId = requireFactoryTenantId(options.tenantId, 'ContextFactory');
   }
 
   /**
@@ -176,7 +185,7 @@ export class ContextFactory implements IContextFactory {
    * @param tenantId - New tenant ID
    */
   setTenantId(tenantId: string): void {
-    this.tenantId = tenantId;
+    this.tenantId = requireFactoryTenantId(tenantId, 'ContextFactory.setTenantId');
   }
 
   /**
@@ -197,12 +206,12 @@ export class ContextFactory implements IContextFactory {
    */
   private createCoreRepositories(): CoreRepositories {
     return {
-      userCore: new UserCoreRepository(this.coreAdapter),
-      client: new ClientRepository(this.coreAdapter),
-      session: new SessionRepository(this.coreAdapter),
-      passkey: new PasskeyRepository(this.coreAdapter),
-      role: new RoleRepository(this.coreAdapter),
-      sessionClient: new SessionClientRepository(this.coreAdapter),
+      userCore: new UserCoreRepository(this.coreAdapter, this.tenantId),
+      client: new ClientRepository(this.coreAdapter, this.tenantId),
+      session: new SessionRepository(this.coreAdapter, this.tenantId),
+      passkey: new PasskeyRepository(this.coreAdapter, this.tenantId),
+      role: new RoleRepository(this.coreAdapter, this.tenantId),
+      sessionClient: new SessionClientRepository(this.coreAdapter, this.tenantId),
       // Future: organization: new OrganizationRepository(this.coreAdapter),
     };
   }
@@ -214,7 +223,7 @@ export class ContextFactory implements IContextFactory {
    */
   private createPIIRepositories(piiAdapter: DatabaseAdapter): PIIRepositories {
     return {
-      userPII: new UserPIIRepository(piiAdapter),
+      userPII: new UserPIIRepository(piiAdapter, this.tenantId),
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),
@@ -233,33 +242,34 @@ export class ContextFactory implements IContextFactory {
  * This is a convenience function for creating a factory with common setup.
  *
  * @param coreAdapter - Core database adapter
+ * @param tenantId - Tenant ID
  * @param piiAdapter - PII database adapter (optional)
  * @param partitionRouter - Partition router (optional)
- * @param tenantId - Default tenant ID (optional)
  * @returns Configured ContextFactory
  *
  * @example
  * // Minimal setup (Non-PII only)
- * const factory = createContextFactory(createD1Adapter(env.DB, 'core'));
+ * const factory = createContextFactory(createD1Adapter(env.DB, 'core'), tenantId);
  *
  * // Full setup (with PII)
  * const factory = createContextFactory(
  *   createD1Adapter(env.DB, 'core'),
+ *   tenantId,
  *   createD1Adapter(env.DB_PII, 'pii'),
  *   createPIIPartitionRouter(coreAdapter, piiAdapter, env.AUTHRIM_CONFIG)
  * );
  */
 export function createContextFactory(
   coreAdapter: DatabaseAdapter,
+  tenantId: string,
   piiAdapter?: DatabaseAdapter,
-  partitionRouter?: PIIPartitionRouter,
-  tenantId?: string
+  partitionRouter?: PIIPartitionRouter
 ): ContextFactory {
   return new ContextFactory({
     coreAdapter,
+    tenantId,
     defaultPiiAdapter: piiAdapter,
     partitionRouter,
-    tenantId,
   });
 }
 

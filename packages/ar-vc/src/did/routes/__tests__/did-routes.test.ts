@@ -26,7 +26,8 @@ const _mockLogger = {
 };
 
 // Mock @authrim/ar-lib-core
-vi.mock('@authrim/ar-lib-core', () => {
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   // Mock repository that returns null by default (no cache)
   const mockCacheRepo = {
     getValidCache: vi.fn().mockResolvedValue(null),
@@ -50,6 +51,7 @@ vi.mock('@authrim/ar-lib-core', () => {
   };
 
   return {
+    ...actual,
     // Include safeFetch in the mock
     safeFetch: mockSafeFetch,
     // Include getLogger mock
@@ -73,6 +75,7 @@ vi.mock('@authrim/ar-lib-core', () => {
     isValidDID: vi.fn((did: string) => {
       return did.startsWith('did:') && did.split(':').length >= 3;
     }),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
     D1Adapter: class {
       constructor() {}
     },
@@ -140,11 +143,20 @@ const createMockContext = (
     ...overrides.env,
   };
 
+  const url = overrides.req?.url || 'https://authrim.com/did/test';
+  const rawRequest = new Request(url, {
+    method: overrides.req?.method || 'GET',
+    headers: {
+      Host: new URL(url).host,
+    },
+  });
+
   return {
     env: defaultEnv,
     req: {
-      url: 'https://authrim.com/did/test',
-      method: 'GET',
+      raw: rawRequest,
+      url,
+      method: overrides.req?.method || 'GET',
       param: vi.fn().mockReturnValue('did:web:example.com'),
       ...overrides.req,
     },
@@ -739,17 +751,20 @@ describe('DID Document Route', () => {
     expect(verifierService?.serviceEndpoint).toContain('openid-credential-verifier');
   });
 
-  it('should use custom ISSUER_IDENTIFIER', async () => {
+  it('uses the request host as DID identifier even when ISSUER_IDENTIFIER is configured', async () => {
     const c = createMockContext({
       env: {
         ISSUER_IDENTIFIER: 'did:web:custom.example.com',
+      },
+      req: {
+        url: 'https://tenant1.example.com/.well-known/did.json',
       },
     });
 
     const response = await didDocumentRoute(c);
     const data = (await response.json()) as { id: string };
 
-    expect(data.id).toBe('did:web:custom.example.com');
+    expect(data.id).toBe('did:web:tenant1.example.com');
   });
 
   it('should handle KeyManager error gracefully', async () => {

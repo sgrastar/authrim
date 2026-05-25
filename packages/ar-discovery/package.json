@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-discovery",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -9,12 +9,13 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-discovery: lint skipped'",
-    "test": "echo 'op-discovery: tests skipped'",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
-    "hono": "^4.12.7",
+    "hono": "4.12.21",
     "jose": "^6.1.2"
   },
   "devDependencies": {

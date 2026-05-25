@@ -9,9 +9,19 @@
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { adminFetch } from '$lib/api/admin-request';
+import { settingsContext } from '$lib/stores/settings-context.svelte';
 
-// Default tenant ID for single-tenant environments
-const DEFAULT_TENANT_ID = 'default';
+function resolveTenantId(tenantId?: string): string {
+	const resolved =
+		tenantId?.trim() || settingsContext.tenantId || settingsContext.availableTenants[0]?.id;
+
+	if (!resolved) {
+		throw new Error('Tenant ID is required');
+	}
+
+	return resolved;
+}
 
 /**
  * Setting value source (priority: env > kv > default)
@@ -102,6 +112,33 @@ export interface SettingsPatchResult {
 	version: string;
 }
 
+export interface UIPathConfig {
+	login: string;
+	consent: string;
+	reauth: string;
+	error: string;
+	device: string;
+	deviceAuthorize: string;
+	logoutComplete: string;
+	loggedOut: string;
+	register: string;
+}
+
+export interface UIPathMetadataItem {
+	label: string;
+	description: string;
+}
+
+export interface UIConfigResponse {
+	config: {
+		baseUrl: string | null;
+		paths: UIPathConfig;
+	};
+	source: 'kv' | 'env' | 'none';
+	defaults: UIPathConfig;
+	metadata: Record<keyof UIPathConfig, UIPathMetadataItem>;
+}
+
 /**
  * UI patch operation (for internal use)
  */
@@ -141,6 +178,38 @@ export function convertPatchesToAPIRequest(
 	};
 }
 
+export interface TokenExchangeBooleanSetting {
+	value: boolean;
+	source: SettingSource;
+	default: boolean;
+}
+
+export interface TokenExchangeConfigResponse {
+	settings: {
+		enabled: TokenExchangeBooleanSetting;
+		allowedSubjectTokenTypes: {
+			value: string[];
+			source: SettingSource;
+			default: string[];
+			validOptions: string[];
+		};
+		maxResourceParams: {
+			value: number;
+			source: SettingSource;
+			default: number;
+			min: number;
+			max: number;
+		};
+		maxAudienceParams: {
+			value: number;
+			source: SettingSource;
+			default: number;
+			min: number;
+			max: number;
+		};
+	};
+}
+
 /**
  * Settings conflict error
  */
@@ -163,8 +232,8 @@ export const adminSettingsAPI = {
 	 * GET /api/admin/settings/meta
 	 */
 	async getCategories(): Promise<{ categories: CategoryMeta[] }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/meta`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/meta`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -180,8 +249,8 @@ export const adminSettingsAPI = {
 	 * GET /api/admin/settings/meta/:category
 	 */
 	async getMeta(category: string): Promise<CategoryMetaFull> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/meta/${category}`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/meta/${category}`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -199,15 +268,11 @@ export const adminSettingsAPI = {
 	 * Get settings for a tenant category
 	 * GET /api/admin/tenants/:tenantId/settings/:category
 	 */
-	async getSettings(
-		category: string,
-		tenantId: string = DEFAULT_TENANT_ID
-	): Promise<CategorySettings> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/tenants/${tenantId}/settings/${category}`,
-			{
-				credentials: 'include'
-			}
+	async getSettings(category: string, tenantId?: string): Promise<CategorySettings> {
+		const resolvedTenantId = resolveTenantId(tenantId);
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${resolvedTenantId}/settings/${category}`,
+			{ tenantId: resolvedTenantId }
 		);
 
 		if (!response.ok) {
@@ -226,8 +291,8 @@ export const adminSettingsAPI = {
 	 * GET /api/admin/platform/settings/:category
 	 */
 	async getPlatformSettings(category: string): Promise<CategorySettings> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/platform/settings/${category}`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/platform/settings/${category}`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -242,22 +307,63 @@ export const adminSettingsAPI = {
 	},
 
 	/**
+	 * Update platform settings (optimistic locking)
+	 * PATCH /api/admin/platform/settings/:category
+	 */
+	async updatePlatformSettings(
+		category: string,
+		request: SettingsPatchRequest
+	): Promise<SettingsPatchResult> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/platform/settings/${category}`, {
+			method: 'PATCH',
+			includeJsonContentType: true,
+			skipTenantHeader: true,
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+
+			if (response.status === 409) {
+				if (!error.currentVersion) {
+					throw new Error('Version conflict detected. Please refresh the page and try again.');
+				}
+				throw new SettingsConflictError(
+					error.message || 'Settings were updated by someone else',
+					error.currentVersion
+				);
+			}
+
+			if (response.status === 400) {
+				throw new Error(error.message || 'Validation failed');
+			}
+
+			if (response.status === 403 || response.status === 405) {
+				throw new Error(error.message || 'Settings are read-only');
+			}
+
+			throw new Error(error.message || error.error || 'Failed to update platform settings');
+		}
+
+		return response.json();
+	},
+
+	/**
 	 * Update settings for a tenant category (optimistic locking)
 	 * PATCH /api/admin/tenants/:tenantId/settings/:category
 	 */
 	async updateSettings(
 		category: string,
 		request: SettingsPatchRequest,
-		tenantId: string = DEFAULT_TENANT_ID
+		tenantId?: string
 	): Promise<SettingsPatchResult> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/tenants/${tenantId}/settings/${category}`,
+		const resolvedTenantId = resolveTenantId(tenantId);
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${resolvedTenantId}/settings/${category}`,
 			{
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				credentials: 'include',
+				includeJsonContentType: true,
+				tenantId: resolvedTenantId,
 				body: JSON.stringify(request)
 			}
 		);
@@ -292,6 +398,81 @@ export const adminSettingsAPI = {
 		}
 
 		return response.json();
+	}
+};
+
+export const adminTokenExchangeSettingsAPI = {
+	async getConfig(): Promise<TokenExchangeConfigResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/token-exchange`, {
+			skipTenantHeader: true
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(
+				error.error_description || error.message || 'Failed to fetch token exchange settings'
+			);
+		}
+
+		return response.json();
+	},
+
+	async updateConfig(request: {
+		enabled: boolean;
+		allowedSubjectTokenTypes?: string[];
+		maxResourceParams?: number;
+		maxAudienceParams?: number;
+	}): Promise<TokenExchangeConfigResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/token-exchange`, {
+			method: 'PUT',
+			includeJsonContentType: true,
+			skipTenantHeader: true,
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(
+				error.error_description || error.message || 'Failed to update token exchange settings'
+			);
+		}
+
+		return response.json();
+	}
+};
+
+export const adminUiConfigAPI = {
+	async get(): Promise<UIConfigResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
+			skipTenantHeader: true
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.message || 'Failed to fetch UI config');
+		}
+
+		return response.json();
+	},
+
+	async update(request: {
+		baseUrl: string | null;
+		paths: Partial<UIPathConfig>;
+	}): Promise<UIConfigResponse['config']> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
+			method: 'PUT',
+			includeJsonContentType: true,
+			skipTenantHeader: true,
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.message || 'Failed to update UI config');
+		}
+
+		const result = await response.json();
+		return result.config;
 	}
 };
 
@@ -335,6 +516,11 @@ export const CATEGORY_NAMES = [
 	'check-api-audit',
 	// Login UI Customization
 	'login-ui',
+	'login-methods',
+	// Login Entry / Discovery
+	'login-entry',
+	'tenant-discovery-ui',
+	'support-ops',
 	// Platform settings (read-only)
 	'infrastructure',
 	'encryption'
@@ -438,12 +624,14 @@ export const scopedSettingsAPI = {
 		params.set('includeInheritance', 'true');
 
 		let url: string;
+		let tenantHeaderId: string | undefined;
 		switch (scope.level) {
 			case 'platform':
 				url = `${API_BASE_URL}/api/admin/platform/settings/${category}`;
 				break;
 			case 'tenant':
-				url = `${API_BASE_URL}/api/admin/tenants/${scope.tenantId || DEFAULT_TENANT_ID}/settings/${category}`;
+				tenantHeaderId = resolveTenantId(scope.tenantId);
+				url = `${API_BASE_URL}/api/admin/tenants/${tenantHeaderId}/settings/${category}`;
 				break;
 			case 'client':
 				if (!scope.clientId) {
@@ -453,8 +641,9 @@ export const scopedSettingsAPI = {
 				break;
 		}
 
-		const response = await fetch(`${url}?${params}`, {
-			credentials: 'include'
+		const response = await adminFetch(`${url}?${params}`, {
+			skipTenantHeader: scope.level === 'platform',
+			tenantId: tenantHeaderId
 		});
 
 		if (!response.ok) {
@@ -489,8 +678,8 @@ export const scopedSettingsAPI = {
 	 * Get category scope information with user permissions
 	 */
 	async getCategoryScopeInfo(category: string): Promise<CategoryScopeInfo> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/meta/${category}/scope`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/meta/${category}/scope`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -509,11 +698,9 @@ export const scopedSettingsAPI = {
 	 * GET /api/admin/clients/:clientId/settings/:category
 	 */
 	async getClientSettings(clientId: string, category: string): Promise<CategorySettings> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${clientId}/settings/${category}`,
-			{
-				credentials: 'include'
-			}
+			{}
 		);
 
 		if (!response.ok) {
@@ -536,14 +723,11 @@ export const scopedSettingsAPI = {
 		category: string,
 		request: SettingsPatchRequest
 	): Promise<SettingsPatchResult> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${clientId}/settings/${category}`,
 			{
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				credentials: 'include',
+				includeJsonContentType: true,
 				body: JSON.stringify(request)
 			}
 		);
@@ -584,7 +768,7 @@ export const scopedSettingsAPI = {
 			case 'platform':
 				return adminSettingsAPI.getPlatformSettings(category);
 			case 'tenant':
-				return adminSettingsAPI.getSettings(category, scope.tenantId || DEFAULT_TENANT_ID);
+				return adminSettingsAPI.getSettings(category, resolveTenantId(scope.tenantId));
 			case 'client':
 				if (!scope.clientId) {
 					throw new Error('Client ID is required for client scope');
@@ -604,13 +788,9 @@ export const scopedSettingsAPI = {
 	): Promise<SettingsPatchResult> {
 		switch (scope.level) {
 			case 'platform':
-				throw new Error('Platform settings are read-only');
+				return adminSettingsAPI.updatePlatformSettings(category, request);
 			case 'tenant':
-				return adminSettingsAPI.updateSettings(
-					category,
-					request,
-					scope.tenantId || DEFAULT_TENANT_ID
-				);
+				return adminSettingsAPI.updateSettings(category, request, resolveTenantId(scope.tenantId));
 			case 'client':
 				if (!scope.clientId) {
 					throw new Error('Client ID is required for client scope');

@@ -14,6 +14,7 @@
  * Table: session_clients
  * Schema:
  *   - id: TEXT PRIMARY KEY (UUID)
+ *   - tenant_id: TEXT NOT NULL
  *   - session_id: TEXT NOT NULL (FK to sessions)
  *   - client_id: TEXT NOT NULL (FK to oauth_clients)
  *   - first_token_at: INTEGER NOT NULL (timestamp)
@@ -26,6 +27,7 @@
 import { generateId, getCurrentTimestamp } from '../base';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { SessionClientWithWebhook } from '../../types/logout';
+import { requireTenantId } from '../tenant';
 
 /**
  * Session-Client association entity
@@ -36,6 +38,8 @@ import type { SessionClientWithWebhook } from '../../types/logout';
 export interface SessionClient {
   /** Unique ID (UUID) */
   id: string;
+  /** Tenant ID this association belongs to */
+  tenant_id: string;
   /** Session ID this association belongs to */
   session_id: string;
   /** Client ID (RP) that received tokens */
@@ -54,6 +58,8 @@ export interface SessionClient {
 export interface CreateSessionClientInput {
   /** Optional ID (auto-generated if not provided) */
   id?: string;
+  /** Tenant ID */
+  tenant_id?: string;
   /** Session ID */
   session_id: string;
   /** Client ID (RP) */
@@ -92,11 +98,29 @@ export interface SessionClientWithDetails extends SessionClient {
  */
 interface SessionClientRow {
   id: string;
+  tenant_id: string;
   session_id: string;
   client_id: string;
   first_token_at: number;
   last_token_at: number;
   last_seen_at: number | null;
+}
+
+interface SessionClientLogoutDetailsRow {
+  client_id: string;
+  client_name: string | null;
+  backchannel_logout_uri: string | null;
+  backchannel_logout_session_required: number;
+  frontchannel_logout_uri: string | null;
+  frontchannel_logout_session_required: number;
+  logout_webhook_uri: string | null;
+  logout_webhook_secret_encrypted: string | null;
+}
+
+export interface HydratedSessionClientLogoutTargets {
+  backchannelClients: SessionClientWithDetails[];
+  frontchannelClients: SessionClientWithDetails[];
+  webhookClients: SessionClientWithWebhook[];
 }
 
 /**
@@ -107,9 +131,11 @@ interface SessionClientRow {
  */
 export class SessionClientRepository {
   protected readonly adapter: DatabaseAdapter;
+  protected readonly tenantId: string;
 
-  constructor(adapter: DatabaseAdapter) {
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     this.adapter = adapter;
+    this.tenantId = requireTenantId(tenantId, 'SessionClientRepository');
   }
 
   /**
@@ -123,16 +149,22 @@ export class SessionClientRepository {
    */
   async createOrUpdate(input: CreateSessionClientInput): Promise<SessionClient> {
     const now = getCurrentTimestamp();
+    const tenantId = input.tenant_id
+      ? requireTenantId(input.tenant_id, 'SessionClientRepository.createOrUpdate')
+      : this.tenantId;
+    if (tenantId !== this.tenantId) {
+      throw new Error('SessionClientRepository tenant mismatch');
+    }
 
     // Check if association already exists
-    const existing = await this.findBySessionAndClient(input.session_id, input.client_id);
+    const existing = await this.findBySessionAndClient(input.session_id, input.client_id, tenantId);
 
     if (existing) {
       // Update last_token_at
-      await this.adapter.execute('UPDATE session_clients SET last_token_at = ? WHERE id = ?', [
-        now,
-        existing.id,
-      ]);
+      await this.adapter.execute(
+        'UPDATE session_clients SET last_token_at = ? WHERE id = ? AND tenant_id = ?',
+        [now, existing.id, tenantId]
+      );
       return {
         ...existing,
         last_token_at: now,
@@ -142,14 +174,15 @@ export class SessionClientRepository {
     // Create new association
     const id = input.id ?? generateId();
     const sql = `
-      INSERT INTO session_clients (id, session_id, client_id, first_token_at, last_token_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, NULL)
+      INSERT INTO session_clients (id, tenant_id, session_id, client_id, first_token_at, last_token_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL)
     `;
 
-    await this.adapter.execute(sql, [id, input.session_id, input.client_id, now, now]);
+    await this.adapter.execute(sql, [id, tenantId, input.session_id, input.client_id, now, now]);
 
     return {
       id,
+      tenant_id: tenantId,
       session_id: input.session_id,
       client_id: input.client_id,
       first_token_at: now,
@@ -165,8 +198,8 @@ export class SessionClientRepository {
    * @returns Session-client or null if not found
    */
   async findById(id: string): Promise<SessionClient | null> {
-    const sql = 'SELECT * FROM session_clients WHERE id = ?';
-    const row = await this.adapter.queryOne<SessionClientRow>(sql, [id]);
+    const sql = 'SELECT * FROM session_clients WHERE id = ? AND tenant_id = ?';
+    const row = await this.adapter.queryOne<SessionClientRow>(sql, [id, this.tenantId]);
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -177,9 +210,25 @@ export class SessionClientRepository {
    * @param clientId - Client ID
    * @returns Session-client or null if not found
    */
-  async findBySessionAndClient(sessionId: string, clientId: string): Promise<SessionClient | null> {
-    const sql = 'SELECT * FROM session_clients WHERE session_id = ? AND client_id = ?';
-    const row = await this.adapter.queryOne<SessionClientRow>(sql, [sessionId, clientId]);
+  async findBySessionAndClient(
+    sessionId: string,
+    clientId: string,
+    tenantId = this.tenantId
+  ): Promise<SessionClient | null> {
+    const normalizedTenantId = requireTenantId(
+      tenantId,
+      'SessionClientRepository.findBySessionAndClient'
+    );
+    if (normalizedTenantId !== this.tenantId) {
+      throw new Error('SessionClientRepository tenant mismatch');
+    }
+    const sql =
+      'SELECT * FROM session_clients WHERE tenant_id = ? AND session_id = ? AND client_id = ?';
+    const row = await this.adapter.queryOne<SessionClientRow>(sql, [
+      normalizedTenantId,
+      sessionId,
+      clientId,
+    ]);
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -190,8 +239,9 @@ export class SessionClientRepository {
    * @returns Array of session-clients
    */
   async findBySessionId(sessionId: string): Promise<SessionClient[]> {
-    const sql = 'SELECT * FROM session_clients WHERE session_id = ? ORDER BY first_token_at ASC';
-    const rows = await this.adapter.query<SessionClientRow>(sql, [sessionId]);
+    const sql =
+      'SELECT * FROM session_clients WHERE tenant_id = ? AND session_id = ? ORDER BY first_token_at ASC';
+    const rows = await this.adapter.query<SessionClientRow>(sql, [this.tenantId, sessionId]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -219,8 +269,8 @@ export class SessionClientRepository {
         c.frontchannel_logout_uri,
         c.frontchannel_logout_session_required
       FROM session_clients sc
-      JOIN oauth_clients c ON sc.client_id = c.client_id
-      WHERE sc.session_id = ?
+      JOIN oauth_clients c ON sc.tenant_id = c.tenant_id AND sc.client_id = c.client_id
+      WHERE sc.tenant_id = ? AND sc.session_id = ?
       ORDER BY sc.first_token_at ASC
     `;
 
@@ -232,7 +282,7 @@ export class SessionClientRepository {
         frontchannel_logout_uri: string | null;
         frontchannel_logout_session_required: number;
       }
-    >(sql, [sessionId]);
+    >(sql, [this.tenantId, sessionId]);
 
     return rows.map((row) => ({
       ...this.rowToEntity(row),
@@ -268,8 +318,8 @@ export class SessionClientRepository {
         c.frontchannel_logout_uri,
         c.frontchannel_logout_session_required
       FROM session_clients sc
-      JOIN oauth_clients c ON sc.client_id = c.client_id
-      WHERE sc.session_id = ?
+      JOIN oauth_clients c ON sc.tenant_id = c.tenant_id AND sc.client_id = c.client_id
+      WHERE sc.tenant_id = ? AND sc.session_id = ?
         AND c.backchannel_logout_uri IS NOT NULL
         AND c.backchannel_logout_uri != ''
       ORDER BY sc.first_token_at ASC
@@ -283,7 +333,7 @@ export class SessionClientRepository {
         frontchannel_logout_uri: string | null;
         frontchannel_logout_session_required: number;
       }
-    >(sql, [sessionId]);
+    >(sql, [this.tenantId, sessionId]);
 
     return rows.map((row) => ({
       ...this.rowToEntity(row),
@@ -319,8 +369,8 @@ export class SessionClientRepository {
         c.frontchannel_logout_uri,
         c.frontchannel_logout_session_required
       FROM session_clients sc
-      JOIN oauth_clients c ON sc.client_id = c.client_id
-      WHERE sc.session_id = ?
+      JOIN oauth_clients c ON sc.tenant_id = c.tenant_id AND sc.client_id = c.client_id
+      WHERE sc.tenant_id = ? AND sc.session_id = ?
         AND c.frontchannel_logout_uri IS NOT NULL
         AND c.frontchannel_logout_uri != ''
       ORDER BY sc.first_token_at ASC
@@ -334,7 +384,7 @@ export class SessionClientRepository {
         frontchannel_logout_uri: string | null;
         frontchannel_logout_session_required: number;
       }
-    >(sql, [sessionId]);
+    >(sql, [this.tenantId, sessionId]);
 
     return rows.map((row) => ({
       ...this.rowToEntity(row),
@@ -365,8 +415,8 @@ export class SessionClientRepository {
         c.logout_webhook_uri,
         c.logout_webhook_secret_encrypted
       FROM session_clients sc
-      JOIN oauth_clients c ON sc.client_id = c.client_id
-      WHERE sc.session_id = ?
+      JOIN oauth_clients c ON sc.tenant_id = c.tenant_id AND sc.client_id = c.client_id
+      WHERE sc.tenant_id = ? AND sc.session_id = ?
         AND c.logout_webhook_uri IS NOT NULL
         AND c.logout_webhook_uri != ''
       ORDER BY sc.first_token_at ASC
@@ -379,7 +429,7 @@ export class SessionClientRepository {
       client_name: string | null;
       logout_webhook_uri: string | null;
       logout_webhook_secret_encrypted: string | null;
-    }>(sql, [sessionId]);
+    }>(sql, [this.tenantId, sessionId]);
 
     return rows.map((row) => ({
       id: row.id,
@@ -391,6 +441,80 @@ export class SessionClientRepository {
     }));
   }
 
+  async hydrateLogoutTargetsFromSessionClients(
+    sessionClients: SessionClient[]
+  ): Promise<HydratedSessionClientLogoutTargets> {
+    const tenantScopedClients = sessionClients.filter(
+      (client) => client.tenant_id === this.tenantId
+    );
+    const clientIds = [...new Set(tenantScopedClients.map((client) => client.client_id))];
+    if (clientIds.length === 0) {
+      return {
+        backchannelClients: [],
+        frontchannelClients: [],
+        webhookClients: [],
+      };
+    }
+
+    const placeholders = clientIds.map(() => '?').join(', ');
+    const rows = await this.adapter.query<SessionClientLogoutDetailsRow>(
+      `
+        SELECT
+          client_id,
+          client_name,
+          backchannel_logout_uri,
+          backchannel_logout_session_required,
+          frontchannel_logout_uri,
+          frontchannel_logout_session_required,
+          logout_webhook_uri,
+          logout_webhook_secret_encrypted
+        FROM oauth_clients
+        WHERE tenant_id = ? AND client_id IN (${placeholders})
+      `,
+      [this.tenantId, ...clientIds]
+    );
+    const detailsByClientId = new Map(rows.map((row) => [row.client_id, row]));
+    const withDetails = tenantScopedClients.flatMap((client): SessionClientWithDetails[] => {
+      const details = detailsByClientId.get(client.client_id);
+      if (!details) {
+        return [];
+      }
+      return [
+        {
+          ...client,
+          client_name: details.client_name,
+          backchannel_logout_uri: details.backchannel_logout_uri,
+          backchannel_logout_session_required: Boolean(details.backchannel_logout_session_required),
+          frontchannel_logout_uri: details.frontchannel_logout_uri,
+          frontchannel_logout_session_required: Boolean(
+            details.frontchannel_logout_session_required
+          ),
+        },
+      ];
+    });
+
+    return {
+      backchannelClients: withDetails.filter((client) => Boolean(client.backchannel_logout_uri)),
+      frontchannelClients: withDetails.filter((client) => Boolean(client.frontchannel_logout_uri)),
+      webhookClients: tenantScopedClients.flatMap((client): SessionClientWithWebhook[] => {
+        const details = detailsByClientId.get(client.client_id);
+        if (!details?.logout_webhook_uri) {
+          return [];
+        }
+        return [
+          {
+            id: client.id,
+            session_id: client.session_id,
+            client_id: client.client_id,
+            client_name: details.client_name,
+            logout_webhook_uri: details.logout_webhook_uri,
+            logout_webhook_secret_encrypted: details.logout_webhook_secret_encrypted,
+          },
+        ];
+      }),
+    };
+  }
+
   /**
    * Find all sessions for a client
    *
@@ -400,8 +524,9 @@ export class SessionClientRepository {
    * @returns Array of session-clients
    */
   async findByClientId(clientId: string): Promise<SessionClient[]> {
-    const sql = 'SELECT * FROM session_clients WHERE client_id = ? ORDER BY last_token_at DESC';
-    const rows = await this.adapter.query<SessionClientRow>(sql, [clientId]);
+    const sql =
+      'SELECT * FROM session_clients WHERE tenant_id = ? AND client_id = ? ORDER BY last_token_at DESC';
+    const rows = await this.adapter.query<SessionClientRow>(sql, [this.tenantId, clientId]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -419,9 +544,9 @@ export class SessionClientRepository {
     const sql = `
       UPDATE session_clients
       SET last_seen_at = ?
-      WHERE session_id = ? AND client_id = ?
+      WHERE tenant_id = ? AND session_id = ? AND client_id = ?
     `;
-    const result = await this.adapter.execute(sql, [now, sessionId, clientId]);
+    const result = await this.adapter.execute(sql, [now, this.tenantId, sessionId, clientId]);
     return result.rowsAffected > 0;
   }
 
@@ -439,9 +564,9 @@ export class SessionClientRepository {
     const sql = `
       UPDATE session_clients
       SET last_token_at = ?
-      WHERE session_id = ? AND client_id = ?
+      WHERE tenant_id = ? AND session_id = ? AND client_id = ?
     `;
-    const result = await this.adapter.execute(sql, [now, sessionId, clientId]);
+    const result = await this.adapter.execute(sql, [now, this.tenantId, sessionId, clientId]);
     return result.rowsAffected > 0;
   }
 
@@ -452,8 +577,8 @@ export class SessionClientRepository {
    * @returns True if deleted, false if not found
    */
   async delete(id: string): Promise<boolean> {
-    const sql = 'DELETE FROM session_clients WHERE id = ?';
-    const result = await this.adapter.execute(sql, [id]);
+    const sql = 'DELETE FROM session_clients WHERE id = ? AND tenant_id = ?';
+    const result = await this.adapter.execute(sql, [id, this.tenantId]);
     return result.rowsAffected > 0;
   }
 
@@ -467,8 +592,8 @@ export class SessionClientRepository {
    * @returns Number of deleted associations
    */
   async deleteBySessionId(sessionId: string): Promise<number> {
-    const sql = 'DELETE FROM session_clients WHERE session_id = ?';
-    const result = await this.adapter.execute(sql, [sessionId]);
+    const sql = 'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, sessionId]);
     return result.rowsAffected;
   }
 
@@ -481,8 +606,8 @@ export class SessionClientRepository {
    * @returns Number of deleted associations
    */
   async deleteByClientId(clientId: string): Promise<number> {
-    const sql = 'DELETE FROM session_clients WHERE client_id = ?';
-    const result = await this.adapter.execute(sql, [clientId]);
+    const sql = 'DELETE FROM session_clients WHERE tenant_id = ? AND client_id = ?';
+    const result = await this.adapter.execute(sql, [this.tenantId, clientId]);
     return result.rowsAffected;
   }
 
@@ -493,8 +618,9 @@ export class SessionClientRepository {
    * @returns Number of clients
    */
   async countBySessionId(sessionId: string): Promise<number> {
-    const sql = 'SELECT COUNT(*) as count FROM session_clients WHERE session_id = ?';
-    const result = await this.adapter.queryOne<{ count: number }>(sql, [sessionId]);
+    const sql =
+      'SELECT COUNT(*) as count FROM session_clients WHERE tenant_id = ? AND session_id = ?';
+    const result = await this.adapter.queryOne<{ count: number }>(sql, [this.tenantId, sessionId]);
     return result?.count ?? 0;
   }
 
@@ -505,8 +631,9 @@ export class SessionClientRepository {
    * @returns Number of sessions
    */
   async countByClientId(clientId: string): Promise<number> {
-    const sql = 'SELECT COUNT(*) as count FROM session_clients WHERE client_id = ?';
-    const result = await this.adapter.queryOne<{ count: number }>(sql, [clientId]);
+    const sql =
+      'SELECT COUNT(*) as count FROM session_clients WHERE tenant_id = ? AND client_id = ?';
+    const result = await this.adapter.queryOne<{ count: number }>(sql, [this.tenantId, clientId]);
     return result?.count ?? 0;
   }
 
@@ -527,11 +654,15 @@ export class SessionClientRepository {
     const cutoff = getCurrentTimestamp() - inactiveDurationMs;
     const sql = `
       SELECT * FROM session_clients
-      WHERE session_id = ?
+      WHERE tenant_id = ? AND session_id = ?
         AND (last_seen_at IS NULL OR last_seen_at < ?)
       ORDER BY first_token_at ASC
     `;
-    const rows = await this.adapter.query<SessionClientRow>(sql, [sessionId, cutoff]);
+    const rows = await this.adapter.query<SessionClientRow>(sql, [
+      this.tenantId,
+      sessionId,
+      cutoff,
+    ]);
     return rows.map((row) => this.rowToEntity(row));
   }
 
@@ -541,6 +672,7 @@ export class SessionClientRepository {
   private rowToEntity(row: SessionClientRow): SessionClient {
     return {
       id: row.id,
+      tenant_id: row.tenant_id,
       session_id: row.session_id,
       client_id: row.client_id,
       first_token_at: row.first_token_at,

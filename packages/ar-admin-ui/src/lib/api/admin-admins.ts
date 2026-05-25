@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Users Management API Client
  *
@@ -41,10 +42,15 @@ export interface AdminUserDetail extends AdminUser {
  */
 export interface AdminRoleAssignment {
 	id: string;
+	assignment_id: string;
+	role_id: string;
 	name: string;
 	display_name: string | null;
+	scope_type: 'global' | 'tenant' | 'org';
+	scope_id: string | null;
 	assigned_at: number;
 	expires_at: number | null;
+	assigned_by: string | null;
 }
 
 /**
@@ -104,6 +110,8 @@ export interface UpdateAdminUserInput {
  */
 export interface AssignRoleInput {
 	role_id: string;
+	scope_type?: 'global' | 'tenant';
+	scope_id?: string;
 	expires_at?: number;
 }
 
@@ -128,7 +136,7 @@ export const adminAdminsAPI = {
 		const queryString = searchParams.toString();
 		const url = `${API_BASE_URL}/api/admin/admins${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -145,9 +153,12 @@ export const adminAdminsAPI = {
 	 * GET /api/admin/admins/:id
 	 */
 	async get(id: string): Promise<AdminUserDetail> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			if (response.status === 404) {
@@ -165,7 +176,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins
 	 */
 	async create(data: CreateAdminUserInput): Promise<AdminUser> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -185,12 +196,15 @@ export const adminAdminsAPI = {
 	 * PATCH /api/admin/admins/:id
 	 */
 	async update(id: string, data: UpdateAdminUserInput): Promise<AdminUser> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`,
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -205,10 +219,13 @@ export const adminAdminsAPI = {
 	 * DELETE /api/admin/admins/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}`,
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -223,7 +240,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/suspend
 	 */
 	async suspend(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/suspend`,
 			{
 				method: 'POST',
@@ -244,7 +261,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/activate
 	 */
 	async activate(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/activate`,
 			{
 				method: 'POST',
@@ -265,7 +282,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/unlock
 	 */
 	async unlock(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/unlock`,
 			{
 				method: 'POST',
@@ -286,7 +303,7 @@ export const adminAdminsAPI = {
 	 * POST /api/admin/admins/:id/roles
 	 */
 	async assignRole(id: string, data: AssignRoleInput): Promise<{ id: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/roles`,
 			{
 				method: 'POST',
@@ -309,7 +326,7 @@ export const adminAdminsAPI = {
 	 * DELETE /api/admin/admins/:id/roles/:roleId
 	 */
 	async removeRole(id: string, roleId: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`,
 			{
 				method: 'DELETE',
@@ -320,6 +337,32 @@ export const adminAdminsAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error_description || 'Failed to remove role');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Remove a specific role assignment from an admin user
+	 * DELETE /api/admin/admins/:id/role-assignments/:assignmentId
+	 */
+	async removeRoleAssignment(
+		id: string,
+		assignmentId: string
+	): Promise<{ success: boolean; message: string }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admins/${encodeURIComponent(id)}/role-assignments/${encodeURIComponent(
+				assignmentId
+			)}`,
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to remove role assignment');
 		}
 
 		return response.json();

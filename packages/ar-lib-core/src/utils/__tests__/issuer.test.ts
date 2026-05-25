@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildIssuerUrl,
+  getDefaultTenantId,
   isMultiTenantEnabled,
   validateHostHeader,
   extractSubdomain,
@@ -25,7 +26,7 @@ describe('Issuer URL Builder', () => {
           ISSUER_URL: 'https://auth.example.com',
         } as Env;
 
-        const issuer = buildIssuerUrl(env);
+        const issuer = buildIssuerUrl(env, getDefaultTenantId(env));
         expect(issuer).toBe('https://auth.example.com');
       });
 
@@ -50,19 +51,24 @@ describe('Issuer URL Builder', () => {
         expect(issuer).toBe('https://acme.authrim.com');
       });
 
-      it('should use default tenant ID when subdomain not provided', () => {
-        const issuer = buildIssuerUrl(mtEnv);
+      it('should use explicit default tenant ID', () => {
+        const issuer = buildIssuerUrl(mtEnv, getDefaultTenantId(mtEnv));
         expect(issuer).toBe('https://default.authrim.com');
       });
 
       it('should use naked base domain for the primary/default tenant when enabled', () => {
-        const issuer = buildIssuerUrl({
+        const env = {
           ...mtEnv,
           DEFAULT_TENANT_ID: 'default',
           NAKED_DOMAIN_AS_ISSUER: 'true',
-        } as Env);
+        } as Env;
+        const issuer = buildIssuerUrl(env, getDefaultTenantId(env));
 
         expect(issuer).toBe('https://authrim.com');
+      });
+
+      it('should reject an empty tenant ID in multi-tenant mode', () => {
+        expect(() => buildIssuerUrl(mtEnv, '')).toThrow('buildIssuerUrl requires tenantId');
       });
 
       it('should keep subdomain URLs for non-primary tenants when naked domain is enabled', () => {
@@ -91,6 +97,19 @@ describe('Issuer URL Builder', () => {
             'main'
           )
         ).toBe('https://authrim.com');
+      });
+
+      it('should keep the primary tenant on a subdomain when omission is disabled', () => {
+        expect(
+          buildIssuerUrl(
+            {
+              ...mtEnv,
+              DEFAULT_TENANT_ID: 'default',
+              PRIMARY_TENANT_ID: 'main',
+            } as Env,
+            'main'
+          )
+        ).toBe('https://main.authrim.com');
       });
 
       it('should handle different subdomains', () => {
@@ -197,17 +216,42 @@ describe('Issuer URL Builder', () => {
         expect(result.statusCode).toBe(400);
       });
 
-      it('should handle naked domain with DEFAULT_TENANT_ID', () => {
+      it('should reject naked domain when tenant omission is disabled', () => {
         const result = validateHostHeader('authrim.com', { ...mtEnv, DEFAULT_TENANT_ID: 'main' });
+
+        expect(result.valid).toBe(false);
+        expect(result.tenantId).toBeNull();
+        expect(result.error).toBe('tenant_not_found');
+      });
+
+      it('should reject naked domain even when PRIMARY_TENANT_ID is set but omission is disabled', () => {
+        const result = validateHostHeader('authrim.com', {
+          ...mtEnv,
+          DEFAULT_TENANT_ID: 'default',
+          PRIMARY_TENANT_ID: 'main',
+        });
+
+        expect(result.valid).toBe(false);
+        expect(result.tenantId).toBeNull();
+        expect(result.error).toBe('tenant_not_found');
+      });
+
+      it('should handle naked domain with DEFAULT_TENANT_ID when omission is enabled', () => {
+        const result = validateHostHeader('authrim.com', {
+          ...mtEnv,
+          DEFAULT_TENANT_ID: 'main',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
+        });
 
         expect(result.valid).toBe(true);
         expect(result.tenantId).toBe('main');
       });
 
-      it('should handle naked domain with PRIMARY_TENANT_ID', () => {
+      it('should handle naked domain with PRIMARY_TENANT_ID when omission is enabled', () => {
         const result = validateHostHeader('authrim.com', {
           ...mtEnv,
           PRIMARY_TENANT_ID: 'primary',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
         });
 
         expect(result.valid).toBe(true);

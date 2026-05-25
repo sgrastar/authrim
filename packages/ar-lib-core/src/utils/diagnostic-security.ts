@@ -587,7 +587,6 @@ function extractTokenEndpointBody(body: Record<string, unknown>): Record<string,
     'grant_type',
     'scope',
     'redirect_uri',
-    'code_verifier', // PKCE (safe to log, single-use)
     'client_id', // Public client ID
   ];
 
@@ -597,12 +596,11 @@ function extractTokenEndpointBody(body: Record<string, unknown>): Record<string,
     }
   }
 
-  // Hash sensitive fields
   if ('code' in body && typeof body.code === 'string') {
-    safe.code_hash = `sha256:${body.code.slice(0, 8)}...`; // Placeholder (will hash async)
+    safe.code_present = true;
   }
 
-  // EXCLUDE: client_secret, refresh_token, password
+  // EXCLUDE: code, code_verifier, client_secret, refresh_token, password
   // These are NEVER logged
 
   return safe;
@@ -699,12 +697,11 @@ export function sanitizeQueryParams(query: Record<string, string>): Record<strin
     }
   }
 
-  // Hash sensitive params (if present)
   if ('code' in query) {
-    safe.code_hash = `sha256:${query.code.slice(0, 8)}...`;
+    safe.code_present = 'true';
   }
 
-  // EXCLUDE: access_token, id_token, session_state, etc.
+  // EXCLUDE: code, code_verifier, access_token, id_token, session_state, etc.
 
   return safe;
 }
@@ -717,7 +714,7 @@ export function sanitizeQueryParams(query: Record<string, string>): Record<strin
  */
 export function containsPII(value: string): boolean {
   // Email pattern
-  if (/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/.test(value)) {
+  if (/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(value)) {
     return true;
   }
 
@@ -727,7 +724,10 @@ export function containsPII(value: string): boolean {
   }
 
   // Credit card pattern (basic)
-  if (/\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/.test(value)) {
+  if (
+    /\b(?:\d{4}[-\s]?){3}\d{4}\b/.test(value) ||
+    /\b3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}\b/.test(value)
+  ) {
     return true;
   }
 
@@ -750,7 +750,7 @@ export function redactPII(value: string): string {
 
   // Redact email
   redacted = redacted.replace(
-    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
+    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
     '[EMAIL_REDACTED]'
   );
 
@@ -758,10 +758,17 @@ export function redactPII(value: string): string {
   redacted = redacted.replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, '[PHONE_REDACTED]');
 
   // Redact credit card
-  redacted = redacted.replace(/\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, '[CC_REDACTED]');
+  redacted = redacted.replace(/\b(?:\d{4}[-\s]?){3}\d{4}\b/g, '[CC_REDACTED]');
+  redacted = redacted.replace(/\b3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}\b/g, '[CC_REDACTED]');
 
   // Redact SSN
   redacted = redacted.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN_REDACTED]');
+
+  // Redact compact JWT-like tokens
+  redacted = redacted.replace(
+    /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+    '[JWT_REDACTED]'
+  );
 
   return redacted;
 }

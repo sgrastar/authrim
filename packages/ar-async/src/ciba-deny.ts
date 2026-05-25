@@ -7,7 +7,15 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  buildDOInstanceName,
+  parseCIBARequestId,
+  getCIBARequestStoreById,
+} from '@authrim/ar-lib-core';
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * POST /api/ciba/deny
@@ -27,6 +35,16 @@ import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-
  */
 export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     // Parse JSON request body
     const body = await c.req.json();
@@ -41,14 +59,18 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get CIBA request metadata from CIBARequestStore
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
-    const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
+    const parsedCibaId = parseCIBARequestId(authReqId);
+    const cibaRequestStore = parsedCibaId
+      ? getCIBARequestStoreById(c.env, authReqId, tenantId).stub
+      : c.env.CIBA_REQUEST_STORE.get(
+          c.env.CIBA_REQUEST_STORE.idFromName(buildDOInstanceName('ciba', tenantId))
+        );
 
     // First, verify the request exists and is pending
     const getResponse = await cibaRequestStore.fetch(
       new Request('https://internal/get-by-auth-req-id', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ auth_req_id: authReqId }),
       })
     );
@@ -72,7 +94,7 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
     const denyResponse = await cibaRequestStore.fetch(
       new Request('https://internal/deny', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({
           auth_req_id: authReqId,
           reason: reason || 'User rejected',

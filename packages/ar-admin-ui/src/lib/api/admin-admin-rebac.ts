@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin ReBAC API Client (for Admin Operators)
  *
@@ -113,7 +114,7 @@ export const adminAdminRebacAPI = {
 		if (params?.offset) queryParams.set('offset', params.offset.toString());
 
 		const url = `${API_BASE_URL}/api/admin/admin-rebac-definitions${queryParams.toString() ? `?${queryParams}` : ''}`;
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -130,7 +131,7 @@ export const adminAdminRebacAPI = {
 	 * GET /api/admin/admin-rebac-definitions/:id
 	 */
 	async getDefinition(id: string): Promise<AdminRebacDefinition> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions/${id}`, {
 			credentials: 'include'
 		});
 
@@ -147,7 +148,7 @@ export const adminAdminRebacAPI = {
 	 * POST /api/admin/admin-rebac-definitions
 	 */
 	async createDefinition(input: AdminRebacDefinitionCreateInput): Promise<AdminRebacDefinition> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -172,7 +173,7 @@ export const adminAdminRebacAPI = {
 		id: string,
 		input: AdminRebacDefinitionUpdateInput
 	): Promise<AdminRebacDefinition> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions/${id}`, {
 			method: 'PATCH',
 			headers: {
 				'Content-Type': 'application/json'
@@ -194,7 +195,7 @@ export const adminAdminRebacAPI = {
 	 * DELETE /api/admin/admin-rebac-definitions/:id
 	 */
 	async deleteDefinition(id: string): Promise<void> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-rebac-definitions/${id}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});
@@ -224,7 +225,7 @@ export const adminAdminRebacAPI = {
 		if (params?.offset) queryParams.set('offset', params.offset.toString());
 
 		const url = `${API_BASE_URL}/api/admin/admin-relationships${queryParams.toString() ? `?${queryParams}` : ''}`;
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -241,7 +242,7 @@ export const adminAdminRebacAPI = {
 	 * GET /api/admin/admin-relationships/:id
 	 */
 	async getRelationship(id: string): Promise<AdminRelationship> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-relationships/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-relationships/${id}`, {
 			credentials: 'include'
 		});
 
@@ -258,7 +259,7 @@ export const adminAdminRebacAPI = {
 	 * POST /api/admin/admin-relationships
 	 */
 	async createRelationship(input: AdminRelationshipCreateInput): Promise<AdminRelationship> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-relationships`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-relationships`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -280,7 +281,7 @@ export const adminAdminRebacAPI = {
 	 * DELETE /api/admin/admin-relationships/:id
 	 */
 	async deleteRelationship(id: string): Promise<void> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-relationships/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-relationships/${id}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});
@@ -307,7 +308,7 @@ export const adminAdminRebacAPI = {
 		if (params?.direction) queryParams.set('direction', params.direction);
 
 		const url = `${API_BASE_URL}/api/admin/admins/${userId}/relationships${queryParams.toString() ? `?${queryParams}` : ''}`;
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -327,7 +328,7 @@ export const adminAdminRebacAPI = {
 		userId: string,
 		input: Omit<AdminRelationshipCreateInput, 'from_id'>
 	): Promise<AdminRelationship> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admins/${userId}/relationships`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admins/${userId}/relationships`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -349,7 +350,7 @@ export const adminAdminRebacAPI = {
 	 * DELETE /api/admin/admins/:userId/relationships/:relationshipId
 	 */
 	async deleteRelationshipForUser(userId: string, relationshipId: string): Promise<void> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admins/${userId}/relationships/${relationshipId}`,
 			{
 				method: 'DELETE',

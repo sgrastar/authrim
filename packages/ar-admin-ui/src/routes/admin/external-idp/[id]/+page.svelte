@@ -7,6 +7,7 @@
 		type ExternalIdPProvider,
 		type UpdateProviderRequest
 	} from '$lib/api/admin-external-providers';
+	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { ToggleSwitch } from '$lib/components';
 
 	let provider: ExternalIdPProvider | null = $state(null);
@@ -36,6 +37,7 @@
 	let alwaysFetchUserinfo = $state(false);
 	let enableSso = $state(true);
 	let iconUrl = $state('');
+	let iconName = $state('');
 	let buttonColor = $state('');
 	let buttonColorDark = $state('');
 	let buttonText = $state('');
@@ -149,6 +151,7 @@
 			alwaysFetchUserinfo = data.alwaysFetchUserinfo || false;
 			enableSso = data.enableSso !== false;
 			iconUrl = data.iconUrl || '';
+			iconName = data.iconName || '';
 			buttonColor = data.buttonColor || '';
 			buttonColorDark = data.buttonColorDark || '';
 			buttonText = data.buttonText || '';
@@ -197,7 +200,8 @@
 				require_email_verified: requireEmailVerified,
 				always_fetch_userinfo: alwaysFetchUserinfo,
 				enable_sso: enableSso,
-				icon_url: iconUrl || undefined,
+				icon_url: iconUrl || null,
+				icon_name: iconName || null,
 				button_color: buttonColor || undefined,
 				button_color_dark: buttonColorDark || undefined,
 				button_text: buttonText || undefined
@@ -545,6 +549,15 @@
 							bind:value={iconUrl}
 							placeholder="ex. https://example.com/icon.png"
 							class="form-input"
+						/>
+					</div>
+
+					<div class="form-group form-group-full">
+						<LoginProviderIconPicker
+							bind:value={iconName}
+							defaultIcon="sign-in"
+							defaultLabel="Automatic"
+							description="Used when Icon URL is empty. Choose Automatic to keep the built-in provider fallback."
 						/>
 					</div>
 

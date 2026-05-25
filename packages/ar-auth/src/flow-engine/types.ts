@@ -1,10 +1,10 @@
 /**
- * Flow Engine - 3層IR型定義
+ * Flow Engine - three-layer IR type definitions
  *
- * アーキテクチャ原則:
- * - GraphDefinition（編集用）: Admin UI / Flow Designerで使用
- * - CompiledPlan（実行用）: Flow Engineが実行時に参照
- * - RuntimeState（DO保存用）: Durable Objectに永続化
+ * Architecture principles:
+ * - GraphDefinition (for editing): Used by Admin UI / Flow Designer
+ * - CompiledPlan (for execution): Flow Engine references it at runtime
+ * - RuntimeState (for DO storage): Persisted to Durable Object
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -20,165 +20,165 @@ import type {
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
-// Layer 1: GraphDefinition（編集用）
-// Admin UI / Flow Designerで使用。ビジュアル編集に最適化。
+// Layer 1: GraphDefinition (for editing)
+// Used by Admin UI / Flow Designer.Optimized for visual editing.
 // =============================================================================
 
 /**
- * GraphDefinition - Admin UI / Flow Designer用
- * ビジュアル編集に最適化された形式
+ * GraphDefinition - Admin UI / Flow Designerfor
+ * Format optimized for visual editing
  */
 export interface GraphDefinition {
-  /** 一意識別子 */
+  /** Unique identifier */
   id: string;
 
-  /** フロー定義のバージョン（セマンティックバージョン e.g., "1.0.0"） */
+  /** Flow definition version (semantic version e.g., "1.0.0") */
   flowVersion: string;
 
-  /** フロー名称 */
+  /** Flow name */
   name: string;
 
-  /** フロー説明 */
+  /** Flow description */
   description: string;
 
-  /** 対象プロファイル */
+  /** target profile */
   profileId: ProfileId;
 
-  /** ノード定義 */
+  /** Node definitions */
   nodes: GraphNode[];
 
-  /** エッジ定義 */
+  /** Edge definitions */
   edges: GraphEdge[];
 
-  /** メタデータ */
+  /** Metadata */
   metadata: GraphMetadata;
 }
 
 /**
- * グラフノード - フローの各ステップ
+ * Graph node - each step in the flow
  */
 export interface GraphNode {
-  /** ノード一意識別子 */
+  /** Unique node identifier */
   id: string;
 
-  /** ノードタイプ */
+  /** Node type */
   type: GraphNodeType;
 
-  /** UI配置位置（Flow Designer用） */
+  /** UI position (Flow Designerfor) */
   position: { x: number; y: number };
 
-  /** ノードデータ */
+  /** Node data */
   data: GraphNodeData;
 }
 
 /**
- * ノードデータ
+ * Node data
  */
 export interface GraphNodeData {
-  /** 表示ラベル */
+  /** Display label */
   label: string;
 
-  /** Intent（意図/目的） */
+  /** Intent (intent/purpose) */
   intent: Intent;
 
-  /** Capabilityテンプレート */
+  /** Capability template */
   capabilities: CapabilityTemplate[];
 
-  /** ノード固有設定 */
+  /** Node-specific settings */
   config: Record<string, unknown>;
 }
 
 /**
- * ノードタイプ
+ * Node type
  *
- * 設計原則:
- * - 選択 = UIノード（ユーザーが選ぶ）
- * - 判断 = Check/Resolveノード（システムが判定）
- * - 実行 = Actionノード（副作用を起こす）
- * - 制御 = Controlノード（フロー制御）
+ * Design principles:
+ * - selection = UI node (chosen by the user)
+ * - decision = Check/Resolve node (decided by the system)
+ * - execution = Action node (performs side effects)
+ * - control = Control node (flow control)
  */
 export type GraphNodeType =
-  // === 1. Control Nodes（制御系）===
-  | 'start' // フロー開始
-  | 'end' // フロー終了
-  | 'goto' // Flow内ジャンプ（ループ・共通処理用）
+  // === 1. Control Nodes (control nodes)===
+  | 'start' // flow start
+  | 'end' // flow end
+  | 'goto' // jump within the flow (for loops and shared processing)
 
-  // === 2. State/Check Nodes（状態判定系）===
-  | 'check_session' // セッション有無確認
-  | 'check_auth_level' // ACR/強度チェック
-  | 'check_first_login' // 初回ログインか
-  | 'check_user_attribute' // ユーザー属性チェック
+  // === 2. State/Check Nodes (state/check nodes)===
+  | 'check_session' // check for a session
+  | 'check_auth_level' // ACR/strength check
+  | 'check_first_login' // first login check
+  | 'check_user_attribute' // user attribute check
   | 'check_context' // client/locale/ip/country
-  | 'check_risk' // リスクスコア
+  | 'check_risk' // risk score
 
-  // === 3. Selection/UI Nodes（選択・入力系）===
-  | 'auth_method_select' // 認証方法選択（email or social等）
-  | 'login_method_select' // ログイン方法選択（passkey or OTP等）
-  | 'identifier' // 識別子入力（email/phone/username）
-  | 'profile_input' // プロフィール入力（name/birthdate等）
-  | 'custom_form' // 管理者定義フォーム
-  | 'information' // 説明のみ（読み取り専用）
-  | 'challenge' // CAPTCHA/Botチャレンジ
+  // === 3. Selection/UI Nodes (selection/input nodes)===
+  | 'auth_method_select' // authentication method selection (email, social, etc.)
+  | 'login_method_select' // login method selection (passkey, OTP, etc.)
+  | 'identifier' // identifier input (email/phone/username)
+  | 'profile_input' // profile input (name/birthdate, etc.)
+  | 'custom_form' // administrator-defined form
+  | 'information' // information only (read-only)
+  | 'challenge' // CAPTCHA/Bot challenge
 
-  // === 4. Authentication Nodes（認証実行系）===
-  | 'login' // 認証実行（passkey/otp/password/social）
-  | 'mfa' // 追加認証（TOTP/SMS/WebAuthn）
-  | 'register' // 新規登録
+  // === 4. Authentication Nodes (authentication execution nodes)===
+  | 'login' // authentication execution (passkey/otp/password/social)
+  | 'mfa' // additional authentication (TOTP/SMS/WebAuthn)
+  | 'register' // registration
 
-  // === 5. Consent/Profile Nodes（同意・プロフィール）===
-  | 'consent' // 利用規約・同意
-  | 'check_consent_status' // 同意済みか確認
-  | 'record_consent' // 同意記録（監査用）
+  // === 5. Consent/Profile Nodes (consent/profile nodes)===
+  | 'consent' // terms of service・consent
+  | 'check_consent_status' // check consent status
+  | 'record_consent' // consent recording (for audit)
 
-  // === 6. Resolve Nodes（解決系 - 重要）===
-  | 'resolve_tenant' // テナント解決（email domain等から）
-  | 'resolve_org' // 組織解決
-  | 'resolve_policy' // ポリシー解決
+  // === 6. Resolve Nodes (resolve nodes - important)===
+  | 'resolve_tenant' // tenant resolution (from email domain, etc.)
+  | 'resolve_org' // organization resolution
+  | 'resolve_policy' // policy resolution
 
-  // === 7. Session/Token Nodes（セッション・トークン）===
-  | 'issue_tokens' // トークン発行
-  | 'refresh_session' // セッション更新
-  | 'revoke_session' // 強制ログアウト
-  | 'bind_device' // デバイス紐付け
-  | 'link_account' // ソーシャル連携・ID統合
+  // === 7. Session/Token Nodes (session/token nodes)===
+  | 'issue_tokens' // issue tokens
+  | 'refresh_session' // refresh session
+  | 'revoke_session' // force logout
+  | 'bind_device' // device binding
+  | 'link_account' // social linking / identity stitching
 
-  // === 8. Side Effect Nodes（外部連携・副作用）===
-  | 'redirect' // 意味ベースリダイレクト
-  | 'webhook' // 外部通知
-  | 'event_emit' // 内部イベント発火（audit/analytics）
-  | 'email_send' // メール送信
-  | 'sms_send' // SMS送信
-  | 'push_notify' // Push通知
+  // === 8. Side Effect Nodes (external integration / side effects)===
+  | 'redirect' // semantic redirect
+  | 'webhook' // external notification
+  | 'event_emit' // emit internal event (audit/analytics)
+  | 'email_send' // send email
+  | 'sms_send' // SMSsubmit
+  | 'push_notify' // push notification
 
-  // === 9. Logic/Decision Nodes（条件・分岐）===
-  | 'decision' // 複合条件分岐
-  | 'switch' // enum分岐（locale/client_type）
+  // === 9. Logic/Decision Nodes (condition/branch nodes)===
+  | 'decision' // compound condition branch
+  | 'switch' // enum branching (locale/client_type)
 
-  // === 10. Policy Nodes（ポリシー判定）===
-  | 'policy_check' // RBAC/ABAC/ReBAC判定
+  // === 10. Policy Nodes (policy decision)===
+  | 'policy_check' // RBAC/ABAC/ReBAC decision
 
   // === 11. Error/Debug Nodes ===
-  | 'error' // エラー表示（retry/support）
-  | 'log' // ログ出力（開発用）
+  | 'error' // error display (retry/support)
+  | 'log' // logging (for development)
 
   // === Legacy (deprecated, kept for migration) ===
-  | 'auth_method' // → auth_method_select に移行
-  | 'user_input' // → profile_input/custom_form に移行
-  | 'condition' // → decision に移行
-  | 'check_user' // → check_user_attribute に移行
-  | 'set_variable' // → 内部処理へ
-  | 'call_api' // → webhook に統合
-  | 'send_notification' // → email_send/sms_send/push_notify に分割
-  | 'risk_check' // → check_risk に移行
-  | 'wait_input'; // → custom_form に移行
+  | 'auth_method' // → auth_method_select migrate to
+  | 'user_input' // → profile_input/custom_form migrate to
+  | 'condition' // → decision migrate to
+  | 'check_user' // → check_user_attribute migrate to
+  | 'set_variable' // → to internal processing
+  | 'call_api' // → webhook merge into
+  | 'send_notification' // → email_send/sms_send/push_notify split into
+  | 'risk_check' // → check_risk migrate to
+  | 'wait_input'; // → custom_form migrate to
 
 // =============================================================================
-// Condition Types - 条件評価用
+// Condition Types - for condition evaluation
 // =============================================================================
 
 /**
- * 条件キー - 評価対象のデータパス
- * Descope dynamic keysを参考に設計
+ * Condition key - data path to evaluate
+ * Designed with Descope dynamic keys as a reference
  */
 export type ConditionKey =
   // === User Attributes ===
@@ -254,7 +254,7 @@ export type ConditionKey =
   | `var.${string}`;
 
 /**
- * 条件演算子
+ * Condition operator
  */
 export type ConditionOperator =
   | 'equals' // ==
@@ -276,41 +276,41 @@ export type ConditionOperator =
   | 'isFalse'; // boolean false (no value needed)
 
 /**
- * 単一条件
+ * Single condition
  */
 export interface FlowCondition {
-  /** 条件キー */
-  key: ConditionKey | string; // stringでカスタムキーも許可
+  /** Condition key */
+  key: ConditionKey | string; // allow custom keys as strings
 
-  /** 演算子 */
+  /** Operator */
   operator: ConditionOperator;
 
-  /** 比較値（isTrue/isFalseでは不要） */
+  /** Comparison value (not needed for isTrue/isFalse) */
   value?: unknown;
 }
 
 /**
- * 条件グループ（複数条件の組み合わせ）
+ * Condition group (combination of multiple conditions)
  */
 export interface ConditionGroup {
-  /** 論理演算子 */
+  /** Logical operator */
   logic: 'and' | 'or';
 
-  /** 条件リスト */
+  /** Condition list */
   conditions: (FlowCondition | ConditionGroup)[];
 }
 
 /**
- * ノード出力 - 直前ノードの結果
+ * Node output - previous node result
  */
 export interface NodeOutput {
-  /** 成功/失敗 */
+  /** Success/failure */
   success: boolean;
 
-  /** 結果値（文字列、数値、真偽値、オブジェクト） */
+  /** Result value (string, number, boolean, or object) */
   result?: string | number | boolean | Record<string, unknown>;
 
-  /** エラー情報 */
+  /** Error information */
   error?: {
     code: string;
     message: string;
@@ -318,7 +318,7 @@ export interface NodeOutput {
 }
 
 /**
- * フローランタイムコンテキスト - 条件評価時に利用
+ * Flow runtime context - used during condition evaluation
  */
 export interface FlowRuntimeContext {
   // === User ===
@@ -405,355 +405,361 @@ export interface FlowRuntimeContext {
 // =============================================================================
 
 /**
- * Decision Node Configuration - N分岐条件ノード
- * 各ブランチの条件を評価し、最初にマッチした分岐に遷移
+ * Decision Node Configuration - N-way conditional node
+ * Evaluate each branch condition and transition to the first matching branch
  */
 export interface DecisionNodeConfig {
-  /** 分岐リスト（priority順に評価） */
+  /** Branch list (evaluated in priority order) */
   branches: DecisionBranch[];
 
-  /** デフォルト分岐（全条件不一致時） */
+  /** Default branch (when no condition matches) */
   defaultBranch?: string;
 }
 
 /**
- * Decision Branch - 単一分岐の定義
+ * Decision Branch - single branch definition
  */
 export interface DecisionBranch {
-  /** ブランチID（sourceHandle ID） */
+  /** Branch ID (sourceHandle ID) */
   id: string;
 
-  /** 表示ラベル */
+  /** Display label */
   label: string;
 
-  /** 分岐条件 */
+  /** Branch condition */
   condition: FlowCondition | ConditionGroup;
 
-  /** 優先度（小さい方が先に評価、同一優先度は定義順） */
+  /** Priority (lower values are evaluated first; same priority uses definition order) */
   priority: number;
 }
 
 /**
- * Switch Node Configuration - enum値による分岐
- * 特定のキーの値に基づいて分岐先を決定
+ * Switch Node Configuration - enum-value branching
+ * Determine the branch target from a specific key value
  */
 export interface SwitchNodeConfig {
-  /** 評価対象のキー */
+  /** Key to evaluate */
   switchKey: ConditionKey | string;
 
-  /** case 分岐リスト */
+  /** case Branch list */
   cases: SwitchCase[];
 
-  /** デフォルトcase（どのcaseにもマッチしない時） */
+  /** Default case (when no case matches) */
   defaultCase?: string;
 }
 
 /**
- * Switch Case - 単一caseの定義
+ * Switch Case - single case definition
  */
 export interface SwitchCase {
-  /** caseID（sourceHandle ID） */
+  /** caseID (sourceHandle ID) */
   id: string;
 
-  /** 表示ラベル */
+  /** Display label */
   label: string;
 
-  /** マッチする値のリスト */
+  /** List of matching values */
   values: (string | number | boolean)[];
 }
 
 /**
- * グラフエッジ - ノード間の遷移
+ * Graph edge - transition between nodes
  */
 export interface GraphEdge {
-  /** エッジ一意識別子 */
+  /** Edge unique identifier */
   id: string;
 
-  /** 始点ノードID */
+  /** Source node ID */
   source: string;
 
-  /** 終点ノードID */
+  /** Target node ID */
   target: string;
 
-  /** 始点ハンドル（複数出力用） */
+  /** Source handle (for multiple outputs) */
   sourceHandle?: string;
 
-  /** 終点ハンドル（複数入力用） */
+  /** Target handle (for multiple inputs) */
   targetHandle?: string;
 
-  /** エッジタイプ */
+  /** Edge type */
   type: GraphEdgeType;
 
-  /** エッジデータ */
+  /** Edge data */
   data?: GraphEdgeData;
 }
 
 /**
- * エッジデータ
+ * Edge data
  */
 export interface GraphEdgeData {
-  /** 表示ラベル */
+  /** Display label */
   label?: string;
 
-  /** 遷移条件（conditionalタイプ用） */
+  /** Transition condition (for conditional type) */
   condition?: EdgeCondition;
 }
 
 /**
- * エッジタイプ
+ * Edge type
  */
 export type GraphEdgeType = 'success' | 'error' | 'conditional';
 
 /**
- * エッジ条件
+ * Edge condition
  */
 export interface EdgeCondition {
-  /** 条件タイプ */
+  /** Condition type */
   type: 'capability_result' | 'policy_check' | 'feature_flag' | 'custom';
 
-  /** 評価式（JSONPath風またはJavaScript式） */
+  /** Evaluation expression (JSONPath-like or JavaScript expression) */
   expression: string;
 }
 
 /**
- * グラフメタデータ
+ * Graph metadata
  */
 export interface GraphMetadata {
-  /** 作成日時（ISO 8601） */
+  /** Created at (ISO 8601) */
   createdAt: string;
 
-  /** 更新日時（ISO 8601） */
+  /** Updated at (ISO 8601) */
   updatedAt: string;
 
-  /** 作成者（user_id） */
+  /** Created by (user_id) */
   createdBy?: string;
 }
 
 /**
- * Capabilityテンプレート - UIContract生成時に解決される
+ * Capability template - resolved during UIContract generation
  */
 export interface CapabilityTemplate {
-  /** Capabilityタイプ */
+  /** Capability type */
   type: CapabilityType;
 
-  /** ID接尾辞（完全IDは `${nodeId}_${idSuffix}`） */
+  /** ID suffix (Full ID is `${nodeId}_${idSuffix}`) */
   idSuffix: string;
 
-  /** 必須フラグ */
+  /** Required flag */
   required: boolean;
 
-  /** ヒントテンプレート */
+  /** Hint template */
   hintsTemplate?: Partial<CapabilityHints>;
 
-  /** バリデーションルール */
+  /** Validation rules */
   validationRules?: ValidationRule[];
 }
 
 // =============================================================================
-// Layer 2: CompiledPlan（実行用）
-// Flow Engineが実行時に参照。最適化された形式。
+// Layer 2: CompiledPlan (for execution)
+// Flow Engine references it at runtime.optimized format.
 // =============================================================================
 
 /**
- * CompiledPlan - Flow Engine実行用
- * GraphDefinitionをコンパイルした最適化形式
+ * CompiledPlan - Flow Enginefor execution
+ * Optimized form compiled from GraphDefinition
  */
 export interface CompiledPlan {
-  /** コンパイル済みプランID */
+  /** Compiled plan ID */
   id: string;
 
-  /** CompiledPlan自体のバージョン */
+  /** Version of the CompiledPlan itself */
   version: string;
 
-  /** 元のGraphDefinitionのflowVersion */
+  /** flowVersion from the source GraphDefinition */
   sourceVersion: string;
 
-  /** 対象プロファイル */
+  /** target profile */
   profileId: ProfileId;
 
-  /** エントリーポイントノードID */
+  /** Entry point node ID */
   entryNodeId: string;
 
-  /** ノードマップ（id -> CompiledNode） */
+  /** Node map (id -> CompiledNode) */
   nodes: Map<string, CompiledNode>;
 
-  /** 遷移マップ（sourceNodeId -> CompiledTransition[]） */
+  /** Transition map (sourceNodeId -> CompiledTransition[]) */
   transitions: Map<string, CompiledTransition[]>;
 
-  /** コンパイル日時（ISO 8601） */
+  /** Compiled at (ISO 8601) */
   compiledAt: string;
 }
 
 /**
- * コンパイル済みノード
+ * Compiled node
  */
 export interface CompiledNode {
-  /** ノードID */
+  /** Node ID */
   id: string;
 
-  /** ノードタイプ */
+  /** Node type */
   type: GraphNodeType;
 
   /** Intent */
   intent: Intent;
 
-  /** 解決済みCapability */
+  /** Resolved Capability */
   capabilities: ResolvedCapability[];
 
-  /** 成功時の次ノードID（nullは終端） */
+  /** Next node ID on success (null means terminal) */
   nextOnSuccess: string | null;
 
-  /** エラー時の次ノードID（nullはデフォルトエラーハンドリング） */
+  /** Next node ID on error (null means default error handling) */
   nextOnError: string | null;
 
-  /** Decision/Switch設定（該当ノードのみ） */
+  /** Decision/Switch settings (matching nodes only) */
   decisionConfig?: DecisionNodeConfig | SwitchNodeConfig;
 }
 
 /**
- * コンパイル済み遷移
+ * Compiled transition
  */
 export interface CompiledTransition {
-  /** 遷移先ノードID */
+  /** Target node ID */
   targetNodeId: string;
 
-  /** 遷移タイプ */
+  /** Transition type */
   type: 'success' | 'error' | 'conditional';
 
-  /** コンパイル済み条件（conditionalタイプ用） */
+  /** Compiled condition (for conditional type) */
   condition?: CompiledCondition;
 
-  /** 始点ハンドル（Decision/Switchノード用） */
+  /** Source handle (Decision/Switch nodefor) */
   sourceHandle?: string;
 
-  /** 優先度（Decision分岐評価順） */
+  /** Priority (Decision branch evaluation order) */
   priority?: number;
 }
 
 /**
- * コンパイル済み条件
+ * Compiled condition
  */
 export interface CompiledCondition {
-  /** 条件タイプ */
+  /** Condition type */
   type: 'capability_result' | 'policy_check' | 'feature_flag' | 'custom';
 
-  /** 元の式 */
+  /** Source expression */
   expression: string;
 
-  /** 評価関数（コンパイル時に生成） */
+  /** Evaluation function (generated at compile time) */
   evaluate: (context: EvaluationContext) => boolean;
 }
 
 /**
- * 条件評価コンテキスト
+ * Condition evaluation context
  */
 export interface EvaluationContext {
-  /** 収集済みデータ */
+  /** Collected data */
   collectedData: Record<string, unknown>;
 
-  /** 完了済みCapability ID */
+  /** Completed Capability IDs */
   completedCapabilities: string[];
 
-  /** ユーザークレーム */
+  /** User claims */
   claims?: Record<string, unknown>;
 
-  /** 機能フラグ */
+  /** Feature flags */
   featureFlags?: Record<string, boolean>;
 }
 
 /**
- * 解決済みCapability
+ * Resolved Capability
  */
 export interface ResolvedCapability {
-  /** Capabilityタイプ */
+  /** Capability type */
   type: CapabilityType;
 
-  /** 完全ID（`${nodeId}_${idSuffix}`） */
+  /** Full ID (`${nodeId}_${idSuffix}`) */
   id: string;
 
-  /** 必須フラグ */
+  /** Required flag */
   required: boolean;
 
-  /** 解決済みヒント */
+  /** Resolved hints */
   hints: CapabilityHints;
 
-  /** バリデーションルール */
+  /** Validation rules */
   validationRules: ValidationRule[];
 
-  /** 安定性レベル */
+  /** Stability level */
   stability: StabilityLevel;
 }
 
 // =============================================================================
-// Layer 3: RuntimeState（DO保存用）
-// Durable Objectに永続化。最小限のデータ。
+// Layer 3: RuntimeState (for DO storage)
+// Persisted to Durable Object.minimal data.
 // =============================================================================
 
 /**
- * RuntimeState - Durable Object保存用
- * 実行時の状態を最小限に保持
+ * RuntimeState - for Durable Object storage
+ * Keep minimal runtime state
  */
 export interface RuntimeState {
-  // === セッション識別 ===
+  // === Session identification ===
 
-  /** セッションID */
+  /** Session ID */
   sessionId: string;
 
-  /** フローID */
+  /** Flow ID */
   flowId: string;
 
-  /** テナントID */
+  /** Flow type */
+  flowType: string;
+
+  /** Tenant ID */
   tenantId: string;
 
-  /** クライアントID */
+  /** Client ID */
   clientId: string;
 
-  // === 現在位置 ===
+  // === Current position ===
 
-  /** 現在のノードID */
+  /** Current node ID */
   currentNodeId: string;
 
-  /** 訪問済みノードID */
+  /** Visited node IDs */
   visitedNodeIds: string[];
 
-  // === 収集済みデータ ===
+  // === Collected data ===
 
-  /** 収集したデータ（capabilityId -> response） */
+  /** Collected data (capabilityId -> response) */
   collectedData: Record<string, unknown>;
 
-  /** 完了済みCapability ID */
+  /** Completed Capability IDs */
   completedCapabilities: string[];
 
-  // === 認証コンテキスト ===
+  // === Authentication context ===
 
-  /** 認証済みユーザーID */
+  /** Authenticated user ID */
   userId?: string;
 
-  /** ユーザークレーム */
+  /** User claims */
   claims?: Record<string, unknown>;
 
-  // === OAuth パラメータ（認可フロー用） ===
+  // === OAuth parameters (for authorization flow) ===
   oauthParams?: OAuthFlowParams;
 
-  // === タイムスタンプ ===
+  // === Timestamps ===
 
-  /** フロー開始時刻（UNIX ms） */
+  /** Flow start time (UNIX ms) */
   startedAt: number;
 
-  /** 有効期限（UNIX ms） */
+  /** expiration time (UNIX ms) */
   expiresAt: number;
 
-  /** 最終アクティビティ時刻（UNIX ms） */
+  /** Last activity time (UNIX ms) */
   lastActivityAt: number;
 
-  // === 冪等性管理 ===
+  /** Recent request timestamps for per-session rate limiting */
+  requestTimestamps: number[];
 
-  /** 処理済みrequestId -> スナップショット */
+  // === Idempotency management ===
+
+  /** Processed requestId -> snapshot */
   processedRequestIds: Record<string, RuntimeStateSnapshot>;
 }
 
 /**
- * OAuthフローパラメータ
+ * OAuth flow parameters
  */
 export interface OAuthFlowParams {
   responseType?: string;
@@ -770,20 +776,20 @@ export interface OAuthFlowParams {
 }
 
 /**
- * 冪等性のためのスナップショット
- * 同一requestIdの再送時にこの結果を返す
+ * Snapshot for idempotency
+ * Return this result when the same requestId is resent
  */
 export interface RuntimeStateSnapshot {
-  /** リクエストID */
+  /** Request ID */
   requestId: string;
 
-  /** 処理時刻（UNIX ms） */
+  /** Processed at (UNIX ms) */
   processedAt: number;
 
-  /** 結果のノードID */
+  /** Result node ID */
   resultNodeId: string;
 
-  /** 結果データ（UIContractまたはリダイレクト情報） */
+  /** Result data (UIContract or redirect information) */
   resultData: FlowSubmitResult;
 }
 
@@ -792,66 +798,66 @@ export interface RuntimeStateSnapshot {
 // =============================================================================
 
 /**
- * POST /api/flow/init リクエスト
+ * POST /api/flow/init request
  */
 export interface FlowInitRequest {
-  /** フロータイプ */
+  /** Flow type */
   flowType: 'login' | 'authorization' | 'consent' | 'logout';
 
-  /** クライアントID */
+  /** Client ID */
   clientId: string;
 
-  /** テナントID（マルチテナント用） */
+  /** Tenant ID (for multi-tenant) */
   tenantId?: string;
 
-  /** OAuthパラメータ（認可フロー用） */
+  /** OAuthparameters (for authorization flow) */
   oauthParams?: OAuthFlowParams;
 }
 
 /**
- * POST /api/flow/init レスポンス
+ * POST /api/flow/init response
  */
 export interface FlowInitResponse {
-  /** セッションID */
+  /** Session ID */
   sessionId: string;
 
-  /** UIContractバージョン */
+  /** UIContract version */
   uiContractVersion: '0.1';
 
-  /** 初期UIContract */
+  /** Initial UIContract */
   uiContract: UIContract;
 }
 
 /**
- * POST /api/flow/submit リクエスト
+ * POST /api/flow/submit request
  */
 export interface FlowSubmitRequest {
-  /** セッションID */
+  /** Session ID */
   sessionId: string;
 
-  /** リクエストID（クライアント生成UUID、冪等性用） */
+  /** Request ID (clientgenerateUUID, for idempotency) */
   requestId: string;
 
   /** Capability ID */
   capabilityId: string;
 
-  /** Capability応答 */
+  /** capability response */
   response: unknown;
 
-  /** テナントID（セッション検証用、リクエストコンテキストから取得） */
+  /** Tenant ID (session validationfor, retrieved from request context) */
   tenantId?: string;
 
-  /** クライアントID（セッション検証用、リクエストコンテキストから取得） */
+  /** Client ID (session validationfor, retrieved from request context) */
   clientId?: string;
 }
 
 /**
- * POST /api/flow/submit レスポンス
+ * POST /api/flow/submit response
  */
 export type FlowSubmitResponse = FlowSubmitResult;
 
 /**
- * フロー送信結果
+ * Flow submit result
  */
 export type FlowSubmitResult =
   | { type: 'continue'; uiContract: UIContract }
@@ -859,45 +865,45 @@ export type FlowSubmitResult =
   | { type: 'error'; error: FlowError };
 
 /**
- * リダイレクト情報
+ * redirect information
  */
 export interface FlowRedirect {
-  /** リダイレクトURL */
+  /** redirect URL */
   url: string;
 
-  /** HTTPメソッド */
+  /** HTTP method */
   method: 'GET' | 'POST';
 
-  /** 追加パラメータ */
+  /** additional parameters */
   params?: Record<string, string>;
 }
 
 /**
- * フローエラー
+ * Flow error
  */
 export interface FlowError {
-  /** エラーコード */
+  /** Error code */
   code: string;
 
-  /** エラーメッセージ */
+  /** Error message */
   message: string;
 
-  /** 追加詳細 */
+  /** additional details */
   details?: Record<string, unknown>;
 }
 
 /**
- * GET /api/flow/state/:sessionId レスポンス
+ * GET /api/flow/state/:sessionId response
  */
 export interface FlowStateResponse {
-  /** 現在の状態（公開用サブセット） */
+  /** current state (public subset) */
   state: {
     currentNodeId: string;
     visitedNodeIds: string[];
     completedCapabilities: string[];
   };
 
-  /** 現在のUIContract */
+  /** Current UIContract */
   uiContract: UIContract;
 }
 
@@ -906,21 +912,21 @@ export interface FlowStateResponse {
 // =============================================================================
 
 /**
- * マイグレーション関数
+ * Migration function
  */
 export type MigrationFn = (flow: GraphDefinition) => GraphDefinition;
 
 /**
- * マイグレーション定義
+ * Migration definition
  */
 export interface MigrationDefinition {
-  /** 移行元バージョン */
+  /** source version */
   fromVersion: string;
 
-  /** 移行先バージョン */
+  /** target version */
   toVersion: string;
 
-  /** マイグレーション関数 */
+  /** Migration function */
   migrate: MigrationFn;
 }
 
@@ -929,18 +935,19 @@ export interface MigrationDefinition {
 // =============================================================================
 
 /**
- * GraphDefinitionをCompiledPlanに変換するコンパイラ
+ * Compiler that converts GraphDefinition to CompiledPlan
  */
 export interface FlowCompiler {
   compile(graph: GraphDefinition): CompiledPlan;
 }
 
 /**
- * RuntimeStateの作成パラメータ
+ * RuntimeState creation parameters
  */
 export interface CreateRuntimeStateParams {
   sessionId: string;
   flowId: string;
+  flowType: 'login' | 'authorization' | 'consent' | 'logout';
   tenantId: string;
   clientId: string;
   entryNodeId: string;
@@ -949,11 +956,11 @@ export interface CreateRuntimeStateParams {
 }
 
 /**
- * セッション有効期限のデフォルト値（10分）
+ * Default session expiration (10 minutes)
  */
 export const DEFAULT_FLOW_TTL_MS = 10 * 60 * 1000;
 
 /**
- * 冪等性スナップショットの最大保持数
+ * Maximum retention count for idempotency snapshots
  */
 export const MAX_PROCESSED_REQUEST_IDS = 100;

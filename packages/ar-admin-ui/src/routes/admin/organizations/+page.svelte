@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminOrganizationsAPI,
 		type OrgDomainMapping,
@@ -52,6 +53,7 @@
 	let verifyError = $state('');
 	let verifyRecordName = $state('');
 	let verifyExpectedValue = $state('');
+	let loadedTenantId = $state('');
 
 	// ==========================================================================
 	// Organization Hierarchy Functions
@@ -176,9 +178,25 @@
 		}
 	}
 
-	onMount(() => {
-		// Load hierarchy by default
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		selectedRootOrg = null;
+		hierarchyData = null;
+		organizations = [];
+		mappings = [];
+		total = 0;
+		highlightedIds.clear();
+		expandedNodes.clear();
 		loadOrganizations();
+		if (activeTab === 'mappings') {
+			loadMappings();
+		}
 	});
 
 	function handleTabChange(tab: 'hierarchy' | 'mappings') {

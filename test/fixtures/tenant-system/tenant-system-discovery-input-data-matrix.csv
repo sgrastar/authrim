@@ -1,0 +1,19 @@
+case_id,mode,data_condition,profiles,expect
+DI-001,email,exact email maps to one active tenant,P00;P02,Resolves to the exact tenant.
+DI-002,email,exact email maps to multiple active tenants,P00;P06,Returns multiple candidates or chooser.
+DI-003,email,"no exact match, verified domain maps to one tenant",P00,Resolves via domain fallback.
+DI-004,email,"no exact match, verified domain maps to multiple tenants",P00;P06,Returns multiple candidates.
+DI-005,email,"no exact match, domain mapping exists but unverified/inactive",P00,Does not resolve through that mapping.
+DI-006,email,domain fallback candidate tenant is inactive,P00,Does not return inactive tenant.
+DI-007,email,"no exact/domain match, manual allowed",P00,Returns manual_required.
+DI-008,email,"no exact/domain match, manual disabled",P08,Returns not-found.
+DI-009,email,"exact-only policy, domain mapping exists",P02,Does not fall back to domain.
+DI-010,email,email method disabled,P03,UI hides email; API returns manual/not-found per policy.
+DI-011,tenant_code,active tenant code,P00;P04,Resolves.
+DI-012,tenant_code,inactive/unknown tenant code,P00;P04,tenant_code_not_found.
+DI-013,tenant_slug,active tenant id,P00;P05,Resolves.
+DI-014,tenant_slug,inactive/unknown tenant id,P00;P05,tenant_slug_not_found.
+DI-015,invite_token,"valid token, tenant active",P00;P01,Redirects to signup URL with invite token.
+DI-016,invite_token,"expired, unknown, overused, or inactive tenant",P00;P01,Invitation error.
+DI-017,app_hint,"known client in tenant, app_hint enabled",P11,Resolves to client tenant.
+DI-018,app_hint,unknown client or app_hint disabled,P00;P11,app_hint_not_found.

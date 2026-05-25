@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { readResponseTextWithLimit, safeFetch } from '@authrim/ar-lib-core';
 import type {
   AuthrimPlugin,
   PluginContext,
@@ -21,6 +22,10 @@ import type {
 } from '../../core/types';
 import { CapabilityRegistry } from '../../core/registry';
 import { NOTIFIER_SECURITY_DEFAULTS, renderTemplate } from './types';
+
+const MAX_RESEND_HEALTH_RESPONSE_BYTES = 64 * 1024;
+const MAX_RESEND_SEND_RESPONSE_BYTES = 64 * 1024;
+const MAX_RESEND_ERROR_RESPONSE_BYTES = 16 * 1024;
 
 // =============================================================================
 // Configuration Schema
@@ -210,18 +215,15 @@ export const resendEmailPlugin: AuthrimPlugin<ResendNotifierConfig> = {
     try {
       // Resend doesn't have a dedicated health endpoint,
       // so we check if the API is reachable by fetching domains
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(`${config.apiEndpoint}/domains`, {
+      const response = await safeFetch(`${config.apiEndpoint}/domains`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${config.apiKey}`,
         },
-        signal: controller.signal,
+        requireHttps: true,
+        timeoutMs: 5000,
+        maxResponseSize: MAX_RESEND_HEALTH_RESPONSE_BYTES,
       });
-
-      clearTimeout(timeoutId);
 
       if (response.ok || response.status === 401) {
         // 401 means API is reachable but key might be invalid
@@ -389,57 +391,52 @@ async function sendEmail(
   request: ResendEmailRequest,
   config: ResendNotifierConfig
 ): Promise<SendResult> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
+  const response = await safeFetch(`${config.apiEndpoint}/emails`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+    requireHttps: true,
+    timeoutMs: config.timeoutMs,
+    maxResponseSize: MAX_RESEND_SEND_RESPONSE_BYTES,
+  });
+
+  if (response.ok) {
+    const result = JSON.parse(
+      await readResponseTextWithLimit(response, MAX_RESEND_SEND_RESPONSE_BYTES)
+    ) as ResendEmailResponse;
+    return {
+      success: true,
+      messageId: result.id,
+      providerResponse: { id: result.id },
+    };
+  }
+
+  // Handle error response
+  const errorBody = await readResponseTextWithLimit(response, MAX_RESEND_ERROR_RESPONSE_BYTES);
+  let errorMessage = `Resend API error: ${response.status}`;
+  let errorCode: string | undefined;
+  let retryable = false;
 
   try {
-    const response = await fetch(`${config.apiEndpoint}/emails`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-      signal: controller.signal,
-    });
+    const errorData = JSON.parse(errorBody) as ResendErrorResponse;
+    errorMessage = errorData.message || errorMessage;
+    errorCode = errorData.name;
 
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      const result = (await response.json()) as ResendEmailResponse;
-      return {
-        success: true,
-        messageId: result.id,
-        providerResponse: { id: result.id },
-      };
-    }
-
-    // Handle error response
-    const errorBody = await response.text();
-    let errorMessage = `Resend API error: ${response.status}`;
-    let errorCode: string | undefined;
-    let retryable = false;
-
-    try {
-      const errorData = JSON.parse(errorBody) as ResendErrorResponse;
-      errorMessage = errorData.message || errorMessage;
-      errorCode = errorData.name;
-
-      // Determine if error is retryable
-      retryable = response.status >= 500 || response.status === 429;
-    } catch {
-      // Failed to parse error body, use status code message
-    }
-
-    return {
-      success: false,
-      error: sanitizeApiError(errorMessage),
-      errorCode,
-      retryable,
-    };
-  } finally {
-    clearTimeout(timeoutId);
+    // Determine if error is retryable
+    retryable = response.status >= 500 || response.status === 429;
+  } catch {
+    // Failed to parse error body, use status code message
   }
+
+  return {
+    success: false,
+    error: sanitizeApiError(errorMessage),
+    errorCode,
+    retryable,
+  };
 }
 
 /**

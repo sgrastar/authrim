@@ -1,3 +1,14 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "Identity at the edge of everywhere"
+type: vision
+tags:
+  - authrim
+  - identity-platform
+  - vision
+---
 # Authrim Vision
 
 **Identity at the edge of everywhere**

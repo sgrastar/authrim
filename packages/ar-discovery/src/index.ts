@@ -21,6 +21,16 @@ const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
 app.use('*', logger());
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    maxAge: 86400,
+  })
+);
 app.use('*', requestContextMiddleware());
 app.use('*', pluginContextMiddleware());
 
@@ -46,25 +56,11 @@ app.use(
   })
 );
 
-// CORS configuration
-app.use(
-  '*',
-  cors({
-    origin: '*',
-    allowMethods: ['GET', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
-    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
-    maxAge: 86400,
-    credentials: true,
-  })
-);
-
 // Health check endpoints
 app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'op-discovery',
-    version: '0.1.0',
     timestamp: new Date().toISOString(),
   });
 });

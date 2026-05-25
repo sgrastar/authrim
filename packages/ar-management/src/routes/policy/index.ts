@@ -27,12 +27,12 @@
  * - GET /api/admin/effective-policy - Get resolved policy
  */
 
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
-  D1Adapter,
   type DatabaseAdapter,
+  createAuthContextFromHono,
   createPolicyResolver,
   type TenantContract,
   type ClientContract,
@@ -102,13 +102,17 @@ function getAdminAuth(c: { get: (key: string) => unknown }): AdminAuthContext | 
 }
 
 /**
- * Create database adapters from context
- * Uses D1Adapter for database abstraction
+ * Create database adapters from request context.
+ * The core adapter follows the same runtime-aware resolution as other auth-core routes.
  */
-function createAdaptersFromContext(c: { env: Env }): {
+function createAdaptersFromContext(
+  c: Context<{ Bindings: Env }>,
+  explicitTenantId?: string
+): {
   coreAdapter: DatabaseAdapter;
 } {
-  const coreAdapter = new D1Adapter({ db: c.env.DB });
+  const tenantId = explicitTenantId ?? getTenantIdFromContext(c);
+  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
   return { coreAdapter };
 }
 
@@ -137,8 +141,8 @@ async function validateClientOwnership(
   clientId: string
 ): Promise<ClientRecord | null> {
   const client = await coreAdapter.queryOne<ClientRecord>(
-    'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
-    [clientId, tenantId]
+    'SELECT client_id, tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+    [tenantId, clientId]
   );
   return client;
 }
@@ -922,7 +926,7 @@ policyRouter.get('/clients/:clientId/profile', async (c) => {
 
   const clientId = c.req.param('clientId')!;
   const tenantId = getTenantIdFromContext(c);
-  const { coreAdapter } = createAdaptersFromContext(c);
+  const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 
   // Validate client ownership - CRITICAL SECURITY CHECK
   const clientRecord = await validateClientOwnership(coreAdapter, tenantId, clientId);
@@ -971,7 +975,7 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
   const tenantId = getTenantIdFromContext(c);
   const adminAuth = getAdminAuth(c);
   const actor = adminAuth?.userId ?? 'unknown';
-  const { coreAdapter } = createAdaptersFromContext(c);
+  const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 
   // Validate client ownership - CRITICAL SECURITY CHECK
   const clientRecord = await validateClientOwnership(coreAdapter, tenantId, clientId);
@@ -1205,7 +1209,7 @@ policyRouter.post('/clients/:clientId/apply-preset', async (c) => {
   const tenantId = getTenantIdFromContext(c);
   const adminAuth = getAdminAuth(c);
   const actor = adminAuth?.userId ?? 'unknown';
-  const { coreAdapter } = createAdaptersFromContext(c);
+  const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 
   // Validate client ownership - CRITICAL SECURITY CHECK
   const clientRecord = await validateClientOwnership(coreAdapter, tenantId, clientId);
@@ -1308,7 +1312,7 @@ policyRouter.get('/clients/:clientId/profile/validate', async (c) => {
 
   const clientId = c.req.param('clientId')!;
   const tenantId = getTenantIdFromContext(c);
-  const { coreAdapter } = createAdaptersFromContext(c);
+  const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 
   // Validate client ownership - CRITICAL SECURITY CHECK
   const clientRecord = await validateClientOwnership(coreAdapter, tenantId, clientId);
@@ -1372,7 +1376,7 @@ policyRouter.get('/effective-policy', async (c) => {
 
   const tenantId = getTenantIdFromContext(c);
   const includeDebug = c.req.query('debug') === 'true';
-  const { coreAdapter } = createAdaptersFromContext(c);
+  const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 
   // Validate client ownership - CRITICAL SECURITY CHECK
   const clientRecord = await validateClientOwnership(coreAdapter, tenantId, clientId);
@@ -1440,7 +1444,7 @@ policyRouter.get('/effective-policy/options', async (c) => {
   }
 
   const tenantId = getTenantIdFromContext(c);
-  const { coreAdapter } = createAdaptersFromContext(c);
+  const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 
   // Validate client ownership - CRITICAL SECURITY CHECK
   const clientRecord = await validateClientOwnership(coreAdapter, tenantId, clientId);

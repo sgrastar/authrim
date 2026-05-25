@@ -48,10 +48,10 @@ export class OrganizationStore implements IOrganizationStore {
   // Organization CRUD
   // ==========================================================================
 
-  async getOrganization(orgId: string): Promise<Organization | null> {
+  async getOrganization(tenantId: string, orgId: string): Promise<Organization | null> {
     const results = await this.adapter.query<OrganizationRow>(
-      'SELECT * FROM organizations WHERE id = ?',
-      [orgId]
+      'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
+      [tenantId, orgId]
     );
     return results[0] ? rowToOrganization(results[0]) : null;
   }
@@ -109,8 +109,12 @@ export class OrganizationStore implements IOrganizationStore {
     return newOrg;
   }
 
-  async updateOrganization(orgId: string, updates: Partial<Organization>): Promise<Organization> {
-    const existing = await this.getOrganization(orgId);
+  async updateOrganization(
+    tenantId: string,
+    orgId: string,
+    updates: Partial<Organization>
+  ): Promise<Organization> {
+    const existing = await this.getOrganization(tenantId, orgId);
     if (!existing) {
       throw new Error(`Organization not found: ${orgId}`);
     }
@@ -128,7 +132,7 @@ export class OrganizationStore implements IOrganizationStore {
         name = ?, display_name = ?, description = ?, org_type = ?,
         parent_org_id = ?, plan = ?, is_active = ?, metadata_json = ?,
         updated_at = ?
-      WHERE id = ?`,
+      WHERE tenant_id = ? AND id = ?`,
       [
         updated.name,
         updated.display_name ?? null,
@@ -139,6 +143,7 @@ export class OrganizationStore implements IOrganizationStore {
         updated.is_active ? 1 : 0,
         updated.metadata_json ?? null,
         updated.updated_at,
+        tenantId,
         orgId,
       ]
     );
@@ -146,8 +151,11 @@ export class OrganizationStore implements IOrganizationStore {
     return updated;
   }
 
-  async deleteOrganization(orgId: string): Promise<void> {
-    await this.adapter.execute('DELETE FROM organizations WHERE id = ?', [orgId]);
+  async deleteOrganization(tenantId: string, orgId: string): Promise<void> {
+    await this.adapter.execute('DELETE FROM organizations WHERE tenant_id = ? AND id = ?', [
+      tenantId,
+      orgId,
+    ]);
   }
 
   async listOrganizations(
@@ -180,21 +188,25 @@ export class OrganizationStore implements IOrganizationStore {
   // Membership CRUD
   // ==========================================================================
 
-  async getMembership(membershipId: string): Promise<SubjectOrgMembership | null> {
+  async getMembership(
+    tenantId: string,
+    membershipId: string
+  ): Promise<SubjectOrgMembership | null> {
     const results = await this.adapter.query<SubjectOrgMembershipRow>(
-      'SELECT * FROM subject_org_membership WHERE id = ?',
-      [membershipId]
+      'SELECT * FROM subject_org_membership WHERE tenant_id = ? AND id = ?',
+      [tenantId, membershipId]
     );
     return results[0] ? rowToMembership(results[0]) : null;
   }
 
   async getMembershipBySubjectAndOrg(
+    tenantId: string,
     subjectId: string,
     orgId: string
   ): Promise<SubjectOrgMembership | null> {
     const results = await this.adapter.query<SubjectOrgMembershipRow>(
-      'SELECT * FROM subject_org_membership WHERE subject_id = ? AND org_id = ?',
-      [subjectId, orgId]
+      'SELECT * FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ? AND org_id = ?',
+      [tenantId, subjectId, orgId]
     );
     return results[0] ? rowToMembership(results[0]) : null;
   }
@@ -220,8 +232,8 @@ export class OrganizationStore implements IOrganizationStore {
     if (newMembership.is_primary) {
       await this.adapter.execute(
         `UPDATE subject_org_membership SET is_primary = 0, updated_at = ?
-         WHERE subject_id = ? AND is_primary = 1`,
-        [now, membership.subject_id]
+         WHERE tenant_id = ? AND subject_id = ? AND is_primary = 1`,
+        [now, membership.tenant_id, membership.subject_id]
       );
     }
 
@@ -246,10 +258,11 @@ export class OrganizationStore implements IOrganizationStore {
   }
 
   async updateMembership(
+    tenantId: string,
     membershipId: string,
     updates: Partial<SubjectOrgMembership>
   ): Promise<SubjectOrgMembership> {
-    const existing = await this.getMembership(membershipId);
+    const existing = await this.getMembership(tenantId, membershipId);
     if (!existing) {
       throw new Error(`Membership not found: ${membershipId}`);
     }
@@ -266,38 +279,51 @@ export class OrganizationStore implements IOrganizationStore {
     if (updates.is_primary && !existing.is_primary) {
       await this.adapter.execute(
         `UPDATE subject_org_membership SET is_primary = 0, updated_at = ?
-         WHERE subject_id = ? AND is_primary = 1 AND id != ?`,
-        [now, existing.subject_id, membershipId]
+         WHERE tenant_id = ? AND subject_id = ? AND is_primary = 1 AND id != ?`,
+        [now, tenantId, existing.subject_id, membershipId]
       );
     }
 
     await this.adapter.execute(
       `UPDATE subject_org_membership SET
         membership_type = ?, is_primary = ?, updated_at = ?
-      WHERE id = ?`,
-      [updated.membership_type, updated.is_primary ? 1 : 0, updated.updated_at, membershipId]
+      WHERE tenant_id = ? AND id = ?`,
+      [
+        updated.membership_type,
+        updated.is_primary ? 1 : 0,
+        updated.updated_at,
+        tenantId,
+        membershipId,
+      ]
     );
 
     return updated;
   }
 
-  async deleteMembership(membershipId: string): Promise<void> {
-    await this.adapter.execute('DELETE FROM subject_org_membership WHERE id = ?', [membershipId]);
+  async deleteMembership(tenantId: string, membershipId: string): Promise<void> {
+    await this.adapter.execute(
+      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND id = ?',
+      [tenantId, membershipId]
+    );
   }
 
   // ==========================================================================
   // Membership queries
   // ==========================================================================
 
-  async listMembershipsBySubject(subjectId: string): Promise<SubjectOrgMembership[]> {
+  async listMembershipsBySubject(
+    tenantId: string,
+    subjectId: string
+  ): Promise<SubjectOrgMembership[]> {
     const results = await this.adapter.query<SubjectOrgMembershipRow>(
-      'SELECT * FROM subject_org_membership WHERE subject_id = ? ORDER BY is_primary DESC, created_at ASC',
-      [subjectId]
+      'SELECT * FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ? ORDER BY is_primary DESC, created_at ASC',
+      [tenantId, subjectId]
     );
     return results.map(rowToMembership);
   }
 
   async listMembershipsByOrg(
+    tenantId: string,
     orgId: string,
     options?: { limit?: number; offset?: number }
   ): Promise<SubjectOrgMembership[]> {
@@ -305,19 +331,19 @@ export class OrganizationStore implements IOrganizationStore {
     const offset = options?.offset ?? 0;
 
     const results = await this.adapter.query<SubjectOrgMembershipRow>(
-      `SELECT * FROM subject_org_membership WHERE org_id = ?
+      `SELECT * FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?
        ORDER BY created_at ASC LIMIT ? OFFSET ?`,
-      [orgId, limit, offset]
+      [tenantId, orgId, limit, offset]
     );
     return results.map(rowToMembership);
   }
 
-  async getPrimaryOrganization(subjectId: string): Promise<Organization | null> {
+  async getPrimaryOrganization(tenantId: string, subjectId: string): Promise<Organization | null> {
     const results = await this.adapter.query<OrganizationRow>(
       `SELECT o.* FROM organizations o
        JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ? AND m.is_primary = 1`,
-      [subjectId]
+       WHERE o.tenant_id = ? AND m.tenant_id = ? AND m.subject_id = ? AND m.is_primary = 1`,
+      [tenantId, tenantId, subjectId]
     );
     return results[0] ? rowToOrganization(results[0]) : null;
   }

@@ -13,7 +13,7 @@ import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   type IStorageAdapter,
   escapeLikePattern,
@@ -44,7 +44,8 @@ function asBaseContext(c: AdminContext): BaseContext {
  * Create database adapter from context
  */
 function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+  const tenantId = getTenantIdFromContext(asBaseContext(c));
+  return createAuthContextFromHono(asBaseContext(c), tenantId).coreAdapter;
 }
 
 // =============================================================================
@@ -68,8 +69,8 @@ export async function adminRelationDefinitionsListHandler(c: AdminContext) {
     const offset = (page - 1) * limit;
 
     // Build query
-    const whereClauses: string[] = ['tenant_id IN (?, ?)'];
-    const bindings: unknown[] = [tenantId, 'default'];
+    const whereClauses: string[] = ['tenant_id = ?'];
+    const bindings: unknown[] = [tenantId];
 
     if (objectType) {
       whereClauses.push('object_type = ?');
@@ -165,11 +166,7 @@ export async function adminRelationDefinitionGetHandler(c: AdminContext) {
       is_active: number;
       created_at: number;
       updated_at: number;
-    }>('SELECT * FROM relation_definitions WHERE id = ? AND tenant_id IN (?, ?)', [
-      id,
-      tenantId,
-      'default',
-    ]);
+    }>('SELECT * FROM relation_definitions WHERE id = ? AND tenant_id = ?', [id, tenantId]);
 
     if (results.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -297,22 +294,14 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
       is_active?: boolean;
     }>();
 
-    // Check if exists and belongs to tenant (not default)
+    // Check if exists and belongs to the current tenant
     const existing = await adapter.query<{ tenant_id: string }>(
-      'SELECT tenant_id FROM relation_definitions WHERE id = ?',
-      [id]
+      'SELECT tenant_id FROM relation_definitions WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
     );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (existing[0].tenant_id === 'default') {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-    }
-
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -336,9 +325,9 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
       params.push(body.is_active ? 1 : 0);
     }
 
-    params.push(id);
+    params.push(id, tenantId);
     await adapter.execute(
-      `UPDATE relation_definitions SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE relation_definitions SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`,
       params
     );
 
@@ -364,25 +353,20 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const id = c.req.param('id')!;
 
-    // Check if exists and belongs to tenant (not default)
+    // Check if exists and belongs to the current tenant
     const existing = await adapter.query<{ tenant_id: string }>(
-      'SELECT tenant_id FROM relation_definitions WHERE id = ?',
-      [id]
+      'SELECT tenant_id FROM relation_definitions WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
     );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    if (existing[0].tenant_id === 'default') {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-    }
-
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-    }
-
-    await adapter.execute('DELETE FROM relation_definitions WHERE id = ?', [id]);
+    await adapter.execute('DELETE FROM relation_definitions WHERE id = ? AND tenant_id = ?', [
+      id,
+      tenantId,
+    ]);
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'delete', 'relation_definition', id, {});
@@ -597,19 +581,18 @@ export async function adminRelationshipTupleDeleteHandler(c: AdminContext) {
 
     // Check if exists
     const existing = await adapter.query<{ tenant_id: string }>(
-      'SELECT tenant_id FROM relationships WHERE id = ?',
-      [id]
+      'SELECT tenant_id FROM relationships WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
     );
 
     if (existing.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    if (existing[0].tenant_id !== tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-    }
-
-    await adapter.execute('DELETE FROM relationships WHERE id = ?', [id]);
+    await adapter.execute('DELETE FROM relationships WHERE id = ? AND tenant_id = ?', [
+      id,
+      tenantId,
+    ]);
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'delete', 'relationship_tuple', id, {});
@@ -706,10 +689,10 @@ export async function adminObjectTypesListHandler(c: AdminContext) {
     const results = await adapter.query<{ object_type: string; count: number }>(
       `SELECT object_type, COUNT(*) as count
        FROM relation_definitions
-       WHERE tenant_id IN (?, ?)
+       WHERE tenant_id = ?
        GROUP BY object_type
        ORDER BY object_type ASC`,
-      [tenantId, 'default']
+      [tenantId]
     );
 
     return c.json({

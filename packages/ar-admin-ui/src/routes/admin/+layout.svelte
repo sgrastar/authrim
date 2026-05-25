@@ -13,17 +13,22 @@
 	import type { Snippet } from 'svelte';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { adminLoggingControlAPI } from '$lib/api/admin-logging-control';
 
 	let { children }: { children: Snippet } = $props();
 
 	// Tenant selector state — derived from shared store
-	let selectedTenantId = $state('default');
+	let selectedTenantId = $state('');
 
 	// Check if current page is login page
 	const isLoginPage = $derived($page.url.pathname === '/admin/login');
 
 	// Mobile menu state
 	let mobileMenuOpen = $state(false);
+	let adminContextReady = $state(false);
+	let adminContextPromise: Promise<void> | null = null;
+	let loggingAlertCount = $state(0);
+	let notificationAlertCount = $state(0);
 
 	// Close mobile menu on navigation
 	$effect(() => {
@@ -53,6 +58,7 @@
 		monitoring: [
 			{ path: '/admin/audit-logs', label: 'User Audit Logs', icon: 'i-ph-file-text' },
 			{ path: '/admin/access-trace', label: 'Access Trace', icon: 'i-ph-path' },
+			{ path: '/admin/support-ops', label: 'Support Ops', icon: 'i-ph-lifebuoy' },
 			{ path: '/admin/diagnostic-logging', label: 'Diagnostic Logging', icon: 'i-ph-bug' }
 		]
 	};
@@ -70,32 +76,55 @@
 	const navTenant = {
 		authentication: [
 			{ path: '/admin/external-idp', label: 'External IdP', icon: 'i-ph-globe' },
+			{
+				path: '/admin/external-token-refresh',
+				label: 'Token Refresh',
+				icon: 'i-ph-arrows-clockwise'
+			},
+			{ path: '/admin/saml', label: 'SAML', icon: 'i-ph-arrows-left-right' },
 			{ path: '/admin/consents', label: 'Consents', icon: 'i-ph-handshake' },
-			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' },
-			{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' }
+			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' }
 		],
 		identitySchema: [
 			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
-		branding: [{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' }],
+		branding: [
+			{ path: '/admin/login-methods', label: 'Login Methods', icon: 'i-ph-sign-in' },
+			{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' },
+			{ path: '/admin/tenant-discovery', label: 'Tenant Discovery', icon: 'i-ph-signpost' }
+		],
 		configuration: [
 			{ path: '/admin/info', label: 'Info', icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: 'Settings', icon: 'i-ph-gear' },
+			{ path: '/admin/email-settings', label: 'Email Settings', icon: 'i-ph-envelope-simple' },
 			{ path: '/admin/plugins', label: 'Plugins', icon: 'i-ph-puzzle-piece' }
 		]
 	};
 
 	// PLATFORM section - system administration
 	const navPlatform = {
-		tenantManagement: [{ path: '/admin/tenants', label: 'Tenants', icon: 'i-ph-buildings' }],
+		tenantManagement: [
+			{ path: '/admin/tenants', label: 'Tenants', icon: 'i-ph-buildings' },
+			{ path: '/admin/tenant-vanity-domains', label: 'Vanity Domains', icon: 'i-ph-globe' }
+		],
 		security: [
 			{ path: '/admin/security', label: 'Security', icon: 'i-ph-lock-key' },
 			{ path: '/admin/compliance', label: 'Compliance', icon: 'i-ph-certificate' }
 		],
 		operations: [
 			{ path: '/admin/scale', label: 'Scale', icon: 'i-ph-chart-bar' },
-			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' }
+			{ path: '/admin/storage-destinations', label: 'Storage Destinations', icon: 'i-ph-archive' },
+			{
+				path: '/admin/logging-policies',
+				label: 'Logging Policies',
+				icon: 'i-ph-list-magnifying-glass'
+			},
+			{ path: '/admin/notifications', label: 'Notification Center', icon: 'i-ph-bell' },
+			{ path: '/admin/database-connections', label: 'Database Connections', icon: 'i-ph-database' },
+			{ path: '/admin/dr-backup', label: 'DR Backup', icon: 'i-ph-cloud-arrow-up' },
+			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' },
+			{ path: '/admin/approvals', label: 'Approvals', icon: 'i-ph-checks' }
 		],
 		adminUsers: { path: '/admin/admins', label: 'Admin Users', icon: 'i-ph-user-gear' },
 		adminAccessControl: {
@@ -112,13 +141,16 @@
 			]
 		},
 		adminOthers: [
+			{ path: '/admin/machine-access', label: 'Machine Access', icon: 'i-ph-robot' },
 			{ path: '/admin/ip-allowlist', label: 'IP Allowlist', icon: 'i-ph-shield-check' },
-			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' }
+			{ path: '/admin/admin-logging', label: 'Admin Logging', icon: 'i-ph-activity' },
+			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' },
+			{ path: '/admin/operational-logs', label: 'Operational Logs', icon: 'i-ph-scroll' }
 		]
 	};
 
 	// All nav items flattened for breadcrumb lookup
-	const allNavItems = [
+	const allNavItems = $derived([
 		// End User
 		...navEndUser.identity,
 		{
@@ -155,7 +187,7 @@
 			icon: 'i-ph-arrow-right'
 		})),
 		...navPlatform.adminOthers
-	];
+	]);
 
 	// Check if nav item is active
 	function isActive(path: string, exact: boolean = false): boolean {
@@ -204,10 +236,82 @@
 			return;
 		}
 
-		// Load tenant list into the shared store for the header selector
-		await tenantStore.load();
-		selectedTenantId = tenantStore.defaultTenantId;
+		await ensureAdminContextReady();
+		await loadLoggingAlertBadge();
 	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (tenantId && tenantId !== selectedTenantId) {
+			selectedTenantId = tenantId;
+		}
+	});
+
+	async function ensureAdminContextReady() {
+		if (adminContextReady) {
+			return;
+		}
+
+		if (adminContextPromise) {
+			await adminContextPromise;
+			return;
+		}
+
+		adminContextPromise = (async () => {
+			adminContextReady = false;
+			try {
+				// Load tenant list and settings context before rendering child pages.
+				// This avoids first-render requests being sent without X-Tenant-Id.
+				await tenantStore.load();
+				await settingsContext.initialize();
+				selectedTenantId = settingsContext.tenantId || tenantStore.defaultTenantId;
+			} finally {
+				adminContextReady = true;
+				adminContextPromise = null;
+			}
+		})();
+
+		await adminContextPromise;
+	}
+
+	$effect(() => {
+		const isOnLoginPage = $page.url.pathname === '/admin/login';
+		const isAuthenticated = adminAuth.isAuthenticated;
+
+		if (isOnLoginPage) {
+			adminContextReady = false;
+			return;
+		}
+
+		if (isAuthenticated && !adminContextReady) {
+			void ensureAdminContextReady();
+		}
+	});
+
+	// Paths that belong to the PLATFORM section (tenant selector should be hidden)
+	const PLATFORM_PATHS = [
+		'/admin/tenants',
+		'/admin/security',
+		'/admin/compliance',
+		'/admin/scale',
+		'/admin/storage-destinations',
+		'/admin/logging-policies',
+		'/admin/notifications',
+		'/admin/admin-logging',
+		'/admin/database-connections',
+		'/admin/jobs',
+		'/admin/admins',
+		'/admin/admin-access-control',
+		'/admin/admin-rbac',
+		'/admin/admin-abac',
+		'/admin/admin-rebac',
+		'/admin/admin-policies',
+		'/admin/machine-access',
+		'/admin/ip-allowlist',
+		'/admin/admin-audit'
+	];
+
+	const isPlatformPage = $derived(PLATFORM_PATHS.some((p) => $page.url.pathname.startsWith(p)));
 
 	async function handleTenantChange(tenantId: string) {
 		selectedTenantId = tenantId;
@@ -216,6 +320,37 @@
 
 	function toggleMobileMenu() {
 		mobileMenuOpen = !mobileMenuOpen;
+	}
+
+	function navBadgeFor(path: string): string | number | undefined {
+		const count =
+			path === '/admin/logging-policies'
+				? loggingAlertCount
+				: path === '/admin/notifications'
+					? notificationAlertCount
+					: 0;
+		if (count <= 0) {
+			return undefined;
+		}
+		return count > 99 ? '99+' : count;
+	}
+
+	async function loadLoggingAlertBadge() {
+		try {
+			const response = await adminLoggingControlAPI.listNotifications({ limit: 1 });
+			loggingAlertCount = response.total;
+		} catch {
+			loggingAlertCount = 0;
+		}
+		try {
+			const response = await adminLoggingControlAPI.listNotificationCenter({
+				status: 'unresolved',
+				limit: 1
+			});
+			notificationAlertCount = response.total;
+		} catch {
+			notificationAlertCount = 0;
+		}
 	}
 </script>
 
@@ -229,6 +364,13 @@
 			<i class="i-ph-circle-notch animate-spin w-8 h-8"></i>
 		</div>
 		<p>Loading...</p>
+	</div>
+{:else if adminAuth.isAuthenticated && !adminContextReady}
+	<div class="loading-container">
+		<div class="loading-spinner">
+			<i class="i-ph-circle-notch animate-spin w-8 h-8"></i>
+		</div>
+		<p>Loading tenant context...</p>
 	</div>
 {:else if adminAuth.isAuthenticated}
 	<!-- Authenticated - layout with floating sidebar -->
@@ -355,6 +497,7 @@
 						icon={item.icon}
 						label={item.label}
 						active={isActive(item.path)}
+						badge={navBadgeFor(item.path)}
 					/>
 				{/each}
 
@@ -391,6 +534,7 @@
 				userEmail={adminAuth.user?.email}
 				userName={adminAuth.user?.name}
 				lastLoginAt={adminAuth.user?.lastLoginAt}
+				hideTenantSelector={isPlatformPage}
 			/>
 
 			<div class="page-content">

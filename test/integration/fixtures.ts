@@ -498,6 +498,7 @@ export async function createMockEnv(): Promise<Env> {
       string,
       {
         id: string;
+        type?: string;
         challenge: string;
         userId?: string;
         clientId?: string;
@@ -508,8 +509,50 @@ export async function createMockEnv(): Promise<Env> {
         claims?: string;
         consumed: boolean;
         expiresAt: number;
+        metadata?: Record<string, unknown>;
       }
     >();
+
+    async storeChallengeRpc(request: {
+      id: string;
+      type?: string;
+      userId?: string;
+      challenge: string;
+      ttl?: number;
+      metadata?: Record<string, unknown>;
+    }): Promise<{ success: boolean }> {
+      this.challenges.set(request.id, {
+        id: request.id,
+        type: request.type,
+        challenge: request.challenge,
+        userId: request.userId,
+        consumed: false,
+        expiresAt: Date.now() + (request.ttl ?? 300) * 1000,
+        metadata: request.metadata,
+      });
+
+      return { success: true };
+    }
+
+    async getChallengeRpc(id: string): Promise<Record<string, unknown> | null> {
+      return this.challenges.get(id) ?? null;
+    }
+
+    async consumeChallengeRpc(request: { id: string } | string): Promise<Record<string, unknown>> {
+      const id = typeof request === 'string' ? request : request.id;
+      const record = this.challenges.get(id);
+      if (!record || record.expiresAt <= Date.now()) {
+        throw new Error('Challenge not found');
+      }
+
+      this.challenges.delete(id);
+      return record;
+    }
+
+    async deleteChallengeRpc(id: string): Promise<{ deleted: boolean }> {
+      const deleted = this.challenges.delete(id);
+      return { deleted };
+    }
 
     async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
       const request = input instanceof Request ? input : new Request(input, init);

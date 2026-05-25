@@ -13,9 +13,13 @@ import { adminAuthAPI, AuthError } from '$lib/api/admin-auth';
  */
 export interface AdminUser {
 	userId: string;
+	tenantId: string;
 	email: string;
 	name?: string;
 	roles: string[];
+	permissions: string[];
+	adminScope: 'platform' | 'tenant';
+	isPlatformAdmin: boolean;
 	lastLoginAt?: number | null;
 }
 
@@ -78,7 +82,7 @@ function createAdminAuthStore() {
 		},
 
 		/**
-		 * Check authentication status by calling /api/admin/sessions/me
+		 * Check authentication status by calling /api/admin/me/session
 		 */
 		async checkAuth(): Promise<void> {
 			if (!browser) return;
@@ -93,9 +97,13 @@ function createAdminAuthStore() {
 					state.isAuthenticated = true;
 					state.user = {
 						userId: session.user_id,
+						tenantId: session.tenant_id,
 						email: session.email || '',
 						name: session.name,
 						roles: session.roles,
+						permissions: session.permissions ?? [],
+						adminScope: session.admin_scope,
+						isPlatformAdmin: session.is_platform_admin,
 						lastLoginAt: session.last_login_at
 					};
 				} else {

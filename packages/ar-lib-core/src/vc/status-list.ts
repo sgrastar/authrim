@@ -8,7 +8,7 @@
 
 import { jwtVerify, importJWK } from 'jose';
 import type { JWK, JWTPayload } from 'jose';
-import { safeFetch } from '../utils/url-security';
+import { readResponseTextWithLimit, safeFetch, safeFetchJson } from '../utils/url-security';
 
 /**
  * Decode base64url to string
@@ -240,15 +240,17 @@ export async function fetchStatusList(
     contentType.includes('application/jwt')
   ) {
     // Parse as JWT with signature verification
-    const jwt = await response.text();
+    const jwt = await readResponseTextWithLimit(response, 2 * 1024 * 1024);
     bitstring = await parseStatusListJWT(jwt, { verifySignature, keyResolver });
   } else if (contentType.includes('application/json')) {
     // Parse as JSON-LD credential (no JWT signature to verify)
-    const credential = (await response.json()) as StatusListCredential;
+    const credential = JSON.parse(
+      await readResponseTextWithLimit(response, 2 * 1024 * 1024)
+    ) as StatusListCredential;
     bitstring = await decodeStatusList(credential.credentialSubject.encodedList);
   } else {
     // Try to parse as JWT first, then JSON
-    const text = await response.text();
+    const text = await readResponseTextWithLimit(response, 2 * 1024 * 1024);
     if (text.split('.').length === 3) {
       bitstring = await parseStatusListJWT(text, { verifySignature, keyResolver });
     } else {
@@ -437,18 +439,12 @@ async function fetchIssuerKey(issuer: string, kid: string | undefined, alg: stri
   }
 
   // Fetch JWKS with SSRF protection, timeout, and response size limits
-  const response = await safeFetch(jwksUri, {
+  const jwks = await safeFetchJson<JWKSResponse>(jwksUri, {
     headers: { Accept: 'application/json' },
     requireHttps: true,
     timeoutMs: 10000,
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch issuer JWKS: HTTP ${response.status}`);
-  }
-
-  const text = await response.text();
-  const jwks = JSON.parse(text) as JWKSResponse;
 
   // Cache JWKS
   issuerJwksCache.set(jwksUri, {

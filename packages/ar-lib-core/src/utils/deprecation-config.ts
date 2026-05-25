@@ -232,7 +232,7 @@ async function getCachedEntry(env: Env, kvKey: string): Promise<DeprecationEntry
 
     return entry;
   } catch (error) {
-    // Fail-safe: log sanitized error and return null
+    // fail-safe: log sanitized error and return null
     // Security: Only log error type/message, not full stack traces
     log.error('Error reading KV', {}, error as Error);
 

@@ -23,9 +23,13 @@ const {
   mockCreateAuthContextFromHono,
   mockValidateClientAssertion,
   mockGetKeyByKid,
+  mockDeviceSecretRepository,
 } = vi.hoisted(() => {
   const clientRepo = {
     findByClientId: vi.fn(),
+  };
+  const deviceSecretRepo = {
+    findByRawSecret: vi.fn(),
   };
   return {
     mockClientRepository: clientRepo,
@@ -53,6 +57,7 @@ const {
       n: 'mock-n',
       e: 'AQAB',
     }),
+    mockDeviceSecretRepository: deviceSecretRepo,
   };
 });
 
@@ -73,6 +78,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateClientAssertion: mockValidateClientAssertion,
     // JWKS cache utility
     getKeyByKid: mockGetKeyByKid,
+    getDeviceSecretInstallationId: (device: { id: string; installation_id?: string }) =>
+      device.installation_id ?? device.id,
+    DeviceSecretRepository: vi.fn(function DeviceSecretRepositoryMock() {
+      return mockDeviceSecretRepository;
+    }),
     buildIssuerUrl: (env: Partial<Env>, tenantId?: string) => {
       if (env.BASE_DOMAIN) {
         const resolvedTenantId = tenantId || env.DEFAULT_TENANT_ID || 'default';
@@ -144,6 +154,7 @@ function createMockContext(options: {
     },
     env: mockEnv as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    header: vi.fn(),
     // Add get method for context variables (required by getLogger)
     get: vi.fn().mockReturnValue(undefined),
   } as any;
@@ -169,11 +180,13 @@ describe('Token Introspection Endpoint', () => {
     vi.clearAllMocks();
     // Reset repository mock
     mockClientRepository.findByClientId.mockReset();
+    mockDeviceSecretRepository.findByRawSecret.mockReset();
     // Re-setup createAuthContextFromHono to return the mock repository
     mockCreateAuthContextFromHono.mockReturnValue({
       repositories: {
         client: mockClientRepository,
       },
+      coreAdapter: {},
     });
     vi.mocked(importJWK).mockResolvedValue({} as any);
     // Default: cache disabled for most tests to test without cache
@@ -440,6 +453,43 @@ describe('Token Introspection Endpoint', () => {
       expect(verifyClientSecretHash).toHaveBeenCalledWith('client-secret', 'hash_client-secret');
     });
 
+    it('resolves duplicated client_id through the request tenant context', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('tenant-b');
+
+      const tokenPayload = {
+        ...sampleTokenPayload,
+        client_id: 'shared-mobile',
+      };
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'shared-mobile',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue(tokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(tokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'shared-mobile',
+        tenant_id: 'tenant-b',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(c, 'tenant-b');
+      expect(mockClientRepository.findByClientId).toHaveBeenCalledWith('shared-mobile');
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+    });
+
     it('should use the naked-domain issuer for primary-tenant private_key_jwt validation', async () => {
       mockGetTenantIdFromContext.mockReturnValue('default');
 
@@ -488,6 +538,54 @@ describe('Token Introspection Endpoint', () => {
         expect.anything(),
         'https://oidc.example.com',
         { audience: 'https://oidc.example.com' }
+      );
+    });
+
+    it('should prefer the request host for private_key_jwt validation when present', async () => {
+      mockGetTenantIdFromContext.mockReturnValue('tenant1');
+
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'client-123',
+          client_assertion: 'assertion.jwt',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        },
+        env: {
+          BASE_DOMAIN: 'oidc.example.com',
+        },
+      });
+      c.req.raw = new Request('https://tenant1.customer.example/introspect', {
+        method: 'POST',
+        headers: {
+          Host: 'tenant1.customer.example',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        ...sampleTokenPayload,
+        aud: 'https://tenant1.customer.example',
+        iss: 'https://tenant1.customer.example',
+      });
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+
+      const clientMetadata = {
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      };
+      mockClientRepository.findByClientId.mockResolvedValue(clientMetadata);
+
+      await introspectHandler(c);
+
+      expect(mockValidateClientAssertion).toHaveBeenCalledWith(
+        'assertion.jwt',
+        'https://tenant1.customer.example/introspect',
+        clientMetadata
       );
     });
 
@@ -545,6 +643,88 @@ describe('Token Introspection Endpoint', () => {
           sub: 'user-123',
           iss: 'https://op.example.com',
           jti: 'token-jti-123',
+        })
+      );
+    });
+
+    it('returns downstream elevation details for exchanged break-glass tokens', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'valid.jwt.token',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue({
+        ...sampleTokenPayload,
+        authorization_details: [
+          {
+            type: 'authrim_break_glass',
+            grant_id: 'egr_public_1',
+            request_id: 'apr_public_1',
+            investigation_id: 'inv_123',
+            request_surface: 'service_data',
+            requested_action: 'detail_read',
+            resource_class: 'customer_profile',
+            resource_ids: ['user-123'],
+            detail_classes: ['profile_export'],
+            dataset: 'profiles',
+            audience: 'https://service.example.com',
+            redaction_level: 'masked',
+            target_subject_type: 'user',
+            target_subject_id: 'user-123',
+            requester_subject_type: 'admin_user',
+            requester_subject_id: 'admin-1',
+            ticket_reference: null,
+            reference: null,
+            policy_preset: 'technical_debug_default',
+            reuse_scope: 'request',
+            partial_access_allowed: false,
+          },
+        ],
+        authrim_elevation: {
+          grant_id: 'egr_public_1',
+          request_id: 'apr_public_1',
+          investigation_id: 'inv_123',
+          target_subject_type: 'user',
+          target_subject_id: 'user-123',
+          requester_subject_type: 'admin_user',
+          requester_subject_id: 'admin-1',
+          resource_class: 'customer_profile',
+          redaction_level: 'masked',
+        },
+      });
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          active: true,
+          authorization_details: [
+            expect.objectContaining({
+              type: 'authrim_break_glass',
+              grant_id: 'egr_public_1',
+            }),
+          ],
+          authrim_elevation: expect.objectContaining({
+            grant_id: 'egr_public_1',
+            request_id: 'apr_public_1',
+            investigation_id: 'inv_123',
+            resource_class: 'customer_profile',
+            redaction_level: 'masked',
+          }),
         })
       );
     });
@@ -694,7 +874,8 @@ describe('Token Introspection Endpoint', () => {
         'user-123',
         1,
         'client-123',
-        'token-jti-123'
+        'token-jti-123',
+        'tenant1'
       );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -756,12 +937,311 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
-      expect(isTokenRevoked).toHaveBeenCalledWith(c.env, 'token-jti-123');
+      expect(isTokenRevoked).toHaveBeenCalledWith(c.env, 'token-jti-123', 'tenant1');
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,
         })
       );
+    });
+  });
+
+  describe('Device Secret Introspection', () => {
+    it('returns canonical active metadata for confidential callers', async () => {
+      const expiresAt = Date.now() + 3_600_000;
+      const createdAt = Date.now() - 60_000;
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+        client_name: 'Native Service',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        device_platform: 'ios',
+        created_at: createdAt,
+        updated_at: createdAt,
+        expires_at: expiresAt,
+        last_used_at: createdAt,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      const response = await introspectHandler(c);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        active: true,
+        token_type: 'device_secret',
+        client_id: 'client-123',
+        sub: 'user-123',
+        iss: 'https://op.example.com',
+        jti: 'ds-001',
+        installation_id: 'inst-001',
+        app_display_name: 'Native Service',
+        platform: 'ios',
+        display_name: '',
+        fallback_display_name: 'ios device',
+      });
+      expect(body.exp).toBe(Math.floor(expiresAt / 1000));
+      expect(body.iat).toBe(Math.floor(createdAt / 1000));
+      expect(body).not.toHaveProperty('aud');
+      expect(body).not.toHaveProperty('last_seen_at');
+    });
+
+    it('omits fallback_display_name when the device has a user display name', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        tenant_id: 'default',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        device_name: 'Work iPhone',
+        device_platform: undefined,
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      const response = await introspectHandler(c);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body.display_name).toBe('Work iPhone');
+      expect(body.platform).toBe('unknown');
+      expect(body.fallback_display_name).toBeUndefined();
+      expect(body.app_display_name).toBeUndefined();
+    });
+
+    it('denies confidential cross-client introspection without trust-group allowlist', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'service-client',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'service-client',
+        client_secret_hash: 'hash_client-secret',
+        trust_group_id: 'wallet-suite',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'native-client',
+        trust_group_id: 'wallet-suite',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        created_at: Date.now() - 60_000,
+        updated_at: Date.now() - 60_000,
+        expires_at: Date.now() + 3_600_000,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      const response = await introspectHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe('access_denied');
+      expect(body.error_details?.code).toBe('unauthorized_introspection_caller');
+    });
+
+    it('allows confidential cross-client introspection with trust-group allowlist', async () => {
+      const expiresAt = Date.now() + 3_600_000;
+      const createdAt = Date.now() - 60_000;
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'service-client',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId
+        .mockResolvedValueOnce({
+          client_id: 'service-client',
+          client_secret_hash: 'hash_client-secret',
+          trust_group_id: 'wallet-suite',
+          device_secret_introspection_trust_groups: ['wallet-suite'],
+        })
+        .mockResolvedValueOnce({
+          client_id: 'native-client',
+          client_name: 'Wallet Native App',
+        });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+        id: 'ds-001',
+        installation_id: 'inst-001',
+        tenant_id: 'default',
+        client_id: 'native-client',
+        trust_group_id: 'wallet-suite',
+        user_id: 'user-123',
+        session_id: 'sid-123',
+        secret_hash: 'hash',
+        device_platform: 'ios',
+        created_at: createdAt,
+        updated_at: createdAt,
+        expires_at: expiresAt,
+        use_count: 1,
+        is_active: 1,
+      });
+
+      const response = await introspectHandler(c);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        active: true,
+        token_type: 'device_secret',
+        client_id: 'native-client',
+        installation_id: 'inst-001',
+        app_display_name: 'Wallet Native App',
+      });
+      expect(body.exp).toBe(Math.floor(expiresAt / 1000));
+      expect(body.iat).toBe(Math.floor(createdAt / 1000));
+    });
+
+    it('returns introspection_disabled when confidential caller policy disables it', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'service-client',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'service-client',
+        client_secret_hash: 'hash_client-secret',
+        device_secret_introspection_enabled: false,
+      });
+
+      const response = await introspectHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe('access_denied');
+      expect(body.error_details?.code).toBe('introspection_disabled');
+      expect(mockDeviceSecretRepository.findByRawSecret).not.toHaveBeenCalled();
+    });
+
+    it('denies native public callers for device_secret introspection', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'native-client',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'native-client',
+        application_type: 'native',
+      });
+
+      const response = await introspectHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        error_details?: { code?: string };
+      };
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe('access_denied');
+      expect(body.error_details?.code).toBe('unauthorized_introspection_caller');
+      expect(mockDeviceSecretRepository.findByRawSecret).not.toHaveBeenCalled();
+    });
+
+    it('returns active=false for inactive device_secret records', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'raw-device-secret',
+          token_type_hint: 'device_secret',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue(null);
+
+      const response = await introspectHandler(c);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ active: false });
     });
   });
 
@@ -1320,7 +1800,8 @@ describe('Token Introspection Endpoint', () => {
         'user-123',
         1,
         'client-123',
-        'token-jti-123'
+        'token-jti-123',
+        'tenant1'
       );
       expect(isTokenRevoked).not.toHaveBeenCalled();
       // Should return cached response

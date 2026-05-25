@@ -161,7 +161,7 @@ export class DiagnosticLogger {
 			expected: options.expected,
 			actual: options.actual,
 			errorMessage: options.errorMessage,
-			details: options.details
+			details: sanitizeDiagnosticValue(options.details) as Record<string, unknown> | undefined
 		};
 
 		this.addEntry(entry);
@@ -184,7 +184,7 @@ export class DiagnosticLogger {
 			decision: options.decision,
 			reason: options.reason,
 			flow: options.flow,
-			context: options.context
+			context: sanitizeDiagnosticValue(options.context) as Record<string, unknown> | undefined
 		};
 
 		this.addEntry(entry);
@@ -377,4 +377,37 @@ export class DiagnosticLogger {
 			// Ignore
 		}
 	}
+}
+
+const SENSITIVE_DIAGNOSTIC_KEYS = new Set([
+	'access_token',
+	'refresh_token',
+	'id_token',
+	'token',
+	'authorization',
+	'dpop',
+	'dpop_proof',
+	'client_secret',
+	'code_verifier',
+	'direct_auth_artifact',
+	'handoff_token'
+]);
+
+function sanitizeDiagnosticValue(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map((entry) => sanitizeDiagnosticValue(entry));
+	}
+	if (!value || typeof value !== 'object') {
+		return value;
+	}
+
+	const sanitized: Record<string, unknown> = {};
+	for (const [key, nestedValue] of Object.entries(value)) {
+		if (SENSITIVE_DIAGNOSTIC_KEYS.has(key.toLowerCase())) {
+			sanitized[key] = '[REDACTED]';
+			continue;
+		}
+		sanitized[key] = sanitizeDiagnosticValue(nestedValue);
+	}
+	return sanitized;
 }

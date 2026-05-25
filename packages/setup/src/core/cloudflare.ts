@@ -6,8 +6,11 @@
  */
 
 import { execa, type ExecaError } from 'execa';
-import { fileURLToPath } from 'node:url';
-import { dirname, join as pathJoin } from 'node:path';
+import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
+import { basename, join as pathJoin } from 'node:path';
+import { tmpdir } from 'node:os';
+import { readdirSync, statSync } from 'node:fs';
+import { writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
   getKVNamespaceName,
@@ -15,12 +18,26 @@ import {
   D1_DATABASES,
   KV_NAMESPACES,
 } from './naming.js';
-import type { D1Location, D1Jurisdiction } from './config.js';
+import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
+import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-portability.js';
+import {
+  buildAdminUiBffMachineAccessBootstrapSql,
+  buildSetupMachineAccessCleanupSql,
+  buildSetupMachineAccessBootstrapSql,
+  deleteSetupMachineKeyFiles,
+  ensureSetupMachineKeyFiles,
+  loadAdminUiBffPublicJwk,
+  loadSetupMachinePublicJwk,
+} from './admin-machine-access.js';
 
-// Package directory (for bundled migrations)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PACKAGE_MIGRATIONS_DIR = pathJoin(__dirname, '..', '..', 'migrations');
+const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
+const D1_MIGRATION_MAX_ATTEMPTS = 4;
+const QUEUE_PROVISIONING_DEFINITIONS = [
+  { binding: 'AUDIT_QUEUE', nameSuffix: 'audit-queue' },
+  { binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE', nameSuffix: 'logging-delivery-critical-queue' },
+  { binding: 'LOGGING_DELIVERY_QUEUE', nameSuffix: 'logging-delivery-queue' },
+  { binding: 'LOGGING_DELIVERY_BULK_QUEUE', nameSuffix: 'logging-delivery-bulk-queue' },
+] as const;
 
 // =============================================================================
 // Types
@@ -56,6 +73,15 @@ export interface R2BucketInfo {
   name: string;
 }
 
+export type R2BucketProvisioningState = 'configured' | 'recorded_but_missing' | 'missing';
+
+export interface R2BucketProvisioningStatus extends R2BucketInfo {
+  recorded: boolean;
+  exists: boolean;
+  configured: boolean;
+  state: R2BucketProvisioningState;
+}
+
 export interface ProvisionedResources {
   d1: D1DatabaseInfo[];
   kv: KVNamespaceInfo[];
@@ -89,6 +115,95 @@ export interface ProvisionOptions {
   onProgress?: (message: string) => void;
   /** Database location configuration */
   databaseConfig?: DatabaseProvisionConfig;
+  /** Runtime profile defaults used for migration layout decisions */
+  config?: MigrationProfileConfig;
+}
+
+export interface MigrationProfileConfig {
+  profiles?: {
+    defaults?: {
+      storage?: string;
+    };
+  };
+}
+
+export const R2_BUCKETS = [
+  { binding: 'AVATARS', suffix: 'authrim-avatars' },
+  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
+  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive' },
+  { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts' },
+  { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts' },
+  { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details' },
+] as const;
+
+export type R2BucketBinding = (typeof R2_BUCKETS)[number]['binding'];
+
+export function getR2BucketName(env: string, binding: R2BucketBinding): string {
+  const bucket = R2_BUCKETS.find((candidate) => candidate.binding === binding);
+  if (!bucket) {
+    throw new Error(`Unknown R2 bucket binding: ${binding}`);
+  }
+  return `${env}-${bucket.suffix}`;
+}
+
+export function getRequiredR2Buckets(env: string): R2BucketInfo[] {
+  return R2_BUCKETS.map((bucket) => ({
+    binding: bucket.binding,
+    name: `${env}-${bucket.suffix}`,
+  }));
+}
+
+export function buildR2BucketProvisioningStatus(
+  env: string,
+  recordedBuckets: Record<string, { name: string }> | null | undefined,
+  cloudflareBucketNames: Iterable<string>
+): {
+  env: string;
+  enabled: boolean;
+  required: number;
+  configured: number;
+  missing: R2BucketProvisioningStatus[];
+  buckets: R2BucketProvisioningStatus[];
+} {
+  const existingNames = new Set(cloudflareBucketNames);
+  const buckets = getRequiredR2Buckets(env).map((bucket) => {
+    const recordedName = recordedBuckets?.[bucket.binding]?.name;
+    const name = recordedName ?? bucket.name;
+    const recorded = Boolean(recordedName);
+    const exists = existingNames.has(name);
+    const configured = recorded && exists;
+    const state: R2BucketProvisioningState = recorded
+      ? exists
+        ? 'configured'
+        : 'recorded_but_missing'
+      : 'missing';
+
+    return {
+      ...bucket,
+      name,
+      recorded,
+      exists,
+      configured,
+      state,
+    };
+  });
+
+  return {
+    env,
+    enabled: buckets.every((bucket) => bucket.configured),
+    required: buckets.length,
+    configured: buckets.filter((bucket) => bucket.configured).length,
+    missing: buckets.filter((bucket) => !bucket.configured),
+    buckets,
+  };
+}
+
+export function shouldMirrorPiiMigrationsToCore(config?: MigrationProfileConfig | null): boolean {
+  return config?.profiles?.defaults?.storage === 'builtin:storage:single-db';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // =============================================================================
@@ -111,6 +226,11 @@ async function wrangler(
       reject: false,
       timeout: options.timeout ?? 30000,
     });
+
+    if (result.exitCode !== 0) {
+      const detail = [result.stderr, result.stdout].filter(Boolean).join('\n');
+      throw new Error(`Wrangler command failed (${result.exitCode}): ${detail || args.join(' ')}`);
+    }
 
     return {
       stdout: result.stdout,
@@ -143,6 +263,27 @@ export async function isWranglerInstalled(): Promise<boolean> {
  * Check if user is authenticated with Cloudflare
  */
 export async function checkAuth(): Promise<CloudflareAuth> {
+  const apiTokenAuth = async (): Promise<CloudflareAuth | null> => {
+    const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+    const tokenInfo = envToken
+      ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
+      : await getCloudflareApiToken();
+    if (!tokenInfo?.token) {
+      return null;
+    }
+
+    if (!(await verifyCloudflareApiToken(tokenInfo.token))) {
+      return null;
+    }
+
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
+    return {
+      isLoggedIn: true,
+      accountId,
+      email: tokenInfo.source === 'env' ? 'api-token' : undefined,
+    };
+  };
+
   try {
     const { stdout, stderr } = await wrangler(['whoami']);
     const combinedOutput = (stdout + '\n' + stderr).toLowerCase();
@@ -167,17 +308,50 @@ export async function checkAuth(): Promise<CloudflareAuth> {
     // Parse output to extract account info
     const emailMatch = stdout.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
     const accountMatch = stdout.match(/([a-f0-9]{32})/);
+    const envAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
 
     // Consider logged in if: no negative patterns AND (has email OR has logged in message)
     const isLoggedIn = !isNotLoggedIn && (hasEmail || hasLoggedInMessage);
+    if (!isLoggedIn) {
+      const tokenAuth = await apiTokenAuth();
+      if (tokenAuth) {
+        return tokenAuth;
+      }
+    }
 
     return {
       isLoggedIn,
       email: emailMatch?.[1],
-      accountId: accountMatch?.[1],
+      accountId: accountMatch?.[1] ?? envAccountId,
     };
   } catch {
+    const tokenAuth = await apiTokenAuth();
+    if (tokenAuth) {
+      return tokenAuth;
+    }
     return { isLoggedIn: false };
+  }
+}
+
+async function verifyCloudflareApiToken(token: string): Promise<boolean> {
+  try {
+    const response = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      return false;
+    }
+
+    try {
+      const data = (await response.json()) as { success?: boolean };
+      return data.success !== false;
+    } catch {
+      return true;
+    }
+  } catch {
+    return false;
   }
 }
 
@@ -298,6 +472,184 @@ export async function getWorkersSubdomain(): Promise<string | null> {
   }
 }
 
+export interface SetupCapabilityDiagnostics {
+  wranglerInstalled: boolean;
+  loggedIn: boolean;
+  tokenAvailable: boolean;
+  workersSubdomainAvailable: boolean;
+  zoneReadAvailable: boolean;
+  accessibleZoneCount: number;
+  dnsReadAvailable: boolean;
+  uiWorkersApiAvailable: boolean;
+}
+
+export interface SetupCapabilityEstimate {
+  workersDeploy: boolean;
+  customDomain: boolean;
+  multiTenant: boolean;
+  nakedDomain: boolean;
+  pages: boolean;
+}
+
+export type SetupCapabilityStatus = 'ok' | 'review' | 'ng';
+
+export interface SetupCapabilityStatuses {
+  workersDeploy: SetupCapabilityStatus;
+  customDomain: SetupCapabilityStatus;
+  multiTenant: SetupCapabilityStatus;
+  nakedDomain: SetupCapabilityStatus;
+  pages: SetupCapabilityStatus;
+}
+
+export function deriveSetupCapabilityEstimate(
+  diagnostics: SetupCapabilityDiagnostics
+): SetupCapabilityEstimate {
+  const workersDeploy = diagnostics.wranglerInstalled && diagnostics.loggedIn;
+  const customDomain =
+    workersDeploy &&
+    diagnostics.tokenAvailable &&
+    diagnostics.zoneReadAvailable &&
+    diagnostics.accessibleZoneCount > 0;
+  const multiTenant = customDomain && diagnostics.dnsReadAvailable;
+  const nakedDomain = multiTenant;
+  const pages = workersDeploy && diagnostics.tokenAvailable && diagnostics.uiWorkersApiAvailable;
+
+  return {
+    workersDeploy,
+    customDomain,
+    multiTenant,
+    nakedDomain,
+    pages,
+  };
+}
+
+export function deriveSetupCapabilityStatuses(
+  diagnostics: SetupCapabilityDiagnostics
+): SetupCapabilityStatuses {
+  const workersDeploy: SetupCapabilityStatus =
+    diagnostics.wranglerInstalled && diagnostics.loggedIn ? 'ok' : 'ng';
+
+  let customDomain: SetupCapabilityStatus;
+  if (workersDeploy === 'ng') {
+    customDomain = 'ng';
+  } else if (diagnostics.zoneReadAvailable && diagnostics.accessibleZoneCount > 0) {
+    customDomain = 'ok';
+  } else if (diagnostics.zoneReadAvailable && diagnostics.accessibleZoneCount === 0) {
+    customDomain = 'ng';
+  } else {
+    customDomain = 'review';
+  }
+
+  let multiTenant: SetupCapabilityStatus;
+  if (customDomain === 'ng') {
+    multiTenant = 'ng';
+  } else if (diagnostics.dnsReadAvailable) {
+    multiTenant = 'ok';
+  } else {
+    multiTenant = 'review';
+  }
+
+  const nakedDomain: SetupCapabilityStatus =
+    multiTenant === 'ok' ? 'ok' : multiTenant === 'review' ? 'review' : 'ng';
+
+  let pages: SetupCapabilityStatus;
+  if (workersDeploy === 'ng') {
+    pages = 'ng';
+  } else if (diagnostics.uiWorkersApiAvailable) {
+    pages = 'ok';
+  } else {
+    pages = 'review';
+  }
+
+  return {
+    workersDeploy,
+    customDomain,
+    multiTenant,
+    nakedDomain,
+    pages,
+  };
+}
+
+export async function getSetupCapabilityDiagnostics(
+  auth: CloudflareAuth,
+  wranglerInstalled: boolean,
+  workersSubdomain?: string | null
+): Promise<SetupCapabilityDiagnostics> {
+  const baseDiagnostics: SetupCapabilityDiagnostics = {
+    wranglerInstalled,
+    loggedIn: auth.isLoggedIn,
+    tokenAvailable: false,
+    workersSubdomainAvailable: !!workersSubdomain,
+    zoneReadAvailable: false,
+    accessibleZoneCount: 0,
+    dnsReadAvailable: false,
+    uiWorkersApiAvailable: false,
+  };
+
+  if (!wranglerInstalled || !auth.isLoggedIn) {
+    return baseDiagnostics;
+  }
+
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo?.token) {
+    return baseDiagnostics;
+  }
+
+  baseDiagnostics.tokenAvailable = true;
+
+  try {
+    const zoneResponse = await fetch('https://api.cloudflare.com/client/v4/zones?per_page=1', {
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+      },
+    });
+
+    if (zoneResponse.ok) {
+      const zoneData = (await zoneResponse.json()) as {
+        success?: boolean;
+        result?: Array<{ id?: string }>;
+      };
+      if (zoneData.success) {
+        baseDiagnostics.zoneReadAvailable = true;
+        baseDiagnostics.accessibleZoneCount = zoneData.result?.length ?? 0;
+
+        const sampleZoneId = zoneData.result?.[0]?.id;
+        if (sampleZoneId) {
+          const dnsResponse = await fetch(
+            `https://api.cloudflare.com/client/v4/zones/${sampleZoneId}/dns_records?per_page=1`,
+            {
+              headers: {
+                Authorization: `Bearer ${tokenInfo.token}`,
+              },
+            }
+          );
+          baseDiagnostics.dnsReadAvailable = dnsResponse.ok;
+        }
+      }
+    }
+  } catch {
+    // Keep defaults; this is an estimate only.
+  }
+
+  if (auth.accountId) {
+    try {
+      const workersResponse = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${auth.accountId}/workers/scripts`,
+        {
+          headers: {
+            Authorization: `Bearer ${tokenInfo.token}`,
+          },
+        }
+      );
+      baseDiagnostics.uiWorkersApiAvailable = workersResponse.ok;
+    } catch {
+      // Keep default false; this is an estimate only.
+    }
+  }
+
+  return baseDiagnostics;
+}
+
 // =============================================================================
 // Zone Check
 // =============================================================================
@@ -308,10 +660,132 @@ export interface ZoneInfo {
   status: string;
 }
 
+export type ZoneCheckDiagnosticCode =
+  | 'zone_found'
+  | 'not_logged_in'
+  | 'token_unavailable'
+  | 'zone_read_forbidden'
+  | 'zone_not_found'
+  | 'api_error'
+  | 'network_error';
+
+export type ZoneCheckDiagnosticSeverity = 'success' | 'warning' | 'error';
+
+export type ZoneCheckAction =
+  | 'retry_check'
+  | 'reload_page'
+  | 'run_wrangler_login'
+  | 'check_cloudflare_permissions'
+  | 'open_cloudflare_dashboard';
+
+export interface ZoneCheckDiagnostic {
+  code: ZoneCheckDiagnosticCode;
+  severity: ZoneCheckDiagnosticSeverity;
+  allowBinding: boolean;
+  actions: ZoneCheckAction[];
+}
+
 export interface ZoneCheckResult {
   found: boolean;
   zone?: ZoneInfo;
+  zoneName?: string;
   error?: string;
+  diagnostic?: ZoneCheckDiagnostic;
+}
+
+function createZoneDiagnostic(
+  code: ZoneCheckDiagnosticCode,
+  overrides: Partial<ZoneCheckDiagnostic> = {}
+): ZoneCheckDiagnostic {
+  const defaults: Record<ZoneCheckDiagnosticCode, ZoneCheckDiagnostic> = {
+    zone_found: {
+      code: 'zone_found',
+      severity: 'success',
+      allowBinding: true,
+      actions: [],
+    },
+    not_logged_in: {
+      code: 'not_logged_in',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page', 'run_wrangler_login'],
+    },
+    token_unavailable: {
+      code: 'token_unavailable',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page', 'run_wrangler_login'],
+    },
+    zone_read_forbidden: {
+      code: 'zone_read_forbidden',
+      severity: 'warning',
+      allowBinding: true,
+      actions: ['retry_check', 'reload_page', 'run_wrangler_login', 'check_cloudflare_permissions'],
+    },
+    zone_not_found: {
+      code: 'zone_not_found',
+      severity: 'warning',
+      allowBinding: false,
+      actions: ['retry_check', 'open_cloudflare_dashboard'],
+    },
+    api_error: {
+      code: 'api_error',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page'],
+    },
+    network_error: {
+      code: 'network_error',
+      severity: 'error',
+      allowBinding: false,
+      actions: ['retry_check', 'reload_page'],
+    },
+  };
+
+  return {
+    ...defaults[code],
+    ...overrides,
+    actions: overrides.actions ?? defaults[code].actions,
+  };
+}
+
+function createZoneCheckResult(
+  code: ZoneCheckDiagnosticCode,
+  options: {
+    found?: boolean;
+    zone?: ZoneInfo;
+    zoneName?: string;
+    error?: string;
+  } = {}
+): ZoneCheckResult {
+  return {
+    found: options.found ?? code === 'zone_found',
+    zone: options.zone,
+    zoneName: options.zoneName,
+    error: options.error,
+    diagnostic: createZoneDiagnostic(code),
+  };
+}
+
+export function isZoneReadPermissionError(
+  errorOrResult?: string | ZoneCheckResult | ZoneCheckDiagnostic | null
+): boolean {
+  if (!errorOrResult) {
+    return false;
+  }
+  if (typeof errorOrResult === 'string') {
+    return errorOrResult.includes('zone:read');
+  }
+  if ('diagnostic' in errorOrResult) {
+    return (
+      errorOrResult.diagnostic?.code === 'zone_read_forbidden' ||
+      (errorOrResult.error ?? '').includes('zone:read')
+    );
+  }
+  if ('code' in errorOrResult) {
+    return errorOrResult.code === 'zone_read_forbidden';
+  }
+  return false;
 }
 
 /**
@@ -764,12 +1238,21 @@ export function extractZoneName(hostname: string): string {
  */
 export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> {
   try {
+    const zoneName = extractZoneName(domain);
     const tokenInfo = await getCloudflareApiToken();
     if (!tokenInfo) {
-      return { found: false, error: 'Not logged in to Cloudflare (run: wrangler login)' };
+      const auth = await checkAuth();
+      if (!auth.isLoggedIn) {
+        return createZoneCheckResult('not_logged_in', {
+          zoneName,
+          error: 'Not logged in to Cloudflare (run: wrangler login)',
+        });
+      }
+      return createZoneCheckResult('token_unavailable', {
+        zoneName,
+        error: 'Cloudflare API token is unavailable',
+      });
     }
-
-    const zoneName = extractZoneName(domain);
 
     const response = await fetch(
       `https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(zoneName)}`,
@@ -782,31 +1265,324 @@ export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> 
 
     if (!response.ok) {
       if (response.status === 403) {
-        return { found: false, error: 'Token lacks zone:read permission' };
+        return createZoneCheckResult('zone_read_forbidden', {
+          zoneName,
+          error: 'Token lacks zone:read permission',
+        });
       }
-      return { found: false, error: `Cloudflare API returned ${response.status}` };
+      return createZoneCheckResult('api_error', {
+        zoneName,
+        error: `Cloudflare API returned ${response.status}`,
+      });
     }
 
     const data = (await response.json()) as {
       success: boolean;
       result: Array<{ id: string; name: string; status: string }>;
+      errors?: CloudflareApiMessage[];
     };
 
-    if (!data.success || !data.result || data.result.length === 0) {
-      return { found: false };
+    if (!data.success) {
+      const apiMessage = data.errors?.find((item) => item.message)?.message;
+      return createZoneCheckResult('api_error', {
+        zoneName,
+        error: apiMessage || 'Cloudflare API returned an unsuccessful response',
+      });
+    }
+
+    if (!data.result || data.result.length === 0) {
+      return createZoneCheckResult('zone_not_found', { zoneName });
     }
 
     const zone = data.result[0];
-    return {
+    return createZoneCheckResult('zone_found', {
       found: true,
       zone: { id: zone.id, name: zone.name, status: zone.status },
-    };
+      zoneName,
+    });
   } catch (error) {
-    return {
-      found: false,
+    return createZoneCheckResult('network_error', {
+      zoneName: extractZoneName(domain),
       error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}
+
+export interface EnsureWildcardDnsResult {
+  created: boolean;
+  updated: boolean;
+  recordId?: string;
+  name: string;
+  target: string;
+  verificationLimited?: boolean;
+}
+
+interface CloudflareApiMessage {
+  code?: number;
+  message?: string;
+}
+
+interface CloudflareDnsRecordResponse {
+  success?: boolean;
+  result?: Array<{
+    id: string;
+    type: string;
+    name: string;
+    content: string;
+    proxied?: boolean;
+  }>;
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareDnsMutationResponse {
+  success?: boolean;
+  result?: { id?: string };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareR2ObjectListResponse {
+  success?: boolean;
+  result?: Array<{ key?: string }>;
+  result_info?: {
+    cursor?: string;
+    is_truncated?: boolean;
+  };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareAccountsResponse {
+  success?: boolean;
+  result?: Array<{ id?: string }>;
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+function hasCloudflareAlreadyExistsError(payload: {
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}): boolean {
+  const entries = [...(payload.errors ?? []), ...(payload.messages ?? [])];
+  return entries.some(
+    (entry) =>
+      entry.code === 81057 || entry.code === 81058 || /already exists/i.test(entry.message ?? '')
+  );
+}
+
+/**
+ * Ensure a proxied wildcard DNS record exists for tenant subdomains.
+ *
+ * Creates or updates `*.{baseDomain}` as a proxied CNAME pointing to `{baseDomain}`.
+ * This allows wildcard tenant hosts to resolve through Cloudflare so Worker routes can match.
+ */
+export async function ensureWildcardDnsRecord(
+  baseDomain: string,
+  zoneId?: string | null
+): Promise<EnsureWildcardDnsResult> {
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo) {
+    throw new Error('Not logged in to Cloudflare (run: wrangler login)');
+  }
+
+  const recordName = `*.${baseDomain}`;
+  const recordTarget = baseDomain;
+
+  let resolvedZoneId = zoneId || undefined;
+  if (!resolvedZoneId) {
+    const zoneResult = await checkZoneExists(baseDomain);
+    if (!zoneResult.found || !zoneResult.zone?.id) {
+      if (zoneResult.diagnostic?.code === 'zone_read_forbidden') {
+        return {
+          created: false,
+          updated: false,
+          name: recordName,
+          target: recordTarget,
+          verificationLimited: true,
+        };
+      }
+      throw new Error(`Cloudflare zone not found for ${baseDomain}`);
+    }
+    resolvedZoneId = zoneResult.zone.id;
+  }
+
+  const recordResponse = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records?name=${encodeURIComponent(recordName)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+      },
+    }
+  );
+
+  const payload = {
+    type: 'CNAME',
+    name: recordName,
+    content: recordTarget,
+    proxied: true,
+    ttl: 1,
+  };
+
+  const createWildcardRecord = async (
+    assumeExistingOnForbidden: boolean
+  ): Promise<EnsureWildcardDnsResult> => {
+    const createResponse = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenInfo.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const createdData = (await createResponse
+      .json()
+      .catch(() => ({}))) as CloudflareDnsMutationResponse;
+
+    if (!createResponse.ok || createdData.success === false) {
+      if (hasCloudflareAlreadyExistsError(createdData) || createResponse.status === 409) {
+        return {
+          created: false,
+          updated: false,
+          name: recordName,
+          target: recordTarget,
+        };
+      }
+
+      if (createResponse.status === 403) {
+        if (assumeExistingOnForbidden) {
+          return {
+            created: false,
+            updated: false,
+            name: recordName,
+            target: recordTarget,
+            verificationLimited: true,
+          };
+        }
+        throw new Error('Token lacks dns:edit permission to create wildcard DNS record');
+      }
+
+      throw new Error(`Failed to create wildcard DNS record (${createResponse.status})`);
+    }
+
+    return {
+      created: true,
+      updated: false,
+      recordId: createdData.result?.id,
+      name: recordName,
+      target: recordTarget,
+    };
+  };
+
+  if (!recordResponse.ok) {
+    if (recordResponse.status === 403) {
+      return createWildcardRecord(true);
+    }
+    throw new Error(`Failed to query DNS records (${recordResponse.status})`);
+  }
+
+  const recordData = (await recordResponse.json()) as CloudflareDnsRecordResponse;
+
+  if (!recordData.success) {
+    throw new Error('Cloudflare DNS query failed');
+  }
+
+  const existingRecord = recordData.result?.find((record) => record.name === recordName);
+
+  if (existingRecord) {
+    if (existingRecord.content === recordTarget && existingRecord.proxied === true) {
+      return {
+        created: false,
+        updated: false,
+        recordId: existingRecord.id,
+        name: recordName,
+        target: recordTarget,
+      };
+    }
+
+    const updateResponse = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records/${existingRecord.id}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${tokenInfo.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (!updateResponse.ok) {
+      throw new Error(`Failed to update wildcard DNS record (${updateResponse.status})`);
+    }
+
+    return {
+      created: false,
+      updated: true,
+      recordId: existingRecord.id,
+      name: recordName,
+      target: recordTarget,
     };
   }
+
+  return createWildcardRecord(false);
+}
+
+export async function ensureWildcardDnsForMultiTenant(
+  cfg: Partial<AuthrimConfig> | null | undefined,
+  onProgress?: (message: string) => void,
+  verifyPublicDns: (baseDomain: string) => Promise<boolean> = verifyWildcardDnsPublicResolution
+): Promise<void> {
+  const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
+  if (!baseDomain) {
+    return;
+  }
+
+  onProgress?.(`Ensuring wildcard DNS for *.${baseDomain}...`);
+
+  const result = await ensureWildcardDnsRecord(baseDomain, cfg?.urls?.api?.zoneId ?? null);
+  if (result.created) {
+    onProgress?.(`✓ Wildcard DNS created: ${result.name} -> ${result.target}`);
+  } else if (result.updated) {
+    onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
+  } else if (result.verificationLimited) {
+    if (await verifyPublicDns(baseDomain)) {
+      onProgress?.(`✓ Wildcard DNS resolves publicly: ${result.name} -> ${result.target}`);
+      return;
+    }
+    throw new Error(
+      `Token lacks zone:read or dns:edit permission to verify/create wildcard DNS record for ${result.name}`
+    );
+  } else {
+    onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
+  }
+}
+
+export async function verifyWildcardDnsPublicResolution(baseDomain: string): Promise<boolean> {
+  const hostname = `authrim-wildcard-check-${Date.now()}.${baseDomain}`;
+
+  const attempts = [
+    () => resolveCname(hostname),
+    () => resolve4(hostname),
+    () => resolve6(hostname),
+  ] as const;
+
+  for (const attempt of attempts) {
+    try {
+      const records = await attempt();
+      if (records.length > 0) {
+        return true;
+      }
+    } catch {
+      // Try the next record type.
+    }
+  }
+
+  return false;
 }
 
 // =============================================================================
@@ -919,6 +1695,29 @@ export async function createD1Database(
   return { id: idMatch[1], name };
 }
 
+export async function putKVKeyByNamespaceId(
+  namespaceId: string,
+  key: string,
+  value: string,
+  options: { expirationTtl?: number } = {}
+): Promise<void> {
+  const args = ['kv', 'key', 'put', key, value, '--namespace-id', namespaceId, '--remote'];
+  if (options.expirationTtl !== undefined) {
+    args.push('--ttl', String(options.expirationTtl));
+  }
+  await wrangler(args, { timeout: 60000 });
+}
+
+export async function getKVKeyByNamespaceId(namespaceId: string, key: string): Promise<string> {
+  const { stdout } = await wrangler(
+    ['kv', 'key', 'get', key, '--namespace-id', namespaceId, '--remote'],
+    {
+      timeout: 60000,
+    }
+  );
+  return stdout;
+}
+
 /**
  * Delete a D1 database
  */
@@ -978,19 +1777,131 @@ export async function executeD1Migration(
   sqlFilePath: string,
   onProgress?: (message: string) => void
 ): Promise<{ success: boolean; error?: string }> {
+  const isAlreadyAppliedError = (message: string): boolean =>
+    message.includes('already exists') ||
+    message.includes('duplicate column name') ||
+    message.includes('UNIQUE constraint');
+
+  const isTransientD1MigrationError = (message: string): boolean => {
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes('file could not be uploaded') ||
+      normalized.includes('internalerror') ||
+      normalized.includes('please retry') ||
+      normalized.includes('we encountered an internal error') ||
+      normalized.includes('internal server error') ||
+      normalized.includes('bad gateway') ||
+      normalized.includes('service unavailable') ||
+      normalized.includes('gateway timeout') ||
+      normalized.includes('fetch failed') ||
+      normalized.includes('econnreset') ||
+      normalized.includes('etimedout') ||
+      normalized.includes('timed out')
+    );
+  };
+
+  const retryDelayMs = (attempt: number): number => {
+    if (process.env.NODE_ENV === 'test') {
+      return 0;
+    }
+    return Math.min(2_000 * 2 ** (attempt - 1), 15_000);
+  };
+
   try {
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
-    await wrangler(['d1', 'execute', dbName, '--remote', '--file', sqlFilePath, '--yes']);
-    return { success: true };
+    const { readFileSync } = await import('node:fs');
+    const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
+    const tempSqlPath = pathJoin(
+      tmpdir(),
+      `authrim-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`
+    );
+    await writeFile(tempSqlPath, renderedSql, 'utf-8');
+    try {
+      for (let attempt = 1; attempt <= D1_MIGRATION_MAX_ATTEMPTS; attempt++) {
+        try {
+          await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes'], {
+            timeout: D1_MIGRATION_EXECUTE_TIMEOUT_MS,
+          });
+          return { success: true };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (isAlreadyAppliedError(message)) {
+            onProgress?.('  ⚠️ Migration already applied (skipped)');
+            return { success: true };
+          }
+
+          const canRetry =
+            attempt < D1_MIGRATION_MAX_ATTEMPTS && isTransientD1MigrationError(message);
+          if (!canRetry) {
+            return { success: false, error: message };
+          }
+
+          const delayMs = retryDelayMs(attempt);
+          onProgress?.(
+            `  ⚠️ Transient D1 migration failure for ${basename(sqlFilePath)} ` +
+              `(attempt ${attempt}/${D1_MIGRATION_MAX_ATTEMPTS}); retrying in ${Math.round(delayMs / 1000)}s`
+          );
+          if (delayMs > 0) {
+            await sleep(delayMs);
+          }
+        }
+      }
+    } finally {
+      await unlink(tempSqlPath).catch(() => {});
+    }
+    return { success: false, error: 'D1 migration retry loop exited unexpectedly' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Ignore "already exists" errors - migration may have been partially applied
-    if (message.includes('already exists') || message.includes('UNIQUE constraint')) {
+    if (isAlreadyAppliedError(message)) {
       onProgress?.('  ⚠️ Migration already applied (skipped)');
       return { success: true };
     }
     return { success: false, error: message };
   }
+}
+
+export interface D1ExecuteCommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+export async function executeD1Command(
+  dbName: string,
+  sql: string,
+  options: { json?: boolean; timeout?: number } = {}
+): Promise<D1ExecuteCommandResult> {
+  return wrangler(
+    [
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+      ...(options.json ? ['--json'] : []),
+    ],
+    { timeout: options.timeout ?? D1_MIGRATION_EXECUTE_TIMEOUT_MS }
+  );
+}
+
+export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
+  stdout: string
+): T[] {
+  const payload = JSON.parse(stdout) as Array<{ results?: T[] }> | { results?: T[] };
+  if (Array.isArray(payload)) {
+    return payload.flatMap((entry) => entry.results ?? []);
+  }
+  return payload.results ?? [];
+}
+
+export async function queryD1Rows<T extends Record<string, unknown>>(
+  dbName: string,
+  sql: string
+): Promise<T[]> {
+  const { stdout } = await executeD1Command(dbName, sql, { json: true });
+  return parseD1RowsFromWranglerJson<T>(stdout);
 }
 
 /** SQL to create the migration tracking table (idempotent) */
@@ -1052,11 +1963,103 @@ async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
   }
 }
 
+function extractMigrationVersion(filename: string): number {
+  const match = filename.match(/^(\d+)_/u);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+export async function validateD1MigrationVersion(
+  dbName: string,
+  expectedVersion: number
+): Promise<{ success: boolean; latestVersion: number; error?: string }> {
+  try {
+    const applied = await getAppliedMigrations(dbName);
+    const latestVersion = Math.max(0, ...Array.from(applied).map(extractMigrationVersion));
+    if (latestVersion < expectedVersion) {
+      return {
+        success: false,
+        latestVersion,
+        error: `D1 database ${dbName} migration version ${latestVersion} is below expected ${expectedVersion}`,
+      };
+    }
+    return { success: true, latestVersion };
+  } catch (error) {
+    return {
+      success: false,
+      latestVersion: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /**
  * Record a migration filename as applied.
  */
+export function buildRecordMigrationSql(filename: string, appliedAt = Date.now()): string {
+  const escapedFilename = filename.replace(/'/g, "''");
+  return `INSERT INTO authrim_migrations (filename, applied_at)
+SELECT '${escapedFilename}', ${appliedAt}
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM authrim_migrations
+  WHERE filename = '${escapedFilename}'
+);`;
+}
+
+const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
+
+interface ListD1MigrationOptions {
+  excludeTopLevelDirectories?: ReadonlySet<string>;
+}
+
+interface RunD1MigrationOptions extends ListD1MigrationOptions {
+  logSummaryLimit?: number;
+}
+
+export function listD1MigrationSqlFiles(
+  migrationsDir: string,
+  options: ListD1MigrationOptions = {}
+): string[] {
+  const files: string[] = [];
+
+  function walk(relativeDir: string): void {
+    const absoluteDir = relativeDir ? pathJoin(migrationsDir, relativeDir) : migrationsDir;
+    for (const entry of readdirSync(absoluteDir).sort()) {
+      if (entry.startsWith('.')) {
+        continue;
+      }
+      const relativePath = relativeDir ? `${relativeDir}/${entry}` : entry;
+      const absolutePath = pathJoin(migrationsDir, relativePath);
+      const stat = statSync(absolutePath);
+      if (stat.isDirectory()) {
+        if (!relativeDir && options.excludeTopLevelDirectories?.has(entry)) {
+          continue;
+        }
+        walk(relativePath);
+        continue;
+      }
+      if (stat.isFile() && entry.endsWith('.sql')) {
+        files.push(relativePath);
+      }
+    }
+  }
+
+  walk('');
+  return files.sort();
+}
+
+function formatMigrationFileSummary(files: string[], limit = 8): string {
+  if (files.length === 0) {
+    return '';
+  }
+
+  const visible = files.slice(0, limit).join(', ');
+  const remaining = files.length - limit;
+  return remaining > 0 ? `${visible}, +${remaining} more` : visible;
+}
+
 async function recordMigration(dbName: string, filename: string): Promise<void> {
-  const sql = `INSERT OR IGNORE INTO authrim_migrations (filename, applied_at) VALUES ('${filename.replace(/'/g, "''")}', ${Date.now()});`;
+  const sql = buildRecordMigrationSql(filename);
   try {
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
   } catch {
@@ -1073,9 +2076,10 @@ async function recordMigration(dbName: string, filename: string): Promise<void> 
 export async function runD1Migrations(
   dbName: string,
   migrationsDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: RunD1MigrationOptions = {}
 ): Promise<{ success: boolean; appliedCount: number; skippedCount: number; error?: string }> {
-  const { existsSync, readdirSync } = await import('node:fs');
+  const { existsSync } = await import('node:fs');
   const { join } = await import('node:path');
 
   if (!existsSync(migrationsDir)) {
@@ -1087,10 +2091,7 @@ export async function runD1Migrations(
     };
   }
 
-  // Get all SQL files sorted by name (001_, 002_, etc.)
-  const sqlFiles = readdirSync(migrationsDir)
-    .filter((f) => f.endsWith('.sql') && !f.startsWith('.'))
-    .sort();
+  const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
 
   if (sqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
@@ -1106,10 +2107,12 @@ export async function runD1Migrations(
 
   let appliedCount = 0;
   let skippedCount = 0;
+  const alreadyAppliedFiles: string[] = [];
+  const summaryLimit = options.logSummaryLimit ?? 8;
 
   for (const sqlFile of sqlFiles) {
     if (applied.has(sqlFile)) {
-      onProgress?.(`  ⏭  Skipping (already applied): ${sqlFile}`);
+      alreadyAppliedFiles.push(sqlFile);
       skippedCount++;
       continue;
     }
@@ -1128,16 +2131,562 @@ export async function runD1Migrations(
     appliedCount++;
   }
 
+  if (alreadyAppliedFiles.length > 0) {
+    onProgress?.(
+      `  ⏭  Skipping ${alreadyAppliedFiles.length} already-applied migration(s): ${formatMigrationFileSummary(
+        alreadyAppliedFiles,
+        summaryLimit
+      )}`
+    );
+  }
+
   return { success: true, appliedCount, skippedCount };
+}
+
+function sqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Build idempotent SQL that guarantees the configured initial tenant exists.
+ *
+ * Fresh databases currently start with a hard-coded `default` row. When setup
+ * configures a different initial tenant ID, that row must be renamed or a new
+ * tenant must be inserted so host-based tenant resolution succeeds.
+ */
+export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
+  const sqlExpr = getPortableSqlExpressions('sqlite');
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const tenantCode = tenantId;
+  const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
+
+  const tenantIdSql = sqlString(tenantId);
+  const tenantCodeSql = sqlString(tenantCode);
+  const displayNameSql = sqlString(displayName);
+
+  // Note: D1's HTTP API (used by `wrangler d1 execute --command`) does not support
+  // explicit BEGIN TRANSACTION / COMMIT statements. Each statement runs as its own
+  // implicit transaction, which is safe here because this bootstrap runs once during
+  // deployment with no concurrent writes.
+  return `
+UPDATE tenants
+SET id = ${tenantIdSql},
+    tenant_code = ${tenantCodeSql},
+    name = ${displayNameSql},
+    tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
+    is_active = 1,
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND (SELECT COUNT(*) FROM tenants) = 1;
+
+INSERT INTO tenants (
+  id, tenant_code, tenant_key, name, description, is_active, is_default,
+  default_tenant_guard, created_at, updated_at
+)
+SELECT ${tenantIdSql}, ${tenantCodeSql}, 't_' || lower(hex(randomblob(18))), ${displayNameSql}, NULL, 1,
+       CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
+       CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
+       ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
+WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
+
+UPDATE tenants
+SET tenant_code = ${tenantCodeSql},
+    name = ${displayNameSql},
+    tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
+    is_active = 1,
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE id = ${tenantIdSql};
+`.trim();
+}
+
+/**
+ * Build idempotent SQL that canonicalizes built-in admin roles in DB_ADMIN.
+ *
+ * System roles are global templates and must exist only under tenant `default`.
+ * Older setup versions copied them into the initial tenant; this rewrites any
+ * assignments to the canonical default roles and deletes those stale copies.
+ */
+export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const tenantIdSql = sqlString(tenantId);
+
+  return `
+DELETE FROM admin_role_assignments
+WHERE admin_role_id IN (
+  SELECT copy.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.tenant_id = ${tenantIdSql}
+    AND copy.tenant_id <> 'default'
+    AND copy.is_system = 1
+)
+AND EXISTS (
+  SELECT 1
+  FROM admin_role_assignments existing
+  JOIN admin_roles copy
+    ON copy.id = admin_role_assignments.admin_role_id
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE existing.tenant_id = admin_role_assignments.tenant_id
+    AND existing.admin_user_id = admin_role_assignments.admin_user_id
+    AND existing.admin_role_id = canonical.id
+    AND existing.scope_type = admin_role_assignments.scope_type
+    AND COALESCE(existing.scope_id, '') = COALESCE(admin_role_assignments.scope_id, '')
+);
+
+UPDATE admin_role_assignments
+SET admin_role_id = (
+  SELECT canonical.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.id = admin_role_assignments.admin_role_id
+  LIMIT 1
+)
+WHERE admin_role_id IN (
+  SELECT copy.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.tenant_id = ${tenantIdSql}
+    AND copy.tenant_id <> 'default'
+    AND copy.is_system = 1
+);
+
+DELETE FROM admin_roles
+WHERE tenant_id = ${tenantIdSql}
+  AND ${tenantIdSql} <> 'default'
+  AND is_system = 1
+  AND EXISTS (
+    SELECT 1
+    FROM admin_roles canonical
+    WHERE canonical.tenant_id = 'default'
+      AND canonical.is_system = 1
+      AND canonical.name = admin_roles.name
+  );
+`.trim();
+}
+
+export interface InitialTenantBootstrapResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface InitialAdminRolesBootstrapResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface SetupMachineAccessBootstrapResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface RuntimeProfileSeedResult {
+  success: boolean;
+  seededCount: number;
+  backend: 'kv' | 'database';
+  error?: string;
+}
+
+/**
+ * Ensure the configured initial tenant exists in the core D1 database.
+ *
+ * This runs after migrations so host-based tenant validation can find the
+ * configured tenant immediately after deployment.
+ */
+export async function ensureInitialTenantInD1(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<InitialTenantBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'core-db');
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const sql = buildInitialTenantBootstrapSql(config);
+
+  try {
+    onProgress?.(`🔧 Ensuring initial tenant exists in ${dbName} (${tenantId})...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    // wrangler uses reject:false so errors appear in output rather than thrown
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Initial tenant bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+    onProgress?.(`  ✅ Initial tenant ready: ${tenantId}`);
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Initial tenant bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Ensure built-in admin roles exist for the configured initial tenant.
+ */
+export async function ensureInitialAdminRolesInD1(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<InitialAdminRolesBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const sql = buildInitialAdminRolesBootstrapSql(config);
+
+  try {
+    onProgress?.(`🔧 Ensuring admin roles exist in ${dbName} (${tenantId})...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Admin role bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+    onProgress?.(`  ✅ Admin roles ready: ${tenantId}`);
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Admin role bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Ensure the setup tool machine principal and public JWK credential exist in DB_ADMIN.
+ */
+export async function ensureSetupMachineAccessInD1(
+  env: string,
+  config: AuthrimConfig,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    await ensureSetupMachineKeyFiles(keysDir);
+    const publicJwk = await loadSetupMachinePublicJwk(keysDir);
+    const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
+
+    onProgress?.(`🔧 Ensuring setup machine access exists in ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Setup machine access bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    onProgress?.('  ✅ Setup machine access ready');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Setup machine access bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Remove the deploy-only setup machine principal and its local private key.
+ *
+ * The initial admin setup token is managed separately and is intentionally not
+ * touched here.
+ */
+export async function cleanupSetupMachineAccessInD1(
+  env: string,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    const sql = buildSetupMachineAccessCleanupSql();
+
+    onProgress?.(`🧹 Removing setup machine access from ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Setup machine access cleanup failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    await deleteSetupMachineKeyFiles(keysDir);
+    onProgress?.('  ✅ Setup machine access removed');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Setup machine access cleanup failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Ensure the Admin UI BFF machine principal and public JWK credential exist in DB_ADMIN.
+ */
+export async function ensureAdminUiBffMachineAccessInD1(
+  env: string,
+  config: AuthrimConfig,
+  keysDir: string,
+  onProgress?: (message: string) => void
+): Promise<SetupMachineAccessBootstrapResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+
+  try {
+    const publicJwk = await loadAdminUiBffPublicJwk(keysDir);
+    const sql = buildAdminUiBffMachineAccessBootstrapSql(config, publicJwk);
+
+    onProgress?.(`🔧 Ensuring Admin UI BFF machine access exists in ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Admin UI BFF machine access bootstrap failed: ${errorDetail}`);
+      return { success: false, error: errorDetail };
+    }
+
+    onProgress?.('  ✅ Admin UI BFF machine access ready');
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Admin UI BFF machine access bootstrap failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+type SeededRuntimeProfile = {
+  kind: 'storage' | 'audit' | 'residency';
+  id: string;
+  payload: Record<string, unknown>;
+};
+
+function collectSeededRuntimeProfiles(config: AuthrimConfig): SeededRuntimeProfile[] {
+  const seeded: SeededRuntimeProfile[] = [];
+  for (const profile of config.profiles?.seed?.storage ?? []) {
+    seeded.push({
+      kind: 'storage',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'storage',
+        builtin: false,
+      },
+    });
+  }
+  for (const profile of config.profiles?.seed?.audit ?? []) {
+    seeded.push({
+      kind: 'audit',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'audit',
+        builtin: false,
+      },
+    });
+  }
+  for (const profile of config.profiles?.seed?.residency ?? []) {
+    seeded.push({
+      kind: 'residency',
+      id: profile.id,
+      payload: {
+        ...profile,
+        kind: 'residency',
+        builtin: false,
+      },
+    });
+  }
+  return seeded;
+}
+
+export function buildRuntimeProfileSeedSql(config: AuthrimConfig): string | null {
+  const seeded = collectSeededRuntimeProfiles(config);
+  if (seeded.length === 0) {
+    return null;
+  }
+
+  return seeded
+    .map((profile) => {
+      const payloadSql = sqlString(JSON.stringify(profile.payload));
+      const kindSql = sqlString(profile.kind);
+      const idSql = sqlString(profile.id);
+      return `
+UPDATE profile_registry
+SET payload_json = ${payloadSql},
+    updated_at = CURRENT_TIMESTAMP
+WHERE kind = ${kindSql}
+  AND id = ${idSql};
+
+INSERT INTO profile_registry (id, kind, payload_json, created_at, updated_at)
+SELECT ${idSql}, ${kindSql}, ${payloadSql}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM profile_registry
+  WHERE kind = ${kindSql}
+    AND id = ${idSql}
+);`.trim();
+    })
+    .join('\n\n');
+}
+
+export async function seedRuntimeProfiles(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<RuntimeProfileSeedResult> {
+  const seeded = collectSeededRuntimeProfiles(config);
+  if (seeded.length === 0) {
+    return {
+      success: true,
+      seededCount: 0,
+      backend: config.profiles?.registry?.backend ?? 'kv',
+    };
+  }
+
+  const backend = config.profiles?.registry?.backend ?? 'kv';
+
+  try {
+    if (backend === 'database') {
+      const dbName = getD1DatabaseName(env, 'core-db');
+      const sql = buildRuntimeProfileSeedSql(config);
+      if (!sql) {
+        return { success: true, seededCount: 0, backend };
+      }
+
+      onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
+      const { stdout, stderr } = await wrangler([
+        'd1',
+        'execute',
+        dbName,
+        '--remote',
+        '--yes',
+        '--command',
+        sql,
+      ]);
+
+      const combined = (stdout + '\n' + stderr).toLowerCase();
+      if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+        const errorDetail = stderr || stdout;
+        onProgress?.(`  ❌ Runtime profile seed failed: ${errorDetail}`);
+        return { success: false, seededCount: 0, backend, error: errorDetail };
+      }
+
+      onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
+      return { success: true, seededCount: seeded.length, backend };
+    }
+
+    onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into AUTHRIM_CONFIG KV...`);
+    for (const profile of seeded) {
+      await wrangler([
+        'kv',
+        'key',
+        'put',
+        `profile-registry:${profile.kind}:${profile.id}`,
+        JSON.stringify(profile.payload),
+        '--env',
+        env,
+        '--binding',
+        'AUTHRIM_CONFIG',
+      ]);
+    }
+
+    onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
+    return { success: true, seededCount: seeded.length, backend };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Runtime profile seed failed: ${message}`);
+    return { success: false, seededCount: 0, backend, error: message };
+  }
+}
+
+/**
+ * Locate the migrations root used by setup commands.
+ *
+ * Priority: local project > authrim subdir > cwd.
+ */
+export async function findMigrationsRoot(
+  rootDir: string,
+  onProgress?: (message: string) => void
+): Promise<{ path: string | null; searchPaths: string[] }> {
+  const { existsSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const searchPaths = [
+    resolve(rootDir, 'migrations'),
+    resolve(rootDir, 'authrim', 'migrations'),
+    resolve(process.cwd(), 'migrations'),
+    resolve(process.cwd(), 'authrim', 'migrations'),
+  ];
+
+  for (const searchPath of searchPaths) {
+    onProgress?.(`  Checking for migrations at: ${searchPath}`);
+    if (existsSync(searchPath)) {
+      onProgress?.(`  ✓ Found migrations directory: ${searchPath}`);
+      return { path: searchPath, searchPaths };
+    }
+  }
+
+  return { path: null, searchPaths };
 }
 
 /**
  * Run migrations for an Authrim environment
  *
- * Searches for migrations directory in multiple locations:
+ * Searches for migrations directory in source-code locations:
  * 1. {rootDir}/migrations
  * 2. {rootDir}/authrim/migrations
- * 3. Relative to current working directory
+ * 3. process.cwd()/migrations
+ * 4. process.cwd()/authrim/migrations
  *
  * @param env - Environment name
  * @param rootDir - Root directory to search for migrations
@@ -1146,7 +2695,8 @@ export async function runD1Migrations(
 export async function runMigrationsForEnvironment(
   env: string,
   rootDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  config?: MigrationProfileConfig
 ): Promise<{
   success: boolean;
   core: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -1154,36 +2704,18 @@ export async function runMigrationsForEnvironment(
   admin: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
 }> {
   const { existsSync } = await import('node:fs');
-  const { join, resolve } = await import('node:path');
+  const { join } = await import('node:path');
 
   // Database names for this environment
   const coreDbName = getD1DatabaseName(env, 'core-db');
   const piiDbName = getD1DatabaseName(env, 'pii-db');
   const adminDbName = getD1DatabaseName(env, 'admin-db');
 
-  // Search for migrations directory in multiple locations
-  // Priority: local project > authrim subdir > cwd > package bundled
-  const searchPaths = [
-    resolve(rootDir, 'migrations'),
-    resolve(rootDir, 'authrim', 'migrations'),
-    resolve(process.cwd(), 'migrations'),
-    resolve(process.cwd(), 'authrim', 'migrations'),
-    // Bundled migrations in npm package (fallback for npx users)
-    PACKAGE_MIGRATIONS_DIR,
-  ];
-
-  let migrationsRoot: string | null = null;
-  for (const searchPath of searchPaths) {
-    onProgress?.(`  Checking for migrations at: ${searchPath}`);
-    if (existsSync(searchPath)) {
-      migrationsRoot = searchPath;
-      onProgress?.(`  ✓ Found migrations directory: ${searchPath}`);
-      break;
-    }
-  }
+  const migrationSearch = await findMigrationsRoot(rootDir, onProgress);
+  const migrationsRoot = migrationSearch.path;
 
   if (!migrationsRoot) {
-    const errorMsg = `Migrations directory not found. Searched:\n${searchPaths.map((p) => `    - ${p}`).join('\n')}`;
+    const errorMsg = `Migrations directory not found. Searched:\n${migrationSearch.searchPaths.map((p) => `    - ${p}`).join('\n')}`;
     onProgress?.(`  ❌ ${errorMsg}`);
     return {
       success: false,
@@ -1195,7 +2727,9 @@ export async function runMigrationsForEnvironment(
 
   // Run core database migrations
   onProgress?.(`📜 Running migrations for ${coreDbName}...`);
-  const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress);
+  const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress, {
+    excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+  });
   if (!coreResult.success) {
     onProgress?.(`  ❌ Core migration failed: ${coreResult.error}`);
   } else {
@@ -1223,6 +2757,27 @@ export async function runMigrationsForEnvironment(
     }
   }
 
+  let coreMirrorResult: {
+    success: boolean;
+    appliedCount: number;
+    skippedCount: number;
+    error?: string;
+  } | null = null;
+
+  if (shouldMirrorPiiMigrationsToCore(config) && existsSync(piiMigrationsDir)) {
+    onProgress?.(`📜 Mirroring PII migrations into ${coreDbName} for single-db profile...`);
+    coreMirrorResult = await runD1Migrations(coreDbName, piiMigrationsDir, onProgress);
+    if (!coreMirrorResult.success) {
+      onProgress?.(`  ❌ Core mirror migration failed: ${coreMirrorResult.error}`);
+    } else {
+      coreResult.appliedCount += coreMirrorResult.appliedCount;
+      coreResult.skippedCount += coreMirrorResult.skippedCount;
+      onProgress?.(
+        `  ✅ Mirrored ${coreMirrorResult.appliedCount} PII migrations into core (${coreMirrorResult.skippedCount} skipped)`
+      );
+    }
+  }
+
   // Run Admin database migrations
   const adminMigrationsDir = join(migrationsRoot, 'admin');
   onProgress?.(`📜 Running migrations for ${adminDbName}...`);
@@ -1243,8 +2798,16 @@ export async function runMigrationsForEnvironment(
   }
 
   return {
-    success: coreResult.success && piiResult.success && adminResult.success,
-    core: coreResult,
+    success:
+      coreResult.success &&
+      (coreMirrorResult?.success ?? true) &&
+      piiResult.success &&
+      adminResult.success,
+    core: {
+      ...coreResult,
+      success: coreResult.success && (coreMirrorResult?.success ?? true),
+      error: coreMirrorResult?.error ?? coreResult.error,
+    },
     pii: piiResult,
     admin: adminResult,
   };
@@ -1419,6 +2982,10 @@ export async function deleteKVNamespace(namespaceId: string): Promise<boolean> {
 
 /**
  * Put a value in KV
+ *
+ * NOTE: Values are written via a temporary file using --path instead of being
+ * passed as a positional CLI argument. This avoids a wrangler parsing bug where
+ * values starting with '-' (valid in base64url tokens) are misinterpreted as flags.
  */
 export async function kvPut(
   namespaceId: string,
@@ -1426,8 +2993,23 @@ export async function kvPut(
   value: string,
   options: { expirationTtl?: number } = {}
 ): Promise<boolean> {
+  const tmpFile = pathJoin(
+    tmpdir(),
+    `authrim-kv-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`
+  );
   try {
-    const args = ['kv', 'key', 'put', key, value, '--namespace-id', namespaceId, '--remote'];
+    await writeFile(tmpFile, value, 'utf-8');
+    const args = [
+      'kv',
+      'key',
+      'put',
+      key,
+      '--path',
+      tmpFile,
+      '--namespace-id',
+      namespaceId,
+      '--remote',
+    ];
     if (options.expirationTtl) {
       args.push('--expiration-ttl', options.expirationTtl.toString());
     }
@@ -1435,6 +3017,8 @@ export async function kvPut(
     return true;
   } catch {
     return false;
+  } finally {
+    await unlink(tmpFile).catch(() => {});
   }
 }
 
@@ -1473,10 +3057,117 @@ export async function createR2Bucket(name: string): Promise<{ name: string }> {
   try {
     await wrangler(['r2', 'bucket', 'create', name]);
     return { name };
-  } catch {
-    // Bucket might already exist
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isAlreadyExistsError(message)) {
+      throw error;
+    }
     return { name };
   }
+}
+
+function isAlreadyExistsError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('already exists') ||
+    normalized.includes('already in use') ||
+    normalized.includes('conflict') ||
+    normalized.includes('409')
+  );
+}
+
+export function parseR2BucketRows(stdout: string): Array<{ name: string }> {
+  try {
+    const parsed = JSON.parse(stdout) as
+      | Array<{ name?: unknown }>
+      | { buckets?: Array<{ name?: unknown }>; result?: Array<{ name?: unknown }> };
+    const rows = Array.isArray(parsed) ? parsed : (parsed.buckets ?? parsed.result ?? []);
+    return rows
+      .map((row) => (typeof row.name === 'string' ? row.name.trim() : ''))
+      .filter((name) => name.length > 0)
+      .map((name) => ({ name }));
+  } catch {
+    // Wrangler has emitted plain text in older versions. Keep a conservative fallback.
+  }
+
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const nameMatch = line.match(/^name:\s+(.+)$/i);
+      if (nameMatch?.[1]) {
+        return [{ name: nameMatch[1].trim() }];
+      }
+      if (/^[a-z0-9][a-z0-9-]*$/i.test(line)) {
+        return [{ name: line }];
+      }
+      return [];
+    });
+}
+
+async function listR2BucketNamesStrict(): Promise<Set<string>> {
+  return new Set((await listR2Buckets({ throwOnError: true })).map((bucket) => bucket.name));
+}
+
+async function waitForR2BucketVisible(name: string): Promise<void> {
+  const maxAttempts = process.env.NODE_ENV === 'test' ? 1 : 4;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const names = await listR2BucketNamesStrict();
+      if (names.has(name)) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < maxAttempts && process.env.NODE_ENV !== 'test') {
+      await sleep(Math.min(1_000 * 2 ** (attempt - 1), 5_000));
+    }
+  }
+
+  const suffix = lastError instanceof Error ? `: ${lastError.message}` : '';
+  throw new Error(`R2 bucket ${name} was not visible after creation${suffix}`);
+}
+
+export async function provisionR2Buckets(
+  env: string,
+  options: {
+    existing?: Record<string, { name: string }> | null;
+    onProgress?: (message: string) => void;
+  } = {}
+): Promise<R2BucketInfo[]> {
+  const onProgress = options.onProgress ?? (() => undefined);
+  const existing = options.existing ?? {};
+  const provisioned: R2BucketInfo[] = [];
+  let bucketNames = await listR2BucketNamesStrict();
+
+  for (const bucket of getRequiredR2Buckets(env)) {
+    const bucketName = existing[bucket.binding]?.name ?? bucket.name;
+    if (bucketNames.has(bucketName)) {
+      provisioned.push({
+        binding: bucket.binding,
+        name: bucketName,
+      });
+      onProgress(`  ✓ Existing: ${bucketName}`);
+      continue;
+    }
+
+    onProgress(`  ⏳ Creating: ${bucketName}...`);
+    const result = await createR2Bucket(bucketName);
+    await waitForR2BucketVisible(result.name);
+    bucketNames = await listR2BucketNamesStrict();
+    provisioned.push({
+      binding: bucket.binding,
+      name: result.name,
+    });
+    onProgress(`  ✅ ${bucketName} created`);
+  }
+
+  return provisioned;
 }
 
 // =============================================================================
@@ -1609,7 +3300,12 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     if (options.runMigrations !== false && options.rootDir) {
       onProgress('📜 Running database migrations...');
 
-      const migrationsResult = await runMigrationsForEnvironment(env, options.rootDir, onProgress);
+      const migrationsResult = await runMigrationsForEnvironment(
+        env,
+        options.rootDir,
+        onProgress,
+        options.config
+      );
 
       if (!migrationsResult.success) {
         const errors = [];
@@ -1655,19 +3351,21 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
   // Provision Queues (optional)
   if (options.createQueues) {
     onProgress('📨 Queues');
-    const queueName = getQueueName(env, 'audit-queue');
-    onProgress(`  ⏳ Creating: ${queueName}...`);
+    for (const definition of QUEUE_PROVISIONING_DEFINITIONS) {
+      const queueName = getQueueName(env, definition.nameSuffix);
+      onProgress(`  ⏳ Creating: ${queueName}...`);
 
-    try {
-      const result = await createQueue(queueName);
-      resources.queues.push({
-        binding: 'AUDIT_QUEUE',
-        name: result.name,
-        id: result.id,
-      });
-      onProgress(`  ✅ ${queueName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${queueName} - ${sanitizeError(error)}`);
+      try {
+        const result = await createQueue(queueName);
+        resources.queues.push({
+          binding: definition.binding,
+          name: result.name,
+          id: result.id,
+        });
+        onProgress(`  ✅ ${queueName} created`);
+      } catch (error) {
+        onProgress(`  ⚠️ Skipped: ${queueName} - ${sanitizeError(error)}`);
+      }
     }
     onProgress('');
   }
@@ -1675,32 +3373,10 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
   // Provision R2 buckets (optional)
   if (options.createR2) {
     onProgress('📁 R2 Buckets');
-    const avatarBucketName = `${env}-authrim-avatars`;
-    onProgress(`  ⏳ Creating: ${avatarBucketName}...`);
-
     try {
-      const result = await createR2Bucket(avatarBucketName);
-      resources.r2.push({
-        binding: 'AVATARS',
-        name: result.name,
-      });
-      onProgress(`  ✅ ${avatarBucketName} created`);
+      resources.r2.push(...(await provisionR2Buckets(env, { onProgress })));
     } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${avatarBucketName} - ${sanitizeError(error)}`);
-    }
-
-    const diagnosticBucketName = `${env}-diagnostic-logs`;
-    onProgress(`  ⏳ Creating: ${diagnosticBucketName}...`);
-
-    try {
-      const result = await createR2Bucket(diagnosticBucketName);
-      resources.r2.push({
-        binding: 'DIAGNOSTIC_LOGS',
-        name: result.name,
-      });
-      onProgress(`  ✅ ${diagnosticBucketName} created`);
-    } catch (error) {
-      onProgress(`  ⚠️ Skipped: ${diagnosticBucketName} - ${sanitizeError(error)}`);
+      onProgress(`  ⚠️ R2 provisioning skipped: ${sanitizeError(error)}`);
     }
     onProgress('');
   }
@@ -1763,13 +3439,14 @@ export function toResourceIds(resources: ProvisionedResources): {
  */
 const AUTHRIM_PATTERNS = {
   worker:
-    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy)$/,
-  d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db$/,
+    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
+  d1: /^(?:([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db|authrim-([a-z][a-z0-9-]*)-(?:tdb-slot-[0-9]{4}-(?:core|pii)|[a-z0-9-]+-(?:core|pii)))$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
-  kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
-  queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs)$/,
-  // Pages projects: {env}-ar-admin-ui, {env}-ar-login-ui
+  kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
+  queue:
+    /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
+  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
+  // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
 
@@ -1791,7 +3468,18 @@ export interface DeleteOptions {
   deleteQueues?: boolean;
   deleteR2?: boolean;
   deletePages?: boolean;
+  knownD1Names?: string[];
   onProgress?: (message: string) => void;
+}
+
+export function filterKnownD1NamesForEnvironment(env: string, names: string[]): string[] {
+  return Array.from(
+    new Set(
+      names.filter(
+        (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
+      )
+    )
+  );
 }
 
 /**
@@ -1820,22 +3508,16 @@ export async function listWorkers(): Promise<Array<{ name: string; id?: string }
 /**
  * List R2 buckets
  */
-export async function listR2Buckets(): Promise<Array<{ name: string }>> {
+export async function listR2Buckets(
+  options: { throwOnError?: boolean } = {}
+): Promise<Array<{ name: string }>> {
   try {
     const { stdout } = await wrangler(['r2', 'bucket', 'list']);
-    // Parse the output - format is "name: bucket-name" per line
-    const lines = stdout.split('\n').filter((line) => line.trim());
-    const buckets: Array<{ name: string }> = [];
-
-    for (const line of lines) {
-      // Parse "name: bucket-name" format
-      const match = line.match(/^name:\s+(.+)$/);
-      if (match && match[1]) {
-        buckets.push({ name: match[1].trim() });
-      }
+    return parseR2BucketRows(stdout);
+  } catch (error) {
+    if (options.throwOnError) {
+      throw error;
     }
-    return buckets;
-  } catch {
     return [];
   }
 }
@@ -1858,7 +3540,7 @@ export async function listQueues(): Promise<Array<{ name: string; id?: string }>
 }
 
 /**
- * List Pages projects
+ * List legacy Pages projects
  */
 export async function listPagesProjects(): Promise<Array<{ name: string }>> {
   try {
@@ -1895,7 +3577,7 @@ export async function listPagesProjects(): Promise<Array<{ name: string }>> {
 }
 
 /**
- * Delete a Pages project
+ * Delete a legacy Pages project
  */
 export async function deletePagesProject(name: string): Promise<boolean> {
   try {
@@ -2000,7 +3682,7 @@ export async function detectEnvironments(
     for (const db of databases) {
       const match = db.name.match(AUTHRIM_PATTERNS.d1);
       if (match) {
-        const env = match[1].toLowerCase();
+        const env = (match[1] ?? match[3]).toLowerCase();
         d1Envs.add(env);
         if (!environments.has(env)) {
           environments.set(env, {
@@ -2071,21 +3753,23 @@ export async function detectEnvironments(
     progress(`  ⚠️ Could not scan R2: ${error instanceof Error ? error.message : error}`);
   }
 
-  progress('Scanning Pages projects...');
+  progress('Scanning legacy Pages projects...');
   try {
     const pagesProjects = await listPagesProjects();
     for (const project of pagesProjects) {
       const match = project.name.match(AUTHRIM_PATTERNS.pages);
       if (match) {
         const env = match[1].toLowerCase();
-        // Only attach Pages to environments that already have Workers or D1
+        // Only attach legacy Pages projects to environments that already have Workers or D1
         if (environments.has(env)) {
           environments.get(env)!.pages.push({ name: project.name });
         }
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan Pages: ${error instanceof Error ? error.message : error}`);
+    progress(
+      `  ⚠️ Could not scan legacy Pages projects: ${error instanceof Error ? error.message : error}`
+    );
   }
 
   // Filter: only keep environments that have actual Workers or D1 databases
@@ -2124,6 +3808,56 @@ export interface WorkerDeploymentInfo {
   versionId: string | null;
 }
 
+function parseLatestWorkerDeployment(stdout: string): {
+  createdAt: string | null;
+  author: string | null;
+  versionId: string | null;
+} {
+  const deploymentStarts = Array.from(
+    stdout.matchAll(/^Created:\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s*$/gm)
+  );
+
+  let latest: {
+    createdAt: string;
+    index: number;
+    nextIndex: number;
+  } | null = null;
+
+  for (let index = 0; index < deploymentStarts.length; index++) {
+    const match = deploymentStarts[index];
+    const createdAt = match[1];
+    if (!createdAt || match.index === undefined) {
+      continue;
+    }
+    const parsed = Date.parse(createdAt);
+    const latestParsed = latest ? Date.parse(latest.createdAt) : Number.NEGATIVE_INFINITY;
+    if (!latest || parsed > latestParsed) {
+      latest = {
+        createdAt,
+        index: match.index,
+        nextIndex: deploymentStarts[index + 1]?.index ?? stdout.length,
+      };
+    }
+  }
+
+  if (!latest) {
+    return {
+      createdAt: null,
+      author: null,
+      versionId: null,
+    };
+  }
+
+  const block = stdout.slice(latest.index, latest.nextIndex);
+  const authorMatch = block.match(/^Author:\s+(\S+)/m);
+  const versionMatch = block.match(/^Version\(s\):\s+\(\d+%\)\s+([a-f0-9-]+)/m);
+  return {
+    createdAt: latest.createdAt,
+    author: authorMatch?.[1] || null,
+    versionId: versionMatch?.[1] || null,
+  };
+}
+
 export async function getWorkerDeployments(name: string): Promise<WorkerDeploymentInfo> {
   try {
     const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name]);
@@ -2139,18 +3873,16 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
       };
     }
 
-    // Parse deployment info - get the first (most recent) deployment
-    // Format: Created: 2025-12-31T16:05:56.164Z
-    const createdMatch = stdout.match(/Created:\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/);
-    const authorMatch = stdout.match(/Author:\s+(\S+)/);
-    const versionMatch = stdout.match(/Version\(s\):\s+\(\d+%\)\s+([a-f0-9-]+)/);
+    // Wrangler does not guarantee newest-first output here; secret changes can appear before
+    // the upload deployment. Use the max top-level Created timestamp instead of the first one.
+    const deployment = parseLatestWorkerDeployment(stdout);
 
     return {
       name,
       exists: true,
-      lastDeployedAt: createdMatch?.[1] || null,
-      author: authorMatch?.[1] || null,
-      versionId: versionMatch?.[1] || null,
+      lastDeployedAt: deployment.createdAt,
+      author: deployment.author,
+      versionId: deployment.versionId,
     };
   } catch {
     return {
@@ -2175,14 +3907,344 @@ export async function deleteQueue(name: string): Promise<boolean> {
   }
 }
 
+const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries(
+  R2_BUCKETS.map((bucket) => [bucket.binding, bucket.suffix])
+);
+
+interface ObjectCatalogR2Row {
+  bucket_binding?: unknown;
+  object_key?: unknown;
+}
+
+export function getObjectCatalogR2BucketName(env: string, bucketBinding: string): string | null {
+  const suffix = OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING[bucketBinding];
+  return suffix ? `${env}-${suffix}` : null;
+}
+
+export function parseObjectCatalogR2RowsFromWranglerJson(
+  stdout: string
+): Array<{ bucketBinding: string; objectKey: string }> {
+  const payload = JSON.parse(stdout) as Array<{ results?: ObjectCatalogR2Row[] }>;
+  const rows = payload?.[0]?.results ?? [];
+  return rows.flatMap((row) => {
+    if (typeof row.bucket_binding !== 'string' || typeof row.object_key !== 'string') {
+      return [];
+    }
+    return [{ bucketBinding: row.bucket_binding, objectKey: row.object_key }];
+  });
+}
+
+function formatCloudflareApiMessages(payload: {
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}): string {
+  const entries = [...(payload.errors ?? []), ...(payload.messages ?? [])];
+  return entries
+    .map((entry) => [entry.code, entry.message].filter(Boolean).join(': '))
+    .filter(Boolean)
+    .join('; ');
+}
+
+async function queryObjectCatalogR2Objects(
+  dbName: string
+): Promise<Array<{ bucketBinding: string; objectKey: string }>> {
+  const { stdout } = await wrangler([
+    'd1',
+    'execute',
+    dbName,
+    '--remote',
+    '--yes',
+    '--command',
+    'SELECT bucket_binding, object_key FROM object_catalog_objects WHERE deleted_at IS NULL;',
+    '--json',
+  ]);
+  return parseObjectCatalogR2RowsFromWranglerJson(stdout);
+}
+
+async function collectKnownR2ObjectsByBucket(
+  env: string,
+  buckets: Array<{ name: string }>,
+  onProgress?: (message: string) => void
+): Promise<Map<string, string[]>> {
+  const targetBuckets = new Set(buckets.map((bucket) => bucket.name));
+  const objectsByBucket = new Map<string, Set<string>>();
+  const dbNames = [getD1DatabaseName(env, 'core-db'), getD1DatabaseName(env, 'admin-db')];
+
+  for (const dbName of dbNames) {
+    try {
+      const rows = await queryObjectCatalogR2Objects(dbName);
+      for (const row of rows) {
+        const bucketName = getObjectCatalogR2BucketName(env, row.bucketBinding);
+        if (!bucketName || !targetBuckets.has(bucketName)) {
+          continue;
+        }
+        const keys = objectsByBucket.get(bucketName) ?? new Set<string>();
+        keys.add(row.objectKey);
+        objectsByBucket.set(bucketName, keys);
+      }
+    } catch (error) {
+      onProgress?.(`  ⚠️ Could not read object catalog from ${dbName}: ${sanitizeError(error)}`);
+    }
+  }
+
+  return new Map(
+    [...objectsByBucket.entries()].map(([bucketName, keys]) => [bucketName, [...keys]])
+  );
+}
+
+async function removeKnownR2Objects(
+  bucketName: string,
+  objectKeys: string[],
+  onProgress?: (message: string) => void
+): Promise<void> {
+  if (objectKeys.length === 0) {
+    return;
+  }
+
+  onProgress?.(`  🧹 Emptying known R2 objects: ${bucketName} (${objectKeys.length})...`);
+  const concurrency = 5;
+  let removed = 0;
+  let completed = 0;
+  let nextIndex = 0;
+
+  const workerCount = Math.min(concurrency, objectKeys.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < objectKeys.length) {
+        const objectKey = objectKeys[nextIndex];
+        nextIndex += 1;
+        try {
+          await wrangler(['r2', 'object', 'delete', `${bucketName}/${objectKey}`, '--remote']);
+          removed += 1;
+        } catch (error) {
+          onProgress?.(`  ⚠️ R2 object cleanup skipped for ${bucketName}: ${sanitizeError(error)}`);
+        } finally {
+          completed += 1;
+          if (completed % 50 === 0 || completed === objectKeys.length) {
+            onProgress?.(
+              `  R2 object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+            );
+          }
+        }
+      }
+    })
+  );
+  onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
+}
+
+async function getR2ApiCredentials(): Promise<{ accountId: string; token: string } | null> {
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo?.token) {
+    return null;
+  }
+
+  const accountId =
+    process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ||
+    (await getAccountId()) ||
+    (await getSingleAccountIdViaApi(tokenInfo.token));
+  if (!accountId) {
+    return null;
+  }
+
+  return { accountId, token: tokenInfo.token };
+}
+
+async function getSingleAccountIdViaApi(token: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=2', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = (await response.json().catch(() => ({}))) as CloudflareAccountsResponse;
+    if (!response.ok || data.success === false) {
+      return null;
+    }
+
+    const accounts = (data.result ?? []).flatMap((account) =>
+      typeof account.id === 'string' ? [account.id] : []
+    );
+    return accounts.length === 1 ? accounts[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listAllR2ObjectKeysViaApi(
+  bucketName: string,
+  credentials: { accountId: string; token: string }
+): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const params = new URLSearchParams({ per_page: '1000' });
+    if (cursor) {
+      params.set('cursor', cursor);
+    }
+
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+        },
+      }
+    );
+
+    const data = (await response.json().catch(() => ({}))) as CloudflareR2ObjectListResponse;
+    if (!response.ok || data.success === false) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare R2 object list failed (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+
+    for (const object of data.result ?? []) {
+      if (typeof object.key === 'string') {
+        keys.push(object.key);
+      }
+    }
+
+    cursor = data.result_info?.is_truncated ? data.result_info.cursor : undefined;
+  } while (cursor);
+
+  return keys;
+}
+
+async function deleteR2ObjectViaApi(
+  bucketName: string,
+  objectKey: string,
+  credentials: { accountId: string; token: string }
+): Promise<void> {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects/${encodeURIComponent(objectKey)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    }
+  );
+
+  if (response.status === 404) {
+    return;
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  };
+  if (!response.ok || data.success === false) {
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(
+      `Cloudflare R2 object delete failed (${response.status})${detail ? `: ${detail}` : ''}`
+    );
+  }
+}
+
+async function deleteR2BucketViaApi(
+  bucketName: string,
+  credentials: { accountId: string; token: string }
+): Promise<void> {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    }
+  );
+
+  if (response.status === 404) {
+    return;
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  };
+  if (!response.ok || data.success === false) {
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(
+      `Cloudflare R2 bucket delete failed (${response.status})${detail ? `: ${detail}` : ''}`
+    );
+  }
+}
+
+async function removeAllR2ObjectsViaApi(
+  bucketName: string,
+  onProgress?: (message: string) => void
+): Promise<void> {
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) {
+    onProgress?.(
+      `  ⚠️ R2 full object cleanup skipped for ${bucketName}: API token/account unavailable`
+    );
+    return;
+  }
+
+  const objectKeys = await listAllR2ObjectKeysViaApi(bucketName, credentials);
+  if (objectKeys.length === 0) {
+    return;
+  }
+
+  onProgress?.(`  🧹 Emptying all R2 objects: ${bucketName} (${objectKeys.length})...`);
+  const concurrency = 5;
+  let removed = 0;
+  let completed = 0;
+  let nextIndex = 0;
+
+  const workerCount = Math.min(concurrency, objectKeys.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < objectKeys.length) {
+        const objectKey = objectKeys[nextIndex];
+        nextIndex += 1;
+        try {
+          await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
+          removed += 1;
+        } catch (error) {
+          onProgress?.(`  ⚠️ R2 object cleanup failed for ${bucketName}: ${sanitizeError(error)}`);
+        } finally {
+          completed += 1;
+          if (completed % 50 === 0 || completed === objectKeys.length) {
+            onProgress?.(
+              `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+            );
+          }
+        }
+      }
+    })
+  );
+  onProgress?.(
+    `  R2 full object cleanup removed for ${bucketName}: ${removed}/${objectKeys.length}`
+  );
+}
+
 /**
  * Delete an R2 bucket
  */
-export async function deleteR2Bucket(name: string): Promise<boolean> {
+export async function deleteR2Bucket(
+  name: string,
+  options: { objectKeys?: string[]; onProgress?: (message: string) => void } = {}
+): Promise<boolean> {
   try {
-    await wrangler(['r2', 'bucket', 'delete', name]);
+    await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
+    await removeAllR2ObjectsViaApi(name, options.onProgress);
+    const credentials = await getR2ApiCredentials();
+    if (credentials) {
+      await deleteR2BucketViaApi(name, credentials);
+    } else {
+      await wrangler(['r2', 'bucket', 'delete', name]);
+    }
     return true;
-  } catch {
+  } catch (error) {
+    options.onProgress?.(`  ⚠️ R2 bucket delete failed for ${name}: ${sanitizeError(error)}`);
     return false;
   }
 }
@@ -2210,6 +4272,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleteQueues = true,
     deleteR2 = true,
     deletePages = true,
+    knownD1Names = [],
     onProgress = console.log,
   } = options;
 
@@ -2226,15 +4289,34 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   const errors: string[] = [];
 
   // Get environment info first
-  const envs = await detectEnvironments();
-  const envInfo = envs.find((e) => e.env === env);
+  const envs = await detectEnvironments(onProgress);
+  let envInfo = envs.find((e) => e.env === env);
+  const safeKnownD1Names = filterKnownD1NamesForEnvironment(env, knownD1Names);
 
-  if (!envInfo) {
+  if (!envInfo && safeKnownD1Names.length === 0) {
     return {
       success: false,
       deleted,
       errors: [`Environment '${env}' not found`],
     };
+  }
+  if (!envInfo) {
+    envInfo = {
+      env,
+      workers: [],
+      d1: [],
+      kv: [],
+      queues: [],
+      r2: [],
+      pages: [],
+    };
+  }
+  const knownD1Set = new Set(envInfo.d1.map((db) => db.name));
+  for (const name of safeKnownD1Names) {
+    if (!knownD1Set.has(name)) {
+      envInfo.d1.push({ name, id: '' });
+      knownD1Set.add(name);
+    }
   }
 
   onProgress(`🗑️ Deleting environment: ${env}`);
@@ -2251,6 +4333,29 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         onProgress(`  ✅ ${worker.name}`);
       } else {
         onProgress(`  ⚠️ ${worker.name} (not found or already deleted)`);
+      }
+    }
+    onProgress('');
+  }
+
+  // Delete R2 buckets before D1 so object_catalog_objects can still identify stored objects.
+  if (deleteR2 && envInfo.r2.length > 0) {
+    const knownR2ObjectsByBucket = await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress);
+    onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
+    for (const bucket of envInfo.r2) {
+      onProgress(`  ⏳ Deleting: ${bucket.name}...`);
+      const success = await deleteR2Bucket(bucket.name, {
+        objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
+        onProgress,
+      });
+      if (success) {
+        deleted.r2.push(bucket.name);
+        onProgress(`  ✅ ${bucket.name}`);
+      } else {
+        errors.push(
+          `Failed to delete R2: ${bucket.name} (bucket may still contain objects or require manual cleanup)`
+        );
+        onProgress(`  ❌ ${bucket.name}`);
       }
     }
     onProgress('');
@@ -2307,26 +4412,9 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress('');
   }
 
-  // Delete R2 buckets
-  if (deleteR2 && envInfo.r2.length > 0) {
-    onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
-    for (const bucket of envInfo.r2) {
-      onProgress(`  ⏳ Deleting: ${bucket.name}...`);
-      const success = await deleteR2Bucket(bucket.name);
-      if (success) {
-        deleted.r2.push(bucket.name);
-        onProgress(`  ✅ ${bucket.name}`);
-      } else {
-        errors.push(`Failed to delete R2: ${bucket.name}`);
-        onProgress(`  ❌ ${bucket.name}`);
-      }
-    }
-    onProgress('');
-  }
-
-  // Delete Pages projects
+  // Delete legacy Pages projects
   if (deletePages && envInfo.pages.length > 0) {
-    onProgress(`📄 Deleting Pages Projects (${envInfo.pages.length})...`);
+    onProgress(`📄 Deleting legacy Pages Projects (${envInfo.pages.length})...`);
     for (const project of envInfo.pages) {
       onProgress(`  ⏳ Deleting: ${project.name}...`);
       const success = await deletePagesProject(project.name);
@@ -2334,7 +4422,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         deleted.pages.push(project.name);
         onProgress(`  ✅ ${project.name}`);
       } else {
-        errors.push(`Failed to delete Pages: ${project.name}`);
+        errors.push(`Failed to delete legacy Pages project: ${project.name}`);
         onProgress(`  ❌ ${project.name}`);
       }
     }

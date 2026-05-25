@@ -3,11 +3,20 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, externalIdpAPI } from '$lib/api/client';
+	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
+	import { fetchRegistrationFields, type RegistrationField } from '$lib/api/registration-fields';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
-	import { fetchLoginMethods, type SocialProvider } from '$lib/api/login-methods';
+	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
+	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
+	import {
+		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
+		LOGIN_UI_SESSION_STORAGE_KEYS,
+		removeLoginUiSessionItems,
+		setLoginUiSessionItem
+	} from '$lib/authrim/storage-keys';
 	import { onMount } from 'svelte';
 
 	// ---------------------------------------------------------------------------
@@ -18,17 +27,9 @@
 	let inviteToken = $state('');
 	let inviteTenantName = $state('');
 
-	// Registration fields (custom)
-	interface RegistrationField {
-		field_key: string;
-		display_label: string;
-		field_type: string;
-		required: boolean;
-		placeholder: string | null;
-		validation_rules: Record<string, unknown> | null;
-	}
 	let registrationFields = $state<RegistrationField[]>([]);
 	let customFieldValues = $state<Record<string, string>>({});
+	let customFieldErrors = $state<Record<string, string>>({});
 	let error = $state('');
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
@@ -40,10 +41,10 @@
 	let methodsLoading = $state(true);
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);
-	let socialEnabled = $state(false);
-	let socialProviders = $state<SocialProvider[]>([]);
+	let externalEnabled = $state(false);
+	let externalProviders = $state<ExternalProvider[]>([]);
 
-	// Dark mode detection for social button colors
+	// Dark mode detection for external provider button colors
 	let isDarkMode = $state(false);
 
 	// Derived: WebAuthn support check
@@ -54,6 +55,17 @@
 	);
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+
+	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
+		return messageForApiError(apiError, {
+			unknown: () => $LL.error_unknown(),
+			invalidRequest: () => $LL.error_invalid_request(),
+			accessDenied: () => $LL.error_access_denied(),
+			serverError: () => $LL.error_server_error(),
+			loginRequired: () => $LL.error_login_required(),
+			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
+		});
+	}
 
 	// ---------------------------------------------------------------------------
 	// Lifecycle
@@ -107,8 +119,8 @@
 			if (data) {
 				passkeyEnabled = data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.enabled;
-				socialEnabled = data.methods.social.enabled;
-				socialProviders = data.methods.social.providers;
+				externalEnabled = data.methods.external.enabled;
+				externalProviders = data.methods.external.providers;
 			}
 		} catch {
 			// Fallback: enable all methods
@@ -120,18 +132,11 @@
 	}
 
 	async function loadRegistrationFields() {
-		try {
-			const res = await fetch('/api/v1/registration-fields');
-			if (res.ok) {
-				const data = (await res.json()) as { fields: RegistrationField[] };
-				registrationFields = data.fields ?? [];
-				// Initialize values
-				for (const f of registrationFields) {
-					customFieldValues[f.field_key] = '';
-				}
-			}
-		} catch {
-			// Non-fatal: proceed without custom fields
+		registrationFields = await fetchRegistrationFields();
+		customFieldValues = {};
+		customFieldErrors = {};
+		for (const f of registrationFields) {
+			customFieldValues[f.field_key] = f.field_type === 'boolean' ? 'false' : '';
 		}
 	}
 
@@ -140,6 +145,45 @@
 	// ---------------------------------------------------------------------------
 	function validateEmail(value: string): boolean {
 		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+	}
+
+	function getFieldLabel(field: RegistrationField): string {
+		return field.required ? `${field.display_label} *` : field.display_label;
+	}
+
+	function getEnumOptions(field: RegistrationField): string[] {
+		const enumValues = field.validation_rules?.enum_values;
+		if (!Array.isArray(enumValues)) {
+			return [];
+		}
+
+		return enumValues.filter((value): value is string => typeof value === 'string');
+	}
+
+	function setCustomFieldValue(fieldKey: string, value: string) {
+		customFieldValues[fieldKey] = value;
+		if (customFieldErrors[fieldKey]) {
+			customFieldErrors[fieldKey] = '';
+		}
+	}
+
+	function validateCustomFields(): boolean {
+		customFieldErrors = {};
+
+		for (const field of registrationFields) {
+			const value = customFieldValues[field.field_key] ?? '';
+			if (field.required && value.trim() === '') {
+				customFieldErrors[field.field_key] = `${field.display_label} is required`;
+			}
+		}
+
+		return Object.values(customFieldErrors).every((value) => !value);
+	}
+
+	function getSubmittedCustomFields(): Record<string, string> {
+		return Object.fromEntries(
+			Object.entries(customFieldValues).filter(([, value]) => value !== '')
+		);
 	}
 
 	function validateForm(): boolean {
@@ -158,6 +202,9 @@
 			emailError = $LL.login_errorEmailInvalid();
 			return false;
 		}
+		if (!validateCustomFields()) {
+			return false;
+		}
 		return true;
 	}
 
@@ -171,11 +218,12 @@
 		try {
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
 				email,
-				name
+				name,
+				custom_fields: getSubmittedCustomFields()
 			});
 
 			if (optionsError) {
-				throw new Error(optionsError.error_description || 'Failed to get registration options');
+				throw new Error(getApiErrorMessage(optionsError));
 			}
 			if (!optionsData?.options) {
 				throw new Error('Invalid response from server: missing options');
@@ -191,17 +239,11 @@
 			});
 
 			if (verifyError) {
-				throw new Error(verifyError.error_description || 'Registration verification failed');
+				throw new Error(getApiErrorMessage(verifyError));
 			}
 
-			// Save session after successful registration
-			if (verifyData?.sessionId) {
-				auth.login(verifyData.sessionId, {
-					userId: verifyData.userId,
-					email: verifyData.user.email,
-					name: verifyData.user.name || undefined
-				});
-			}
+			// Restore authenticated state from the HttpOnly managed session cookie.
+			await auth.refreshFromSession();
 
 			// Apply invitation if present (passkey flow: server doesn't see invite_token during registration)
 			if (inviteToken && verifyData?.userId) {
@@ -217,6 +259,15 @@
 				} catch (inviteErr) {
 					console.warn('[signup] Failed to apply invitation:', inviteErr);
 				}
+			}
+
+			try {
+				removeLoginUiSessionItems([
+					LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.signupCustomFields
+				]);
+			} catch {
+				// Non-fatal
 			}
 
 			window.location.href = '/';
@@ -235,17 +286,31 @@
 		emailCodeLoading = true;
 
 		try {
-			const { error: apiError } = await emailCodeAPI.send({ email, name });
+			const submittedCustomFields = getSubmittedCustomFields();
+			const { error: apiError } = await emailCodeAPI.send({
+				email,
+				name,
+				invite_token: inviteToken || undefined,
+				custom_fields: submittedCustomFields
+			});
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to send verification code');
+				throw new Error(getApiErrorMessage(apiError));
 			}
 			// Persist custom field values for post-verification saving
-			if (Object.keys(customFieldValues).length > 0) {
+			if (Object.keys(submittedCustomFields).length > 0) {
 				try {
-					sessionStorage.setItem('signup_custom_fields', JSON.stringify(customFieldValues));
+					setLoginUiSessionItem(
+						LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+						JSON.stringify(submittedCustomFields)
+					);
 				} catch {
 					// Non-fatal
 				}
+			} else {
+				removeLoginUiSessionItems([
+					LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.signupCustomFields
+				]);
 			}
 			let verifyQs = `email=${encodeURIComponent(email)}`;
 			if (inviteToken) verifyQs += `&invite_token=${encodeURIComponent(inviteToken)}`;
@@ -258,28 +323,30 @@
 		}
 	}
 
-	async function handleExternalLogin(providerId: string) {
+	async function handleExternalLogin(provider: ExternalProvider) {
+		const providerId = provider.id;
 		externalIdpLoading = providerId;
 		try {
-			const redirectUri = `${window.location.origin}/callback`;
-			const { url, codeVerifier } = await externalIdpAPI.startLogin(providerId, redirectUri);
+			const redirectUri =
+				provider.startMode === 'saml_sp'
+					? `${window.location.origin}/`
+					: `${window.location.origin}/callback`;
+			const { url } = await externalIdpAPI.startLogin(
+				providerId,
+				redirectUri,
+				provider.startUrl,
+				provider.startMode
+			);
 
 			if (!isValidRedirectUrl(url)) {
 				throw new Error('Invalid redirect URL from identity provider');
 			}
 
-			// Store code_verifier in sessionStorage for callback
+			// Provider ID is diagnostic-only; the managed LoginUI flow does not store PKCE secrets.
 			try {
-				sessionStorage.setItem('pkce_code_verifier', codeVerifier);
+				setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId, providerId);
 			} catch (storageError) {
-				console.error('Failed to store PKCE verifier:', storageError);
-				if (storageError instanceof DOMException && storageError.name === 'QuotaExceededError') {
-					error = $LL.callback_errorStorageQuotaExceeded();
-				} else {
-					error = $LL.callback_errorStorageUnavailable();
-				}
-				externalIdpLoading = null;
-				return;
+				console.warn('Failed to store external provider diagnostic state:', storageError);
 			}
 
 			// Redirect to external IdP
@@ -290,21 +357,11 @@
 		}
 	}
 
-	function getProviderIcon(provider: SocialProvider): string {
-		if (provider.iconUrl) return provider.iconUrl;
-		const providerName = (provider.name || '').toLowerCase();
-		if (providerName.includes('google')) return 'i-ph-google-logo';
-		if (providerName.includes('github')) return 'i-ph-github-logo';
-		if (providerName.includes('microsoft') || providerName.includes('azure'))
-			return 'i-ph-windows-logo';
-		if (providerName.includes('apple')) return 'i-ph-apple-logo';
-		if (providerName.includes('facebook') || providerName.includes('meta')) return 'i-ph-meta-logo';
-		if (providerName.includes('twitter') || providerName.includes('x.com')) return 'i-ph-x-logo';
-		if (providerName.includes('linkedin')) return 'i-ph-linkedin-logo';
-		return 'i-ph-sign-in';
+	function getProviderIcon(provider: ExternalProvider): string {
+		return getExternalProviderIconClass(provider);
 	}
 
-	function getProviderButtonText(provider: SocialProvider): string {
+	function getProviderButtonText(provider: ExternalProvider): string {
 		if (provider.buttonText) return provider.buttonText;
 		return $LL.login_continueWith({ provider: provider.name });
 	}
@@ -366,7 +423,8 @@
 					</h2>
 					{#if inviteTenantName}
 						<p class="auth-section-subtitle">
-							You've been invited to <strong>{inviteTenantName}</strong>. Create your account to continue.
+							You've been invited to <strong>{inviteTenantName}</strong>. Create your account to
+							continue.
 						</p>
 					{:else}
 						<p class="auth-section-subtitle">
@@ -419,31 +477,75 @@
 										type="checkbox"
 										checked={customFieldValues[field.field_key] === 'true'}
 										onchange={(e) => {
-											customFieldValues[field.field_key] = (
-												e.currentTarget as HTMLInputElement
-											).checked
-												? 'true'
-												: 'false';
+											setCustomFieldValue(
+												field.field_key,
+												(e.currentTarget as HTMLInputElement).checked ? 'true' : 'false'
+											);
 										}}
 									/>
 									<span style="font-size: 0.875rem; color: var(--text);"
-										>{field.display_label}{field.required ? ' *' : ''}</span
+										>{getFieldLabel(field)}</span
 									>
 								</label>
+								{#if customFieldErrors[field.field_key]}
+									<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
+								{/if}
+							{:else if field.field_type === 'enum'}
+								<div class="form-group">
+									<label class="form-label" for={`signup-${field.field_key}`}
+										>{getFieldLabel(field)}</label
+									>
+									<select
+										id={`signup-${field.field_key}`}
+										class="custom-field-select"
+										class:has-error={!!customFieldErrors[field.field_key]}
+										value={customFieldValues[field.field_key]}
+										onchange={(e) =>
+											setCustomFieldValue(
+												field.field_key,
+												(e.currentTarget as HTMLSelectElement).value
+											)}
+									>
+										<option value="">{field.placeholder ?? 'Select an option'}</option>
+										{#each getEnumOptions(field) as option (option)}
+											<option value={option}>{option}</option>
+										{/each}
+									</select>
+									{#if customFieldErrors[field.field_key]}
+										<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
+									{/if}
+								</div>
+							{:else if field.field_type === 'date'}
+								<Input
+									label={getFieldLabel(field)}
+									type="date"
+									placeholder={field.placeholder ?? ''}
+									bind:value={customFieldValues[field.field_key]}
+									error={customFieldErrors[field.field_key]}
+									oninput={() =>
+										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+									required={field.required}
+								/>
 							{:else if field.field_type === 'number'}
 								<Input
-									label="{field.display_label}{field.required ? ' *' : ''}"
+									label={getFieldLabel(field)}
 									type="number"
 									placeholder={field.placeholder ?? ''}
 									bind:value={customFieldValues[field.field_key]}
+									error={customFieldErrors[field.field_key]}
+									oninput={() =>
+										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
 									required={field.required}
 								/>
 							{:else}
 								<Input
-									label="{field.display_label}{field.required ? ' *' : ''}"
+									label={getFieldLabel(field)}
 									type="text"
 									placeholder={field.placeholder ?? ''}
 									bind:value={customFieldValues[field.field_key]}
+									error={customFieldErrors[field.field_key]}
+									oninput={() =>
+										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
 									required={field.required}
 								/>
 							{/if}
@@ -487,8 +589,8 @@
 					</Button>
 				{/if}
 
-				<!-- Social Login Section -->
-				{#if socialEnabled && socialProviders.length > 0}
+				<!-- External Login Section -->
+				{#if externalEnabled && externalProviders.length > 0}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -496,7 +598,7 @@
 					</div>
 
 					<div class="space-y-3">
-						{#each socialProviders as provider (provider.id)}
+						{#each externalProviders as provider (provider.id)}
 							{@const safeColor =
 								isDarkMode && provider.buttonColorDark
 									? sanitizeColor(provider.buttonColorDark)
@@ -508,10 +610,19 @@
 								disabled={passkeyLoading ||
 									emailCodeLoading ||
 									(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
-								onclick={() => handleExternalLogin(provider.id)}
+								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 							>
-								<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{#if provider.iconUrl}
+									<img
+										src={provider.iconUrl}
+										alt=""
+										loading="lazy"
+										style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
+									/>
+								{:else if getProviderIcon(provider)}
+									<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{/if}
 								{getProviderButtonText(provider)}
 							</Button>
 						{/each}
@@ -538,3 +649,48 @@
 		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>
+
+<style>
+	.form-group {
+		width: 100%;
+	}
+
+	.form-label {
+		display: block;
+		font-family: var(--font-display);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		margin-bottom: 8px;
+	}
+
+	.custom-field-select {
+		width: 100%;
+		padding: 12px 16px;
+		background: var(--bg-glass);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		font-size: 0.9375rem;
+		font-family: var(--font-body);
+		color: var(--text-primary);
+		transition: all var(--transition-fast);
+		backdrop-filter: var(--blur-sm);
+		-webkit-backdrop-filter: var(--blur-sm);
+	}
+
+	.custom-field-select.has-error {
+		border-color: var(--danger);
+	}
+
+	.custom-field-select:focus {
+		outline: none;
+		border-color: var(--primary);
+		box-shadow: 0 0 0 4px var(--primary-light);
+	}
+
+	.custom-field-error {
+		font-size: 0.8125rem;
+		color: var(--danger);
+		margin-top: 6px;
+	}
+</style>

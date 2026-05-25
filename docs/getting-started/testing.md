@@ -1,3 +1,13 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "This guide covers Authrim's comprehensive testing strategy including unit tests, integration tests, E2E tests, conformance tests, and load testing."
+type: guide
+tags:
+  - authrim
+  - testing
+---
 # Testing Guide
 
 This guide covers Authrim's comprehensive testing strategy including unit tests, integration tests, E2E tests, conformance tests, and load testing.
@@ -230,7 +240,7 @@ cd load-testing
 
 # 1. Seed test data (example: access tokens)
 BASE_URL=https://your-authrim.example.com \
-CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz \
+CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_MACHINE_ACCESS_TOKEN=zzz \
 TOKEN_COUNT=1000 \
 node scripts/seeds/seed-access-tokens.js
 

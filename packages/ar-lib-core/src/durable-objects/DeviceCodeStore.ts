@@ -16,7 +16,7 @@
  * Storage Strategy:
  * - Durable Storage as primary (for atomic operations)
  * - In-memory cache for hot data (active device codes)
- * - D1 for persistence, recovery, and audit trail
+ * - Profile-controlled D1 persistence, recovery, and audit trail
  * - Dual mapping: device_code → metadata, user_code → device_code
  */
 
@@ -25,7 +25,18 @@ import type { Env } from '../types/env';
 import type { DeviceCodeMetadata } from '../types/oidc';
 import { isDeviceCodeExpired } from '../utils/device-flow';
 import { retryD1Operation } from '../utils/d1-retry';
+import { createAuditLog } from '../utils/audit-log';
 import { createLogger, type Logger } from '../utils/logger';
+import {
+  AUTH_CORE_PERSISTENCE_CONTEXT_KEY,
+  resolveAuthCorePersistenceContextFromEnv,
+  resolveAuthCorePersistenceSourceFromContext,
+  type AuthCorePersistenceContext,
+} from '../services/auth-core-persistence-context';
+import {
+  createDeviceCodePersistenceAdapter,
+  type DeviceCodePersistenceAdapter,
+} from '../services/device-code-persistence';
 
 /**
  * Device Code V2 - Enhanced state for V2 architecture
@@ -34,13 +45,6 @@ export interface DeviceCodeV2 extends DeviceCodeMetadata {
   // V2 additions for tracking
   token_issued?: boolean; // One-time use enforcement
   token_issued_at?: number; // When tokens were issued
-}
-
-/**
- * D1 Row type (SQLite stores booleans as integers)
- */
-interface DeviceCodeRow extends Omit<DeviceCodeV2, 'token_issued'> {
-  token_issued?: number; // 0 = false, 1 = true
 }
 
 /**
@@ -89,6 +93,10 @@ export class DeviceCodeStore {
   private pendingAuditLogs: AuditLogEntry[] = [];
   private flushScheduled: boolean = false;
   private readonly AUDIT_FLUSH_DELAY = 100; // ms
+  private deviceCodePersistence: DeviceCodePersistenceAdapter | null = null;
+  private deviceCodePersistenceInit: Promise<DeviceCodePersistenceAdapter | null> | null = null;
+  private persistenceContext: AuthCorePersistenceContext | null = null;
+  private tenantId: string | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -116,6 +124,9 @@ export class DeviceCodeStore {
       for (const [key, metadata] of deviceEntries) {
         const deviceCode = key.substring(STORAGE_PREFIX.DEVICE.length);
         this.deviceCodes.set(deviceCode, metadata);
+        if (!this.tenantId && metadata.tenant_id) {
+          this.tenantId = metadata.tenant_id;
+        }
       }
 
       // Load user code mappings
@@ -201,6 +212,7 @@ export class DeviceCodeStore {
    */
   async fetch(request: Request): Promise<Response> {
     await this.initializeState();
+    this.configureTenantFromRequest(request);
 
     const url = new URL(request.url);
     const path = url.pathname;
@@ -330,8 +342,13 @@ export class DeviceCodeStore {
    * Store a new device code
    */
   private async storeDeviceCode(metadata: DeviceCodeMetadata): Promise<void> {
+    if (metadata.tenant_id) {
+      this.setTenantId(metadata.tenant_id);
+    }
+
     const v2Metadata: DeviceCodeV2 = {
       ...metadata,
+      ...(this.tenantId ? { tenant_id: this.tenantId } : {}),
       token_issued: false,
     };
 
@@ -343,29 +360,11 @@ export class DeviceCodeStore {
     await this.saveDeviceCode(metadata.device_code, v2Metadata);
     await this.saveUserMapping(metadata.user_code, metadata.device_code);
 
-    // Persist to D1 (backup/audit)
-    if (this.env.DB) {
+    // Persist to cold storage (backup/recovery)
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
       await retryD1Operation(
-        async () => {
-          await this.env.DB.prepare(
-            `INSERT INTO device_codes (
-              device_code, user_code, client_id, scope, status,
-              created_at, expires_at, poll_count, token_issued
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-            .bind(
-              metadata.device_code,
-              metadata.user_code,
-              metadata.client_id,
-              metadata.scope,
-              metadata.status,
-              metadata.created_at,
-              metadata.expires_at,
-              metadata.poll_count || 0,
-              0 // token_issued = false
-            )
-            .run();
-        },
+        () => persistence.storeDeviceCode(v2Metadata),
         'DeviceCodeStore.storeDeviceCode',
         { maxRetries: 3 }
       );
@@ -422,18 +421,13 @@ export class DeviceCodeStore {
       return storedMetadata;
     }
 
-    // Fallback to D1 (for recovery after data loss)
-    if (this.env.DB) {
-      const result = await this.env.DB.prepare('SELECT * FROM device_codes WHERE device_code = ?')
-        .bind(deviceCode)
-        .first<DeviceCodeRow>();
+    // Fallback to cold persistence (for recovery after data loss)
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
+      const persisted = await persistence.getByDeviceCode(deviceCode);
 
-      if (result) {
-        // Convert D1 row to V2 metadata
-        const v2Metadata: DeviceCodeV2 = {
-          ...result,
-          token_issued: result.token_issued === 1,
-        };
+      if (persisted) {
+        const v2Metadata: DeviceCodeV2 = { ...persisted };
 
         // Check if expired
         if (isDeviceCodeExpired(v2Metadata)) {
@@ -443,9 +437,9 @@ export class DeviceCodeStore {
 
         // Warm up cache and Durable Storage
         this.deviceCodes.set(deviceCode, v2Metadata);
-        this.userCodeToDeviceCode.set(result.user_code, deviceCode);
+        this.userCodeToDeviceCode.set(v2Metadata.user_code, deviceCode);
         await this.saveDeviceCode(deviceCode, v2Metadata);
-        await this.saveUserMapping(result.user_code, deviceCode);
+        await this.saveUserMapping(v2Metadata.user_code, deviceCode);
         return v2Metadata;
       }
     }
@@ -469,30 +463,25 @@ export class DeviceCodeStore {
       return this.getByDeviceCode(deviceCode);
     }
 
-    // Fallback to D1 (for recovery)
-    if (this.env.DB) {
-      const result = await this.env.DB.prepare('SELECT * FROM device_codes WHERE user_code = ?')
-        .bind(userCode)
-        .first<DeviceCodeRow>();
+    // Fallback to cold persistence (for recovery)
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
+      const persisted = await persistence.getByUserCode(userCode);
 
-      if (result) {
-        // Convert D1 row to V2 metadata
-        const v2Metadata: DeviceCodeV2 = {
-          ...result,
-          token_issued: result.token_issued === 1,
-        };
+      if (persisted) {
+        const v2Metadata: DeviceCodeV2 = { ...persisted };
 
         // Check if expired
         if (isDeviceCodeExpired(v2Metadata)) {
-          await this.deleteDeviceCode(result.device_code);
+          await this.deleteDeviceCode(v2Metadata.device_code);
           return null;
         }
 
         // Warm up cache and Durable Storage
-        this.deviceCodes.set(result.device_code, v2Metadata);
-        this.userCodeToDeviceCode.set(userCode, result.device_code);
-        await this.saveDeviceCode(result.device_code, v2Metadata);
-        await this.saveUserMapping(userCode, result.device_code);
+        this.deviceCodes.set(v2Metadata.device_code, v2Metadata);
+        this.userCodeToDeviceCode.set(userCode, v2Metadata.device_code);
+        await this.saveDeviceCode(v2Metadata.device_code, v2Metadata);
+        await this.saveUserMapping(userCode, v2Metadata.device_code);
         return v2Metadata;
       }
     }
@@ -529,18 +518,11 @@ export class DeviceCodeStore {
     // V2: Update in Durable Storage
     await this.saveDeviceCode(metadata.device_code, metadata);
 
-    // Update in D1
-    if (this.env.DB) {
+    // Update in cold persistence
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
       await retryD1Operation(
-        async () => {
-          await this.env.DB.prepare(
-            `UPDATE device_codes
-             SET status = ?, user_id = ?, sub = ?
-             WHERE device_code = ?`
-          )
-            .bind('approved', userId, sub, metadata.device_code)
-            .run();
-        },
+        () => persistence.approveDeviceCode(metadata.device_code, userId, sub),
         'DeviceCodeStore.approveDeviceCode',
         { maxRetries: 3 }
       );
@@ -581,14 +563,11 @@ export class DeviceCodeStore {
     // V2: Update in Durable Storage
     await this.saveDeviceCode(metadata.device_code, metadata);
 
-    // Update in D1
-    if (this.env.DB) {
+    // Update in cold persistence
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
       await retryD1Operation(
-        async () => {
-          await this.env.DB.prepare('UPDATE device_codes SET status = ? WHERE device_code = ?')
-            .bind('denied', metadata.device_code)
-            .run();
-        },
+        () => persistence.denyDeviceCode(metadata.device_code),
         'DeviceCodeStore.denyDeviceCode',
         { maxRetries: 3 }
       );
@@ -624,20 +603,21 @@ export class DeviceCodeStore {
     // V2: Update in Durable Storage
     await this.saveDeviceCode(deviceCode, metadata);
 
-    // Update in D1 (periodic update to reduce writes)
-    // Only update every 5 polls to reduce D1 load
-    if (metadata.poll_count % 5 === 0 && this.env.DB) {
-      await retryD1Operation(
-        async () => {
-          await this.env.DB.prepare(
-            'UPDATE device_codes SET last_poll_at = ?, poll_count = ? WHERE device_code = ?'
-          )
-            .bind(metadata.last_poll_at, metadata.poll_count, deviceCode)
-            .run();
-        },
-        'DeviceCodeStore.updatePollTime',
-        { maxRetries: 2 }
-      );
+    // Update in cold persistence (periodic update to reduce writes)
+    if (metadata.poll_count % 5 === 0) {
+      const persistence = await this.ensureDeviceCodePersistence();
+      if (persistence) {
+        await retryD1Operation(
+          () =>
+            persistence.updatePoll(
+              deviceCode,
+              metadata.last_poll_at ?? Date.now(),
+              metadata.poll_count ?? 0
+            ),
+          'DeviceCodeStore.updatePollTime',
+          { maxRetries: 2 }
+        );
+      }
     }
   }
 
@@ -669,16 +649,11 @@ export class DeviceCodeStore {
     // V2: Update in Durable Storage
     await this.saveDeviceCode(deviceCode, metadata);
 
-    // Update in D1
-    if (this.env.DB) {
+    // Update in cold persistence
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
       await retryD1Operation(
-        async () => {
-          await this.env.DB.prepare(
-            'UPDATE device_codes SET token_issued = ?, status = ? WHERE device_code = ?'
-          )
-            .bind(1, 'consumed', deviceCode)
-            .run();
-        },
+        () => persistence.markTokenIssued(deviceCode, metadata.token_issued_at ?? Date.now()),
         'DeviceCodeStore.markTokenIssued',
         { maxRetries: 3 }
       );
@@ -711,14 +686,11 @@ export class DeviceCodeStore {
     // V2: Delete from Durable Storage
     await this.deleteDeviceCodeFromStorage(deviceCode, userCode);
 
-    // Delete from D1
-    if (this.env.DB) {
+    // Delete from cold persistence
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
       await retryD1Operation(
-        async () => {
-          await this.env.DB.prepare('DELETE FROM device_codes WHERE device_code = ?')
-            .bind(deviceCode)
-            .run();
-        },
+        () => persistence.deleteDeviceCode(deviceCode),
         'DeviceCodeStore.deleteDeviceCode',
         { maxRetries: 2 }
       );
@@ -729,10 +701,6 @@ export class DeviceCodeStore {
    * Log non-critical events (batched, async) - V2
    */
   private async logToD1(entry: AuditLogEntry): Promise<void> {
-    if (!this.env.DB) {
-      return;
-    }
-
     this.pendingAuditLogs.push(entry);
     this.scheduleAuditFlush();
   }
@@ -741,30 +709,21 @@ export class DeviceCodeStore {
    * Log critical events synchronously - V2
    */
   private async logCritical(entry: AuditLogEntry): Promise<void> {
-    if (!this.env.DB) {
+    const tenantId = this.getTenantIdForAudit(`device_flow.${entry.action}`);
+    if (!tenantId) {
       return;
     }
-
-    await retryD1Operation(
-      async () => {
-        await this.env.DB.prepare(
-          `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            `audit_${crypto.randomUUID()}`,
-            entry.userId || null,
-            `device_flow.${entry.action}`,
-            'device_code',
-            entry.deviceCode,
-            entry.metadata ? JSON.stringify(entry.metadata) : null,
-            Math.floor(entry.timestamp / 1000)
-          )
-          .run();
-      },
-      'DeviceCodeStore.logCritical',
-      { maxRetries: 3 }
-    );
+    await createAuditLog(this.env, {
+      tenantId,
+      userId: entry.userId ?? 'system',
+      action: `device_flow.${entry.action}`,
+      resource: 'device_code',
+      resourceId: entry.deviceCode,
+      ipAddress: 'system',
+      userAgent: 'DeviceCodeStore',
+      metadata: JSON.stringify(entry.metadata ?? {}),
+      severity: 'warning',
+    });
   }
 
   /**
@@ -787,7 +746,7 @@ export class DeviceCodeStore {
   private async flushAuditLogs(): Promise<void> {
     this.flushScheduled = false;
 
-    if (this.pendingAuditLogs.length === 0 || !this.env.DB) {
+    if (this.pendingAuditLogs.length === 0) {
       return;
     }
 
@@ -795,22 +754,26 @@ export class DeviceCodeStore {
     this.pendingAuditLogs = [];
 
     try {
-      const statements = logsToFlush.map((entry) =>
-        this.env.DB.prepare(
-          `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).bind(
-          `audit_${crypto.randomUUID()}`,
-          entry.userId || null,
-          `device_flow.${entry.action}`,
-          'device_code',
-          entry.deviceCode,
-          entry.metadata ? JSON.stringify(entry.metadata) : null,
-          Math.floor(entry.timestamp / 1000)
-        )
+      await Promise.all(
+        logsToFlush.map((entry) => {
+          const action = `device_flow.${entry.action}`;
+          const tenantId = this.getTenantIdForAudit(action);
+          if (!tenantId) {
+            return Promise.resolve();
+          }
+          return createAuditLog(this.env, {
+            tenantId,
+            userId: entry.userId ?? 'system',
+            action,
+            resource: 'device_code',
+            resourceId: entry.deviceCode,
+            ipAddress: 'system',
+            userAgent: 'DeviceCodeStore',
+            metadata: JSON.stringify(entry.metadata ?? {}),
+            severity: 'info',
+          });
+        })
       );
-
-      await this.env.DB.batch(statements);
     } catch (error) {
       this.log.error('Failed to flush audit logs', {}, error as Error);
       // Re-queue (limited to prevent memory leak)
@@ -868,14 +831,11 @@ export class DeviceCodeStore {
       });
     }
 
-    // Clean up expired codes in D1 (idempotent - WHERE clause ensures safety)
-    if (this.env.DB) {
+    // Clean up expired codes in cold persistence (idempotent)
+    const persistence = await this.ensureDeviceCodePersistence();
+    if (persistence) {
       await retryD1Operation(
-        async () => {
-          await this.env.DB.prepare('DELETE FROM device_codes WHERE expires_at < ?')
-            .bind(now)
-            .run();
-        },
+        () => persistence.deleteExpired(now),
         'DeviceCodeStore.alarm.cleanup',
         { maxRetries: 2 }
       );
@@ -888,5 +848,76 @@ export class DeviceCodeStore {
 
     // Schedule next cleanup
     await this.state.storage.setAlarm(now + CLEANUP_INTERVAL_MS);
+  }
+
+  private async ensurePersistenceContext(): Promise<AuthCorePersistenceContext> {
+    if (this.persistenceContext) {
+      return this.persistenceContext;
+    }
+
+    const stored = await this.state.storage.get<AuthCorePersistenceContext>(
+      AUTH_CORE_PERSISTENCE_CONTEXT_KEY
+    );
+    if (stored) {
+      this.persistenceContext = stored;
+      return stored;
+    }
+
+    const resolved = await resolveAuthCorePersistenceContextFromEnv(this.env);
+    await this.state.storage.put(AUTH_CORE_PERSISTENCE_CONTEXT_KEY, resolved);
+    this.persistenceContext = resolved;
+    return resolved;
+  }
+
+  private async initializeDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
+    const context = await this.ensurePersistenceContext();
+    if (context.transientAuth?.deviceCibaColdPersistence === 'disabled') {
+      return null;
+    }
+
+    const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
+    if (!this.tenantId) {
+      throw new Error('Device code persistence requires tenant context');
+    }
+    return createDeviceCodePersistenceAdapter(source, 'device-code-store', this.tenantId);
+  }
+
+  private async ensureDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
+    if (this.deviceCodePersistence) {
+      return this.deviceCodePersistence;
+    }
+    if (!this.deviceCodePersistenceInit) {
+      this.deviceCodePersistenceInit = this.initializeDeviceCodePersistence().finally(() => {
+        this.deviceCodePersistenceInit = null;
+      });
+    }
+
+    this.deviceCodePersistence = await this.deviceCodePersistenceInit;
+    return this.deviceCodePersistence;
+  }
+
+  private configureTenantFromRequest(request: Request): void {
+    const tenantId = request.headers.get('X-Authrim-Tenant-Id')?.trim();
+    if (tenantId) {
+      this.setTenantId(tenantId);
+    }
+  }
+
+  private getTenantIdForAudit(action: string): string | null {
+    if (!this.tenantId) {
+      this.log.error('Cannot create device flow audit log: tenant context is missing', { action });
+      return null;
+    }
+    return this.tenantId;
+  }
+
+  private setTenantId(tenantId: string): void {
+    if (this.tenantId === tenantId) {
+      return;
+    }
+
+    this.tenantId = tenantId;
+    this.deviceCodePersistence = null;
+    this.deviceCodePersistenceInit = null;
   }
 }

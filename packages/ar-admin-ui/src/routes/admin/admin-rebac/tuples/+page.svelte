@@ -103,6 +103,13 @@
 		}
 	}
 
+	function closeOnBackdropKeydown(event: KeyboardEvent, close: () => void) {
+		if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			close();
+		}
+	}
+
 	onMount(() => {
 		loadData();
 	});
@@ -285,15 +292,20 @@
 </div>
 
 <!-- Create Dialog -->
-{#if showCreateDialog}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		on:click={() => (showCreateDialog = false)}
-	>
+	{#if showCreateDialog}
 		<div
-			class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
-			on:click|stopPropagation
+			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+			role="button"
+			tabindex="0"
+			aria-label="Close create relationship dialog"
+			on:click|self={() => (showCreateDialog = false)}
+			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
 		>
+			<div
+				class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
+				role="dialog"
+				aria-modal="true"
+			>
 			<h2 class="text-xl font-semibold mb-4">Create Relationship</h2>
 
 			{#if createError}
@@ -443,15 +455,20 @@
 {/if}
 
 <!-- Delete Confirmation Dialog -->
-{#if showDeleteDialog && deletingRelationship}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		on:click={() => (showDeleteDialog = false)}
-	>
+	{#if showDeleteDialog && deletingRelationship}
 		<div
-			class="bg-white rounded-lg max-w-md w-full p-6"
-			on:click|stopPropagation
+			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+			role="button"
+			tabindex="0"
+			aria-label="Close delete relationship dialog"
+			on:click|self={() => (showDeleteDialog = false)}
+			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
 		>
+			<div
+				class="bg-white rounded-lg max-w-md w-full p-6"
+				role="dialog"
+				aria-modal="true"
+			>
 			<h2 class="text-xl font-semibold mb-4">Delete Relationship</h2>
 
 			{#if deleteError}

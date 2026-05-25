@@ -43,6 +43,7 @@ function createMockD1(): D1Database {
         run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
       };
     }),
+    batch: vi.fn().mockResolvedValue([]),
   } as unknown as D1Database;
 }
 

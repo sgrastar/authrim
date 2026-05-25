@@ -27,7 +27,6 @@ import {
   type ParsedRegionId,
   type ShardResolution,
 } from './region-sharding';
-import { DEFAULT_TENANT_ID } from './tenant-context';
 
 /**
  * Type alias for AuthorizationCodeStore stub returned from region-aware functions
@@ -45,12 +44,12 @@ type AuthCodeStoreStub = DurableObjectStub<AuthorizationCodeStore>;
  * @param userId - User identifier (sub claim)
  * @param clientId - OAuth client identifier
  * @param randomCode - Random opaque code string
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing authCode, shardIndex, regionKey, and generation
  *
  * @example
  * const { authCode, shardIndex, regionKey, generation } = await generateRegionShardedAuthCode(
- *   env, 'user123', 'client456', 'randomCode789'
+ *   env, 'user123', 'client456', 'randomCode789', tenantId
  * );
  * // authCode: "g1:apac:3:ac_randomCode789"
  */
@@ -59,7 +58,7 @@ export async function generateRegionShardedAuthCode(
   userId: string,
   clientId: string,
   randomCode: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<{
   authCode: string;
   shardIndex: number;
@@ -124,18 +123,22 @@ export function parseRegionShardedAuthCode(
  *
  * @param env - Environment object with DO bindings
  * @param authCode - Region-sharded authorization code
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing DO stub and resolution info
  * @throws Error if authCode format is invalid
  *
  * @example
- * const { stub, resolution, opaqueCode } = getAuthCodeStoreByCode(env, "g1:apac:3:ac_xyz789");
+ * const { stub, resolution, opaqueCode } = getAuthCodeStoreByCode(
+ *   env,
+ *   "g1:apac:3:ac_xyz789",
+ *   tenantId
+ * );
  * const response = await stub.fetch(new Request(...));
  */
 export function getAuthCodeStoreByCode(
   env: Env,
   authCode: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): {
   stub: AuthCodeStoreStub;
   resolution: ShardResolution;
@@ -181,12 +184,12 @@ export function getAuthCodeStoreByCode(
  * @param userId - User identifier (sub claim)
  * @param clientId - OAuth client identifier
  * @param randomCode - Random opaque code string
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Object containing DO stub, new authCode, and resolution info
  *
  * @example
  * const { stub, authCode, resolution } = await getAuthCodeStoreForNewCode(
- *   env, 'user123', 'client456', 'randomCode789'
+ *   env, 'user123', 'client456', 'randomCode789', tenantId
  * );
  * const response = await stub.fetch(new Request(..., {
  *   body: JSON.stringify({ code: authCode, ... })
@@ -197,7 +200,7 @@ export async function getAuthCodeStoreForNewCode(
   userId: string,
   clientId: string,
   randomCode: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<{
   stub: AuthCodeStoreStub;
   authCode: string;

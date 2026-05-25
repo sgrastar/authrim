@@ -4,8 +4,8 @@
  * OIDC Native SSO 1.0 (draft-07) configuration management.
  * Implements hybrid approach: KV → Environment Variable → Default Value
  *
- * Per CLAUDE.md: code defaults should use secure values.
- * Native SSO is disabled by default for security.
+ * Phase 1 default: same-client Native SSO is enabled for eligible native clients.
+ * Cross-client Native SSO remains disabled unless explicitly configured.
  */
 
 import type { Env } from '../types/env';
@@ -17,15 +17,17 @@ const log = createLogger().module('NATIVE_SSO_CONFIG');
  * Native SSO Settings interface
  *
  * All settings have secure defaults:
- * - enabled: false (must explicitly enable)
+ * - enabled: true (eligible same-client Native SSO default-on)
  * - deviceSecretTTLDays: 30 (standard mobile session duration)
  * - maxDeviceSecretsPerUser: 10 (reasonable limit)
  * - maxSecretsBehavior: 'revoke_oldest' (UX-friendly)
  * - allowCrossClientNativeSSO: false (more secure)
  * - maxUseCountPerSecret: 10 (replay attack prevention)
+ * - deviceSecretRotationPolicy: 'disabled' (no implicit rotation)
+ * - deviceSecretRotationOverlapSeconds: 0 (immediate old-secret invalidation when rotation is later enabled)
  */
 export interface NativeSSOSettings {
-  /** Enable Native SSO feature (default: false) */
+  /** Enable Native SSO feature (default: true for eligible same-client native clients) */
   enabled: boolean;
   /** Device secret TTL in days (default: 30, min: 1, max: 90) */
   deviceSecretTTLDays: number;
@@ -45,6 +47,14 @@ export interface NativeSSOSettings {
   maxSecretsBehavior: 'revoke_oldest' | 'reject';
   /** Allow cross-client Native SSO (default: false) */
   allowCrossClientNativeSSO: boolean;
+  /**
+   * Device secret rotation policy.
+   * - 'disabled': never rotate during token exchange (default)
+   * - 'explicit': allow a dedicated explicit rotation flow
+   */
+  deviceSecretRotationPolicy: 'disabled' | 'explicit';
+  /** Old-secret overlap window in seconds. Default 0 means immediate invalidation. */
+  deviceSecretRotationOverlapSeconds: number;
   /** Rate limit settings for Token Exchange */
   rateLimit: {
     /** Max attempts per minute per user+device_secret (default: 10) */
@@ -54,14 +64,16 @@ export interface NativeSSOSettings {
   };
 }
 
-/** Default Native SSO settings (secure by default) */
+/** Default Native SSO settings */
 const DEFAULT_SETTINGS: NativeSSOSettings = {
-  enabled: false,
+  enabled: true,
   deviceSecretTTLDays: 30,
   maxDeviceSecretsPerUser: 10,
   maxUseCountPerSecret: 10, // Replay attack prevention
   maxSecretsBehavior: 'revoke_oldest',
   allowCrossClientNativeSSO: false,
+  deviceSecretRotationPolicy: 'disabled',
+  deviceSecretRotationOverlapSeconds: 0,
   rateLimit: {
     maxAttemptsPerMinute: 10,
     blockDurationMinutes: 15,
@@ -166,6 +178,10 @@ function mergeSettings(
     maxUseCountPerSecret: override.maxUseCountPerSecret ?? base.maxUseCountPerSecret,
     maxSecretsBehavior: override.maxSecretsBehavior ?? base.maxSecretsBehavior,
     allowCrossClientNativeSSO: override.allowCrossClientNativeSSO ?? base.allowCrossClientNativeSSO,
+    deviceSecretRotationPolicy:
+      override.deviceSecretRotationPolicy ?? base.deviceSecretRotationPolicy,
+    deviceSecretRotationOverlapSeconds:
+      override.deviceSecretRotationOverlapSeconds ?? base.deviceSecretRotationOverlapSeconds,
     rateLimit: {
       maxAttemptsPerMinute:
         override.rateLimit?.maxAttemptsPerMinute ?? base.rateLimit.maxAttemptsPerMinute,
@@ -217,6 +233,23 @@ function mergeWithEnvVars(settings: NativeSSOSettings, env: Env): NativeSSOSetti
     settings.allowCrossClientNativeSSO = envRecord.NATIVE_SSO_ALLOW_CROSS_CLIENT === 'true';
   }
 
+  if (envRecord.NATIVE_SSO_DEVICE_SECRET_ROTATION_POLICY !== undefined) {
+    const policy = envRecord.NATIVE_SSO_DEVICE_SECRET_ROTATION_POLICY;
+    if (policy === 'disabled' || policy === 'explicit') {
+      settings.deviceSecretRotationPolicy = policy;
+    }
+  }
+
+  if (envRecord.NATIVE_SSO_DEVICE_SECRET_ROTATION_OVERLAP_SECONDS !== undefined) {
+    const overlapSeconds = parseInt(
+      envRecord.NATIVE_SSO_DEVICE_SECRET_ROTATION_OVERLAP_SECONDS,
+      10
+    );
+    if (!isNaN(overlapSeconds)) {
+      settings.deviceSecretRotationOverlapSeconds = overlapSeconds;
+    }
+  }
+
   if (envRecord.NATIVE_SSO_RATE_LIMIT_MAX_ATTEMPTS !== undefined) {
     const max = parseInt(envRecord.NATIVE_SSO_RATE_LIMIT_MAX_ATTEMPTS, 10);
     if (!isNaN(max)) {
@@ -258,6 +291,14 @@ function validateSettings(settings: NativeSSOSettings): NativeSSOSettings {
       settings.maxSecretsBehavior === 'reject' || settings.maxSecretsBehavior === 'revoke_oldest'
         ? settings.maxSecretsBehavior
         : 'revoke_oldest',
+    deviceSecretRotationPolicy:
+      settings.deviceSecretRotationPolicy === 'explicit' ? 'explicit' : 'disabled',
+    deviceSecretRotationOverlapSeconds: safeClamp(
+      settings.deviceSecretRotationOverlapSeconds,
+      0,
+      86400,
+      0
+    ),
     rateLimit: {
       // Clamp rate limit: 1-100
       maxAttemptsPerMinute: safeClamp(settings.rateLimit.maxAttemptsPerMinute, 1, 100, 10),

@@ -8,10 +8,27 @@ import {
   clearShardConfigCache,
   getTenantIdFromContext,
   createAuthContextFromHono,
+  ensureOptionalDatabaseAdapter,
+  type DatabaseSource,
+  countActiveRefreshTokenFamiliesByGeneration,
+  deleteRefreshTokenFamiliesByGeneration,
   getLogger,
+  getRefreshTokenFamilyGenerationStats,
+  listRefreshTokenFamiliesByUser,
+  revokeRefreshTokenFamiliesByUser,
   type RefreshTokenShardConfig,
   type Env,
 } from '@authrim/ar-lib-core';
+
+function resolveOptionalCoreAdapter(c: Context<{ Bindings: Env }>) {
+  const runtimeSources = (c as any).get?.('runtimeUserStoreSources') as
+    | { coreDb?: DatabaseSource | null }
+    | undefined;
+  return ensureOptionalDatabaseAdapter(
+    runtimeSources?.coreDb ?? c.env.DB ?? null,
+    'refresh-token-sharding-config'
+  );
+}
 
 /**
  * GET /api/admin/settings/refresh-token-sharding
@@ -20,10 +37,11 @@ import {
 export async function getRefreshTokenShardingConfig(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('RefreshTokenShardingAPI');
   const clientId = c.req.query('clientId') || null;
+  const tenantId = getTenantIdFromContext(c);
 
   try {
     // Get from KV (with cache)
-    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__', tenantId);
 
     return c.json({
       clientId: clientId || '__global__',
@@ -97,7 +115,11 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
     }
 
     // Get current config
-    const currentConfig = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const currentConfig = await getRefreshTokenShardConfig(
+      c.env,
+      clientId || '__global__',
+      getTenantIdFromContext(c)
+    );
 
     // Check if shard count is actually changing
     if (currentConfig.currentShardCount === body.shardCount) {
@@ -115,20 +137,20 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
     const newConfig = createNewGeneration(currentConfig, body.shardCount, adminUser);
 
     // Save to KV
-    await saveRefreshTokenShardConfig(c.env, clientId, newConfig);
+    await saveRefreshTokenShardConfig(c.env, clientId, newConfig, getTenantIdFromContext(c));
 
-    // Record in D1 for audit via Adapter
-    if (c.env.DB) {
+    // Record in the resolved core adapter when relational bookkeeping is available.
+    const coreAdapter = resolveOptionalCoreAdapter(c);
+    if (coreAdapter) {
       const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
 
-      await authCtx.coreAdapter.execute(
+      await coreAdapter.execute(
         `INSERT INTO refresh_token_shard_configs
          (id, tenant_id, client_id, generation, shard_count, activated_at, created_by, notes)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           `rtsc_${crypto.randomUUID()}`,
-          'default',
+          tenantId,
           clientId,
           newConfig.currentGeneration,
           newConfig.currentShardCount,
@@ -140,11 +162,11 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
 
       // Mark previous generation as deprecated
       if (currentConfig.currentGeneration > 0) {
-        await authCtx.coreAdapter.execute(
+        await coreAdapter.execute(
           `UPDATE refresh_token_shard_configs
            SET deprecated_at = ?
            WHERE tenant_id = ? AND client_id = ? AND generation = ? AND deprecated_at IS NULL`,
-          [Date.now(), 'default', clientId, currentConfig.currentGeneration]
+          [Date.now(), tenantId, clientId, currentConfig.currentGeneration]
         );
       }
     }
@@ -178,43 +200,19 @@ export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>
   const clientId = c.req.query('clientId') || null;
 
   try {
-    if (!c.env.DB) {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Database not available',
-        },
-        500
-      );
-    }
-
     // Get token family distribution by generation via Adapter
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     const now = Date.now();
 
-    const stats = await authCtx.coreAdapter.query<{
-      generation: number;
-      total: number;
-      active: number;
-      revoked: number;
-      expired: number;
-    }>(
-      `SELECT
-         generation,
-         COUNT(*) as total,
-         SUM(CASE WHEN is_revoked = 0 AND expires_at > ? THEN 1 ELSE 0 END) as active,
-         SUM(CASE WHEN is_revoked = 1 THEN 1 ELSE 0 END) as revoked,
-         SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired
-       FROM user_token_families
-       WHERE (? IS NULL OR client_id = ?)
-       GROUP BY generation
-       ORDER BY generation DESC`,
-      [now, now, clientId, clientId]
-    );
+    const stats = await getRefreshTokenFamilyGenerationStats(authCtx.coreAdapter, {
+      tenantId,
+      clientId,
+      nowMs: now,
+    });
 
     // Get shard config
-    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__', tenantId);
 
     return c.json({
       clientId: clientId || '__global__',
@@ -254,42 +252,31 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
       );
     }
 
-    if (!c.env.DB) {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Database not available',
-        },
-        500
-      );
-    }
-
     // Create AuthContext for database operations
     const authCtx = createAuthContextFromHono(c, tenantId);
     const now = Date.now();
 
     // Safety check: ensure no active tokens exist for this generation via Adapter
-    const params = clientId ? [tenantId, generation, now, clientId] : [tenantId, generation, now];
-    const activeResult = await authCtx.coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM user_token_families
-       WHERE tenant_id = ? AND generation = ? AND is_revoked = 0 AND expires_at > ?
-       ${clientId ? 'AND client_id = ?' : ''}`,
-      params
-    );
+    const activeCount = await countActiveRefreshTokenFamiliesByGeneration(authCtx.coreAdapter, {
+      tenantId,
+      generation,
+      nowMs: now,
+      clientId,
+    });
 
-    if (activeResult && activeResult.count > 0) {
+    if (activeCount > 0) {
       return c.json(
         {
           error: 'cleanup_blocked',
-          error_description: `Cannot cleanup generation ${generation}: ${activeResult.count} active tokens exist`,
-          active_count: activeResult.count,
+          error_description: `Cannot cleanup generation ${generation}: ${activeCount} active tokens exist`,
+          active_count: activeCount,
         },
         400
       );
     }
 
     // Get current config to prevent cleanup of current generation
-    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
+    const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__', tenantId);
     if (generation === config.currentGeneration) {
       return c.json(
         {
@@ -301,15 +288,11 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
     }
 
     // Delete D1 records via Adapter
-    const deleteParams = clientId ? [generation, clientId] : [generation];
-    const deleteResult = await authCtx.coreAdapter.execute(
-      `DELETE FROM user_token_families
-       WHERE generation = ?
-       ${clientId ? 'AND client_id = ?' : ''}`,
-      deleteParams
-    );
-
-    const deletedCount = deleteResult.rowsAffected || 0;
+    const deletedCount = await deleteRefreshTokenFamiliesByGeneration(authCtx.coreAdapter, {
+      tenantId,
+      generation,
+      clientId,
+    });
 
     // Remove from shard config's previousGenerations
     const updatedConfig: RefreshTokenShardConfig = {
@@ -317,7 +300,7 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
       previousGenerations: config.previousGenerations.filter((g) => g.generation !== generation),
       updatedAt: Date.now(),
     };
-    await saveRefreshTokenShardConfig(c.env, clientId, updatedConfig);
+    await saveRefreshTokenShardConfig(c.env, clientId, updatedConfig, tenantId);
 
     // Clear cache
     clearShardConfigCache();
@@ -360,31 +343,17 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    if (!c.env.DB) {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Database not available',
-        },
-        500
-      );
-    }
-
     // Get all token families for this user via Adapter
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const params = clientId ? [userId, clientId] : [userId];
-    const families = await authCtx.coreAdapter.query<{
-      jti: string;
-      client_id: string;
-      generation: number;
-    }>(
-      `SELECT jti, client_id, generation FROM user_token_families
-       WHERE user_id = ? AND is_revoked = 0
-       ${clientId ? 'AND client_id = ?' : ''}`,
-      params
-    );
+    const families = await listRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+      tenantId,
+      userId,
+      clientId,
+      activeOnly: true,
+      nowMs: Date.now(),
+    });
 
     if (families.length === 0) {
       return c.json({
@@ -402,7 +371,8 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       const instanceName = buildRefreshTokenRotatorInstanceName(
         family.client_id,
         parsed.generation,
-        parsed.shardIndex
+        parsed.shardIndex,
+        tenantId
       );
 
       if (!shardGroups.has(instanceName)) {
@@ -432,14 +402,11 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
     await Promise.all(revokePromises);
 
     // Update D1 via Adapter
-    const updateParams = clientId ? [userId, clientId] : [userId];
-    await authCtx.coreAdapter.execute(
-      `UPDATE user_token_families
-       SET is_revoked = 1
-       WHERE user_id = ?
-       ${clientId ? 'AND client_id = ?' : ''}`,
-      updateParams
-    );
+    await revokeRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+      tenantId,
+      userId,
+      clientId,
+    });
 
     return c.json({
       success: true,

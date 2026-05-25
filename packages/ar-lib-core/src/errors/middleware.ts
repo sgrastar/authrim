@@ -62,11 +62,16 @@ export class AuthrimError extends Error {
   public readonly options: {
     variables?: Record<string, string | number>;
     state?: string;
+    extensions?: Record<string, unknown>;
   };
 
   constructor(
     code: ARErrorCode,
-    options: { variables?: Record<string, string | number>; state?: string } = {}
+    options: {
+      variables?: Record<string, string | number>;
+      state?: string;
+      extensions?: Record<string, unknown>;
+    } = {}
   ) {
     super(`AuthrimError: ${code}`);
     this.name = 'AuthrimError';
@@ -199,6 +204,7 @@ export function errorMiddleware(options: ErrorMiddlewareOptions = {}): Middlewar
         descriptor = factory.create(error.code, {
           variables: error.options.variables,
           state: error.options.state,
+          extensions: error.options.extensions,
         });
       } else if (error instanceof RFCError) {
         // Handle RFCError
@@ -266,7 +272,11 @@ export async function createErrorFactoryFromContext(c: Context): Promise<ErrorFa
 export async function createErrorResponse(
   c: Context,
   code: ARErrorCode,
-  options?: { variables?: Record<string, string | number>; state?: string }
+  options?: {
+    variables?: Record<string, string | number>;
+    state?: string;
+    extensions?: Record<string, unknown>;
+  }
 ): Promise<Response> {
   const config = await getErrorConfig(c, {});
   const factory = new ErrorFactory({

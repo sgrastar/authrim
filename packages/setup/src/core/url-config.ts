@@ -1,4 +1,4 @@
-import type { UrlsConfig } from './config.js';
+import type { AuthrimConfig, UrlsConfig } from './config.js';
 
 export interface BuildUrlsConfigOptions {
   env: string;
@@ -25,8 +25,269 @@ export function getWorkersDevUrl(workerName: string, workersSubdomain?: string |
   return `https://${workerName}.workers.dev`;
 }
 
-export function getPagesDevUrl(projectName: string): string {
-  return `https://${projectName}.pages.dev`;
+export function getUiWorkersDevUrl(workerName: string, workersSubdomain?: string | null): string {
+  return getWorkersDevUrl(workerName, workersSubdomain);
+}
+
+function normalizeWorkersDevUrl(
+  url: string | null | undefined,
+  workersSubdomain?: string | null
+): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.endsWith('.workers.dev')) {
+      const parts = parsed.hostname.split('.');
+      if (parts.length === 3 && workersSubdomain) {
+        parsed.hostname = `${parts[0]}.${workersSubdomain}.workers.dev`;
+      }
+    }
+    return stripTrailingSlash(parsed.toString());
+  } catch {
+    return url;
+  }
+}
+
+export function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+function normalizeNonWorkersDevOrigin(urlOrDomain: string | null | undefined): string | null {
+  const withScheme = ensureHttps(urlOrDomain);
+  if (!withScheme) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(withScheme);
+    if (parsed.hostname === 'workers.dev' || parsed.hostname.endsWith('.workers.dev')) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+export interface ResolveEnvironmentUrlOptions {
+  env: string;
+  workersSubdomain?: string | null;
+}
+
+export type ApiBaseUrlCandidatePurpose = 'operational' | 'tenant-scoped-admin';
+
+export interface ResolveApiBaseUrlCandidatesOptions extends ResolveEnvironmentUrlOptions {
+  purpose?: ApiBaseUrlCandidatePurpose;
+}
+
+export interface DomainRoutingConflict {
+  field: 'loginUiDomain' | 'adminUiDomain';
+  message: string;
+}
+
+export interface ValidateDomainRoutingOptions {
+  apiDomain?: string | null;
+  loginUiDomain?: string | null;
+  adminUiDomain?: string | null;
+  multiTenant?: boolean;
+  nakedDomain?: boolean;
+}
+
+function isMultiTenantConfigured(config?: Partial<AuthrimConfig> | null): boolean {
+  return config?.tenant?.multiTenant === true && !!config.tenant.baseDomain?.trim();
+}
+
+function normalizeDomainInput(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  return normalized || null;
+}
+
+export function validateDomainRoutingConfig(
+  options: ValidateDomainRoutingOptions
+): DomainRoutingConflict[] {
+  const apiDomain = normalizeDomainInput(options.apiDomain);
+  if (!apiDomain || options.multiTenant !== true || options.nakedDomain === true) {
+    return [];
+  }
+
+  const conflicts: DomainRoutingConflict[] = [];
+  const candidateDomains = [
+    ['loginUiDomain', normalizeDomainInput(options.loginUiDomain)],
+    ['adminUiDomain', normalizeDomainInput(options.adminUiDomain)],
+  ] as const;
+
+  for (const [field, candidateDomain] of candidateDomains) {
+    if (candidateDomain && candidateDomain === apiDomain) {
+      conflicts.push({
+        field,
+        message:
+          'UI custom domain cannot match the API domain in multi-tenant mode unless naked domain is enabled.',
+      });
+    }
+  }
+
+  return conflicts;
+}
+
+export function resolveIssuerUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
+  const tenantName = config?.tenant?.name?.trim() || 'default';
+  const baseDomain = config?.tenant?.baseDomain?.trim();
+
+  if (isMultiTenantConfigured(config) && baseDomain) {
+    return config?.tenant?.nakedDomain === true
+      ? `https://${baseDomain}`
+      : `https://${tenantName}.${baseDomain}`;
+  }
+
+  const apiUrl = config?.urls?.api?.custom || config?.urls?.api?.auto;
+  if (apiUrl) {
+    return stripTrailingSlash(apiUrl);
+  }
+
+  return getWorkersDevUrl(`${options.env}-ar-router`, options.workersSubdomain);
+}
+
+/**
+ * Resolve the most stable public API origin for setup-time management calls.
+ *
+ * In multi-tenant mode the canonical issuer may be `{tenant}.{baseDomain}`.
+ * Immediately after deploy, that tenant hostname can lag wildcard/custom-domain
+ * propagation even when the base API domain is already routed. Admin bootstrap
+ * requests carry `X-Tenant-Id`, so using the base API origin avoids unnecessary
+ * dependence on the tenant hostname during post-deploy setup.
+ */
+export function resolveOperationalApiBaseUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
+  const baseDomain = config?.tenant?.baseDomain?.trim();
+  if (isMultiTenantConfigured(config) && baseDomain) {
+    return `https://${baseDomain}`;
+  }
+
+  const apiUrl = config?.urls?.api?.custom || config?.urls?.api?.auto;
+  if (apiUrl) {
+    return stripTrailingSlash(apiUrl);
+  }
+
+  return getWorkersDevUrl(`${options.env}-ar-router`, options.workersSubdomain);
+}
+
+export function resolveApiBaseUrlCandidates(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveApiBaseUrlCandidatesOptions
+): string[] {
+  const purpose = options.purpose ?? 'operational';
+  const issuerUrl = resolveIssuerUrl(config, options);
+  const operationalUrl = resolveOperationalApiBaseUrl(config, options);
+  const customUrl = config?.urls?.api?.custom
+    ? stripTrailingSlash(config.urls.api.custom)
+    : undefined;
+  const workersDevUrl =
+    !customUrl && config?.urls?.api?.auto
+      ? normalizeWorkersDevUrl(config.urls.api.auto, options.workersSubdomain)
+      : undefined;
+  const candidates =
+    purpose === 'tenant-scoped-admin'
+      ? [issuerUrl, operationalUrl, customUrl, workersDevUrl]
+      : [operationalUrl, issuerUrl, customUrl, workersDevUrl];
+  const seen = new Set<string>();
+  return candidates
+    .map((candidate) => normalizeWorkersDevUrl(candidate, options.workersSubdomain))
+    .filter((candidate): candidate is string => {
+      if (!candidate || seen.has(candidate)) {
+        return false;
+      }
+      seen.add(candidate);
+      return true;
+    });
+}
+
+export function resolveSharedLoginUiBaseUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
+  const loginUiUrl = config?.urls?.loginUi?.custom || config?.urls?.loginUi?.auto;
+  if (loginUiUrl) {
+    return stripTrailingSlash(loginUiUrl);
+  }
+
+  return getUiWorkersDevUrl(`${options.env}-ar-login-ui`, options.workersSubdomain);
+}
+
+export function resolveLoginUiEntryUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
+  if (isMultiTenantConfigured(config) || config?.urls?.loginUi?.sameAsApi === true) {
+    return `${resolveIssuerUrl(config, options)}/login`;
+  }
+
+  return `${resolveSharedLoginUiBaseUrl(config, options)}/login`;
+}
+
+export function resolveAdminUiEntryUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
+  if (config?.urls?.adminUi?.sameAsApi === true) {
+    return `${resolveIssuerUrl(config, options)}/admin/info`;
+  }
+
+  const adminUiUrl = config?.urls?.adminUi?.custom || config?.urls?.adminUi?.auto;
+  const adminBaseUrl = adminUiUrl
+    ? stripTrailingSlash(adminUiUrl)
+    : getUiWorkersDevUrl(`${options.env}-ar-admin-ui`, options.workersSubdomain);
+  return `${adminBaseUrl}/admin/info`;
+}
+
+export function resolveTenantDiscoverUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string | null {
+  if (!isMultiTenantConfigured(config)) {
+    return null;
+  }
+
+  if (config?.urls?.loginUi?.sameAsApi !== true) {
+    const loginUiOrigin = normalizeNonWorkersDevOrigin(config?.urls?.loginUi?.custom);
+    if (loginUiOrigin) {
+      return `${loginUiOrigin}/discover`;
+    }
+  }
+
+  const baseDomain = config?.tenant?.baseDomain?.trim();
+  if (baseDomain) {
+    return `https://${baseDomain}/discover`;
+  }
+
+  return `${resolveSharedLoginUiBaseUrl(config, options)}/discover`;
+}
+
+export function buildInitialAdminSetupUrl(baseUrl: string, token: string): string {
+  return `${stripTrailingSlash(baseUrl)}/admin-init-setup?token=${token}`;
+}
+
+export function resolveInitialAdminSetupUrl(
+  config: Partial<AuthrimConfig> | null | undefined,
+  token: string,
+  options: ResolveEnvironmentUrlOptions
+): string {
+  return buildInitialAdminSetupUrl(resolveIssuerUrl(config, options), token);
 }
 
 export function buildUrlsConfig(options: BuildUrlsConfigOptions): UrlsConfig {
@@ -46,11 +307,17 @@ export function buildUrlsConfig(options: BuildUrlsConfigOptions): UrlsConfig {
   const adminUiCustomUrl = ensureHttps(adminUiDomain);
 
   // If existingUrls.api.auto matches the custom domain, it was incorrectly set — regenerate.
-  const existingAutoUrl = existingUrls?.api?.auto;
+  const existingAutoUrl = normalizeWorkersDevUrl(existingUrls?.api?.auto, workersSubdomain);
   const autoUrlIsCustomDomain = existingAutoUrl && apiCustomUrl && existingAutoUrl === apiCustomUrl;
   const resolvedAutoUrl =
     (!autoUrlIsCustomDomain && existingAutoUrl) ||
     getWorkersDevUrl(`${env}-ar-router`, workersSubdomain);
+  const resolvedLoginUiAutoUrl =
+    normalizeWorkersDevUrl(existingUrls?.loginUi?.auto, workersSubdomain) ||
+    getUiWorkersDevUrl(`${env}-ar-login-ui`, workersSubdomain);
+  const resolvedAdminUiAutoUrl =
+    normalizeWorkersDevUrl(existingUrls?.adminUi?.auto, workersSubdomain) ||
+    getUiWorkersDevUrl(`${env}-ar-admin-ui`, workersSubdomain);
 
   return {
     api: {
@@ -61,12 +328,12 @@ export function buildUrlsConfig(options: BuildUrlsConfigOptions): UrlsConfig {
     },
     loginUi: {
       custom: loginUiCustomUrl,
-      auto: existingUrls?.loginUi?.auto || getPagesDevUrl(`${env}-ar-login-ui`),
+      auto: resolvedLoginUiAutoUrl,
       sameAsApi: apiCustomUrl !== null && loginUiCustomUrl === apiCustomUrl,
     },
     adminUi: {
       custom: adminUiCustomUrl,
-      auto: existingUrls?.adminUi?.auto || getPagesDevUrl(`${env}-ar-admin-ui`),
+      auto: resolvedAdminUiAutoUrl,
       sameAsApi: apiCustomUrl !== null && adminUiCustomUrl === apiCustomUrl,
     },
   };

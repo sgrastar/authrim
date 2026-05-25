@@ -28,8 +28,9 @@ class MockStatusListRepository implements StatusListRepository {
     return null;
   }
 
-  async findById(listId: string): Promise<StatusListRecord | null> {
-    return this.lists.get(listId) || null;
+  async findById(tenantId: string, listId: string): Promise<StatusListRecord | null> {
+    const list = this.lists.get(listId);
+    return list && list.tenant_id === tenantId ? list : null;
   }
 
   async create(record: Omit<StatusListRecord, 'created_at' | 'updated_at'>): Promise<void> {
@@ -42,11 +43,12 @@ class MockStatusListRepository implements StatusListRepository {
   }
 
   async update(
+    tenantId: string,
     listId: string,
     updates: Partial<Pick<StatusListRecord, 'encoded_list' | 'used_count' | 'state' | 'sealed_at'>>
   ): Promise<void> {
     const list = this.lists.get(listId);
-    if (!list) throw new Error('List not found');
+    if (!list || list.tenant_id !== tenantId) throw new Error('List not found');
     this.lists.set(listId, {
       ...list,
       ...updates,
@@ -54,9 +56,9 @@ class MockStatusListRepository implements StatusListRepository {
     });
   }
 
-  async incrementUsedCount(listId: string): Promise<number> {
+  async incrementUsedCount(tenantId: string, listId: string): Promise<number> {
     const list = this.lists.get(listId);
-    if (!list) throw new Error('List not found');
+    if (!list || list.tenant_id !== tenantId) throw new Error('List not found');
     const newCount = list.used_count + 1;
     list.used_count = newCount;
     list.updated_at = new Date().toISOString();
@@ -116,12 +118,31 @@ describe('StatusListManager', () => {
       expect(list.purpose).toBe('suspension');
     });
 
+    it('should reject capacity values above the supported maximum', async () => {
+      await expect(manager.createStatusList('tenant1', 'revocation', 1048577)).rejects.toThrow(
+        'Status list capacity must be between'
+      );
+    });
+
     it('should create encoded bitstring', async () => {
       const list = await manager.createStatusList('tenant1', 'revocation');
 
       expect(list.encoded_list).toBeTruthy();
       // Should be base64url encoded
       expect(list.encoded_list).toMatch(/^[A-Za-z0-9_-]+$/);
+    });
+  });
+
+  describe('decode bounds', () => {
+    it('should reject oversized stored encoded lists', async () => {
+      const list = await manager.createStatusList('tenant1', 'revocation', 8);
+      const stored = repository.getAll().find((candidate) => candidate.id === list.id);
+      expect(stored).toBeDefined();
+      stored!.encoded_list = 'A'.repeat(2048);
+
+      await expect(manager.getStatus('tenant1', list.id, 0)).rejects.toThrow(
+        'Encoded status list exceeds maximum size'
+      );
     });
   });
 
@@ -164,7 +185,7 @@ describe('StatusListManager', () => {
       expect(alloc4.index).toBe(0); // New list starts at 0
 
       // Check old list is sealed
-      const oldList = await manager.getStatusList(smallList.id);
+      const oldList = await manager.getStatusList('tenant1', smallList.id);
       expect(oldList?.state).toBe('sealed');
       expect(oldList?.sealed_at).toBeTruthy();
     });
@@ -189,31 +210,31 @@ describe('StatusListManager', () => {
       const { listId, index } = await manager.allocateIndex('tenant1', 'revocation');
 
       // Initially valid
-      expect(await manager.getStatus(listId, index)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', listId, index)).toBe(StatusValue.VALID);
 
       // Revoke
-      await manager.revoke(listId, index);
+      await manager.revoke('tenant1', listId, index);
 
       // Now invalid
-      expect(await manager.getStatus(listId, index)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', listId, index)).toBe(StatusValue.INVALID);
     });
 
     it('should suspend a credential', async () => {
       const { listId, index } = await manager.allocateIndex('tenant1', 'suspension');
 
-      await manager.suspend(listId, index);
+      await manager.suspend('tenant1', listId, index);
 
-      expect(await manager.getStatus(listId, index)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', listId, index)).toBe(StatusValue.INVALID);
     });
 
     it('should activate a suspended credential', async () => {
       const { listId, index } = await manager.allocateIndex('tenant1', 'suspension');
 
-      await manager.suspend(listId, index);
-      expect(await manager.getStatus(listId, index)).toBe(StatusValue.INVALID);
+      await manager.suspend('tenant1', listId, index);
+      expect(await manager.getStatus('tenant1', listId, index)).toBe(StatusValue.INVALID);
 
-      await manager.activate(listId, index);
-      expect(await manager.getStatus(listId, index)).toBe(StatusValue.VALID);
+      await manager.activate('tenant1', listId, index);
+      expect(await manager.getStatus('tenant1', listId, index)).toBe(StatusValue.VALID);
     });
 
     it('should handle multiple status updates', async () => {
@@ -222,31 +243,37 @@ describe('StatusListManager', () => {
       const alloc3 = await manager.allocateIndex('tenant1', 'revocation');
 
       // Revoke first and third
-      await manager.revoke(alloc1.listId, alloc1.index);
-      await manager.revoke(alloc3.listId, alloc3.index);
+      await manager.revoke('tenant1', alloc1.listId, alloc1.index);
+      await manager.revoke('tenant1', alloc3.listId, alloc3.index);
 
-      expect(await manager.getStatus(alloc1.listId, alloc1.index)).toBe(StatusValue.INVALID);
-      expect(await manager.getStatus(alloc2.listId, alloc2.index)).toBe(StatusValue.VALID);
-      expect(await manager.getStatus(alloc3.listId, alloc3.index)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', alloc1.listId, alloc1.index)).toBe(
+        StatusValue.INVALID
+      );
+      expect(await manager.getStatus('tenant1', alloc2.listId, alloc2.index)).toBe(
+        StatusValue.VALID
+      );
+      expect(await manager.getStatus('tenant1', alloc3.listId, alloc3.index)).toBe(
+        StatusValue.INVALID
+      );
     });
 
     it('should throw error for non-existent list', async () => {
-      await expect(manager.updateStatus('non-existent', 0, StatusValue.INVALID)).rejects.toThrow(
-        'Status list not found: non-existent'
-      );
+      await expect(
+        manager.updateStatus('tenant1', 'non-existent', 0, StatusValue.INVALID)
+      ).rejects.toThrow('Status list not found: non-existent');
     });
   });
 
   describe('getEncodedList', () => {
     it('should return encoded bitstring', async () => {
       const list = await manager.createStatusList('tenant1', 'revocation');
-      const encoded = await manager.getEncodedList(list.id);
+      const encoded = await manager.getEncodedList('tenant1', list.id);
 
       expect(encoded).toBe(list.encoded_list);
     });
 
     it('should throw error for non-existent list', async () => {
-      await expect(manager.getEncodedList('non-existent')).rejects.toThrow(
+      await expect(manager.getEncodedList('tenant1', 'non-existent')).rejects.toThrow(
         'Status list not found: non-existent'
       );
     });
@@ -294,8 +321,8 @@ describe('StatusListManager', () => {
     it('should generate consistent ETag', async () => {
       const list = await manager.createStatusList('tenant1', 'revocation');
 
-      const etag1 = await manager.calculateETag(list.id);
-      const etag2 = await manager.calculateETag(list.id);
+      const etag1 = await manager.calculateETag('tenant1', list.id);
+      const etag2 = await manager.calculateETag('tenant1', list.id);
 
       expect(etag1).toBe(etag2);
       expect(etag1).toMatch(/^"[a-f0-9]{16}"$/);
@@ -304,15 +331,15 @@ describe('StatusListManager', () => {
     it('should change ETag after status update', async () => {
       const { listId, index } = await manager.allocateIndex('tenant1', 'revocation');
 
-      const etagBefore = await manager.calculateETag(listId);
-      await manager.revoke(listId, index);
-      const etagAfter = await manager.calculateETag(listId);
+      const etagBefore = await manager.calculateETag('tenant1', listId);
+      await manager.revoke('tenant1', listId, index);
+      const etagAfter = await manager.calculateETag('tenant1', listId);
 
       expect(etagBefore).not.toBe(etagAfter);
     });
 
     it('should throw error for non-existent list', async () => {
-      await expect(manager.calculateETag('non-existent')).rejects.toThrow(
+      await expect(manager.calculateETag('tenant1', 'non-existent')).rejects.toThrow(
         'Status list not found: non-existent'
       );
     });
@@ -324,45 +351,45 @@ describe('StatusListManager', () => {
       const list = await manager.createStatusList('tenant1', 'revocation');
 
       // Update status at a high index
-      await manager.updateStatus(list.id, 1000, StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 1000)).toBe(StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 999)).toBe(StatusValue.VALID);
-      expect(await manager.getStatus(list.id, 1001)).toBe(StatusValue.VALID);
+      await manager.updateStatus('tenant1', list.id, 1000, StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 1000)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 999)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', list.id, 1001)).toBe(StatusValue.VALID);
     });
 
     it('should handle boundary index values', async () => {
       const list = await manager.createStatusList('tenant1', 'revocation', 16); // 16 bits = 2 bytes
 
       // Test first bit
-      await manager.updateStatus(list.id, 0, StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 0)).toBe(StatusValue.INVALID);
+      await manager.updateStatus('tenant1', list.id, 0, StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 0)).toBe(StatusValue.INVALID);
 
       // Test last bit
-      await manager.updateStatus(list.id, 15, StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 15)).toBe(StatusValue.INVALID);
+      await manager.updateStatus('tenant1', list.id, 15, StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 15)).toBe(StatusValue.INVALID);
 
       // Middle bits should still be valid
-      expect(await manager.getStatus(list.id, 7)).toBe(StatusValue.VALID);
-      expect(await manager.getStatus(list.id, 8)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', list.id, 7)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', list.id, 8)).toBe(StatusValue.VALID);
     });
 
     it('should correctly handle byte boundaries', async () => {
       const list = await manager.createStatusList('tenant1', 'revocation', 24); // 3 bytes
 
       // Set bits at byte boundaries
-      await manager.updateStatus(list.id, 7, StatusValue.INVALID); // Last bit of first byte
-      await manager.updateStatus(list.id, 8, StatusValue.INVALID); // First bit of second byte
-      await manager.updateStatus(list.id, 15, StatusValue.INVALID); // Last bit of second byte
-      await manager.updateStatus(list.id, 16, StatusValue.INVALID); // First bit of third byte
+      await manager.updateStatus('tenant1', list.id, 7, StatusValue.INVALID); // Last bit of first byte
+      await manager.updateStatus('tenant1', list.id, 8, StatusValue.INVALID); // First bit of second byte
+      await manager.updateStatus('tenant1', list.id, 15, StatusValue.INVALID); // Last bit of second byte
+      await manager.updateStatus('tenant1', list.id, 16, StatusValue.INVALID); // First bit of third byte
 
-      expect(await manager.getStatus(list.id, 6)).toBe(StatusValue.VALID);
-      expect(await manager.getStatus(list.id, 7)).toBe(StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 8)).toBe(StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 9)).toBe(StatusValue.VALID);
-      expect(await manager.getStatus(list.id, 14)).toBe(StatusValue.VALID);
-      expect(await manager.getStatus(list.id, 15)).toBe(StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 16)).toBe(StatusValue.INVALID);
-      expect(await manager.getStatus(list.id, 17)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', list.id, 6)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', list.id, 7)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 8)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 9)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', list.id, 14)).toBe(StatusValue.VALID);
+      expect(await manager.getStatus('tenant1', list.id, 15)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 16)).toBe(StatusValue.INVALID);
+      expect(await manager.getStatus('tenant1', list.id, 17)).toBe(StatusValue.VALID);
     });
   });
 });

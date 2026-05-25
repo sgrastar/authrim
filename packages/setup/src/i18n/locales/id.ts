@@ -156,8 +156,8 @@ const id: Translations = {
 
   // UI deployment
   'ui.prompt': 'Metode deployment UI',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Deploy ke Cloudflare Pages (disarankan)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Deploy ke Cloudflare Workers (disarankan)',
   'ui.customOption': 'Domain kustom',
   'ui.customDesc': 'Gunakan hosting Anda sendiri',
   'ui.skipOption': 'Lewati',
@@ -182,6 +182,46 @@ const id: Translations = {
   'domain.zoneCheckSkipped': 'Pemeriksaan zona dilewati, melanjutkan pengaturan...',
   'domain.continueWithoutZone': 'Lanjutkan tanpa verifikasi zona?',
   'domain.configureBinding': 'Konfigurasi binding domain kustom untuk Workers',
+  'domain.action.retryCheck': 'Periksa lagi',
+  'domain.action.reloadPage': 'Muat ulang halaman',
+  'domain.action.openCloudflareDashboard': 'Buka dashboard Cloudflare',
+  'domain.prereq.reviewTitle': 'Pemeriksaan domain kustom perlu ditinjau',
+  'domain.prereq.reviewBody':
+    'Jika Anda akan memakai domain kustom, coba lagi setelah memuat ulang halaman atau memperbarui login Cloudflare.',
+  'domain.diagnostic.zone_found.title': 'Zona Cloudflare siap digunakan',
+  'domain.diagnostic.zone_found.body': 'Zona "{{zone}}" tersedia di akun Cloudflare Anda.',
+  'domain.diagnostic.zone_found.next':
+    'Anda dapat melanjutkan ke konfigurasi binding domain kustom.',
+  'domain.diagnostic.not_logged_in.title': 'Login Cloudflare diperlukan',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim tidak dapat memastikan status login Cloudflare untuk pemeriksaan zona ini.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Jalankan `wrangler login` di terminal.\n2. Muat ulang halaman ini.\n3. Periksa zona lagi.',
+  'domain.diagnostic.token_unavailable.title': 'Token Cloudflare tidak dapat dimuat',
+  'domain.diagnostic.token_unavailable.body':
+    'Login Wrangler tampak ada, tetapi token API yang dibutuhkan untuk mengakses zona belum tersedia.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Muat ulang halaman ini lalu periksa lagi.\n2. Jika masih gagal, jalankan `wrangler login` lagi.\n3. Setelah itu ulangi pemeriksaan zona.',
+  'domain.diagnostic.zone_read_forbidden.title': 'Akses ke daftar zona dibatasi',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'Token Cloudflare saat ini tidak dapat membaca daftar zona. Zona yang sudah ada mungkin tetap berfungsi, tetapi verifikasi otomatis dan bantuan DNS akan terbatas.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Periksa lagi terlebih dahulu.\n2. Jika masih gagal, jalankan `wrangler login` lagi.\n3. Pastikan token memiliki izin Zone:Read.\n4. Jika zona sudah ada, Anda dapat melanjutkan secara manual.',
+  'domain.diagnostic.zone_not_found.title': 'Zona tidak ditemukan pada akun ini',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare merespons, tetapi zona "{{zone}}" tidak terlihat pada akun saat ini.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Pastikan zona tersebut ada pada akun Cloudflare yang sedang Anda gunakan.\n2. Jika perlu, ganti akun atau buka dashboard Cloudflare.\n3. Setelah itu periksa zonanya lagi.',
+  'domain.diagnostic.api_error.title': 'Pemeriksaan API Cloudflare gagal',
+  'domain.diagnostic.api_error.body':
+    'Cloudflare mengembalikan respons yang tidak terduga saat memeriksa zona ini.',
+  'domain.diagnostic.api_error.next':
+    'Coba periksa lagi terlebih dahulu. Jika masih gagal, muat ulang halaman ini lalu coba lagi.',
+  'domain.diagnostic.network_error.title': 'Pemeriksaan jaringan ke Cloudflare gagal',
+  'domain.diagnostic.network_error.body':
+    'Pemeriksaan zona tidak dapat diselesaikan karena Cloudflare atau jaringan tidak merespons seperti yang diharapkan.',
+  'domain.diagnostic.network_error.next':
+    'Coba periksa lagi terlebih dahulu. Jika masih gagal, muat ulang halaman ini lalu coba lagi.',
   'domain.issuerUrl': 'URL Issuer: {{url}}',
   'domain.apiDomain': 'Domain API / Issuer (contoh: auth.example.com)',
   'domain.loginUiDomain': 'Domain UI Login (Enter untuk lewati)',
@@ -189,6 +229,12 @@ const id: Translations = {
   'domain.enterDomains': 'Masukkan domain kustom (kosongkan untuk menggunakan default Cloudflare)',
   'domain.singleTenantNote': 'Dalam mode single-tenant, URL Issuer = domain API',
   'domain.usingWorkersDev': '(menggunakan domain Cloudflare workers.dev)',
+  'web.form.multiTenantEnable': 'Aktifkan mode multi-tenant',
+  'web.form.multiTenantHint': 'Buat subdomain tenant di bawah domain kustom Anda',
+  'web.form.multiTenantExamples': 'Contoh URL tenant',
+  'web.form.multiTenantExampleDefaultOmitted': 'Tenant default tanpa nama: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Tenant default dengan nama eksplisit: {{url}}',
+  'web.form.multiTenantExampleOther': 'Tenant non-default: {{url}}',
 
   // Database
   'db.title': 'Konfigurasi Database',
@@ -410,9 +456,10 @@ const id: Translations = {
   'userId.note': 'Catatan: Pengaturan ini tidak dapat diubah setelah pengguna dibuat.',
   'userId.selected': 'Format ID pengguna: {{format}}',
 
-  // Optional components
-  'components.title': 'Komponen Opsional',
-  'components.note': 'Catatan: Login Sosial dan Policy Engine adalah komponen standar',
+  // Standard components
+  'components.title': 'Komponen Standar',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Login Sosial, dan Policy Engine dipasang secara default.',
   'components.samlPrompt': 'Aktifkan dukungan SAML?',
   'components.vcPrompt': 'Aktifkan Verifiable Credentials?',
   'components.saml': 'SAML:',
@@ -439,7 +486,7 @@ const id: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Konfigurasikan sharding? (untuk environment beban tinggi)',
   'sharding.title': 'Pengaturan Sharding',
-  'sharding.note': 'Catatan: Disarankan pangkat 2 untuk jumlah shard (8, 16, 32, 64, 128)',
+  'sharding.note': 'Catatan: Disarankan pangkat 2 untuk jumlah shard (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Jumlah shard Auth Code',
   'sharding.refreshTokenShards': 'Jumlah shard Refresh Token',
 
@@ -706,7 +753,7 @@ const id: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI Login',
-  'web.config.loginUiDesc': 'UI autentikasi siap pakai yang dideploy ke Cloudflare Pages.',
+  'web.config.loginUiDesc': 'UI autentikasi siap pakai yang dideploy ke Cloudflare Workers.',
   'web.config.adminUi': 'UI Admin',
   'web.config.adminUiDesc': 'Dashboard manajemen untuk pengguna, klien, dan pengaturan.',
 
@@ -715,9 +762,9 @@ const id: Translations = {
   'web.url.apiDomain': 'Domain API',
   'web.url.apiDomainHint': 'Kosongkan untuk menggunakan subdomain workers.dev',
   'web.url.loginDomain': 'Domain UI Login',
-  'web.url.loginDomainHint': 'Kosongkan untuk menggunakan subdomain pages.dev',
+  'web.url.loginDomainHint': 'Kosongkan untuk menggunakan subdomain workers.dev',
   'web.url.adminDomain': 'Domain UI Admin',
-  'web.url.adminDomainHint': 'Kosongkan untuk menggunakan subdomain pages.dev',
+  'web.url.adminDomainHint': 'Kosongkan untuk menggunakan subdomain workers.dev',
 
   // Web UI Database
   'web.db.title': 'Konfigurasi Database',
@@ -732,6 +779,19 @@ const id: Translations = {
   'web.db.name': 'Nama',
   'web.db.region': 'Wilayah',
   'web.db.regionAuto': 'Otomatis (terdekat)',
+  'web.db.storageProfileTitle': 'Profil Deployment Penyimpanan',
+  'web.db.storageProfileDesc':
+    'Pilih bagaimana data core/PII pengguna ditempatkan untuk deployment ini.',
+  'web.db.sharedD1Title': 'D1 Bersama',
+  'web.db.sharedD1Desc':
+    'Satu core D1 dan PII D1 untuk seluruh deployment. Biaya setup paling rendah dan jalur default.',
+  'web.db.tenantD1Title': 'Tenant D1',
+  'web.db.tenantD1Desc':
+    'Satu pasangan core/PII D1 per tenant. Memerlukan provisioning database tenant sebelum aktivasi tenant.',
+  'web.db.preallocatedSlotsTitle': 'Slot tenant pra-alokasi',
+  'web.db.preallocatedSlotsDesc': 'Setiap slot tenant membuat dua database D1: core dan PII.',
+  'web.db.slotsLabel': 'Slot',
+  'web.db.slotsHelp': 'Default 3. Maksimum 500 slot.',
 
   // Web UI Email
   'web.email.title': 'Penyedia Email',
@@ -881,7 +941,7 @@ const id: Translations = {
   'web.section.apiDomain': 'Domain API / Issuer',
   'web.section.uiDomains': 'Domain UI (Opsional)',
   'web.section.uiDomainsHint':
-    'Domain kustom untuk UI Login/Admin. Masing-masing dapat diatur secara independen. Kosongkan untuk menggunakan default Cloudflare Pages.',
+    'Domain kustom untuk UI Login/Admin. Masing-masing dapat diatur secara independen. Kosongkan untuk menggunakan default Cloudflare Workers.',
   'web.section.corsHint':
     'CORS: Permintaan cross-origin dari UI Login/Admin ke API diizinkan secara otomatis.',
   'web.section.configPreview': 'Pratinjau Konfigurasi',
@@ -893,6 +953,19 @@ const id: Translations = {
   'web.preview.issuerUrl': 'URL Issuer:',
   'web.preview.loginUi': 'UI Login:',
   'web.preview.adminUi': 'UI Admin:',
+  'web.preview.pagesUrl': 'Origin UI Login:',
+  'web.preview.tenantDiscover': 'Pilihan Tenant (Pintu Masuk Umum):',
+  'web.preview.adminAccess': 'Akses UI Admin:',
+  'web.preview.firstTenant': '{{name}} (Tenant Utama)',
+  'web.preview.otherTenants': 'Tenant Lainnya',
+  'web.preview.allTenantsShared': '(dibagi oleh semua tenant)',
+  'web.preview.loginUiOriginNote': '(origin deployment; login tenant memakai issuer /login)',
+  'web.preview.viaApiProxy': '(diproksikan melalui domain API yang sama)',
+  'web.preview.conflictWarningTitle': '⚠️ Masalah konfigurasi',
+  'web.preview.conflictWarningMsg':
+    'Domain kustom {{conflictUI}} sama dengan domain API ({{baseDomain}}). Karena "Hapus tenant dari URL" dinonaktifkan, permintaan API ke {{baseDomain}} (/authorize, /api/auth/*, dll.) akan mengembalikan 404 dan alur login tidak akan berfungsi.',
+  'web.preview.conflictActionMsg':
+    'Solusi: Aktifkan "Hapus tenant dari URL" dan tetapkan tenant pertama ({{tenantName}}) sebagai utama. Atau ubah domain {{conflictUI}} ke domain yang berbeda dari API (mis. login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI Login',
@@ -943,9 +1016,18 @@ const id: Translations = {
     'Digunakan untuk mengirim OTP email dan verifikasi alamat email. Anda dapat mengkonfigurasi ini nanti jika Anda mau.',
   'web.email.configureLater': 'Konfigurasikan nanti',
   'web.email.configureLaterHint': 'Lewati untuk sekarang dan konfigurasikan nanti.',
+  'web.email.configureCloudflare': 'Konfigurasikan Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Menggunakan binding native Workers Email Service. Memerlukan paket Workers Paid dan Cloudflare DNS.',
   'web.email.configureResend': 'Konfigurasikan Resend',
   'web.email.configureResendHint':
     'Siapkan pengiriman email dengan Resend (disarankan untuk produksi).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Persyaratan',
+  'web.email.cloudflareRequirementPaid': 'Paket Workers Paid wajib',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / onboarding domain wajib',
+  'web.email.cloudflareRequirementManual':
+    'Penyiapan domain di dashboard Cloudflare masih harus dilakukan secara manual',
   'web.email.resendSetup': 'Konfigurasi Resend',
   'web.email.beforeBegin': 'Sebelum Anda mulai:',
   'web.email.step1': 'Buat akun Resend di',
@@ -953,10 +1035,18 @@ const id: Translations = {
   'web.email.step3': 'Buat API key di',
   'web.email.resendApiKey': 'API Key Resend',
   'web.email.resendApiKeyHint': 'API key Anda dimulai dengan "re_"',
+  'web.email.resendApiKeyMissing': 'Silakan masukkan API key Resend Anda',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API key tidak dimulai dengan "re_". Ini mungkin bukan API key Resend yang valid. Tetap lanjutkan?',
   'web.email.fromEmailAddress': 'Alamat Email Pengirim',
+  'web.email.cloudflareFromHint':
+    'Harus berasal dari domain yang sudah di-onboard ke Cloudflare Email Service',
   'web.email.fromEmailHint': 'Harus dari domain yang terverifikasi di akun Resend Anda',
+  'web.email.fromEmailMissing': 'Silakan masukkan alamat email pengirim',
+  'web.email.fromEmailInvalid': 'Silakan masukkan alamat email yang valid',
   'web.email.fromDisplayName': 'Nama Tampilan Pengirim (opsional)',
   'web.email.fromDisplayHint': 'Ditampilkan sebagai nama pengirim di klien email',
+  'web.email.saveConfigFailed': 'Gagal menyimpan konfigurasi email',
   'web.email.domainVerificationTitle': 'Verifikasi Domain Diperlukan',
   'web.email.domainVerificationDesc':
     'Sebelum domain Anda diverifikasi, email hanya dapat dikirim dari onboarding@resend.dev (untuk pengujian).',
@@ -998,10 +1088,10 @@ const id: Translations = {
   'web.envDetail.kvNamespaces': 'KV Namespace',
   'web.envDetail.queues': 'Queue',
   'web.envDetail.r2Buckets': 'Bucket R2',
-  'web.envDetail.pagesProjects': 'Proyek Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Perbarui Workers',
+  'web.envDetail.workerUpdate': 'Perbarui semua Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Terdeploy',
   'web.envDetail.localVersion': 'Lokal',
@@ -1010,7 +1100,7 @@ const id: Translations = {
   'web.envDetail.upToDate': 'Terkini',
   'web.envDetail.notDeployed': 'Belum terdeploy',
   'web.envDetail.updateOnlyChanged': 'Perbarui hanya versi yang berubah',
-  'web.envDetail.updateAllWorkers': 'Perbarui Workers',
+  'web.envDetail.updateAllWorkers': 'Perbarui semua Workers',
   'web.envDetail.refreshVersions': 'Segarkan',
   'web.envDetail.updateProgress': 'Progres pembaruan:',
   'web.envDetail.updatesAvailable': '{{count}} pembaruan tersedia',
@@ -1019,9 +1109,9 @@ const id: Translations = {
   'web.envDetail.action': 'Tindakan',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Perbarui UI (Pages)',
+  'web.envDetail.uiUpdate': 'Perbarui UI (Worker)',
   'web.envDetail.uiUpdateDesc':
-    'Perbarui Admin UI atau Login UI secara individual. Ini dideploy ke Cloudflare Pages.',
+    'Perbarui Admin UI atau Login UI secara individual. Ini dideploy ke Cloudflare Workers.',
   'web.envDetail.updateNow': 'Perbarui',
 
   // Web UI Delete Section
@@ -1035,7 +1125,7 @@ const id: Translations = {
   'web.delete.kvNamespaces': 'KV Namespace',
   'web.delete.queues': 'Queue',
   'web.delete.r2Buckets': 'Bucket R2',
-  'web.delete.pagesProjects': 'Proyek Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Batal',
   'web.delete.confirmBtn': 'Hapus yang Dipilih',
 

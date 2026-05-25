@@ -88,7 +88,7 @@ export interface DeprecationVariables {
  *
  * - Checks for version-level or route-level deprecation
  * - Adds RFC 8594 compliant headers to responses
- * - Fail-safe: If KV is unavailable, no headers are added
+ * - fail-safe: If KV is unavailable, no headers are added
  *
  * @returns Hono middleware handler
  */

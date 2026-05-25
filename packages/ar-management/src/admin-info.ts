@@ -12,13 +12,17 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
-  buildIssuerUrl,
+  getUIConfig,
   getLogger,
+  resolveTenantRuntimeProfilesFromEnv,
+  usesNakedDomainIssuer as usesNakedDomainIssuerCore,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from './single-tenant-guard';
+import { getCanonicalTenantBaseUrl } from './request-issuer';
+import { requireTenantResourceAccess } from './admin-tenant-access';
 
 type AdminInfoEnv = Env & {
   LOGIN_UI_ENABLED?: string;
@@ -26,6 +30,7 @@ type AdminInfoEnv = Env & {
   SAML_ENABLED?: string;
   ASYNC_ENABLED?: string;
   VC_ENABLED?: string;
+  PROFILE_REGISTRY_BACKEND?: string;
 };
 
 interface ComponentAvailability {
@@ -56,9 +61,13 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
   if (blocked) {
     return blocked;
   }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
 
   try {
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string; name: string }>(
@@ -77,7 +86,15 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     const issuer = buildTenantBaseUrl(c.env, tenantId);
 
     const components = getComponentAvailability(c.env);
-    const { loginUiUrl, adminUiUrl } = getConfiguredUiUrls(c.env);
+    const { loginUiUrl, adminUiUrl } = await getConfiguredUiUrls(c.env, issuer);
+    const singleTenantMode = !c.env.BASE_DOMAIN;
+    const tenantLoginUrl = buildTenantLoginUrl({
+      issuer,
+      loginUiUrl,
+      singleTenantMode,
+    });
+    const globalLoginUiUrl = !singleTenantMode && loginUiUrl ? `${loginUiUrl}/login` : null;
+    const discoverUrl = !singleTenantMode && loginUiUrl ? `${loginUiUrl}/discover` : null;
 
     // API base URL — same origin as the management API (relative construction)
     // We infer from the issuer since the API runs on the same Worker
@@ -85,21 +102,143 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
 
     // Construct all standard endpoint URLs
     const endpoints = buildEndpoints(issuer, apiBaseUrl);
+    const runtimeProfiles = await resolveRuntimeProfileInfo(c.env, tenantId, log);
 
     return c.json({
       tenant_id: tenantId,
       tenant_name: tenant.name,
       issuer,
       components,
-      login_ui_url: loginUiUrl,
+      login_ui_url: tenantLoginUrl,
+      global_login_ui_url: globalLoginUiUrl,
+      discover_url: discoverUrl,
       admin_ui_url: adminUiUrl,
       api_url: apiBaseUrl,
+      runtime_profiles: runtimeProfiles.profiles,
+      runtime_profiles_error: runtimeProfiles.error,
       ...endpoints,
     });
   } catch (error) {
     log.error('Failed to get tenant info', { tenantId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+async function resolveRuntimeProfileInfo(
+  env: AdminInfoEnv,
+  tenantId: string,
+  log: { warn: (message: string, data?: Record<string, unknown>) => void }
+): Promise<{
+  profiles: {
+    registry_backend: string;
+    effective: {
+      storage: { id: string; label: string; inherited: boolean };
+      audit: { id: string; label: string; inherited: boolean };
+      residency: { id: string; label: string; inherited: boolean };
+    };
+  } | null;
+  error: string | null;
+}> {
+  try {
+    const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
+    return {
+      profiles: {
+        registry_backend: env.PROFILE_REGISTRY_BACKEND ?? 'kv',
+        effective: {
+          storage: {
+            id: resolved.storageProfile.id,
+            label: resolved.storageProfile.label,
+            inherited: resolved.refs.inherited.storage,
+          },
+          audit: {
+            id: resolved.auditProfile.id,
+            label: resolved.auditProfile.label,
+            inherited: resolved.refs.inherited.audit,
+          },
+          residency: {
+            id: resolved.residencyProfile.id,
+            label: resolved.residencyProfile.label,
+            inherited: resolved.refs.inherited.residency,
+          },
+        },
+      },
+      error: null,
+    };
+  } catch (error) {
+    log.warn('Failed to resolve runtime profiles for tenant info', {
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      profiles: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+function extractWorkersDevAccountSubdomain(url: string): string | null {
+  try {
+    const { hostname } = new URL(url);
+    const parts = hostname.split('.');
+    if (
+      parts.length >= 4 &&
+      parts[parts.length - 2] === 'workers' &&
+      parts[parts.length - 1] === 'dev'
+    ) {
+      return parts.slice(1, -2).join('.');
+    }
+  } catch {
+    // Ignore invalid URLs and keep the configured value.
+  }
+  return null;
+}
+
+function normalizeWorkersDevUrlWithAccountSubdomain(
+  value: string | null,
+  issuer: string | null
+): string | null {
+  if (!value || !issuer) {
+    return value;
+  }
+
+  const accountSubdomain = extractWorkersDevAccountSubdomain(issuer);
+  if (!accountSubdomain) {
+    return value;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const parts = parsed.hostname.split('.');
+    if (parts.length === 3 && parts[1] === 'workers' && parts[2] === 'dev') {
+      parsed.hostname = `${parts[0]}.${accountSubdomain}.workers.dev`;
+      return stripTrailingSlash(parsed.toString());
+    }
+  } catch {
+    // Ignore invalid URLs and keep the configured value.
+  }
+
+  return value;
+}
+
+function buildTenantLoginUrl(options: {
+  issuer: string;
+  loginUiUrl: string | null;
+  singleTenantMode: boolean;
+}): string {
+  const { issuer, loginUiUrl, singleTenantMode } = options;
+  if (!singleTenantMode || !loginUiUrl) {
+    return `${issuer}/login`;
+  }
+
+  const normalizedIssuer = stripTrailingSlash(issuer);
+  const normalizedLoginUiUrl = stripTrailingSlash(loginUiUrl);
+  const baseUrl =
+    normalizedLoginUiUrl === normalizedIssuer ? normalizedIssuer : normalizedLoginUiUrl;
+  return `${baseUrl}/login`;
 }
 
 /**
@@ -135,6 +274,8 @@ function buildEndpoints(issuer: string, apiBaseUrl: string) {
     /** SAML 2.0 Endpoints */
     saml: {
       sso: `${issuer}/saml/idp/sso`,
+      idp_metadata: `${issuer}/saml/idp/metadata`,
+      sp_metadata: `${issuer}/saml/sp/metadata`,
       metadata: `${issuer}/saml/sp/metadata`,
       acs: `${issuer}/saml/sp/acs`,
       slo: `${issuer}/saml/sp/slo`,
@@ -187,30 +328,27 @@ function buildEndpoints(issuer: string, apiBaseUrl: string) {
  * Other tenants continue to use subdomain-based URLs.
  */
 export function buildTenantBaseUrl(env: Env, tenantId: string): string {
-  if (usesNakedDomainIssuer(env, tenantId) && env.BASE_DOMAIN) {
-    return `https://${env.BASE_DOMAIN}`;
-  }
-
-  return buildIssuerUrl(env, tenantId);
+  return getCanonicalTenantBaseUrl(env, tenantId);
 }
 
 export function usesNakedDomainIssuer(env: Env, tenantId: string): boolean {
-  if (env.NAKED_DOMAIN_AS_ISSUER !== 'true' || !env.BASE_DOMAIN) {
-    return false;
-  }
-
-  const nakedDomainTenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || 'default';
-  return tenantId === nakedDomainTenantId;
+  return usesNakedDomainIssuerCore(env, tenantId);
 }
 
-export function getConfiguredUiUrls(env: AdminInfoEnv): {
+export async function getConfiguredUiUrls(
+  env: AdminInfoEnv,
+  issuer: string | null = null
+): Promise<{
   loginUiUrl: string | null;
   adminUiUrl: string | null;
-} {
+}> {
   const components = getComponentAvailability(env);
+  const uiConfig = await getUIConfig(env);
+  const loginUiUrl = uiConfig?.baseUrl ?? null;
+  const adminUiUrl = components.admin_ui ? env.ADMIN_UI_URL || null : null;
   return {
-    loginUiUrl: components.login_ui ? env.UI_URL || null : null,
-    adminUiUrl: components.admin_ui ? env.ADMIN_UI_URL || null : null,
+    loginUiUrl: normalizeWorkersDevUrlWithAccountSubdomain(loginUiUrl, issuer),
+    adminUiUrl: normalizeWorkersDevUrlWithAccountSubdomain(adminUiUrl, issuer),
   };
 }
 

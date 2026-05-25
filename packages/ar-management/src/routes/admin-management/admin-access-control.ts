@@ -12,13 +12,13 @@ import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 
 import {
-  D1Adapter,
   AdminRoleRepository,
   AdminRoleAssignmentRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
   adminAuthMiddleware,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 
 // Create router
@@ -35,10 +35,7 @@ adminAccessControlRouter.use('*', adminAuthMiddleware({}));
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getAdminAdapter(c: Context<any, any, any>) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
-  }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
 }
 
 /**

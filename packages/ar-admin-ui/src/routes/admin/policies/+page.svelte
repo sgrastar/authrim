@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminPoliciesAPI,
 		type PolicyRule,
@@ -80,6 +81,7 @@
 	// Resource/Action inputs
 	let resourceTypeInput = $state('');
 	let actionInput = $state('');
+	let loadedTenantId = $state('');
 
 	async function loadRules() {
 		loading = true;
@@ -388,7 +390,17 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		pagination.page = 1;
+		simulationResult = null;
+		simulationError = '';
 		loadCustomRulesStatus();
 		loadRules();
 		loadConditionTypes();

@@ -8,6 +8,7 @@ import type {
 	PublicKeyCredentialCreationOptionsJSON,
 	RegistrationResponseJSON
 } from '@simplewebauthn/browser';
+import { adminFetch } from '$lib/api/admin-request';
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -68,7 +69,7 @@ export const myPasskeysAPI = {
 	 * GET /api/admin/me/passkeys
 	 */
 	async list(): Promise<AdminPasskeyListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/me/passkeys`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/passkeys`, {
 			credentials: 'include'
 		});
 
@@ -88,9 +89,9 @@ export const myPasskeysAPI = {
 	 * POST /api/admin/me/passkeys/options
 	 */
 	async getRegistrationOptions(rpId: string, deviceName?: string): Promise<PasskeyOptionsResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/me/passkeys/options`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/passkeys/options`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			includeJsonContentType: true,
 			credentials: 'include',
 			body: JSON.stringify({
 				rp_id: rpId,
@@ -119,9 +120,9 @@ export const myPasskeysAPI = {
 		origin: string,
 		deviceName?: string
 	): Promise<PasskeyCompleteResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/me/passkeys/complete`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/passkeys/complete`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			includeJsonContentType: true,
 			credentials: 'include',
 			body: JSON.stringify({
 				challenge_id: challengeId,
@@ -150,11 +151,11 @@ export const myPasskeysAPI = {
 		id: string,
 		deviceName: string
 	): Promise<{ success: boolean; passkey: AdminPasskey }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/me/passkeys/${encodeURIComponent(id)}`,
 			{
 				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
+				includeJsonContentType: true,
 				credentials: 'include',
 				body: JSON.stringify({ device_name: deviceName })
 			}
@@ -176,7 +177,7 @@ export const myPasskeysAPI = {
 	 * DELETE /api/admin/me/passkeys/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/me/passkeys/${encodeURIComponent(id)}`,
 			{
 				method: 'DELETE',

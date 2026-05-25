@@ -9,15 +9,17 @@ import type { Env } from '../../types';
 import {
   createSDJWTVC,
   type SDJWTVCCreateOptions,
-  D1Adapter,
   IssuedCredentialRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { validateVCIAccessToken } from '../services/token-validation';
 import { generateSecureNonce } from '../../utils/crypto';
 import { importPKCS8 } from 'jose';
+import { getRequestIssuerIdentifier } from '../../request-identifiers';
 
 interface DeferredCredentialRequest {
   transaction_id: string;
@@ -31,6 +33,7 @@ interface DeferredCredentialRequest {
 export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const log = getLogger(c as any).module('VC-ISSUER');
+  const requestIssuerIdentifier = getRequestIssuerIdentifier(c);
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
@@ -39,14 +42,19 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     }
 
     const accessToken = authHeader.substring(7);
-    const tokenResult = await validateVCIAccessToken(c.env, accessToken);
+    const tokenResult = await validateVCIAccessToken(
+      c.env,
+      accessToken,
+      requestIssuerIdentifier,
+      getTenantIdFromContext(c)
+    );
 
     if (!tokenResult.valid) {
       return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     // Ensure userId is present
-    if (!tokenResult.userId) {
+    if (!tokenResult.userId || !tokenResult.tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
@@ -59,10 +67,13 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Look up deferred credential using repository
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core', {
+      tenantId: tokenResult.tenantId,
+    });
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
 
     const result = await issuedCredentialRepo.findDeferredByIdAndUser(
+      tokenResult.tenantId,
       body.transaction_id,
       tokenResult.userId
     );
@@ -89,7 +100,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
       | undefined;
 
     // Get issuer key
-    const issuerKey = await getIssuerKey(c.env);
+    const issuerKey = await getIssuerKey(c.env, result.tenant_id);
 
     // Create SD-JWT VC
     const options: SDJWTVCCreateOptions = {
@@ -100,7 +111,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
 
     const sdjwtvc = await createSDJWTVC(
       claims,
-      c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com',
+      requestIssuerIdentifier,
       issuerKey.privateKey,
       'ES256',
       issuerKey.kid,
@@ -108,7 +119,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     );
 
     // Update status to 'active' using repository
-    await issuedCredentialRepo.updateStatus(body.transaction_id, 'active');
+    await issuedCredentialRepo.updateStatus(tokenResult.tenantId, body.transaction_id, 'active');
 
     // Generate new c_nonce
     const cNonce = await generateSecureNonce();
@@ -133,8 +144,11 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
 /**
  * Get issuer signing key from KeyManager
  */
-async function getIssuerKey(env: Env): Promise<{ privateKey: CryptoKey; kid: string }> {
-  const doId = env.KEY_MANAGER.idFromName('issuer-keys');
+async function getIssuerKey(
+  env: Env,
+  tenantId: string
+): Promise<{ privateKey: CryptoKey; kid: string }> {
+  const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const stub = env.KEY_MANAGER.get(doId);
 
   const response = await stub.fetch(

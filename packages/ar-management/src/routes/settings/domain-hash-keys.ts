@@ -11,6 +11,9 @@
 
 import type { Context } from 'hono';
 import {
+  createAuthContextFromHono,
+  ensureDatabaseAdapter,
+  type DatabaseSource,
   type EmailDomainHashConfig,
   type KeyRotationStatus,
   type KeyRotationInput,
@@ -19,6 +22,7 @@ import {
   validateDomainHashConfig,
   getMappingCountByVersion,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -46,24 +50,21 @@ function maskSecret(secret: string): string {
  * Get user count by email_domain_hash_version
  */
 async function getUserCountByVersion(
-  db: D1Database,
+  db: DatabaseSource,
   tenantId: string
 ): Promise<Record<number, number>> {
-  const result = await db
-    .prepare(
-      `SELECT email_domain_hash_version, COUNT(*) as count
-       FROM users_core
-       WHERE tenant_id = ?
-       GROUP BY email_domain_hash_version`
-    )
-    .bind(tenantId)
-    .all();
-
-  const counts: Record<number, number> = {};
-  const rows = (result.results || []) as Array<{
+  const adapter = ensureDatabaseAdapter(db, 'domain-hash-keys');
+  const rows = await adapter.query<{
     email_domain_hash_version: number | null;
     count: number;
-  }>;
+  }>(
+    `SELECT email_domain_hash_version, COUNT(*) as count
+     FROM users_core
+     WHERE tenant_id = ?
+     GROUP BY email_domain_hash_version`,
+    [tenantId]
+  );
+  const counts: Record<number, number> = {};
   for (const row of rows) {
     const version = row.email_domain_hash_version ?? 1; // Default to version 1
     counts[version] = row.count;
@@ -284,7 +285,7 @@ export async function completeDomainHashKeyRotation(c: Context) {
  */
 export async function getDomainHashKeyStatus(c: Context) {
   const log = getLogger(c).module('DomainHashKeysAPI');
-  const tenantId = 'default';
+  const tenantId = getTenantIdFromContext(c as never);
 
   try {
     let config: EmailDomainHashConfig;
@@ -302,8 +303,9 @@ export async function getDomainHashKeyStatus(c: Context) {
     }
 
     // Get counts
-    const usersByVersion = await getUserCountByVersion(c.env.DB, tenantId);
-    const orgMappingsByVersion = await getMappingCountByVersion(c.env.DB, tenantId);
+    const coreAdapter = createAuthContextFromHono(c as never, tenantId).coreAdapter;
+    const usersByVersion = await getUserCountByVersion(coreAdapter, tenantId);
+    const orgMappingsByVersion = await getMappingCountByVersion(coreAdapter, tenantId);
 
     // Calculate estimated completion
     let estimatedCompletion: string | undefined;
@@ -398,7 +400,9 @@ export async function deleteDomainHashKeyVersion(c: Context) {
     }
 
     // Check if any users still use this version
-    const usersByVersion = await getUserCountByVersion(c.env.DB, 'default');
+    const tenantId = getTenantIdFromContext(c);
+    const coreAdapter = createAuthContextFromHono(c as never, tenantId).coreAdapter;
+    const usersByVersion = await getUserCountByVersion(coreAdapter, tenantId);
     if (usersByVersion[version] && usersByVersion[version] > 0) {
       // SECURITY: Do not expose user count in error message
       log.warn('Cannot delete version - users still using it', {

@@ -1,8 +1,10 @@
 import type { AuthrimConfig } from './config.js';
+import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
 import { ensureHttps } from './url-config.js';
 import type { UiEnvConfig } from './ui-env.js';
 
 export type UiComponent = 'ar-login-ui' | 'ar-admin-ui';
+export type AdminUiApiMode = 'same-origin' | 'same-site-cross-origin' | 'cross-site-proxy';
 
 export const DISABLED_API_BACKEND_URL = '__DISABLED__';
 
@@ -16,11 +18,26 @@ export interface ResolveUiDeploymentOptions {
 export interface UiDeploymentSettings {
   apiBaseUrl: string;
   uiUrl: string;
+  workersDev: boolean;
+  routes: Array<{ pattern: string; custom_domain: boolean }>;
   useRelativeApi: boolean;
   needsProxy: boolean;
+  siteClassification: UiApiSiteClassification;
+  adminUiApiMode?: AdminUiApiMode;
   uiEnv: UiEnvConfig;
   runtimeApiBackendUrl: string;
   serviceBindingName: string | undefined;
+}
+
+export function describeAdminUiApiMode(mode: AdminUiApiMode): string {
+  switch (mode) {
+    case 'same-origin':
+      return 'Admin UI calls Admin API on the same origin with HttpOnly SameSite=Lax cookies.';
+    case 'same-site-cross-origin':
+      return 'Admin UI calls the same-site Admin API origin directly with credentialed CORS and CSRF checks.';
+    case 'cross-site-proxy':
+      return 'Admin UI uses the Worker BFF via Service Binding; browser direct cross-site Admin API calls are disabled.';
+  }
 }
 
 function normalizeUrl(url: string | null | undefined): string | undefined {
@@ -36,7 +53,9 @@ function normalizeUrl(url: string | null | undefined): string | undefined {
   }
 }
 
-function normalizeHostname(urlOrDomain: string | null | undefined): string | undefined {
+export function normalizeUiDomainHostname(
+  urlOrDomain: string | null | undefined
+): string | undefined {
   const normalized = ensureHttps(urlOrDomain);
   if (!normalized) {
     return undefined;
@@ -49,12 +68,46 @@ function normalizeHostname(urlOrDomain: string | null | undefined): string | und
   }
 }
 
-function isWithinBaseDomain(hostname: string, baseDomain?: string): boolean {
-  if (!baseDomain) {
+function isWorkersDevHostname(hostname: string): boolean {
+  return hostname === 'workers.dev' || hostname.endsWith('.workers.dev');
+}
+
+export function isImmediateSubdomainOfBaseDomain(hostname: string, baseDomain?: string): boolean {
+  if (!baseDomain || !hostname.endsWith(`.${baseDomain}`)) {
     return false;
   }
 
-  return hostname === baseDomain || hostname.endsWith(`.${baseDomain}`);
+  const prefix = hostname.slice(0, -baseDomain.length - 1);
+  return prefix.length > 0 && !prefix.includes('.');
+}
+
+export function isRoutedByMultiTenantRouter(hostname: string, baseDomain?: string): boolean {
+  return hostname === baseDomain || isImmediateSubdomainOfBaseDomain(hostname, baseDomain);
+}
+
+export function uiCustomDomainRequiresOwnRoute(options: {
+  uiDomain?: string | null;
+  apiDomain?: string | null;
+  baseDomain?: string | null;
+  multiTenant?: boolean;
+}): boolean {
+  const uiHostname = normalizeUiDomainHostname(options.uiDomain);
+  if (!uiHostname) {
+    return false;
+  }
+
+  const apiHostname = normalizeUiDomainHostname(options.apiDomain);
+  if (apiHostname && uiHostname === apiHostname) {
+    return false;
+  }
+
+  const baseDomain =
+    options.multiTenant === true ? normalizeUiDomainHostname(options.baseDomain) : undefined;
+  if (baseDomain && uiHostname === baseDomain) {
+    return false;
+  }
+
+  return true;
 }
 
 function getUiConfig(config: AuthrimConfig, component: UiComponent) {
@@ -63,8 +116,26 @@ function getUiConfig(config: AuthrimConfig, component: UiComponent) {
 
 function getFallbackUiUrl(env: string, component: UiComponent): string {
   return component === 'ar-login-ui'
-    ? `https://${env}-ar-login-ui.pages.dev`
-    : `https://${env}-ar-admin-ui.pages.dev`;
+    ? `https://${env}-ar-login-ui.workers.dev`
+    : `https://${env}-ar-admin-ui.workers.dev`;
+}
+
+function getCustomDomainRoute(uiConfig: ReturnType<typeof getUiConfig>, baseDomain?: string) {
+  if (uiConfig?.sameAsApi || !uiConfig?.custom) {
+    return undefined;
+  }
+
+  const customUrl = normalizeUrl(uiConfig.custom);
+  if (!customUrl) {
+    return undefined;
+  }
+
+  const hostname = new URL(customUrl).hostname;
+  if (hostname === baseDomain) {
+    return undefined;
+  }
+
+  return { pattern: hostname, custom_domain: true };
 }
 
 export function resolveUiDeploymentSettings(
@@ -84,25 +155,55 @@ export function resolveUiDeploymentSettings(
   // custom domain → auto (workers.dev) → fallback.
   const runtimeApiBackendUrl = apiBaseUrl;
 
+  const configuredBaseDomain =
+    config.tenant?.multiTenant === true
+      ? normalizeUiDomainHostname(config.tenant?.baseDomain)
+      : undefined;
   const uiConfig = getUiConfig(config, component);
   const uiUrl = uiConfig?.sameAsApi
     ? apiBaseUrl
     : normalizeUrl(uiConfig?.custom) ||
       normalizeUrl(uiConfig?.auto) ||
       getFallbackUiUrl(env, component);
+  const customDomainRoute = getCustomDomainRoute(uiConfig, configuredBaseDomain);
+  const routes = customDomainRoute ? [customDomainRoute] : [];
+  const customUiDomainRoutedByRouter = Boolean(
+    !customDomainRoute &&
+    !uiConfig?.sameAsApi &&
+    uiConfig?.custom &&
+    configuredBaseDomain &&
+    isRoutedByMultiTenantRouter(
+      normalizeUiDomainHostname(uiConfig.custom) ?? '',
+      configuredBaseDomain
+    )
+  );
+  const workersDev = routes.length === 0 && !customUiDomainRoutedByRouter && !uiConfig?.sameAsApi;
 
   const apiOrigin = new URL(apiBaseUrl);
   const uiOrigin = new URL(uiUrl);
 
-  const configuredBaseDomain = normalizeHostname(config.tenant?.baseDomain);
   const sameOrigin = apiOrigin.origin === uiOrigin.origin;
-  const sameConfiguredSite =
-    isWithinBaseDomain(apiOrigin.hostname, configuredBaseDomain) &&
-    isWithinBaseDomain(uiOrigin.hostname, configuredBaseDomain);
+  const siteClassification = classifyUiApiSite(apiBaseUrl, uiUrl, {
+    baseDomain: configuredBaseDomain,
+  });
 
-  // Use relative same-origin API calls whenever the UI is colocated with the API
-  // or when Pages needs to proxy requests to avoid cross-site cookie/CSP issues.
-  const needsProxy = !sameOrigin && !sameConfiguredSite;
+  const adminUiApiMode: AdminUiApiMode | undefined =
+    component === 'ar-admin-ui'
+      ? siteClassification === 'cross-site'
+        ? 'cross-site-proxy'
+        : siteClassification
+      : undefined;
+
+  // Admin UI uses the new three-mode policy. Login UI keeps its existing policy
+  // with one extra guard: separate workers.dev UI/API origins still use the BFF
+  // even when PSL classification says they are same-site.
+  const needsProxy =
+    component === 'ar-admin-ui'
+      ? adminUiApiMode === 'cross-site-proxy'
+      : !sameOrigin &&
+        (siteClassification === 'cross-site' ||
+          isWorkersDevHostname(apiOrigin.hostname) ||
+          isWorkersDevHostname(uiOrigin.hostname));
   const useRelativeApi = sameOrigin || needsProxy;
 
   const uiEnv: UiEnvConfig = {
@@ -116,13 +217,19 @@ export function resolveUiDeploymentSettings(
   uiEnv.PUBLIC_AUTHRIM_ISSUER = apiBaseUrl;
   if (component === 'ar-login-ui') {
     uiEnv.PUBLIC_LOGIN_UI_CLIENT_ID = loginUiClientId;
+  } else {
+    uiEnv.ADMIN_UI_API_MODE = adminUiApiMode;
   }
 
   return {
     apiBaseUrl,
     uiUrl,
+    workersDev,
+    routes,
     useRelativeApi,
     needsProxy,
+    siteClassification,
+    adminUiApiMode,
     uiEnv,
     runtimeApiBackendUrl: needsProxy ? runtimeApiBackendUrl : DISABLED_API_BACKEND_URL,
     serviceBindingName: needsProxy ? 'AR_ROUTER' : undefined,

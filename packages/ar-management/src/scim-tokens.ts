@@ -10,8 +10,9 @@ import { generateScimToken, revokeScimToken, listScimTokens } from '@authrim/ar-
 import {
   createErrorResponse,
   AR_ERROR_CODES,
-  scheduleAuditLogFromContext,
+  createAuditLogFromContext,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -100,7 +101,8 @@ function validateScimTokenInput(body: { description?: unknown; expiresInDays?: u
  */
 export async function adminScimTokensListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const tokens = await listScimTokens(c.env);
+    const tenantId = getTenantIdFromContext(c);
+    const tokens = await listScimTokens(c.env, { tenantId });
 
     return c.json({
       tokens,
@@ -134,15 +136,17 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
     }
 
     const { description, expiresInDays } = validation.sanitized;
+    const tenantId = getTenantIdFromContext(c);
 
     const { token, tokenHash } = await generateScimToken(c.env, {
+      tenantId,
       description,
       expiresInDays,
       enabled: true,
     });
 
-    // Audit log (non-blocking) - uses waitUntil for reliable completion
-    scheduleAuditLogFromContext(c, 'scim.token.create', 'scim_token', tokenHash.slice(0, 8), {
+    await createAuditLogFromContext(c, 'scim.token.create', 'scim_token', tokenHash.slice(0, 8), {
+      tenantId,
       description,
       expiresInDays,
     });
@@ -152,6 +156,7 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
       {
         token, // Plain text token (show to user only once)
         tokenHash,
+        tenantId,
         description,
         expiresInDays,
         message:
@@ -172,6 +177,7 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
 export async function adminScimTokenRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tokenHash = c.req.param('tokenHash')!;
+    const tenantId = getTenantIdFromContext(c);
 
     if (!tokenHash) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -179,19 +185,18 @@ export async function adminScimTokenRevokeHandler(c: Context<{ Bindings: Env }>)
       });
     }
 
-    const success = await revokeScimToken(c.env, tokenHash);
+    const success = await revokeScimToken(c.env, tokenHash, { tenantId });
 
     if (!success) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // Audit log (non-blocking) - severity: warning for revocation - uses waitUntil for reliable completion
-    scheduleAuditLogFromContext(
+    await createAuditLogFromContext(
       c,
       'scim.token.revoke',
       'scim_token',
       tokenHash.slice(0, 8),
-      {},
+      { tenantId },
       'warning'
     );
 

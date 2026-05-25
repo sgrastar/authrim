@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  adminTenantInfoHandler,
   buildTenantBaseUrl,
   getComponentAvailability,
   getConfiguredUiUrls,
@@ -8,6 +9,15 @@ import {
 } from '../admin-info';
 
 describe('admin-info tenant base URL resolution', () => {
+  it('uses ISSUER_URL directly in single-tenant mode', () => {
+    const env = {
+      ISSUER_URL: 'https://login.example.com',
+    } as unknown as Env;
+
+    expect(usesNakedDomainIssuer(env, 'default')).toBe(false);
+    expect(buildTenantBaseUrl(env, 'default')).toBe('https://login.example.com');
+  });
+
   it('uses the naked domain for the default tenant when configured', () => {
     const env = {
       BASE_DOMAIN: 'auth.example.com',
@@ -50,36 +60,275 @@ describe('admin-info tenant base URL resolution', () => {
     const env = {
       BASE_DOMAIN: 'auth.example.com',
       DEFAULT_TENANT_ID: 'default',
+      PRIMARY_TENANT_ID: 'primary',
       ISSUER_URL: 'https://fallback.example.workers.dev',
     } as Env;
 
     expect(usesNakedDomainIssuer(env, 'default')).toBe(false);
     expect(buildTenantBaseUrl(env, 'default')).toBe('https://default.auth.example.com');
+    expect(usesNakedDomainIssuer(env, 'primary')).toBe(false);
+    expect(buildTenantBaseUrl(env, 'primary')).toBe('https://primary.auth.example.com');
   });
 
-  it('returns configured Login/Admin UI URLs when present', () => {
+  it('returns configured Login/Admin UI URLs when present', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
     } as Env;
 
-    expect(getConfiguredUiUrls(env)).toEqual({
+    await expect(getConfiguredUiUrls(env)).resolves.toEqual({
       loginUiUrl: 'https://nodomain-ar-login-ui.pages.dev',
       adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
     });
   });
 
-  it('hides Login UI URL when Login UI is disabled', () => {
+  it('normalizes short workers.dev UI URLs to the issuer account subdomain', async () => {
+    const env = {
+      UI_URL: 'https://single-ar-login-ui.workers.dev',
+      ADMIN_UI_URL: 'https://single-ar-admin-ui.workers.dev',
+    } as Env;
+
+    await expect(
+      getConfiguredUiUrls(env, 'https://single-ar-router.sgrastar.workers.dev')
+    ).resolves.toEqual({
+      loginUiUrl: 'https://single-ar-login-ui.sgrastar.workers.dev',
+      adminUiUrl: 'https://single-ar-admin-ui.sgrastar.workers.dev',
+    });
+  });
+
+  it('keeps custom UI domains unchanged when issuer uses workers.dev', async () => {
+    const env = {
+      UI_URL: 'https://login.example.com',
+      ADMIN_UI_URL: 'https://admin.example.com',
+    } as Env;
+
+    await expect(
+      getConfiguredUiUrls(env, 'https://single-ar-router.sgrastar.workers.dev')
+    ).resolves.toEqual({
+      loginUiUrl: 'https://login.example.com',
+      adminUiUrl: 'https://admin.example.com',
+    });
+  });
+
+  it('prefers UI config from SETTINGS over env UI_URL', async () => {
+    const env = {
+      UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
+      ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+      SETTINGS: {
+        get: async () =>
+          JSON.stringify({
+            ui: {
+              baseUrl: 'https://configured-login.example.com',
+            },
+          }),
+      },
+    } as unknown as Env;
+
+    await expect(getConfiguredUiUrls(env)).resolves.toEqual({
+      loginUiUrl: 'https://configured-login.example.com',
+      adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
+    });
+  });
+
+  it('keeps global Login UI URL available even when built-in Login UI is disabled', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
       LOGIN_UI_ENABLED: 'false',
     } as unknown as Env;
 
-    expect(getConfiguredUiUrls(env)).toEqual({
-      loginUiUrl: null,
+    await expect(getConfiguredUiUrls(env)).resolves.toEqual({
+      loginUiUrl: 'https://nodomain-ar-login-ui.pages.dev',
       adminUiUrl: 'https://nodomain-ar-admin-ui.pages.dev',
     });
+  });
+
+  it('includes global_login_ui_url in tenant info responses', async () => {
+    const env = {
+      UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
+      ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
+      BASE_DOMAIN: 'auth.example.com',
+      PROFILE_REGISTRY_BACKEND: 'database',
+      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
+      DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
+      DEFAULT_RESIDENCY_PROFILE_ID: 'builtin:residency:default',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
+    } as any);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      login_ui_url: string | null;
+      global_login_ui_url: string | null;
+      discover_url: string | null;
+      saml: {
+        idp_metadata: string;
+        sp_metadata: string;
+        metadata: string;
+      };
+      runtime_profiles: {
+        registry_backend: string;
+        effective: {
+          storage: { id: string };
+          audit: { id: string };
+          residency: { id: string };
+        };
+      } | null;
+      runtime_profiles_error: string | null;
+    };
+    expect(body.login_ui_url).toBe('https://default.auth.example.com/login');
+    expect(body.global_login_ui_url).toBe('https://nodomain-ar-login-ui.pages.dev/login');
+    expect(body.discover_url).toBe('https://nodomain-ar-login-ui.pages.dev/discover');
+    expect(body.saml.idp_metadata).toBe('https://default.auth.example.com/saml/idp/metadata');
+    expect(body.saml.sp_metadata).toBe('https://default.auth.example.com/saml/sp/metadata');
+    expect(body.saml.metadata).toBe(body.saml.sp_metadata);
+    expect(body.runtime_profiles?.registry_backend).toBe('database');
+    expect(body.runtime_profiles?.effective.storage.id).toBe('builtin:storage:standard');
+    expect(body.runtime_profiles?.effective.audit.id).toBe('builtin:audit:standard');
+    expect(body.runtime_profiles?.effective.residency.id).toBe('builtin:residency:default');
+    expect(body.runtime_profiles_error).toBeNull();
+  });
+
+  it('uses naked-domain issuer login URL for the primary tenant', async () => {
+    const env = {
+      UI_URL: 'https://login.example.pages.dev',
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      NAKED_DOMAIN_AS_ISSUER: 'true',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
+    } as any);
+
+    const body = (await response.json()) as { login_ui_url: string | null };
+    expect(body.login_ui_url).toBe('https://auth.example.com/login');
+  });
+
+  it('omits common-entry URLs in single-tenant mode', async () => {
+    const env = {
+      UI_URL: 'https://login.example.com',
+      ISSUER_URL: 'https://login.example.com',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
+    } as any);
+
+    const body = (await response.json()) as {
+      login_ui_url: string | null;
+      global_login_ui_url: string | null;
+      discover_url: string | null;
+    };
+    expect(body.login_ui_url).toBe('https://login.example.com/login');
+    expect(body.global_login_ui_url).toBeNull();
+    expect(body.discover_url).toBeNull();
+  });
+
+  it('uses the configured Login UI URL in single-tenant mode when it differs from issuer', async () => {
+    const env = {
+      UI_URL: 'https://single-ar-login-ui.pages.dev',
+      ISSUER_URL: 'https://single-ar-router.sgrastar.workers.dev',
+      DB: {
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({
+              id: 'default',
+              name: 'Default Tenant',
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+
+    const response = await adminTenantInfoHandler({
+      req: {
+        param: () => 'default',
+      },
+      env,
+      json: (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      get: vi.fn((key: string) =>
+        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+      ),
+    } as any);
+
+    const body = (await response.json()) as {
+      login_ui_url: string | null;
+      global_login_ui_url: string | null;
+      discover_url: string | null;
+    };
+    expect(body.login_ui_url).toBe('https://single-ar-login-ui.pages.dev/login');
+    expect(body.global_login_ui_url).toBeNull();
+    expect(body.discover_url).toBeNull();
   });
 
   it('derives component availability from env flags', () => {

@@ -8,7 +8,12 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { createLogger } from '@authrim/ar-lib-core';
+import {
+  createLogger,
+  readResponseTextWithLimit,
+  safeFetch,
+  safeFetchJson,
+} from '@authrim/ar-lib-core';
 import type { LinkedIdentity, ProviderMetadata, UpstreamProvider } from '../types';
 
 const log = createLogger().module('TOKEN-REVOCATION');
@@ -49,7 +54,7 @@ export async function revokeLinkedIdentityTokens(
 
   try {
     // Get provider configuration
-    const provider = await getProvider(env, identity.providerId);
+    const provider = await getProvider(env, identity.tenantId, identity.providerId);
     if (!provider) {
       // SECURITY: Do not expose provider ID in error to prevent enumeration
       result.errors.push('Provider not found');
@@ -143,13 +148,13 @@ async function getRevocationEndpoint(provider: UpstreamProvider): Promise<string
   // Try OIDC discovery
   if (provider.issuer) {
     try {
-      const discoveryUrl = `${provider.issuer}/.well-known/openid-configuration`;
-      const response = await fetch(discoveryUrl);
-      if (response.ok) {
-        const metadata: ProviderMetadata = await response.json();
-        if (metadata.revocation_endpoint) {
-          return metadata.revocation_endpoint;
-        }
+      const discoveryUrl = `${provider.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
+      const metadata = await safeFetchJson<ProviderMetadata>(discoveryUrl, {
+        timeoutMs: 5000,
+        maxResponseSize: 64 * 1024,
+      });
+      if (metadata.revocation_endpoint) {
+        return metadata.revocation_endpoint;
       }
     } catch {
       // Discovery failed - provider might not support it
@@ -189,12 +194,14 @@ async function revokeToken(
       client_secret: clientSecret,
     });
 
-    const response = await fetch(revocationEndpoint, {
+    const response = await safeFetch(revocationEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: body.toString(),
+      timeoutMs: 10000,
+      maxResponseSize: 16 * 1024,
     });
 
     // RFC 7009 specifies:
@@ -205,7 +212,7 @@ async function revokeToken(
     }
 
     // Handle error response - read body for parsing but don't log it (may contain sensitive data)
-    const errorBody = await response.text();
+    const errorBody = await readResponseTextWithLimit(response, 16 * 1024);
     // Security: Only log HTTP status code (safe), not response body
     log.warn('Token revocation failed', { status: response.status });
 

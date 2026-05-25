@@ -7,6 +7,7 @@
 	import { brandingStore } from '$lib/stores/branding.svelte';
 
 	let mounted = $state(false);
+	let logoutLoading = $state(false);
 
 	onMount(async () => {
 		auth.refresh();
@@ -23,8 +24,14 @@
 	});
 
 	async function handleLogout() {
-		await auth.logout();
-		window.location.href = '/';
+		if (logoutLoading) return;
+		logoutLoading = true;
+		try {
+			await auth.logout();
+			window.location.href = '/';
+		} catch {
+			logoutLoading = false;
+		}
 	}
 </script>
 
@@ -71,9 +78,14 @@
 						<button
 							class="landing__logout-btn"
 							onclick={handleLogout}
+							disabled={logoutLoading}
 							aria-label={$LL.header_logout()}
 						>
-							<div class="i-heroicons-arrow-right-on-rectangle h-4 w-4"></div>
+							{#if logoutLoading}
+								<span class="landing__button-spinner" aria-hidden="true"></span>
+							{:else}
+								<div class="i-heroicons-arrow-right-on-rectangle h-4 w-4"></div>
+							{/if}
 							<span class="landing__logout-text">{$LL.header_logout()}</span>
 						</button>
 					</div>
@@ -84,7 +96,7 @@
 								{$LL.header_signUp()}
 							</Button>
 						</a>
-						<a href="/login">
+						<a href="/discover">
 							<Button variant="primary">
 								{$LL.header_login()}
 							</Button>
@@ -130,8 +142,13 @@
 							<button
 								class="landing__auth-card-btn landing__auth-card-btn--logout"
 								onclick={handleLogout}
+								disabled={logoutLoading}
 							>
-								<div class="i-heroicons-arrow-right-on-rectangle h-4 w-4"></div>
+								{#if logoutLoading}
+									<span class="landing__button-spinner" aria-hidden="true"></span>
+								{:else}
+									<div class="i-heroicons-arrow-right-on-rectangle h-4 w-4"></div>
+								{/if}
 								{$LL.header_logout()}
 							</button>
 						</div>
@@ -139,7 +156,7 @@
 				{:else}
 					<!-- Unauthenticated state -->
 					<div class="landing__cta">
-						<a href="/login" class="landing__cta-primary">
+						<a href="/discover" class="landing__cta-primary">
 							<span>{$LL.header_login()}</span>
 							<div class="i-heroicons-arrow-right h-4 w-4"></div>
 						</a>
@@ -292,9 +309,30 @@
 		cursor: pointer;
 	}
 
-	.landing__logout-btn:hover {
+	.landing__logout-btn:hover:not(:disabled) {
 		background: var(--danger-light);
 		color: var(--danger);
+	}
+
+	.landing__logout-btn:disabled,
+	.landing__auth-card-btn:disabled {
+		cursor: wait;
+		opacity: 0.7;
+	}
+
+	.landing__button-spinner {
+		width: 1rem;
+		height: 1rem;
+		border-radius: 50%;
+		border: 2px solid currentColor;
+		border-top-color: transparent;
+		animation: landing-spin 0.8s linear infinite;
+	}
+
+	@keyframes landing-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	/* === Main / Hero === */
@@ -558,7 +596,7 @@
 		font-family: inherit;
 	}
 
-	.landing__auth-card-btn--logout:hover {
+	.landing__auth-card-btn--logout:hover:not(:disabled) {
 		border-color: var(--danger);
 		color: var(--danger);
 		background: var(--danger-light);

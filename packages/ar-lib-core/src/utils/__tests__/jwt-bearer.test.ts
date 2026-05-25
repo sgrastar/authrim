@@ -82,6 +82,17 @@ describe('JWT Bearer Flow Utilities', () => {
       expect(result.error_description).toContain('not trusted');
     });
 
+    it('should reject oversized assertions before decoding', async () => {
+      const trustedIssuers = new Map<string, TrustedIssuer>();
+      const assertion = ['e30', 'x'.repeat(17 * 1024), 'sig'].join('.');
+
+      const result = await validateJWTBearerAssertion(assertion, audience, trustedIssuers);
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('invalid_grant');
+      expect(result.error_description).toContain('too large');
+    });
+
     it('should reject assertion with wrong audience', async () => {
       const wrongAudience = 'https://wrong-audience.example.com';
 
@@ -311,6 +322,26 @@ describe('JWT Bearer Flow Utilities', () => {
 
       expect(result.size).toBe(1);
       expect(result.has('https://service.example.com')).toBe(true);
+    });
+
+    it('should parse JSON trusted issuer target resource policy', () => {
+      const envVar = JSON.stringify([
+        {
+          issuer: 'https://service.example.com',
+          jwks_uri: 'https://service.example.com/jwks',
+          default_resource: 'svc://service-api',
+          allowed_resources: ['svc://service-api', 'svc://admin-api'],
+          allowed_scopes: ['api:read'],
+        },
+      ]);
+
+      const result = parseTrustedIssuers(envVar);
+
+      const issuer = result.get('https://service.example.com');
+      expect(issuer?.jwks_uri).toBe('https://service.example.com/jwks');
+      expect(issuer?.default_resource).toBe('svc://service-api');
+      expect(issuer?.allowed_resources).toEqual(['svc://service-api', 'svc://admin-api']);
+      expect(issuer?.allowed_scopes).toEqual(['api:read']);
     });
   });
 });

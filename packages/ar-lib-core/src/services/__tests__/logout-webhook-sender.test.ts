@@ -186,7 +186,7 @@ describe('sendLogoutWebhook', () => {
     await sendLogoutWebhook({
       webhookUri: 'https://example.com/webhook',
       payload: '{"event":"user.logout"}',
-      signature: 'abc123',
+      secret: 'secret-123',
       timeoutMs: 5000,
     });
 
@@ -194,7 +194,8 @@ describe('sendLogoutWebhook', () => {
     expect(callArgs[0]).toBe('https://example.com/webhook');
     expect(callArgs[1].method).toBe('POST');
     expect(callArgs[1].headers['Content-Type']).toBe('application/json');
-    expect(callArgs[1].headers['X-Authrim-Signature-256']).toBe('sha256=abc123');
+    expect(callArgs[1].headers['X-Authrim-Signature-256']).toMatch(/^sha256=[0-9a-f]{64}$/);
+    expect(callArgs[1].headers['X-Authrim-Signature-Version']).toBe('v1');
     expect(callArgs[1].headers['X-Authrim-Timestamp']).toBeDefined();
     expect(callArgs[1].headers['X-Authrim-Delivery']).toBeDefined();
     expect(callArgs[1].headers['User-Agent']).toBe('Authrim-Webhook/1.0');

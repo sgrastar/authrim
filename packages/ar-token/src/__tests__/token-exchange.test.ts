@@ -376,7 +376,7 @@ describe('Token Exchange Tests (RFC 8693)', () => {
       it('should use audiences when only audience parameters provided', () => {
         const resources: string[] = [];
         const audiences = ['service-a', 'service-b'];
-        const issuerUrl = 'https://auth.example.com';
+        const defaultResource = 'svc://default-api';
 
         let targetAudiences: string[];
         let audienceSource: string;
@@ -391,8 +391,8 @@ describe('Token Exchange Tests (RFC 8693)', () => {
           targetAudiences = resources;
           audienceSource = 'resource_param';
         } else {
-          targetAudiences = [issuerUrl];
-          audienceSource = 'default';
+          targetAudiences = [defaultResource];
+          audienceSource = 'client_default_resource';
         }
 
         expect(targetAudiences).toEqual(['service-a', 'service-b']);
@@ -402,7 +402,7 @@ describe('Token Exchange Tests (RFC 8693)', () => {
       it('should use resources when only resource parameters provided', () => {
         const resources = ['https://api1.example.com', 'https://api2.example.com'];
         const audiences: string[] = [];
-        const issuerUrl = 'https://auth.example.com';
+        const defaultResource = 'svc://default-api';
 
         let targetAudiences: string[];
         let audienceSource: string;
@@ -417,8 +417,8 @@ describe('Token Exchange Tests (RFC 8693)', () => {
           targetAudiences = resources;
           audienceSource = 'resource_param';
         } else {
-          targetAudiences = [issuerUrl];
-          audienceSource = 'default';
+          targetAudiences = [defaultResource];
+          audienceSource = 'client_default_resource';
         }
 
         expect(targetAudiences).toEqual(['https://api1.example.com', 'https://api2.example.com']);
@@ -428,7 +428,7 @@ describe('Token Exchange Tests (RFC 8693)', () => {
       it('should combine audiences and resources when both provided', () => {
         const resources = ['https://api.example.com'];
         const audiences = ['service-a', 'service-b'];
-        const issuerUrl = 'https://auth.example.com';
+        const defaultResource = 'svc://default-api';
 
         let targetAudiences: string[];
         let audienceSource: string;
@@ -443,8 +443,8 @@ describe('Token Exchange Tests (RFC 8693)', () => {
           targetAudiences = resources;
           audienceSource = 'resource_param';
         } else {
-          targetAudiences = [issuerUrl];
-          audienceSource = 'default';
+          targetAudiences = [defaultResource];
+          audienceSource = 'client_default_resource';
         }
 
         // Audiences first, then resources
@@ -452,10 +452,10 @@ describe('Token Exchange Tests (RFC 8693)', () => {
         expect(audienceSource).toBe('both');
       });
 
-      it('should default to issuer URL when no audience or resource provided', () => {
+      it('should default to client default_resource when no audience or resource provided', () => {
         const resources: string[] = [];
         const audiences: string[] = [];
-        const issuerUrl = 'https://auth.example.com';
+        const defaultResource = 'svc://default-api';
 
         let targetAudiences: string[];
         let audienceSource: string;
@@ -470,12 +470,42 @@ describe('Token Exchange Tests (RFC 8693)', () => {
           targetAudiences = resources;
           audienceSource = 'resource_param';
         } else {
-          targetAudiences = [issuerUrl];
-          audienceSource = 'default';
+          targetAudiences = [defaultResource];
+          audienceSource = 'client_default_resource';
         }
 
-        expect(targetAudiences).toEqual(['https://auth.example.com']);
-        expect(audienceSource).toBe('default');
+        expect(targetAudiences).toEqual(['svc://default-api']);
+        expect(audienceSource).toBe('client_default_resource');
+      });
+
+      it('should fail closed when no request target or client default_resource exists', () => {
+        const resources: string[] = [];
+        const audiences: string[] = [];
+        const defaultResource: string | undefined = undefined;
+
+        let targetAudiences: string[] | undefined;
+        let audienceSource: string | undefined;
+        let error: string | undefined;
+
+        if (audiences.length > 0 && resources.length > 0) {
+          targetAudiences = [...audiences, ...resources];
+          audienceSource = 'both';
+        } else if (audiences.length > 0) {
+          targetAudiences = audiences;
+          audienceSource = 'audience_param';
+        } else if (resources.length > 0) {
+          targetAudiences = resources;
+          audienceSource = 'resource_param';
+        } else if (defaultResource) {
+          targetAudiences = [defaultResource];
+          audienceSource = 'client_default_resource';
+        } else {
+          error = 'invalid_target';
+        }
+
+        expect(targetAudiences).toBeUndefined();
+        expect(audienceSource).toBeUndefined();
+        expect(error).toBe('invalid_target');
       });
     });
 

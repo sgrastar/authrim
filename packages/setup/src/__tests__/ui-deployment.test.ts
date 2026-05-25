@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthrimConfig } from '../core/config.js';
-import { DISABLED_API_BACKEND_URL, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
+import {
+  describeAdminUiApiMode,
+  DISABLED_API_BACKEND_URL,
+  resolveUiDeploymentSettings,
+  uiCustomDomainRequiresOwnRoute,
+} from '../core/ui-deployment.js';
 
 function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
   return {
@@ -18,12 +23,12 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
       },
       loginUi: {
         custom: null,
-        auto: 'https://test-ar-login-ui.pages.dev',
+        auto: 'https://test-ar-login-ui.workers.dev',
         sameAsApi: false,
       },
       adminUi: {
         custom: null,
-        auto: 'https://test-ar-admin-ui.pages.dev',
+        auto: 'https://test-ar-admin-ui.workers.dev',
         sameAsApi: false,
       },
     },
@@ -60,7 +65,6 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
       refreshTokenShards: 4,
       sessionShards: 4,
       challengeShards: 4,
-      flowStateShards: 32,
       ...overrides.sharding,
     },
     features: {
@@ -93,7 +97,7 @@ function createConfig(overrides: Partial<AuthrimConfig> = {}): AuthrimConfig {
 }
 
 describe('resolveUiDeploymentSettings', () => {
-  it('uses same-origin proxy mode for pages.dev UIs against a custom API domain', () => {
+  it('uses same-origin proxy mode for UI Workers against a custom API domain', () => {
     const config = createConfig({
       urls: {
         api: {
@@ -102,12 +106,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -145,6 +149,7 @@ describe('resolveUiDeploymentSettings', () => {
 
     expect(admin.useRelativeApi).toBe(true);
     expect(admin.needsProxy).toBe(true);
+    expect(admin.adminUiApiMode).toBe('cross-site-proxy');
     expect(admin.serviceBindingName).toBe('AR_ROUTER');
     expect(admin.uiEnv.PUBLIC_API_BASE_URL).toBe('');
     expect(admin.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBe('https://test.authrim.com');
@@ -153,7 +158,7 @@ describe('resolveUiDeploymentSettings', () => {
     expect(admin.runtimeApiBackendUrl).toBe('https://test.authrim.com');
   });
 
-  it('uses Service Binding proxy mode for workers.dev API and pages.dev Login UI', () => {
+  it('uses Service Binding proxy mode for workers.dev API and Login UI Worker', () => {
     const config = createConfig({
       urls: {
         api: {
@@ -162,12 +167,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -187,7 +192,7 @@ describe('resolveUiDeploymentSettings', () => {
     });
 
     expect(login.apiBaseUrl).toBe('https://test-ar-router.example.workers.dev');
-    expect(login.uiUrl).toBe('https://test-ar-login-ui.pages.dev');
+    expect(login.uiUrl).toBe('https://test-ar-login-ui.workers.dev');
     expect(login.useRelativeApi).toBe(true);
     expect(login.needsProxy).toBe(true);
     expect(login.serviceBindingName).toBe('AR_ROUTER');
@@ -210,12 +215,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: 'https://login.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: 'https://admin.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -239,6 +244,8 @@ describe('resolveUiDeploymentSettings', () => {
 
     expect(login.useRelativeApi).toBe(false);
     expect(login.needsProxy).toBe(false);
+    expect(login.workersDev).toBe(false);
+    expect(login.routes).toEqual([{ pattern: 'login.example.com', custom_domain: true }]);
     expect(login.serviceBindingName).toBeUndefined();
     expect(login.uiEnv.PUBLIC_API_BASE_URL).toBe('https://auth.example.com');
     expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBeUndefined();
@@ -246,10 +253,278 @@ describe('resolveUiDeploymentSettings', () => {
 
     expect(admin.useRelativeApi).toBe(false);
     expect(admin.needsProxy).toBe(false);
+    expect(admin.workersDev).toBe(false);
+    expect(admin.routes).toEqual([{ pattern: 'admin.example.com', custom_domain: true }]);
+    expect(admin.adminUiApiMode).toBe('same-site-cross-origin');
     expect(admin.serviceBindingName).toBeUndefined();
     expect(admin.uiEnv.PUBLIC_API_BASE_URL).toBe('https://auth.example.com');
     expect(admin.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBeUndefined();
     expect(admin.runtimeApiBackendUrl).toBe(DISABLED_API_BACKEND_URL);
+  });
+
+  it('keeps workers.dev enabled when UI has no custom domain', () => {
+    const config = createConfig({
+      urls: {
+        api: {
+          custom: 'https://auth.example.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+    });
+
+    const login = resolveUiDeploymentSettings({ component: 'ar-login-ui', config });
+    const admin = resolveUiDeploymentSettings({ component: 'ar-admin-ui', config });
+
+    expect(login.workersDev).toBe(true);
+    expect(login.routes).toEqual([]);
+    expect(admin.workersDev).toBe(true);
+    expect(admin.routes).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: 'single tenant custom UI subdomains are routed directly to UI Workers',
+      tenant: {
+        name: 'default',
+        displayName: 'Default',
+        multiTenant: false,
+        baseDomain: undefined,
+        userIdFormat: 'nanoid' as const,
+      },
+      urls: {
+        api: {
+          custom: 'https://auth.authrim.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.authrim.com',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.authrim.com',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      expectedLoginRoutes: [{ pattern: 'login.authrim.com', custom_domain: true }],
+      expectedAdminRoutes: [{ pattern: 'admin.authrim.com', custom_domain: true }],
+      expectedLoginProxy: false,
+      expectedAdminProxy: false,
+      expectedAdminMode: 'same-site-cross-origin',
+    },
+    {
+      name: 'single tenant cross-site UI domains are routed directly and use the UI BFF',
+      tenant: {
+        name: 'default',
+        displayName: 'Default',
+        multiTenant: false,
+        baseDomain: undefined,
+        userIdFormat: 'nanoid' as const,
+      },
+      urls: {
+        api: {
+          custom: 'https://auth.example.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.example.net',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.example.net',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      expectedLoginRoutes: [{ pattern: 'login.example.net', custom_domain: true }],
+      expectedAdminRoutes: [{ pattern: 'admin.example.net', custom_domain: true }],
+      expectedLoginProxy: true,
+      expectedAdminProxy: true,
+      expectedAdminMode: 'cross-site-proxy',
+    },
+    {
+      name: 'multi tenant first-level UI hosts need exact UI custom-domain routes',
+      tenant: {
+        name: 'first',
+        displayName: 'First',
+        multiTenant: true,
+        baseDomain: 'example.com',
+        userIdFormat: 'nanoid' as const,
+      },
+      urls: {
+        api: {
+          custom: 'https://example.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.example.com',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.example.com',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      expectedLoginRoutes: [{ pattern: 'login.example.com', custom_domain: true }],
+      expectedAdminRoutes: [{ pattern: 'admin.example.com', custom_domain: true }],
+      expectedLoginProxy: false,
+      expectedAdminProxy: false,
+      expectedAdminMode: 'same-site-cross-origin',
+    },
+    {
+      name: 'multi tenant UI hosts under a multi-label base need exact UI custom-domain routes',
+      tenant: {
+        name: 'first',
+        displayName: 'First',
+        multiTenant: true,
+        baseDomain: 'multi-tenant.authrim.com',
+        userIdFormat: 'nanoid' as const,
+      },
+      urls: {
+        api: {
+          custom: 'https://multi-tenant.authrim.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.multi-tenant.authrim.com',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.multi-tenant.authrim.com',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      expectedLoginRoutes: [{ pattern: 'login.multi-tenant.authrim.com', custom_domain: true }],
+      expectedAdminRoutes: [{ pattern: 'admin.multi-tenant.authrim.com', custom_domain: true }],
+      expectedLoginProxy: false,
+      expectedAdminProxy: false,
+      expectedAdminMode: 'same-site-cross-origin',
+    },
+    {
+      name: 'multi tenant UI hosts outside a multi-label base need direct custom-domain routes',
+      tenant: {
+        name: 'first',
+        displayName: 'First',
+        multiTenant: true,
+        baseDomain: 'multi-tenant.authrim.com',
+        userIdFormat: 'nanoid' as const,
+      },
+      urls: {
+        api: {
+          custom: 'https://multi-tenant.authrim.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.authrim.com',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.authrim.com',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      expectedLoginRoutes: [{ pattern: 'login.authrim.com', custom_domain: true }],
+      expectedAdminRoutes: [{ pattern: 'admin.authrim.com', custom_domain: true }],
+      expectedLoginProxy: false,
+      expectedAdminProxy: false,
+      expectedAdminMode: 'same-site-cross-origin',
+    },
+    {
+      name: 'multi tenant hyphenated first-level UI hosts need exact UI custom-domain routes',
+      tenant: {
+        name: 'first',
+        displayName: 'First',
+        multiTenant: true,
+        baseDomain: 'example.com',
+        userIdFormat: 'nanoid' as const,
+      },
+      urls: {
+        api: {
+          custom: 'https://example.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login-first.example.com',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin-first.example.com',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      expectedLoginRoutes: [{ pattern: 'login-first.example.com', custom_domain: true }],
+      expectedAdminRoutes: [{ pattern: 'admin-first.example.com', custom_domain: true }],
+      expectedLoginProxy: false,
+      expectedAdminProxy: false,
+      expectedAdminMode: 'same-site-cross-origin',
+    },
+    {
+      name: 'multi tenant second-level UI hosts need exact UI custom-domain routes',
+      tenant: {
+        name: 'first',
+        displayName: 'First',
+        multiTenant: true,
+        baseDomain: 'example.com',
+        userIdFormat: 'nanoid' as const,
+      },
+      urls: {
+        api: {
+          custom: 'https://example.com',
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: 'https://login.first.example.com',
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: 'https://admin.first.example.com',
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      expectedLoginRoutes: [{ pattern: 'login.first.example.com', custom_domain: true }],
+      expectedAdminRoutes: [{ pattern: 'admin.first.example.com', custom_domain: true }],
+      expectedLoginProxy: false,
+      expectedAdminProxy: false,
+      expectedAdminMode: 'same-site-cross-origin',
+    },
+  ])('$name', (scenario) => {
+    const config = createConfig({
+      tenant: scenario.tenant,
+      urls: scenario.urls,
+    });
+
+    const login = resolveUiDeploymentSettings({ component: 'ar-login-ui', config });
+    const admin = resolveUiDeploymentSettings({ component: 'ar-admin-ui', config });
+
+    expect(login.workersDev).toBe(false);
+    expect(admin.workersDev).toBe(false);
+    expect(login.routes).toEqual(scenario.expectedLoginRoutes);
+    expect(admin.routes).toEqual(scenario.expectedAdminRoutes);
+    expect(login.needsProxy).toBe(scenario.expectedLoginProxy);
+    expect(admin.needsProxy).toBe(scenario.expectedAdminProxy);
+    expect(admin.adminUiApiMode).toBe(scenario.expectedAdminMode);
   });
 
   it('keeps relative same-origin API calls when the UI is served on the API domain', () => {
@@ -261,12 +536,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: 'https://auth.example.com',
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: true,
         },
         adminUi: {
           custom: 'https://auth.example.com',
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: true,
         },
       },
@@ -283,6 +558,10 @@ describe('resolveUiDeploymentSettings', () => {
       component: 'ar-login-ui',
       config,
     });
+    const admin = resolveUiDeploymentSettings({
+      component: 'ar-admin-ui',
+      config,
+    });
 
     expect(login.useRelativeApi).toBe(true);
     expect(login.needsProxy).toBe(false);
@@ -290,6 +569,12 @@ describe('resolveUiDeploymentSettings', () => {
     expect(login.uiEnv.PUBLIC_API_BASE_URL).toBe('');
     expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBeUndefined();
     expect(login.runtimeApiBackendUrl).toBe(DISABLED_API_BACKEND_URL);
+
+    expect(admin.useRelativeApi).toBe(true);
+    expect(admin.needsProxy).toBe(false);
+    expect(admin.adminUiApiMode).toBe('same-origin');
+    expect(admin.serviceBindingName).toBeUndefined();
+    expect(admin.uiEnv.PUBLIC_API_BASE_URL).toBe('');
   });
 
   it('falls back to the public API URL for proxy mode when no auto backend URL exists', () => {
@@ -300,12 +585,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -340,12 +625,12 @@ describe('resolveUiDeploymentSettings', () => {
         },
         loginUi: {
           custom: null,
-          auto: 'https://test-ar-login-ui.pages.dev',
+          auto: 'https://test-ar-login-ui.workers.dev',
           sameAsApi: false,
         },
         adminUi: {
           custom: null,
-          auto: 'https://test-ar-admin-ui.pages.dev',
+          auto: 'https://test-ar-admin-ui.workers.dev',
           sameAsApi: false,
         },
       },
@@ -367,6 +652,89 @@ describe('resolveUiDeploymentSettings', () => {
     // derive the correct X-Authrim-Forwarded-Host for Service Binding requests.
     expect(admin.uiEnv.PUBLIC_AUTHRIM_ISSUER).toBe('https://auth.example.com');
     expect(admin.needsProxy).toBe(true);
+    expect(admin.adminUiApiMode).toBe('cross-site-proxy');
     expect(admin.serviceBindingName).toBe('AR_ROUTER');
+  });
+
+  it('describes Admin UI API modes for operator output', () => {
+    expect(describeAdminUiApiMode('same-origin')).toContain('same origin');
+    expect(describeAdminUiApiMode('same-site-cross-origin')).toContain('credentialed CORS');
+    expect(describeAdminUiApiMode('cross-site-proxy')).toContain('Worker BFF');
+  });
+
+  it.each([
+    {
+      name: 'workers.dev UI origin does not need a custom route',
+      uiDomain: null,
+      apiDomain: null,
+      baseDomain: null,
+      multiTenant: false,
+      expected: false,
+    },
+    {
+      name: 'same-as-api UI domain is served through the API/router worker',
+      uiDomain: 'auth.example.com',
+      apiDomain: 'auth.example.com',
+      baseDomain: null,
+      multiTenant: false,
+      expected: false,
+    },
+    {
+      name: 'single-tenant separate UI custom domain needs a direct UI route',
+      uiDomain: 'login.example.com',
+      apiDomain: 'auth.example.com',
+      baseDomain: null,
+      multiTenant: false,
+      expected: true,
+    },
+    {
+      name: 'multi-tenant immediate UI host needs a direct UI route',
+      uiDomain: 'login.multi-tenant.example.com',
+      apiDomain: 'multi-tenant.example.com',
+      baseDomain: 'multi-tenant.example.com',
+      multiTenant: true,
+      expected: true,
+    },
+    {
+      name: 'multi-tenant external UI host needs a direct UI route',
+      uiDomain: 'login.example.com',
+      apiDomain: 'multi-tenant.authrim.com',
+      baseDomain: 'multi-tenant.authrim.com',
+      multiTenant: true,
+      expected: true,
+    },
+    {
+      name: 'multi-tenant immediate UI host under a multi-label base needs a direct UI route',
+      uiDomain: 'login.multi-tenant.authrim.com',
+      apiDomain: 'multi-tenant.authrim.com',
+      baseDomain: 'multi-tenant.authrim.com',
+      multiTenant: true,
+      expected: true,
+    },
+    {
+      name: 'same-zone UI host outside a multi-label base needs its own route',
+      uiDomain: 'login.authrim.com',
+      apiDomain: 'multi-tenant.authrim.com',
+      baseDomain: 'multi-tenant.authrim.com',
+      multiTenant: true,
+      expected: true,
+    },
+    {
+      name: 'multi-tenant two-label UI host needs a direct UI route if loaded from config',
+      uiDomain: 'login.first.example.com',
+      apiDomain: 'example.com',
+      baseDomain: 'example.com',
+      multiTenant: true,
+      expected: true,
+    },
+  ])('$name', (scenario) => {
+    expect(
+      uiCustomDomainRequiresOwnRoute({
+        uiDomain: scenario.uiDomain,
+        apiDomain: scenario.apiDomain,
+        baseDomain: scenario.baseDomain,
+        multiTenant: scenario.multiTenant,
+      })
+    ).toBe(scenario.expected);
   });
 });

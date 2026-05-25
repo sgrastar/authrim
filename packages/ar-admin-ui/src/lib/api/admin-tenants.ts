@@ -1,3 +1,5 @@
+import { adminFetch } from '$lib/api/admin-request';
+
 /**
  * Admin Tenants API Client
  *
@@ -14,17 +16,32 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 export interface Tenant {
 	id: string;
+	tenant_code: string;
 	name: string;
 	description: string | null;
 	is_active: boolean;
 	is_default: boolean;
 	created_at: number;
 	updated_at: number;
+	provisioning_status?: 'active' | 'inactive' | 'provisioning_failed';
+	provisioning_error?: string | null;
+	provisioning_slot_id?: string | null;
+	provisioning_updated_at?: number | null;
 }
 
 export interface TenantListResponse {
 	tenants: Tenant[];
 	total: number;
+	tenant_d1_pool?: {
+		enabled: boolean;
+		capacity?: number;
+		available_slots?: number;
+		reserved_slots?: number;
+		assigned_slots?: number;
+		pending_binding_slots?: number;
+		unavailable_slots?: number;
+		reset_required_slots?: number;
+	};
 	single_tenant_mode?: boolean;
 	single_tenant_reason?: string | null;
 }
@@ -35,14 +52,31 @@ export interface TenantDeleteResponse {
 	estimated_completion: number;
 }
 
+export interface TenantProvisioningCleanupResponse {
+	status: 'cleaned';
+	tenant_id: string;
+	slot_id: string | null;
+}
+
+export interface TenantProvisioningRetryResponse extends Tenant {
+	provisioning?: {
+		mode: string;
+		slot_id: string;
+		smoke_test: 'passed';
+		retry: 'succeeded';
+	};
+}
+
 export interface CreateTenantRequest {
 	id: string;
+	tenant_code?: string;
 	name: string;
 	description?: string;
 }
 
 export interface UpdateTenantRequest {
 	name?: string;
+	tenant_code?: string;
 	description?: string | null;
 	is_active?: boolean;
 }
@@ -56,8 +90,8 @@ export const adminTenantsAPI = {
 	 * List all tenants
 	 */
 	async list(): Promise<TenantListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants`, {
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants`, {
+			skipTenantHeader: true
 		});
 
 		if (!response.ok) {
@@ -71,9 +105,12 @@ export const adminTenantsAPI = {
 	 * Get a single tenant by ID
 	 */
 	async get(id: string): Promise<Tenant> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				skipTenantHeader: true
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -86,10 +123,10 @@ export const adminTenantsAPI = {
 	 * Create a new tenant
 	 */
 	async create(data: CreateTenantRequest): Promise<Tenant> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
+			skipTenantHeader: true,
 			body: JSON.stringify(data)
 		});
 
@@ -105,12 +142,15 @@ export const adminTenantsAPI = {
 	 * Note: id and is_default cannot be changed via this endpoint
 	 */
 	async update(id: string, data: UpdateTenantRequest): Promise<Tenant> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify(data)
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				method: 'PATCH',
+				includeJsonContentType: true,
+				skipTenantHeader: true,
+				body: JSON.stringify(data)
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -126,10 +166,13 @@ export const adminTenantsAPI = {
 	 * The 'default' tenant cannot be deleted.
 	 */
 	async delete(id: string): Promise<TenantDeleteResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}`,
+			{
+				method: 'DELETE',
+				skipTenantHeader: true
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -139,14 +182,56 @@ export const adminTenantsAPI = {
 	},
 
 	/**
+	 * Delete a failed tenant provisioning draft.
+	 */
+	async cleanupProvisioning(id: string): Promise<TenantProvisioningCleanupResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/provisioning/cleanup`,
+			{
+				method: 'POST',
+				skipTenantHeader: true
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to cleanup tenant provisioning draft'
+			);
+		}
+		return response.json();
+	},
+
+	/**
+	 * Retry a failed tenant provisioning draft.
+	 */
+	async retryProvisioning(id: string): Promise<TenantProvisioningRetryResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/provisioning/retry`,
+			{
+				method: 'POST',
+				skipTenantHeader: true
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to retry tenant provisioning'
+			);
+		}
+		return response.json();
+	},
+
+	/**
 	 * Set a tenant as the default tenant
 	 */
 	async setDefault(id: string): Promise<Tenant> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/set-default`,
 			{
 				method: 'POST',
-				credentials: 'include'
+				skipTenantHeader: true
 			}
 		);
 

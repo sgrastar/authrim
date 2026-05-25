@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Plugins API Client
  *
@@ -86,6 +87,8 @@ export interface PluginStatus {
 	pluginId: string;
 	enabled: boolean;
 	configSource: 'kv' | 'env' | 'default';
+	configured: boolean;
+	missingRequiredFields: string[];
 	loadedAt?: number;
 	lastHealthCheck?: PluginHealthStatus;
 }
@@ -96,6 +99,8 @@ export interface PluginStatus {
 export interface PluginWithStatus extends PluginRegistryEntry {
 	enabled: boolean;
 	configSource: 'kv' | 'env' | 'default';
+	configured: boolean;
+	missingRequiredFields: string[];
 	loadedAt?: number;
 	lastHealthCheck?: PluginHealthStatus;
 }
@@ -128,6 +133,15 @@ export interface PluginHealthResponse {
 	details?: Record<string, unknown>;
 }
 
+export interface PluginTestEmailResponse {
+	success: boolean;
+	pluginId: string;
+	tenantId: string | null;
+	to: string;
+	messageId: string | null;
+	providerResponse: unknown;
+}
+
 /**
  * List params for filtering
  */
@@ -136,6 +150,7 @@ export interface ListPluginsParams {
 	capability?: string;
 	enabled?: boolean;
 	trustLevel?: PluginTrustLevel;
+	tenantId?: string;
 }
 
 /**
@@ -173,11 +188,16 @@ export const adminPluginsAPI = {
 		if (params.capability) searchParams.set('capability', params.capability);
 		if (params.enabled !== undefined) searchParams.set('enabled', params.enabled.toString());
 		if (params.trustLevel) searchParams.set('trustLevel', params.trustLevel);
+		if (params.tenantId) searchParams.set('tenant_id', params.tenantId);
 
 		const query = searchParams.toString();
-		const response = await fetch(`${API_BASE_URL}/api/admin/plugins${query ? '?' + query : ''}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins${query ? '?' + query : ''}`,
+			{
+				tenantId: params.tenantId,
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -189,10 +209,15 @@ export const adminPluginsAPI = {
 	/**
 	 * Get plugin details including configuration
 	 */
-	async get(id: string): Promise<PluginDetailResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}`, {
-			credentials: 'include'
-		});
+	async get(id: string, tenantId?: string): Promise<PluginDetailResponse> {
+		const query = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}${query}`,
+			{
+				tenantId,
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -204,10 +229,11 @@ export const adminPluginsAPI = {
 	/**
 	 * Get plugin configuration
 	 */
-	async getConfig(id: string): Promise<Record<string, unknown>> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/config`,
-			{ credentials: 'include' }
+	async getConfig(id: string, tenantId?: string): Promise<Record<string, unknown>> {
+		const query = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/config${query}`,
+			{ credentials: 'include', tenantId }
 		);
 
 		if (!response.ok) {
@@ -224,15 +250,17 @@ export const adminPluginsAPI = {
 	 */
 	async updateConfig(
 		id: string,
-		config: Record<string, unknown>
+		config: Record<string, unknown>,
+		tenantId?: string
 	): Promise<Record<string, unknown>> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/config`,
 			{
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				credentials: 'include',
-				body: JSON.stringify(config)
+				tenantId,
+				body: JSON.stringify(tenantId ? { ...config, tenant_id: tenantId } : config)
 			}
 		);
 
@@ -248,12 +276,15 @@ export const adminPluginsAPI = {
 	/**
 	 * Enable a plugin
 	 */
-	async enable(id: string): Promise<PluginStatus> {
-		const response = await fetch(
+	async enable(id: string, tenantId?: string): Promise<PluginStatus> {
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/enable`,
 			{
 				method: 'PUT',
-				credentials: 'include'
+				credentials: 'include',
+				tenantId,
+				includeJsonContentType: true,
+				body: JSON.stringify(tenantId ? { tenant_id: tenantId } : {})
 			}
 		);
 
@@ -267,12 +298,15 @@ export const adminPluginsAPI = {
 	/**
 	 * Disable a plugin
 	 */
-	async disable(id: string): Promise<PluginStatus> {
-		const response = await fetch(
+	async disable(id: string, tenantId?: string): Promise<PluginStatus> {
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/disable`,
 			{
 				method: 'PUT',
-				credentials: 'include'
+				credentials: 'include',
+				tenantId,
+				includeJsonContentType: true,
+				body: JSON.stringify(tenantId ? { tenant_id: tenantId } : {})
 			}
 		);
 
@@ -286,10 +320,11 @@ export const adminPluginsAPI = {
 	/**
 	 * Check plugin health
 	 */
-	async checkHealth(id: string): Promise<PluginHealthResponse> {
-		const response = await fetch(
-			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/health`,
-			{ credentials: 'include' }
+	async checkHealth(id: string, tenantId?: string): Promise<PluginHealthResponse> {
+		const query = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/health${query}`,
+			{ credentials: 'include', tenantId }
 		);
 
 		if (!response.ok) {
@@ -303,7 +338,7 @@ export const adminPluginsAPI = {
 	 * Get plugin JSON Schema for UI form generation
 	 */
 	async getSchema(id: string): Promise<Record<string, unknown>> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/schema`,
 			{ credentials: 'include' }
 		);
@@ -311,6 +346,36 @@ export const adminPluginsAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error_description || error.message || 'Failed to fetch plugin schema');
+		}
+		return response.json();
+	},
+
+	async sendTestEmail(
+		id: string,
+		payload: {
+			to: string;
+			config?: Record<string, unknown>;
+			tenantId?: string;
+		}
+	): Promise<PluginTestEmailResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/test-email`,
+			{
+				method: 'POST',
+				credentials: 'include',
+				tenantId: payload.tenantId,
+				includeJsonContentType: true,
+				body: JSON.stringify({
+					to: payload.to,
+					config: payload.config,
+					...(payload.tenantId ? { tenant_id: payload.tenantId } : {})
+				})
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to send test email');
 		}
 		return response.json();
 	}

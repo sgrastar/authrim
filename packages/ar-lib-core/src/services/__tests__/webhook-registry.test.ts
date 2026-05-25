@@ -504,8 +504,23 @@ describe('WebhookRegistry', () => {
       await registry.list('tenant_default', { limit: 10, offset: 20 });
 
       const queryCall = adapter.executedQueries.find((q) => q.sql.includes('SELECT'));
-      expect(queryCall?.sql).toContain('LIMIT 10');
-      expect(queryCall?.sql).toContain('OFFSET 20');
+      expect(queryCall?.sql).toContain('LIMIT ?');
+      expect(queryCall?.sql).toContain('OFFSET ?');
+      expect(queryCall?.params).toEqual(['tenant_default', 10, 20]);
+    });
+
+    it('should ignore invalid runtime pagination values', async () => {
+      adapter.mockRows = [];
+
+      await registry.list('tenant_default', {
+        limit: '1; DROP TABLE webhook_configs' as unknown as number,
+        offset: -1,
+      });
+
+      const queryCall = adapter.executedQueries.find((q) => q.sql.includes('SELECT'));
+      expect(queryCall?.sql).not.toContain('DROP TABLE');
+      expect(queryCall?.sql).not.toContain('LIMIT');
+      expect(queryCall?.params).toEqual(['tenant_default']);
     });
   });
 

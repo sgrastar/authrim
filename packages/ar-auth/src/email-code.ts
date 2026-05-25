@@ -21,6 +21,7 @@ import {
   getSessionStoreBySessionId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
+  buildDOKey,
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
@@ -52,6 +53,10 @@ import {
   verifyEmailCodeHash,
   hashEmail,
 } from './utils/email-code-utils';
+import {
+  persistRegistrationFieldValuesFromEnv,
+  validateRegistrationFieldSubmissionFromEnv,
+} from './registration-field-utils';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
@@ -115,9 +120,10 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       const body = await c.req.json<{
         email: string;
         name?: string;
+        custom_fields?: Record<string, unknown>;
       }>();
 
-      const { email, name } = body;
+      const { email, name, custom_fields } = body;
 
       if (!email) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -131,8 +137,12 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
+      const tenantId = getTenantIdFromContext(c);
+
       // Rate limiting check: 3 requests per 15 minutes per email via RPC
-      const rateLimiterId = c.env.RATE_LIMITER.idFromName('email-code');
+      const rateLimiterId = c.env.RATE_LIMITER.idFromName(
+        buildDOKey('rate-limit', 'email-code', tenantId)
+      );
       const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
       const rateLimitResult = await rateLimiter.incrementRpc(`email_code:${email.toLowerCase()}`, {
@@ -146,14 +156,35 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
+      const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+        c.env,
+        tenantId,
+        custom_fields
+      );
+      if (!customFieldValidation.ok) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+          variables: { field: 'custom_fields', reason: customFieldValidation.error },
+          extensions: customFieldValidation.missingRequiredFields
+            ? {
+                missing_required_fields: customFieldValidation.missingRequiredFields.map(
+                  (field) => ({
+                    field_key: field.fieldKey,
+                    label: field.label,
+                    field_type: field.fieldType,
+                  })
+                ),
+              }
+            : undefined,
+        });
+      }
+
       // Check if user exists, if not create a new user via Repository
       // PII/Non-PII DB separation: email lookup uses PII DB, user creation uses both DBs
-      const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       let user: { id: string; email: string; name: string | null } | null = null;
 
-      // Search by email in PII DB
-      if (c.env.DB_PII) {
+      // Search by email in the configured PII user store
+      {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
           tenantId,
@@ -184,47 +215,41 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           tenant_id: tenantId,
           email_verified: false,
           user_type: 'end_user',
-          pii_partition: 'default',
+          pii_partition: tenantId,
           pii_status: 'pending',
         });
 
-        // Step 2: Create user in PII DB (if DB_PII is configured)
-        if (c.env.DB_PII) {
-          const piiCtx = createPIIContextFromHono(c, tenantId);
-          try {
-            await piiCtx.piiRepositories.userPII.createPII({
-              id: userId,
-              tenant_id: tenantId,
-              email: email.toLowerCase(),
-              name: defaultName,
-              preferred_username: preferredUsername,
-            });
-
-            // Step 3: Update pii_status to 'active' (only on successful PII DB write)
-            await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-          } catch (piiError: unknown) {
-            // PII Protection: Don't log full error (may contain PII)
-            log.error(
-              'Failed to create user in PII DB',
-              { action: 'pii_create' },
-              piiError instanceof Error ? piiError : undefined
-            );
-            // Update pii_status to 'failed' to indicate PII DB write failure
-            await authCtx.repositories.userCore
-              .updatePIIStatus(userId, 'failed')
-              .catch((statusError: unknown) => {
-                log.error(
-                  'Failed to update pii_status to failed',
-                  { action: 'pii_status_update' },
-                  statusError instanceof Error ? statusError : undefined
-                );
-              });
-            // Note: We continue with user creation - Core DB user exists, PII can be retried
-          }
-        } else {
-          log.warn('DB_PII not configured - user created with pii_status=pending', {
-            action: 'pii_config',
+        // Step 2: Create user in the configured PII store
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        try {
+          await piiCtx.piiRepositories.userPII.createPII({
+            id: userId,
+            tenant_id: tenantId,
+            email: email.toLowerCase(),
+            name: defaultName,
+            preferred_username: preferredUsername,
           });
+
+          // Step 3: Update pii_status to 'active' (only on successful PII store write)
+          await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
+        } catch (piiError: unknown) {
+          // PII Protection: Don't log full error (may contain PII)
+          log.error(
+            'Failed to create user in PII store',
+            { action: 'pii_create' },
+            piiError instanceof Error ? piiError : undefined
+          );
+          // Update pii_status to 'failed' to indicate PII write failure
+          await authCtx.repositories.userCore
+            .updatePIIStatus(userId, 'failed')
+            .catch((statusError: unknown) => {
+              log.error(
+                'Failed to update pii_status to failed',
+                { action: 'pii_status_update' },
+                statusError instanceof Error ? statusError : undefined
+              );
+            });
+          // Note: We continue with user creation - Core DB user exists, PII can be retried
         }
 
         user = { id: userId, email: email.toLowerCase(), name: defaultName || email.split('@')[0] };
@@ -244,11 +269,12 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       const [codeHash, emailHash, challengeStore] = await Promise.all([
         hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
         hashEmail(email.toLowerCase()),
-        getChallengeStoreByChallengeId(c.env, otpSessionId),
+        getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
       ]);
 
       await challengeStore.storeChallengeRpc({
         id: `email_code:${otpSessionId}`,
+        tenantId: getTenantIdFromContext(c),
         type: 'email_code',
         userId: user.id as string,
         challenge: codeHash, // Store hash, not plaintext
@@ -259,6 +285,9 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           otp_session_id: otpSessionId,
           issued_at: issuedAt,
           purpose: 'login',
+          ...(Object.keys(customFieldValidation.values).length > 0
+            ? { custom_fields: customFieldValidation.values }
+            : {}),
         },
       });
 
@@ -379,7 +408,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Get challenge from ChallengeStore (RPC)
       // Use otpSessionId-based sharding - same UUID always routes to same shard
-      const challengeStore = await getChallengeStoreByChallengeId(c.env, otpSessionId);
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        otpSessionId,
+        getTenantIdFromContext(c)
+      );
 
       let challengeData: {
         challenge: string;
@@ -390,6 +423,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           otp_session_id: string;
           issued_at: number;
           purpose: string;
+          custom_fields?: Record<string, unknown>;
         };
       };
 
@@ -398,6 +432,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         // This replaces the previous getChallengeRpc + consumeChallengeRpc pattern
         challengeData = (await challengeStore.consumeChallengeRpc({
           id: `email_code:${otpSessionId}`,
+          tenantId: getTenantIdFromContext(c),
           type: 'email_code',
         })) as typeof challengeData;
       } catch (error) {
@@ -441,8 +476,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
 
-      // Create PII context only if DB_PII is configured
-      const piiCtx = c.env.DB_PII ? createPIIContextFromHono(c, tenantId) : null;
+      const piiCtx = createPIIContextFromHono(c, tenantId);
 
       const [isValidCode, userCore, userPII] = await Promise.all([
         verifyEmailCodeHash(
@@ -454,9 +488,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           hmacSecret
         ),
         authCtx.repositories.userCore.findById(challengeData.userId),
-        piiCtx
-          ? piiCtx.piiRepositories.userPII.findById(challengeData.userId)
-          : Promise.resolve(null),
+        piiCtx.piiRepositories.userPII.findById(challengeData.userId),
       ]);
 
       if (!isValidCode) {
@@ -509,6 +541,23 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       };
 
       const now = Date.now();
+      const customFields = challengeData.metadata?.custom_fields;
+      if (customFields) {
+        try {
+          await persistRegistrationFieldValuesFromEnv(
+            c.env,
+            tenantId,
+            challengeData.userId,
+            customFields
+          );
+        } catch (persistError) {
+          log.warn(
+            'Failed to persist registration field values',
+            { action: 'registration_fields_persist' },
+            persistError as Error
+          );
+        }
+      }
 
       // Check for existing anonymous session (for upgrade flow)
       // If the user is upgrading from anonymous, update the existing session
@@ -521,7 +570,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         try {
           const { stub: existingSessionStore } = getSessionStoreBySessionId(
             c.env,
-            existingSessionId
+            existingSessionId,
+            tenantId
           );
           const existingSession = (await existingSessionStore.getSessionRpc(
             existingSessionId
@@ -573,7 +623,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       if (!isAnonymousUpgrade) {
         try {
           const { stub: sessionStore, sessionId: newSessionId } =
-            await getSessionStoreForNewSession(c.env);
+            await getSessionStoreForNewSession(c.env, getTenantIdFromContext(c));
           sessionId = newSessionId;
 
           await sessionStore.createSessionRpc(
@@ -585,7 +635,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
               name: user.name,
               amr: ['otp'],
               acr: 'urn:mace:incommon:iap:bronze',
-            }
+            },
+            tenantId
           );
         } catch (error) {
           // PII Protection: Don't log full error
@@ -604,8 +655,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       // This is non-critical for the login flow - session is already created
       authCtx.coreAdapter
         .execute(
-          'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?',
-          [now, now, challengeData.userId]
+          'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+          [now, now, challengeData.userId, tenantId]
         )
         .catch((error) => {
           // PII Protection: Don't log full error

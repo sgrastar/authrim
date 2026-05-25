@@ -31,6 +31,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
+  getTenantSettings,
   parseAllowedOrigins,
   isAllowedOrigin,
   // Logger
@@ -39,7 +40,7 @@ import {
   AdminUserRepository,
   AdminPasskeyRepository,
   // Database adapter
-  D1Adapter,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 
 // Note: Passkey registration is now handled by Admin UI, not Router
@@ -86,25 +87,14 @@ function toBase64URLString(input: CredentialIDLike): string {
  * Get allowed origins from KV (priority) or environment variables
  * Priority: KV > env > ISSUER_URL
  */
-async function getAllowedOriginsFromKV(env: Env): Promise<string[]> {
+async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  // Try to read from KV first
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const settings = JSON.parse(kvData) as Record<string, unknown>;
-        if (typeof settings['tenant.allowed_origins'] === 'string') {
-          allowedOriginsValue = settings['tenant.allowed_origins'];
-        }
-      }
-    } catch {
-      // Ignore KV read errors, fall back to env
-    }
+  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
+    allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  // Fall back to environment variables
   const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
@@ -330,7 +320,7 @@ async function rollbackUserCreation(
   try {
     // Use DB_ADMIN when available (new architecture)
     if (c.env.DB_ADMIN) {
-      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
       const adminUserRepo = new AdminUserRepository(adminAdapter);
       const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
 
@@ -354,11 +344,9 @@ async function rollbackUserCreation(
     // Delete from users_core
     await authCtx.repositories.userCore.delete(userId);
 
-    // Delete from users_pii if PII DB is available
-    if (c.env.DB_PII) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      await piiCtx.piiRepositories.userPII.delete(userId);
-    }
+    // Delete from the configured PII user store
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    await piiCtx.piiRepositories.userPII.delete(userId);
 
     moduleLogger.info('User rollback completed (legacy)', {
       action: 'rollback_completed',
@@ -422,6 +410,8 @@ setupApp.get('/api/admin-init-setup/status', async (c) => {
  */
 setupApp.post('/api/admin-init-setup/initialize', async (c) => {
   let lockAcquired = false;
+  let createdUserId: string | null = null;
+  let rollbackTenantId = getTenantIdFromContext(c);
 
   try {
     const body = await c.req.json<{
@@ -534,7 +524,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       );
     }
 
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env);
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
     // During initial setup, if no allowed origins are configured (ISSUER_URL not set),
     // allow the current request's origin. This is safe because:
@@ -567,11 +557,12 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Create user in database
     const tenantId = getTenantIdFromContext(c);
+    rollbackTenantId = tenantId;
     const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
 
     // Use DB_ADMIN when available (new Admin/EndUser separation architecture)
     if (c.env.DB_ADMIN) {
-      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
       const adminUserRepo = new AdminUserRepository(adminAdapter);
 
       // Create Admin user in admin_users (no PII separation needed for Admin)
@@ -583,6 +574,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
         // email_verified is set to true during setup
         // MFA can be configured later
       });
+      createdUserId = userId;
 
       // Set email as verified for initial admin
       await adminUserRepo.setEmailVerified(userId);
@@ -597,22 +589,21 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
         tenant_id: tenantId,
         email_verified: true, // Admin email is trusted
         user_type: 'admin',
-        pii_partition: 'default',
+        pii_partition: tenantId,
         pii_status: 'pending',
       });
+      createdUserId = userId;
 
-      // Create user in users_pii if PII DB is available
-      if (c.env.DB_PII) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        const preferredUsername = email.split('@')[0];
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: userId,
-          tenant_id: tenantId,
-          email: email.toLowerCase(),
-          name: name || null,
-          preferred_username: preferredUsername,
-        });
-      }
+      // Create user in the configured PII store
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const preferredUsername = email.split('@')[0];
+      await piiCtx.piiRepositories.userPII.createPII({
+        id: userId,
+        tenant_id: tenantId,
+        email: email.toLowerCase(),
+        name: name || null,
+        preferred_username: preferredUsername,
+      });
     }
 
     // Assign super_admin role
@@ -624,7 +615,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
     const tokenExpiresAt = now + 24 * 60 * 60 * 1000; // 24 hours
 
     if (c.env.DB_ADMIN) {
-      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
       await adminAdapter.execute(
         `INSERT INTO admin_setup_tokens (id, tenant_id, admin_user_id, status, expires_at, created_at, created_by)
          VALUES (?, ?, ?, 'pending', ?, ?, 'initial_setup')`,
@@ -668,6 +659,10 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       admin_ui_setup_url: adminUiSetupUrl,
     });
   } catch (error) {
+    if (createdUserId) {
+      await rollbackUserCreation(c, createdUserId, rollbackTenantId);
+    }
+
     // Release lock on error
     if (lockAcquired) {
       await releaseSetupLock(c.env);

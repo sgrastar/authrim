@@ -3,6 +3,11 @@
 	import Alert from '$lib/components/Alert.svelte';
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	import {
+		adminStorageDestinationsAPI,
+		type StorageDestination
+	} from '$lib/api/admin-storage-destinations';
+	import { adminFetch } from '$lib/api/admin-request';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	type ExportFormat = 'json' | 'jsonl' | 'text';
@@ -21,7 +26,7 @@
 	];
 
 	// Export form state
-	let tenantId = $state('default');
+	let tenantId = $state('');
 	let startDate = $state('');
 	let endDate = $state('');
 	let startTime = $state('00:00');
@@ -43,7 +48,7 @@
 	let clientSearchQuery = $state('');
 
 	// Connection test state
-	let testTenantId = $state('default');
+	let testTenantId = $state('');
 	let r2BucketBinding = $state('DIAGNOSTIC_LOGS');
 	let pathPrefix = $state('diagnostic-logs');
 
@@ -66,6 +71,9 @@
 	let testError = $state('');
 	let testSuccess = $state('');
 	let testLatency = $state<number | null>(null);
+	let storageDestinations = $state<StorageDestination[]>([]);
+	let selectedStorageDestinationId = $state('');
+	let storageDestinationError = $state('');
 
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
 
@@ -90,10 +98,10 @@
 		const dateTime = new Date(`${date}T${time}:00`);
 		if (isNaN(dateTime.getTime())) return null;
 
-		// UTC表示
+		// UTC display
 		const utcStr = dateTime.toISOString().replace('T', ' ').substring(0, 19);
 
-		// ローカルタイムゾーン表示
+		// Local time zone display
 		const localStr = dateTime
 			.toLocaleString('ja-JP', {
 				year: 'numeric',
@@ -155,6 +163,7 @@
 
 		await loadLoggingSettings();
 		await loadClientOptions();
+		await loadStorageDestinations();
 	});
 
 	// Reload when tenant changes via the header selector
@@ -172,6 +181,7 @@
 		selectedClientIds = [];
 		loadLoggingSettings();
 		loadClientOptions();
+		loadStorageDestinations();
 	});
 
 	async function loadLoggingSettings() {
@@ -185,6 +195,9 @@
 			r2OutputEnabled = Boolean(result.values['diagnostic-logging.r2_output_enabled']);
 			sdkIngestEnabled = Boolean(result.values['diagnostic-logging.sdk_ingest_enabled']);
 			mergedOutputEnabled = Boolean(result.values['diagnostic-logging.merged_output_enabled']);
+			selectedStorageDestinationId = String(
+				result.values['diagnostic-logging.storage_destination_id'] ?? ''
+			);
 			storageModeDefault = normalizeStorageMode(
 				result.values['diagnostic-logging.storage_mode.default'],
 				'masked'
@@ -203,6 +216,64 @@
 		}
 	}
 
+	async function loadStorageDestinations() {
+		storageDestinationError = '';
+		try {
+			const response = await adminStorageDestinationsAPI.listUsable();
+			storageDestinations = response.items;
+		} catch (err) {
+			storageDestinationError =
+				err instanceof Error ? err.message : 'Failed to load storage destinations';
+			storageDestinations = [];
+		}
+	}
+
+	async function handleStorageDestinationChange(destinationId: string) {
+		if (!loggingSettings || settingsSaving || !canEdit) return;
+
+		settingsSaving = true;
+		settingsError = '';
+		storageDestinationError = '';
+
+		try {
+			const result = await adminSettingsAPI.updateSettings(
+				'diagnostic-logging',
+				{
+					ifMatch: loggingSettings.version,
+					set: {
+						'diagnostic-logging.storage_destination_id': destinationId
+					}
+				},
+				tenantId
+			);
+
+			if (destinationId) {
+				await adminStorageDestinationsAPI.recordUsage(destinationId, {
+					feature: 'diagnostic_logging',
+					resource_type: 'tenant',
+					resource_id: tenantId,
+					metadata: { setting: 'diagnostic-logging.storage_destination_id' }
+				});
+			}
+
+			loggingSettings = {
+				...loggingSettings,
+				version: result.version,
+				values: {
+					...loggingSettings.values,
+					'diagnostic-logging.storage_destination_id': destinationId
+				}
+			};
+			selectedStorageDestinationId = destinationId;
+			success = 'Storage destination updated.';
+		} catch (err) {
+			storageDestinationError =
+				err instanceof Error ? err.message : 'Failed to update storage destination';
+		} finally {
+			settingsSaving = false;
+		}
+	}
+
 	async function loadClientOptions() {
 		clientsLoading = true;
 		clientsError = '';
@@ -213,9 +284,7 @@
 			const limit = 200;
 
 			while (true) {
-				const response = await fetch(`/api/admin/clients?page=${page}&limit=${limit}`, {
-					credentials: 'include'
-				});
+				const response = await adminFetch(`/api/admin/clients?page=${page}&limit=${limit}`);
 
 				if (!response.ok) {
 					const errorData = await response.json().catch(() => ({}));
@@ -548,9 +617,12 @@
 			params.append('exportMode', exportMode);
 			if (includeStats) params.append('includeStats', 'true');
 
-			const response = await fetch(`/api/admin/diagnostic-logging/export?${params.toString()}`, {
-				credentials: 'include'
-			});
+			const response = await adminFetch(
+				`/api/admin/diagnostic-logging/export?${params.toString()}`,
+				{
+					tenantId
+				}
+			);
 
 			if (!response.ok) {
 				const errorData = await response.json().catch(() => ({}));
@@ -584,7 +656,7 @@
 	}
 
 	function handleReset() {
-		tenantId = settingsContext.tenantId || 'default';
+		tenantId = settingsContext.tenantId;
 		testTenantId = tenantId;
 		selectedClientIds = [];
 		sessionIds = '';
@@ -609,14 +681,12 @@
 		testLoading = true;
 
 		try {
-			const response = await fetch('/api/admin/diagnostic-logging/test-connection', {
+			const response = await adminFetch('/api/admin/diagnostic-logging/test-connection', {
 				method: 'POST',
-				credentials: 'include',
-				headers: {
-					'Content-Type': 'application/json'
-				},
+				includeJsonContentType: true,
+				tenantId: testTenantId || settingsContext.tenantId,
 				body: JSON.stringify({
-					tenantId: testTenantId || 'default',
+					tenantId: testTenantId || settingsContext.tenantId,
 					r2BucketBinding,
 					pathPrefix
 				})
@@ -902,7 +972,8 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">HTTP Request</span>
-								<span class="category-description">Full request including Authorization header</span>
+								<span class="category-description">Full request including Authorization header</span
+								>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['http-response']}>
@@ -924,7 +995,9 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">Token Validation</span>
-								<span class="category-description">JWT validation, signature verification, claims validation</span>
+								<span class="category-description"
+									>JWT validation, signature verification, claims validation</span
+								>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['auth-decision']}>
@@ -935,7 +1008,9 @@
 							/>
 							<div class="category-content">
 								<span class="category-checkbox-text">Auth Decision</span>
-								<span class="category-description">Authorization logic, policy evaluation results</span>
+								<span class="category-description"
+									>Authorization logic, policy evaluation results</span
+								>
 							</div>
 						</label>
 					</div>
@@ -1116,6 +1191,26 @@
 
 				<div class="card-section">
 					<div class="form-grid">
+						<div class="form-group">
+							<label for="storageDestination">Storage destination</label>
+							<select
+								id="storageDestination"
+								class="settings-select"
+								bind:value={selectedStorageDestinationId}
+								onchange={(event) => handleStorageDestinationChange(event.currentTarget.value)}
+								disabled={!canEdit || settingsSaving}
+							>
+								<option value="">Use runtime binding fields below</option>
+								{#each storageDestinations as destination (destination.id)}
+									<option value={destination.id}>
+										{destination.display_name} ({destination.provider})
+									</option>
+								{/each}
+							</select>
+							{#if storageDestinationError}
+								<p class="field-error">{storageDestinationError}</p>
+							{/if}
+						</div>
 						<div class="form-group">
 							<label for="testTenantId">Tenant ID</label>
 							<input

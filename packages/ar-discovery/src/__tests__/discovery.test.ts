@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { discoveryHandler } from '../discovery';
+import { clearDiscoveryMetadataCache, discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
-import { LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
+import { clearNativeSSOConfigCache, LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
 
 /**
  * Create a mock environment for testing
@@ -20,10 +20,61 @@ function createMockEnv(): Env {
   } as Env;
 }
 
+function createTenantApp(tenantId: string): Hono<{ Bindings: Env }> {
+  const app = new Hono<{ Bindings: Env }>();
+  app.use('*', async (c, next) => {
+    (c as { set: (key: string, value: string) => void }).set('tenantId', tenantId);
+    await next();
+  });
+  app.get('/.well-known/openid-configuration', discoveryHandler);
+  return app;
+}
+
+async function fetchDiscoveryMetadata(
+  tenantId: string,
+  requestUrl: string,
+  env: Env
+): Promise<OIDCProviderMetadata> {
+  const response = await createTenantApp(tenantId).fetch(new Request(requestUrl), env);
+  expect(response.status).toBe(200);
+  return (await response.json()) as OIDCProviderMetadata;
+}
+
+function expectIssuerBoundMetadata(metadata: OIDCProviderMetadata, issuer: string): void {
+  expect(metadata.issuer).toBe(issuer);
+  expect(metadata.authorization_endpoint).toBe(`${issuer}/authorize`);
+  expect(metadata.token_endpoint).toBe(`${issuer}/token`);
+  expect(metadata.userinfo_endpoint).toBe(`${issuer}/userinfo`);
+  expect(metadata.jwks_uri).toBe(`${issuer}/.well-known/jwks.json`);
+  expect(metadata.registration_endpoint).toBe(`${issuer}/register`);
+  expect(metadata.introspection_endpoint).toBe(`${issuer}/introspect`);
+  expect(metadata.revocation_endpoint).toBe(`${issuer}/revoke`);
+  expect(metadata.pushed_authorization_request_endpoint).toBe(`${issuer}/par`);
+  expect(metadata.end_session_endpoint).toBe(`${issuer}/logout`);
+}
+
+function createMockKV(options: {
+  get?: (key: string, init?: unknown) => Promise<unknown>;
+  put?: (key: string, value: string, init?: unknown) => Promise<void>;
+}): KVNamespace & {
+  get: ReturnType<typeof vi.fn>;
+  put: ReturnType<typeof vi.fn>;
+} {
+  return {
+    get: vi.fn(options.get ?? (async () => null)),
+    put: vi.fn(options.put ?? (async () => undefined)),
+  } as unknown as KVNamespace & {
+    get: ReturnType<typeof vi.fn>;
+    put: ReturnType<typeof vi.fn>;
+  };
+}
+
 describe('Discovery Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
   beforeEach(() => {
+    clearDiscoveryMetadataCache();
+    clearNativeSSOConfigCache();
     app = new Hono<{ Bindings: Env }>();
     app.get('/.well-known/openid-configuration', discoveryHandler);
   });
@@ -77,6 +128,137 @@ describe('Discovery Handler', () => {
       expect(metadata.token_endpoint).toBe('https://custom.example.com/token');
       expect(metadata.userinfo_endpoint).toBe('https://custom.example.com/userinfo');
       expect(metadata.jwks_uri).toBe('https://custom.example.com/.well-known/jwks.json');
+    });
+
+    it('uses the request host as issuer in multi-tenant mode', async () => {
+      const env = {
+        ...createMockEnv(),
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'tenant1',
+      } as Env;
+      const localApp = new Hono<{ Bindings: Env }>();
+      localApp.use('*', async (c, next) => {
+        (c as any).set('tenantId', 'tenant1');
+        await next();
+      });
+      localApp.get('/.well-known/openid-configuration', discoveryHandler);
+
+      const response = await localApp.fetch(
+        new Request('https://tenant1.example.com/.well-known/openid-configuration'),
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.issuer).toBe('https://tenant1.example.com');
+      expect(metadata.token_endpoint).toBe('https://tenant1.example.com/token');
+    });
+
+    describe('issuer domain matrix', () => {
+      it('uses the configured ISSUER_URL in single-tenant mode', async () => {
+        const env = {
+          ...createMockEnv(),
+          ISSUER_URL: 'https://auth.single.example.com',
+        } as Env;
+
+        const metadata = await fetchDiscoveryMetadata(
+          'default',
+          'https://tenant-a.example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expectIssuerBoundMetadata(metadata, 'https://auth.single.example.com');
+      });
+
+      it('uses each tenant subdomain as issuer in multi-tenant mode', async () => {
+        const env = {
+          ...createMockEnv(),
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'default',
+        } as Env;
+
+        const tenantA = await fetchDiscoveryMetadata(
+          'tenant-a',
+          'https://tenant-a.example.com/.well-known/openid-configuration',
+          env
+        );
+        const tenantB = await fetchDiscoveryMetadata(
+          'tenant-b',
+          'https://tenant-b.example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expectIssuerBoundMetadata(tenantA, 'https://tenant-a.example.com');
+        expectIssuerBoundMetadata(tenantB, 'https://tenant-b.example.com');
+      });
+
+      it('keeps the primary/default tenant on a subdomain when naked-domain issuer is disabled', async () => {
+        const env = {
+          ...createMockEnv(),
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'first',
+        } as Env;
+
+        const metadata = await fetchDiscoveryMetadata(
+          'first',
+          'https://first.example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expectIssuerBoundMetadata(metadata, 'https://first.example.com');
+      });
+
+      it('uses the naked domain for the default tenant when naked-domain issuer is enabled', async () => {
+        const env = {
+          ...createMockEnv(),
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'first',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
+        } as Env;
+
+        const metadata = await fetchDiscoveryMetadata(
+          'first',
+          'https://example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expectIssuerBoundMetadata(metadata, 'https://example.com');
+      });
+
+      it('uses PRIMARY_TENANT_ID for naked-domain issuer selection', async () => {
+        const env = {
+          ...createMockEnv(),
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'default',
+          PRIMARY_TENANT_ID: 'first',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
+        } as Env;
+
+        const metadata = await fetchDiscoveryMetadata(
+          'first',
+          'https://example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expectIssuerBoundMetadata(metadata, 'https://example.com');
+      });
+
+      it('keeps non-primary tenants on subdomain issuers even when naked-domain issuer is enabled', async () => {
+        const env = {
+          ...createMockEnv(),
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'default',
+          PRIMARY_TENANT_ID: 'first',
+          NAKED_DOMAIN_AS_ISSUER: 'true',
+        } as Env;
+
+        const metadata = await fetchDiscoveryMetadata(
+          'tenant-b',
+          'https://tenant-b.example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expectIssuerBoundMetadata(metadata, 'https://tenant-b.example.com');
+      });
     });
 
     it('should return correct response types', async () => {
@@ -184,8 +366,63 @@ describe('Discovery Handler', () => {
       expect(metadata.claims_supported).toContain('aud');
       expect(metadata.claims_supported).toContain('exp');
       expect(metadata.claims_supported).toContain('iat');
+      expect(metadata.claims_supported).toContain('auth_time');
+      expect(metadata.claims_supported).toContain('acr');
+      expect(metadata.claims_supported).toContain('amr');
       expect(metadata.claims_supported).toContain('name');
       expect(metadata.claims_supported).toContain('email');
+    });
+
+    it('should advertise implemented ASC capabilities', async () => {
+      const env = createMockEnv();
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.selective_abort_omit_supported).toBe(true);
+      expect(metadata.selective_abort_omit_schema_supported).toBe(false);
+      expect(metadata.transformed_claims_functions_supported).toContain('years_ago');
+      expect(metadata.transformed_claims_max_count).toBe(0);
+      expect(metadata.transformed_claims_predefined).toHaveProperty('age_over_18');
+    });
+
+    it('should expose only the canonical Native SSO discovery field when enabled', async () => {
+      const env = {
+        ...createMockEnv(),
+        NATIVE_SSO_ENABLED: 'true',
+      } as Env;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata & Record<string, unknown>;
+      expect(metadata.native_sso_supported).toBe(true);
+      expect(metadata.native_sso_token_exchange_supported).toBeUndefined();
+      expect(metadata.native_sso_device_secret_supported).toBeUndefined();
+    });
+
+    it('should expose Phase 1 DPoP signing algorithms', async () => {
+      const env = createMockEnv();
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.dpop_signing_alg_values_supported).toEqual(['ES256', 'PS256', 'EdDSA']);
     });
 
     it('should support multiple token endpoint auth methods', async () => {
@@ -236,6 +473,114 @@ describe('Discovery Handler', () => {
       const vary = response.headers.get('Vary');
       expect(vary).toBeDefined();
       expect(vary).toContain('Accept-Encoding');
+    });
+
+    it('serves metadata from AUTHRIM_CONFIG discovery cache when present', async () => {
+      const cachedMetadata = {
+        issuer: 'https://cached.example.com',
+        authorization_endpoint: 'https://cached.example.com/authorize',
+        token_endpoint: 'https://cached.example.com/token',
+        userinfo_endpoint: 'https://cached.example.com/userinfo',
+        jwks_uri: 'https://cached.example.com/.well-known/jwks.json',
+        response_types_supported: ['code'],
+        grant_types_supported: ['authorization_code'],
+        id_token_signing_alg_values_supported: ['RS256'],
+        subject_types_supported: ['public'],
+        scopes_supported: ['openid'],
+        claims_supported: ['sub'],
+        token_endpoint_auth_methods_supported: ['private_key_jwt'],
+      } as OIDCProviderMetadata;
+      const authrimConfig = createMockKV({
+        get: async (key: string) => {
+          if (key.startsWith('v1:discovery:')) {
+            return cachedMetadata;
+          }
+          return null;
+        },
+      });
+      const env = {
+        ...createMockEnv(),
+        AUTHRIM_CONFIG: authrimConfig,
+      } as Env;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('X-Discovery-Cache')).toBe('HIT');
+      expect(response.headers.get('Cache-Control')).toContain('max-age=300');
+      await expect(response.json()).resolves.toEqual(cachedMetadata);
+      expect(
+        authrimConfig.put.mock.calls.some(([key]) => String(key).startsWith('v1:discovery:'))
+      ).toBe(false);
+    });
+
+    it('returns fresh metadata when AUTHRIM_CONFIG cache write fails', async () => {
+      const authrimConfig = createMockKV({
+        put: async () => {
+          throw new Error('kv write unavailable');
+        },
+      });
+      const env = {
+        ...createMockEnv(),
+        AUTHRIM_CONFIG: authrimConfig,
+      } as Env;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('X-Discovery-Cache')).toBe('MISS');
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expectIssuerBoundMetadata(metadata, 'https://test.example.com');
+      expect(authrimConfig.put).toHaveBeenCalledWith(
+        expect.stringMatching(/^v1:discovery:/),
+        expect.any(String),
+        expect.objectContaining({ expirationTtl: 300 })
+      );
+    });
+
+    it('returns fresh metadata when AUTHRIM_CONFIG discovery cache read fails', async () => {
+      const authrimConfig = createMockKV({
+        get: async (key: string) => {
+          if (key.startsWith('v1:discovery:')) {
+            throw new Error('kv read unavailable');
+          }
+          return null;
+        },
+      });
+      const env = {
+        ...createMockEnv(),
+        AUTHRIM_CONFIG: authrimConfig,
+      } as Env;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('X-Discovery-Cache')).toBe('MISS');
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expectIssuerBoundMetadata(metadata, 'https://test.example.com');
+      expect(authrimConfig.put).toHaveBeenCalledWith(
+        expect.stringMatching(/^v1:discovery:/),
+        expect.any(String),
+        expect.objectContaining({ expirationTtl: 300 })
+      );
     });
   });
 

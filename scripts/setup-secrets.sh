@@ -206,13 +206,29 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📧 Email Configuration for Magic Links"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "Authrim uses Resend for sending magic link emails."
+echo "Authrim supports Cloudflare Email Service and Resend for magic link emails."
 echo "If you don't configure this now, magic links will return URLs"
 echo "instead of sending emails (useful for development)."
 echo ""
-read -p "Do you want to configure Resend API Key? (y/N): " -n 1 -r
+echo "  1) Cloudflare Email Service"
+echo "  2) Resend"
+echo "  3) Skip"
+read -p "Select provider (1-3): " -r email_provider
 echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ "$email_provider" == "1" ]]; then
+    echo ""
+    echo "Cloudflare prerequisites: Workers Paid Plan + Cloudflare DNS + dashboard onboarding"
+    echo "📦 Uploading email configuration to ${DEPLOY_ENV}-authrim-ar-auth and ${DEPLOY_ENV}-authrim-ar-management..."
+
+    echo "  • Enter your 'From' email address (e.g., noreply@yourdomain.com):"
+    read -p "    EMAIL_FROM: " EMAIL_FROM
+
+    echo "$EMAIL_FROM" | wrangler secret put EMAIL_FROM --name="${DEPLOY_ENV}-authrim-ar-auth"
+    echo "$EMAIL_FROM" | wrangler secret put EMAIL_FROM --name="${DEPLOY_ENV}-authrim-ar-management"
+
+    echo "✅ Cloudflare email bootstrap uploaded"
+    echo ""
+elif [[ "$email_provider" == "2" ]]; then
     echo ""
     echo "📦 Uploading email configuration to ${DEPLOY_ENV}-authrim-ar-auth..."
 

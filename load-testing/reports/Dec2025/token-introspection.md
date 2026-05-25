@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "Test Date: December 16, 2025 Target: Authrim OIDC Provider - Token Introspection Endpoint (POST /introspect) Test Tool: K6 Cloud (Distributed Load Testing) Monitoring: Cloudflare."
+type: report
+tags:
+  - authrim
+  - load-testing
+  - performance
+  - oidc
+  - token-introspection
+  - testing
+---
 # Token Introspection (RFC 7662) Load Test Report
 
 **Test Date**: December 16, 2025

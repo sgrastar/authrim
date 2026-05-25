@@ -8,7 +8,6 @@
  * - Automatic detail evacuation to R2
  */
 
-import type { D1Database } from '@cloudflare/workers-types';
 import type {
   IAuditService,
   EventLogParams,
@@ -21,8 +20,13 @@ import type {
   TenantPIIConfig,
   EncryptedValue,
   AuditQueueMessage,
+  EventCategory,
 } from './types';
 import { DEFAULT_PII_CONFIG } from './types';
+import type { AuditProfile, AuditTarget } from '../../types/runtime-profile';
+import type { IAuditStorageAdapter } from './storage';
+import { BUILTIN_RUNTIME_PROFILES, DEFAULT_AUDIT_PROFILE_ID } from '../../types/runtime-profile';
+import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../../db';
 import {
   sanitizeEventDetails,
   sanitizeErrorMessage,
@@ -32,21 +36,42 @@ import {
   calculateRetentionUntil,
   arrayBufferToBase64,
 } from './utils';
+import type { TenantKeyResolver } from './tenant-key';
 import { AnonymizationService } from './anonymization';
 import { createLogger, type Logger } from '../../utils/logger';
+
+export interface AuditDeliveryPlan {
+  auditProfileId: string;
+  primary: AuditTarget | null;
+  archives: AuditTarget[];
+  sinks: AuditTarget[];
+  retentionDays?: number | null;
+  archiveFailureMode?: AuditProfile['archiveFailureMode'];
+  sinkFailureMode?: AuditProfile['sinkFailureMode'];
+  matchedRuleNames?: string[];
+}
 
 /**
  * Dependencies for audit service.
  */
 export interface AuditServiceDependencies {
-  /** Core database (non-PII) */
-  coreDb: D1Database;
+  /** Core database source (non-PII) */
+  coreSource: DatabaseSource;
 
-  /** PII database */
-  piiDb: D1Database;
+  /** PII database source */
+  piiSource: DatabaseSource;
 
   /** R2 bucket for large details */
   r2Bucket: R2Bucket;
+
+  /** R2 bucket for chunked sensitive detail payloads */
+  sensitiveDetailBucket?: R2Bucket;
+
+  /** Root key for object-plane sensitive detail encryption */
+  objectEncryptionRootKey?: string;
+
+  /** Object-plane encryption key version */
+  objectEncryptionKeyVersion?: number;
 
   /** Audit queue for async processing (optional) */
   auditQueue?: Queue<AuditQueueMessage>;
@@ -56,32 +81,248 @@ export interface AuditServiceDependencies {
 
   /** Logger instance (optional) */
   logger?: Logger;
+
+  /** Runtime resolver for tenant audit profiles (optional) */
+  resolveAuditProfile?: (tenantId: string) => Promise<AuditProfile>;
+
+  /** Runtime resolver for per-event delivery plans (optional) */
+  resolveDeliveryPlan?: (input: {
+    tenantId: string;
+    logType: 'event' | 'pii';
+    eventCategory?: EventCategory;
+    clientId?: string;
+    auditProfile: AuditProfile;
+  }) => Promise<AuditDeliveryPlan | null>;
+
+  /** Runtime resolver for synchronous primary adapters (optional) */
+  resolvePrimaryAdapter?: (
+    target: AuditTarget,
+    logType: 'event' | 'pii'
+  ) => Promise<IAuditStorageAdapter | null>;
+
+  /** Optional tenant registry backed tenant_key resolver for direct R2 detail evacuation */
+  tenantKeyResolver?: TenantKeyResolver;
 }
 
 /**
  * Audit service implementation.
  */
 export class AuditService implements IAuditService {
-  private readonly coreDb: D1Database;
-  private readonly piiDb: D1Database;
+  private readonly coreAdapter: DatabaseAdapter;
+  private readonly piiAdapter: DatabaseAdapter;
   private readonly r2Bucket: R2Bucket;
+  private readonly sensitiveDetailBucket?: R2Bucket;
+  private readonly objectEncryptionRootKey?: string;
+  private readonly objectEncryptionKeyVersion?: number;
   private readonly auditQueue?: Queue<AuditQueueMessage>;
   private readonly configKv?: KVNamespace;
   private readonly logger: Logger;
   private readonly anonymizationService: AnonymizationService;
+  private readonly resolveAuditProfile?: (tenantId: string) => Promise<AuditProfile>;
+  private readonly resolveDeliveryPlan?: AuditServiceDependencies['resolveDeliveryPlan'];
+  private readonly resolvePrimaryAdapter?: AuditServiceDependencies['resolvePrimaryAdapter'];
+  private readonly tenantKeyResolver?: TenantKeyResolver;
 
   // In-memory config cache (3 minute TTL)
   private configCache: Map<string, { config: TenantPIIConfig; expiresAt: number }> = new Map();
   private readonly CONFIG_CACHE_TTL_MS = 180_000; // 3 minutes
+  private readonly auditProfileCache: Map<string, { profile: AuditProfile; expiresAt: number }> =
+    new Map();
+  private readonly AUDIT_PROFILE_CACHE_TTL_MS = 60_000; // 1 minute
 
   constructor(deps: AuditServiceDependencies) {
-    this.coreDb = deps.coreDb;
-    this.piiDb = deps.piiDb;
+    this.coreAdapter = ensureDatabaseAdapter(deps.coreSource, 'audit-core');
+    this.piiAdapter = ensureDatabaseAdapter(deps.piiSource, 'audit-pii');
     this.r2Bucket = deps.r2Bucket;
+    this.sensitiveDetailBucket = deps.sensitiveDetailBucket;
+    this.objectEncryptionRootKey = deps.objectEncryptionRootKey;
+    this.objectEncryptionKeyVersion = deps.objectEncryptionKeyVersion;
     this.auditQueue = deps.auditQueue;
     this.configKv = deps.configKv;
     this.logger = deps.logger ?? createLogger().module('AuditService');
-    this.anonymizationService = new AnonymizationService(this.piiDb);
+    this.anonymizationService = new AnonymizationService(deps.piiSource);
+    this.resolveAuditProfile = deps.resolveAuditProfile;
+    this.resolveDeliveryPlan = deps.resolveDeliveryPlan;
+    this.resolvePrimaryAdapter = deps.resolvePrimaryAdapter;
+    this.tenantKeyResolver = deps.tenantKeyResolver;
+  }
+
+  private getDefaultAuditProfile(): AuditProfile {
+    return BUILTIN_RUNTIME_PROFILES.find(
+      (profile): profile is AuditProfile =>
+        profile.kind === 'audit' && profile.id === DEFAULT_AUDIT_PROFILE_ID
+    )!;
+  }
+
+  private async getTenantAuditProfile(tenantId: string): Promise<AuditProfile> {
+    const cached = this.auditProfileCache.get(tenantId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.profile;
+    }
+
+    let profile = this.getDefaultAuditProfile();
+
+    if (this.resolveAuditProfile) {
+      try {
+        profile = await this.resolveAuditProfile(tenantId);
+      } catch (error) {
+        this.logger.warn('audit_profile_resolve_failed', {
+          tenantId,
+          error: sanitizeErrorMessage(String(error)),
+        });
+      }
+    }
+
+    this.auditProfileCache.set(tenantId, {
+      profile,
+      expiresAt: Date.now() + this.AUDIT_PROFILE_CACHE_TTL_MS,
+    });
+    return profile;
+  }
+
+  private resolveRetentionDays(
+    profile: AuditProfile,
+    defaults: TenantPIIConfig,
+    logType: 'event' | 'pii',
+    overrideDays?: number | null
+  ): number {
+    if (overrideDays != null) {
+      return overrideDays;
+    }
+    if (logType === 'event' && profile.retention?.eventLogRetentionDays != null) {
+      return profile.retention.eventLogRetentionDays;
+    }
+    if (logType === 'pii' && profile.retention?.piiLogRetentionDays != null) {
+      return profile.retention.piiLogRetentionDays;
+    }
+    if (profile.primary && profile.retention?.primaryDays != null) {
+      return profile.retention.primaryDays;
+    }
+    if (!profile.primary && profile.retention?.archiveDays != null) {
+      return profile.retention.archiveDays;
+    }
+    return logType === 'event' ? defaults.eventLogRetentionDays : defaults.piiLogRetentionDays;
+  }
+
+  private isD1PrimaryTarget(
+    target: AuditTarget | null | undefined
+  ): target is Extract<AuditTarget, { type: 'd1' }> {
+    return Boolean(target && target.type === 'd1');
+  }
+
+  private async writePrimaryEventLog(
+    tenantId: string,
+    plan: AuditDeliveryPlan,
+    entry: EventLogEntry
+  ): Promise<void> {
+    if (!plan.primary) {
+      return;
+    }
+
+    if (this.isD1PrimaryTarget(plan.primary)) {
+      await this.directInsertEventLog(entry);
+      return;
+    }
+
+    const adapter = this.resolvePrimaryAdapter
+      ? await this.resolvePrimaryAdapter(plan.primary, 'event')
+      : null;
+    if (!adapter) {
+      this.logger.warn('unsupported_audit_primary_target', {
+        tenantId,
+        targetType: plan.primary.type,
+        auditProfileId: plan.auditProfileId,
+      });
+      return;
+    }
+
+    const result = await adapter.writeEventLog(entry);
+    if (!result.success) {
+      throw new Error(result.errorMessage ?? 'audit_primary_event_write_failed');
+    }
+  }
+
+  private async writePrimaryPIILog(
+    tenantId: string,
+    plan: AuditDeliveryPlan,
+    entry: PIILogEntry
+  ): Promise<void> {
+    if (!plan.primary) {
+      return;
+    }
+
+    if (this.isD1PrimaryTarget(plan.primary)) {
+      await this.directInsertPIILog(entry);
+      return;
+    }
+
+    const adapter = this.resolvePrimaryAdapter
+      ? await this.resolvePrimaryAdapter(plan.primary, 'pii')
+      : null;
+    if (!adapter) {
+      this.logger.warn('unsupported_audit_primary_target', {
+        tenantId,
+        targetType: plan.primary.type,
+        auditProfileId: plan.auditProfileId,
+      });
+      return;
+    }
+
+    const result = await adapter.writePIILog(entry);
+    if (!result.success) {
+      throw new Error(result.errorMessage ?? 'audit_primary_pii_write_failed');
+    }
+  }
+
+  private buildBaseDeliveryPlan(profile: AuditProfile): AuditDeliveryPlan {
+    return {
+      auditProfileId: profile.id,
+      primary: profile.primary ?? null,
+      archives: profile.archive ? [profile.archive] : [],
+      sinks: profile.sinks,
+      archiveFailureMode: profile.archiveFailureMode,
+      sinkFailureMode: profile.sinkFailureMode,
+    };
+  }
+
+  private async getAuditDeliveryPlan(input: {
+    tenantId: string;
+    logType: 'event' | 'pii';
+    eventCategory?: EventCategory;
+    clientId?: string;
+    auditProfile: AuditProfile;
+  }): Promise<AuditDeliveryPlan> {
+    if (this.resolveDeliveryPlan) {
+      try {
+        const resolved = await this.resolveDeliveryPlan(input);
+        if (resolved) {
+          return resolved;
+        }
+      } catch (error) {
+        this.logger.warn('audit_delivery_plan_resolve_failed', {
+          tenantId: input.tenantId,
+          logType: input.logType,
+          error: sanitizeErrorMessage(String(error)),
+        });
+      }
+    }
+
+    return this.buildBaseDeliveryPlan(input.auditProfile);
+  }
+
+  private buildFanoutPlan(plan: AuditDeliveryPlan): AuditQueueMessage['fanout'] | undefined {
+    if (plan.archives.length === 0 && plan.sinks.length === 0) {
+      return undefined;
+    }
+
+    return {
+      auditProfileId: plan.auditProfileId,
+      archives: plan.archives,
+      sinks: plan.sinks,
+      archiveFailureMode: plan.archiveFailureMode,
+      sinkFailureMode: plan.sinkFailureMode,
+      matchedRuleNames: plan.matchedRuleNames,
+    };
   }
 
   /**
@@ -120,9 +361,19 @@ export class AuditService implements IAuditService {
    */
   async logEvent(tenantId: string, params: EventLogParams): Promise<void> {
     const config = await this.getTenantPIIConfig(tenantId);
+    const auditProfile = await this.getTenantAuditProfile(tenantId);
+    const deliveryPlan = await this.getAuditDeliveryPlan({
+      tenantId,
+      logType: 'event',
+      eventCategory: params.eventCategory,
+      clientId: params.clientId,
+      auditProfile,
+    });
     const entryId = crypto.randomUUID();
     const createdAt = Date.now();
-    const retentionUntil = calculateRetentionUntil(config.eventLogRetentionDays);
+    const retentionUntil = calculateRetentionUntil(
+      this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays)
+    );
 
     // Sanitize details if provided
     let detailsJson: string | null = null;
@@ -133,7 +384,24 @@ export class AuditService implements IAuditService {
         params.details as Record<string, unknown>,
         config
       );
-      const result = await writeEventDetails(sanitizedDetails, this.r2Bucket, tenantId, entryId);
+      const result = await writeEventDetails(
+        sanitizedDetails,
+        this.r2Bucket,
+        tenantId,
+        entryId,
+        undefined,
+        this.tenantKeyResolver,
+        this.sensitiveDetailBucket && this.objectEncryptionRootKey
+          ? {
+              adapter: this.coreAdapter,
+              bucket: this.sensitiveDetailBucket,
+              rootKeyHex: this.objectEncryptionRootKey,
+              keyVersion: this.objectEncryptionKeyVersion,
+              createdAt,
+              tenantKeyResolver: this.tenantKeyResolver,
+            }
+          : undefined
+      );
       detailsJson = result.detailsJson;
       detailsR2Key = result.detailsR2Key;
     }
@@ -163,43 +431,45 @@ export class AuditService implements IAuditService {
       createdAt,
     };
 
-    // Try to send via Queue first
-    if (this.auditQueue) {
+    await this.writePrimaryEventLog(tenantId, deliveryPlan, entry);
+
+    const fanout = this.buildFanoutPlan(deliveryPlan);
+
+    if (fanout && this.auditQueue) {
       try {
         await this.auditQueue.send({
           type: 'event_log',
           entries: [entry],
           tenantId,
           timestamp: createdAt,
+          fanout,
         });
-        return;
       } catch (queueError) {
-        // Queue failed, fall back to direct write
         this.logger.warn('audit_queue_failed', {
           error: sanitizeErrorMessage(String(queueError)),
           tenantId,
         });
       }
+    } else if (fanout && !this.auditQueue) {
+      this.logger.warn('audit_fanout_skipped_without_queue', {
+        tenantId,
+        auditProfileId: deliveryPlan.auditProfileId,
+      });
     }
-
-    // Direct D1 write (sync or fallback)
-    await this.directInsertEventLog(entry);
   }
 
   /**
    * Direct insert to event_log table.
    */
   private async directInsertEventLog(entry: EventLogEntry): Promise<void> {
-    await this.coreDb
-      .prepare(
-        `INSERT INTO event_log (
-          id, tenant_id, event_type, event_category, result, severity,
-          error_code, error_message, anonymized_user_id, client_id,
-          session_id, request_id, duration_ms, details_r2_key, details_json,
-          retention_until, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
+    await this.coreAdapter.execute(
+      `INSERT INTO event_log (
+        id, tenant_id, event_type, event_category, result, severity,
+        error_code, error_message, anonymized_user_id, client_id,
+        session_id, request_id, duration_ms, details_r2_key, details_json,
+        retention_until, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
         entry.id,
         entry.tenantId,
         entry.eventType,
@@ -216,9 +486,9 @@ export class AuditService implements IAuditService {
         entry.detailsR2Key ?? null,
         entry.detailsJson ?? null,
         entry.retentionUntil ?? null,
-        entry.createdAt
-      )
-      .run();
+        entry.createdAt,
+      ]
+    );
   }
 
   /**
@@ -226,9 +496,17 @@ export class AuditService implements IAuditService {
    */
   async logPIIChange(tenantId: string, params: PIILogParams): Promise<void> {
     const config = await this.getTenantPIIConfig(tenantId);
+    const auditProfile = await this.getTenantAuditProfile(tenantId);
+    const deliveryPlan = await this.getAuditDeliveryPlan({
+      tenantId,
+      logType: 'pii',
+      auditProfile,
+    });
     const entryId = crypto.randomUUID();
     const createdAt = Date.now();
-    const retentionUntil = calculateRetentionUntil(config.piiLogRetentionDays);
+    const retentionUntil = calculateRetentionUntil(
+      this.resolveRetentionDays(auditProfile, config, 'pii', deliveryPlan.retentionDays)
+    );
 
     // Get or create anonymized user ID
     const anonymizedUserId =
@@ -252,7 +530,19 @@ export class AuditService implements IAuditService {
       JSON.stringify(encrypted),
       this.r2Bucket,
       tenantId,
-      entryId
+      entryId,
+      undefined,
+      this.tenantKeyResolver,
+      this.sensitiveDetailBucket && this.objectEncryptionRootKey
+        ? {
+            adapter: this.coreAdapter,
+            bucket: this.sensitiveDetailBucket,
+            rootKeyHex: this.objectEncryptionRootKey,
+            keyVersion: this.objectEncryptionKeyVersion,
+            createdAt,
+            tenantKeyResolver: this.tenantKeyResolver,
+          }
+        : undefined
     );
 
     const entry: PIILogEntry = {
@@ -275,42 +565,45 @@ export class AuditService implements IAuditService {
       createdAt,
     };
 
-    // Try to send via Queue first
-    if (this.auditQueue) {
+    await this.writePrimaryPIILog(tenantId, deliveryPlan, entry);
+
+    const fanout = this.buildFanoutPlan(deliveryPlan);
+
+    if (fanout && this.auditQueue) {
       try {
         await this.auditQueue.send({
           type: 'pii_log',
           entries: [entry],
           tenantId,
           timestamp: createdAt,
+          fanout,
         });
-        return;
       } catch (queueError) {
         this.logger.warn('audit_queue_failed_pii', {
           error: sanitizeErrorMessage(String(queueError)),
           tenantId,
         });
       }
+    } else if (fanout && !this.auditQueue) {
+      this.logger.warn('audit_fanout_skipped_without_queue', {
+        tenantId,
+        auditProfileId: deliveryPlan.auditProfileId,
+      });
     }
-
-    // Direct D1 write
-    await this.directInsertPIILog(entry);
   }
 
   /**
    * Direct insert to pii_log table.
    */
   private async directInsertPIILog(entry: PIILogEntry): Promise<void> {
-    await this.piiDb
-      .prepare(
-        `INSERT INTO pii_log (
-          id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
-          values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
-          actor_user_id, actor_type, request_id, legal_basis, consent_reference,
-          retention_until, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
+    await this.piiAdapter.execute(
+      `INSERT INTO pii_log (
+        id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
+        values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
+        actor_user_id, actor_type, request_id, legal_basis, consent_reference,
+        retention_until, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
         entry.id,
         entry.tenantId,
         entry.userId,
@@ -327,9 +620,9 @@ export class AuditService implements IAuditService {
         entry.legalBasis ?? null,
         entry.consentReference ?? null,
         entry.retentionUntil,
-        entry.createdAt
-      )
-      .run();
+        entry.createdAt,
+      ]
+    );
   }
 
   /**
@@ -399,12 +692,12 @@ export class AuditService implements IAuditService {
 
     try {
       // Step 2: Delete PII logs
-      const piiDeleteResult = await this.piiDb
-        .prepare('DELETE FROM pii_log WHERE tenant_id = ? AND user_id = ?')
-        .bind(tenantId, userId)
-        .run();
+      const piiDeleteResult = await this.piiAdapter.execute(
+        'DELETE FROM pii_log WHERE tenant_id = ? AND user_id = ?',
+        [tenantId, userId]
+      );
 
-      const piiLogsDeleted = piiDeleteResult.meta?.changes ?? 0;
+      const piiLogsDeleted = piiDeleteResult.rowsAffected;
 
       // Step 3: Delete anonymization mapping
       await this.anonymizationService.deleteMapping(tenantId, userId);
@@ -502,10 +795,14 @@ export class AuditService implements IAuditService {
    * Placeholder - in production, get from KeyManager or environment.
    */
   private async getEncryptionKey(): Promise<CryptoKey> {
-    // Generate a deterministic key from a seed (placeholder)
-    // In production, inject PII_ENCRYPTION_KEY from environment
-    const seed = new TextEncoder().encode('placeholder-pii-encryption-key-32b');
-    return crypto.subtle.importKey('raw', seed, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    // Derive a deterministic 32-byte key from a placeholder seed.
+    // In production, inject PII_ENCRYPTION_KEY from environment or KeyManager.
+    const seed = new TextEncoder().encode('placeholder-pii-encryption-key');
+    const digest = await crypto.subtle.digest('SHA-256', seed);
+    return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, [
+      'encrypt',
+      'decrypt',
+    ]);
   }
 }
 

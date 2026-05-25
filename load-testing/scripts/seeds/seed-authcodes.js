@@ -21,6 +21,7 @@
  *   CLIENT_ID         - OAuth client ID (required)
  *   CLIENT_SECRET     - OAuth client secret (required)
  *   ADMIN_API_SECRET  - Admin API secret (required)
+ *   TENANT_ID         - Tenant ID for admin API requests (optional)
  *   AUTH_CODE_COUNT   - Number of authorization codes to generate (default: 1000)
  *   USER_COUNT        - Number of users to use (default: all users)
  *   CONCURRENCY       - Parallel requests (default: 10)
@@ -39,6 +40,7 @@ const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://localhost:3000/callback';
 const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const TENANT_ID = process.env.TENANT_ID || '';
 const AUTH_CODE_COUNT = Number.parseInt(process.env.AUTH_CODE_COUNT || '1000', 10);
 // USER_COUNT: Number of users to use (0 = use all users)
 const USER_COUNT = Number.parseInt(process.env.USER_COUNT || '0', 10);
@@ -62,7 +64,10 @@ if (!ADMIN_API_SECRET) {
 }
 
 const basicAuthHeader = `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`;
-const adminAuthHeader = { Authorization: `Bearer ${ADMIN_API_SECRET}` };
+const adminAuthHeader = {
+  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
+};
 
 // Multi-user support: mapping of user IDs to sessions
 const userSessions = new Map(); // userId -> sessionCookie

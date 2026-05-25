@@ -25,8 +25,18 @@ import {
   type UiEnvConfig,
 } from './ui-env.js';
 import { DISABLED_API_BACKEND_URL } from './ui-deployment.js';
-import { generatePagesWranglerConfig } from './wrangler.js';
+import { generateUiWorkersWranglerConfig } from './wrangler.js';
 import { getPackageVersion } from './version.js';
+import { getSecretNamesForWorker, getSecretTargetWorkers } from './secrets.js';
+import type { AdminUiBffWorkerSecrets } from './admin-machine-access.js';
+
+export {
+  DEFAULT_SECRET_TARGET_WORKERS,
+  getSecretNamesForWorker,
+  getSecretTargetWorkers,
+  SECRET_UPLOAD_PLAN,
+  type SecretName,
+} from './secrets.js';
 
 // =============================================================================
 // Validation Helpers
@@ -58,6 +68,7 @@ export interface DeployOptions {
   dryRun?: boolean;
   maxRetries?: number;
   retryDelayMs?: number;
+  interDeploymentDelayMs?: number;
   onProgress?: (message: string) => void;
   onError?: (component: string, error: Error) => void;
 }
@@ -92,6 +103,8 @@ export interface BuildResult {
   error?: string;
 }
 
+export const DEFAULT_INTER_DEPLOY_DELAY_MS = 10_000;
+
 const UI_BUILD_ENV_KEYS = [
   'PUBLIC_API_BASE_URL',
   'PUBLIC_API_PROXY_BACKEND_URL',
@@ -100,22 +113,12 @@ const UI_BUILD_ENV_KEYS = [
   'API_BACKEND_URL',
 ] as const;
 
-export const DEFAULT_SECRET_TARGET_WORKERS: WorkerComponent[] = [
-  'ar-discovery',
-  'ar-auth',
-  'ar-token',
-  'ar-userinfo',
-  'ar-management',
-  'ar-lib-core',
-  'ar-saml',
-];
-
 /**
- * Prepare build-time env for Pages UIs.
+ * Prepare build-time env for UI Workers.
  * When a package-local .env exists, strip conflicting PUBLIC_* variables from
  * the parent process so Vite uses the generated file instead of leaked shell/CI values.
  */
-export function buildPagesUiBuildEnv(
+export function buildUiWorkerBuildEnv(
   baseEnv: NodeJS.ProcessEnv,
   options: {
     apiBaseUrl?: string;
@@ -290,7 +293,7 @@ export async function deployWorker(
 
       // Use wrangler deploy with --env to target [env.{env}] section in wrangler.toml
       // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
-      await execa('npx', ['wrangler', 'deploy', '--env', env], {
+      await execa('pnpm', ['exec', 'wrangler', 'deploy', '--env', env], {
         cwd: packageDir,
         reject: true,
       });
@@ -365,12 +368,14 @@ export async function deployAll(
   options: DeployOptions,
   enabledComponents?: WorkerComponent[]
 ): Promise<DeploymentSummary> {
-  const { onProgress, onError } = options;
+  const { onProgress, onError, interDeploymentDelayMs = 0 } = options;
   const startedAt = new Date().toISOString();
   const startTime = Date.now();
 
   const levels = getDeploymentLevels(enabledComponents);
   const allResults: DeployResult[] = [];
+  const totalPlannedComponents = levels.reduce((count, level) => count + level.length, 0);
+  let processedComponents = 0;
 
   onProgress?.('Starting Authrim deployment...\n');
   onProgress?.(`Environment: ${options.env}`);
@@ -385,6 +390,7 @@ export async function deployAll(
     for (const component of level) {
       const result = await deployWorker(component, options);
       allResults.push(result);
+      processedComponents++;
 
       if (!result.success) {
         onError?.(component, new Error(result.error));
@@ -394,6 +400,20 @@ export async function deployAll(
           onProgress?.(`\n⚠️  Critical component ${component} failed. Stopping deployment.`);
           break;
         }
+      }
+
+      if (
+        result.success &&
+        !options.dryRun &&
+        interDeploymentDelayMs > 0 &&
+        processedComponents < totalPlannedComponents
+      ) {
+        const waitSeconds =
+          interDeploymentDelayMs % 1000 === 0
+            ? String(interDeploymentDelayMs / 1000)
+            : (interDeploymentDelayMs / 1000).toFixed(1);
+        onProgress?.(`  ⏳ Waiting ${waitSeconds}s before deploying the next worker...`);
+        await new Promise((resolve) => setTimeout(resolve, interDeploymentDelayMs));
       }
     }
   }
@@ -474,7 +494,7 @@ export async function uploadSecrets(
   const errors: string[] = [];
 
   // Workers that need secrets
-  const targetWorkers = workers || DEFAULT_SECRET_TARGET_WORKERS;
+  const targetWorkers = getSecretTargetWorkers(workers);
 
   for (const component of targetWorkers) {
     const workerName = getWorkerName(env, component);
@@ -484,7 +504,14 @@ export async function uploadSecrets(
       continue;
     }
 
-    for (const [secretName, secretValue] of Object.entries(secrets)) {
+    const componentSecretNames = getSecretNamesForWorker(component);
+
+    for (const secretName of componentSecretNames) {
+      const secretValue = secrets[secretName];
+      if (secretValue === undefined) {
+        continue;
+      }
+
       try {
         onProgress?.(`Uploading ${secretName} to ${workerName}...`);
 
@@ -495,7 +522,7 @@ export async function uploadSecrets(
 
         // Use --env to target the environment section in wrangler.toml
         // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
-        await execa('npx', ['wrangler', 'secret', 'put', secretName, '--env', env], {
+        await execa('pnpm', ['exec', 'wrangler', 'secret', 'put', secretName, '--env', env], {
           cwd: packageDir,
           input: secretValue,
         });
@@ -516,18 +543,18 @@ export async function uploadSecrets(
 }
 
 // =============================================================================
-// Pages Deployment
+// UI Workers Deployment
 // =============================================================================
 
-/** Pages component type (separate from Worker components) */
-export type PagesComponent = 'ar-admin-ui' | 'ar-login-ui';
+/** UI component type (separate from core Authrim Worker components) */
+export type UiWorkerComponent = 'ar-admin-ui' | 'ar-login-ui';
 
-/** All Pages components */
-export const PAGES_COMPONENTS: PagesComponent[] = ['ar-admin-ui', 'ar-login-ui'];
+/** All UI components deployed as Workers static assets */
+export const UI_WORKER_COMPONENTS: UiWorkerComponent[] = ['ar-admin-ui', 'ar-login-ui'];
 
-/** Result for Pages deployment */
-export interface PagesDeployResult {
-  component: PagesComponent;
+/** Result for UI Workers deployment */
+export interface UiWorkerDeployResult {
+  component: UiWorkerComponent;
   projectName: string;
   success: boolean;
   error?: string;
@@ -535,9 +562,9 @@ export interface PagesDeployResult {
   duration?: number;
 }
 
-/** Options for deploying a single Pages component */
-export interface PagesDeployOptions extends DeployOptions {
-  /** Cloudflare Pages project name (defaults to {env}-{component}) */
+/** Options for deploying a single UI Worker component */
+export interface UiWorkerDeployOptions extends DeployOptions {
+  /** UI Worker name (defaults to {env}-{component}) */
   projectName?: string;
   /** API base URL for the UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   apiBaseUrl?: string;
@@ -545,19 +572,27 @@ export interface PagesDeployOptions extends DeployOptions {
   uiEnvPath?: string;
   /** Component-specific UI env generated at deploy time */
   uiEnvConfig?: UiEnvConfig;
-  /** Runtime backend URL for the Pages proxy (or a disable marker) */
+  /** Runtime backend URL for the UI Worker proxy (or a disable marker) */
   runtimeApiBackendUrl?: string;
-  /** Service Binding name for Pages → Worker communication (e.g., 'AR_ROUTER') */
+  /** Service Binding name for UI Worker -> router communication (e.g., 'AR_ROUTER') */
   serviceBindingName?: string;
+  /** Whether to expose the UI Worker on workers.dev */
+  workersDev?: boolean;
+  /** Custom-domain routes for the UI Worker */
+  routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
+  /** Optional Admin UI BFF machine credentials uploaded as UI Worker secrets */
+  adminUiBffSecrets?: AdminUiBffWorkerSecrets;
 }
 
 /**
- * Deploy a single UI package to Cloudflare Pages
+ * Deploy a single UI package to Cloudflare Workers static assets.
+ *
+ * Deploys AdminUI/LoginUI as Workers static assets.
  */
-export async function deployPagesComponent(
-  component: PagesComponent,
-  options: PagesDeployOptions
-): Promise<PagesDeployResult> {
+export async function deployUiWorkerComponent(
+  component: UiWorkerComponent,
+  options: UiWorkerDeployOptions
+): Promise<UiWorkerDeployResult> {
   const {
     env,
     rootDir,
@@ -569,6 +604,11 @@ export async function deployPagesComponent(
     uiEnvConfig,
     runtimeApiBackendUrl,
     serviceBindingName,
+    workersDev,
+    routes,
+    adminUiBffSecrets,
+    maxRetries = 3,
+    retryDelayMs = 5000,
   } = options;
 
   // Security: Validate environment name
@@ -583,8 +623,6 @@ export async function deployPagesComponent(
   }
 
   const uiDir = join(rootDir, 'packages', component);
-  // SvelteKit with adapter-cloudflare outputs to .svelte-kit/cloudflare
-  const distDir = join(uiDir, '.svelte-kit', 'cloudflare');
   const startTime = Date.now();
 
   if (!existsSync(uiDir)) {
@@ -606,13 +644,24 @@ export async function deployPagesComponent(
     onProgress?.(`Building ${component}...`);
 
     if (!dryRun) {
+      const generatedUiEnv = uiEnvConfig;
+      const runtimeSecretValue = serviceBindingName
+        ? DISABLED_API_BACKEND_URL
+        : (runtimeApiBackendUrl ?? DISABLED_API_BACKEND_URL);
+
       // Generate wrangler.toml for this environment before building.
-      // This ensures the correct project name and Service Binding are applied
-      // when wrangler reads the file during `wrangler pages deploy`.
-      const wranglerContent = generatePagesWranglerConfig({
+      // This ensures the correct Worker name, runtime vars, and Service Binding
+      // are applied when wrangler reads the file during `wrangler deploy`.
+      const wranglerContent = generateUiWorkersWranglerConfig({
         component,
         env,
         needsProxy: !!serviceBindingName,
+        workersDev,
+        routes,
+        vars: {
+          ...generatedUiEnv,
+          API_BACKEND_URL: runtimeSecretValue,
+        },
       });
       await writeFile(join(uiDir, 'wrangler.toml'), wranglerContent, 'utf-8');
       if (serviceBindingName) {
@@ -659,7 +708,7 @@ export async function deployPagesComponent(
       }
 
       try {
-        const buildEnv = buildPagesUiBuildEnv(process.env, {
+        const buildEnv = buildUiWorkerBuildEnv(process.env, {
           apiBaseUrl,
           preferPackageEnv: wrotePackageEnv || copiedUiEnv,
         });
@@ -678,10 +727,10 @@ export async function deployPagesComponent(
       }
     }
 
-    onProgress?.('Deploying to Cloudflare Pages...');
+    onProgress?.('Deploying UI Worker...');
 
     if (dryRun) {
-      onProgress?.(`[DRY RUN] Would deploy ${component} to Pages`);
+      onProgress?.(`[DRY RUN] Would deploy ${component} with wrangler deploy`);
       return {
         component,
         projectName: projectName || `${env}-${component}`,
@@ -691,104 +740,61 @@ export async function deployPagesComponent(
       };
     }
 
-    const pagesProjectName = projectName || `${env}-${component}`;
+    const uiWorkerName = projectName || `${env}-${component}`;
 
-    // First, try to create the project (will fail silently if already exists)
-    // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
-    onProgress?.(`Ensuring Pages project exists: ${pagesProjectName}...`);
-    await execa(
-      'npx',
-      ['wrangler', 'pages', 'project', 'create', pagesProjectName, '--production-branch', 'main'],
-      {
-        cwd: uiDir,
-        reject: false, // Ignore error if project already exists
-      }
-    );
-
-    // Set API_BACKEND_URL secret to control the Pages-side proxy explicitly.
-    // When Service Binding is used, disable HTTP fetch fallback (AR_ROUTER handles it).
-    // A valid URL enables the HTTP proxy; __DISABLED__ or other markers disable it.
-    const secretValue = serviceBindingName
-      ? DISABLED_API_BACKEND_URL
-      : (runtimeApiBackendUrl ?? DISABLED_API_BACKEND_URL);
-    if (runtimeApiBackendUrl !== undefined || serviceBindingName !== undefined) {
-      onProgress?.(`Setting API_BACKEND_URL secret for ${pagesProjectName}...`);
-      const secretResult = await execa(
-        'npx',
-        [
-          'wrangler',
-          'pages',
-          'secret',
-          'put',
-          'API_BACKEND_URL',
-          '--project-name',
-          pagesProjectName,
-        ],
-        {
-          cwd: uiDir,
-          input: secretValue,
-          reject: false,
-        }
-      );
-      if (secretResult.exitCode === 0) {
-        onProgress?.(`✓ API_BACKEND_URL secret set for ${component}`);
-      } else {
-        const secretError = secretResult.stderr || secretResult.stdout || 'Unknown error';
-        onProgress?.(`⚠️ Could not set API_BACKEND_URL secret: ${secretError}`);
-        return {
-          component,
-          projectName: pagesProjectName,
-          success: false,
-          error:
-            secretValue === DISABLED_API_BACKEND_URL
-              ? `Failed to disable API_BACKEND_URL secret: ${secretError}`
-              : `Failed to set API_BACKEND_URL secret: ${secretError}`,
-          duration: Date.now() - startTime,
-        };
-      }
-    }
-
-    // Deploy to Pages
-    // --branch=main ensures Production deployment regardless of current git branch
-    // --commit-dirty=true allows deployment even with uncommitted changes
-    const result = await execa(
-      'npx',
-      [
-        'wrangler',
-        'pages',
-        'deploy',
-        distDir,
-        '--project-name',
-        pagesProjectName,
-        '--branch',
-        'main',
-        '--commit-dirty',
-        'true',
-      ],
-      {
+    let result: Awaited<ReturnType<typeof execa>> | undefined;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      onProgress?.(`[${attempt}/${maxRetries}] Deploying UI Worker ${uiWorkerName}...`);
+      result = await execa('pnpm', ['exec', 'wrangler', 'deploy', '--config', 'wrangler.toml'], {
         cwd: uiDir,
         reject: false, // Don't throw on non-zero exit
-      }
-    );
+      });
 
-    if (result.exitCode !== 0) {
+      if (result.exitCode === 0 || attempt === maxRetries) {
+        break;
+      }
+
+      const errorOutput = String(result.stderr || result.stdout || 'Unknown error');
+      onProgress?.(`  ✗ UI Worker deploy attempt ${attempt} failed: ${errorOutput}`);
+      const delay = retryDelayMs * attempt;
+      onProgress?.(`  ⏳ Retrying in ${delay / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    if (!result || result.exitCode !== 0) {
       // Get meaningful error from stderr or stdout
-      const errorOutput = result.stderr || result.stdout || 'Unknown error';
-      onProgress?.(`Pages deploy error: ${errorOutput}`);
+      const errorOutput = result
+        ? String(result.stderr || result.stdout || 'Unknown error')
+        : 'Unknown error';
+      const hint = errorOutput.includes('assets-upload-session')
+        ? '\nCloudflare rejected the Workers Static Assets upload session. This is usually an account/API entitlement issue or a transient Cloudflare API failure, not a Svelte build error. Try updating Wrangler and retrying; if it persists, check Workers Static Assets availability for the Cloudflare account.'
+        : '';
+      onProgress?.(`UI Worker deploy error: ${errorOutput}${hint}`);
       return {
         component,
-        projectName: pagesProjectName,
+        projectName: uiWorkerName,
         success: false,
-        error: errorOutput,
+        error: `${errorOutput}${hint}`,
         duration: Date.now() - startTime,
       };
     }
 
-    onProgress?.(`✓ ${component} deployed to Pages: ${pagesProjectName}`);
+    onProgress?.(`✓ ${component} deployed as UI Worker: ${uiWorkerName}`);
+
+    if (component === 'ar-admin-ui' && adminUiBffSecrets) {
+      for (const [secretName, secretValue] of Object.entries(adminUiBffSecrets)) {
+        onProgress?.(`Uploading ${secretName} to ${uiWorkerName}...`);
+        await execa('pnpm', ['exec', 'wrangler', 'secret', 'put', secretName, '--env', env], {
+          cwd: uiDir,
+          input: secretValue,
+        });
+        onProgress?.(`  ✓ ${secretName} uploaded`);
+      }
+    }
 
     return {
       component,
-      projectName: pagesProjectName,
+      projectName: uiWorkerName,
       success: true,
       deployedAt: new Date().toISOString(),
       duration: Date.now() - startTime,
@@ -807,41 +813,44 @@ export async function deployPagesComponent(
   }
 }
 
-/** Summary for all Pages deployments */
-export interface PagesDeploymentSummary {
-  results: PagesDeployResult[];
+/** Summary for all UI Worker deployments */
+export interface UiWorkersDeploymentSummary {
+  results: UiWorkerDeployResult[];
   successCount: number;
   failedCount: number;
 }
 
 /**
- * Deploy all enabled UI packages to Cloudflare Pages
+ * Deploy all enabled UI packages to Cloudflare Workers static assets.
  */
-export async function deployAllPages(
+export async function deployAllUiWorkers(
   options: DeployOptions & {
     apiBaseUrl?: string;
     uiEnvPath?: string;
     perComponent?: Partial<
       Record<
-        PagesComponent,
+        UiWorkerComponent,
         Pick<
-          PagesDeployOptions,
+          UiWorkerDeployOptions,
           | 'apiBaseUrl'
           | 'projectName'
           | 'runtimeApiBackendUrl'
           | 'uiEnvConfig'
           | 'uiEnvPath'
           | 'serviceBindingName'
+          | 'workersDev'
+          | 'routes'
+          | 'adminUiBffSecrets'
         >
       >
     >;
   },
   enabledComponents: { loginUi: boolean; adminUi: boolean }
-): Promise<PagesDeploymentSummary> {
-  const results: PagesDeployResult[] = [];
+): Promise<UiWorkersDeploymentSummary> {
+  const results: UiWorkerDeployResult[] = [];
 
   if (enabledComponents.loginUi) {
-    const loginResult = await deployPagesComponent('ar-login-ui', {
+    const loginResult = await deployUiWorkerComponent('ar-login-ui', {
       ...options,
       ...(options.perComponent?.['ar-login-ui'] || {}),
     });
@@ -849,7 +858,7 @@ export async function deployAllPages(
   }
 
   if (enabledComponents.adminUi) {
-    const adminResult = await deployPagesComponent('ar-admin-ui', {
+    const adminResult = await deployUiWorkerComponent('ar-admin-ui', {
       ...options,
       ...(options.perComponent?.['ar-admin-ui'] || {}),
     });
@@ -864,11 +873,57 @@ export async function deployAllPages(
 }
 
 /**
- * @deprecated Use deployPagesComponent instead for new code
- * Deploy UI to Cloudflare Pages (legacy - deploys ar-login-ui)
+ * Create UI Worker scripts before ar-router is deployed.
+ *
+ * Cloudflare validates Service Binding targets at deploy time. In multi-tenant
+ * mode ar-router binds LOGIN_UI_WORKER/ADMIN_UI_WORKER, while some final UI
+ * deployments may also bind back to ar-router. This lightweight first pass
+ * breaks that first-deploy cycle; the full UI deployment later overwrites these
+ * scripts with the final env, routes, and secrets.
  */
-export async function deployPages(
+export async function deployUiWorkerBindingTargets(
+  options: DeployOptions & {
+    apiBaseUrl?: string;
+  },
+  enabledComponents: { loginUi: boolean; adminUi: boolean }
+): Promise<UiWorkersDeploymentSummary> {
+  const apiBaseUrl = options.apiBaseUrl || `https://${options.env}-ar-router.workers.dev`;
+  const placeholderUiEnv: UiEnvConfig = {
+    PUBLIC_API_BASE_URL: apiBaseUrl,
+    PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
+    API_BACKEND_URL: DISABLED_API_BACKEND_URL,
+  };
+
+  options.onProgress?.('Preparing UI Worker binding targets before router deploy...');
+
+  return deployAllUiWorkers(
+    {
+      ...options,
+      perComponent: {
+        'ar-login-ui': {
+          apiBaseUrl,
+          runtimeApiBackendUrl: DISABLED_API_BACKEND_URL,
+          uiEnvConfig: placeholderUiEnv,
+          serviceBindingName: undefined,
+          workersDev: true,
+          routes: [],
+        },
+        'ar-admin-ui': {
+          apiBaseUrl,
+          runtimeApiBackendUrl: DISABLED_API_BACKEND_URL,
+          uiEnvConfig: placeholderUiEnv,
+          serviceBindingName: undefined,
+          workersDev: true,
+          routes: [],
+        },
+      },
+    },
+    enabledComponents
+  );
+}
+
+export async function deployUiWorker(
   options: DeployOptions & { projectName?: string }
-): Promise<PagesDeployResult> {
-  return deployPagesComponent('ar-login-ui', options);
+): Promise<UiWorkerDeployResult> {
+  return deployUiWorkerComponent('ar-login-ui', options);
 }

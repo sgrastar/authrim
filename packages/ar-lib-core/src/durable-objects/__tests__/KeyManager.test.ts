@@ -1,6 +1,22 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { KeyManager } from '../KeyManager';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { KeyManager } from '../KeyManager.ts';
 import type { Env } from '../../types/env';
+
+vi.mock('../../utils/keys', () => ({
+  generateKeySet: async (kid: string) => ({
+    publicJWK: {
+      kty: 'RSA',
+      kid,
+      n: `mock-modulus-${kid}`,
+      e: 'AQAB',
+    },
+    privatePEM: [
+      '-----BEGIN PRIVATE KEY-----',
+      `mock-private-key-${kid}`,
+      '-----END PRIVATE KEY-----',
+    ].join('\n'),
+  }),
+}));
 
 /**
  * Mock implementation of DurableObjectState for testing
@@ -235,6 +251,57 @@ describe('KeyManager Durable Object', () => {
       expect(data).toHaveProperty('kid');
       expect(data).toHaveProperty('publicJWK');
     });
+
+    it('should persist a public certificate for a key only once', async () => {
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      const rotateResponse = await keyManager.fetch(rotateRequest);
+      const rotateData = (await rotateResponse.json()) as { key: { kid: string } };
+
+      const firstCertificate = [
+        '-----BEGIN CERTIFICATE-----',
+        'MIIBtest',
+        '-----END CERTIFICATE-----',
+      ].join('\n');
+      const secondCertificate = [
+        '-----BEGIN CERTIFICATE-----',
+        'MIIBdifferent',
+        '-----END CERTIFICATE-----',
+      ].join('\n');
+
+      const firstResponse = await keyManager.fetch(
+        createRequest('/internal/certificate', 'POST', 'test-secret-token', {
+          kid: rotateData.key.kid,
+          certificatePEM: firstCertificate,
+          certificateCreatedAt: 1778745600000,
+          certificateSha256Thumbprint: 'thumbprint-1',
+        })
+      );
+      expect(firstResponse.status).toBe(200);
+      const firstData = (await firstResponse.json()) as Record<string, unknown>;
+      expect(firstData.certificatePEM).toBe(firstCertificate);
+      expect(firstData.certificateCreatedAt).toBe(1778745600000);
+      expect(firstData.certificateSha256Thumbprint).toBe('thumbprint-1');
+
+      const secondResponse = await keyManager.fetch(
+        createRequest('/internal/certificate', 'POST', 'test-secret-token', {
+          kid: rotateData.key.kid,
+          certificatePEM: secondCertificate,
+          certificateCreatedAt: 1778745700000,
+          certificateSha256Thumbprint: 'thumbprint-2',
+        })
+      );
+      expect(secondResponse.status).toBe(200);
+      const secondData = (await secondResponse.json()) as Record<string, unknown>;
+      expect(secondData.certificatePEM).toBe(firstCertificate);
+      expect(secondData.certificateCreatedAt).toBe(1778745600000);
+      expect(secondData.certificateSha256Thumbprint).toBe('thumbprint-1');
+
+      const activeResponse = await keyManager.fetch(
+        createRequest('/internal/active-with-private', 'GET', 'test-secret-token')
+      );
+      const activeData = (await activeResponse.json()) as Record<string, unknown>;
+      expect(activeData.certificatePEM).toBe(firstCertificate);
+    });
   });
 
   describe('Key Generation', () => {
@@ -303,19 +370,41 @@ describe('KeyManager Durable Object', () => {
     });
 
     it('should exclude revoked keys from JWKS', async () => {
-      // Create and rotate keys
-      const rotate1 = createRequest('/rotate', 'POST', 'test-secret-token');
-      await keyManager.fetch(rotate1);
-
-      // Emergency rotate to revoke the first key
-      const emergencyRequest = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {
-        reason: 'Test key compromise scenario',
+      const seededState = new MockDurableObjectState();
+      const now = Date.now();
+      await seededState.storage.put('state', {
+        keys: [
+          {
+            kid: 'revoked-kid',
+            publicJWK: { kty: 'RSA', kid: 'revoked-kid', n: 'revoked-modulus', e: 'AQAB' },
+            privatePEM: 'revoked-private-key',
+            createdAt: now - 1000,
+            status: 'revoked',
+            revokedAt: now,
+            revokedReason: 'Test key compromise scenario',
+          },
+          {
+            kid: 'active-kid',
+            publicJWK: { kty: 'RSA', kid: 'active-kid', n: 'active-modulus', e: 'AQAB' },
+            privatePEM: 'active-private-key',
+            createdAt: now,
+            status: 'active',
+          },
+        ],
+        activeKeyId: 'active-kid',
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: now,
+        secrets: {},
       });
-      await keyManager.fetch(emergencyRequest);
+      const seededKeyManager = new KeyManager(seededState as unknown as DurableObjectState, env);
+      await Promise.resolve();
 
       // Get JWKS
       const jwksRequest = createRequest('/jwks', 'GET');
-      const jwksResponse = await keyManager.fetch(jwksRequest);
+      const jwksResponse = await seededKeyManager.fetch(jwksRequest);
       const jwksData = (await jwksResponse.json()) as Record<string, unknown>;
 
       // Should only have the new active key, not the revoked one
@@ -323,13 +412,78 @@ describe('KeyManager Durable Object', () => {
 
       // Get status to verify revoked key exists but not in JWKS
       const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
-      const statusResponse = await keyManager.fetch(statusRequest);
+      const statusResponse = await seededKeyManager.fetch(statusRequest);
       const statusData = (await statusResponse.json()) as Record<string, unknown>;
 
       // Should have 2 keys in status (one revoked, one active)
       expect(statusData.keys.length).toBe(2);
       const revokedKey = statusData.keys.find((k: { status: string }) => k.status === 'revoked');
       expect(revokedKey).toBeDefined();
+    });
+  });
+
+  describe('Secret management', () => {
+    it('should create and return a stable internal secret', async () => {
+      const firstResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid',
+          'GET',
+          'test-secret-token'
+        )
+      );
+      const secondResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid',
+          'GET',
+          'test-secret-token'
+        )
+      );
+
+      expect(firstResponse.status).toBe(200);
+      expect(secondResponse.status).toBe(200);
+
+      const first = (await firstResponse.json()) as {
+        secretRef: string;
+        active: { kid: string; value: string };
+        previous?: { value: string };
+      };
+      const second = (await secondResponse.json()) as {
+        secretRef: string;
+        active: { kid: string; value: string };
+      };
+
+      expect(first.secretRef).toBe('tenant:test:saml:pairwise-nameid');
+      expect(first.active.value).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(second.active.value).toBe(first.active.value);
+      expect(first.previous).toBeUndefined();
+    });
+
+    it('should rotate an internal secret while retaining the previous value', async () => {
+      const initialResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid',
+          'GET',
+          'test-secret-token'
+        )
+      );
+      const initial = (await initialResponse.json()) as { active: { value: string } };
+
+      const rotateResponse = await keyManager.fetch(
+        createRequest(
+          '/internal/secrets/tenant%3Atest%3Asaml%3Apairwise-nameid/rotate',
+          'POST',
+          'test-secret-token'
+        )
+      );
+
+      expect(rotateResponse.status).toBe(200);
+      const rotated = (await rotateResponse.json()) as {
+        active: { value: string };
+        previous?: { value: string };
+      };
+
+      expect(rotated.active.value).not.toBe(initial.active.value);
+      expect(rotated.previous?.value).toBe(initial.active.value);
     });
   });
 

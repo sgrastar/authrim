@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminRolesAPI,
 		type RoleDetail,
@@ -23,6 +24,7 @@
 	// Submit state
 	let submitting = $state(false);
 	let error = $state('');
+	let loadedTenantId = $state('');
 
 	// Check if there are unsaved changes
 	let hasChanges = $derived.by(() => {
@@ -78,7 +80,17 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		role = null;
+		error = '';
+		loadError = '';
 		loadRole();
 	});
 

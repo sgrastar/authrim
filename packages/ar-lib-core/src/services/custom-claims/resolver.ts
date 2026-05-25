@@ -9,7 +9,8 @@
  * Graceful degradation: errors return empty claims, never block the caller.
  */
 
-import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../../db';
 import { createLogger } from '../../utils/logger';
 import { SchemaLoader } from './schema-loader';
 import { ClaimScopeEvaluator } from './scope-evaluator';
@@ -66,6 +67,14 @@ export interface CustomClaimsFeatureConfig {
   enabled: boolean;
   introspectionEnabled: boolean;
   maxClaimsPerTarget: number;
+}
+
+export interface CustomClaimSchemaResolverSources {
+  schemaDb: DatabaseSource;
+  nonPiiDb: DatabaseSource;
+  piiDb: DatabaseSource | null;
+  cache: KVNamespace | null;
+  featureConfig?: CustomClaimsFeatureConfig;
 }
 
 // =============================================================================
@@ -251,17 +260,29 @@ export class CustomClaimSchemaResolver {
 // =============================================================================
 
 export function createCustomClaimSchemaResolver(
-  db: D1Database,
-  dbPii: D1Database | null,
+  db: DatabaseSource,
+  dbPii: DatabaseSource | null,
   cache: KVNamespace | null,
   featureConfig?: CustomClaimsFeatureConfig
 ): CustomClaimSchemaResolver {
+  return createCustomClaimSchemaResolverFromSources({
+    schemaDb: db,
+    nonPiiDb: db,
+    piiDb: dbPii,
+    cache,
+    featureConfig,
+  });
+}
+
+export function createCustomClaimSchemaResolverFromSources(
+  sources: CustomClaimSchemaResolverSources
+): CustomClaimSchemaResolver {
   return new CustomClaimSchemaResolver({
-    schemaLoader: new SchemaLoader(db, cache),
+    schemaLoader: new SchemaLoader(sources.schemaDb, sources.cache),
     scopeEvaluator: new ClaimScopeEvaluator(),
-    dataFetcher: new UserCustomDataFetcher(db, dbPii),
+    dataFetcher: new UserCustomDataFetcher(sources.nonPiiDb, sources.piiDb),
     valueCaster: new ClaimValueCaster(),
     nameResolver: new ClaimNameResolver(),
-    maxClaimsPerTarget: featureConfig?.maxClaimsPerTarget,
+    maxClaimsPerTarget: sources.featureConfig?.maxClaimsPerTarget,
   });
 }

@@ -6,12 +6,14 @@
 
 import { jwtVerify, importJWK, type JWK } from 'jose';
 import type { ClientMetadata } from '../types/oidc';
-import { isInternalUrl } from './url-security';
+import { isInternalUrl, safeFetchJson } from './url-security';
 import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
 import { timingSafeEqual } from './crypto';
 import { createLogger } from './logger';
 
 const log = createLogger().module('CLIENT_AUTH');
+const MAX_CLIENT_ASSERTION_SIZE_BYTES = 16 * 1024;
+const MAX_CLIENT_ASSERTION_SEGMENT_SIZE_BYTES = 8 * 1024;
 
 /**
  * Client Assertion Claims (RFC 7523 Section 3)
@@ -72,6 +74,15 @@ export async function validateClientAssertion(
   const { acceptIssuerIdAsAudience = true } = options;
 
   try {
+    const sizeError = validateAssertionSize(assertion);
+    if (sizeError) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: sizeError,
+      };
+    }
+
     // Step 1: Parse JWT to get claims (without verification first)
     const parts = assertion.split('.');
     if (parts.length !== 3) {
@@ -246,16 +257,14 @@ export async function validateClientAssertion(
           };
         }
 
-        log.debug(`Fetching JWKS from: ${client.jwks_uri}`);
-        const response = await fetch(client.jwks_uri, {
+        log.debug('Fetching JWKS from client jwks_uri');
+        const jwks = await safeFetchJson<{ keys: JWK[] }>(client.jwks_uri, {
           headers: {
             Accept: 'application/json',
           },
+          timeoutMs: 5000,
+          maxResponseSize: 256 * 1024,
         });
-        if (!response.ok) {
-          throw new Error(`Failed to fetch JWKS: ${response.status}`);
-        }
-        const jwks = (await response.json()) as { keys: JWK[] };
         if (jwks.keys && jwks.keys.length > 0) {
           jwksKeys = jwks.keys;
           log.debug(`Fetched ${jwksKeys.length} keys from jwks_uri`);
@@ -342,4 +351,18 @@ export async function validateClientAssertion(
       error_description: 'Failed to validate client assertion',
     };
   }
+}
+
+function validateAssertionSize(assertion: string): string | null {
+  if (new TextEncoder().encode(assertion).byteLength > MAX_CLIENT_ASSERTION_SIZE_BYTES) {
+    return 'Client assertion JWT is too large';
+  }
+
+  for (const segment of assertion.split('.')) {
+    if (new TextEncoder().encode(segment).byteLength > MAX_CLIENT_ASSERTION_SEGMENT_SIZE_BYTES) {
+      return 'Client assertion JWT segment is too large';
+    }
+  }
+
+  return null;
 }

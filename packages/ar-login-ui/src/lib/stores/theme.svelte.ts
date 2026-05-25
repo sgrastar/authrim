@@ -46,6 +46,22 @@ const STORAGE_KEY_DARK_VARIANT = 'authrim-dark-variant';
 const DEFAULT_LIGHT_VARIANT: LightVariant = 'beige';
 const DEFAULT_DARK_VARIANT: DarkVariant = 'brown';
 
+function getSavedPreferences() {
+	if (!browser) {
+		return {
+			savedTheme: null as ThemeMode | null,
+			savedLightVariant: null as LightVariant | null,
+			savedDarkVariant: null as DarkVariant | null
+		};
+	}
+
+	return {
+		savedTheme: localStorage.getItem(STORAGE_KEY_THEME) as ThemeMode | null,
+		savedLightVariant: localStorage.getItem(STORAGE_KEY_LIGHT_VARIANT) as LightVariant | null,
+		savedDarkVariant: localStorage.getItem(STORAGE_KEY_DARK_VARIANT) as DarkVariant | null
+	};
+}
+
 // Detect system preference
 function getSystemTheme(): ThemeMode {
 	if (!browser) return 'light';
@@ -68,6 +84,40 @@ function createThemeStore() {
 	let tenantLightVariant: LightVariant | null = null;
 	let tenantDarkVariant: DarkVariant | null = null;
 
+	function applyTenantDefaultsIfNeeded() {
+		if (!browser || !isInitialized) return;
+
+		const { savedTheme, savedLightVariant, savedDarkVariant } = getSavedPreferences();
+		let changed = false;
+
+		if (savedTheme !== 'light' && savedTheme !== 'dark' && tenantMode && mode !== tenantMode) {
+			mode = tenantMode;
+			changed = true;
+		}
+
+		if (
+			(!savedLightVariant || !LIGHT_VARIANTS.some((v) => v.id === savedLightVariant)) &&
+			tenantLightVariant &&
+			lightVariant !== tenantLightVariant
+		) {
+			lightVariant = tenantLightVariant;
+			changed = true;
+		}
+
+		if (
+			(!savedDarkVariant || !DARK_VARIANTS.some((v) => v.id === savedDarkVariant)) &&
+			tenantDarkVariant &&
+			darkVariant !== tenantDarkVariant
+		) {
+			darkVariant = tenantDarkVariant;
+			changed = true;
+		}
+
+		if (changed) {
+			applyTheme();
+		}
+	}
+
 	/**
 	 * Set tenant theme defaults from the login-methods API response.
 	 * These are used as fallback when the user has no localStorage preference.
@@ -85,6 +135,8 @@ function createThemeStore() {
 				tenantDarkVariant = variant as DarkVariant;
 			}
 		}
+
+		applyTenantDefaultsIfNeeded();
 	}
 
 	// Initialize from localStorage (browser only)
@@ -92,11 +144,7 @@ function createThemeStore() {
 	function init() {
 		if (!browser) return;
 
-		const savedTheme = localStorage.getItem(STORAGE_KEY_THEME) as ThemeMode | null;
-		const savedLightVariant = localStorage.getItem(
-			STORAGE_KEY_LIGHT_VARIANT
-		) as LightVariant | null;
-		const savedDarkVariant = localStorage.getItem(STORAGE_KEY_DARK_VARIANT) as DarkVariant | null;
+		const { savedTheme, savedLightVariant, savedDarkVariant } = getSavedPreferences();
 
 		// Mode: localStorage → tenant → system
 		if (savedTheme === 'light' || savedTheme === 'dark') {

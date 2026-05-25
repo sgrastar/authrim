@@ -32,7 +32,7 @@ const log = createLogger().module('SETTINGS_MANAGER');
 export type SettingScope =
   | { type: 'platform' }
   | { type: 'tenant'; id: string }
-  | { type: 'client'; id: string };
+  | { type: 'client'; id: string; tenantId: string };
 
 /**
  * Setting value source
@@ -259,7 +259,7 @@ function getKVKey(category: string, scope: SettingScope): string {
     case 'tenant':
       return `settings:tenant:${validateKVKeyPart(scope.id, 'tenantId')}:${safeCategory}`;
     case 'client':
-      return `settings:client:${validateKVKeyPart(scope.id, 'clientId')}:${safeCategory}`;
+      return `settings:client:${validateKVKeyPart(scope.tenantId, 'tenantId')}:${validateKVKeyPart(scope.id, 'clientId')}:${safeCategory}`;
   }
 }
 
@@ -382,10 +382,8 @@ export class SettingsManager {
       throw new Error(`Unknown category: ${category}`);
     }
 
-    // Platform settings are read-only
-    if (scope.type === 'platform') {
-      throw new Error('Platform settings are read-only');
-    }
+    // Platform writeability is enforced by the API layer. The manager only applies
+    // scoped patch semantics once the caller has authorized the scope/category pair.
 
     // Load current KV data directly from KV (skip cache to prevent TOCTOU race conditions)
     // This ensures we always read the latest KV data for version checking
@@ -496,12 +494,11 @@ export class SettingsManager {
 
       // Emit audit event
       if (this.auditCallback && Object.keys(diff).length > 0) {
-        // At this point scope is guaranteed to be tenant or client (platform throws earlier)
-        const scopeWithId = scope as { type: 'tenant' | 'client'; id: string };
+        const scopeId = scope.type === 'platform' ? 'platform' : scope.id;
         await this.auditCallback({
           event: 'settings.updated',
-          scope: scopeWithId.type,
-          scopeId: scopeWithId.id,
+          scope: scope.type,
+          scopeId,
           category,
           diff,
           actor,

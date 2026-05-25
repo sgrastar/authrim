@@ -42,6 +42,15 @@ vi.mock('@authrim/ar-lib-core', () => {
       requireStatusCheck: false,
       allowedAlgorithms: ['ES256', 'ES384', 'ES512'],
     }),
+    checkCredentialStatus: vi.fn().mockResolvedValue(true),
+    decodeBase64Url: vi.fn((value: string) => {
+      const padded = value
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+        .padEnd(Math.ceil(value.length / 4) * 4, '=');
+      return atob(padded);
+    }),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
     D1Adapter: class {
       constructor() {}
     },

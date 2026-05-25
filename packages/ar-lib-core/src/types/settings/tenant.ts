@@ -8,6 +8,7 @@
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 import type { UserIdFormat } from '../../utils/id';
+import type { SAMLAttributeReleaseFailureUserMessageMode } from '../saml';
 
 /**
  * Tenant Settings Interface
@@ -21,6 +22,19 @@ export interface TenantSettings {
 
   // CORS Settings
   'tenant.allowed_origins': string;
+  'tenant.allowed_domains': string;
+  'tenant.allowed_identifiers': string;
+
+  // Runtime Profile Overrides
+  'tenant.storage_profile_id': string;
+  'tenant.audit_profile_id': string;
+  'tenant.residency_profile_id': string;
+
+  // Browser Public Client Defaults
+  'tenant.browser_public_client_mode': 'strict' | 'cookie_fallback';
+
+  // SAML Defaults
+  'tenant.saml_attribute_release_failure_message_mode': SAMLAttributeReleaseFailureUserMessageMode;
 
   // Branding
   'tenant.name': string;
@@ -91,6 +105,72 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
       'Comma-separated list of allowed origins for Direct Auth API. Supports wildcards (e.g., https://*.pages.dev). If not set, all origins are allowed without credentials.',
     visibility: 'admin',
   },
+  'tenant.allowed_domains': {
+    key: 'tenant.allowed_domains',
+    type: 'string',
+    default: '',
+    label: 'Allowed Domains',
+    description:
+      'Comma-separated list of exact request hosts allowed for this tenant. Empty keeps the canonical issuer host only.',
+    visibility: 'admin',
+  },
+  'tenant.allowed_identifiers': {
+    key: 'tenant.allowed_identifiers',
+    type: 'string',
+    default: '',
+    label: 'Allowed Identifiers',
+    description:
+      'Comma-separated list of exact issuer/verifier identifiers allowed for this tenant. Empty disables additional identifier restrictions.',
+    visibility: 'admin',
+  },
+  'tenant.storage_profile_id': {
+    key: 'tenant.storage_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Storage Profile Override',
+    description:
+      'Optional storage profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.audit_profile_id': {
+    key: 'tenant.audit_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Audit Profile Override',
+    description:
+      'Optional audit profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.residency_profile_id': {
+    key: 'tenant.residency_profile_id',
+    type: 'string',
+    default: '',
+    label: 'Residency Profile Override',
+    description:
+      'Optional residency profile ID override for this tenant. Empty means inherit the environment default.',
+    visibility: 'admin',
+  },
+  'tenant.browser_public_client_mode': {
+    key: 'tenant.browser_public_client_mode',
+    type: 'enum',
+    default: 'cookie_fallback',
+    envKey: 'TENANT_BROWSER_PUBLIC_CLIENT_MODE',
+    label: 'Browser Public Client Mode',
+    description:
+      'Default hosted/built-in browser behavior. Custom browser SDK clients default to strict unless configured otherwise.',
+    enum: ['strict', 'cookie_fallback'],
+    visibility: 'admin',
+  },
+  'tenant.saml_attribute_release_failure_message_mode': {
+    key: 'tenant.saml_attribute_release_failure_message_mode',
+    type: 'enum',
+    default: 'generic',
+    label: 'SAML Attribute Failure Message Mode',
+    description:
+      'Default user-facing StatusMessage detail for SAML required attribute release failures. SP configuration can override this.',
+    enum: ['generic', 'detailed'],
+    visibility: 'admin',
+  },
 
   // Branding
   'tenant.name': {
@@ -138,7 +218,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_BASE_URL',
     label: 'UI Base URL',
     description: 'Base URL for authentication UI (if different from issuer)',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_login_path': {
     key: 'tenant.ui_login_path',
@@ -147,7 +227,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_LOGIN_PATH',
     label: 'Login Path',
     description: 'Path for user login page',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_consent_path': {
     key: 'tenant.ui_consent_path',
@@ -156,7 +236,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_CONSENT_PATH',
     label: 'Consent Path',
     description: 'Path for OAuth consent page',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_reauth_path': {
     key: 'tenant.ui_reauth_path',
@@ -165,7 +245,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_REAUTH_PATH',
     label: 'Reauth Path',
     description: 'Path for re-authentication page',
-    visibility: 'admin',
+    visibility: 'page',
   },
   'tenant.ui_error_path': {
     key: 'tenant.ui_error_path',
@@ -174,7 +254,7 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'UI_ERROR_PATH',
     label: 'Error Path',
     description: 'Path for error display page',
-    visibility: 'admin',
+    visibility: 'page',
   },
 };
 
@@ -198,6 +278,13 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.user_id_format': 'nanoid',
   // CORS Settings
   'tenant.allowed_origins': '',
+  'tenant.allowed_domains': '',
+  'tenant.allowed_identifiers': '',
+  'tenant.storage_profile_id': '',
+  'tenant.audit_profile_id': '',
+  'tenant.residency_profile_id': '',
+  'tenant.browser_public_client_mode': 'cookie_fallback',
+  'tenant.saml_attribute_release_failure_message_mode': 'generic',
   // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',

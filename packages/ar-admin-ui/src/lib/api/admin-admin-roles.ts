@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Roles Management API Client
  *
@@ -20,6 +21,7 @@ export interface AdminRole {
 	hierarchy_level: number;
 	role_type: 'system' | 'builtin' | 'custom';
 	is_system: boolean;
+	inherits_from: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -30,6 +32,46 @@ export interface AdminRole {
 export interface AdminRoleDetail extends AdminRole {
 	assigned_user_count: number;
 	assigned_user_ids: string[];
+}
+
+export type AdminRoleAssignmentScopeType = 'global' | 'tenant' | 'org';
+
+// Admin org scope is reserved for future resource-level enforcement.
+// New AdminUI/API assignments should only create global or tenant bindings.
+export type AssignableAdminRoleScopeType = 'global' | 'tenant';
+
+export interface AdminRoleAssignmentRecord {
+	id: string;
+	tenant_id: string;
+	admin_user_id: string;
+	admin_role_id: string;
+	scope_type: AdminRoleAssignmentScopeType;
+	scope_id: string | null;
+	expires_at: number | null;
+	assigned_by: string | null;
+	created_at: number;
+}
+
+export interface AdminRoleAssignmentWithUser extends AdminRoleAssignmentRecord {
+	user: {
+		id: string;
+		email: string;
+		name: string | null;
+		status: string;
+		is_active: boolean;
+	} | null;
+}
+
+export interface AdminRoleAssignmentListResponse {
+	items: AdminRoleAssignmentWithUser[];
+	total: number;
+}
+
+export interface AssignAdminRoleInput {
+	admin_user_id: string;
+	scope_type: AssignableAdminRoleScopeType;
+	scope_id?: string;
+	expires_at?: number;
 }
 
 /**
@@ -65,6 +107,7 @@ export interface CreateAdminRoleInput {
 	description?: string;
 	permissions: string[];
 	hierarchy_level?: number;
+	inherits_from?: string | null;
 }
 
 /**
@@ -75,6 +118,7 @@ export interface UpdateAdminRoleInput {
 	description?: string;
 	permissions?: string[];
 	hierarchy_level?: number;
+	inherits_from?: string | null;
 }
 
 /**
@@ -92,7 +136,7 @@ export const adminAdminRolesAPI = {
 		const queryString = params.toString();
 		const url = `${API_BASE_URL}/api/admin/admin-roles${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -109,7 +153,7 @@ export const adminAdminRolesAPI = {
 	 * GET /api/admin/admin-roles/:id
 	 */
 	async get(id: string): Promise<AdminRoleDetail> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}`,
 			{
 				credentials: 'include'
@@ -128,11 +172,122 @@ export const adminAdminRolesAPI = {
 	},
 
 	/**
+	 * List role assignments
+	 * GET /api/admin/admin-roles/:id/assignments
+	 */
+	async listAssignments(
+		id: string,
+		includeExpired: boolean = false
+	): Promise<AdminRoleAssignmentListResponse> {
+		const params = new URLSearchParams();
+		if (includeExpired) params.set('include_expired', 'true');
+
+		const queryString = params.toString();
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}/assignments${
+				queryString ? `?${queryString}` : ''
+			}`,
+			{
+				credentials: 'include'
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to fetch role assignments');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Assign this role to an admin user
+	 * POST /api/admin/admin-roles/:id/assignments
+	 */
+	async assignRole(id: string, data: AssignAdminRoleInput): Promise<AdminRoleAssignmentRecord> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}/assignments`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to assign role');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Update a role assignment
+	 * PATCH /api/admin/admin-roles/:id/assignments/:assignmentId
+	 */
+	async updateAssignment(
+		id: string,
+		assignmentId: string,
+		data: {
+			scope_type?: AssignableAdminRoleScopeType;
+			scope_id?: string;
+			expires_at?: number | null;
+		}
+	): Promise<AdminRoleAssignmentRecord> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}/assignments/${encodeURIComponent(
+				assignmentId
+			)}`,
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(data)
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to update role assignment');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Remove a role assignment
+	 * DELETE /api/admin/admin-roles/:id/assignments/:assignmentId
+	 */
+	async removeAssignment(
+		id: string,
+		assignmentId: string
+	): Promise<{ success: boolean; message: string }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}/assignments/${encodeURIComponent(
+				assignmentId
+			)}`,
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to remove role assignment');
+		}
+
+		return response.json();
+	},
+
+	/**
 	 * Create a new custom admin role
 	 * POST /api/admin/admin-roles
 	 */
 	async create(data: CreateAdminRoleInput): Promise<AdminRole> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-roles`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-roles`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -152,7 +307,7 @@ export const adminAdminRolesAPI = {
 	 * PATCH /api/admin/admin-roles/:id
 	 */
 	async update(id: string, data: UpdateAdminRoleInput): Promise<AdminRole> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}`,
 			{
 				method: 'PATCH',
@@ -175,7 +330,7 @@ export const adminAdminRolesAPI = {
 	 * DELETE /api/admin/admin-roles/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(id)}`,
 			{
 				method: 'DELETE',
@@ -196,7 +351,7 @@ export const adminAdminRolesAPI = {
 	 * GET /api/admin/admin-roles/permissions/list
 	 */
 	async listPermissions(): Promise<AdminPermissionListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-roles/permissions/list`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-roles/permissions/list`, {
 			credentials: 'include'
 		});
 
@@ -280,7 +435,205 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 	{
 		category: 'Admin Audit',
 		description: 'View Admin audit logs',
-		permissions: [{ key: 'admin:admin_audit:read', description: 'View Admin audit logs' }]
+		permissions: [
+			{ key: 'admin:admin_audit:read', description: 'View Admin audit logs' },
+			{
+				key: 'admin:admin_audit:detail:read',
+				description: 'Read full Admin audit detail payloads'
+			}
+		]
+	},
+	{
+		category: 'Approvals',
+		description: 'Manage approval and elevation workflows',
+		permissions: [
+			{ key: 'admin:approvals:read', description: 'View approval requests' },
+			{ key: 'admin:approvals:write', description: 'Create and update approval requests' },
+			{ key: 'admin:approvals:approve', description: 'Approve or deny approval steps' },
+			{ key: 'admin:approvals:*', description: 'Full approval workflow access' }
+		]
+	},
+	{
+		category: 'Jobs',
+		description: 'Manage async admin jobs and their output artifacts',
+		permissions: [
+			{ key: 'admin:jobs:read', description: 'View job status and summaries' },
+			{ key: 'admin:jobs:write', description: 'Create and manage jobs' },
+			{
+				key: 'admin:jobs:artifact:read',
+				description: 'Read full job result artifacts and chunks'
+			},
+			{
+				key: 'admin:jobs:destination:select',
+				description: 'Select approved storage destinations for job outputs'
+			},
+			{ key: 'admin:jobs:*', description: 'Full job management access' }
+		]
+	},
+	{
+		category: 'Storage Destinations',
+		description: 'Manage reusable storage endpoints for logs, jobs, and DR backup',
+		permissions: [
+			{ key: 'admin:storage_destinations:list', description: 'List storage destinations' },
+			{ key: 'admin:storage_destinations:read', description: 'View storage destination metadata' },
+			{
+				key: 'admin:storage_destinations:create',
+				description: 'Create storage destinations'
+			},
+			{
+				key: 'admin:storage_destinations:update',
+				description: 'Update storage destination metadata'
+			},
+			{ key: 'admin:storage_destinations:delete', description: 'Delete storage destinations' },
+			{
+				key: 'admin:storage_destinations:credentials:write',
+				description: 'Create or rotate storage destination credentials'
+			},
+			{
+				key: 'admin:storage_destinations:test',
+				description: 'Test storage destination connectivity'
+			},
+			{
+				key: 'admin:storage_destinations:usage:read',
+				description: 'View feature usage for storage destinations'
+			},
+			{ key: 'admin:storage_destinations:*', description: 'Full storage destination access' }
+		]
+	},
+	{
+		category: 'Destination Selection',
+		description: 'Select approved storage destinations from feature settings',
+		permissions: [
+			{
+				key: 'admin:diagnostic_logging:destination:select',
+				description: 'Select diagnostic logging storage destination'
+			},
+			{
+				key: 'admin:dr_backup:destination:select',
+				description: 'Select DR backup storage destination'
+			}
+		]
+	},
+	{
+		category: 'Database Connections',
+		description: 'Manage platform database connection profiles',
+		permissions: [
+			{ key: 'admin:database_connections:list', description: 'List database connections' },
+			{ key: 'admin:database_connections:read', description: 'View database connection metadata' },
+			{ key: 'admin:database_connections:create', description: 'Create database connections' },
+			{
+				key: 'admin:database_connections:update',
+				description: 'Update database connection metadata'
+			},
+			{ key: 'admin:database_connections:delete', description: 'Delete database connections' },
+			{
+				key: 'admin:database_connections:credentials:write',
+				description: 'Create or rotate database connection credentials'
+			},
+			{ key: 'admin:database_connections:test', description: 'Test database connectivity' },
+			{ key: 'admin:database_connections:*', description: 'Full database connection access' }
+		]
+	},
+	{
+		category: 'Database Routing',
+		description: 'Future platform database routing and cutover operations',
+		permissions: [
+			{ key: 'admin:database_routing:read', description: 'View database routing state' },
+			{ key: 'admin:database_routing:write', description: 'Stage database routing changes' },
+			{ key: 'admin:database_routing:switch', description: 'Switch runtime database route' },
+			{ key: 'admin:database_routing:rollback', description: 'Rollback database routing changes' },
+			{ key: 'admin:database_routing:*', description: 'Full database routing access' }
+		]
+	},
+	{
+		category: 'Operational Logs',
+		description: 'Read short-retention reason detail records',
+		permissions: [
+			{ key: 'admin:operational_logs:read', description: 'View operational log summaries' },
+			{
+				key: 'admin:operational_logs:detail:read',
+				description: 'Read full operational log reason detail payloads'
+			},
+			{ key: 'admin:operational_logs:*', description: 'Full operational log access' }
+		]
+	},
+	{
+		category: 'Webhooks',
+		description: 'Manage webhooks and read delivery payloads',
+		permissions: [
+			{ key: 'admin:webhooks:read', description: 'View webhook configurations' },
+			{ key: 'admin:webhooks:write', description: 'Create and update webhooks' },
+			{ key: 'admin:webhooks:delete', description: 'Delete webhooks' },
+			{
+				key: 'admin:webhooks:payload:read',
+				description: 'Read full webhook delivery request/response payloads'
+			}
+		]
+	},
+	{
+		category: 'External Identity Providers',
+		description: 'Manage social login and upstream federation providers',
+		permissions: [
+			{ key: 'admin:external_providers:read', description: 'View external identity providers' },
+			{
+				key: 'admin:external_providers:write',
+				description: 'Create and update external identity providers'
+			},
+			{
+				key: 'admin:external_providers:delete',
+				description: 'Delete external identity providers'
+			},
+			{ key: 'admin:external_providers:*', description: 'Full external provider management' },
+			{
+				key: 'admin:external_token_refresh:read',
+				description: 'View external IdP token refresh settings and run history'
+			},
+			{
+				key: 'admin:external_token_refresh:write',
+				description: 'Update external IdP token refresh settings'
+			},
+			{
+				key: 'admin:external_token_refresh:run',
+				description: 'Run external IdP token refresh'
+			},
+			{
+				key: 'admin:external_token_refresh:*',
+				description: 'Full external IdP token refresh operations'
+			}
+		]
+	},
+	{
+		category: 'SAML Providers',
+		description: 'Manage SAML federation providers and metadata rollover',
+		permissions: [
+			{ key: 'admin:saml_providers:list', description: 'List SAML providers' },
+			{ key: 'admin:saml_providers:read', description: 'View SAML provider details' },
+			{ key: 'admin:saml_providers:create', description: 'Create SAML providers' },
+			{ key: 'admin:saml_providers:update', description: 'Update SAML providers' },
+			{ key: 'admin:saml_providers:delete', description: 'Delete SAML providers' },
+			{
+				key: 'admin:saml_providers:metadata:import',
+				description: 'Import SAML provider metadata'
+			},
+			{
+				key: 'admin:saml_providers:metadata:refresh',
+				description: 'Refresh SAML provider metadata'
+			},
+			{
+				key: 'admin:saml_providers:signing:publish_next',
+				description: 'Publish next SAML signing certificate'
+			},
+			{
+				key: 'admin:saml_providers:signing:promote',
+				description: 'Promote next SAML signing certificate'
+			},
+			{
+				key: 'admin:saml_providers:signing:retire_backup',
+				description: 'Retire backup SAML signing certificate'
+			},
+			{ key: 'admin:saml_providers:*', description: 'Full SAML provider management' },
+			{ key: 'admin:saml_attribute_presets:read', description: 'View SAML attribute presets' }
+		]
 	},
 	{
 		category: 'IP Allowlist',
@@ -312,6 +665,22 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 		]
 	},
 	{
+		category: 'Admin Machine Access',
+		description: 'Manage scoped machine principals and credentials',
+		permissions: [
+			{ key: 'admin:machine_access:read', description: 'View machine principals and credentials' },
+			{
+				key: 'admin:machine_access:write',
+				description: 'Create and update machine principals, credentials, permissions, and scopes'
+			},
+			{
+				key: 'admin:machine_access:delete',
+				description: 'Disable principals and revoke machine credentials'
+			},
+			{ key: 'admin:machine_access:*', description: 'Full Admin Machine Access management' }
+		]
+	},
+	{
 		category: 'End User Roles',
 		description: 'Manage end user roles',
 		permissions: [
@@ -327,6 +696,16 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 		permissions: [
 			{ key: 'admin:settings:read', description: 'View system settings' },
 			{ key: 'admin:settings:write', description: 'Update system settings' }
+		]
+	},
+	{
+		category: 'Tenant Domains',
+		description: 'Manage tenant vanity domains',
+		permissions: [
+			{ key: 'admin:tenant_domains:read', description: 'View tenant vanity domains' },
+			{ key: 'admin:tenant_domains:write', description: 'Create and update tenant vanity domains' },
+			{ key: 'admin:tenant_domains:delete', description: 'Delete tenant vanity domains' },
+			{ key: 'admin:tenant_domains:*', description: 'Full tenant vanity domain management' }
 		]
 	},
 	{

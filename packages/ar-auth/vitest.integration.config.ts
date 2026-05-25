@@ -23,13 +23,8 @@ export default defineConfig({
     // Longer timeout for integration tests
     testTimeout: 30000,
     hookTimeout: 30000,
-    // Run tests sequentially to avoid race conditions
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        isolate: true,
-      },
-    },
+    isolate: true,
     fileParallelism: false,
   },
   resolve: {

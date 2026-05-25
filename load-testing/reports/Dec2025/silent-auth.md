@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "Test Date: December 11, 2025 Target: Authrim OIDC Provider - Authorization Endpoint (prompt=none) Test Tool: K6 Cloud (Distributed Load Testing) Monitoring: Cloudflare Analytics."
+type: report
+tags:
+  - authrim
+  - load-testing
+  - performance
+  - oidc
+  - testing
+  - cloudflare-workers
+---
 # Silent Authentication Load Test Report
 
 **Test Date**: December 11, 2025
@@ -153,6 +167,22 @@ GET /authorize?response_type=code&client_id=xxx&redirect_uri=xxx&scope=openid&pr
 | 3,000 |         1,336,694 |         0 | 183.39 | 731.48 | 1,040.33 | 1,311.51 |  1,691.65 |
 | 3,500 |         1,565,263 |         0 | 178.94 | 190.19 |   690.62 | 1,380.58 |  1,515.72 |
 | 4,000 |         1,796,556 |     1,223 | 172.92 | 182.15 |   190.99 |   441.97 |  2,317.21 |
+
+### 5.5 D1 Database Metrics
+
+| RPS | Read Queries | Write Queries | Reporting Status |
+| --: | -----------: | ------------: | ---------------- |
+| 500 |          N/A |           N/A | Not captured     |
+| 1,000 |        N/A |           N/A | Not captured     |
+| 1,500 |        N/A |           N/A | Not captured     |
+| 2,000 |        N/A |           N/A | Not captured     |
+| 2,500 |        N/A |           N/A | Not captured     |
+| 3,000 |        N/A |           N/A | Not captured     |
+| 3,500 |        N/A |           N/A | Not captured     |
+| 4,000 |        N/A |           N/A | Not captured     |
+
+> **Reporting gap**: The December 11 silent-auth run did not archive D1 read/write counters.
+> Future storage-profile comparisons must include D1 query/write counters for every run.
 
 ---
 

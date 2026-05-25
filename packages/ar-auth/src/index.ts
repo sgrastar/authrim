@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
+import { bodyLimit } from 'hono/body-limit';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   rateLimitMiddleware,
@@ -24,8 +25,12 @@ import {
   csrfProtectionMiddleware,
   // Logger
   getLogger,
+  // Tenant-aware utilities
+  getTenantIdFromContext,
+  getTenantSettings,
 } from '@authrim/ar-lib-core';
-import { resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
+import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { getRequestIssuer } from './issuer';
 
 // Import handlers
@@ -71,6 +76,7 @@ import {
   directPasskeyRegisterFinishHandler,
   directEmailCodeSendHandler,
   directEmailCodeVerifyHandler,
+  directSessionCreateHandler,
   directTokenHandler,
   directSessionHandler,
   directLogoutHandler,
@@ -78,12 +84,35 @@ import {
 import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
+const AUTH_REQUEST_BODY_MAX_BYTES = 100 * 1024;
 
 // Middleware
 app.use('*', logger());
 app.use('*', requestContextMiddleware());
+app.use('*', (c, next) =>
+  bodyLimit({
+    maxSize: AUTH_REQUEST_BODY_MAX_BYTES,
+    onError: (ctx) =>
+      ctx.json(
+        {
+          error: 'payload_too_large',
+          error_description: 'Request body exceeds maximum allowed size',
+        },
+        413
+      ),
+  })(c, next)
+);
 app.use(
   '*',
   diagnosticLoggingMiddleware({
@@ -91,10 +120,20 @@ app.use(
   })
 );
 
-// Plugin Context - provides access to notifiers, idp handlers, authenticators
-// Plugins are loaded lazily on first request and cached per Worker lifecycle
-// Configuration resolved: KV → env → configSchema defaults
-const loadPlugins = createPluginLoader([{ plugin: resendEmailPlugin }]);
+// Plugin Context - provides access to notifiers, idp handlers, authenticators.
+// Bootstrap config comes from Worker env, but tenant/global KV overrides remain authoritative.
+const loadPlugins = createPluginLoader([
+  {
+    plugin: cloudflareEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, cloudflareEmailPlugin.id),
+  },
+  {
+    plugin: resendEmailPlugin,
+    skipIfConfigEmpty: true,
+    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
+  },
+]);
 app.use('*', pluginContextMiddleware({ loadPlugins }));
 
 // Enhanced security headers
@@ -144,18 +183,13 @@ app.use('*', async (c, next) => {
   // Try to get allowed origins from KV (Settings Manager format)
   let allowedOriginsValue: string | undefined;
 
-  if (c.env.AUTHRIM_CONFIG) {
-    try {
-      const kvData = await c.env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
-      if (kvData) {
-        const settings = JSON.parse(kvData) as Record<string, unknown>;
-        if (typeof settings['tenant.allowed_origins'] === 'string') {
-          allowedOriginsValue = settings['tenant.allowed_origins'];
-        }
-      }
-    } catch {
-      // KV read failed, fall through to env
-    }
+  const tenantSettings = await getTenantSettings(
+    c.env.AUTHRIM_CONFIG,
+    getTenantIdFromContext(c),
+    'tenant'
+  );
+  if (tenantSettings && typeof tenantSettings['tenant.allowed_origins'] === 'string') {
+    allowedOriginsValue = tenantSettings['tenant.allowed_origins'];
   }
 
   // Fallback to environment variable, then ISSUER_URL
@@ -336,6 +370,7 @@ app.post('/auth/consent', consentPostHandler);
 
 // Login Challenge endpoints (for OIDC Dynamic OP conformance - logo_uri, policy_uri, tos_uri display)
 app.get('/api/auth/login-challenges', loginChallengeGetHandler);
+app.get('/auth/login-challenge', loginChallengeGetHandler);
 
 // Session Management endpoints (RESTful naming)
 app.post('/api/sessions', issueSessionTokenHandler); // Issue new session token
@@ -473,6 +508,7 @@ app.post('/api/v1/auth/direct/email-code/verify', directEmailCodeVerifyHandler);
 app.post('/api/v1/auth/direct/token', directTokenHandler);
 
 // Session endpoint
+app.post('/api/v1/auth/direct/session', directSessionCreateHandler);
 app.get('/api/v1/auth/direct/session', directSessionHandler);
 
 // Logout endpoint
@@ -603,9 +639,9 @@ app.get('/logout-error', async (c) => {
 <body>
   <div class="container">
     <div class="icon">⚠</div>
-    <h1>${errorInfo.title}</h1>
-    <p>${errorInfo.description}</p>
-    <div class="error-code">Error: ${error}</div>
+    <h1>${escapeHtml(errorInfo.title)}</h1>
+    <p>${escapeHtml(errorInfo.description)}</p>
+    <div class="error-code">Error: ${escapeHtml(error)}</div>
     <div class="footer">Powered by Authrim</div>
   </div>
 </body>

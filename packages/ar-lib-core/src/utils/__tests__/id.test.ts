@@ -117,8 +117,14 @@ describe('ID Generation Utilities', () => {
 
   describe('getUserIdFormatFromSettings', () => {
     it('should return default format when KV is undefined', async () => {
-      const format = await getUserIdFormatFromSettings(undefined);
+      const format = await getUserIdFormatFromSettings(undefined, 'default');
       expect(format).toBe(DEFAULT_USER_ID_FORMAT);
+    });
+
+    it('should reject a missing tenant ID', async () => {
+      await expect(getUserIdFormatFromSettings(undefined, '')).rejects.toThrow(
+        'getUserIdFormatFromSettings requires tenantId'
+      );
     });
 
     it('should return nanoid when setting is "nanoid"', async () => {
@@ -179,10 +185,16 @@ describe('ID Generation Utilities', () => {
 
   describe('generateUserIdFromSettings', () => {
     it('should generate NanoID when KV is undefined', async () => {
-      const id = await generateUserIdFromSettings(undefined);
+      const id = await generateUserIdFromSettings(undefined, 'default');
 
       expect(id).toHaveLength(21);
       expect(id).toMatch(/^[A-Za-z0-9_-]{21}$/);
+    });
+
+    it('should reject a missing tenant ID', async () => {
+      await expect(generateUserIdFromSettings(undefined, '')).rejects.toThrow(
+        'getUserIdFormatFromSettings requires tenantId'
+      );
     });
 
     it('should generate NanoID when setting is "nanoid"', async () => {

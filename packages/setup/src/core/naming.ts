@@ -28,7 +28,7 @@ export const WORKER_COMPONENTS = [
 
 export type WorkerComponent = (typeof WORKER_COMPONENTS)[number];
 
-// Core components that are always deployed
+// Standard components that are always deployed
 export const CORE_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-lib-core',
   'ar-discovery',
@@ -36,17 +36,16 @@ export const CORE_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-token',
   'ar-userinfo',
   'ar-management',
-  'ar-router',
-];
-
-// Optional components
-export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-async',
   'ar-policy',
   'ar-saml',
   'ar-bridge',
   'ar-vc',
+  'ar-router',
 ];
+
+// Reserved for future install-time optional workers.
+export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [];
 
 // =============================================================================
 // Durable Objects
@@ -54,6 +53,7 @@ export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [
 
 export const DURABLE_OBJECTS = [
   { name: 'SESSION_STORE', className: 'SessionStore' },
+  { name: 'SESSION_CLIENT_STORE', className: 'SessionClientStore' },
   { name: 'KEY_MANAGER', className: 'KeyManager' },
   { name: 'AUTH_CODE_STORE', className: 'AuthorizationCodeStore' },
   { name: 'REFRESH_TOKEN_ROTATOR', className: 'RefreshTokenRotator' },
@@ -66,6 +66,7 @@ export const DURABLE_OBJECTS = [
   { name: 'TOKEN_REVOCATION_STORE', className: 'TokenRevocationStore' },
   { name: 'VERSION_MANAGER', className: 'VersionManager' },
   { name: 'SAML_REQUEST_STORE', className: 'SAMLRequestStore' },
+  { name: 'SAML_AGGREGATE_METADATA_STORE', className: 'SAMLAggregateMetadataStore' },
   { name: 'PERMISSION_CHANGE_HUB', className: 'PermissionChangeHub' },
   { name: 'FLOW_STATE_STORE', className: 'FlowStateStore' },
 ] as const;
@@ -83,6 +84,7 @@ export const KV_NAMESPACES = [
   'REBAC_CACHE',
   'USER_CACHE',
   'AUTHRIM_CONFIG',
+  'TENANT_RUNTIME_REGISTRY',
   'STATE_STORE',
   'CONSENT_CACHE',
 ] as const;
@@ -175,16 +177,6 @@ export function getAutoWorkerUrl(
   accountSubdomain: string
 ): string {
   return `https://${getWorkerName(env, component)}.${accountSubdomain}.workers.dev`;
-}
-
-/**
- * Generate auto URL for Pages (pages.dev domain)
- *
- * @example
- * getAutoPagesUrl('prod', 'ar-login-ui') => 'https://prod-ar-login-ui.pages.dev'
- */
-export function getAutoPagesUrl(env: string, projectName: string): string {
-  return `https://${env}-${projectName}.pages.dev`;
 }
 
 // =============================================================================

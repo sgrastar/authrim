@@ -124,6 +124,17 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
     getTenantIdFromContext: () => 'default',
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
   };
 });
 
@@ -249,6 +260,7 @@ function createMockContext(options: {
   method?: string;
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
+  url?: string;
   db?: D1Database;
   dbPII?: D1Database;
   challengeStore?: ReturnType<typeof createMockChallengeStore>;
@@ -278,6 +290,15 @@ function createMockContext(options: {
   const c = {
     req: {
       method: options.method || 'POST',
+      url:
+        options.url ??
+        (() => {
+          const host = options.headers?.host ?? 'example.com';
+          const isLocalhost =
+            host.startsWith('localhost') || host.startsWith('127.0.0.1') || host.startsWith('::1');
+          const protocol = isLocalhost ? 'http' : 'https';
+          return `${protocol}://${host}/api/auth/passkeys/test`;
+        })(),
       json: vi.fn().mockResolvedValue(options.body ?? {}),
       header: vi.fn().mockImplementation((name: string) => {
         return options.headers?.[name.toLowerCase()] ?? null;
@@ -453,6 +474,30 @@ describe('Passkey Handlers', () => {
       expect(body.error).toBe('access_denied');
     });
 
+    it('should allow same-origin requests even when not listed in allowed origins', async () => {
+      const c = createMockContext({
+        body: { email: 'tenant-user@example.com' },
+        headers: {
+          host: 'first.multi-tenant.authrim.com',
+          origin: 'https://first.multi-tenant.authrim.com',
+        },
+      });
+
+      c.env.ALLOWED_ORIGINS = 'https://admin.multi-tenant.authrim.com';
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            challenge: expect.any(String),
+          }),
+          userId: expect.any(String),
+        })
+      );
+    });
+
     it('should generate registration options for new user', async () => {
       // Setup: No existing user found via Repository
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
@@ -480,6 +525,46 @@ describe('Passkey Handlers', () => {
           userId: expect.any(String),
         })
       );
+    });
+
+    it('should return missing_required_fields when registration fields are required', async () => {
+      const db = createMockDB({
+        allResults: [
+          {
+            field_key: 'department',
+            display_label: 'Department',
+            field_type: 'string',
+            registration_required: 1,
+            validation_rules: null,
+          },
+        ],
+      });
+
+      const c = createMockContext({
+        body: { email: 'newuser@example.com' },
+        headers: { origin: 'https://example.com' },
+        db,
+      });
+
+      const response = await passkeyRegisterOptionsHandler(c);
+      const body = (await response.json()) as {
+        error: string;
+        missing_required_fields?: Array<{
+          field_key: string;
+          label: string;
+          field_type: string;
+        }>;
+      };
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
     });
 
     it('should generate registration options for existing user', async () => {
@@ -603,6 +688,30 @@ describe('Passkey Handlers', () => {
       expect(body.error).toBe('access_denied');
     });
 
+    it('should allow same-origin login requests even when not listed in allowed origins', async () => {
+      const c = createMockContext({
+        body: {},
+        headers: {
+          host: 'first.multi-tenant.authrim.com',
+          origin: 'https://first.multi-tenant.authrim.com',
+        },
+      });
+
+      c.env.ALLOWED_ORIGINS = 'https://admin.multi-tenant.authrim.com';
+
+      const response = await passkeyLoginOptionsHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            challenge: expect.any(String),
+          }),
+          challengeId: expect.any(String),
+        })
+      );
+    });
+
     it('should include user credentials when email provided', async () => {
       // PII/Non-PII DB Separation via Repository pattern:
       // 1. Query PII DB for user by email
@@ -704,16 +813,26 @@ describe('Passkey Handlers', () => {
     });
 
     it('should verify registration and create session on success', async () => {
-      const challengeStore = createMockChallengeStore();
       const sessionStore = createMockSessionStore();
+      const db = createMockDB({
+        allResults: [
+          {
+            field_key: 'department',
+            display_label: 'Department',
+            field_type: 'string',
+            registration_required: 0,
+            validation_rules: null,
+          },
+        ],
+      });
 
-      // Pre-store a challenge (will be consumed via /challenge/consume)
-      challengeStore._challenges.set('passkey_reg:user-123', {
-        id: 'passkey_reg:user-123',
-        type: 'passkey_registration',
-        userId: 'user-123',
+      mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValueOnce({
         challenge: 'mock-challenge-base64',
-        email: 'test@example.com',
+        metadata: {
+          custom_fields: {
+            department: 'Platform',
+          },
+        },
       });
 
       // Setup: User found after registration via Repository
@@ -744,8 +863,8 @@ describe('Passkey Handlers', () => {
           },
         },
         headers: { origin: 'https://example.com' },
-        challengeStore,
         sessionStore,
+        db,
       });
 
       await passkeyRegisterVerifyHandler(c);
@@ -757,6 +876,9 @@ describe('Passkey Handlers', () => {
           credential_id: expect.any(String),
           public_key: expect.any(String),
         })
+      );
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO user_custom_fields')
       );
     });
   });

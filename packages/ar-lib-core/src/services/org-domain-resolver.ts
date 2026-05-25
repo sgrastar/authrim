@@ -11,9 +11,10 @@
  * - Respect for JIT Provisioning configuration
  */
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter } from '../db';
 import type { OrgDomainMapping, OrgDomainMappingRow } from '../types/policy-rules';
-import type { JITProvisioningConfig, EmailDomainHashConfig } from '../types/jit-config';
+import type { JITProvisioningConfig } from '../types/jit-config';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('ORG-DOMAIN-RESOLVER');
@@ -50,6 +51,10 @@ export interface OrgJoinResult {
  */
 type MembershipType = 'member' | 'admin' | 'owner';
 
+function getAdapter(db: DatabaseSource) {
+  return ensureDatabaseAdapter(db, 'org-domain-resolver');
+}
+
 // =============================================================================
 // Domain Resolution
 // =============================================================================
@@ -62,14 +67,14 @@ type MembershipType = 'member' | 'admin' | 'owner';
  * 2. priority DESC (higher priority first)
  * 3. created_at ASC (older mappings first for tie-breaking)
  *
- * @param db - D1 database instance
+ * @param db - Database source
  * @param domainHash - HMAC-SHA256 hash of email domain
  * @param tenantId - Tenant ID for isolation
  * @param config - JIT Provisioning configuration
  * @returns First matching organization or null
  */
 export async function resolveOrgByDomainHash(
-  db: D1Database,
+  db: DatabaseSource,
   domainHash: string,
   tenantId: string,
   config: JITProvisioningConfig
@@ -81,18 +86,19 @@ export async function resolveOrgByDomainHash(
 /**
  * Resolve all matching organizations by domain hash
  *
- * @param db - D1 database instance
+ * @param db - Database source
  * @param domainHash - HMAC-SHA256 hash of email domain
  * @param tenantId - Tenant ID for isolation
  * @param config - JIT Provisioning configuration (optional)
  * @returns Array of matching organizations (sorted by priority)
  */
 export async function resolveAllOrgsByDomainHash(
-  db: D1Database,
+  db: DatabaseSource,
   domainHash: string,
   tenantId: string,
   config?: JITProvisioningConfig
 ): Promise<ResolvedOrganization[]> {
+  const adapter = getAdapter(db);
   // Build query with optional verified filter
   let query = `
     SELECT
@@ -119,27 +125,28 @@ export async function resolveAllOrgsByDomainHash(
       created_at ASC
   `;
 
-  const result = await db.prepare(query).bind(tenantId, domainHash).all<OrgDomainMappingRow>();
+  const rows = await adapter.query<OrgDomainMappingRow>(query, [tenantId, domainHash]);
 
-  return (result.results || []).map(rowToResolvedOrg);
+  return rows.map(rowToResolvedOrg);
 }
 
 /**
  * Resolve organizations by domain hash with version support
  * Used during key rotation when checking multiple hash versions
  *
- * @param db - D1 database instance
+ * @param db - Database source
  * @param hashes - Array of hashes with their versions
  * @param tenantId - Tenant ID for isolation
  * @param config - JIT Provisioning configuration
  * @returns Array of matching organizations
  */
 export async function resolveOrgsByDomainHashMultiVersion(
-  db: D1Database,
+  db: DatabaseSource,
   hashes: Array<{ hash: string; version: number }>,
   tenantId: string,
   config?: JITProvisioningConfig
 ): Promise<ResolvedOrganization[]> {
+  const adapter = getAdapter(db);
   if (hashes.length === 0) {
     return [];
   }
@@ -177,10 +184,9 @@ export async function resolveOrgsByDomainHashMultiVersion(
       created_at ASC
   `;
 
-  const stmt = db.prepare(query);
-  const result = await stmt.bind(...values).all<OrgDomainMappingRow>();
+  const rows = await adapter.query<OrgDomainMappingRow>(query, values);
 
-  return (result.results || []).map(rowToResolvedOrg);
+  return rows.map(rowToResolvedOrg);
 }
 
 /**
@@ -204,7 +210,7 @@ function rowToResolvedOrg(row: OrgDomainMappingRow): ResolvedOrganization {
 /**
  * Join a user to an organization
  *
- * @param db - D1 database instance
+ * @param db - Database source
  * @param userId - User ID to add
  * @param orgId - Organization ID to join
  * @param tenantId - Tenant ID for isolation
@@ -212,21 +218,22 @@ function rowToResolvedOrg(row: OrgDomainMappingRow): ResolvedOrganization {
  * @returns Join result
  */
 export async function joinOrganization(
-  db: D1Database,
+  db: DatabaseSource,
   userId: string,
   orgId: string,
   tenantId: string,
   membershipType: MembershipType = 'member'
 ): Promise<OrgJoinResult> {
+  const adapter = getAdapter(db);
   const membershipId = `mem_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
   try {
     // Check if organization exists
-    const orgCheck = await db
-      .prepare('SELECT id FROM organizations WHERE id = ? AND tenant_id = ?')
-      .bind(orgId, tenantId)
-      .first<{ id: string }>();
+    const orgCheck = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
+      [orgId, tenantId]
+    );
 
     if (!orgCheck) {
       return {
@@ -238,10 +245,10 @@ export async function joinOrganization(
     }
 
     // Check if already a member
-    const existingMember = await db
-      .prepare('SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND tenant_id = ?')
-      .bind(userId, orgId, tenantId)
-      .first<{ id: string }>();
+    const existingMember = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM org_memberships WHERE tenant_id = ? AND user_id = ? AND org_id = ?',
+      [tenantId, userId, orgId]
+    );
 
     if (existingMember) {
       return {
@@ -253,13 +260,11 @@ export async function joinOrganization(
     }
 
     // Create membership
-    await db
-      .prepare(
-        `INSERT INTO org_memberships (id, tenant_id, user_id, org_id, membership_type, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(membershipId, tenantId, userId, orgId, membershipType, now, now)
-      .run();
+    await adapter.execute(
+      `INSERT INTO org_memberships (id, tenant_id, user_id, org_id, membership_type, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [membershipId, tenantId, userId, orgId, membershipType, now, now]
+    );
 
     return {
       success: true,
@@ -280,14 +285,14 @@ export async function joinOrganization(
 /**
  * Join a user to multiple organizations
  *
- * @param db - D1 database instance
+ * @param db - Database source
  * @param userId - User ID to add
  * @param orgs - Array of organizations to join
  * @param tenantId - Tenant ID for isolation
  * @returns Array of join results
  */
 export async function joinOrganizations(
-  db: D1Database,
+  db: DatabaseSource,
   userId: string,
   orgs: ResolvedOrganization[],
   tenantId: string
@@ -313,21 +318,22 @@ export async function joinOrganizations(
  * @returns Assignment result
  */
 export async function assignRoleToUser(
-  db: D1Database,
+  db: DatabaseSource,
   userId: string,
   roleId: string,
   orgId: string,
   tenantId: string
 ): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
+  const adapter = getAdapter(db);
   const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
   try {
     // Check if role exists
-    const roleCheck = await db
-      .prepare('SELECT id FROM roles WHERE id = ? AND tenant_id = ?')
-      .bind(roleId, tenantId)
-      .first<{ id: string }>();
+    const roleCheck = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM roles WHERE id = ? AND tenant_id = ?',
+      [roleId, tenantId]
+    );
 
     if (!roleCheck) {
       return {
@@ -338,13 +344,11 @@ export async function assignRoleToUser(
     }
 
     // Check if already assigned
-    const existing = await db
-      .prepare(
-        `SELECT id FROM role_assignments
-         WHERE user_id = ? AND role_id = ? AND scope_type = 'org' AND scope_target = ? AND tenant_id = ?`
-      )
-      .bind(userId, roleId, `org:${orgId}`, tenantId)
-      .first<{ id: string }>();
+    const existing = await adapter.queryOne<{ id: string }>(
+      `SELECT id FROM role_assignments
+       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = 'org' AND scope_target = ?`,
+      [tenantId, userId, roleId, `org:${orgId}`]
+    );
 
     if (existing) {
       return {
@@ -355,13 +359,11 @@ export async function assignRoleToUser(
     }
 
     // Create assignment
-    await db
-      .prepare(
-        `INSERT INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'org', ?, ?, ?)`
-      )
-      .bind(assignmentId, tenantId, userId, roleId, `org:${orgId}`, now, now)
-      .run();
+    await adapter.execute(
+      `INSERT INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'org', ?, ?, ?)`,
+      [assignmentId, tenantId, userId, roleId, `org:${orgId}`, now, now]
+    );
 
     return {
       success: true,
@@ -385,14 +387,15 @@ export async function assignRoleToUser(
  * Get domain mapping by ID
  */
 export async function getDomainMappingById(
-  db: D1Database,
+  db: DatabaseSource,
   id: string,
   tenantId: string
 ): Promise<OrgDomainMapping | null> {
-  const row = await db
-    .prepare('SELECT * FROM org_domain_mappings WHERE id = ? AND tenant_id = ?')
-    .bind(id, tenantId)
-    .first<OrgDomainMappingRow>();
+  const adapter = getAdapter(db);
+  const row = await adapter.queryOne<OrgDomainMappingRow>(
+    'SELECT * FROM org_domain_mappings WHERE id = ? AND tenant_id = ?',
+    [id, tenantId]
+  );
 
   return row ? rowToOrgDomainMapping(row) : null;
 }
@@ -401,7 +404,7 @@ export async function getDomainMappingById(
  * List domain mappings for a tenant
  */
 export async function listDomainMappings(
-  db: D1Database,
+  db: DatabaseSource,
   tenantId: string,
   options?: {
     orgId?: string;
@@ -411,6 +414,7 @@ export async function listDomainMappings(
     offset?: number;
   }
 ): Promise<{ mappings: OrgDomainMapping[]; total: number }> {
+  const adapter = getAdapter(db);
   let whereClause = 'WHERE tenant_id = ?';
   const values: unknown[] = [tenantId];
 
@@ -430,30 +434,30 @@ export async function listDomainMappings(
   }
 
   // Get total count
-  const countResult = await db
-    .prepare(`SELECT COUNT(*) as count FROM org_domain_mappings ${whereClause}`)
-    .bind(...values)
-    .first<{ count: number }>();
+  const countResult = await adapter.queryOne<{ count: number }>(
+    `SELECT COUNT(*) as count FROM org_domain_mappings ${whereClause}`,
+    values
+  );
 
   const total = countResult?.count ?? 0;
 
   // Get mappings with pagination
   let query = `SELECT * FROM org_domain_mappings ${whereClause} ORDER BY priority DESC, created_at DESC`;
+  const queryValues = [...values];
 
   if (options?.limit) {
-    query += ` LIMIT ${options.limit}`;
-    if (options.offset) {
-      query += ` OFFSET ${options.offset}`;
+    query += ' LIMIT ?';
+    queryValues.push(options.limit);
+    if (options.offset !== undefined) {
+      query += ' OFFSET ?';
+      queryValues.push(options.offset);
     }
   }
 
-  const result = await db
-    .prepare(query)
-    .bind(...values)
-    .all<OrgDomainMappingRow>();
+  const rows = await adapter.query<OrgDomainMappingRow>(query, queryValues);
 
   return {
-    mappings: (result.results || []).map(rowToOrgDomainMapping),
+    mappings: rows.map(rowToOrgDomainMapping),
     total,
   };
 }
@@ -462,7 +466,7 @@ export async function listDomainMappings(
  * Create a new domain mapping
  */
 export async function createDomainMapping(
-  db: D1Database,
+  db: DatabaseSource,
   tenantId: string,
   domainHash: string,
   domainHashVersion: number,
@@ -476,18 +480,17 @@ export async function createDomainMapping(
     isActive?: boolean;
   }
 ): Promise<OrgDomainMapping> {
+  const adapter = getAdapter(db);
   const id = `odm_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  await db
-    .prepare(
-      `INSERT INTO org_domain_mappings (
-        id, tenant_id, domain_hash, domain_hash_version, org_id,
-        auto_join_enabled, membership_type, auto_assign_role_id,
-        verified, priority, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .bind(
+  await adapter.execute(
+    `INSERT INTO org_domain_mappings (
+      id, tenant_id, domain_hash, domain_hash_version, org_id,
+      auto_join_enabled, membership_type, auto_assign_role_id,
+      verified, priority, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       id,
       tenantId,
       domainHash,
@@ -500,9 +503,9 @@ export async function createDomainMapping(
       options?.priority ?? 0,
       options?.isActive !== false ? 1 : 0,
       now,
-      now
-    )
-    .run();
+      now,
+    ]
+  );
 
   return {
     id,
@@ -525,7 +528,7 @@ export async function createDomainMapping(
  * Update a domain mapping
  */
 export async function updateDomainMapping(
-  db: D1Database,
+  db: DatabaseSource,
   id: string,
   tenantId: string,
   updates: Partial<{
@@ -537,6 +540,7 @@ export async function updateDomainMapping(
     isActive: boolean;
   }>
 ): Promise<OrgDomainMapping | null> {
+  const adapter = getAdapter(db);
   const setClauses: string[] = [];
   const values: unknown[] = [];
 
@@ -578,12 +582,10 @@ export async function updateDomainMapping(
   setClauses.push('updated_at = ?');
   values.push(now, id, tenantId);
 
-  await db
-    .prepare(
-      `UPDATE org_domain_mappings SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`
-    )
-    .bind(...values)
-    .run();
+  await adapter.execute(
+    `UPDATE org_domain_mappings SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`,
+    values
+  );
 
   return getDomainMappingById(db, id, tenantId);
 }
@@ -592,16 +594,17 @@ export async function updateDomainMapping(
  * Delete a domain mapping
  */
 export async function deleteDomainMapping(
-  db: D1Database,
+  db: DatabaseSource,
   id: string,
   tenantId: string
 ): Promise<boolean> {
-  const result = await db
-    .prepare('DELETE FROM org_domain_mappings WHERE id = ? AND tenant_id = ?')
-    .bind(id, tenantId)
-    .run();
+  const adapter = getAdapter(db);
+  const result = await adapter.execute(
+    'DELETE FROM org_domain_mappings WHERE id = ? AND tenant_id = ?',
+    [id, tenantId]
+  );
 
-  return (result.meta?.changes ?? 0) > 0;
+  return result.rowsAffected > 0;
 }
 
 /**
@@ -639,22 +642,21 @@ function rowToOrgDomainMapping(row: OrgDomainMappingRow): OrgDomainMapping {
  * @param tenantId - Tenant ID
  */
 export async function updateDomainMappingHash(
-  db: D1Database,
+  db: DatabaseSource,
   id: string,
   newHash: string,
   newVersion: number,
   tenantId: string
 ): Promise<void> {
+  const adapter = getAdapter(db);
   const now = Math.floor(Date.now() / 1000);
 
-  await db
-    .prepare(
-      `UPDATE org_domain_mappings
-       SET domain_hash = ?, domain_hash_version = ?, updated_at = ?
-       WHERE id = ? AND tenant_id = ?`
-    )
-    .bind(newHash, newVersion, now, id, tenantId)
-    .run();
+  await adapter.execute(
+    `UPDATE org_domain_mappings
+     SET domain_hash = ?, domain_hash_version = ?, updated_at = ?
+     WHERE id = ? AND tenant_id = ?`,
+    [newHash, newVersion, now, id, tenantId]
+  );
 }
 
 /**
@@ -662,21 +664,20 @@ export async function updateDomainMappingHash(
  * Used for key rotation status reporting
  */
 export async function getMappingCountByVersion(
-  db: D1Database,
+  db: DatabaseSource,
   tenantId: string
 ): Promise<Record<number, number>> {
-  const result = await db
-    .prepare(
-      `SELECT domain_hash_version, COUNT(*) as count
-       FROM org_domain_mappings
-       WHERE tenant_id = ?
-       GROUP BY domain_hash_version`
-    )
-    .bind(tenantId)
-    .all<{ domain_hash_version: number; count: number }>();
+  const adapter = getAdapter(db);
+  const rows = await adapter.query<{ domain_hash_version: number; count: number }>(
+    `SELECT domain_hash_version, COUNT(*) as count
+     FROM org_domain_mappings
+     WHERE tenant_id = ?
+     GROUP BY domain_hash_version`,
+    [tenantId]
+  );
 
   const counts: Record<number, number> = {};
-  for (const row of result.results || []) {
+  for (const row of rows) {
     counts[row.domain_hash_version] = row.count;
   }
 

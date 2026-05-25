@@ -644,6 +644,11 @@ describe('DID Authentication', () => {
         const response = await didAuthVerifyHandler(c);
 
         expect(response.status).toBe(200);
+        expect(mockLinkedIdentityRepo.findByProviderUser).toHaveBeenCalledWith(
+          'default',
+          'did',
+          'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH'
+        );
         const data = (await response.json()) as ApiResponse;
         expect(data.session_id).toBe('mock-session-id');
         expect(data.user_id).toBe('linked-user-id');
@@ -667,7 +672,8 @@ describe('DID Authentication', () => {
             acr: 'urn:authrim:acr:did',
             did: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
             verification_method: validKid,
-          })
+          }),
+          'default'
         );
       });
     });

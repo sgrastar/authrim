@@ -33,29 +33,27 @@
  * - GET /api/check/health - Check API health (Phase 8.3)
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
-import type { Env as SharedEnv, IStorageAdapter } from '@authrim/ar-lib-core';
+import type { Env as SharedEnv } from '@authrim/ar-lib-core';
 import {
   requestContextMiddleware,
   pluginContextMiddleware,
-  createReBACService,
   timingSafeEqual,
-  D1Adapter,
   createPermissionChangeNotifier,
   createPermissionChangeEvent,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getDefaultTenantId,
   type DatabaseAdapter,
   type ReBACService,
   type CheckRequest,
   type BatchCheckRequest,
   type ListObjectsRequest,
   type ListUsersRequest,
-  type ReBACConfig,
   type PermissionChangeNotifier,
 } from '@authrim/ar-lib-core';
 import {
@@ -74,6 +72,7 @@ import {
 } from '@authrim/ar-lib-policy';
 import { checkRoutes } from './routes/check';
 import { subscribeRoutes } from './routes/subscribe';
+import { createPolicyReBACService, getPolicyCoreAdapter } from './rebac-storage-adapter';
 
 /**
  * Environment bindings for Policy Service
@@ -144,6 +143,15 @@ function authenticateRequest(c: {
   const token = authHeader.slice(7);
   // Use timing-safe comparison to prevent timing attacks
   return !!c.env.POLICY_API_SECRET && timingSafeEqual(token, c.env.POLICY_API_SECRET);
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return String(error).includes('UNIQUE constraint');
+}
+
+function requireBodyTenantId(tenantId: string | undefined): string | null {
+  const normalized = tenantId?.trim();
+  return normalized || null;
 }
 
 // ============================================================
@@ -505,85 +513,26 @@ policyRoutes.post('/is-admin', async (c) => {
 // ReBAC Routes (/api/rebac/*)
 // ============================================================
 
-/**
- * Simple D1 Storage Adapter for ReBAC
- * Implements only the query() and execute() methods needed by ReBACService
- */
-class D1StorageAdapter implements IStorageAdapter {
-  constructor(private db: D1Database) {}
-
-  async get(_key: string): Promise<string | null> {
-    // Not used by ReBACService
+function getReBACService(c: Context<{ Bindings: Env }>): ReBACService | null {
+  try {
+    const coreAdapter = getPolicyCoreAdapter(c);
+    return createPolicyReBACService(coreAdapter, c.env.REBAC_CACHE_KV);
+  } catch {
     return null;
   }
-
-  async set(_key: string, _value: string, _ttl?: number): Promise<void> {
-    // Not used by ReBACService
-  }
-
-  async delete(_key: string): Promise<void> {
-    // Not used by ReBACService
-  }
-
-  async query<T = unknown>(sql: string, params?: unknown[]): Promise<T[]> {
-    const stmt = this.db.prepare(sql);
-    if (params && params.length > 0) {
-      stmt.bind(...params);
-    }
-    const result = await stmt.all<T>();
-    return result.results ?? [];
-  }
-
-  async execute(
-    sql: string,
-    params?: unknown[]
-  ): Promise<{ success: boolean; meta: { changes: number; last_row_id: number } }> {
-    const stmt = this.db.prepare(sql);
-    if (params && params.length > 0) {
-      stmt.bind(...params);
-    }
-    const result = await stmt.run();
-    return {
-      success: result.success,
-      meta: {
-        changes: result.meta?.changes ?? 0,
-        last_row_id: result.meta?.last_row_id ?? 0,
-      },
-    };
-  }
-}
-
-/**
- * Get or create ReBACService instance for request
- * ReBAC requires D1 database binding
- */
-function getReBACService(env: Env): ReBACService | null {
-  if (!env.DB) {
-    return null;
-  }
-
-  const adapter = new D1StorageAdapter(env.DB);
-  // ReBACConfig uses Cloudflare Workers' global KVNamespace type
-  // Use type assertion to bypass incompatibility between KVNamespace versions
-  const config: ReBACConfig = {
-    cache_namespace: env.REBAC_CACHE_KV as unknown as ReBACConfig['cache_namespace'],
-    cache_ttl: 60,
-    max_depth: 5,
-  };
-
-  return createReBACService(adapter, config);
 }
 
 /**
  * Get or create PermissionChangeNotifier instance for request
  * Phase 8.3: Used to publish permission change events
  */
-function getPermissionChangeNotifier(env: Env): PermissionChangeNotifier {
+function getPermissionChangeNotifier(c: Context<{ Bindings: Env }>): PermissionChangeNotifier {
+  const coreAdapter = getPolicyCoreAdapter(c);
   return createPermissionChangeNotifier({
-    db: env.DB,
+    db: coreAdapter,
     // Cast to satisfy type compatibility between policy-core KVNamespace and Cloudflare Workers KVNamespace
-    cache: env.REBAC_CACHE_KV as unknown as globalThis.KVNamespace | undefined,
-    permissionChangeHub: env.PERMISSION_CHANGE_HUB,
+    cache: c.env.REBAC_CACHE_KV as unknown as globalThis.KVNamespace | undefined,
+    permissionChangeHub: c.env.PERMISSION_CHANGE_HUB,
     debug: false,
   });
 }
@@ -615,7 +564,7 @@ rebacRoutes.get('/health', async (c) => {
  *
  * Request body:
  * {
- *   "tenant_id": "tenant_123",  // optional, uses DEFAULT_TENANT_ID if not provided
+ *   "tenant_id": "tenant_123",
  *   "user_id": "user:user_123",
  *   "relation": "viewer",
  *   "object": "document:doc_456"
@@ -636,7 +585,7 @@ rebacRoutes.post('/check', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
-  const rebacService = getReBACService(c.env);
+  const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -654,8 +603,15 @@ rebacRoutes.post('/check', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    const tenantId = requireBodyTenantId(body.tenant_id);
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tenant_id' },
+      });
+    }
+
     const request: CheckRequest = {
-      tenant_id: body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default',
+      tenant_id: tenantId,
       user_id: body.user_id,
       relation: body.relation,
       object: body.object,
@@ -697,7 +653,7 @@ rebacRoutes.post('/batch-check', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
-  const rebacService = getReBACService(c.env);
+  const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -716,12 +672,22 @@ rebacRoutes.post('/batch-check', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const defaultTenantId = c.env.DEFAULT_TENANT_ID || 'default';
-    const request: BatchCheckRequest = {
-      checks: body.checks.map((check) => ({
+    const checks: CheckRequest[] = [];
+    for (const check of body.checks) {
+      const tenantId = requireBodyTenantId(check.tenant_id);
+      if (!tenantId) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'checks[].tenant_id' },
+        });
+      }
+      checks.push({
         ...check,
-        tenant_id: check.tenant_id || defaultTenantId,
-      })),
+        tenant_id: tenantId,
+      });
+    }
+
+    const request: BatchCheckRequest = {
+      checks,
     };
 
     const result = await rebacService.batchCheck(request);
@@ -761,7 +727,7 @@ rebacRoutes.post('/list-objects', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
-  const rebacService = getReBACService(c.env);
+  const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -773,8 +739,15 @@ rebacRoutes.post('/list-objects', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    const tenantId = requireBodyTenantId(body.tenant_id);
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tenant_id' },
+      });
+    }
+
     const request: ListObjectsRequest = {
-      tenant_id: body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default',
+      tenant_id: tenantId,
       user_id: body.user_id,
       relation: body.relation,
       object_type: body.object_type,
@@ -817,7 +790,7 @@ rebacRoutes.post('/list-users', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
-  const rebacService = getReBACService(c.env);
+  const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -829,8 +802,15 @@ rebacRoutes.post('/list-users', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    const tenantId = requireBodyTenantId(body.tenant_id);
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tenant_id' },
+      });
+    }
+
     const request: ListUsersRequest = {
-      tenant_id: body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default',
+      tenant_id: tenantId,
       object: body.object,
       object_type: body.object_type,
       relation: body.relation,
@@ -876,10 +856,6 @@ rebacRoutes.post('/write', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
-  if (!c.env.DB) {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-
   try {
     const body = await c.req.json<{
       tenant_id?: string;
@@ -901,45 +877,100 @@ rebacRoutes.post('/write', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
+    const tenantId = requireBodyTenantId(body.tenant_id);
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tenant_id' },
+      });
+    }
     const now = Math.floor(Date.now() / 1000);
-    const id = crypto.randomUUID();
-
-    // Insert relationship tuple
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-    await coreAdapter.execute(
-      `INSERT INTO relationships (
-        id, tenant_id, relationship_type, from_type, from_id,
-        to_type, to_id, permission_level, expires_at, is_bidirectional,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (tenant_id, from_type, from_id, to_type, to_id, relationship_type)
-      DO UPDATE SET expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
+    const coreAdapter = getPolicyCoreAdapter(c);
+    const existing = await coreAdapter.queryOne<{ id: string }>(
+      `SELECT id FROM relationships
+       WHERE tenant_id = ? AND from_type = ? AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
       [
-        id,
         tenantId,
-        body.relation,
         body.subject_type,
         body.subject_id,
         body.object_type,
         body.object_id,
-        'full', // default permission level
-        body.expires_at ?? null,
-        0, // not bidirectional
-        now,
-        now,
+        body.relation,
       ]
     );
 
+    let id = existing?.id ?? crypto.randomUUID();
+
+    if (existing) {
+      await coreAdapter.execute(
+        `UPDATE relationships
+         SET expires_at = ?, updated_at = ?
+         WHERE id = ? AND tenant_id = ?`,
+        [body.expires_at ?? null, now, existing.id, tenantId]
+      );
+    } else {
+      try {
+        await coreAdapter.execute(
+          `INSERT INTO relationships (
+            id, tenant_id, relationship_type, from_type, from_id,
+            to_type, to_id, permission_level, expires_at, is_bidirectional,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            tenantId,
+            body.relation,
+            body.subject_type,
+            body.subject_id,
+            body.object_type,
+            body.object_id,
+            'full', // default permission level
+            body.expires_at ?? null,
+            0, // not bidirectional
+            now,
+            now,
+          ]
+        );
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          throw error;
+        }
+
+        const raced = await coreAdapter.queryOne<{ id: string }>(
+          `SELECT id FROM relationships
+           WHERE tenant_id = ? AND from_type = ? AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
+          [
+            tenantId,
+            body.subject_type,
+            body.subject_id,
+            body.object_type,
+            body.object_id,
+            body.relation,
+          ]
+        );
+
+        if (!raced) {
+          throw new Error('Failed to resolve raced relationship tuple');
+        }
+
+        id = raced.id;
+        await coreAdapter.execute(
+          `UPDATE relationships
+           SET expires_at = ?, updated_at = ?
+           WHERE id = ? AND tenant_id = ?`,
+          [body.expires_at ?? null, now, raced.id, tenantId]
+        );
+      }
+    }
+
     // Invalidate cache for the affected object
-    const rebacService = getReBACService(c.env);
+    const rebacService = getReBACService(c);
     if (rebacService) {
       await rebacService.invalidateCache(tenantId, body.object_type, body.object_id, body.relation);
     }
 
     // Phase 8.3: Publish permission change event
     try {
-      const notifier = getPermissionChangeNotifier(c.env);
+      const notifier = getPermissionChangeNotifier(c);
       await notifier.publish(
         createPermissionChangeEvent('grant', tenantId, body.subject_id, {
           resource: `${body.object_type}:${body.object_id}`,
@@ -1000,10 +1031,6 @@ rebacRoutes.delete('/tuples', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
-  if (!c.env.DB) {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-
   try {
     const body = await c.req.json<{
       tenant_id?: string;
@@ -1024,10 +1051,15 @@ rebacRoutes.delete('/tuples', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
+    const tenantId = requireBodyTenantId(body.tenant_id);
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tenant_id' },
+      });
+    }
 
     // Delete relationship tuple
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const coreAdapter = getPolicyCoreAdapter(c);
     const result = await coreAdapter.execute(
       `DELETE FROM relationships
        WHERE tenant_id = ?
@@ -1047,7 +1079,7 @@ rebacRoutes.delete('/tuples', async (c) => {
     );
 
     // Invalidate cache for the affected object
-    const rebacService = getReBACService(c.env);
+    const rebacService = getReBACService(c);
     if (rebacService) {
       await rebacService.invalidateCache(tenantId, body.object_type, body.object_id, body.relation);
     }
@@ -1056,7 +1088,7 @@ rebacRoutes.delete('/tuples', async (c) => {
     const deleted = (result.rowsAffected ?? 0) > 0;
     if (deleted) {
       try {
-        const notifier = getPermissionChangeNotifier(c.env);
+        const notifier = getPermissionChangeNotifier(c);
         await notifier.publish(
           createPermissionChangeEvent('revoke', tenantId, body.subject_id, {
             resource: `${body.object_type}:${body.object_id}`,
@@ -1100,7 +1132,7 @@ rebacRoutes.post('/invalidate', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
 
-  const rebacService = getReBACService(c.env);
+  const rebacService = getReBACService(c);
   if (!rebacService) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1114,7 +1146,12 @@ rebacRoutes.post('/invalidate', async (c) => {
       user_id?: string;
     }>();
 
-    const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
+    const tenantId = requireBodyTenantId(body.tenant_id);
+    if (!tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tenant_id' },
+      });
+    }
 
     if (body.type === 'user') {
       if (!body.user_id) {
@@ -1146,7 +1183,8 @@ rebacRoutes.post('/invalidate', async (c) => {
 // Mount policy routes at /api/policy/* (for custom domain routes)
 app.route('/api/policy', policyRoutes);
 
-// Mount ReBAC routes at /api/rebac/* (for custom domain routes)
+// Legacy ReBAC routes are privileged system APIs. They authorize only with
+// POLICY_API_SECRET and require explicit tenant_id in tenant-owned request bodies.
 app.route('/api/rebac', rebacRoutes);
 
 // Mount Check API routes at /api/check/* (Phase 8.3)

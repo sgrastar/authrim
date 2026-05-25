@@ -23,6 +23,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     getClient: mockGetClient,
+    getClientCached: mockGetClient,
   };
 });
 
@@ -77,6 +78,25 @@ function createMockDONamespace() {
   } as unknown as DurableObjectNamespace;
 }
 
+function createUnsignedRequestObject(claims: Record<string, unknown>): string {
+  return createJwtRequestObject({ alg: 'none', typ: 'oauth-authz-req+jwt' }, claims);
+}
+
+function createJwtRequestObject(
+  headerClaims: Record<string, unknown>,
+  claims: Record<string, unknown>
+): string {
+  const header = btoa(JSON.stringify(headerClaims))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  const payload = btoa(JSON.stringify(claims))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  return `${header}.${payload}.`;
+}
+
 /**
  * Mock ChallengeStore Durable Object with RPC methods
  */
@@ -115,7 +135,7 @@ function createMockChallengeStore() {
 }
 
 describe('HTTPS Request URI Security', () => {
-  let app: Hono<{ Bindings: Env }>;
+  let app: Hono<{ Bindings: Env; Variables: { tenantId: string } }>;
   let mockEnv: Env;
   const originalFetch = global.fetch;
 
@@ -125,7 +145,11 @@ describe('HTTPS Request URI Security', () => {
     // Mock global fetch
     global.fetch = mockFetch;
 
-    app = new Hono<{ Bindings: Env }>();
+    app = new Hono<{ Bindings: Env; Variables: { tenantId: string } }>();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'default');
+      await next();
+    });
     app.get('/authorize', authorizeHandler);
     app.post('/authorize', authorizeHandler);
 
@@ -394,9 +418,63 @@ describe('HTTPS Request URI Security', () => {
   });
 
   describe('Redirect Handling', () => {
-    it('should use redirect: follow option in fetch (OIDF Conformance Suite uses redirects)', async () => {
+    it('should reject a redirect to a domain outside the allowlist before following it', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://evil.example/request.jwt' }),
+      });
+
+      const envWithAllowlist = {
+        ...mockEnv,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+        HTTPS_REQUEST_URI_ALLOWED_DOMAINS: 'trusted.com',
+      };
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://trusted.com/request.jwt',
+        { method: 'GET' },
+        envWithAllowlist
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_uri');
+      expect(body.error_description).toContain('Redirected request_uri domain');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should reject a redirect to an internal address before following it', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'https://127.0.0.1/request.jwt' }),
+      });
+
+      const envWithFeature = {
+        ...mockEnv,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+      };
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://external.com/request.jwt',
+        { method: 'GET' },
+        envWithFeature
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_uri');
+      expect(body.error_description).toContain('redirect to internal addresses');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should use redirect: manual option and validate redirect hops', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
+        status: 200,
         headers: new Headers({ 'content-length': '100' }),
         body: {
           getReader: () => ({
@@ -423,13 +501,267 @@ describe('HTTPS Request URI Security', () => {
         envWithFeature
       );
 
-      // Verify fetch was called with redirect: 'follow' (OIDF uses 302 redirects)
+      // Redirects are followed manually so every hop is validated before another fetch.
       expect(mockFetch).toHaveBeenCalledWith(
         'https://external.com/request.jwt',
         expect.objectContaining({
-          redirect: 'follow',
+          redirect: 'manual',
         })
       );
+    });
+
+    it('should follow a validated HTTPS redirect', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 302,
+          statusText: 'Found',
+          headers: new Headers({ location: 'https://cdn.trusted.com/request.jwt' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-length': '4' }),
+          body: {
+            getReader: () => ({
+              read: vi
+                .fn()
+                .mockResolvedValueOnce({
+                  done: false,
+                  value: new TextEncoder().encode('test'),
+                })
+                .mockResolvedValueOnce({ done: true }),
+              cancel: vi.fn(),
+            }),
+          },
+        });
+
+      const envWithAllowlist = {
+        ...mockEnv,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+        HTTPS_REQUEST_URI_ALLOWED_DOMAINS: 'trusted.com',
+      };
+
+      await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://trusted.com/request.jwt',
+        { method: 'GET' },
+        envWithAllowlist
+      );
+
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'https://cdn.trusted.com/request.jwt',
+        expect.objectContaining({ redirect: 'manual' })
+      );
+    });
+  });
+
+  describe('Request Object Fetching', () => {
+    it('should reject alg=none request objects in production even when test settings allow them', async () => {
+      const requestObject = createUnsignedRequestObject({
+        response_type: 'code',
+        client_id: 'test-client',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+      });
+
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'system_settings',
+        JSON.stringify({
+          oidc: {
+            allowNoneAlgorithm: true,
+          },
+        })
+      );
+
+      const response = await app.request(
+        `/authorize?request=${encodeURIComponent(requestObject)}`,
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          ENVIRONMENT: 'production',
+          SETTINGS: settings as unknown as KVNamespace,
+        }
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_object');
+      expect(body.error_description).toContain('not permitted in production');
+    });
+
+    it('should reject alg=none request objects unless explicitly enabled', async () => {
+      const requestObject = createUnsignedRequestObject({
+        response_type: 'code',
+        client_id: 'test-client',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+      });
+
+      const response = await app.request(
+        `/authorize?request=${encodeURIComponent(requestObject)}`,
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          ENVIRONMENT: 'test',
+          SETTINGS: new MockKVNamespace() as unknown as KVNamespace,
+        }
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_object');
+      expect(body.error_description).toContain('not allowed');
+    });
+
+    it('should reject signed request objects when the client jwks has no signing key', async () => {
+      mockGetClient.mockResolvedValueOnce({
+        client_id: 'test-client',
+        redirect_uris: ['https://example.com/callback'],
+        response_types: ['code'],
+        jwks: {
+          keys: [{ kty: 'oct', kid: 'not-a-signing-key', use: 'enc', k: 'abc' }],
+        },
+      });
+      const requestObject = createJwtRequestObject(
+        { alg: 'RS256', typ: 'oauth-authz-req+jwt' },
+        {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+        }
+      );
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request=${encodeURIComponent(requestObject)}`,
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_object');
+      expect(body.error_description).toContain('No suitable signing key');
+    });
+
+    it('should reject signed request objects with an internal jwks_uri', async () => {
+      mockGetClient.mockResolvedValueOnce({
+        client_id: 'test-client',
+        redirect_uris: ['https://example.com/callback'],
+        response_types: ['code'],
+        jwks_uri: 'https://127.0.0.1/jwks.json',
+      });
+      const requestObject = createJwtRequestObject(
+        { alg: 'RS256', typ: 'oauth-authz-req+jwt' },
+        {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+        }
+      );
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request=${encodeURIComponent(requestObject)}`,
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_object');
+      expect(body.error_description).toContain('jwks_uri cannot point to internal addresses');
+    });
+
+    it('should reject signed request objects when no client public key is available', async () => {
+      const requestObject = createJwtRequestObject(
+        { alg: 'RS256', typ: 'oauth-authz-req+jwt' },
+        {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+        }
+      );
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request=${encodeURIComponent(requestObject)}`,
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_object');
+      expect(body.error_description).toContain('No client public key');
+    });
+
+    it('should fetch and apply an unsigned request object only when explicitly enabled', async () => {
+      const requestObject = createUnsignedRequestObject({
+        response_type: 'code',
+        client_id: 'test-client',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid profile',
+        state: 'request-object-state',
+        nonce: 'request-object-nonce',
+        response_mode: 'form_post',
+        claims: { id_token: { email: { essential: true } } },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        url: 'https://trusted.com/request.jwt',
+        headers: new Headers({ 'content-length': String(requestObject.length) }),
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({
+                done: false,
+                value: new TextEncoder().encode(requestObject),
+              })
+              .mockResolvedValueOnce({ done: true }),
+            cancel: vi.fn(),
+          }),
+        },
+      });
+
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'system_settings',
+        JSON.stringify({
+          oidc: {
+            allowNoneAlgorithm: true,
+          },
+        })
+      );
+      const envWithFeature = {
+        ...mockEnv,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+        HTTPS_REQUEST_URI_ALLOWED_DOMAINS: 'trusted.com',
+        ENVIRONMENT: 'test',
+        SETTINGS: settings as unknown as KVNamespace,
+      };
+
+      const response = await app.request(
+        '/authorize?request_uri=https%3A%2F%2Ftrusted.com%2Frequest.jwt',
+        { method: 'GET' },
+        envWithFeature
+      );
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://trusted.com/request.jwt',
+        expect.objectContaining({
+          redirect: 'manual',
+        })
+      );
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain('method="post"');
+      expect(html).toContain('action="https://example.com/callback"');
+      expect(html).toContain('name="state" value="request-object-state"');
     });
   });
 

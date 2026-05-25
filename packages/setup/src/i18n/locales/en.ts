@@ -155,8 +155,8 @@ const en: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI deployment method',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Deploy to Cloudflare Pages (recommended)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Deploy to Cloudflare Workers (recommended)',
   'ui.customOption': 'Custom domain',
   'ui.customDesc': 'Use your own hosting',
   'ui.skipOption': 'Skip',
@@ -182,12 +182,58 @@ const en: Translations = {
   'domain.zoneCheckSkipped': 'Zone check skipped, continuing with setup...',
   'domain.continueWithoutZone': 'Continue without zone verification?',
   'domain.configureBinding': 'Configure custom domain binding for Workers',
+  'domain.action.retryCheck': 'Recheck',
+  'domain.action.reloadPage': 'Reload Page',
+  'domain.action.openCloudflareDashboard': 'Open Cloudflare Dashboard',
+  'domain.prereq.reviewTitle': 'Custom-domain checks need a quick review',
+  'domain.prereq.reviewBody':
+    'If you plan to use a custom domain, retry the check after reloading the page or refreshing your Cloudflare login.',
+  'domain.diagnostic.zone_found.title': 'Cloudflare zone is ready',
+  'domain.diagnostic.zone_found.body':
+    'The zone "{{zone}}" is available in your Cloudflare account.',
+  'domain.diagnostic.zone_found.next': 'You can continue with custom-domain binding.',
+  'domain.diagnostic.not_logged_in.title': 'Cloudflare login is required',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim could not confirm a Cloudflare login for this zone check.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Run `wrangler login` in your terminal.\n2. Reload this page.\n3. Recheck the zone.',
+  'domain.diagnostic.token_unavailable.title': 'Cloudflare token could not be loaded',
+  'domain.diagnostic.token_unavailable.body':
+    'Wrangler login looks present, but the API token needed for zone access is not available yet.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Reload this page and recheck.\n2. If it still fails, run `wrangler login` again.\n3. Then retry the zone check.',
+  'domain.diagnostic.zone_read_forbidden.title': 'Zone list access is limited',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'The current Cloudflare token cannot read zone listings. Existing zones may still work, but automatic verification and DNS assistance are limited.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Recheck first.\n2. If it still fails, run `wrangler login` again.\n3. Verify that the token has Zone:Read permission.\n4. If the zone already exists, you can continue manually.',
+  'domain.diagnostic.zone_not_found.title': 'Zone was not found in this account',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare responded, but the zone "{{zone}}" was not visible in the current account.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Confirm that the zone exists in the Cloudflare account you are using.\n2. If needed, switch accounts or open the Cloudflare dashboard.\n3. Then recheck the zone.',
+  'domain.diagnostic.api_error.title': 'Cloudflare API check failed',
+  'domain.diagnostic.api_error.body':
+    'Cloudflare returned an unexpected response while checking this zone.',
+  'domain.diagnostic.api_error.next':
+    'Retry the check first. If it still fails, reload this page and try again.',
+  'domain.diagnostic.network_error.title': 'Cloudflare network check failed',
+  'domain.diagnostic.network_error.body':
+    'The zone check could not complete because Cloudflare or the network did not respond as expected.',
+  'domain.diagnostic.network_error.next':
+    'Retry the check first. If it still fails, reload this page and try again.',
   'domain.apiDomain': 'API / Issuer domain (e.g., auth.example.com)',
   'domain.loginUiDomain': 'Login UI domain (Enter to skip)',
   'domain.adminUiDomain': 'Admin UI domain (Enter to skip)',
   'domain.enterDomains': 'Enter custom domains (leave empty to use Cloudflare defaults)',
   'domain.singleTenantNote': 'In single-tenant mode, Issuer URL = API domain',
   'domain.usingWorkersDev': '(using Cloudflare workers.dev domain)',
+  'web.form.multiTenantEnable': 'Enable multi-tenant mode',
+  'web.form.multiTenantHint': 'Create tenant subdomains under your custom domain',
+  'web.form.multiTenantExamples': 'Tenant URL Examples',
+  'web.form.multiTenantExampleDefaultOmitted': 'Default tenant with omitted name: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Default tenant with explicit name: {{url}}',
+  'web.form.multiTenantExampleOther': 'Other tenant: {{url}}',
 
   // Database
   'db.title': 'Database Configuration',
@@ -248,7 +294,7 @@ const en: Translations = {
   'config.baseDomain': 'Base Domain:',
   'config.issuerFormat': 'Issuer Format:',
   'config.issuerUrl': 'Issuer URL:',
-  'config.defaultTenant': 'Default Tenant:',
+  'config.defaultTenant': 'Initial Tenant:',
   'config.displayName': 'Display Name:',
   'config.publicUrls': 'Public URLs:',
   'config.apiRouter': 'API Router:',
@@ -409,9 +455,10 @@ const en: Translations = {
   'userId.note': 'Note: This setting cannot be changed after users are created.',
   'userId.selected': 'User ID format: {{format}}',
 
-  // Optional components
-  'components.title': 'Optional Components',
-  'components.note': 'Note: Social Login and Policy Engine are standard components',
+  // Standard components
+  'components.title': 'Standard Components',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Social Login, and Policy Engine are installed by default.',
   'components.samlPrompt': 'Enable SAML support?',
   'components.vcPrompt': 'Enable Verifiable Credentials?',
   'components.saml': 'SAML:',
@@ -438,7 +485,7 @@ const en: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Configure sharding? (for high-load environments)',
   'sharding.title': 'Sharding Settings',
-  'sharding.note': 'Note: Power of 2 recommended for shard count (8, 16, 32, 64, 128)',
+  'sharding.note': 'Note: Power of 2 recommended for shard count (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Auth Code shard count',
   'sharding.refreshTokenShards': 'Refresh Token shard count',
 
@@ -704,7 +751,7 @@ const en: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'Login UI',
-  'web.config.loginUiDesc': 'Pre-built authentication UI deployed to Cloudflare Pages.',
+  'web.config.loginUiDesc': 'Pre-built authentication UI deployed to Cloudflare Workers.',
   'web.config.adminUi': 'Admin UI',
   'web.config.adminUiDesc': 'Management dashboard for users, clients, and settings.',
 
@@ -713,9 +760,9 @@ const en: Translations = {
   'web.url.apiDomain': 'API Domain',
   'web.url.apiDomainHint': 'Leave empty to use workers.dev subdomain',
   'web.url.loginDomain': 'Login UI Domain',
-  'web.url.loginDomainHint': 'Leave empty to use pages.dev subdomain',
+  'web.url.loginDomainHint': 'Leave empty to use workers.dev subdomain',
   'web.url.adminDomain': 'Admin UI Domain',
-  'web.url.adminDomainHint': 'Leave empty to use pages.dev subdomain',
+  'web.url.adminDomainHint': 'Leave empty to use workers.dev subdomain',
 
   // Web UI Database
   'web.db.title': 'Database Configuration',
@@ -730,6 +777,18 @@ const en: Translations = {
   'web.db.name': 'Name',
   'web.db.region': 'Region',
   'web.db.regionAuto': 'Automatic (nearest)',
+  'web.db.storageProfileTitle': 'Storage Deployment Profile',
+  'web.db.storageProfileDesc': 'Select how user core/PII data is placed for this deployment.',
+  'web.db.sharedD1Title': 'Shared D1',
+  'web.db.sharedD1Desc':
+    'One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.',
+  'web.db.tenantD1Title': 'Tenant D1',
+  'web.db.tenantD1Desc':
+    'One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.',
+  'web.db.preallocatedSlotsTitle': 'Preallocated tenant slots',
+  'web.db.preallocatedSlotsDesc': 'Each tenant slot creates two D1 databases: core and PII.',
+  'web.db.slotsLabel': 'Slots',
+  'web.db.slotsHelp': 'Default is 3. Maximum is 500 slots.',
 
   // Web UI Email
   'web.email.title': 'Email Provider',
@@ -859,7 +918,7 @@ const en: Translations = {
   'web.form.nakedDomainHint': 'Use https://example.com instead of https://{tenant}.example.com',
   'web.form.nakedDomainWarning':
     'Tenant subdomains require a custom domain. Workers.dev does not support wildcard subdomains.',
-  'web.form.tenantId': 'Default Tenant ID',
+  'web.form.tenantId': 'Initial Tenant ID',
   'web.form.tenantIdPlaceholder': 'default',
   'web.form.tenantIdHint': 'First tenant identifier (lowercase, no spaces)',
   'web.form.tenantIdWorkerNote':
@@ -879,7 +938,7 @@ const en: Translations = {
   'web.section.apiDomain': 'API / Issuer Domain',
   'web.section.uiDomains': 'UI Domains (Optional)',
   'web.section.uiDomainsHint':
-    'Custom domains for Login/Admin UIs. Each can be set independently. Leave empty to use Cloudflare Pages default.',
+    'Custom domains for Login/Admin UIs. Each can be set independently. Leave empty to use Cloudflare Workers default.',
   'web.section.corsHint':
     'CORS: Cross-origin requests from Login/Admin UI to API are automatically allowed.',
   'web.section.configPreview': 'Configuration Preview',
@@ -891,6 +950,19 @@ const en: Translations = {
   'web.preview.issuerUrl': 'Issuer URL:',
   'web.preview.loginUi': 'Login UI:',
   'web.preview.adminUi': 'Admin UI:',
+  'web.preview.pagesUrl': 'Login UI Origin:',
+  'web.preview.tenantDiscover': 'Tenant Selection (Common Entry):',
+  'web.preview.adminAccess': 'Admin UI Access:',
+  'web.preview.firstTenant': '{{name}} (Primary Tenant)',
+  'web.preview.otherTenants': 'Other Tenants',
+  'web.preview.allTenantsShared': '(shared by all tenants)',
+  'web.preview.loginUiOriginNote': '(deployment origin; tenant login uses issuer /login)',
+  'web.preview.viaApiProxy': '(proxied via same API domain)',
+  'web.preview.conflictWarningTitle': '⚠️ Configuration issue',
+  'web.preview.conflictWarningMsg':
+    'The {{conflictUI}} custom domain is the same as the API domain ({{baseDomain}}). Since "Remove tenant from URL" is disabled, API requests to {{baseDomain}} (/authorize, /api/auth/*, etc.) will 404 and the login flow will break.',
+  'web.preview.conflictActionMsg':
+    'Fix: Enable "Remove tenant from URL" and set the first tenant ({{tenantName}}) as primary. Or change the {{conflictUI}} domain to a different domain (e.g. login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'Login UI',
@@ -940,8 +1012,17 @@ const en: Translations = {
     'Used for sending Mail OTP and email address verification. You can configure this later if you prefer.',
   'web.email.configureLater': 'Configure later',
   'web.email.configureLaterHint': 'Skip for now and configure later.',
+  'web.email.configureCloudflare': 'Configure Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Use the native Workers Email Service binding. Requires a Workers Paid plan and Cloudflare DNS.',
   'web.email.configureResend': 'Configure Resend',
   'web.email.configureResendHint': 'Set up email sending with Resend (recommended for production).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Requirements',
+  'web.email.cloudflareRequirementPaid': 'Workers Paid Plan is required',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS/domain onboarding is required',
+  'web.email.cloudflareRequirementManual':
+    'Domain setup in the Cloudflare dashboard is still manual',
   'web.email.resendSetup': 'Resend Configuration',
   'web.email.beforeBegin': 'Before you begin:',
   'web.email.step1': 'Create a Resend account at',
@@ -949,10 +1030,17 @@ const en: Translations = {
   'web.email.step3': 'Create an API key at',
   'web.email.resendApiKey': 'Resend API Key',
   'web.email.resendApiKeyHint': 'Your API key starts with "re_"',
+  'web.email.resendApiKeyMissing': 'Please enter your Resend API key',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API key does not start with "re_". This may not be a valid Resend API key. Continue anyway?',
   'web.email.fromEmailAddress': 'From Email Address',
+  'web.email.cloudflareFromHint': 'Must be from a domain onboarded to Cloudflare Email Service',
   'web.email.fromEmailHint': 'Must be from a verified domain in your Resend account',
+  'web.email.fromEmailMissing': 'Please enter a From email address',
+  'web.email.fromEmailInvalid': 'Please enter a valid email address',
   'web.email.fromDisplayName': 'From Display Name (optional)',
   'web.email.fromDisplayHint': 'Displayed as the sender name in email clients',
+  'web.email.saveConfigFailed': 'Failed to save email configuration',
   'web.email.domainVerificationTitle': 'Domain Verification Required',
   'web.email.domainVerificationDesc':
     'Before your domain is verified, emails can only be sent from onboarding@resend.dev (for testing).',
@@ -994,10 +1082,38 @@ const en: Translations = {
   'web.envDetail.kvNamespaces': 'KV Namespaces',
   'web.envDetail.queues': 'Queues',
   'web.envDetail.r2Buckets': 'R2 Buckets',
-  'web.envDetail.pagesProjects': 'Pages Projects',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'Email Settings',
+  'web.envDetail.emailDesc':
+    'Enable Cloudflare Email Service later for this environment. This updates .authrim, regenerates wrangler bindings, uploads email secrets, and redeploys ar-auth and ar-management.',
+  'web.envDetail.emailCurrentProvider': 'Current Provider',
+  'web.envDetail.emailCurrentStatus': 'Status',
+  'web.envDetail.emailCurrentFrom': 'From Address',
+  'web.envDetail.emailConfigured': 'Configured',
+  'web.envDetail.emailNotConfigured': 'Not configured',
+  'web.envDetail.emailProviderNone': 'Not configured',
+  'web.envDetail.emailCloudflareRequirements': 'Requirements',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan is required',
+  'web.envDetail.emailCloudflareRequirementDns': 'Cloudflare DNS/domain onboarding is required',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Domain setup in the Cloudflare dashboard is still manual',
+  'web.envDetail.emailCloudflareFromHint':
+    'Must be from a domain onboarded to Cloudflare Email Service.',
+  'web.envDetail.emailFromAddress': 'From Email Address',
+  'web.envDetail.emailFromName': 'From Display Name (optional)',
+  'web.envDetail.emailEnableCloudflare': 'Enable Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Applying...',
+  'web.envDetail.emailProgress': 'Email Setup Progress:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email enabled.',
+  'web.envDetail.emailUpdateFailed': 'Failed to enable Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Please enter a From email address.',
+  'web.envDetail.emailFromInvalid': 'Please enter a valid email address.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'This environment already has another email provider configured. Switch it to Cloudflare Email Service?',
+  'web.envDetail.emailStarting': 'Starting Cloudflare Email setup...',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Update Workers',
+  'web.envDetail.workerUpdate': 'Update All Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Deployed',
   'web.envDetail.localVersion': 'Local',
@@ -1006,7 +1122,7 @@ const en: Translations = {
   'web.envDetail.upToDate': 'Current',
   'web.envDetail.notDeployed': 'Not Deployed',
   'web.envDetail.updateOnlyChanged': 'Update only changed versions',
-  'web.envDetail.updateAllWorkers': 'Update Workers',
+  'web.envDetail.updateAllWorkers': 'Update All Workers',
   'web.envDetail.refreshVersions': 'Refresh',
   'web.envDetail.updateProgress': 'Update Progress:',
   'web.envDetail.updatesAvailable': '{{count}} update(s) available',
@@ -1015,9 +1131,9 @@ const en: Translations = {
   'web.envDetail.action': 'Action',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Update UI (Pages)',
+  'web.envDetail.uiUpdate': 'Update UI (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.',
+    'Update Admin UI or Login UI individually. These are deployed to Cloudflare Workers.',
   'web.envDetail.updateNow': 'Update',
 
   // Web UI Delete Section
@@ -1031,7 +1147,7 @@ const en: Translations = {
   'web.delete.kvNamespaces': 'KV Namespaces',
   'web.delete.queues': 'Queues',
   'web.delete.r2Buckets': 'R2 Buckets',
-  'web.delete.pagesProjects': 'Pages Projects',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Cancel',
   'web.delete.confirmBtn': 'Delete Selected',
 

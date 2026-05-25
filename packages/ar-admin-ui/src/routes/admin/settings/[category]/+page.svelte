@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import {
 		adminSettingsAPI,
+		adminTokenExchangeSettingsAPI,
 		scopedSettingsAPI,
 		isInternalSetting,
 		isPageManagedSetting,
@@ -15,6 +16,11 @@
 		type CategoryName,
 		type ScopeContext
 	} from '$lib/api/admin-settings';
+	import {
+		applyRuntimeFeatureFlagOverrides,
+		shouldRenderRuntimeFeatureFlag,
+		splitRuntimeFeatureFlagPatches
+	} from '$lib/admin/runtime-feature-flags';
 	import { InheritanceIndicator } from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -89,6 +95,13 @@
 				settingsResult = await adminSettingsAPI.getSettings(data.category);
 			}
 
+			if (data.category === 'feature-flags' && scopeContext.level === 'platform') {
+				const tokenExchangeConfig = await adminTokenExchangeSettingsAPI.getConfig();
+				settingsResult = applyRuntimeFeatureFlagOverrides(settingsResult, {
+					tokenExchangeEnabled: tokenExchangeConfig.settings.enabled
+				});
+			}
+
 			settings = settingsResult;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load settings';
@@ -116,6 +129,7 @@
 
 	// Check if a setting is locked (by env OR by internal visibility OR no edit permission)
 	function isSettingLocked(key: string, settingMeta: SettingMetaItem): boolean {
+		if (!shouldRenderRuntimeFeatureFlag(key, currentLevel)) return true;
 		// Locked if no edit permission at current scope
 		if (!canEdit) return true;
 		// Locked if set by environment variable
@@ -157,19 +171,29 @@
 		successMessage = '';
 
 		try {
-			const patchData = convertPatchesToAPIRequest(pendingPatches);
+			const { genericPatches, tokenExchangeEnabled } = splitRuntimeFeatureFlagPatches(pendingPatches);
+			let appliedCount = 0;
 
-			// Use scope-aware API for updates
-			const result = await scopedSettingsAPI.updateSettingsForScope(data.category, scopeContext, {
-				ifMatch: settings.version,
-				...patchData
-			});
+			if (genericPatches.length > 0) {
+				const patchData = convertPatchesToAPIRequest(genericPatches);
+				const result = await scopedSettingsAPI.updateSettingsForScope(data.category, scopeContext, {
+					ifMatch: settings.version,
+					...patchData
+				});
+				appliedCount += result.applied.length + result.cleared.length + result.disabled.length;
+			}
+
+			if (data.category === 'feature-flags' && scopeContext.level === 'platform' && tokenExchangeEnabled !== undefined) {
+				await adminTokenExchangeSettingsAPI.updateConfig({
+					enabled: tokenExchangeEnabled
+				});
+				appliedCount += 1;
+			}
 
 			// Clear pending patches
 			pendingPatches = [];
 
 			// Show success message
-			const appliedCount = result.applied.length + result.cleared.length + result.disabled.length;
 			successMessage = `Successfully updated ${appliedCount} setting${appliedCount !== 1 ? 's' : ''}`;
 
 			// Reload data to get updated version
@@ -248,7 +272,7 @@
 	{:else if meta && settings}
 		<!-- Settings form -->
 		<div class="settings-form-card">
-			{#each Object.entries(meta.settings).filter(([_key, s]) => !isPageManagedSetting(s)) as [key, settingMeta] (key)}
+			{#each Object.entries(meta.settings).filter(([key, s]) => !isPageManagedSetting(s) && shouldRenderRuntimeFeatureFlag(key, currentLevel)) as [key, settingMeta] (key)}
 				{@const value = getCurrentValue(key)}
 				{@const locked = isSettingLocked(key, settingMeta)}
 				{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}

@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Audit Log API Client
  *
@@ -13,9 +14,18 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 export interface AdminAuditLogEntry {
 	id: string;
 	tenant_id: string;
+	detail_artifact_id?: string | null;
 	admin_user_id: string | null;
 	admin_email: string | null;
 	admin_user_name?: string | null;
+	actor_type?: 'admin_user' | 'machine' | 'system';
+	actor_id?: string | null;
+	actor_display_name?: string | null;
+	machine_principal_id?: string | null;
+	machine_principal_type?: string | null;
+	machine_credential_id?: string | null;
+	machine_client_id?: string | null;
+	machine_client_auth_method?: string | null;
 	action: string;
 	resource_type: string | null;
 	resource_id: string | null;
@@ -134,7 +144,7 @@ export const adminAdminAuditAPI = {
 		const queryString = searchParams.toString();
 		const url = `${API_BASE_URL}/api/admin/admin-audit-log${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			credentials: 'include'
 		});
 
@@ -151,7 +161,7 @@ export const adminAdminAuditAPI = {
 	 * GET /api/admin/admin-audit-log/:id
 	 */
 	async get(id: string): Promise<AdminAuditLogEntryDetail> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-audit-log/${encodeURIComponent(id)}`,
 			{
 				credentials: 'include'
@@ -174,7 +184,7 @@ export const adminAdminAuditAPI = {
 	 * GET /api/admin/admin-audit-log/actions/list
 	 */
 	async listActions(): Promise<ActionsListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-audit-log/actions/list`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-audit-log/actions/list`, {
 			credentials: 'include'
 		});
 
@@ -191,9 +201,12 @@ export const adminAdminAuditAPI = {
 	 * GET /api/admin/admin-audit-log/resource-types/list
 	 */
 	async listResourceTypes(): Promise<ResourceTypesListResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/admin-audit-log/resource-types/list`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/admin-audit-log/resource-types/list`,
+			{
+				credentials: 'include'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -208,7 +221,7 @@ export const adminAdminAuditAPI = {
 	 * GET /api/admin/admin-audit-log/stats/summary
 	 */
 	async getStats(days: number = 7): Promise<AdminAuditLogStats> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-audit-log/stats/summary?days=${days}`,
 			{
 				credentials: 'include'
@@ -237,7 +250,7 @@ export const adminAdminAuditAPI = {
 			limit: String(limit)
 		});
 
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/admin-audit-log/user/${encodeURIComponent(userId)}?${params}`,
 			{
 				credentials: 'include'

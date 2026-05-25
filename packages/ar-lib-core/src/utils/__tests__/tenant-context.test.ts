@@ -21,10 +21,10 @@ describe('getTenantIdFromHost', () => {
       expect(result.tenantId).toBe('acme-corp');
     });
 
-    it('should return default tenant for naked domain', () => {
+    it('should reject naked domain when tenant omission is disabled', () => {
       const result = getTenantIdFromHost('authrim.com', multiTenantEnv);
-      expect(result.success).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('should return error for missing host', () => {
@@ -43,9 +43,18 @@ describe('getTenantIdFromHost', () => {
     };
 
     it('should use PRIMARY_TENANT_ID for naked domain', () => {
-      const result = getTenantIdFromHost('authrim.com', envWithPrimary);
+      const result = getTenantIdFromHost('authrim.com', {
+        ...envWithPrimary,
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+      });
       expect(result.success).toBe(true);
       expect(result.tenantId).toBe('tenantA');
+    });
+
+    it('should still reject naked domain when PRIMARY_TENANT_ID is set but omission is disabled', () => {
+      const result = getTenantIdFromHost('authrim.com', envWithPrimary);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('should use explicit tenant over PRIMARY_TENANT_ID', () => {
@@ -71,7 +80,7 @@ describe('resolveTenantFromRequest', () => {
       DEFAULT_TENANT_ID: 'default',
     };
 
-    it('should resolve default tenant from X-Authrim-Forwarded-Host when Host is workers.dev', () => {
+    it('should reject forwarded naked domain when tenant omission is disabled', () => {
       const request = new Request(
         'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
         {
@@ -83,8 +92,8 @@ describe('resolveTenantFromRequest', () => {
       );
 
       const result = resolveTenantFromRequest(request, multiTenantEnv);
-      expect(result.success).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('should resolve tenant subdomain from X-Forwarded-Host when Host is workers.dev', () => {
@@ -103,7 +112,7 @@ describe('resolveTenantFromRequest', () => {
       expect(result.tenantId).toBe('acme');
     });
 
-    it('should prefer X-Authrim-Forwarded-Host over X-Forwarded-Host', () => {
+    it('should prefer a valid forwarded tenant host over an invalid naked-domain host', () => {
       const request = new Request(
         'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
         {
@@ -116,6 +125,25 @@ describe('resolveTenantFromRequest', () => {
       );
 
       const result = resolveTenantFromRequest(request, multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('acme');
+    });
+
+    it('should resolve forwarded naked domain when tenant omission is enabled', () => {
+      const request = new Request(
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        {
+          headers: {
+            Host: 'test-ar-router.sgrastar.workers.dev',
+            'X-Authrim-Forwarded-Host': 'test.authrim.com',
+          },
+        }
+      );
+
+      const result = resolveTenantFromRequest(request, {
+        ...multiTenantEnv,
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+      });
       expect(result.success).toBe(true);
       expect(result.tenantId).toBe('default');
     });

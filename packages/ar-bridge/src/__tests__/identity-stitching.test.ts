@@ -6,65 +6,95 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { UpstreamProvider, UserInfo, TokenResponse } from '../types';
 
 // Create hoisted mocks that can be configured in tests
-const { mockCoreQueryOne, mockCoreExecute, mockPiiQueryOne, MockD1Adapter, sqlTracker } =
-  vi.hoisted(() => {
-    // Storage for tracking SQL calls - differentiate between DB and DB_PII
-    const tracker = {
-      coreDb: [] as { method: string; sql: string; params: unknown[] }[],
-      piiDb: [] as { method: string; sql: string; params: unknown[] }[],
-      reset() {
-        this.coreDb.length = 0;
-        this.piiDb.length = 0;
-      },
-    };
+const {
+  mockCoreQueryOne,
+  mockCoreExecute,
+  mockPiiQueryOne,
+  mockValidateCustomClaimWrite,
+  mockPersistCustomClaimWrite,
+  mockSyncUserLifecycleState,
+  mockCreateAuditLog,
+  MockD1Adapter,
+  sqlTracker,
+} = vi.hoisted(() => {
+  // Storage for tracking SQL calls - differentiate between DB and DB_PII
+  const tracker = {
+    coreDb: [] as { method: string; sql: string; params: unknown[] }[],
+    piiDb: [] as { method: string; sql: string; params: unknown[] }[],
+    reset() {
+      this.coreDb.length = 0;
+      this.piiDb.length = 0;
+    },
+  };
 
-    // Mock functions for Core DB (env.DB)
-    const coreQueryOneMock = vi.fn().mockResolvedValue(null);
-    const coreExecuteMock = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+  // Mock functions for Core DB (env.DB)
+  const coreQueryOneMock = vi.fn().mockResolvedValue(null);
+  const coreExecuteMock = vi.fn().mockResolvedValue({ rowsAffected: 1 });
 
-    // Mock functions for PII DB (env.DB_PII)
-    const piiQueryOneMock = vi.fn().mockResolvedValue(null);
+  // Mock functions for PII DB (env.DB_PII)
+  const piiQueryOneMock = vi.fn().mockResolvedValue(null);
+  const validateCustomClaimWriteMock = vi.fn().mockResolvedValue({ ok: true });
+  const persistCustomClaimWriteMock = vi.fn().mockResolvedValue(undefined);
+  const syncUserLifecycleStateMock = vi.fn().mockResolvedValue({
+    lifecycleState: 'active',
+    missingRequiredFields: [],
+  });
+  const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
 
-    // Create a class that wraps the mock functions and tracks calls
-    // The class determines binding type from the db option's _isPii marker
-    class D1AdapterClass {
-      private binding: 'core' | 'pii';
+  // Create a class that wraps the mock functions and tracks calls
+  // The class determines binding type from the db option's _isPii marker
+  class D1AdapterClass {
+    private binding: 'core' | 'pii';
 
-      constructor(options: { db: unknown }) {
-        // Determine which DB this adapter is for based on the binding marker
-        this.binding = options.db && (options.db as { _isPii?: boolean })._isPii ? 'pii' : 'core';
-      }
-
-      execute = (sql: string, params?: unknown[]) => {
-        tracker.coreDb.push({ method: 'execute', sql, params: params || [] });
-        return coreExecuteMock(sql, params);
-      };
-
-      queryOne = (sql: string, params?: unknown[]) => {
-        if (this.binding === 'pii') {
-          tracker.piiDb.push({ method: 'queryOne', sql, params: params || [] });
-          return piiQueryOneMock(sql, params);
-        } else {
-          tracker.coreDb.push({ method: 'queryOne', sql, params: params || [] });
-          return coreQueryOneMock(sql, params);
-        }
-      };
-
-      query = vi.fn().mockResolvedValue([]);
+    constructor(options: { db: unknown }) {
+      // Determine which DB this adapter is for based on the binding marker
+      this.binding = options.db && (options.db as { _isPii?: boolean })._isPii ? 'pii' : 'core';
     }
 
-    return {
-      mockCoreQueryOne: coreQueryOneMock,
-      mockCoreExecute: coreExecuteMock,
-      mockPiiQueryOne: piiQueryOneMock,
-      MockD1Adapter: D1AdapterClass,
-      sqlTracker: tracker,
+    execute = (sql: string, params?: unknown[]) => {
+      tracker.coreDb.push({ method: 'execute', sql, params: params || [] });
+      return coreExecuteMock(sql, params);
     };
-  });
+
+    queryOne = (sql: string, params?: unknown[]) => {
+      if (this.binding === 'pii') {
+        tracker.piiDb.push({ method: 'queryOne', sql, params: params || [] });
+        return piiQueryOneMock(sql, params);
+      } else {
+        tracker.coreDb.push({ method: 'queryOne', sql, params: params || [] });
+        return coreQueryOneMock(sql, params);
+      }
+    };
+
+    query = vi.fn().mockResolvedValue([]);
+  }
+
+  return {
+    mockCoreQueryOne: coreQueryOneMock,
+    mockCoreExecute: coreExecuteMock,
+    mockPiiQueryOne: piiQueryOneMock,
+    mockValidateCustomClaimWrite: validateCustomClaimWriteMock,
+    mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
+    mockSyncUserLifecycleState: syncUserLifecycleStateMock,
+    mockCreateAuditLog: createAuditLogMock,
+    MockD1Adapter: D1AdapterClass,
+    sqlTracker: tracker,
+  };
+});
 
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
+  createLogger: () => ({
+    module: () => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    }),
+  }),
+  getDefaultTenantId: vi.fn(() => 'default'),
   createRuleEvaluator: vi.fn(() => ({
     evaluate: vi.fn().mockResolvedValue({
       matched_rules: [],
@@ -95,6 +125,31 @@ vi.mock('@authrim/ar-lib-core', () => ({
     default_role_id: 'role_end_user',
     allow_unverified_domain_mappings: false,
   },
+  validateCustomClaimWrite: mockValidateCustomClaimWrite,
+  persistCustomClaimWrite: mockPersistCustomClaimWrite,
+  syncUserLifecycleState: mockSyncUserLifecycleState,
+  createAuditLog: mockCreateAuditLog,
+  resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    storageProfile: {
+      id: 'builtin:storage:standard',
+      kind: 'storage',
+      label: 'Standard D1 Split',
+      slices: {},
+    },
+    schemaDb: env.DB,
+    nonPiiDb: env.DB,
+    piiDb: env.DB_PII ?? null,
+  })),
+  resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    storageProfile: {
+      id: 'builtin:storage:standard',
+      kind: 'storage',
+      label: 'Standard D1 Split',
+      slices: {},
+    },
+    coreDb: env.DB,
+    piiDb: env.DB_PII ?? env.DB ?? null,
+  })),
 }));
 
 // Mock the linked identity store
@@ -165,9 +220,15 @@ describe('Identity Stitching Service', () => {
     vi.clearAllMocks();
     sqlTracker.reset();
     // Reset mock implementations to defaults
-    mockCoreQueryOne.mockResolvedValue(null);
-    mockCoreExecute.mockResolvedValue({ rowsAffected: 1 });
-    mockPiiQueryOne.mockResolvedValue(null);
+    mockCoreQueryOne.mockReset().mockResolvedValue(null);
+    mockCoreExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
+    mockPiiQueryOne.mockReset().mockResolvedValue(null);
+    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
+    mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
+    mockSyncUserLifecycleState.mockReset().mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
+    });
   });
 
   describe('getStitchingConfig', () => {
@@ -220,6 +281,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
           linkingUserId: 'existing-user-456',
         });
 
@@ -258,15 +320,23 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.userId).toBe('existing-user-789');
         expect(result.isNewUser).toBe(false);
         expect(result.stitchedFromExisting).toBe(false);
         expect(result.linkedIdentityId).toBe('existing-linked-id');
+        expect(linkedIdentityStore.findLinkedIdentity).toHaveBeenCalledWith(
+          env,
+          'default',
+          'provider-123',
+          'google-user-123'
+        );
 
         expect(linkedIdentityStore.updateLinkedIdentity).toHaveBeenCalledWith(
           env,
+          'default',
           'existing-linked-id',
           expect.objectContaining({
             tokens: mockTokens,
@@ -298,6 +368,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.userId).toBe('existing-user-by-email');
@@ -319,6 +390,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         // Should JIT provision instead of stitching
@@ -339,6 +411,7 @@ describe('Identity Stitching Service', () => {
           provider: providerNoAutoLink,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         // Should JIT provision instead of stitching
@@ -360,6 +433,7 @@ describe('Identity Stitching Service', () => {
             provider: mockProvider,
             userInfo: unverifiedUserInfo,
             tokens: mockTokens,
+            tenantId: 'default',
           })
         ).rejects.toThrow('email from your external account is not verified');
       });
@@ -386,6 +460,7 @@ describe('Identity Stitching Service', () => {
             provider: mockProvider,
             userInfo: mockUserInfo,
             tokens: mockTokens,
+            tenantId: 'default',
           })
         ).rejects.toThrow('existing account email is not verified');
       });
@@ -404,6 +479,7 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.isNewUser).toBe(true);
@@ -425,6 +501,7 @@ describe('Identity Stitching Service', () => {
             provider: providerNoJIT,
             userInfo: mockUserInfo,
             tokens: mockTokens,
+            tenantId: 'default',
           })
         ).rejects.toThrow('New account registration via external providers is not available');
       });
@@ -442,9 +519,92 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: userInfoNoEmail,
           tokens: mockTokens,
+          tenantId: 'default',
         });
 
         expect(result.isNewUser).toBe(true);
+      });
+
+      it('should reject JIT provisioning when required custom claims are missing', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+        mockValidateCustomClaimWrite.mockResolvedValueOnce({
+          ok: false,
+          error: 'Department is required',
+          missingRequiredFields: [
+            {
+              fieldKey: 'department',
+              label: 'Department',
+              fieldType: 'string',
+            },
+          ],
+        });
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({
+          code: 'required_custom_claims_missing',
+          details: expect.objectContaining({
+            validationError: 'Department is required',
+            missingRequiredFields: [
+              {
+                fieldKey: 'department',
+                label: 'Department',
+                fieldType: 'string',
+              },
+            ],
+          }),
+        });
+      });
+
+      it('should map provider claims into custom claims during JIT provisioning', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
+
+        const providerWithCustomMapping: UpstreamProvider = {
+          ...mockProvider,
+          attributeMapping: {
+            sub: 'sub',
+            email: 'email',
+            'custom_claims.department': 'profile.department',
+            'custom_fields.employee_number': 'profile.employee_number',
+          },
+        };
+
+        const mappedUserInfo: UserInfo = {
+          ...mockUserInfo,
+          profile: {
+            department: 'Engineering',
+            employee_number: 'E-100',
+          },
+        };
+
+        await handleIdentity(env as never, {
+          provider: providerWithCustomMapping,
+          userInfo: mappedUserInfo,
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+
+        expect(mockValidateCustomClaimWrite).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tenantId: 'default',
+            submitted: {
+              department: 'Engineering',
+              employee_number: 'E-100',
+            },
+          })
+        );
+        expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
+        expect(mockSyncUserLifecycleState).toHaveBeenCalled();
       });
     });
 
@@ -457,14 +617,19 @@ describe('Identity Stitching Service', () => {
           provider: mockProvider,
           userInfo: mockUserInfo,
           tokens: mockTokens,
+          tenantId: 'default',
           linkingUserId: 'existing-user-456',
         });
 
-        // Verify audit log was inserted via D1Adapter.execute
-        const auditLogCall = sqlTracker.coreDb.find(
-          (c) => c.method === 'execute' && c.sql.includes('audit_log')
+        expect(mockCreateAuditLog).toHaveBeenCalledWith(
+          env,
+          expect.objectContaining({
+            userId: 'existing-user-456',
+            action: 'identity_linked',
+            resource: 'linked_identity',
+            resourceId: 'linked-id-123',
+          })
         );
-        expect(auditLogCall).toBeDefined();
       });
     });
   });
@@ -474,7 +639,7 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce({ count: 1 });
 
-      const result = await hasPasskeyCredential(env as never, 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
 
       expect(result).toBe(true);
     });
@@ -483,7 +648,7 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce({ count: 0 });
 
-      const result = await hasPasskeyCredential(env as never, 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
 
       expect(result).toBe(false);
     });
@@ -492,7 +657,7 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce(null);
 
-      const result = await hasPasskeyCredential(env as never, 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
 
       expect(result).toBe(false);
     });

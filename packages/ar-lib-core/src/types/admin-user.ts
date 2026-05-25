@@ -181,7 +181,7 @@ export interface AdminRoleUpdateInput {
  * Scope type for role assignment
  * - global: Role applies to all tenants (super_admin only)
  * - tenant: Role applies to specific tenant
- * - org: Role applies to specific organization within tenant
+ * - org: Reserved for future Admin scope binding; current Admin APIs do not create it
  */
 export type AdminRoleAssignmentScopeType = 'global' | 'tenant' | 'org';
 
@@ -199,7 +199,7 @@ export interface AdminRoleAssignment {
   admin_role_id: string;
   /** Scope type */
   scope_type: AdminRoleAssignmentScopeType;
-  /** Scope ID (org_id if scope_type = 'org') */
+  /** Scope ID (tenant_id for tenant scope; reserved for future scoped modes) */
   scope_id: string | null;
   /** Expiration timestamp (Unix milliseconds), null for permanent */
   expires_at: number | null;
@@ -367,6 +367,10 @@ export interface AdminAuditLogEntry {
   after: Record<string, unknown> | null;
   /** Additional metadata */
   metadata: Record<string, unknown> | null;
+  /** Whether full detail is stored in the object plane */
+  has_detail: boolean;
+  /** Public artifact identifier for externalized detail payloads */
+  detail_artifact_id?: string | null;
   /** Timestamp (Unix milliseconds) */
   created_at: number;
 }
@@ -375,6 +379,7 @@ export interface AdminAuditLogEntry {
  * Admin audit log creation input
  */
 export interface AdminAuditLogCreateInput {
+  id?: string;
   tenant_id?: string;
   admin_user_id?: string;
   admin_email?: string;
@@ -392,6 +397,7 @@ export interface AdminAuditLogCreateInput {
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  detail_object_catalog_id?: string;
 }
 
 // =============================================================================
@@ -526,13 +532,164 @@ export const ADMIN_PERMISSIONS = {
   SETTINGS_WRITE: 'admin:settings:write',
   SETTINGS_ALL: 'admin:settings:*',
 
+  // Tenant vanity domain management
+  TENANT_DOMAINS_READ: 'admin:tenant_domains:read',
+  TENANT_DOMAINS_WRITE: 'admin:tenant_domains:write',
+  TENANT_DOMAINS_DELETE: 'admin:tenant_domains:delete',
+  TENANT_DOMAINS_ALL: 'admin:tenant_domains:*',
+
   // Audit log (EndUser audit)
   AUDIT_READ: 'admin:audit:read',
   AUDIT_ALL: 'admin:audit:*',
 
   // Admin audit log (Admin operations in DB_ADMIN)
   ADMIN_AUDIT_READ: 'admin:admin_audit:read',
+  ADMIN_AUDIT_DETAIL_READ: 'admin:admin_audit:detail:read',
   ADMIN_AUDIT_ALL: 'admin:admin_audit:*',
+
+  // Webhook management
+  WEBHOOKS_READ: 'admin:webhooks:read',
+  WEBHOOKS_WRITE: 'admin:webhooks:write',
+  WEBHOOKS_DELETE: 'admin:webhooks:delete',
+  WEBHOOKS_PAYLOAD_READ: 'admin:webhooks:payload:read',
+  WEBHOOKS_ALL: 'admin:webhooks:*',
+
+  // External IdP provider management
+  EXTERNAL_PROVIDERS_READ: 'admin:external_providers:read',
+  EXTERNAL_PROVIDERS_WRITE: 'admin:external_providers:write',
+  EXTERNAL_PROVIDERS_DELETE: 'admin:external_providers:delete',
+  EXTERNAL_PROVIDERS_ALL: 'admin:external_providers:*',
+
+  // External IdP token refresh operations
+  EXTERNAL_TOKEN_REFRESH_READ: 'admin:external_token_refresh:read',
+  EXTERNAL_TOKEN_REFRESH_WRITE: 'admin:external_token_refresh:write',
+  EXTERNAL_TOKEN_REFRESH_RUN: 'admin:external_token_refresh:run',
+  EXTERNAL_TOKEN_REFRESH_ALL: 'admin:external_token_refresh:*',
+
+  // SAML provider management
+  SAML_PROVIDERS_LIST: 'admin:saml_providers:list',
+  SAML_PROVIDERS_READ: 'admin:saml_providers:read',
+  SAML_PROVIDERS_CREATE: 'admin:saml_providers:create',
+  SAML_PROVIDERS_UPDATE: 'admin:saml_providers:update',
+  SAML_PROVIDERS_DELETE: 'admin:saml_providers:delete',
+  SAML_PROVIDERS_METADATA_IMPORT: 'admin:saml_providers:metadata:import',
+  SAML_PROVIDERS_METADATA_REFRESH: 'admin:saml_providers:metadata:refresh',
+  SAML_PROVIDERS_SIGNING_PUBLISH_NEXT: 'admin:saml_providers:signing:publish_next',
+  SAML_PROVIDERS_SIGNING_PROMOTE: 'admin:saml_providers:signing:promote',
+  SAML_PROVIDERS_SIGNING_RETIRE_BACKUP: 'admin:saml_providers:signing:retire_backup',
+  SAML_PROVIDERS_ALL: 'admin:saml_providers:*',
+  SAML_ATTRIBUTE_PRESETS_READ: 'admin:saml_attribute_presets:read',
+  SAML_ATTRIBUTE_PRESETS_WRITE: 'admin:saml_attribute_presets:write',
+  SAML_ATTRIBUTE_PRESETS_DELETE: 'admin:saml_attribute_presets:delete',
+
+  // Admin jobs / artifacts
+  JOBS_READ: 'admin:jobs:read',
+  JOBS_WRITE: 'admin:jobs:write',
+  JOBS_ARTIFACT_READ: 'admin:jobs:artifact:read',
+  JOBS_DESTINATION_SELECT: 'admin:jobs:destination:select',
+  JOBS_ALL: 'admin:jobs:*',
+
+  // Storage destination management
+  STORAGE_DESTINATIONS_LIST: 'admin:storage_destinations:list',
+  STORAGE_DESTINATIONS_READ: 'admin:storage_destinations:read',
+  STORAGE_DESTINATIONS_CREATE: 'admin:storage_destinations:create',
+  STORAGE_DESTINATIONS_UPDATE: 'admin:storage_destinations:update',
+  STORAGE_DESTINATIONS_DELETE: 'admin:storage_destinations:delete',
+  STORAGE_DESTINATIONS_CREDENTIALS_WRITE: 'admin:storage_destinations:credentials:write',
+  STORAGE_DESTINATIONS_HEALTH_CHECK: 'admin:storage_destinations:health:check',
+  STORAGE_DESTINATIONS_TEST: 'admin:storage_destinations:test',
+  STORAGE_DESTINATIONS_USAGE_READ: 'admin:storage_destinations:usage:read',
+  STORAGE_DESTINATIONS_ALL: 'admin:storage_destinations:*',
+
+  // Logging control plane
+  LOGGING_OVERVIEW_READ: 'admin:logging:overview:read',
+  LOGGING_PLATFORM_DEFAULTS_READ: 'admin:logging:platform_defaults:read',
+  LOGGING_PLATFORM_DEFAULTS_UPDATE: 'admin:logging:platform_defaults:update',
+  LOGGING_TENANT_OVERRIDES_READ: 'admin:logging:tenant_overrides:read',
+  LOGGING_TENANT_OVERRIDES_UPDATE: 'admin:logging:tenant_overrides:update',
+  LOGGING_CRITICAL_UPDATE: 'admin:logging:critical:update',
+  LOGGING_DELIVERY_EVENTS_READ: 'admin:logging:delivery_events:read',
+  LOGGING_DELIVERY_RETRY: 'admin:logging:delivery:retry',
+  LOGGING_EXPORT_CREATE: 'admin:logging:exports:create',
+  LOGGING_SENSITIVE_DETAIL_EXPORT: 'admin:logging:sensitive_detail:export',
+  LOGGING_DLQ_REPLAY: 'admin:logging:dlq:replay',
+  LOGGING_DLQ_DELETE: 'admin:logging:dlq:delete',
+  LOGGING_DLQ_PURGE: 'admin:logging:dlq:purge',
+  LOGGING_SNAPSHOTS_PUBLISH: 'admin:logging:snapshots:publish',
+  LOGGING_ROLLBACK: 'admin:logging:rollback',
+  LOGGING_ALL: 'admin:logging:*',
+
+  // Admin logging control plane
+  ADMIN_LOGGING_OVERVIEW_READ: 'admin:admin_logging:overview:read',
+  ADMIN_LOGGING_COVERAGE_READ: 'admin:admin_logging:coverage:read',
+  ADMIN_LOGGING_COVERAGE_UPDATE: 'admin:admin_logging:coverage:update',
+  ADMIN_LOGGING_REPAIR_READ: 'admin:admin_logging:repair:read',
+  ADMIN_LOGGING_REPAIR_RUN: 'admin:admin_logging:repair:run',
+  ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ: 'admin:admin_logging:sensitive_detail_policy:read',
+  ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_UPDATE:
+    'admin:admin_logging:sensitive_detail_policy:update',
+  ADMIN_LOGGING_CRITICAL_UPDATE: 'admin:admin_logging:critical:update',
+  ADMIN_LOGGING_ALL: 'admin:admin_logging:*',
+
+  // Feature storage destination selection
+  DIAGNOSTIC_LOGGING_DESTINATION_SELECT: 'admin:diagnostic_logging:destination:select',
+  DR_BACKUP_DESTINATION_SELECT: 'admin:dr_backup:destination:select',
+
+  // Platform database connection management
+  DATABASE_CONNECTIONS_LIST: 'admin:database_connections:list',
+  DATABASE_CONNECTIONS_READ: 'admin:database_connections:read',
+  DATABASE_CONNECTIONS_CREATE: 'admin:database_connections:create',
+  DATABASE_CONNECTIONS_UPDATE: 'admin:database_connections:update',
+  DATABASE_CONNECTIONS_DELETE: 'admin:database_connections:delete',
+  DATABASE_CONNECTIONS_CREDENTIALS_WRITE: 'admin:database_connections:credentials:write',
+  DATABASE_CONNECTIONS_TEST: 'admin:database_connections:test',
+  DATABASE_CONNECTIONS_ALL: 'admin:database_connections:*',
+
+  // Platform database routing and cutover
+  DATABASE_ROUTING_READ: 'admin:database_routing:read',
+  DATABASE_ROUTING_WRITE: 'admin:database_routing:write',
+  DATABASE_ROUTING_SWITCH: 'admin:database_routing:switch',
+  DATABASE_ROUTING_ROLLBACK: 'admin:database_routing:rollback',
+  DATABASE_ROUTING_ALL: 'admin:database_routing:*',
+
+  // Approval / elevation workflows
+  APPROVALS_READ: 'admin:approvals:read',
+  APPROVALS_DETAIL_READ: 'admin:approvals:detail:read',
+  APPROVALS_WRITE: 'admin:approvals:write',
+  APPROVALS_APPROVE: 'admin:approvals:approve',
+  APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
+  APPROVALS_ALL: 'admin:approvals:*',
+
+  // AI Grants
+  AI_GRANTS_READ: 'admin:ai_grants:read',
+  AI_GRANTS_CREATE: 'admin:ai_grants:create',
+  AI_GRANTS_UPDATE: 'admin:ai_grants:update',
+  AI_GRANTS_REVOKE: 'admin:ai_grants:revoke',
+  AI_GRANTS_ALL: 'admin:ai_grants:*',
+
+  // Admin Machine Access
+  ADMIN_MACHINE_ACCESS_READ: 'admin:machine_access:read',
+  ADMIN_MACHINE_ACCESS_WRITE: 'admin:machine_access:write',
+  ADMIN_MACHINE_ACCESS_DELETE: 'admin:machine_access:delete',
+  ADMIN_MACHINE_ACCESS_ALL: 'admin:machine_access:*',
+
+  // Operational logs
+  OPERATIONAL_LOGS_READ: 'admin:operational_logs:read',
+  OPERATIONAL_LOGS_DETAIL_READ: 'admin:operational_logs:detail:read',
+  OPERATIONAL_LOGS_ALL: 'admin:operational_logs:*',
+
+  // Privacy-preserving support operations
+  SUPPORT_OPS_REGISTRY_READ: 'admin:support_ops:registry:read',
+  SUPPORT_OPS_AGGREGATE_READ: 'admin:support_ops:aggregate:read',
+  SUPPORT_OPS_COHORTS_PREVIEW: 'admin:support_ops:cohorts:preview',
+  SUPPORT_OPS_COHORTS_CREATE: 'admin:support_ops:cohorts:create',
+  SUPPORT_OPS_ACTIONS_REQUEST: 'admin:support_ops:actions:request',
+  SUPPORT_OPS_ACTIONS_APPROVE: 'admin:support_ops:actions:approve',
+  SUPPORT_OPS_ACTIONS_EXECUTE: 'admin:support_ops:actions:execute',
+  SUPPORT_OPS_ACTIONS_READ: 'admin:support_ops:actions:read',
+  SUPPORT_OPS_BREAK_GLASS_REQUEST: 'admin:support_ops:break_glass:request',
+  SUPPORT_OPS_BREAK_GLASS_REVEAL: 'admin:support_ops:break_glass:reveal',
+  SUPPORT_OPS_ALL: 'admin:support_ops:*',
 
   // Security settings
   SECURITY_READ: 'admin:security:read',

@@ -73,7 +73,8 @@ describe('Logger', () => {
 
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
       expect(output.tenantId).toBe('tenant-1');
-      expect(output.userId).toBe('user-123');
+      expect(output.userId).toBeUndefined();
+      expect(output.userIdHash).toMatch(/^uid_[0-9a-f]{16}$/);
       expect(output.action).toBe('login');
     });
   });
@@ -109,6 +110,12 @@ describe('Logger', () => {
     });
 
     it('should include error object in error logs', () => {
+      setLoggerConfig({
+        level: 'info',
+        format: 'json',
+        hashUserId: false,
+        includeErrorStack: false,
+      });
       const logger = createLogger();
       const error = new Error('Something went wrong');
       logger.error('Operation failed', {}, error);
@@ -116,6 +123,21 @@ describe('Logger', () => {
       const output = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
       expect(output.error).toBeDefined();
       expect(output.error.message).toBe('Something went wrong');
+      expect(output.error.stack).toBeUndefined();
+    });
+
+    it('should include error stack when explicitly enabled', () => {
+      setLoggerConfig({
+        level: 'info',
+        format: 'json',
+        hashUserId: false,
+        includeErrorStack: true,
+      });
+      const logger = createLogger();
+      const error = new Error('Something went wrong');
+      logger.error('Operation failed', {}, error);
+
+      const output = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
       expect(output.error.stack).toBeDefined();
     });
   });
@@ -196,7 +218,7 @@ describe('Logger', () => {
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
       expect(output.userId).toBeUndefined();
       expect(output.userIdHash).toBeDefined();
-      expect(output.userIdHash).toMatch(/^uid_[0-9a-f]{8}$/);
+      expect(output.userIdHash).toMatch(/^uid_[0-9a-f]{16}$/);
     });
 
     it('should not hash userId when hashUserId is disabled', () => {
@@ -234,6 +256,85 @@ describe('Logger', () => {
       const output2 = JSON.parse(consoleLogSpy.mock.calls[1][0]);
       expect(output1.userIdHash).not.toBe(output2.userIdHash);
     });
+
+    it('should hash userId by default', () => {
+      const logger = createLogger({ userId: 'user-123' });
+      logger.info('Test message');
+
+      const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
+      expect(output.userId).toBeUndefined();
+      expect(output.userIdHash).toMatch(/^uid_[0-9a-f]{16}$/);
+    });
+
+    it('should hash sessionId even when raw userId logging is enabled', () => {
+      setLoggerConfig({ level: 'info', format: 'json', hashUserId: false });
+      const logger = createLogger({ sessionId: 'session-secret-123' });
+      logger.info('Test message');
+
+      const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
+      expect(output.sessionId).toBeUndefined();
+      expect(output.sessionIdHash).toMatch(/^sid_[0-9a-f]{16}$/);
+    });
+  });
+
+  describe('Redaction and field integrity', () => {
+    it('should redact sensitive extra fields recursively', () => {
+      const logger = createLogger({ tenantId: 'tenant-1' });
+      logger.info('Token issued', {
+        access_token: 'secret-access-token',
+        nested: {
+          password: 'secret-password',
+          note: 'Contact admin@example.com with Bearer raw-token',
+        },
+      });
+
+      const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
+      expect(output.access_token).toBe('[redacted]');
+      expect(output.nested.password).toBe('[redacted]');
+      expect(output.nested.note).toBe('Contact [EMAIL_REDACTED] with Bearer [redacted]');
+    });
+
+    it('should not allow extra fields to clobber core log fields', () => {
+      const logger = createLogger({ tenantId: 'tenant-1' });
+      logger.info('Original message', {
+        tenantId: 'attacker-tenant',
+        level: 'error',
+        message: 'forged message',
+        timestamp: '2000-01-01T00:00:00.000Z',
+      });
+
+      const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
+      expect(output.tenantId).toBe('tenant-1');
+      expect(output.level).toBe('info');
+      expect(output.message).toBe('Original message');
+      expect(output.timestamp).not.toBe('2000-01-01T00:00:00.000Z');
+    });
+
+    it('should not throw on circular extra fields', () => {
+      const logger = createLogger({ tenantId: 'tenant-1' });
+      const circular: Record<string, unknown> = { label: 'root' };
+      circular.self = circular;
+
+      expect(() => logger.info('Circular context', { circular })).not.toThrow();
+
+      const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
+      expect(output.circular).toEqual({ label: 'root', self: '[circular]' });
+    });
+
+    it('should truncate excessively deep extra fields', () => {
+      const logger = createLogger({ tenantId: 'tenant-1' });
+      const deep = { next: {} as Record<string, unknown> };
+      let cursor = deep.next;
+      for (let index = 0; index < 12; index += 1) {
+        cursor.next = {};
+        cursor = cursor.next as Record<string, unknown>;
+      }
+
+      logger.info('Deep context', { deep });
+
+      const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
+      expect(JSON.stringify(output.deep)).toContain('[truncated]');
+    });
   });
 
   describe('Pretty format', () => {
@@ -269,7 +370,8 @@ describe('Logger', () => {
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
       expect(output.tenantId).toBe('tenant-1');
       expect(output.requestId).toBe('req-123');
-      expect(output.userId).toBe('user-456');
+      expect(output.userId).toBeUndefined();
+      expect(output.userIdHash).toMatch(/^uid_[0-9a-f]{16}$/);
     });
 
     it('should not affect parent logger when child is created', () => {
@@ -301,7 +403,8 @@ describe('Logger', () => {
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
       expect(output.tenantId).toBe('tenant-1');
       expect(output.module).toBe('TOKEN');
-      expect(output.userId).toBe('user-1');
+      expect(output.userId).toBeUndefined();
+      expect(output.userIdHash).toMatch(/^uid_[0-9a-f]{16}$/);
     });
   });
 
@@ -338,7 +441,7 @@ describe('Logger', () => {
 
       expect(config.level).toBe('warn');
       expect(config.format).toBe('json'); // default
-      expect(config.hashUserId).toBe(false); // default
+      expect(config.hashUserId).toBe(true); // default
     });
   });
 
@@ -366,7 +469,7 @@ describe('Logger', () => {
       const config = getLoggerConfig();
       expect(config.level).toBe('info'); // default
       expect(config.format).toBe('json'); // default
-      expect(config.hashUserId).toBe(false); // default (not 'true')
+      expect(config.hashUserId).toBe(true); // default
     });
 
     it('should use defaults when env vars are not provided', () => {
@@ -375,7 +478,7 @@ describe('Logger', () => {
       const config = getLoggerConfig();
       expect(config.level).toBe('info');
       expect(config.format).toBe('json');
-      expect(config.hashUserId).toBe(false);
+      expect(config.hashUserId).toBe(true);
     });
   });
 
@@ -399,7 +502,8 @@ describe('Logger', () => {
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
       expect(output.tenantId).toBe('tenant-1');
       expect(output.requestId).toBe('req-123');
-      expect(output.userId).toBe('user-456');
+      expect(output.userId).toBeUndefined();
+      expect(output.userIdHash).toMatch(/^uid_[0-9a-f]{16}$/);
     });
   });
 });

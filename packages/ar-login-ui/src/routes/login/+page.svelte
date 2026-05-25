@@ -3,17 +3,21 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, externalIdpAPI, loginChallengeAPI } from '$lib/api/client';
+	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import {
 		isValidRedirectUrl,
 		isValidImageUrl,
 		isValidLinkUrl,
 		sanitizeColor
 	} from '$lib/utils/url-validation';
-	import { fetchLoginMethods, type SocialProvider } from '$lib/api/login-methods';
+	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
+	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
 	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { page } from '$app/stores';
 
 	// ---------------------------------------------------------------------------
@@ -24,14 +28,17 @@
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
 	let externalIdpLoading = $state<string | null>(null);
+	const authActionLoading = $derived(
+		passkeyLoading || emailCodeLoading || externalIdpLoading !== null
+	);
 
 	// Login methods (from API)
 	let methodsLoading = $state(true);
 	let methodsError = $state('');
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);
-	let socialEnabled = $state(false);
-	let socialProviders = $state<SocialProvider[]>([]);
+	let externalEnabled = $state(false);
+	let externalProviders = $state<ExternalProvider[]>([]);
 
 	// OAuth login challenge client info
 	interface ClientInfo {
@@ -44,6 +51,10 @@
 	}
 	let clientInfo = $state<ClientInfo | null>(null);
 	let clientInfoLoading = $state(false);
+	let authorizationChallengeId = $state('');
+	let samlRequestId = $state('');
+	let samlSpEntityId = $state('');
+	let returnTo = $state('');
 
 	// External IdP error
 	function getExternalIdpErrorMessage(
@@ -84,7 +95,7 @@
 	}
 	let externalIdpError = $state<{ title: string; message: string; action?: string } | null>(null);
 
-	// Dark mode detection for social button colors
+	// Dark mode detection for external provider button colors
 	let isDarkMode = $state(false);
 
 	// Derived: WebAuthn support check
@@ -145,6 +156,14 @@
 
 		// Fetch login methods + challenge data in parallel
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
+		authorizationChallengeId = urlChallengeId || '';
+		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
+		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
+		returnTo = $page.url.searchParams.get('return_to') || '';
+		const urlLoginHint = $page.url.searchParams.get('login_hint');
+		if (urlLoginHint) {
+			email = urlLoginHint;
+		}
 
 		const tasks: Promise<void>[] = [loadLoginMethods()];
 		if (urlChallengeId) {
@@ -168,8 +187,8 @@
 			if (data) {
 				passkeyEnabled = data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.enabled;
-				socialEnabled = data.methods.social.enabled;
-				socialProviders = data.methods.social.providers;
+				externalEnabled = data.methods.external.enabled;
+				externalProviders = data.methods.external.providers;
 			}
 		} catch {
 			methodsError = 'Failed to load login methods';
@@ -205,15 +224,43 @@
 		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 	}
 
+	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
+		return messageForApiError(apiError, {
+			unknown: () => $LL.error_unknown(),
+			invalidRequest: () => $LL.error_invalid_request(),
+			accessDenied: () => $LL.error_access_denied(),
+			serverError: () => $LL.error_server_error(),
+			loginRequired: () => $LL.error_login_required(),
+			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
+		});
+	}
+
+	function buildPostAuthRedirect(redirectUrl?: string): string {
+		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
+			const params = new SvelteURLSearchParams({
+				saml_request_id: samlRequestId,
+				saml_sp_entity_id: samlSpEntityId,
+				return_to: 'saml_sso'
+			});
+			return `/saml/idp/sso?${params.toString()}`;
+		}
+
+		if (redirectUrl && isValidRedirectUrl(redirectUrl)) {
+			return redirectUrl;
+		}
+
+		return '/';
+	}
+
 	async function handlePasskeyLogin() {
-		if (passkeyLoading) return;
+		if (authActionLoading) return;
 		error = '';
 		passkeyLoading = true;
 
 		try {
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({});
 			if (optionsError) {
-				throw new Error(optionsError.error_description || 'Failed to get authentication options');
+				throw new Error(getApiErrorMessage(optionsError));
 			}
 
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -221,22 +268,17 @@
 
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin({
 				challengeId: optionsData!.challengeId,
-				credential
+				credential,
+				authorizationChallengeId: authorizationChallengeId || undefined
 			});
 
 			if (verifyError) {
-				throw new Error(verifyError.error_description || 'Authentication verification failed');
+				throw new Error(getApiErrorMessage(verifyError));
 			}
 
-			if (verifyData!.sessionId) {
-				auth.login(verifyData!.sessionId, {
-					userId: verifyData!.userId,
-					email: verifyData!.user.email,
-					name: verifyData!.user.name || undefined
-				});
-			}
+			await auth.refreshFromSession();
 
-			window.location.href = '/';
+			window.location.href = buildPostAuthRedirect(verifyData?.redirect_url);
 		} catch (err) {
 			error =
 				err instanceof Error ? err.message : 'An error occurred during passkey authentication';
@@ -246,7 +288,7 @@
 	}
 
 	async function handleEmailCodeSend() {
-		if (emailCodeLoading) return;
+		if (authActionLoading) return;
 		error = '';
 
 		if (!email.trim()) {
@@ -262,9 +304,18 @@
 		try {
 			const { error: apiError } = await emailCodeAPI.send({ email });
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to send verification code');
+				throw new Error(getApiErrorMessage(apiError));
 			}
-			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}`;
+			const params = new SvelteURLSearchParams({ email });
+			if (authorizationChallengeId) {
+				params.set('challenge_id', authorizationChallengeId);
+			}
+			if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
+				params.set('saml_request_id', samlRequestId);
+				params.set('saml_sp_entity_id', samlSpEntityId);
+				params.set('return_to', 'saml_sso');
+			}
+			window.location.href = `/verify-email-code?${params.toString()}`;
 		} catch (err) {
 			error =
 				err instanceof Error ? err.message : 'An error occurred while sending verification code';
@@ -273,37 +324,31 @@
 		}
 	}
 
-	async function handleExternalLogin(providerId: string) {
+	async function handleExternalLogin(provider: ExternalProvider) {
+		const providerId = provider.id;
+		if (authActionLoading) return;
 		externalIdpLoading = providerId;
 		try {
-			const redirectUri = `${window.location.origin}/callback`;
-			const { url, codeVerifier } = await externalIdpAPI.startLogin(providerId, redirectUri);
+			const redirectUri =
+				provider.startMode === 'saml_sp'
+					? `${window.location.origin}/`
+					: `${window.location.origin}/callback`;
+			const { url } = await externalIdpAPI.startLogin(
+				providerId,
+				redirectUri,
+				provider.startUrl,
+				provider.startMode
+			);
 
 			if (!isValidRedirectUrl(url)) {
 				throw new Error('Invalid redirect URL from identity provider');
 			}
 
-			// Store code_verifier and provider_id in sessionStorage for callback
+			// Provider ID is diagnostic-only; the managed LoginUI flow does not store PKCE secrets.
 			try {
-				sessionStorage.setItem('pkce_code_verifier', codeVerifier);
-				sessionStorage.setItem('oauth_provider_id', providerId);
-
-				// Verify storage succeeded (defensive check)
-				const storedValue = sessionStorage.getItem('pkce_code_verifier');
-				if (storedValue !== codeVerifier) {
-					throw new Error('Failed to verify stored PKCE verifier');
-				}
-
-				console.debug('PKCE verifier and provider ID stored successfully');
+				setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId, providerId);
 			} catch (storageError) {
-				console.error('Failed to store PKCE verifier:', storageError);
-				if (storageError instanceof DOMException && storageError.name === 'QuotaExceededError') {
-					error = $LL.callback_errorStorageQuotaExceeded();
-				} else {
-					error = $LL.callback_errorStorageUnavailable();
-				}
-				externalIdpLoading = null;
-				return;
+				console.warn('Failed to store external provider diagnostic state:', storageError);
 			}
 
 			// Redirect to external IdP
@@ -314,20 +359,11 @@
 		}
 	}
 
-	function getProviderIcon(provider: SocialProvider): string {
-		if (provider.iconUrl) return provider.iconUrl;
-		const name = (provider.name || '').toLowerCase();
-		if (name.includes('google')) return 'i-ph-google-logo';
-		if (name.includes('github')) return 'i-ph-github-logo';
-		if (name.includes('microsoft') || name.includes('azure')) return 'i-ph-windows-logo';
-		if (name.includes('apple')) return 'i-ph-apple-logo';
-		if (name.includes('facebook') || name.includes('meta')) return 'i-ph-meta-logo';
-		if (name.includes('twitter') || name.includes('x.com')) return 'i-ph-x-logo';
-		if (name.includes('linkedin')) return 'i-ph-linkedin-logo';
-		return 'i-ph-sign-in';
+	function getProviderIcon(provider: ExternalProvider): string {
+		return getExternalProviderIconClass(provider);
 	}
 
-	function getProviderButtonText(provider: SocialProvider): string {
+	function getProviderButtonText(provider: ExternalProvider): string {
 		if (provider.buttonText) return provider.buttonText;
 		return $LL.login_continueWith({ provider: provider.name });
 	}
@@ -504,7 +540,7 @@
 						variant="primary"
 						class="w-full mb-4"
 						loading={passkeyLoading}
-						disabled={emailCodeLoading}
+						disabled={emailCodeLoading || externalIdpLoading !== null}
 						onclick={handlePasskeyLogin}
 					>
 						<div class="i-heroicons-key h-5 w-5"></div>
@@ -530,6 +566,7 @@
 							bind:value={email}
 							onkeypress={handleKeyPress}
 							autocomplete="email"
+							disabled={authActionLoading}
 							required
 						/>
 					</div>
@@ -546,8 +583,8 @@
 					</Button>
 				{/if}
 
-				<!-- Social Login Section -->
-				{#if socialEnabled && socialProviders.length > 0}
+				<!-- External Login Section -->
+				{#if externalEnabled && externalProviders.length > 0}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -555,7 +592,7 @@
 					</div>
 
 					<div class="space-y-3">
-						{#each socialProviders as provider (provider.id)}
+						{#each externalProviders as provider (provider.id)}
 							{@const safeColor =
 								isDarkMode && provider.buttonColorDark
 									? sanitizeColor(provider.buttonColorDark)
@@ -567,10 +604,19 @@
 								disabled={passkeyLoading ||
 									emailCodeLoading ||
 									(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
-								onclick={() => handleExternalLogin(provider.id)}
+								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 							>
-								<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{#if provider.iconUrl}
+									<img
+										src={provider.iconUrl}
+										alt=""
+										loading="lazy"
+										style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
+									/>
+								{:else if getProviderIcon(provider)}
+									<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+								{/if}
 								{getProviderButtonText(provider)}
 							</Button>
 						{/each}

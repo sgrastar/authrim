@@ -14,7 +14,8 @@
  * @packageDocumentation
  */
 
-import { D1Adapter, type DatabaseAdapter } from '../db';
+import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
+import { requireTenantId } from '../repositories/tenant';
 
 // =============================================================================
 // Types
@@ -103,7 +104,6 @@ export interface SettingsHistoryConfig {
 
 const DEFAULT_MAX_VERSIONS = 100;
 const DEFAULT_RETENTION_DAYS = 90;
-const DEFAULT_TENANT_ID = 'default';
 
 // =============================================================================
 // Helper Functions
@@ -159,19 +159,13 @@ export function calculateChanges(
 // =============================================================================
 
 export class SettingsHistoryManager {
-  private db: D1Database;
   private adapter: DatabaseAdapter;
   private tenantId: string;
   private config: SettingsHistoryConfig;
 
-  constructor(
-    db: D1Database,
-    tenantId: string = DEFAULT_TENANT_ID,
-    config: SettingsHistoryConfig = {}
-  ) {
-    this.db = db;
-    this.adapter = new D1Adapter({ db });
-    this.tenantId = tenantId;
+  constructor(db: DatabaseSource, tenantId: string, config: SettingsHistoryConfig = {}) {
+    this.adapter = ensureDatabaseAdapter(db, 'settings-history');
+    this.tenantId = requireTenantId(tenantId, 'SettingsHistoryManager');
     this.config = {
       maxVersions: config.maxVersions ?? DEFAULT_MAX_VERSIONS,
       retentionDays: config.retentionDays ?? DEFAULT_RETENTION_DAYS,
@@ -469,8 +463,8 @@ export class SettingsHistoryManager {
  * Create a settings history manager
  */
 export function createSettingsHistoryManager(
-  db: D1Database,
-  tenantId?: string,
+  db: DatabaseSource,
+  tenantId: string,
   config?: SettingsHistoryConfig
 ): SettingsHistoryManager {
   return new SettingsHistoryManager(db, tenantId, config);

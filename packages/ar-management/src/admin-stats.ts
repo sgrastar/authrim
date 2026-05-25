@@ -25,7 +25,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
+  createAuthContextFromHono,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -34,6 +34,13 @@ import {
   getClient,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
+import {
+  createAuditHotQueryUnsupportedResponse,
+  getAuditHotQuerySupport,
+  getAuditHotQuerySqlSpec,
+  getAuditTimeRange,
+} from './audit-hot-query';
+import { getAuditJsonTextExpr, getAuditTimelineGrouping } from './audit-sql-dialect';
 
 // =============================================================================
 // Constants
@@ -159,11 +166,8 @@ interface TimelineStats {
 // Helpers
 // =============================================================================
 
-/**
- * Create database adapter from context
- */
-function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return new D1Adapter({ db: c.env.DB });
+function createCoreAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 /**
@@ -197,24 +201,6 @@ function parseStatsQuery(c: Context<{ Bindings: Env }>) {
     valid: true as const,
     data: parseResult.data,
   };
-}
-
-/**
- * Get interval grouping SQL expression for different intervals
- */
-function getIntervalGrouping(interval: 'hour' | 'day' | 'week'): string {
-  switch (interval) {
-    case 'hour':
-      // Group by hour
-      return "strftime('%Y-%m-%d %H:00:00', datetime(created_at, 'unixepoch'))";
-    case 'week':
-      // Group by week start (Monday)
-      return "strftime('%Y-%W', datetime(created_at, 'unixepoch'))";
-    case 'day':
-    default:
-      // Group by day
-      return "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch'))";
-  }
 }
 
 /**
@@ -254,53 +240,60 @@ export async function adminStatsTokensHandler(c: Context<{ Bindings: Env }>) {
   void _toTs;
 
   try {
-    const adapter = createAdapter(c);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
 
     // Get today's boundaries for issued/revoked counts
     const todayStart = Math.floor(new Date().setUTCHours(0, 0, 0, 0) / 1000);
     const todayEnd = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
+    const { tableName: auditTable, actionColumn } = getAuditHotQuerySqlSpec(hotQuery.context);
+    const [auditFromTs, auditToTs] = getAuditTimeRange(todayStart, todayEnd, hotQuery.context);
+    const auditAdapter = hotQuery.context.adapter;
+    const coreAdapter = createCoreAdapter(c, tenantId);
 
     // Query access token stats
     // Note: In a real implementation, this would query the actual token tables
     // For now, we return placeholder data structure
     const [activeAccessTokens, issuedTodayAccess, revokedTodayAccess] = await Promise.all([
-      adapter.queryOne<{ count: number }>(
+      coreAdapter.queryOne<{ count: number }>(
         `SELECT COUNT(*) as count FROM sessions
          WHERE tenant_id = ? AND expires_at > ? AND revoked = 0`,
         [tenantId, Math.floor(Date.now() / 1000)]
       ),
-      adapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM audit_log
-         WHERE tenant_id = ? AND action = 'token.issued'
+      auditAdapter.queryOne<{ count: number }>(
+        `SELECT COUNT(*) as count FROM ${auditTable}
+         WHERE tenant_id = ? AND ${actionColumn} = 'token.issued'
          AND created_at >= ? AND created_at <= ?`,
-        [tenantId, todayStart, todayEnd]
+        [tenantId, auditFromTs, auditToTs]
       ),
-      adapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM audit_log
-         WHERE tenant_id = ? AND action = 'token.revoked'
+      auditAdapter.queryOne<{ count: number }>(
+        `SELECT COUNT(*) as count FROM ${auditTable}
+         WHERE tenant_id = ? AND ${actionColumn} = 'token.revoked'
          AND created_at >= ? AND created_at <= ?`,
-        [tenantId, todayStart, todayEnd]
+        [tenantId, auditFromTs, auditToTs]
       ),
     ]);
 
     // Query refresh token stats (using audit log as proxy)
     const [activeRefreshTokens, issuedTodayRefresh, revokedTodayRefresh] = await Promise.all([
-      adapter.queryOne<{ count: number }>(
+      coreAdapter.queryOne<{ count: number }>(
         `SELECT COUNT(*) as count FROM sessions
          WHERE tenant_id = ? AND expires_at > ? AND revoked = 0`,
         [tenantId, Math.floor(Date.now() / 1000)]
       ),
-      adapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM audit_log
-         WHERE tenant_id = ? AND action = 'refresh_token.issued'
+      auditAdapter.queryOne<{ count: number }>(
+        `SELECT COUNT(*) as count FROM ${auditTable}
+         WHERE tenant_id = ? AND ${actionColumn} = 'refresh_token.issued'
          AND created_at >= ? AND created_at <= ?`,
-        [tenantId, todayStart, todayEnd]
+        [tenantId, auditFromTs, auditToTs]
       ),
-      adapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM audit_log
-         WHERE tenant_id = ? AND action = 'refresh_token.revoked'
+      auditAdapter.queryOne<{ count: number }>(
+        `SELECT COUNT(*) as count FROM ${auditTable}
+         WHERE tenant_id = ? AND ${actionColumn} = 'refresh_token.revoked'
          AND created_at >= ? AND created_at <= ?`,
-        [tenantId, todayStart, todayEnd]
+        [tenantId, auditFromTs, auditToTs]
       ),
     ]);
 
@@ -348,11 +341,47 @@ export async function adminStatsAuthHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const adapter = createAdapter(c);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+    const context = hotQuery.context;
+
+    const adapter = context.adapter;
+    const [auditFromTs, auditToTs] = getAuditTimeRange(fromTs, toTs, context);
+    const { tableName: auditTable, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
+    const authWhere =
+      hotQuery.context.mode === 'legacy'
+        ? `(${actionColumn} LIKE 'auth.%' OR ${actionColumn} LIKE 'token.%')`
+        : `event_category IN ('auth', 'token')`;
+    const successCase =
+      hotQuery.context.mode === 'legacy'
+        ? `CASE WHEN ${actionColumn} LIKE '%success%' OR ${actionColumn} LIKE '%issued%' THEN 1 ELSE 0 END`
+        : `CASE WHEN result = 'success' THEN 1 ELSE 0 END`;
+    const failureCase =
+      hotQuery.context.mode === 'legacy'
+        ? `CASE WHEN ${actionColumn} LIKE '%failed%' OR ${actionColumn} LIKE '%error%' THEN 1 ELSE 0 END`
+        : `CASE WHEN result = 'failure' THEN 1 ELSE 0 END`;
+    const mfaCase =
+      hotQuery.context.mode === 'legacy'
+        ? `CASE WHEN ${detailsColumn} LIKE '%mfa%' THEN 1 ELSE 0 END`
+        : `CASE WHEN ${actionColumn} LIKE 'auth.mfa%' OR COALESCE(${detailsColumn}, '') LIKE '%mfa%' THEN 1 ELSE 0 END`;
+    const grantTypeExpr =
+      hotQuery.context.mode === 'legacy'
+        ? `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'grant_type', hotQuery.context.dialect)}, 'unknown')`
+        : `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'grant_type', hotQuery.context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'grantType', hotQuery.context.dialect)}, 'unknown')`;
 
     // Build client filter
-    const clientFilter = client_id ? ' AND details LIKE ?' : '';
-    const clientBinding = client_id ? [`%"client_id":"${client_id}"%`] : [];
+    const clientFilter = client_id
+      ? hotQuery.context.mode === 'legacy'
+        ? ` AND COALESCE(${detailsColumn}, '') LIKE ?`
+        : ` AND (client_id = ? OR ${getAuditJsonTextExpr(detailsColumn, 'client_id', hotQuery.context.dialect)} = ? OR ${getAuditJsonTextExpr(detailsColumn, 'grant_client_id', hotQuery.context.dialect)} = ? OR (${getAuditJsonTextExpr(detailsColumn, 'resourceType', hotQuery.context.dialect)} = 'client' AND ${getAuditJsonTextExpr(detailsColumn, 'resourceId', hotQuery.context.dialect)} = ?))`
+      : '';
+    const clientBinding = client_id
+      ? hotQuery.context.mode === 'legacy'
+        ? [`%"client_id":"${client_id}"%`]
+        : [client_id, client_id, client_id, client_id]
+      : [];
 
     // Query overall auth stats from audit log
     const overallStats = await adapter.queryOne<{
@@ -363,14 +392,14 @@ export async function adminStatsAuthHandler(c: Context<{ Bindings: Env }>) {
     }>(
       `SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN action LIKE '%success%' OR action LIKE '%issued%' THEN 1 ELSE 0 END) as successful,
-        SUM(CASE WHEN action LIKE '%failed%' OR action LIKE '%error%' THEN 1 ELSE 0 END) as failed,
-        SUM(CASE WHEN details LIKE '%mfa%' THEN 1 ELSE 0 END) as mfa_used
-      FROM audit_log
+        SUM(${successCase}) as successful,
+        SUM(${failureCase}) as failed,
+        SUM(${mfaCase}) as mfa_used
+      FROM ${auditTable}
       WHERE tenant_id = ?
-        AND (action LIKE 'auth.%' OR action LIKE 'token.%')
+        AND ${authWhere}
         AND created_at >= ? AND created_at <= ?${clientFilter}`,
-      [tenantId, fromTs, toTs, ...clientBinding]
+      [tenantId, auditFromTs, auditToTs, ...clientBinding]
     );
 
     // Query by grant type
@@ -380,18 +409,15 @@ export async function adminStatsAuthHandler(c: Context<{ Bindings: Env }>) {
       failed: number;
     }>(
       `SELECT
-        COALESCE(
-          json_extract(details, '$.grant_type'),
-          'unknown'
-        ) as grant_type,
-        SUM(CASE WHEN action LIKE '%success%' OR action LIKE '%issued%' THEN 1 ELSE 0 END) as successful,
-        SUM(CASE WHEN action LIKE '%failed%' OR action LIKE '%error%' THEN 1 ELSE 0 END) as failed
-      FROM audit_log
+        ${grantTypeExpr} as grant_type,
+        SUM(${successCase}) as successful,
+        SUM(${failureCase}) as failed
+      FROM ${auditTable}
       WHERE tenant_id = ?
-        AND (action LIKE 'auth.%' OR action LIKE 'token.%')
+        AND ${authWhere}
         AND created_at >= ? AND created_at <= ?${clientFilter}
       GROUP BY grant_type`,
-      [tenantId, fromTs, toTs, ...clientBinding]
+      [tenantId, auditFromTs, auditToTs, ...clientBinding]
     );
 
     const total = overallStats?.total ?? 0;
@@ -446,14 +472,53 @@ export async function adminStatsTimelineHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const adapter = createAdapter(c);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+
+    const adapter = hotQuery.context.adapter;
+    const [auditFromTs, auditToTs] = getAuditTimeRange(fromTs, toTs, hotQuery.context);
+    const {
+      tableName: auditTable,
+      actionColumn,
+      detailsColumn,
+    } = getAuditHotQuerySqlSpec(hotQuery.context);
 
     // Build client filter
-    const clientFilter = client_id ? ' AND details LIKE ?' : '';
-    const clientBinding = client_id ? [`%"client_id":"${client_id}"%`] : [];
+    const authWhere =
+      hotQuery.context.mode === 'legacy'
+        ? `(${actionColumn} LIKE 'auth.%' OR ${actionColumn} LIKE 'token.%')`
+        : `event_category IN ('auth', 'token')`;
+    const successCase =
+      hotQuery.context.mode === 'legacy'
+        ? `CASE WHEN ${actionColumn} LIKE '%success%' OR ${actionColumn} LIKE '%issued%' THEN 1 ELSE 0 END`
+        : `CASE WHEN result = 'success' THEN 1 ELSE 0 END`;
+    const failureCase =
+      hotQuery.context.mode === 'legacy'
+        ? `CASE WHEN ${actionColumn} LIKE '%failed%' OR ${actionColumn} LIKE '%error%' THEN 1 ELSE 0 END`
+        : `CASE WHEN result = 'failure' THEN 1 ELSE 0 END`;
+    const mfaCase =
+      hotQuery.context.mode === 'legacy'
+        ? `CASE WHEN ${detailsColumn} LIKE '%mfa%' THEN 1 ELSE 0 END`
+        : `CASE WHEN ${actionColumn} LIKE 'auth.mfa%' OR COALESCE(${detailsColumn}, '') LIKE '%mfa%' THEN 1 ELSE 0 END`;
+    const clientFilter = client_id
+      ? hotQuery.context.mode === 'legacy'
+        ? ` AND COALESCE(${detailsColumn}, '') LIKE ?`
+        : ` AND (client_id = ? OR ${getAuditJsonTextExpr(detailsColumn, 'client_id', hotQuery.context.dialect)} = ? OR ${getAuditJsonTextExpr(detailsColumn, 'grant_client_id', hotQuery.context.dialect)} = ? OR (${getAuditJsonTextExpr(detailsColumn, 'resourceType', hotQuery.context.dialect)} = 'client' AND ${getAuditJsonTextExpr(detailsColumn, 'resourceId', hotQuery.context.dialect)} = ?))`
+      : '';
+    const clientBinding = client_id
+      ? hotQuery.context.mode === 'legacy'
+        ? [`%"client_id":"${client_id}"%`]
+        : [client_id, client_id, client_id, client_id]
+      : [];
 
     // Get interval grouping expression
-    const grouping = getIntervalGrouping(interval);
+    const grouping = getAuditTimelineGrouping(
+      interval,
+      hotQuery.context.dialect,
+      hotQuery.context.createdAtUnit
+    );
 
     // Query timeline data
     const timelineData = await adapter.query<{
@@ -464,16 +529,16 @@ export async function adminStatsTimelineHandler(c: Context<{ Bindings: Env }>) {
     }>(
       `SELECT
         ${grouping} as time_bucket,
-        SUM(CASE WHEN action LIKE '%success%' OR action LIKE '%issued%' THEN 1 ELSE 0 END) as success,
-        SUM(CASE WHEN action LIKE '%failed%' OR action LIKE '%error%' THEN 1 ELSE 0 END) as failed,
-        SUM(CASE WHEN details LIKE '%mfa%' THEN 1 ELSE 0 END) as mfa_used
-      FROM audit_log
+        SUM(${successCase}) as success,
+        SUM(${failureCase}) as failed,
+        SUM(${mfaCase}) as mfa_used
+      FROM ${auditTable}
       WHERE tenant_id = ?
-        AND (action LIKE 'auth.%' OR action LIKE 'token.%')
+        AND ${authWhere}
         AND created_at >= ? AND created_at <= ?${clientFilter}
       GROUP BY time_bucket
       ORDER BY time_bucket ASC`,
-      [tenantId, fromTs, toTs, ...clientBinding]
+      [tenantId, auditFromTs, auditToTs, ...clientBinding]
     );
 
     // Format data points
@@ -566,10 +631,30 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const adapter = createAdapter(c);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+
+    const {
+      tableName: auditTable,
+      actionColumn,
+      detailsColumn,
+    } = getAuditHotQuerySqlSpec(hotQuery.context);
+    const auditAdapter = hotQuery.context.adapter;
+    const coreAdapter = createCoreAdapter(c, tenantId);
+    const [auditFromTs, auditToTs] = getAuditTimeRange(fromTs, toTs, hotQuery.context);
+    const clientClause =
+      hotQuery.context.mode === 'legacy'
+        ? `((resource_type = 'client' AND resource_id = ?) OR ${getAuditJsonTextExpr(detailsColumn, 'client_id', hotQuery.context.dialect)} = ? OR ${getAuditJsonTextExpr(detailsColumn, 'clientId', hotQuery.context.dialect)} = ?)`
+        : `(client_id = ? OR ${getAuditJsonTextExpr(detailsColumn, 'client_id', hotQuery.context.dialect)} = ? OR ${getAuditJsonTextExpr(detailsColumn, 'clientId', hotQuery.context.dialect)} = ? OR (${getAuditJsonTextExpr(detailsColumn, 'resourceType', hotQuery.context.dialect)} = 'client' AND ${getAuditJsonTextExpr(detailsColumn, 'resourceId', hotQuery.context.dialect)} = ?))`;
+    const clientBindings =
+      hotQuery.context.mode === 'legacy'
+        ? [clientId, clientId, clientId]
+        : [clientId, clientId, clientId, clientId];
 
     // Verify client exists and belongs to tenant using KV cache (with D1 fallback)
-    const client = await getClient(c.env, clientId);
+    const client = await getClient(c.env, tenantId, clientId, coreAdapter);
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -584,81 +669,85 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
     const monthStart = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
 
     // Query token stats for this client
-    const [tokenStats, authStats, usageStats] = await Promise.all([
+    const [tokenStats, activeSessionsResult, authStats, usageStats] = await Promise.all([
       // Token statistics
-      adapter.queryOne<{
-        active_access: number;
-        active_refresh: number;
+      auditAdapter.queryOne<{
         issued_today: number;
         revoked_today: number;
       }>(
         `SELECT
-          (SELECT COUNT(*) FROM sessions WHERE client_id = ? AND tenant_id = ? AND expires_at > ? AND revoked = 0) as active_access,
-          (SELECT COUNT(*) FROM sessions WHERE client_id = ? AND tenant_id = ? AND expires_at > ? AND revoked = 0) as active_refresh,
-          (SELECT COUNT(*) FROM audit_log WHERE tenant_id = ? AND details LIKE ? AND action = 'token.issued' AND created_at >= ? AND created_at <= ?) as issued_today,
-          (SELECT COUNT(*) FROM audit_log WHERE tenant_id = ? AND details LIKE ? AND action = 'token.revoked' AND created_at >= ? AND created_at <= ?) as revoked_today`,
+          (SELECT COUNT(*) FROM ${auditTable} WHERE tenant_id = ? AND ${clientClause} AND ${actionColumn} = 'token.issued' AND created_at >= ? AND created_at <= ?) as issued_today,
+          (SELECT COUNT(*) FROM ${auditTable} WHERE tenant_id = ? AND ${clientClause} AND ${actionColumn} = 'token.revoked' AND created_at >= ? AND created_at <= ?) as revoked_today`,
         [
-          clientId,
           tenantId,
-          Math.floor(Date.now() / 1000),
-          clientId,
+          ...clientBindings,
+          ...getAuditTimeRange(todayStart, todayEnd, hotQuery.context),
           tenantId,
-          Math.floor(Date.now() / 1000),
-          tenantId,
-          `%"client_id":"${clientId}"%`,
-          todayStart,
-          todayEnd,
-          tenantId,
-          `%"client_id":"${clientId}"%`,
-          todayStart,
-          todayEnd,
+          ...clientBindings,
+          ...getAuditTimeRange(todayStart, todayEnd, hotQuery.context),
         ]
+      ),
+      coreAdapter.queryOne<{
+        active_access: number;
+        active_refresh: number;
+      }>(
+        `SELECT
+          COUNT(DISTINCT sc.session_id) as active_access,
+          COUNT(DISTINCT sc.session_id) as active_refresh
+         FROM session_clients sc
+         JOIN sessions s ON s.id = sc.session_id
+         WHERE sc.client_id = ? AND sc.tenant_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
+        [clientId, tenantId, tenantId, Math.floor(Date.now() / 1000)]
       ),
 
       // Auth statistics within period
-      adapter.queryOne<{
+      auditAdapter.queryOne<{
         total: number;
         successful: number;
         failed: number;
       }>(
         `SELECT
           COUNT(*) as total,
-          SUM(CASE WHEN action LIKE '%success%' OR action LIKE '%issued%' THEN 1 ELSE 0 END) as successful,
-          SUM(CASE WHEN action LIKE '%failed%' OR action LIKE '%error%' THEN 1 ELSE 0 END) as failed
-        FROM audit_log
+          SUM(CASE WHEN ${hotQuery.context.mode === 'legacy' ? `${actionColumn} LIKE '%success%' OR ${actionColumn} LIKE '%issued%'` : `result = 'success'`} THEN 1 ELSE 0 END) as successful,
+          SUM(CASE WHEN ${hotQuery.context.mode === 'legacy' ? `${actionColumn} LIKE '%failed%' OR ${actionColumn} LIKE '%error%'` : `result = 'failure'`} THEN 1 ELSE 0 END) as failed
+        FROM ${auditTable}
         WHERE tenant_id = ?
-          AND details LIKE ?
-          AND (action LIKE 'auth.%' OR action LIKE 'token.%')
+          AND ${clientClause}
+          AND ${hotQuery.context.mode === 'legacy' ? `(${actionColumn} LIKE 'auth.%' OR ${actionColumn} LIKE 'token.%')` : `event_category IN ('auth', 'token')`}
           AND created_at >= ? AND created_at <= ?`,
-        [tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
+        [tenantId, ...clientBindings, ...getAuditTimeRange(fromTs, toTs, hotQuery.context)]
       ),
 
       // Usage statistics
-      adapter.queryOne<{
+      auditAdapter.queryOne<{
         api_calls_today: number;
         api_calls_month: number;
         unique_users: number;
         last_activity: number | null;
       }>(
         `SELECT
-          (SELECT COUNT(*) FROM audit_log WHERE tenant_id = ? AND details LIKE ? AND created_at >= ? AND created_at <= ?) as api_calls_today,
-          (SELECT COUNT(*) FROM audit_log WHERE tenant_id = ? AND details LIKE ? AND created_at >= ?) as api_calls_month,
-          (SELECT COUNT(DISTINCT json_extract(details, '$.user_id')) FROM audit_log WHERE tenant_id = ? AND details LIKE ? AND created_at >= ? AND created_at <= ?) as unique_users,
-          (SELECT MAX(created_at) FROM audit_log WHERE tenant_id = ? AND details LIKE ?) as last_activity`,
+          (SELECT COUNT(*) FROM ${auditTable} WHERE tenant_id = ? AND ${clientClause} AND created_at >= ? AND created_at <= ?) as api_calls_today,
+          (SELECT COUNT(*) FROM ${auditTable} WHERE tenant_id = ? AND ${clientClause} AND created_at >= ?) as api_calls_month,
+          (SELECT COUNT(DISTINCT ${
+            hotQuery.context.mode === 'legacy'
+              ? `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'user_id', hotQuery.context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'userId', hotQuery.context.dialect)})`
+              : `COALESCE(anonymized_user_id, ${getAuditJsonTextExpr(detailsColumn, 'user_id', hotQuery.context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'userId', hotQuery.context.dialect)})`
+          }) FROM ${auditTable} WHERE tenant_id = ? AND ${clientClause} AND created_at >= ? AND created_at <= ?) as unique_users,
+          (SELECT MAX(created_at) FROM ${auditTable} WHERE tenant_id = ? AND ${clientClause}) as last_activity`,
         [
           tenantId,
-          `%"client_id":"${clientId}"%`,
-          todayStart,
-          todayEnd,
+          ...clientBindings,
+          ...getAuditTimeRange(todayStart, todayEnd, hotQuery.context),
           tenantId,
-          `%"client_id":"${clientId}"%`,
-          monthStart,
+          ...clientBindings,
+          ...(hotQuery.context.createdAtUnit === 'milliseconds'
+            ? [monthStart * 1000]
+            : [monthStart]),
           tenantId,
-          `%"client_id":"${clientId}"%`,
-          fromTs,
-          toTs,
+          ...clientBindings,
+          ...getAuditTimeRange(fromTs, toTs, hotQuery.context),
           tenantId,
-          `%"client_id":"${clientId}"%`,
+          ...clientBindings,
         ]
       ),
     ]);
@@ -670,8 +759,8 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
       client_id: clientId,
       client_name: client.client_name ?? null,
       tokens: {
-        active_access_tokens: tokenStats?.active_access ?? 0,
-        active_refresh_tokens: tokenStats?.active_refresh ?? 0,
+        active_access_tokens: activeSessionsResult?.active_access ?? 0,
+        active_refresh_tokens: activeSessionsResult?.active_refresh ?? 0,
         issued_today: tokenStats?.issued_today ?? 0,
         revoked_today: tokenStats?.revoked_today ?? 0,
       },
@@ -687,9 +776,9 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
         unique_users: usageStats?.unique_users ?? 0,
         last_activity: usageStats?.last_activity
           ? new Date(
-              usageStats.last_activity < 1e12
-                ? usageStats.last_activity * 1000
-                : usageStats.last_activity
+              hotQuery.context.createdAtUnit === 'milliseconds'
+                ? usageStats.last_activity
+                : usageStats.last_activity * 1000
             ).toISOString()
           : null,
       },
@@ -831,7 +920,28 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const adapter = createAdapter(c);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    if (!hotQuery.supported || !hotQuery.context) {
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
+    }
+    const context = hotQuery.context;
+
+    const adapter = context.adapter;
+    const [auditFromTs, auditToTs] = getAuditTimeRange(fromTs, toTs, context);
+    const { tableName: auditTable, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
+    const countryExpr = `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'country_code', context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'countryCode', context.dialect)}, 'XX')`;
+    const uniqueUserExpr =
+      context.mode === 'legacy'
+        ? `COALESCE(${getAuditJsonTextExpr(detailsColumn, 'user_id', context.dialect)}, ${getAuditJsonTextExpr(detailsColumn, 'ip', context.dialect)})`
+        : `COALESCE(anonymized_user_id, ${getAuditJsonTextExpr(detailsColumn, 'ip', context.dialect)})`;
+    const successCase =
+      context.mode === 'legacy'
+        ? `CASE WHEN ${actionColumn} LIKE '%success%' OR ${actionColumn} LIKE '%issued%' THEN 1 ELSE 0 END`
+        : `CASE WHEN result = 'success' THEN 1 ELSE 0 END`;
+    const failureCase =
+      context.mode === 'legacy'
+        ? `CASE WHEN ${actionColumn} LIKE '%failed%' OR ${actionColumn} LIKE '%error%' THEN 1 ELSE 0 END`
+        : `CASE WHEN result = 'failure' THEN 1 ELSE 0 END`;
 
     // Query country-level statistics from audit log
     // Note: country_code is extracted from IP geolocation stored in audit log details
@@ -844,19 +954,23 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
       last_activity: number | null;
     }>(
       `SELECT
-        COALESCE(json_extract(details, '$.country_code'), 'XX') as country_code,
+        ${countryExpr} as country_code,
         COUNT(*) as total_requests,
-        SUM(CASE WHEN action LIKE '%success%' OR action LIKE '%issued%' THEN 1 ELSE 0 END) as successful,
-        SUM(CASE WHEN action LIKE '%failed%' OR action LIKE '%error%' THEN 1 ELSE 0 END) as failed,
-        COUNT(DISTINCT COALESCE(json_extract(details, '$.user_id'), json_extract(details, '$.ip'))) as unique_users,
+        SUM(${successCase}) as successful,
+        SUM(${failureCase}) as failed,
+        COUNT(DISTINCT ${uniqueUserExpr}) as unique_users,
         MAX(created_at) as last_activity
-      FROM audit_log
+      FROM ${auditTable}
       WHERE tenant_id = ?
-        AND (action LIKE 'auth.%' OR action LIKE 'token.%')
+        AND ${
+          context.mode === 'legacy'
+            ? `(${actionColumn} LIKE 'auth.%' OR ${actionColumn} LIKE 'token.%')`
+            : `event_category IN ('auth', 'token')`
+        }
         AND created_at >= ? AND created_at <= ?
       GROUP BY country_code
       ORDER BY total_requests DESC`,
-      [tenantId, fromTs, toTs]
+      [tenantId, auditFromTs, auditToTs]
     );
 
     // Build country stats with names
@@ -869,7 +983,7 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
       unique_users: row.unique_users,
       last_activity: row.last_activity
         ? new Date(
-            row.last_activity < 1e12 ? row.last_activity * 1000 : row.last_activity
+            context.createdAtUnit === 'milliseconds' ? row.last_activity : row.last_activity * 1000
           ).toISOString()
         : null,
     }));

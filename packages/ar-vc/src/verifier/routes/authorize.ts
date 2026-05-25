@@ -14,7 +14,13 @@ import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../types';
 import { generateSecureNonce } from '../../utils/crypto';
 import { getVPRequestStoreForNewRequest } from '../../utils/vp-request-sharding';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+} from '@authrim/ar-lib-core';
+import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /** Supported client_id_scheme values per OID4VP */
 type ClientIdScheme = 'pre-registered' | 'did' | 'redirect_uri';
@@ -22,8 +28,8 @@ type ClientIdScheme = 'pre-registered' | 'did' | 'redirect_uri';
 const SUPPORTED_CLIENT_ID_SCHEMES: ClientIdScheme[] = ['pre-registered', 'did', 'redirect_uri'];
 
 interface VPAuthorizeRequest {
-  /** Tenant ID */
-  tenant_id: string;
+  /** Tenant ID. If present, it must match the request context tenant. */
+  tenant_id?: string;
 
   /** Client ID (RP identifier) */
   client_id: string;
@@ -110,12 +116,10 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
   const log = getLogger(c as any).module('VC-VERIFIER');
   try {
     const body = await c.req.json<VPAuthorizeRequest>();
+    const tenantId = getTenantIdFromContext(c);
 
-    // Validate required fields
-    if (!body.tenant_id) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'tenant_id' },
-      });
+    if (body.tenant_id && body.tenant_id !== tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (!body.client_id) {
@@ -151,13 +155,13 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
     const expiresAt = now + expirySeconds * 1000;
 
     // Build response URI
-    const baseUrl = new URL(c.req.url).origin;
+    const baseUrl = getRequestIssuerUrl(c);
     const responseUri = body.response_uri || `${baseUrl}/vp/response`;
 
     // Get region-sharded DO stub and request ID
     const { stub, requestId } = await getVPRequestStoreForNewRequest(
       c.env,
-      body.tenant_id,
+      tenantId,
       body.client_id,
       uuid
     );
@@ -165,7 +169,7 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
     // Create VP request state
     const vpRequest: VPRequestState = {
       id: requestId,
-      tenantId: body.tenant_id,
+      tenantId,
       clientId: body.client_id,
       nonce,
       state: body.state,

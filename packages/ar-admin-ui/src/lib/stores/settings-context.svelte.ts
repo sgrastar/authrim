@@ -6,6 +6,7 @@
  */
 
 import { browser } from '$app/environment';
+import { adminFetch } from '$lib/api/admin-request';
 import { adminAuth } from './admin-auth.svelte';
 
 /**
@@ -47,11 +48,6 @@ interface SettingsContextState {
 export type PermissionLevel = 'view' | 'edit' | 'none';
 
 /**
- * Default tenant ID for single-tenant environments
- */
-const DEFAULT_TENANT_ID = 'default';
-
-/**
  * API base URL
  */
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -63,9 +59,9 @@ function createSettingsContextStore() {
 	// Reactive state using Svelte 5 $state rune
 	let state = $state<SettingsContextState>({
 		currentLevel: 'tenant',
-		tenantId: DEFAULT_TENANT_ID,
+		tenantId: '',
 		clientId: null,
-		availableTenants: [{ id: DEFAULT_TENANT_ID, name: 'Default' }],
+		availableTenants: [],
 		availableClients: [],
 		isLoading: false,
 		error: null
@@ -81,6 +77,7 @@ function createSettingsContextStore() {
 			super_admin: { platform: 'edit', tenant: 'edit', client: 'edit' },
 			superadmin: { platform: 'edit', tenant: 'edit', client: 'edit' },
 			system_admin: { platform: 'edit', tenant: 'edit', client: 'edit' },
+			admin: { platform: 'view', tenant: 'edit', client: 'edit' },
 			// Distributor admin can view platform, edit tenant/client
 			distributor_admin: { platform: 'view', tenant: 'edit', client: 'edit' },
 			// Org admin can only view tenant, edit client
@@ -126,6 +123,21 @@ function createSettingsContextStore() {
 
 	return {
 		/**
+		 * Resolve the effective tenant ID for API calls.
+		 * Prefer the loaded tenant context and only use the session tenant as a
+		 * last known-good fallback while the tenant list is unavailable.
+		 */
+		resolveTenantId(candidate?: string | null): string {
+			return (
+				candidate?.trim() ||
+				state.tenantId ||
+				state.availableTenants[0]?.id ||
+				adminAuth.user?.tenantId ||
+				''
+			);
+		},
+
+		/**
 		 * Get current state (readonly)
 		 */
 		get current(): SettingsContextState {
@@ -143,7 +155,7 @@ function createSettingsContextStore() {
 		 * Get current tenant ID
 		 */
 		get tenantId(): string {
-			return state.tenantId;
+			return this.resolveTenantId(state.tenantId);
 		},
 
 		/**
@@ -185,9 +197,10 @@ function createSettingsContextStore() {
 		 * Get scope context for API calls
 		 */
 		get scopeContext(): { level: SettingScopeLevel; tenantId?: string; clientId?: string } {
+			const resolvedTenantId = this.resolveTenantId(state.tenantId);
 			return {
 				level: state.currentLevel,
-				tenantId: state.currentLevel !== 'platform' ? state.tenantId : undefined,
+				tenantId: state.currentLevel !== 'platform' ? resolvedTenantId : undefined,
 				clientId: state.currentLevel === 'client' ? (state.clientId ?? undefined) : undefined
 			};
 		},
@@ -245,16 +258,18 @@ function createSettingsContextStore() {
 		 * Set tenant ID
 		 */
 		async setTenantId(tenantId: string): Promise<void> {
+			const resolvedTenantId = this.resolveTenantId(tenantId);
+
 			// Clear client selection and available clients immediately to prevent stale data
 			state.clientId = null;
 			state.availableClients = [];
 
-			state.tenantId = tenantId;
+			state.tenantId = resolvedTenantId;
 			state.error = null;
 
 			// Save to session storage
 			if (browser) {
-				sessionStorage.setItem('settings_tenant_id', tenantId);
+				sessionStorage.setItem('settings_tenant_id', resolvedTenantId);
 				sessionStorage.removeItem('settings_client_id');
 			}
 
@@ -291,8 +306,8 @@ function createSettingsContextStore() {
 			state.error = null;
 
 			try {
-				const response = await fetch(`${API_BASE_URL}/api/admin/tenants`, {
-					credentials: 'include'
+				const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants`, {
+					skipTenantHeader: true
 				});
 
 				if (response.ok) {
@@ -301,13 +316,34 @@ function createSettingsContextStore() {
 						id: t.id,
 						name: t.name || t.id
 					}));
+					state.tenantId = this.resolveTenantId(
+						state.availableTenants.some((tenant) => tenant.id === state.tenantId)
+							? state.tenantId
+							: state.availableTenants[0]?.id
+					);
+					if (browser && state.tenantId) {
+						sessionStorage.setItem('settings_tenant_id', state.tenantId);
+					}
 				} else {
-					// Fallback to default tenant
-					state.availableTenants = [{ id: DEFAULT_TENANT_ID, name: 'Default' }];
+					state.availableTenants = [];
+					state.tenantId = this.resolveTenantId(
+						state.tenantId && state.tenantId !== 'default'
+							? state.tenantId
+							: adminAuth.user?.tenantId
+					);
+					if (browser && state.tenantId) {
+						sessionStorage.setItem('settings_tenant_id', state.tenantId);
+					}
 				}
 			} catch (err) {
 				console.warn('Failed to load tenants:', err);
-				state.availableTenants = [{ id: DEFAULT_TENANT_ID, name: 'Default' }];
+				state.availableTenants = [];
+				state.tenantId = this.resolveTenantId(
+					state.tenantId && state.tenantId !== 'default' ? state.tenantId : adminAuth.user?.tenantId
+				);
+				if (browser && state.tenantId) {
+					sessionStorage.setItem('settings_tenant_id', state.tenantId);
+				}
 			} finally {
 				state.isLoading = false;
 			}
@@ -317,18 +353,16 @@ function createSettingsContextStore() {
 		 * Load available clients for current tenant
 		 */
 		async loadClients(): Promise<void> {
-			if (!browser || !state.tenantId) return;
+			const tenantId = this.resolveTenantId(state.tenantId);
+			if (!browser || !tenantId) return;
 
 			state.isLoading = true;
 			state.error = null;
 
 			try {
-				const response = await fetch(
-					`${API_BASE_URL}/api/admin/tenants/${state.tenantId}/clients`,
-					{
-						credentials: 'include'
-					}
-				);
+				const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants/${tenantId}/clients`, {
+					tenantId
+				});
 
 				if (response.ok) {
 					const data = await response.json();
@@ -364,8 +398,10 @@ function createSettingsContextStore() {
 				state.currentLevel = savedLevel;
 			}
 
-			if (savedTenantId) {
+			if (savedTenantId && savedTenantId !== 'default') {
 				state.tenantId = savedTenantId;
+			} else if (adminAuth.user?.tenantId) {
+				state.tenantId = adminAuth.user.tenantId;
 			}
 
 			if (savedClientId) {
@@ -385,7 +421,7 @@ function createSettingsContextStore() {
 		 */
 		reset(): void {
 			state.currentLevel = 'tenant';
-			state.tenantId = DEFAULT_TENANT_ID;
+			state.tenantId = state.availableTenants[0]?.id || adminAuth.user?.tenantId || '';
 			state.clientId = null;
 			state.error = null;
 

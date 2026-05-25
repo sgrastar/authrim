@@ -6,7 +6,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, getTenantIdFromContext, getLogger } from '@authrim/ar-lib-core';
+import { createAuthContextFromHono, getTenantIdFromContext, getLogger } from '@authrim/ar-lib-core';
 
 // =============================================================================
 // Types
@@ -56,6 +56,27 @@ function rowToAccessTrace(row: PermissionCheckAuditRow) {
   };
 }
 
+function aggregateResolvedVia(rows: Array<{ resolved_via_json: string | null }>): Array<{
+  resolved_via: string;
+  count: number;
+}> {
+  const counts = new Map<string, number>();
+
+  for (const row of rows) {
+    const parsed = parseJson<unknown>(row.resolved_via_json, []);
+    const values = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+
+    for (const value of values) {
+      const key = typeof value === 'string' ? value : JSON.stringify(value);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+
+  return Array.from(counts.entries())
+    .map(([resolved_via, count]) => ({ resolved_via, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -66,7 +87,7 @@ function rowToAccessTrace(row: PermissionCheckAuditRow) {
 export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     const {
       subject_id,
@@ -161,7 +182,7 @@ export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>)
 export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
     const entryId = c.req.param('id')!;
 
     const row = await db.queryOne<PermissionCheckAuditRow>(
@@ -201,7 +222,7 @@ export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) 
 export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     const { period = '24h' } = c.req.query();
 
@@ -267,17 +288,13 @@ export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>
     );
 
     // Get resolution method distribution
-    const resolutionStats = await db.query<{ resolved_via: string; count: number }>(
-      `SELECT
-         json_extract(value, '$') as resolved_via,
-         COUNT(*) as count
-       FROM permission_check_audit,
-            json_each(permission_check_audit.resolved_via_json)
-       WHERE tenant_id = ? AND checked_at >= ?
-       GROUP BY resolved_via
-       ORDER BY count DESC`,
+    const resolutionRows = await db.query<{ resolved_via_json: string | null }>(
+      `SELECT resolved_via_json
+       FROM permission_check_audit
+       WHERE tenant_id = ? AND checked_at >= ?`,
       [tenantId, cutoffTime]
     );
+    const resolutionStats = aggregateResolvedVia(resolutionRows);
 
     return c.json({
       period,
@@ -310,7 +327,7 @@ export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>
 export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = new D1Adapter({ db: c.env.DB });
+    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     const { period = '24h', granularity = 'hour' } = c.req.query();
 

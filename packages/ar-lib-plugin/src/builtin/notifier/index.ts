@@ -33,11 +33,16 @@ export type { ConsoleNotifierConfig } from './console';
 export { resendEmailPlugin, ResendNotifierConfigSchema } from './resend';
 export type { ResendNotifierConfig } from './resend';
 
+// Cloudflare Email Service Notifier (Workers native)
+export { cloudflareEmailPlugin, CloudflareNotifierConfigSchema } from './cloudflare';
+export type { CloudflareNotifierConfig } from './cloudflare';
+
 // =============================================================================
 // Plugin Registry
 // =============================================================================
 
 import { consoleNotifierPlugin } from './console';
+import { cloudflareEmailPlugin } from './cloudflare';
 import { resendEmailPlugin } from './resend';
 
 /**
@@ -45,4 +50,8 @@ import { resendEmailPlugin } from './resend';
  *
  * Use this for bulk registration or discovery.
  */
-export const builtinNotifierPlugins = [consoleNotifierPlugin, resendEmailPlugin] as const;
+export const builtinNotifierPlugins = [
+  consoleNotifierPlugin,
+  cloudflareEmailPlugin,
+  resendEmailPlugin,
+] as const;

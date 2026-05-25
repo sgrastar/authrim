@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "Test Date: December 17, 2025 Target: Authrim OIDC Provider - Full Login Flow with Email OTP Authentication Test Tool: K6 Cloud (Distributed Load Testing) Monitoring: Cloudflare."
+type: report
+tags:
+  - authrim
+  - load-testing
+  - performance
+  - oidc
+  - oauth2
+  - testing
+---
 # Full Login Flow (Mail OTP) Load Test Report
 
 **Test Date**: December 17, 2025

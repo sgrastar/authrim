@@ -13,7 +13,7 @@
  * - locationHint support for DO placement optimization
  *
  * DO instance name (region-aware): {tenantId}:{region}:rv:{shardIndex}
- * DO instance name (legacy): tenant:default:token-revocation:shard-{shardIndex}
+ * DO instance name (legacy): tenant:{tenantId}:token-revocation:shard-{shardIndex}
  *
  * Configuration:
  * - KV: AUTHRIM_CONFIG namespace, key: "region_shard_config:default" (for region-aware)
@@ -27,10 +27,18 @@
  */
 
 import type { Env } from '../types/env';
-import { fnv1a32, DEFAULT_TENANT_ID } from './tenant-context';
+import { fnv1a32 } from './tenant-context';
 import { createLogger } from './logger';
 
 const log = createLogger().module('TOKEN_REVOCATION_SHARD');
+
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
 import {
   getRegionShardConfig,
   resolveShardForNewResource,
@@ -98,7 +106,7 @@ export interface RevocationShardConfig {
  * Default shard count for token revocation store sharding.
  * Can be overridden via KV or AUTHRIM_REVOCATION_SHARDS environment variable.
  */
-export const DEFAULT_REVOCATION_SHARD_COUNT = 16;
+export const DEFAULT_REVOCATION_SHARD_COUNT = 4;
 
 /**
  * Legacy shard count used for tokens without generation info.
@@ -446,11 +454,12 @@ export function buildRegionAwareRevocationInstanceName(
  * @returns DO instance name for the shard
  *
  * @example
- * buildRevocationShardInstanceName(2)
- * // => "tenant:default:token-revocation:shard-2"
+ * buildRevocationShardInstanceName('tenant-a', 2)
+ * // => "tenant:tenant-a:token-revocation:shard-2"
  */
-export function buildRevocationShardInstanceName(shardIndex: number): string {
-  return `tenant:${DEFAULT_TENANT_ID}:token-revocation:shard-${shardIndex}`;
+export function buildRevocationShardInstanceName(tenantId: string, shardIndex: number): string {
+  const normalizedTenantId = requireTenantId(tenantId, 'Revocation shard');
+  return `tenant:${normalizedTenantId}:token-revocation:shard-${shardIndex}`;
 }
 
 // =============================================================================
@@ -478,20 +487,21 @@ export interface RevocationStoreResult {
  *
  * @param env - Environment object with DO bindings
  * @param jti - JWT ID for sharding
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Promise containing DO stub and shard info
  */
 export async function getRevocationStoreByJti(
   env: Env,
   jti: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<RevocationStoreResult> {
+  const normalizedTenantId = requireTenantId(tenantId, 'Revocation store routing');
   const parsed = parseRevocationJti(jti);
 
   // Region-aware format: use embedded region/shard info with locationHint
   if (parsed.isRegionAware && parsed.regionKey && parsed.shardIndex !== null) {
     const instanceName = buildRegionAwareRevocationInstanceName(
-      tenantId,
+      normalizedTenantId,
       parsed.regionKey,
       parsed.shardIndex
     );
@@ -527,7 +537,7 @@ export async function getRevocationStoreByJti(
     }
   }
 
-  const instanceName = buildRevocationShardInstanceName(shardIndex);
+  const instanceName = buildRevocationShardInstanceName(normalizedTenantId, shardIndex);
   const id = env.TOKEN_REVOCATION_STORE.idFromName(instanceName);
   const stub = env.TOKEN_REVOCATION_STORE.get(id);
 
@@ -561,14 +571,15 @@ export interface RegionAwareJtiResult {
  * Uses region_shard_config for shard distribution across regions.
  *
  * @param env - Environment object with KV bindings
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Promise containing the new JTI and routing info
  */
 export async function generateRegionAwareJti(
   env: Env,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): Promise<RegionAwareJtiResult> {
-  const config = await getRegionShardConfig(env, tenantId);
+  const normalizedTenantId = requireTenantId(tenantId, 'Region-aware revocation JTI');
+  const config = await getRegionShardConfig(env, normalizedTenantId);
   const randomPart = generateAccessTokenRandomPart();
 
   // Use a random shard key for even distribution
@@ -583,7 +594,7 @@ export async function generateRegionAwareJti(
   );
 
   const instanceName = buildRegionAwareRevocationInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     resolution.shardIndex
   );
@@ -692,6 +703,8 @@ export function resetRevocationShardCountCache(): void {
  * @param shardCount - Number of shards
  * @returns Array of shard instance names
  */
-export function getAllRevocationShardNames(shardCount: number): string[] {
-  return Array.from({ length: shardCount }, (_, i) => buildRevocationShardInstanceName(i));
+export function getAllRevocationShardNames(tenantId: string, shardCount: number): string[] {
+  return Array.from({ length: shardCount }, (_, i) =>
+    buildRevocationShardInstanceName(tenantId, i)
+  );
 }

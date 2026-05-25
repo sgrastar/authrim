@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: en
+date: 2026-01-14
+description: "CLI and Web UI for deploying Authrim OIDC Provider to Cloudflare Workers."
+type: reference
+tags:
+  - authrim
+  - setup
+  - oidc
+  - deployment
+  - cloudflare-workers
+---
 # @authrim/setup
 
 CLI and Web UI for deploying Authrim OIDC Provider to Cloudflare Workers.

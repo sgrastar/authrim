@@ -4,6 +4,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getRefreshTokenShardConfig,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -50,7 +51,11 @@ export async function updateCodeShards(c: Context<{ Bindings: Env }>) {
   // Skip if explicitly requested (used when updating both values together from Scale UI)
   if (!skip_sync_check) {
     try {
-      const refreshTokenConfig = await getRefreshTokenShardConfig(c.env, '__global__');
+      const refreshTokenConfig = await getRefreshTokenShardConfig(
+        c.env,
+        '__global__',
+        getTenantIdFromContext(c)
+      );
       if (refreshTokenConfig.currentShardCount !== shards) {
         return c.json(
           {

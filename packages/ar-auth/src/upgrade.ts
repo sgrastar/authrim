@@ -20,13 +20,14 @@
 
 import { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { Env, Session } from '@authrim/ar-lib-core';
+import type { Env, Session, UserLifecycleState } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   generateId,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   isAnonymousAuthEnabled,
@@ -36,6 +37,8 @@ import {
   type AuthEventData,
   // Logger
   getLogger,
+  syncUserLifecycleState,
+  resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -69,7 +72,11 @@ async function getAnonymousSession(
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session || !session.userId) {
@@ -248,7 +255,11 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
       // Immediately clear the nonce to prevent concurrent requests
       // This MUST happen before any other processing
-      const { stub: earlySessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+      const { stub: earlySessionStore } = getSessionStoreBySessionId(
+        c.env,
+        sessionId,
+        getTenantIdFromContext(c)
+      );
       await earlySessionStore.updateSessionDataRpc(sessionId, {
         upgrade_nonce: undefined, // Consume nonce atomically
       });
@@ -309,12 +320,12 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
           email_verified = CASE WHEN ? = 'email' THEN 1 ELSE email_verified END,
           pii_status = CASE WHEN ? IS NOT NULL THEN 'pending' ELSE pii_status END,
           updated_at = ?
-        WHERE id = ?`,
-        [method, email, now, anonymousUserId]
+        WHERE id = ? AND tenant_id = ?`,
+        [method, email, now, anonymousUserId, tenantId]
       );
 
       // Create PII record if email provided
-      if (email && c.env.DB_PII) {
+      if (email && hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         try {
           await piiCtx.piiRepositories.userPII.createPII({
@@ -343,12 +354,12 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         tenant_id: tenantId,
         email_verified: method === 'email',
         user_type: 'end_user',
-        pii_partition: 'default',
+        pii_partition: tenantId,
         pii_status: email ? 'pending' : 'none',
       });
 
       // Create PII record for new user
-      if (email && c.env.DB_PII) {
+      if (email && hasPIIDatabase(c)) {
         const piiCtx = createPIIContextFromHono(c, tenantId);
         try {
           await piiCtx.piiRepositories.userPII.createPII({
@@ -367,8 +378,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
       // Deactivate old anonymous user
       await authCtx.coreAdapter.execute(
-        'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ?',
-        [now, anonymousUserId]
+        'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
+        [now, anonymousUserId, tenantId]
       );
     }
 
@@ -394,13 +405,34 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     // Deactivate anonymous device (no longer needed)
     await authCtx.coreAdapter.execute(
-      'UPDATE anonymous_devices SET is_active = 0 WHERE user_id = ?',
-      [anonymousUserId]
+      'UPDATE anonymous_devices SET is_active = 0 WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, anonymousUserId]
     );
+
+    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+    const lifecycleSync = await syncUserLifecycleState({
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      schemaDb: customClaimSources.schemaDb,
+      stateDb: authCtx.coreAdapter,
+      tenantId,
+      userId: finalUserId,
+    });
+    const missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
+      field_key: field.fieldKey,
+      label: field.label,
+      field_type: field.fieldType,
+    }));
+    const profileCompletionRequired = missingRequiredCustomClaims.length > 0;
+    const accountLifecycleState: UserLifecycleState = lifecycleSync.lifecycleState;
 
     // Update session to reflect upgraded state
     // Security: Clear verified_email to prevent replay attacks
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     await sessionStore.updateSessionDataRpc(sessionId, {
       is_anonymous: false,
       upgrade_eligible: false,
@@ -413,6 +445,11 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       upgrade_nonce: undefined,
       // Clear device identification data (privacy)
       device_id_hash: undefined,
+      // Mirror the lifecycle snapshot into session data so the UI can recover
+      // completion state without an extra round-trip after upgrade.
+      profile_completion_required: profileCompletionRequired,
+      missing_required_custom_claims: missingRequiredCustomClaims,
+      account_lifecycle_state: accountLifecycleState,
     });
 
     // Cleanup: Delete orphaned OTP user (created during email verification)
@@ -458,6 +495,9 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       preserve_sub: preserveSub,
       method,
       upgraded_at: now,
+      profile_completion_required: profileCompletionRequired,
+      missing_required_custom_claims: missingRequiredCustomClaims,
+      account_lifecycle_state: accountLifecycleState,
     });
   } catch (error) {
     log.error('Upgrade complete error', { action: 'complete' }, error as Error);
@@ -483,7 +523,11 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session || !session.userId) {
@@ -495,6 +539,32 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     // Check if user is anonymous
     const user = await authCtx.repositories.userCore.findById(session.userId);
     const isAnonymous = user?.user_type === 'anonymous';
+    let missingRequiredCustomClaims: Array<{
+      field_key: string;
+      label: string;
+      field_type: string;
+    }> = [];
+    let accountLifecycleState: UserLifecycleState = 'active';
+
+    if (!isAnonymous) {
+      const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+      const lifecycleSync = await syncUserLifecycleState({
+        db: customClaimSources.nonPiiDb,
+        dbPii: customClaimSources.piiDb,
+        schemaDb: customClaimSources.schemaDb,
+        stateDb: authCtx.coreAdapter,
+        tenantId,
+        userId: session.userId,
+      });
+      missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
+        field_key: field.fieldKey,
+        label: field.label,
+        field_type: field.fieldType,
+      }));
+      accountLifecycleState = lifecycleSync.lifecycleState;
+    }
+
+    const profileCompletionRequired = missingRequiredCustomClaims.length > 0;
 
     // Get upgrade history if exists
     const upgradeHistory = await authCtx.coreAdapter.query<{
@@ -505,15 +575,18 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     }>(
       `SELECT id, upgrade_method, upgraded_at, preserve_sub
        FROM user_upgrades
-       WHERE anonymous_user_id = ? OR upgraded_user_id = ?
+       WHERE tenant_id = ? AND (anonymous_user_id = ? OR upgraded_user_id = ?)
        ORDER BY upgraded_at DESC`,
-      [session.userId, session.userId]
+      [tenantId, session.userId, session.userId]
     );
 
     return c.json({
       user_id: session.userId,
       is_anonymous: isAnonymous,
       upgrade_eligible: isAnonymous,
+      profile_completion_required: profileCompletionRequired,
+      missing_required_custom_claims: missingRequiredCustomClaims,
+      account_lifecycle_state: accountLifecycleState,
       upgrade_history: upgradeHistory.map((h) => ({
         id: h.id,
         method: h.upgrade_method,

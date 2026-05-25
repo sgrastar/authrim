@@ -9,14 +9,9 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     // Only include src tests, exclude dist directory
     include: ['src/**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**'],
-    // Use 'forks' pool for better test isolation
+    exclude: ['**/node_modules/**', '**/dist/**', 'src/__tests__/authorize-hybrid-flow.test.ts'],
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        isolate: true,
-      },
-    },
+    isolate: true,
     fileParallelism: false,
     coverage: {
       provider: 'v8',

@@ -32,6 +32,10 @@ export interface TestClientMetadata extends Partial<ClientMetadata> {
   grant_types?: string[];
   response_types?: string[];
   token_endpoint_auth_method?: string;
+  trust_group?: string;
+  trust_group_id?: string;
+  native_channel_allowed?: boolean;
+  allowed_channels?: Array<'browser' | 'native' | 'server'>;
   allowed_scopes?: string[];
   default_scope?: string;
   default_audience?: string;
@@ -61,6 +65,7 @@ export function createConfidentialClient(
     token_endpoint_auth_method: 'client_secret_basic',
     allowed_scopes: ['openid', 'profile', 'email'],
     default_scope: 'openid',
+    default_resource: 'svc://confidential-api',
     require_pkce: true,
     ...overrides,
   };
@@ -79,6 +84,7 @@ export function createPublicClient(overrides?: Partial<TestClientMetadata>): Tes
     token_endpoint_auth_method: 'none',
     allowed_scopes: ['openid', 'profile'],
     default_scope: 'openid',
+    default_resource: 'svc://public-api',
     require_pkce: true, // PKCE is mandatory for public clients
     ...overrides,
   };
@@ -97,6 +103,7 @@ export function createM2MClient(overrides?: Partial<TestClientMetadata>): TestCl
     token_endpoint_auth_method: 'client_secret_basic',
     allowed_scopes: ['api:read', 'api:write', 'admin'],
     default_scope: 'api:read',
+    default_resource: 'svc://m2m-api',
     client_credentials_allowed: true,
     ...overrides,
   };
@@ -116,6 +123,7 @@ export function createPrivateKeyJwtClient(
     response_types: ['code'],
     token_endpoint_auth_method: 'private_key_jwt',
     allowed_scopes: ['openid', 'profile', 'email', 'api:admin'],
+    default_resource: 'svc://private-key-jwt-api',
     require_pkce: true,
     jwks_uri: 'https://secure-app.example.com/.well-known/jwks.json',
     ...overrides,
@@ -135,6 +143,7 @@ export function createFAPIClient(overrides?: Partial<TestClientMetadata>): TestC
     response_types: ['code'],
     token_endpoint_auth_method: 'private_key_jwt',
     allowed_scopes: ['openid', 'profile', 'accounts', 'payments'],
+    default_resource: 'svc://fapi-api',
     require_pkce: true,
     dpop_bound_access_tokens: true, // Sender-constrained tokens
     id_token_signed_response_alg: 'PS256',
@@ -156,6 +165,7 @@ export function createTokenExchangeClient(
     response_types: [],
     token_endpoint_auth_method: 'client_secret_basic',
     allowed_scopes: ['openid', 'profile', 'api:read'],
+    default_resource: 'svc://token-exchange-api',
     ...overrides,
   };
 }
@@ -173,6 +183,7 @@ export function createDeviceFlowClient(
     response_types: [],
     token_endpoint_auth_method: 'none', // Browserless devices often don't have secrets
     allowed_scopes: ['openid', 'profile', 'tv:watch'],
+    default_resource: 'svc://device-api',
     ...overrides,
   };
 }
@@ -189,6 +200,7 @@ export function createCIBAClient(overrides?: Partial<TestClientMetadata>): TestC
     response_types: [],
     token_endpoint_auth_method: 'client_secret_basic',
     allowed_scopes: ['openid', 'profile', 'payment'],
+    default_resource: 'svc://ciba-api',
     ...overrides,
   };
 }
@@ -208,6 +220,7 @@ export function createEncryptedIdTokenClient(
     response_types: ['code'],
     token_endpoint_auth_method: 'client_secret_basic',
     allowed_scopes: ['openid', 'profile'],
+    default_resource: 'svc://encrypted-api',
     id_token_encrypted_response_alg: 'RSA-OAEP-256',
     id_token_encrypted_response_enc: 'A256GCM',
     jwks_uri: 'https://encrypted-app.example.com/.well-known/jwks.json',
@@ -302,6 +315,7 @@ export interface TestAuthCodeData {
   claims?: string; // JSON string
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string;
   dpopJkt?: string;
   sid?: string;
@@ -486,6 +500,7 @@ export interface TestRefreshTokenPayload {
   jti: string;
   scope?: string;
   client_id?: string;
+  resource_aud?: string | string[];
   family_id?: string;
   version?: number;
   cnf?: { jkt?: string };

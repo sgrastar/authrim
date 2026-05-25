@@ -43,11 +43,6 @@ import {
 type DeviceCodeStoreStub = DurableObjectStub;
 
 /**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
-
-/**
  * Default device code TTL (600 seconds = 10 minutes as per RFC 8628)
  */
 export const DEVICE_CODE_DEFAULT_TTL_SECONDS = 600;
@@ -149,19 +144,24 @@ export function parseDeviceCodeId(
  * @throws Error if deviceCodeId format is invalid
  *
  * @example
- * const { stub, resolution } = getDeviceCodeStoreById(env, "g1:apac:3:dev_abc...");
+ * const { stub, resolution } = getDeviceCodeStoreById(env, "g1:apac:3:dev_abc...", tenantId);
  * const response = await stub.fetch(new Request('https://internal/poll'));
  */
 export function getDeviceCodeStoreById(
   env: Env,
   deviceCodeId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): {
   stub: DeviceCodeStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   deviceCode: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('getDeviceCodeStoreById requires tenantId');
+  }
+
   const parsed = parseDeviceCodeId(deviceCodeId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded device code ID format: ${deviceCodeId}`);
@@ -174,7 +174,7 @@ export function getDeviceCodeStoreById(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'device',
     resolution.shardIndex

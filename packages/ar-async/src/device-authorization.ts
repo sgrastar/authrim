@@ -16,10 +16,11 @@ import {
   AR_ERROR_CODES,
   // UI Configuration
   getUIConfig,
-  buildIssuerUrl,
-  getTenantIdFromContext,
+  buildRequestIssuerUrl,
   getLogger,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * POST /device_authorization
@@ -29,6 +30,12 @@ import {
  */
 export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
 
   try {
     // Parse request body
@@ -66,6 +73,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     const expiresIn = DEVICE_FLOW_CONSTANTS.DEFAULT_EXPIRES_IN;
 
     const metadata: DeviceCodeMetadata = {
+      tenant_id: tenantId,
       device_code: deviceCode,
       user_code: userCode,
       client_id,
@@ -79,13 +87,15 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     // Store in DeviceCodeStore Durable Object
     // NOTE: Currently using global DO. Future: implement region-sharding with
     // KV-based user_code→device_code index for reverse lookups.
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
+      buildDOInstanceName('device', tenantId)
+    );
     const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
 
     const storeResponse = await deviceCodeStore.fetch(
       new Request('https://internal/store', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
         body: JSON.stringify(metadata),
       })
     );
@@ -103,7 +113,6 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     // Build verification URIs
     // Use UI config if available (for external UI), otherwise fall back to ISSUER_URL
     // tenant_hint is added to verification_uri_complete for UX branding (untrusted, security is via Host header)
-    const tenantId = getTenantIdFromContext(c);
     const uiConfig = await getUIConfig(c.env);
     let verificationBaseUrl: string;
 
@@ -113,7 +122,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       verificationBaseUrl = `${uiConfig.baseUrl}${devicePath}`;
     } else {
       // No external UI - use issuer URL (conformance mode or default)
-      const issuer = buildIssuerUrl(c.env, tenantId);
+      const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
       verificationBaseUrl = `${issuer}/device`;
     }
 

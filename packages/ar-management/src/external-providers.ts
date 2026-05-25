@@ -2,24 +2,60 @@
  * External IdP Provider Management Proxy
  *
  * Proxies requests from Admin UI to ar-bridge's external IdP admin API.
- * Converts session-based authentication to Bearer token authentication.
+ * Propagates the caller's Admin authentication material so ar-bridge can
+ * authorize the same human session or scoped machine access token.
  *
  * @module external-providers
  */
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+  readRequestTextWithLimit,
+  readResponseTextWithLimit,
+  safeFetch,
+} from '@authrim/ar-lib-core';
 
 /**
  * Base URL path for external IdP admin API in ar-bridge
  * Must match the routes in ar-bridge/src/index.ts
  */
 const EXTERNAL_IDP_ADMIN_PATH = '/api/admin/external-providers';
+const EXTERNAL_TOKEN_REFRESH_ADMIN_PATH = '/api/admin/external-token-refresh';
+const EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES = 256 * 1024;
+const EXTERNAL_IDP_ADMIN_RESPONSE_MAX_BYTES = 1024 * 1024;
+const DEFAULT_TOKEN_REFRESH_CONFIG = {
+  enabled: true,
+  refreshThresholdSeconds: 3600,
+  batchSize: 100,
+  scheduledTenantBatchSize: 100,
+};
 
-/**
- * Creates a proxied request to ar-bridge with Bearer token authentication
- */
+async function readExternalIdpAdminBody(
+  c: Context<{ Bindings: Env }>
+): Promise<{ ok: true; body: string } | { ok: false; response: Response }> {
+  try {
+    return {
+      ok: true,
+      body: await readRequestTextWithLimit(c.req.raw, EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES),
+    };
+  } catch {
+    return {
+      ok: false,
+      response: await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST, {
+        extensions: {
+          field: 'body',
+          reason: 'request_body_too_large',
+        },
+      }),
+    };
+  }
+}
+
 async function proxyToExternalIdp(
   c: Context<{ Bindings: Env }>,
   path: string,
@@ -34,33 +70,40 @@ async function proxyToExternalIdp(
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  // Ensure ADMIN_API_SECRET is configured
-  if (!c.env.ADMIN_API_SECRET) {
-    log.error('ADMIN_API_SECRET not configured');
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-
   try {
-    // Debug: Log ADMIN_API_SECRET status (not the actual value)
     log.info('Proxying to ar-bridge', {
-      hasAdminApiSecret: !!c.env.ADMIN_API_SECRET,
-      secretLength: c.env.ADMIN_API_SECRET?.length || 0,
       path,
       method,
     });
 
-    // Build request to ar-bridge
-    const headers: HeadersInit = {
-      Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
-      'Content-Type': 'application/json',
-    };
+    const headers = new Headers({
+      Accept: 'application/json',
+      'X-Tenant-Id': getTenantIdFromContext(c),
+    });
 
-    // Forward tenant_id query parameter if present
-    const url = new URL(c.req.url);
-    const tenantId = url.searchParams.get('tenant_id');
-    const targetUrl = tenantId
-      ? `https://external-idp${path}?tenant_id=${encodeURIComponent(tenantId)}`
-      : `https://external-idp${path}`;
+    const contentType = c.req.header('Content-Type');
+    if (contentType) {
+      headers.set('Content-Type', contentType);
+    } else if (body) {
+      headers.set('Content-Type', 'application/json');
+    }
+
+    const authorization = c.req.header('Authorization');
+    if (authorization) {
+      headers.set('Authorization', authorization);
+    }
+
+    const cookie = c.req.header('Cookie');
+    if (cookie) {
+      headers.set('Cookie', cookie);
+    }
+
+    const sessionId = c.req.header('X-Session-Id');
+    if (sessionId) {
+      headers.set('X-Session-Id', sessionId);
+    }
+
+    const targetUrl = `https://external-idp${path}`;
 
     const requestInit: RequestInit = {
       method,
@@ -75,7 +118,10 @@ async function proxyToExternalIdp(
     const response = await c.env.EXTERNAL_IDP.fetch(targetUrl, requestInit);
 
     // Return response with appropriate status
-    const responseBody = await response.text();
+    const responseBody = await readResponseTextWithLimit(
+      response,
+      EXTERNAL_IDP_ADMIN_RESPONSE_MAX_BYTES
+    );
 
     // Debug: Log response status
     log.info('ar-bridge response', {
@@ -121,8 +167,11 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
       503
     );
   }
-  const body = await c.req.text();
-  return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'POST', body);
+  const body = await readExternalIdpAdminBody(c);
+  if (!body.ok) {
+    return body.response;
+  }
+  return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'POST', body.body);
 }
 
 /**
@@ -148,8 +197,16 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
       variables: { field: 'id' },
     });
   }
-  const body = await c.req.text();
-  return proxyToExternalIdp(c, `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`, 'PUT', body);
+  const body = await readExternalIdpAdminBody(c);
+  if (!body.ok) {
+    return body.response;
+  }
+  return proxyToExternalIdp(
+    c,
+    `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
+    'PUT',
+    body.body
+  );
 }
 
 /**
@@ -163,6 +220,68 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
     });
   }
   return proxyToExternalIdp(c, `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+/**
+ * GET /api/admin/external-token-refresh/config - Read bridge token refresh configuration.
+ */
+export async function adminExternalTokenRefreshConfigGetHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json({
+      config: DEFAULT_TOKEN_REFRESH_CONFIG,
+      runtime_status: 'bridge_not_configured',
+    });
+  }
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/config`, 'GET');
+}
+
+/**
+ * PUT /api/admin/external-token-refresh/config - Update bridge token refresh configuration.
+ */
+export async function adminExternalTokenRefreshConfigUpdateHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json(
+      {
+        error: 'service_unavailable',
+        message:
+          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+      },
+      503
+    );
+  }
+  const body = await readExternalIdpAdminBody(c);
+  if (!body.ok) {
+    return body.response;
+  }
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/config`, 'PUT', body.body);
+}
+
+/**
+ * GET /api/admin/external-token-refresh/runs - List recent bridge token refresh runs.
+ */
+export async function adminExternalTokenRefreshRunsListHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json({ runs: [], runtime_status: 'bridge_not_configured' });
+  }
+  const query = new URL(c.req.url).search;
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/runs${query}`, 'GET');
+}
+
+/**
+ * POST /api/admin/external-token-refresh/run - Run refresh for the current tenant.
+ */
+export async function adminExternalTokenRefreshRunHandler(c: Context<{ Bindings: Env }>) {
+  if (!c.env.EXTERNAL_IDP) {
+    return c.json(
+      {
+        error: 'service_unavailable',
+        message:
+          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+      },
+      503
+    );
+  }
+  return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/run`, 'POST');
 }
 
 /**
@@ -242,10 +361,26 @@ function sanitizeUrl(urlString: unknown): string | null {
   const sanitized = urlString.trim();
   if (sanitized.length > 2048) return null; // Max URL length
   try {
-    new URL(sanitized);
-    return sanitized;
+    const parsed = new URL(sanitized);
+    if (parsed.protocol !== 'https:') {
+      return null;
+    }
+    const safety = isUrlSafeForFetch(parsed);
+    if (!safety.safe) {
+      return null;
+    }
+    return parsed.toString();
   } catch {
     return null;
+  }
+}
+
+function safeUrlForLog(urlString: string): string {
+  try {
+    const url = new URL(urlString);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return '[invalid-url]';
   }
 }
 
@@ -303,7 +438,7 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     const urlSafetyCheck = isUrlSafeForFetch(parsedUrl);
     if (!urlSafetyCheck.safe) {
       log.warn('OIDC discovery blocked by SSRF protection', {
-        url: discoveryUrl,
+        url: safeUrlForLog(discoveryUrl),
         reason: urlSafetyCheck.reason,
       });
       return c.json({ error: 'URL not allowed for security reasons' }, 400);
@@ -313,18 +448,20 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       host.startsWith('www.') ? host.slice(4) : host;
     const baseHost = normalizeHost(parsedUrl.hostname);
 
-    log.info('Fetching OIDC discovery', { url: discoveryUrl });
+    log.info('Fetching OIDC discovery', { url: safeUrlForLog(discoveryUrl) });
 
     // Fetch the OIDC configuration from the external provider
     // Allow a single safe redirect (e.g., www -> apex) with SSRF protection
     const fetchDiscovery = async (url: string, redirects: number): Promise<Response> => {
-      const response = await fetch(url, {
+      const response = await safeFetch(url, {
         method: 'GET',
         headers: {
           Accept: 'application/json',
           'User-Agent': 'Authrim OIDC Discovery/1.0',
         },
         redirect: 'manual', // Handle redirects explicitly for SSRF protection
+        timeoutMs: 10000,
+        maxResponseSize: MAX_DISCOVERY_RESPONSE_SIZE,
       });
 
       if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -362,7 +499,10 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     const response = await fetchDiscovery(discoveryUrl, 0);
 
     if (!response.ok) {
-      log.warn('OIDC discovery failed', { status: response.status, url: discoveryUrl });
+      log.warn('OIDC discovery failed', {
+        status: response.status,
+        url: safeUrlForLog(discoveryUrl),
+      });
       return c.json(
         {
           error: `Failed to fetch OIDC configuration: ${response.status} ${response.statusText}`,
@@ -374,16 +514,19 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     // Check Content-Length if available
     const contentLength = response.headers.get('Content-Length');
     if (contentLength && parseInt(contentLength, 10) > MAX_DISCOVERY_RESPONSE_SIZE) {
-      log.warn('OIDC discovery response too large', { contentLength, url: discoveryUrl });
+      log.warn('OIDC discovery response too large', {
+        contentLength,
+        url: safeUrlForLog(discoveryUrl),
+      });
       return c.json({ error: 'Response too large' }, 400);
     }
 
-    // Read response with size limit
-    const responseText = await response.text();
-    if (responseText.length > MAX_DISCOVERY_RESPONSE_SIZE) {
+    let responseText: string;
+    try {
+      responseText = await readResponseTextWithLimit(response, MAX_DISCOVERY_RESPONSE_SIZE);
+    } catch {
       log.warn('OIDC discovery response too large', {
-        size: responseText.length,
-        url: discoveryUrl,
+        url: safeUrlForLog(discoveryUrl),
       });
       return c.json({ error: 'Response too large' }, 400);
     }
@@ -418,7 +561,10 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
     // Validate issuer matches the discovery URL (RFC 8414 recommendation)
     const expectedIssuer = discoveryUrl.replace('/.well-known/openid-configuration', '');
     if (issuer !== expectedIssuer && issuer !== expectedIssuer + '/') {
-      log.warn('OIDC issuer mismatch', { expected: expectedIssuer, actual: issuer });
+      log.warn('OIDC issuer mismatch', {
+        expected: safeUrlForLog(expectedIssuer),
+        actual: safeUrlForLog(issuer),
+      });
       // This is a warning, not an error - some providers don't follow the spec strictly
     }
 
@@ -440,7 +586,7 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       ...(scopesSupported && { scopes_supported: scopesSupported }),
     };
 
-    log.info('OIDC discovery successful', { issuer });
+    log.info('OIDC discovery successful', { issuer: safeUrlForLog(issuer) });
 
     return c.json(sanitizedConfig);
   } catch (error) {

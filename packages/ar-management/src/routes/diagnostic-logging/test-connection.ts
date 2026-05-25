@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createDiagnosticLogR2Adapter } from '@authrim/ar-lib-core';
+import { createDiagnosticLogR2Adapter, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
 /**
  * Test R2 connection for diagnostic logging
@@ -16,7 +16,6 @@ import { createDiagnosticLogR2Adapter } from '@authrim/ar-lib-core';
  *
  * Request body:
  * {
- *   "tenantId": "default",
  *   "r2BucketBinding": "DIAGNOSTIC_LOGS",
  *   "pathPrefix": "diagnostic-logs"
  * }
@@ -32,12 +31,11 @@ import { createDiagnosticLogR2Adapter } from '@authrim/ar-lib-core';
 export async function testDiagnosticLogR2Connection(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.json<{
-      tenantId?: string;
       r2BucketBinding?: string;
       pathPrefix?: string;
     }>();
 
-    const tenantId = body.tenantId ?? 'default';
+    const tenantId = getTenantIdFromContext(c);
     const bindingName = body.r2BucketBinding ?? 'DIAGNOSTIC_LOGS';
     const pathPrefix = body.pathPrefix ?? 'diagnostic-logs';
 
@@ -59,6 +57,7 @@ export async function testDiagnosticLogR2Connection(c: Context<{ Bindings: Env }
     const adapter = createDiagnosticLogR2Adapter(bucket, {
       pathPrefix,
       tenantId,
+      tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
     });
 
     // Test health

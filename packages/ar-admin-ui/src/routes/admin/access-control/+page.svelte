@@ -2,12 +2,16 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { adminAccessControlAPI, type AccessControlStats } from '$lib/api/admin-access-control';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let stats: AccessControlStats | null = $state(null);
 	let loading = $state(true);
 	let error = $state('');
+	let loadedTenantId = $state('');
 
-	onMount(async () => {
+	async function loadStats() {
+		loading = true;
+		error = '';
 		try {
 			stats = await adminAccessControlAPI.getStats();
 		} catch (err) {
@@ -16,6 +20,17 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		loadStats();
 	});
 
 	function navigateTo(path: string) {

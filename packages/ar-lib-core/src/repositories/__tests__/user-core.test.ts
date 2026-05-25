@@ -15,7 +15,7 @@ describe('UserCoreRepository', () => {
   beforeEach(() => {
     adapter = new MockDatabaseAdapter();
     adapter.initTable('users_core', 'id');
-    repository = new UserCoreRepository(adapter);
+    repository = new UserCoreRepository(adapter, 'default');
   });
 
   describe('createUser', () => {
@@ -38,6 +38,7 @@ describe('UserCoreRepository', () => {
     });
 
     it('should create a user with provided values', async () => {
+      const tenantRepository = new UserCoreRepository(adapter, 'tenant-acme');
       const input: CreateUserCoreInput = {
         id: 'user-123',
         tenant_id: 'tenant-acme',
@@ -51,7 +52,7 @@ describe('UserCoreRepository', () => {
         pii_status: 'active',
       };
 
-      const user = await repository.createUser(input);
+      const user = await tenantRepository.createUser(input);
 
       expect(user.id).toBe('user-123');
       expect(user.tenant_id).toBe('tenant-acme');
@@ -357,7 +358,7 @@ describe('UserCoreRepository', () => {
     });
 
     it('should find all users with failed status', async () => {
-      const users = await repository.findByPIIStatus('failed');
+      const users = await repository.findByPIIStatusGlobal('failed');
 
       expect(users).toHaveLength(2);
       expect(users.every((u) => u.pii_status === 'failed')).toBe(true);
@@ -371,14 +372,14 @@ describe('UserCoreRepository', () => {
     });
 
     it('should find users with active status', async () => {
-      const users = await repository.findByPIIStatus('active');
+      const users = await repository.findByPIIStatusGlobal('active');
 
       expect(users).toHaveLength(1);
       expect(users[0].id).toBe('active-1');
     });
 
     it('should return empty array for no matches', async () => {
-      const users = await repository.findByPIIStatus('deleted');
+      const users = await repository.findByPIIStatusGlobal('deleted');
 
       expect(users).toHaveLength(0);
     });
@@ -436,7 +437,7 @@ describe('UserCoreRepository', () => {
     });
 
     it('should find users by email domain hash', async () => {
-      const users = await repository.findByEmailDomainHash('hash-acme-com');
+      const users = await repository.findByEmailDomainHashGlobal('hash-acme-com');
 
       expect(users).toHaveLength(2);
       expect(users.every((u) => u.email_domain_hash === 'hash-acme-com')).toBe(true);
@@ -450,7 +451,7 @@ describe('UserCoreRepository', () => {
     });
 
     it('should return empty array for non-existent hash', async () => {
-      const users = await repository.findByEmailDomainHash('non-existent');
+      const users = await repository.findByEmailDomainHashGlobal('non-existent');
 
       expect(users).toHaveLength(0);
     });
@@ -508,40 +509,46 @@ describe('UserCoreRepository', () => {
     });
 
     it('should search by tenant_id', async () => {
-      const result = await repository.searchUsers({ tenant_id: 'tenant-1' });
+      const tenantRepository = new UserCoreRepository(adapter, 'tenant-1');
+      const result = await tenantRepository.searchUsers({ tenant_id: 'tenant-1' });
 
       expect(result.items).toHaveLength(2);
       expect(result.items.every((u) => u.tenant_id === 'tenant-1')).toBe(true);
     });
 
     it('should search by user_type', async () => {
-      const result = await repository.searchUsers({ user_type: 'admin' });
+      const tenantRepository = new UserCoreRepository(adapter, 'tenant-1');
+      const result = await tenantRepository.searchUsers({ user_type: 'admin' });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].id).toBe('admin-1');
     });
 
     it('should search by pii_status', async () => {
-      const result = await repository.searchUsers({ pii_status: 'active' });
+      const tenantRepository = new UserCoreRepository(adapter, 'tenant-1');
+      const result = await tenantRepository.searchUsers({ pii_status: 'active' });
 
-      expect(result.items).toHaveLength(2);
+      expect(result.items).toHaveLength(1);
     });
 
     it('should search by email_verified', async () => {
-      const result = await repository.searchUsers({ email_verified: true });
+      const tenantRepository = new UserCoreRepository(adapter, 'tenant-1');
+      const result = await tenantRepository.searchUsers({ email_verified: true });
 
-      expect(result.items).toHaveLength(2);
+      expect(result.items).toHaveLength(1);
     });
 
     it('should search by pii_partition', async () => {
-      const result = await repository.searchUsers({ pii_partition: 'eu' });
+      const tenantRepository = new UserCoreRepository(adapter, 'tenant-1');
+      const result = await tenantRepository.searchUsers({ pii_partition: 'eu' });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].id).toBe('admin-1');
     });
 
     it('should combine multiple filters', async () => {
-      const result = await repository.searchUsers({
+      const tenantRepository = new UserCoreRepository(adapter, 'tenant-1');
+      const result = await tenantRepository.searchUsers({
         tenant_id: 'tenant-1',
         user_type: 'end_user',
       });
@@ -603,7 +610,7 @@ describe('UserCoreRepository', () => {
     });
 
     it('should return partition counts', async () => {
-      const stats = await repository.getPartitionStats();
+      const stats = await repository.getPartitionStats('default');
 
       // Note: Mock adapter doesn't support GROUP BY, so this test
       // verifies the query is executed correctly
@@ -648,7 +655,7 @@ describe('UserCoreRepository', () => {
     });
 
     it('should return PII status counts', async () => {
-      const stats = await repository.getPIIStatusStats();
+      const stats = await repository.getPIIStatusStats('default');
 
       // Note: Mock adapter doesn't support GROUP BY, so this test
       // verifies the query is executed correctly

@@ -202,10 +202,10 @@ export class TrustedIssuerRepository extends BaseRepository<TrustedIssuer> {
   /**
    * Update issuer status
    */
-  async updateStatus(id: string, status: IssuerStatus): Promise<boolean> {
+  async updateStatus(tenantId: string, id: string, status: IssuerStatus): Promise<boolean> {
     const result = await this.adapter.execute(
-      'UPDATE trusted_issuers SET status = ?, updated_at = ? WHERE id = ?',
-      [status, getCurrentTimestamp(), id]
+      'UPDATE trusted_issuers SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+      [status, getCurrentTimestamp(), tenantId, id]
     );
     return result.rowsAffected > 0;
   }

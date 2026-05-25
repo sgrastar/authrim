@@ -155,8 +155,10 @@ function createMockEnv(keyManagerOptions: Parameters<typeof createMockKeyManager
       get: vi.fn().mockReturnValue(mockKeyManager),
     } as unknown as Env['KEY_MANAGER'],
     KEY_MANAGER_SECRET: 'test-secret',
-    JWKS_CACHE: {
+    AUTHRIM_CONFIG: {
       delete: vi.fn().mockResolvedValue(undefined),
+      put: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(null),
     } as unknown as KVNamespace,
     DB: {
       prepare: vi.fn().mockReturnValue({
@@ -178,6 +180,8 @@ function createTestApp() {
   app.use('/api/admin/*', async (c, next) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (c as any).set('adminAuth', { userId: 'test-admin', authMethod: 'bearer', roles: ['admin'] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (c as any).set('tenantId', 'default');
     await next();
   });
 
@@ -310,7 +314,10 @@ describe('Signing Keys Admin API', () => {
       });
       await app.fetch(request, env);
 
-      expect(env.JWKS_CACHE?.delete).toHaveBeenCalledWith('jwks');
+      // New implementation: JWKS cache key is per-tenant in AUTHRIM_CONFIG
+      expect(env.AUTHRIM_CONFIG?.delete).toHaveBeenCalledWith(
+        expect.stringContaining('cache:jwks:')
+      );
     });
 
     it('should handle KeyManager errors gracefully', async () => {
@@ -332,9 +339,10 @@ describe('Signing Keys Admin API', () => {
     it('should continue even if JWKS cache invalidation fails', async () => {
       const app = createTestApp();
       const env = createMockEnv();
-      // Make JWKS cache deletion fail
-      const mockJwksCache = env.JWKS_CACHE as unknown as { delete: ReturnType<typeof vi.fn> };
-      mockJwksCache.delete = vi.fn().mockRejectedValue(new Error('Cache error'));
+      // Make AUTHRIM_CONFIG cache deletion fail
+      (env.AUTHRIM_CONFIG as unknown as { delete: ReturnType<typeof vi.fn> }).delete = vi
+        .fn()
+        .mockRejectedValue(new Error('Cache error'));
 
       const request = new Request('http://localhost/api/admin/signing-keys/rotate', {
         method: 'POST',
@@ -445,7 +453,10 @@ describe('Signing Keys Admin API', () => {
       });
       await app.fetch(request, env);
 
-      expect(env.JWKS_CACHE?.delete).toHaveBeenCalledWith('jwks');
+      // New implementation: JWKS cache key is per-tenant in AUTHRIM_CONFIG
+      expect(env.AUTHRIM_CONFIG?.delete).toHaveBeenCalledWith(
+        expect.stringContaining('cache:jwks:')
+      );
     });
 
     it('should handle KeyManager errors gracefully', async () => {
@@ -486,8 +497,9 @@ describe('Signing Keys Admin API', () => {
     it('should continue even if cache invalidation fails', async () => {
       const app = createTestApp();
       const env = createMockEnv();
-      const mockJwksCache = env.JWKS_CACHE as unknown as { delete: ReturnType<typeof vi.fn> };
-      mockJwksCache.delete = vi.fn().mockRejectedValue(new Error('Cache unavailable'));
+      (env.AUTHRIM_CONFIG as unknown as { delete: ReturnType<typeof vi.fn> }).delete = vi
+        .fn()
+        .mockRejectedValue(new Error('Cache unavailable'));
 
       const request = new Request('http://localhost/api/admin/signing-keys/emergency-rotate', {
         method: 'POST',

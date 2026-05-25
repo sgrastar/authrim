@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminAttributesAPI,
 		type UserAttribute,
@@ -60,6 +61,7 @@
 	let showCleanupDialog = $state(false);
 	let cleaningUp = $state(false);
 	let cleanupResult: { deleted_count: number } | null = $state(null);
+	let loadedTenantId = $state('');
 
 	async function loadAttributes() {
 		loading = true;
@@ -268,7 +270,15 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		pagination.page = 1;
 		loadAbacStatus();
 		loadAttributes();
 		loadStats();

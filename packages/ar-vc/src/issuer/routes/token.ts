@@ -10,10 +10,17 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import type { VCITokenResponse } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger, type Logger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  getTenantIdFromContext,
+  type Logger,
+} from '@authrim/ar-lib-core';
 import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
 import { generateSecureNonce } from '../../utils/crypto';
 import { SignJWT, importJWK } from 'jose';
+import { getRequestIssuerIdentifier } from '../../request-identifiers';
 
 /**
  * Grant type for pre-authorized code
@@ -54,7 +61,8 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
     return await handlePreAuthorizedCodeGrant(
       c,
       log,
-      formData as unknown as Record<string, string>
+      formData as unknown as Record<string, string>,
+      getRequestIssuerIdentifier(c)
     );
   } catch (error) {
     log.error('VCI token request failed', {}, error as Error);
@@ -70,7 +78,8 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
 async function handlePreAuthorizedCodeGrant(
   c: Context<{ Bindings: Env }>,
   log: Logger,
-  formData: Record<string, string>
+  formData: Record<string, string>,
+  issuerIdentifier: string
 ): Promise<Response> {
   // Extract pre-authorized_code (required)
   const preAuthorizedCode = formData['pre-authorized_code'];
@@ -85,7 +94,12 @@ async function handlePreAuthorizedCodeGrant(
 
   // Look up the credential offer by pre-authorized code
   // The pre-authorized code contains the offer ID for routing
-  const offerInfo = await lookupOfferByCode(c.env, log, preAuthorizedCode);
+  const offerInfo = await lookupOfferByCode(
+    c.env,
+    log,
+    preAuthorizedCode,
+    getTenantIdFromContext(c)
+  );
   if (!offerInfo) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
@@ -106,7 +120,7 @@ async function handlePreAuthorizedCodeGrant(
   }
 
   // Generate access token
-  const accessToken = await generateVCIAccessToken(c.env, offerInfo);
+  const accessToken = await generateVCIAccessToken(c.env, offerInfo, issuerIdentifier);
 
   // Generate c_nonce
   const cNonce = await generateSecureNonce();
@@ -118,7 +132,7 @@ async function handlePreAuthorizedCodeGrant(
   });
 
   // Mark offer as accepted
-  await updateOfferStatus(c.env, log, offerInfo.offerId, 'accepted');
+  await updateOfferStatus(c.env, log, offerInfo.offerId, 'accepted', offerInfo.tenantId);
 
   // Build response per OpenID4VCI spec
   const response: VCITokenResponse = {
@@ -147,7 +161,8 @@ async function handlePreAuthorizedCodeGrant(
 async function lookupOfferByCode(
   env: Env,
   log: Logger,
-  preAuthorizedCode: string
+  preAuthorizedCode: string,
+  tenantId: string
 ): Promise<{
   offerId: string;
   userId: string;
@@ -171,7 +186,7 @@ async function lookupOfferByCode(
     const offerId = parts.slice(0, -1).join(':');
 
     // Get the offer from Durable Object
-    const { stub } = getCredentialOfferStoreById(env, offerId);
+    const { stub } = getCredentialOfferStoreById(env, offerId, tenantId);
     const response = await stub.fetch(new Request('https://internal/get'));
 
     if (!response.ok) {
@@ -219,10 +234,11 @@ async function updateOfferStatus(
   env: Env,
   log: Logger,
   offerId: string,
-  status: string
+  status: string,
+  tenantId: string
 ): Promise<void> {
   try {
-    const { stub } = getCredentialOfferStoreById(env, offerId);
+    const { stub } = getCredentialOfferStoreById(env, offerId, tenantId);
     await stub.fetch(
       new Request('https://internal/update', {
         method: 'POST',
@@ -247,10 +263,11 @@ async function generateVCIAccessToken(
     tenantId: string;
     credentialConfigurationId: string;
     claims: Record<string, unknown>;
-  }
+  },
+  issuer: string
 ): Promise<string> {
   // Get signing key from KeyManager
-  const doId = env.KEY_MANAGER.idFromName('issuer-keys');
+  const doId = env.KEY_MANAGER.idFromName(`${offerInfo.tenantId}-v3`);
   const stub = env.KEY_MANAGER.get(doId);
 
   const keyResponse = await stub.fetch(new Request('https://internal/ec/active/ES256'));
@@ -280,7 +297,6 @@ async function generateVCIAccessToken(
 
   const privateKey = await importJWK(privateKeyData.privateKeyJwk, 'ES256');
 
-  const issuer = env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
   const now = Math.floor(Date.now() / 1000);
 
   const token = await new SignJWT({

@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Jobs API Client
  *
@@ -13,6 +14,17 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 async function handleAPIError(response: Response, fallbackMessage: string): Promise<Error> {
 	try {
 		const errorBody = await response.json();
+		if (errorBody?.error === 'unsupported_storage_profile') {
+			const storageProfile =
+				typeof errorBody.storage_profile === 'string'
+					? errorBody.storage_profile
+					: 'current profile';
+			const route = typeof errorBody.route === 'string' ? errorBody.route : 'this route';
+			const message =
+				`This operation is not available for ${storageProfile}. ` +
+				`Route ${route} is blocked by the storage profile boundary.`;
+			return new Error(message);
+		}
 		// In development, show detailed error; in production, use fallback
 		if (import.meta.env.DEV) {
 			return new Error(errorBody.error_description || errorBody.error || fallbackMessage);
@@ -30,12 +42,26 @@ export type JobType =
 	| 'users_import'
 	| 'users_bulk_update'
 	| 'report_generation'
-	| 'org_bulk_members';
+	| 'org_bulk_members'
+	| 'tenant_delete'
+	| 'tenant_database_provision'
+	| 'tenant_database_activate_batch'
+	| 'tenant_database_export'
+	| 'tenant_database_restore_dry_run'
+	| 'tenant_database_purge_backup';
+
+export type ResultDelivery = 'auto' | 'inline' | 'artifact';
 
 /**
  * Job status
  */
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type JobStatus =
+	| 'pending'
+	| 'running'
+	| 'completed'
+	| 'partial_failure'
+	| 'failed'
+	| 'cancelled';
 
 /**
  * Job progress info
@@ -45,6 +71,12 @@ export interface JobProgress {
 	total: number;
 	percentage: number;
 	current_item?: string;
+	stage?: string;
+	succeeded?: number;
+	failed?: number;
+	skipped?: number;
+	cursor?: string;
+	batch_size?: number;
 }
 
 /**
@@ -67,12 +99,25 @@ export interface JobFailure {
 	code?: string;
 }
 
+export interface JobLogEntry {
+	timestamp: string;
+	level: 'info' | 'warn' | 'error';
+	code: string;
+	message: string;
+	row?: number;
+	email?: string;
+}
+
 /**
  * Job result
  */
 export interface JobResult {
 	summary: JobResultSummary;
 	failures: JobFailure[];
+	logs: JobLogEntry[];
+	artifact_id?: string;
+	available_formats?: Array<'json' | 'csv'>;
+	manifest_url?: string;
 	download_url?: string;
 }
 
@@ -90,6 +135,10 @@ export interface Job {
 	created_at: string;
 	started_at?: string;
 	completed_at?: string;
+	next_run_at?: string;
+	attempts: number;
+	max_attempts: number;
+	dead_lettered_at?: string;
 	parameters?: Record<string, unknown>;
 }
 
@@ -111,6 +160,27 @@ export interface UserImportOptions {
 	validate_only?: boolean;
 }
 
+export interface JobTypeDefinition {
+	job_type: string;
+	type: JobType;
+	processor_status: 'scheduled' | 'inline' | 'disabled';
+	creatable_from_admin_api: boolean;
+	result_object_class: string | null;
+	supported_result_delivery: ResultDelivery[];
+	create_endpoint: string | null;
+	notes: string | null;
+}
+
+export interface ResultDeliveryOption {
+	value: ResultDelivery;
+	description: string;
+}
+
+export interface JobTypesResponse {
+	result_delivery_options: ResultDeliveryOption[];
+	job_types: JobTypeDefinition[];
+}
+
 /**
  * Bulk update operation
  */
@@ -124,13 +194,252 @@ export interface BulkUpdateOperation {
 	};
 }
 
+export interface TenantDatabaseProvisionRequest {
+	tenant_slug?: string;
+	generation?: number;
+	activate?: boolean;
+	execution_mode?: 'plan_only' | 'operator_cli';
+	reason?: string;
+}
+
+export interface TenantDatabaseActivateBatchRequest {
+	activation_batch_id?: string;
+	targets: Array<{
+		tenant_id: string;
+		generation: number;
+		roles?: Array<'tenant_core' | 'tenant_pii'>;
+	}>;
+	scheduled_window?: {
+		not_before?: string;
+		not_after?: string;
+		timezone?: string;
+	};
+	require_health_check?: boolean;
+	require_binding_reconciliation?: boolean;
+	execution_mode?: 'plan_only' | 'operator_cli';
+	reason?: string;
+}
+
 /**
  * Presigned upload URL response
  */
 export interface UploadUrlResponse {
 	upload_url: string;
+	upload_method?: 'PUT';
 	file_key: string;
 	expires_at: string;
+}
+
+type ApiJobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'partial_failure';
+type ApiJobType =
+	| 'users/import'
+	| 'users/bulk-update'
+	| 'reports/generate'
+	| 'organizations/bulk-members'
+	| 'tenants/delete'
+	| 'tenant-database/provision'
+	| 'tenant-database/activate-batch'
+	| 'tenant-database/export'
+	| 'tenant-database/restore-dry-run'
+	| 'tenant-database/purge-backup';
+
+const JOB_TYPE_TO_API: Record<JobType, ApiJobType> = {
+	users_import: 'users/import',
+	users_bulk_update: 'users/bulk-update',
+	report_generation: 'reports/generate',
+	org_bulk_members: 'organizations/bulk-members',
+	tenant_delete: 'tenants/delete',
+	tenant_database_provision: 'tenant-database/provision',
+	tenant_database_activate_batch: 'tenant-database/activate-batch',
+	tenant_database_export: 'tenant-database/export',
+	tenant_database_restore_dry_run: 'tenant-database/restore-dry-run',
+	tenant_database_purge_backup: 'tenant-database/purge-backup'
+};
+
+const JOB_TYPE_FROM_API: Record<ApiJobType, JobType> = {
+	'users/import': 'users_import',
+	'users/bulk-update': 'users_bulk_update',
+	'reports/generate': 'report_generation',
+	'organizations/bulk-members': 'org_bulk_members',
+	'tenants/delete': 'tenant_delete',
+	'tenant-database/provision': 'tenant_database_provision',
+	'tenant-database/activate-batch': 'tenant_database_activate_batch',
+	'tenant-database/export': 'tenant_database_export',
+	'tenant-database/restore-dry-run': 'tenant_database_restore_dry_run',
+	'tenant-database/purge-backup': 'tenant_database_purge_backup'
+};
+
+function normalizeJobStatus(status: ApiJobStatus | JobStatus | string | undefined): JobStatus {
+	switch (status) {
+		case 'processing':
+			return 'running';
+		case 'partial_failure':
+			return 'partial_failure';
+		case 'pending':
+		case 'running':
+		case 'completed':
+		case 'failed':
+		case 'cancelled':
+			return status;
+		default:
+			return 'pending';
+	}
+}
+
+function normalizeJobType(type: ApiJobType | JobType | string | undefined): JobType {
+	if (!type) {
+		return 'report_generation';
+	}
+	return JOB_TYPE_FROM_API[type as ApiJobType] || (type as JobType);
+}
+
+function normalizeProgress(
+	raw: Record<string, unknown> | undefined,
+	status: JobStatus
+): JobProgress | undefined {
+	if (!raw) {
+		return undefined;
+	}
+
+	const total = Number(raw.total ?? 0);
+	const processed = Number(raw.processed ?? 0);
+	const percentage =
+		typeof raw.percentage === 'number'
+			? raw.percentage
+			: total > 0
+				? Math.round((processed / total) * 100)
+				: status === 'completed' || status === 'partial_failure'
+					? 100
+					: 0;
+
+	return {
+		total,
+		processed,
+		percentage: Math.min(100, Math.max(0, percentage)),
+		current_item: typeof raw.current_item === 'string' ? raw.current_item : undefined,
+		stage: typeof raw.stage === 'string' ? raw.stage : undefined,
+		succeeded: typeof raw.succeeded === 'number' ? raw.succeeded : undefined,
+		failed: typeof raw.failed === 'number' ? raw.failed : undefined,
+		skipped: typeof raw.skipped === 'number' ? raw.skipped : undefined,
+		cursor: typeof raw.cursor === 'string' ? raw.cursor : undefined,
+		batch_size: typeof raw.batch_size === 'number' ? raw.batch_size : undefined
+	};
+}
+
+function normalizeResult(raw: Record<string, unknown> | undefined): JobResult | undefined {
+	if (!raw) {
+		return undefined;
+	}
+
+	const rawSummary = (raw.summary as Record<string, unknown> | undefined) ?? {};
+	const rawFailures = Array.isArray(raw.failures) ? raw.failures : [];
+	const rawLogs = Array.isArray(raw.logs) ? raw.logs : [];
+
+	return {
+		summary: {
+			success_count: Number(rawSummary.success_count ?? rawSummary.succeeded ?? 0),
+			failure_count: Number(rawSummary.failure_count ?? rawSummary.failed ?? 0),
+			skipped_count: Number(rawSummary.skipped_count ?? rawSummary.skipped ?? 0),
+			warnings: Array.isArray(rawSummary.warnings)
+				? rawSummary.warnings.filter((entry): entry is string => typeof entry === 'string')
+				: []
+		},
+		failures: rawFailures.map((failure) => {
+			const value = failure as Record<string, unknown>;
+			return {
+				line:
+					typeof value.row === 'number'
+						? value.row
+						: typeof value.line === 'number'
+							? value.line
+							: undefined,
+				item:
+					typeof value.email === 'string'
+						? value.email
+						: typeof value.item === 'string'
+							? value.item
+							: undefined,
+				error:
+					(typeof value.message === 'string' && value.message) ||
+					(typeof value.error === 'string' && value.error) ||
+					'Unknown error',
+				code:
+					typeof value.error_code === 'string'
+						? value.error_code
+						: typeof value.code === 'string'
+							? value.code
+							: undefined
+			};
+		}),
+		logs: rawLogs.map((entry) => {
+			const value = entry as Record<string, unknown>;
+			return {
+				timestamp: typeof value.timestamp === 'string' ? value.timestamp : '',
+				level:
+					value.level === 'warn' || value.level === 'error' || value.level === 'info'
+						? value.level
+						: 'info',
+				code: typeof value.code === 'string' ? value.code : 'log',
+				message: typeof value.message === 'string' ? value.message : '',
+				row: typeof value.row === 'number' ? value.row : undefined,
+				email: typeof value.email === 'string' ? value.email : undefined
+			};
+		}),
+		artifact_id: typeof raw.artifact_id === 'string' ? raw.artifact_id : undefined,
+		available_formats: Array.isArray(raw.available_formats)
+			? raw.available_formats.filter(
+					(format): format is 'json' | 'csv' => format === 'json' || format === 'csv'
+				)
+			: undefined,
+		manifest_url: typeof raw.manifest_url === 'string' ? raw.manifest_url : undefined,
+		download_url: typeof raw.download_url === 'string' ? raw.download_url : undefined
+	};
+}
+
+function normalizeJob(raw: Record<string, unknown>): Job {
+	const status = normalizeJobStatus((raw.status as string | undefined) ?? 'pending');
+	return {
+		id: String(raw.id ?? raw.job_id ?? ''),
+		tenant_id: String(raw.tenant_id ?? ''),
+		type: normalizeJobType(
+			(raw.type as string | undefined) ?? (raw.job_type as string | undefined)
+		),
+		status,
+		progress: normalizeProgress(raw.progress as Record<string, unknown> | undefined, status),
+		result: normalizeResult(raw.result as Record<string, unknown> | undefined),
+		created_by: String(raw.created_by ?? 'system'),
+		created_at: String(raw.created_at ?? ''),
+		started_at: typeof raw.started_at === 'string' ? raw.started_at : undefined,
+		completed_at: typeof raw.completed_at === 'string' ? raw.completed_at : undefined,
+		next_run_at: typeof raw.next_run_at === 'string' ? raw.next_run_at : undefined,
+		attempts: Number(raw.attempts ?? 0),
+		max_attempts: Number(raw.max_attempts ?? 3),
+		dead_lettered_at: typeof raw.dead_lettered_at === 'string' ? raw.dead_lettered_at : undefined,
+		parameters: (raw.parameters as Record<string, unknown> | undefined) ?? undefined
+	};
+}
+
+function normalizeJobTypeDefinition(raw: Record<string, unknown>): JobTypeDefinition {
+	const apiType = String(raw.job_type ?? '');
+	return {
+		job_type: apiType,
+		type: normalizeJobType(apiType),
+		processor_status:
+			raw.processor_status === 'inline' || raw.processor_status === 'disabled'
+				? raw.processor_status
+				: 'scheduled',
+		creatable_from_admin_api: raw.creatable_from_admin_api === true,
+		result_object_class:
+			typeof raw.result_object_class === 'string' ? raw.result_object_class : null,
+		supported_result_delivery: Array.isArray(raw.supported_result_delivery)
+			? raw.supported_result_delivery.filter(
+					(value): value is ResultDelivery =>
+						value === 'auto' || value === 'inline' || value === 'artifact'
+				)
+			: [],
+		create_endpoint: typeof raw.create_endpoint === 'string' ? raw.create_endpoint : null,
+		notes: typeof raw.notes === 'string' ? raw.notes : null
+	};
 }
 
 /**
@@ -147,6 +456,45 @@ export interface ListResponse<T> {
  */
 export const adminJobsAPI = {
 	/**
+	 * List supported job types and result delivery modes
+	 */
+	async listTypes(): Promise<JobTypesResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/types`, {
+			method: 'GET',
+			credentials: 'include',
+			headers: {
+				'Content-Type': 'application/json'
+			}
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list job types');
+		}
+
+		const payload = (await response.json()) as {
+			result_delivery_options?: Array<Record<string, unknown>>;
+			job_types?: Array<Record<string, unknown>>;
+		};
+
+		return {
+			result_delivery_options: Array.isArray(payload.result_delivery_options)
+				? payload.result_delivery_options
+						.map((option) => ({
+							value: option.value,
+							description: typeof option.description === 'string' ? option.description : ''
+						}))
+						.filter(
+							(option): option is ResultDeliveryOption =>
+								option.value === 'auto' || option.value === 'inline' || option.value === 'artifact'
+						)
+				: [],
+			job_types: Array.isArray(payload.job_types)
+				? payload.job_types.map(normalizeJobTypeDefinition)
+				: []
+		};
+	},
+
+	/**
 	 * List all jobs
 	 */
 	async list(params?: {
@@ -160,13 +508,14 @@ export const adminJobsAPI = {
 		if (params?.cursor) searchParams.set('cursor', params.cursor);
 
 		const filters: string[] = [];
-		if (params?.status) filters.push(`status=${params.status}`);
-		if (params?.type) filters.push(`job_type=${params.type}`);
+		if (params?.status)
+			filters.push(`status=${params.status === 'running' ? 'processing' : params.status}`);
+		if (params?.type) filters.push(`job_type=${JOB_TYPE_TO_API[params.type]}`);
 		if (filters.length > 0) searchParams.set('filter', filters.join(','));
 
 		const url = `${API_BASE_URL}/api/admin/jobs${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
 
-		const response = await fetch(url, {
+		const response = await adminFetch(url, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -178,14 +527,23 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to list jobs');
 		}
 
-		return response.json();
+		const payload = (await response.json()) as {
+			data?: Record<string, unknown>[];
+			pagination?: { has_more?: boolean; next_cursor?: string };
+		};
+
+		return {
+			data: Array.isArray(payload.data) ? payload.data.map(normalizeJob) : [],
+			has_more: payload.pagination?.has_more ?? false,
+			next_cursor: payload.pagination?.next_cursor
+		};
 	},
 
 	/**
 	 * Get job status
 	 */
 	async get(jobId: string): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/${jobId}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/${jobId}`, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -197,14 +555,14 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to get job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
 	 * Get job result
 	 */
 	async getResult(jobId: string): Promise<JobResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/${jobId}/result`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/${jobId}/result`, {
 			method: 'GET',
 			credentials: 'include',
 			headers: {
@@ -216,20 +574,28 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to get job result');
 		}
 
-		return response.json();
+		return normalizeResult((await response.json()) as Record<string, unknown>) as JobResult;
 	},
 
 	/**
 	 * Get presigned upload URL for user import
 	 */
-	async getUploadUrl(filename: string): Promise<UploadUrlResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/users/import/upload-url`, {
+	async getUploadUrl(
+		filename: string,
+		contentType = 'text/csv',
+		sizeBytes = 0
+	): Promise<UploadUrlResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/import/upload-url`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
 				'Content-Type': 'application/json'
 			},
-			body: JSON.stringify({ filename })
+			body: JSON.stringify({
+				filename,
+				content_type: contentType,
+				size_bytes: sizeBytes
+			})
 		});
 
 		if (!response.ok) {
@@ -239,11 +605,27 @@ export const adminJobsAPI = {
 		return response.json();
 	},
 
+	async uploadImportFile(uploadUrl: string, file: File): Promise<{ file_key: string }> {
+		const response = await adminFetch(uploadUrl, {
+			method: 'PUT',
+			body: file,
+			headers: {
+				'Content-Type': 'text/csv'
+			}
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to upload import file');
+		}
+
+		return response.json();
+	},
+
 	/**
 	 * Create user import job
 	 */
 	async createUserImport(params: { file_key: string; options?: UserImportOptions }): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/users/import`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/import`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -256,17 +638,21 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create import job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
 	 * Create bulk user update job
 	 */
 	async createBulkUpdate(params: {
-		operations: BulkUpdateOperation[];
+		fields: string[];
+		values: Record<string, unknown>;
+		filter?: Record<string, unknown>;
 		dry_run?: boolean;
+		batch_size?: number;
+		result_delivery?: ResultDelivery;
 	}): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/users/bulk-update`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/users/bulk-update`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -279,7 +665,46 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create bulk update job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
+	},
+
+	async createTenantDatabaseProvision(params: TenantDatabaseProvisionRequest): Promise<Job> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/tenant-databases/provision`, {
+			method: 'POST',
+			credentials: 'include',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify(params)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to create tenant database provisioning request');
+		}
+
+		return normalizeJob((await response.json()) as Record<string, unknown>);
+	},
+
+	async createTenantDatabaseActivateBatch(
+		params: TenantDatabaseActivateBatchRequest
+	): Promise<Job> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/jobs/tenant-databases/activate-batch`,
+			{
+				method: 'POST',
+				credentials: 'include',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify(params)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to create tenant database activation request');
+		}
+
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
@@ -287,14 +712,14 @@ export const adminJobsAPI = {
 	 */
 	async createReport(params: {
 		type: ReportType;
-		parameters?: {
-			from?: string;
-			to?: string;
-			user_ids?: string[];
-			client_ids?: string[];
-		};
+		from_date: string;
+		to_date: string;
+		format?: 'json' | 'csv';
+		filters?: Record<string, unknown>;
+		result_delivery?: ResultDelivery;
+		result_storage_destination_id?: string;
 	}): Promise<Job> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/jobs/reports/generate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/reports/generate`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: {
@@ -307,7 +732,7 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create report job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
 	/**
@@ -318,9 +743,11 @@ export const adminJobsAPI = {
 		params: {
 			action: 'add' | 'remove';
 			user_ids: string[];
+			role?: 'member' | 'admin' | 'owner';
+			result_delivery?: ResultDelivery;
 		}
 	): Promise<Job> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/jobs/organizations/${organizationId}/bulk-members`,
 			{
 				method: 'POST',
@@ -336,7 +763,7 @@ export const adminJobsAPI = {
 			throw await handleAPIError(response, 'Failed to create org bulk members job');
 		}
 
-		return response.json();
+		return normalizeJob((await response.json()) as Record<string, unknown>);
 	}
 };
 
@@ -351,12 +778,33 @@ export function getJobStatusColor(status: JobStatus): string {
 			return '#3b82f6';
 		case 'completed':
 			return '#22c55e';
+		case 'partial_failure':
+			return '#f59e0b';
 		case 'failed':
 			return '#ef4444';
 		case 'cancelled':
 			return '#9ca3af';
 		default:
 			return '#6b7280';
+	}
+}
+
+export function getJobStatusDisplayName(status: JobStatus): string {
+	switch (status) {
+		case 'pending':
+			return 'Pending';
+		case 'running':
+			return 'Running';
+		case 'completed':
+			return 'Completed';
+		case 'partial_failure':
+			return 'Partial Failure';
+		case 'failed':
+			return 'Failed';
+		case 'cancelled':
+			return 'Cancelled';
+		default:
+			return 'Unknown';
 	}
 }
 
@@ -368,7 +816,13 @@ export function getJobTypeDisplayName(type: JobType): string {
 		users_import: 'User Import',
 		users_bulk_update: 'Bulk User Update',
 		report_generation: 'Report Generation',
-		org_bulk_members: 'Organization Bulk Members'
+		org_bulk_members: 'Organization Bulk Members',
+		tenant_delete: 'Tenant Deletion',
+		tenant_database_provision: 'Tenant DB Provisioning',
+		tenant_database_activate_batch: 'Tenant DB Activation',
+		tenant_database_export: 'Tenant DB Export',
+		tenant_database_restore_dry_run: 'Tenant DB Restore Dry-Run',
+		tenant_database_purge_backup: 'Tenant DB Backup Purge'
 	};
 	return names[type] || 'Unknown Job Type';
 }

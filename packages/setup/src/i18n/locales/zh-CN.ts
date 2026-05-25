@@ -1,6 +1,6 @@
 /**
  * Chinese (Simplified) Translations for Authrim Setup Tool
- * 简体中文翻译
+ * Simplified Chinese translations
  */
 
 import type { Translations } from '../types.js';
@@ -153,8 +153,8 @@ const zhCN: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI 部署方式',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': '部署到 Cloudflare Pages（推荐）',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': '部署到 Cloudflare Workers（推荐）',
   'ui.customOption': '自定义域名',
   'ui.customDesc': '使用您自己的托管',
   'ui.skipOption': '跳过',
@@ -178,6 +178,42 @@ const zhCN: Translations = {
   'domain.zoneCheckSkipped': '已跳过区域检查，继续设置...',
   'domain.continueWithoutZone': '不验证区域继续？',
   'domain.configureBinding': '为 Workers 配置自定义域名绑定',
+  'domain.action.retryCheck': '重新检查',
+  'domain.action.reloadPage': '重新加载页面',
+  'domain.action.openCloudflareDashboard': '打开 Cloudflare 控制台',
+  'domain.prereq.reviewTitle': '自定义域名检查需要额外确认',
+  'domain.prereq.reviewBody':
+    '如果您计划使用自定义域名，请在重新加载页面或刷新 Cloudflare 登录状态后再次检查。',
+  'domain.diagnostic.zone_found.title': 'Cloudflare 区域已就绪',
+  'domain.diagnostic.zone_found.body': '区域 "{{zone}}" 已可在当前 Cloudflare 账户中使用。',
+  'domain.diagnostic.zone_found.next': '您可以继续配置自定义域名绑定。',
+  'domain.diagnostic.not_logged_in.title': '需要登录 Cloudflare',
+  'domain.diagnostic.not_logged_in.body': 'Authrim 无法为这次区域检查确认 Cloudflare 登录状态。',
+  'domain.diagnostic.not_logged_in.next':
+    '1. 在终端运行 `wrangler login`。\n2. 重新加载此页面。\n3. 再次检查区域。',
+  'domain.diagnostic.token_unavailable.title': '无法加载 Cloudflare token',
+  'domain.diagnostic.token_unavailable.body':
+    '看起来 Wrangler 已登录，但当前还拿不到访问区域所需的 API token。',
+  'domain.diagnostic.token_unavailable.next':
+    '1. 先重新加载此页面再检查一次。\n2. 如果仍然失败，请重新执行 `wrangler login`。\n3. 然后再次检查区域。',
+  'domain.diagnostic.zone_read_forbidden.title': '缺少区域列表读取权限',
+  'domain.diagnostic.zone_read_forbidden.body':
+    '当前 Cloudflare token 无法读取区域列表。已有区域可能仍可使用，但自动验证和 DNS 辅助会受到限制。',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. 先重新检查一次。\n2. 如果仍然失败，请重新执行 `wrangler login`。\n3. 确认 token 具备 Zone:Read 权限。\n4. 如果区域已经存在，可以手动继续。',
+  'domain.diagnostic.zone_not_found.title': '当前账户中未找到该区域',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare 已返回响应，但当前账户下看不到区域 "{{zone}}"。',
+  'domain.diagnostic.zone_not_found.next':
+    '1. 确认该区域存在于您正在使用的 Cloudflare 账户中。\n2. 如有需要，请切换账户或打开 Cloudflare 控制台。\n3. 然后再次检查区域。',
+  'domain.diagnostic.api_error.title': 'Cloudflare API 检查失败',
+  'domain.diagnostic.api_error.body': '检查此区域时，Cloudflare API 返回了非预期响应。',
+  'domain.diagnostic.api_error.next': '请先重新检查；如果仍然失败，请重新加载此页面后再试一次。',
+  'domain.diagnostic.network_error.title': 'Cloudflare 网络检查失败',
+  'domain.diagnostic.network_error.body':
+    '由于 Cloudflare 或网络没有按预期响应，区域检查未能完成。',
+  'domain.diagnostic.network_error.next':
+    '请先重新检查；如果仍然失败，请重新加载此页面后再试一次。',
   'domain.issuerUrl': '发行者 URL：{{url}}',
   'domain.apiDomain': 'API / 发行者域名（例如：auth.example.com）',
   'domain.loginUiDomain': '登录 UI 域名（按回车跳过）',
@@ -185,6 +221,12 @@ const zhCN: Translations = {
   'domain.enterDomains': '输入自定义域名（留空使用 Cloudflare 默认）',
   'domain.singleTenantNote': '在单租户模式下，发行者 URL = API 域名',
   'domain.usingWorkersDev': '（使用 Cloudflare workers.dev 域名）',
+  'web.form.multiTenantEnable': '启用多租户模式',
+  'web.form.multiTenantHint': '在您的自定义域名下创建租户子域名',
+  'web.form.multiTenantExamples': '租户 URL 示例',
+  'web.form.multiTenantExampleDefaultOmitted': '省略默认租户名称时：{{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': '包含默认租户名称时：{{url}}',
+  'web.form.multiTenantExampleOther': '非默认租户时：{{url}}',
 
   // Database
   'db.title': '数据库配置',
@@ -404,9 +446,9 @@ const zhCN: Translations = {
   'userId.note': '注意：此设置在创建用户后无法更改。',
   'userId.selected': '用户 ID 格式：{{format}}',
 
-  // Optional components
-  'components.title': '可选组件',
-  'components.note': '注意：社交登录和策略引擎是标准组件',
+  // Standard components
+  'components.title': '标准组件',
+  'components.note': 'SAML、Device Flow/CIBA、VC、社交登录和策略引擎默认安装。',
   'components.samlPrompt': '启用 SAML 支持？',
   'components.vcPrompt': '启用可验证凭据？',
   'components.saml': 'SAML：',
@@ -433,7 +475,7 @@ const zhCN: Translations = {
   // Sharding settings
   'sharding.configurePrompt': '配置分片？（用于高负载环境）',
   'sharding.title': '分片设置',
-  'sharding.note': '注意：建议分片数为 2 的幂（8、16、32、64、128）',
+  'sharding.note': '注意：建议分片数为 2 的幂（4、8、16、32、64、128）',
   'sharding.authCodeShards': '授权码分片数',
   'sharding.refreshTokenShards': '刷新令牌分片数',
 
@@ -696,7 +738,7 @@ const zhCN: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': '登录 UI',
-  'web.config.loginUiDesc': '部署到 Cloudflare Pages 的预构建认证 UI。',
+  'web.config.loginUiDesc': '部署到 Cloudflare Workers 的预构建认证 UI。',
   'web.config.adminUi': '管理 UI',
   'web.config.adminUiDesc': '用于管理用户、客户端和设置的管理仪表板。',
 
@@ -705,9 +747,9 @@ const zhCN: Translations = {
   'web.url.apiDomain': 'API 域名',
   'web.url.apiDomainHint': '留空使用 workers.dev 子域',
   'web.url.loginDomain': '登录 UI 域名',
-  'web.url.loginDomainHint': '留空使用 pages.dev 子域',
+  'web.url.loginDomainHint': '留空使用 workers.dev 子域',
   'web.url.adminDomain': '管理 UI 域名',
-  'web.url.adminDomainHint': '留空使用 pages.dev 子域',
+  'web.url.adminDomainHint': '留空使用 workers.dev 子域',
 
   // Web UI Database
   'web.db.title': '数据库配置',
@@ -720,6 +762,16 @@ const zhCN: Translations = {
   'web.db.name': '名称',
   'web.db.region': '区域',
   'web.db.regionAuto': '自动（最近）',
+  'web.db.storageProfileTitle': '存储部署配置',
+  'web.db.storageProfileDesc': '选择本次部署中用户 core/PII 数据的放置方式。',
+  'web.db.sharedD1Title': '共享 D1',
+  'web.db.sharedD1Desc': '整个部署共享一个 core D1 和一个 PII D1。设置成本最低，也是默认路径。',
+  'web.db.tenantD1Title': '租户 D1',
+  'web.db.tenantD1Desc': '每个租户使用一组 core/PII D1。租户启用前需要先完成租户数据库预配。',
+  'web.db.preallocatedSlotsTitle': '预分配租户槽位',
+  'web.db.preallocatedSlotsDesc': '每个租户槽位会创建两个 D1 数据库：core 和 PII。',
+  'web.db.slotsLabel': '槽位',
+  'web.db.slotsHelp': '默认值为 3。最多 500 个槽位。',
 
   // Web UI Email
   'web.email.title': '邮件提供商',
@@ -862,7 +914,7 @@ const zhCN: Translations = {
   'web.section.apiDomain': 'API / 发行者域名',
   'web.section.uiDomains': 'UI 域名（可选）',
   'web.section.uiDomainsHint':
-    '登录/管理 UI 的自定义域名。每个可以独立设置。留空使用 Cloudflare Pages 默认值。',
+    '登录/管理 UI 的自定义域名。每个可以独立设置。留空使用 Cloudflare Workers 默认值。',
   'web.section.corsHint': 'CORS：从登录/管理 UI 到 API 的跨域请求自动允许。',
   'web.section.configPreview': '配置预览',
   'web.section.resourceNames': '资源名称',
@@ -873,6 +925,19 @@ const zhCN: Translations = {
   'web.preview.issuerUrl': '发行者 URL：',
   'web.preview.loginUi': '登录 UI：',
   'web.preview.adminUi': '管理 UI：',
+  'web.preview.pagesUrl': '登录 UI Origin：',
+  'web.preview.tenantDiscover': '租户选择（公共入口）：',
+  'web.preview.adminAccess': '管理 UI 访问地址：',
+  'web.preview.firstTenant': '{{name}}（主租户）',
+  'web.preview.otherTenants': '其他租户',
+  'web.preview.allTenantsShared': '（所有租户共用）',
+  'web.preview.loginUiOriginNote': '（部署 Origin；租户登录使用 Issuer 的 /login）',
+  'web.preview.viaApiProxy': '（通过 API 同域代理）',
+  'web.preview.conflictWarningTitle': '⚠️ 配置问题',
+  'web.preview.conflictWarningMsg':
+    '{{conflictUI}} 的自定义域名与 API 相同（{{baseDomain}}），由于"从 URL 中移除租户名"已禁用，对 {{baseDomain}} 的 API 请求（/authorize、/api/auth/* 等）将返回 404，导致登录流程无法运行。',
+  'web.preview.conflictActionMsg':
+    '解决方法：启用"从 URL 中移除租户名"并将首个租户（{{tenantName}}）设为主租户。或将 {{conflictUI}} 的域名更改为与 API 不同的域名（例如 login.{{baseDomain}}）。',
 
   // Web UI Component Labels
   'web.comp.loginUi': '登录 UI',
@@ -917,8 +982,16 @@ const zhCN: Translations = {
   'web.email.introDesc': '用于发送邮件 OTP 和邮箱地址验证。如果您愿意，可以稍后配置。',
   'web.email.configureLater': '稍后配置',
   'web.email.configureLaterHint': '暂时跳过，稍后配置。',
+  'web.email.configureCloudflare': '配置 Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    '使用 Workers 原生 Email Service 绑定。需要 Workers Paid 套餐和 Cloudflare DNS。',
   'web.email.configureResend': '配置 Resend',
   'web.email.configureResendHint': '使用 Resend 设置邮件发送（生产环境推荐）。',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': '要求',
+  'web.email.cloudflareRequirementPaid': '需要 Workers Paid 套餐',
+  'web.email.cloudflareRequirementDns': '需要 Cloudflare DNS / 域名接入',
+  'web.email.cloudflareRequirementManual': 'Cloudflare 控制台中的域名设置仍需手动完成',
   'web.email.resendSetup': 'Resend 配置',
   'web.email.beforeBegin': '开始之前：',
   'web.email.step1': '在此创建 Resend 账户',
@@ -926,10 +999,17 @@ const zhCN: Translations = {
   'web.email.step3': '在此创建 API 密钥',
   'web.email.resendApiKey': 'Resend API 密钥',
   'web.email.resendApiKeyHint': '您的 API 密钥以 "re_" 开头',
+  'web.email.resendApiKeyMissing': '请输入您的 Resend API 密钥',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API 密钥不是以 "re_" 开头。这可能不是有效的 Resend API 密钥。仍要继续吗？',
   'web.email.fromEmailAddress': '发件人邮箱地址',
+  'web.email.cloudflareFromHint': '必须来自已接入 Cloudflare Email Service 的域名',
   'web.email.fromEmailHint': '必须来自您 Resend 账户中的已验证域名',
+  'web.email.fromEmailMissing': '请输入发件人邮箱地址',
+  'web.email.fromEmailInvalid': '请输入有效的邮箱地址',
   'web.email.fromDisplayName': '发件人显示名称（可选）',
   'web.email.fromDisplayHint': '在邮件客户端中显示的发件人名称',
+  'web.email.saveConfigFailed': '保存邮件配置失败',
   'web.email.domainVerificationTitle': '需要域名验证',
   'web.email.domainVerificationDesc':
     '在您的域名验证之前，邮件只能从 onboarding@resend.dev 发送（用于测试）。',
@@ -969,10 +1049,10 @@ const zhCN: Translations = {
   'web.envDetail.kvNamespaces': 'KV 命名空间',
   'web.envDetail.queues': '队列',
   'web.envDetail.r2Buckets': 'R2 存储桶',
-  'web.envDetail.pagesProjects': 'Pages 项目',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': '更新 Workers',
+  'web.envDetail.workerUpdate': '更新所有 Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': '已部署',
   'web.envDetail.localVersion': '本地',
@@ -981,7 +1061,7 @@ const zhCN: Translations = {
   'web.envDetail.upToDate': '最新',
   'web.envDetail.notDeployed': '未部署',
   'web.envDetail.updateOnlyChanged': '仅更新已更改的版本',
-  'web.envDetail.updateAllWorkers': '更新 Workers',
+  'web.envDetail.updateAllWorkers': '更新所有 Workers',
   'web.envDetail.refreshVersions': '刷新',
   'web.envDetail.updateProgress': '更新进度：',
   'web.envDetail.updatesAvailable': '{{count}} 个更新可用',
@@ -990,8 +1070,8 @@ const zhCN: Translations = {
   'web.envDetail.action': '操作',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': '更新 UI（Pages）',
-  'web.envDetail.uiUpdateDesc': '单独更新 Admin UI 或 Login UI。这些部署在 Cloudflare Pages 上。',
+  'web.envDetail.uiUpdate': '更新 UI（Workers）',
+  'web.envDetail.uiUpdateDesc': '单独更新 Admin UI 或 Login UI。这些部署在 Cloudflare Workers 上。',
   'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
@@ -1004,7 +1084,7 @@ const zhCN: Translations = {
   'web.delete.kvNamespaces': 'KV 命名空间',
   'web.delete.queues': '队列',
   'web.delete.r2Buckets': 'R2 存储桶',
-  'web.delete.pagesProjects': 'Pages 项目',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': '取消',
   'web.delete.confirmBtn': '删除所选',
 

@@ -9,14 +9,17 @@ export function normalizeTenantConfigForApiDomain(
 ): TenantConfig {
   const baseDomain = tenant?.baseDomain?.trim() || undefined;
   const customDomainEnabled = hasApiCustomDomain(baseDomain);
+  const multiTenantEnabled = customDomainEnabled && tenant?.multiTenant === true;
+  const initialTenantName = tenant?.name?.trim() || 'default';
+  const primaryTenant = tenant?.primaryTenant?.trim() || initialTenantName;
 
   return {
-    name: customDomainEnabled ? tenant?.name || 'default' : 'default',
-    displayName: tenant?.displayName || 'Default Tenant',
-    multiTenant: customDomainEnabled,
-    baseDomain,
+    name: initialTenantName,
+    displayName: tenant?.displayName || 'Initial Tenant',
+    multiTenant: multiTenantEnabled,
+    baseDomain: multiTenantEnabled ? baseDomain : undefined,
     userIdFormat: tenant?.userIdFormat || 'nanoid',
-    primaryTenant: customDomainEnabled ? tenant?.primaryTenant : undefined,
-    nakedDomain: customDomainEnabled ? (tenant?.nakedDomain ?? false) : false,
+    primaryTenant: multiTenantEnabled ? primaryTenant : undefined,
+    nakedDomain: multiTenantEnabled ? (tenant?.nakedDomain ?? false) : false,
   };
 }

@@ -48,6 +48,7 @@ const createMockContext = (
           first: vi.fn().mockResolvedValue(null),
         }),
       }),
+      batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
     AUTHRIM_CONFIG: {
       get: vi.fn().mockResolvedValue(null),
@@ -71,11 +72,20 @@ const createMockContext = (
     ...overrides.env,
   };
 
+  const url = overrides.req?.url || 'https://authrim.com/vp/test';
+  const rawRequest = new Request(url, {
+    method: overrides.req?.method || 'GET',
+    headers: {
+      Host: new URL(url).host,
+    },
+  });
+
   return {
     env: defaultEnv,
     req: {
-      url: 'https://authrim.com/vp/test',
-      method: 'GET',
+      raw: rawRequest,
+      url,
+      method: overrides.req?.method || 'GET',
       param: vi.fn().mockReturnValue('test-id'),
       json: vi.fn().mockResolvedValue({}),
       header: vi.fn().mockReturnValue(undefined),
@@ -88,8 +98,8 @@ const createMockContext = (
         headers: { 'Content-Type': 'application/json' },
       });
     }),
-    // Mock get method for getLogger
-    get: vi.fn().mockReturnValue(undefined),
+    // Mock get method for getLogger and tenant context
+    get: vi.fn((key: string) => (key === 'tenantId' ? 'tenant-1' : undefined)),
   } as unknown as Context<{ Bindings: Env }>;
 };
 
@@ -111,15 +121,16 @@ describe('Verifier Metadata Route', () => {
     expect(data.dcql_supported).toBe(true);
   });
 
-  it('should use custom VERIFIER_IDENTIFIER', async () => {
+  it('uses the request host as verifier identifier even when VERIFIER_IDENTIFIER is configured', async () => {
     const c = createMockContext({
       env: { VERIFIER_IDENTIFIER: 'did:web:custom-verifier.com' },
+      req: { url: 'https://tenant1.example.com/.well-known/openid-credential-verifier' },
     });
 
     const response = await verifierMetadataRoute(c);
     const data = (await response.json()) as { verifier_identifier: string };
 
-    expect(data.verifier_identifier).toBe('did:web:custom-verifier.com');
+    expect(data.verifier_identifier).toBe('did:web:tenant1.example.com');
   });
 });
 
@@ -168,11 +179,45 @@ describe('VP Authorize Route', () => {
     expect(mockStub.fetch).toHaveBeenCalled();
   });
 
-  it('should reject request without tenant_id', async () => {
+  it('should accept request without tenant_id and use context tenant', async () => {
+    const mockStub = {
+      fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+    };
+
     const c = createMockContext({
       req: {
         json: vi.fn().mockResolvedValue({
           client_id: 'client-1',
+          presentation_definition: {
+            id: 'pd-1',
+            input_descriptors: [],
+          },
+        }),
+      },
+      env: {
+        VP_REQUEST_STORE: {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
+          get: vi.fn().mockReturnValue(mockStub),
+        } as unknown as DurableObjectNamespace,
+      },
+    });
+
+    const response = await vpAuthorizeRoute(c);
+
+    expect(response.status).toBe(200);
+    expect(mockStub.fetch).toHaveBeenCalledWith(expect.any(Request));
+  });
+
+  it('should reject mismatched tenant_id', async () => {
+    const c = createMockContext({
+      req: {
+        json: vi.fn().mockResolvedValue({
+          tenant_id: 'tenant-other',
+          client_id: 'client-1',
+          presentation_definition: {
+            id: 'pd-1',
+            input_descriptors: [],
+          },
         }),
       },
     });
@@ -182,8 +227,6 @@ describe('VP Authorize Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
-    expect(data.error_description).toContain('required');
   });
 
   it('should reject request without client_id', async () => {

@@ -10,6 +10,14 @@
 
 import type { EventDetails, TenantPIIConfig } from './types';
 import { createLogger } from '../../utils/logger';
+import { readR2ObjectTextWithLimit } from '../../utils/body-limits';
+import type { TenantKeyResolver } from './tenant-key';
+import type { DatabaseAdapter } from '../../db';
+import {
+  loadChunkedSensitiveDetailJson,
+  storeImmediateChunkedSensitiveDetailJson,
+  type SensitiveDetailChunkReadEnv,
+} from '../sensitive-detail-chunk-store';
 
 const log = createLogger().module('Audit');
 
@@ -28,6 +36,41 @@ export const ERROR_MESSAGE_MAX_LENGTH = 1024;
 
 /** Chunk size for Base64 encoding (32KB) */
 const BASE64_CHUNK_SIZE = 0x8000;
+
+/** Maximum R2 object size accepted for evacuated event details. */
+const DETAILS_R2_READ_LIMIT_BYTES = 256 * 1024;
+
+/** Maximum R2 object size accepted for evacuated encrypted PII values. */
+const PII_VALUES_R2_READ_LIMIT_BYTES = 1024 * 1024;
+
+const SENSITIVE_DETAIL_CATALOG_REF_PREFIX = 'sensitive-detail-catalog:';
+
+export interface SensitiveDetailChunkWriteContext {
+  adapter: DatabaseAdapter;
+  bucket: R2Bucket;
+  rootKeyHex: string;
+  keyVersion?: number;
+  createdAt?: number;
+  tenantKeySalt?: string;
+  tenantKeyResolver?: TenantKeyResolver;
+}
+
+export interface SensitiveDetailChunkReadContext {
+  adapter: DatabaseAdapter;
+  env: SensitiveDetailChunkReadEnv;
+}
+
+export function encodeSensitiveDetailCatalogRef(catalogId: string): string {
+  return `${SENSITIVE_DETAIL_CATALOG_REF_PREFIX}${catalogId}`;
+}
+
+function decodeSensitiveDetailCatalogRef(value: string | null | undefined): string | null {
+  if (!value?.startsWith(SENSITIVE_DETAIL_CATALOG_REF_PREFIX)) {
+    return null;
+  }
+  const catalogId = value.slice(SENSITIVE_DETAIL_CATALOG_REF_PREFIX.length).trim();
+  return catalogId || null;
+}
 
 // =============================================================================
 // Base64 Utilities (Chunking for Large Data)
@@ -186,15 +229,20 @@ export interface EventDetailsResult {
  *
  * @param details - Event details to write
  * @param r2Bucket - R2 bucket for large details
- * @param tenantId - Tenant ID for R2 path
+ * @param tenantId - Tenant ID used to derive the R2 tenant_key path segment
  * @param entryId - Entry ID for R2 path
+ * @param tenantKeySalt - Optional transitional salt for tenant_key derivation
+ * @param tenantKeyResolver - Optional tenant registry backed tenant_key resolver
  * @returns Details storage result
  */
 export async function writeEventDetails(
   details: Record<string, unknown>,
-  r2Bucket: R2Bucket,
+  _r2Bucket: R2Bucket,
   tenantId: string,
-  entryId: string
+  entryId: string,
+  tenantKeySalt?: string,
+  tenantKeyResolver?: TenantKeyResolver,
+  chunkContext?: SensitiveDetailChunkWriteContext
 ): Promise<EventDetailsResult> {
   const json = JSON.stringify(details);
 
@@ -206,15 +254,31 @@ export async function writeEventDetails(
     return { detailsJson: json, detailsR2Key: null };
   }
 
-  // > 2KB: Evacuate to R2
-  const dateStr = new Date().toISOString().slice(0, 10);
-  const r2Key = `event-details/${tenantId}/${dateStr}/${entryId}.json`;
+  if (chunkContext) {
+    const result = await storeImmediateChunkedSensitiveDetailJson({
+      adapter: chunkContext.adapter,
+      bucket: chunkContext.bucket,
+      rootKeyHex: chunkContext.rootKeyHex,
+      tenantId,
+      objectClass: 'event_log_detail',
+      payload: details,
+      contentType: 'application/json',
+      createdAt: chunkContext.createdAt,
+      keyVersion: chunkContext.keyVersion,
+      tenantKeySalt: chunkContext.tenantKeySalt ?? tenantKeySalt,
+      tenantKeyResolver: chunkContext.tenantKeyResolver ?? tenantKeyResolver,
+      surface: 'event',
+      logType: 'audit',
+      publicArtifactId: `evt_${entryId.replace(/[^A-Za-z0-9_-]/g, '')}`,
+    });
 
-  await r2Bucket.put(r2Key, json, {
-    httpMetadata: { contentType: 'application/json' },
-  });
+    return {
+      detailsJson: null,
+      detailsR2Key: encodeSensitiveDetailCatalogRef(result.catalogId),
+    };
+  }
 
-  return { detailsJson: null, detailsR2Key: r2Key };
+  throw new Error('sensitive_detail_chunk_context_required:event_log_detail');
 }
 
 /**
@@ -228,7 +292,8 @@ export async function writeEventDetails(
 export async function readEventDetails(
   detailsJson: string | null | undefined,
   detailsR2Key: string | null | undefined,
-  r2Bucket: R2Bucket
+  r2Bucket: R2Bucket,
+  chunkContext?: SensitiveDetailChunkReadContext & { tenantId?: string }
 ): Promise<EventDetails | null> {
   // Inline details
   if (detailsJson) {
@@ -239,13 +304,25 @@ export async function readEventDetails(
     }
   }
 
+  const catalogId = decodeSensitiveDetailCatalogRef(detailsR2Key);
+  if (catalogId) {
+    if (!chunkContext?.tenantId) {
+      return null;
+    }
+    return loadChunkedSensitiveDetailJson<EventDetails>(chunkContext.adapter, chunkContext.env, {
+      tenantId: chunkContext.tenantId,
+      objectCatalogId: catalogId,
+      expectedClass: 'event_log_detail',
+    });
+  }
+
   // R2 details
   if (detailsR2Key) {
     const r2Object = await r2Bucket.get(detailsR2Key);
     if (!r2Object) {
       return null;
     }
-    const text = await r2Object.text();
+    const text = await readR2ObjectTextWithLimit(r2Object, DETAILS_R2_READ_LIMIT_BYTES);
     try {
       return JSON.parse(text) as EventDetails;
     } catch {
@@ -275,15 +352,20 @@ export interface PIIValuesResult {
  *
  * @param encryptedJson - JSON string of encrypted values
  * @param r2Bucket - R2 bucket for large values
- * @param tenantId - Tenant ID for R2 path
+ * @param tenantId - Tenant ID used to derive the R2 tenant_key path segment
  * @param entryId - Entry ID for R2 path
+ * @param tenantKeySalt - Optional transitional salt for tenant_key derivation
+ * @param tenantKeyResolver - Optional tenant registry backed tenant_key resolver
  * @returns PII values storage result
  */
 export async function writePIIValues(
   encryptedJson: string,
-  r2Bucket: R2Bucket,
+  _r2Bucket: R2Bucket,
   tenantId: string,
-  entryId: string
+  entryId: string,
+  tenantKeySalt?: string,
+  tenantKeyResolver?: TenantKeyResolver,
+  chunkContext?: SensitiveDetailChunkWriteContext
 ): Promise<PIIValuesResult> {
   // IMPORTANT: Use byte length, not string length (Unicode safety)
   const byteLength = new TextEncoder().encode(encryptedJson).length;
@@ -293,15 +375,31 @@ export async function writePIIValues(
     return { valuesEncrypted: encryptedJson, valuesR2Key: null };
   }
 
-  // > 4KB: Evacuate to R2
-  const dateStr = new Date().toISOString().slice(0, 10);
-  const r2Key = `pii-values/${tenantId}/${dateStr}/${entryId}.json`;
+  if (chunkContext) {
+    const result = await storeImmediateChunkedSensitiveDetailJson({
+      adapter: chunkContext.adapter,
+      bucket: chunkContext.bucket,
+      rootKeyHex: chunkContext.rootKeyHex,
+      tenantId,
+      objectClass: 'pii_log_values',
+      payload: JSON.parse(encryptedJson) as unknown,
+      contentType: 'application/json',
+      createdAt: chunkContext.createdAt,
+      keyVersion: chunkContext.keyVersion,
+      tenantKeySalt: chunkContext.tenantKeySalt ?? tenantKeySalt,
+      tenantKeyResolver: chunkContext.tenantKeyResolver ?? tenantKeyResolver,
+      surface: 'pii',
+      logType: 'pii',
+      publicArtifactId: `pii_${entryId.replace(/[^A-Za-z0-9_-]/g, '')}`,
+    });
 
-  await r2Bucket.put(r2Key, encryptedJson, {
-    httpMetadata: { contentType: 'application/json' },
-  });
+    return {
+      valuesEncrypted: null,
+      valuesR2Key: encodeSensitiveDetailCatalogRef(result.catalogId),
+    };
+  }
 
-  return { valuesEncrypted: null, valuesR2Key: r2Key };
+  throw new Error('sensitive_detail_chunk_context_required:pii_log_values');
 }
 
 // =============================================================================
@@ -472,19 +570,36 @@ export async function readAndDecryptPIIValues(
   r2Bucket: R2Bucket,
   tenantId: string,
   affectedFields: string[],
-  keyProvider: DecryptionKeyProvider
+  keyProvider: DecryptionKeyProvider,
+  chunkContext?: SensitiveDetailChunkReadContext
 ): Promise<Record<string, unknown> | null> {
   let encryptedJson: string | null = null;
 
   // Get encrypted JSON from inline or R2
   if (valuesEncrypted) {
     encryptedJson = valuesEncrypted;
-  } else if (valuesR2Key) {
-    const r2Object = await r2Bucket.get(valuesR2Key);
-    if (!r2Object) {
-      return null;
+  } else {
+    const catalogId = decodeSensitiveDetailCatalogRef(valuesR2Key);
+    if (catalogId) {
+      const chunkPayload = chunkContext
+        ? await loadChunkedSensitiveDetailJson<EncryptedValueForDecrypt>(
+            chunkContext.adapter,
+            chunkContext.env,
+            {
+              tenantId,
+              objectCatalogId: catalogId,
+              expectedClass: 'pii_log_values',
+            }
+          )
+        : null;
+      encryptedJson = chunkPayload ? JSON.stringify(chunkPayload) : null;
+    } else if (valuesR2Key) {
+      const r2Object = await r2Bucket.get(valuesR2Key);
+      if (!r2Object) {
+        return null;
+      }
+      encryptedJson = await readR2ObjectTextWithLimit(r2Object, PII_VALUES_R2_READ_LIMIT_BYTES);
     }
-    encryptedJson = await r2Object.text();
   }
 
   if (!encryptedJson) {

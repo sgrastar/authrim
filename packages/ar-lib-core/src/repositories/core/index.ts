@@ -72,3 +72,8 @@ export {
   type CreateDeviceSecretResult,
   type DeviceSecretCreateOptions,
 } from './device-secret';
+
+export {
+  DeviceInstallationRepository,
+  type FindDeviceInstallationsOptions,
+} from './device-installation';

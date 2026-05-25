@@ -15,8 +15,22 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID, resolveTenantFromRequest } from '../utils/tenant-context';
-import { isMultiTenantEnabled } from '../utils/issuer';
+import { getRequestHost, isMultiTenantEnabled, validateTenantExistsAsync } from '../utils/issuer';
+import { validateTenantRequestBinding } from '../utils/tenant-binding-policy';
+import {
+  classifyTenantRequestPath,
+  extractTenantScopedPathTenantId,
+  isAdminTenantHeaderRequired,
+  isValidTenantIdentifier,
+} from '../utils/tenant-request-policy';
 import { createLogger, type Logger } from '../utils/logger';
+import {
+  getPrimaryTenantVanityDomain,
+  resolveTenantFromVanityHost,
+} from '../services/tenant-vanity-domain-resolver';
+import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
+import { resolveUserStoreRuntimeSourcesFromEnv } from '../services/user-store-runtime-sources';
+import { TenantDatabaseResolverError } from '../services/tenant-database-resolver';
 
 /**
  * Request context available to all handlers via c.get()
@@ -62,21 +76,177 @@ export interface RequestContextMiddlewareOptions {
   requireTenant?: boolean;
 }
 
+function shouldAttemptVanityHostResolution(
+  env: Partial<Env>,
+  requestHost: string | undefined,
+  requestClass:
+    | 'platform_admin'
+    | 'tenant_inventory_admin'
+    | 'tenant_scoped_admin'
+    | 'discovery_ui'
+    | 'health_or_internal'
+    | 'public_protocol_or_rest'
+): boolean {
+  if (!requestHost || !isMultiTenantEnabled(env)) {
+    return false;
+  }
+
+  if (requestClass === 'platform_admin' || requestClass === 'tenant_inventory_admin') {
+    return false;
+  }
+
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (!baseDomain) {
+    return false;
+  }
+
+  if (requestHost === baseDomain || requestHost.endsWith(`.${baseDomain}`)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isTenantDatabaseControlPlanePath(path: string): boolean {
+  return path.startsWith('/api/admin/jobs/tenant-databases/');
+}
+
+function shouldResolveRuntimeUserStoreSources(
+  requestClass:
+    | 'platform_admin'
+    | 'tenant_inventory_admin'
+    | 'tenant_scoped_admin'
+    | 'discovery_ui'
+    | 'health_or_internal'
+    | 'public_protocol_or_rest',
+  path: string
+): boolean {
+  if (isTenantDatabaseControlPlanePath(path)) {
+    return false;
+  }
+
+  return requestClass === 'tenant_scoped_admin' || requestClass === 'public_protocol_or_rest';
+}
+
+function getConfiguredUrlHostname(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): boolean {
+  if (!requestHost) {
+    return false;
+  }
+
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (env.NAKED_DOMAIN_AS_ISSUER === 'true' && baseDomain && requestHost === baseDomain) {
+    return false;
+  }
+
+  return [getConfiguredUrlHostname(env.ADMIN_UI_URL), getConfiguredUrlHostname(env.UI_URL)].some(
+    (hostname) => hostname === requestHost
+  );
+}
+
 export function requestContextMiddleware(options: RequestContextMiddlewareOptions = {}) {
   const { requireTenant = true } = options;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const requestId = crypto.randomUUID();
     const startTime = Date.now();
+    const requestClass = classifyTenantRequestPath(c.req.path);
+    const requestedTenantId = isAdminTenantHeaderRequired(c.req.path)
+      ? c.req.header('X-Tenant-Id')?.trim()
+      : undefined;
+
+    if (isAdminTenantHeaderRequired(c.req.path)) {
+      if (!requestedTenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'X-Tenant-Id header is required',
+          },
+          400
+        );
+      }
+
+      if (!isValidTenantIdentifier(requestedTenantId)) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'X-Tenant-Id header has an invalid format',
+          },
+          400
+        );
+      }
+
+      const pathTenantId = extractTenantScopedPathTenantId(c.req.path);
+      if (pathTenantId && pathTenantId !== requestedTenantId) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'X-Tenant-Id must match the tenant path parameter',
+          },
+          400
+        );
+      }
+    }
 
     // Resolve tenant from Host header
     // Single-tenant mode: always returns default tenant
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
+    const authCoreSource = await resolveAuthCorePersistenceSourceFromEnv(c.env).catch(
+      () => c.env.DB
+    );
     let tenantId = tenantResult.tenantId;
+    const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
+    if (isReservedUiHost(c.env, requestHost)) {
+      tenantResult.success = false;
+      tenantResult.tenantId = c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+      delete tenantResult.error;
+      delete tenantResult.statusCode;
+      tenantId = tenantResult.tenantId;
+    }
+
+    if (
+      !tenantResult.success &&
+      shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)
+    ) {
+      const vanityTenantId = await resolveTenantFromVanityHost(
+        authCoreSource,
+        c.env.AUTHRIM_CONFIG,
+        requestHost
+      );
+      if (vanityTenantId) {
+        tenantResult.success = true;
+        tenantResult.tenantId = vanityTenantId;
+        delete tenantResult.error;
+        delete tenantResult.statusCode;
+        tenantId = vanityTenantId;
+      }
+    }
+    const allowUnknownTenant =
+      requestClass === 'discovery_ui' ||
+      requestClass === 'platform_admin' ||
+      requestClass === 'tenant_inventory_admin' ||
+      requestClass === 'health_or_internal';
 
     // Handle tenant resolution failure in multi-tenant mode
-    if (!tenantResult.success && isMultiTenantEnabled(c.env) && requireTenant) {
+    if (
+      !tenantResult.success &&
+      isMultiTenantEnabled(c.env) &&
+      requireTenant &&
+      !allowUnknownTenant &&
+      requestClass !== 'tenant_scoped_admin'
+    ) {
       // Create logger for error logging
       const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
       errorLogger.warn('Tenant resolution failed', {
@@ -108,6 +278,96 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       tenantId = c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
     }
 
+    if (requestClass === 'tenant_scoped_admin' && requestedTenantId) {
+      tenantId = requestedTenantId;
+    }
+
+    if (
+      requestClass === 'tenant_scoped_admin' &&
+      !isMultiTenantEnabled(c.env) &&
+      tenantId !== (c.env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID)
+    ) {
+      return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+    }
+
+    // In multi-tenant mode, validate that the resolved tenant actually exists in D1.
+    // Uses positive-only KV cache (300s TTL) to avoid per-request D1 queries.
+    // Fail-open on D1 errors to prevent outages from blocking all requests.
+    const shouldValidateTenantExists =
+      isMultiTenantEnabled(c.env) &&
+      !!tenantId &&
+      (requestClass === 'tenant_scoped_admin' || tenantResult.success);
+
+    if (shouldValidateTenantExists) {
+      const exists = await validateTenantExistsAsync(
+        authCoreSource,
+        c.env.AUTHRIM_CONFIG,
+        tenantId
+      );
+      if (!exists) {
+        const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
+        errorLogger.warn('Tenant existence check failed', {
+          tenantId,
+          host: c.req.header('Host'),
+          path: c.req.path,
+        });
+        return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+      }
+    }
+
+    if (
+      isMultiTenantEnabled(c.env) &&
+      tenantResult.success &&
+      requestHost &&
+      !!c.env.BASE_DOMAIN &&
+      requestHost === `${tenantId}.${c.env.BASE_DOMAIN}`
+    ) {
+      const primaryVanity = await getPrimaryTenantVanityDomain(
+        { AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG, DB: authCoreSource },
+        tenantId
+      );
+      if (primaryVanity && primaryVanity.hostname !== requestHost) {
+        const isBrowserNavigation =
+          ['GET', 'HEAD'].includes(c.req.method) &&
+          !c.req.path.startsWith('/api/') &&
+          (c.req.header('Accept') || '').includes('text/html');
+
+        if (isBrowserNavigation) {
+          const redirectUrl = new URL(c.req.url);
+          redirectUrl.hostname = primaryVanity.hostname;
+          return c.redirect(redirectUrl.toString(), 308);
+        }
+
+        if (requestClass === 'public_protocol_or_rest') {
+          return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+        }
+      }
+    }
+
+    const shouldValidateTenantBinding =
+      isMultiTenantEnabled(c.env) &&
+      requestClass === 'public_protocol_or_rest' &&
+      !!tenantId &&
+      tenantResult.success;
+
+    if (shouldValidateTenantBinding) {
+      const bindingAllowed = await validateTenantRequestBinding(
+        c.req.raw,
+        c.env.AUTHRIM_CONFIG,
+        c.env,
+        tenantId
+      );
+      if (!bindingAllowed) {
+        const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
+        errorLogger.warn('Tenant host or identifier binding check failed', {
+          tenantId,
+          host: c.req.header('Host'),
+          path: c.req.path,
+        });
+        return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+      }
+    }
+
     // Create logger with request context
     const logger = createLogger({
       requestId,
@@ -122,6 +382,33 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ctx.set('tenantId', tenantId);
     ctx.set('logger', logger);
     ctx.set('startTime', startTime);
+    if (shouldResolveRuntimeUserStoreSources(requestClass, c.req.path)) {
+      try {
+        ctx.set(
+          'runtimeUserStoreSources',
+          await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId, { requestPath: c.req.path })
+        );
+      } catch (error) {
+        if (error instanceof TenantDatabaseResolverError) {
+          logger.warn('Tenant database runtime source resolution failed', {
+            error: error.code,
+            tenantId,
+            path: c.req.path,
+            storageProfile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
+          });
+          return c.json(
+            {
+              error: error.code,
+              storage_profile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
+              route: c.req.path,
+              tenant_id: tenantId,
+            },
+            409
+          );
+        }
+        throw error;
+      }
+    }
 
     // Log request start
     logger.debug('Request started', {
@@ -189,5 +476,22 @@ export function getLogger(c: Context<{ Bindings: Env }>): Logger {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getTenantIdFromContext(c: Context<any, any, any>): string {
+  const requestPath =
+    c.req.path ||
+    (() => {
+      try {
+        return c.req.raw ? new URL(c.req.raw.url).pathname : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
+  if (isAdminTenantHeaderRequired(requestPath)) {
+    const requestedTenantId = c.req.header('X-Tenant-Id')?.trim();
+    if (requestedTenantId && isValidTenantIdentifier(requestedTenantId)) {
+      return requestedTenantId;
+    }
+  }
+
   return c.get('tenantId') || DEFAULT_TENANT_ID;
 }

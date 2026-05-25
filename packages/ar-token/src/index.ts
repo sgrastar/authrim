@@ -66,7 +66,6 @@ app.use(
     allowHeaders: ['Content-Type', 'Authorization', 'DPoP'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
-    credentials: true,
   })
 );
 
@@ -86,7 +85,6 @@ app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'op-token',
-    version: '0.1.0',
     timestamp: new Date().toISOString(),
   });
 });

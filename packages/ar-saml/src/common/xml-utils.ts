@@ -81,8 +81,8 @@ export function parseXml(xmlString: string): XMLDocument {
   // Security: Validate XML before parsing to prevent XXE attacks
   validateXmlSecurity(xmlString);
 
-  // ErrorHandlerFunction signature: (level: 'error' | 'warning' | 'fatalError', msg: string, context: any) => void
-  const errorHandler = (level: 'error' | 'warning' | 'fatalError', msg: string) => {
+  // xmldom 0.8.x types pass a plain string for the level.
+  const errorHandler = (level: string, msg: string) => {
     if (level === 'error') {
       throw new Error(`XML Parse Error: ${msg}`);
     } else if (level === 'fatalError') {
@@ -201,6 +201,64 @@ export function findElements(
 }
 
 /**
+ * Find a direct child element by namespace/local name.
+ *
+ * Use this for protocol elements whose position is security-sensitive. A
+ * descendant search can accidentally select attacker-controlled nested content.
+ */
+export function findDirectChildElement(
+  parent: XMLDocument | XMLElement,
+  namespace: string,
+  localName: string
+): XMLElement | null {
+  const children = parent.childNodes;
+  if (!children) {
+    return null;
+  }
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (
+      child?.nodeType === 1 &&
+      child.namespaceURI === namespace &&
+      child.localName === localName
+    ) {
+      return child;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find direct child elements by namespace/local name.
+ */
+export function findDirectChildElements(
+  parent: XMLDocument | XMLElement,
+  namespace: string,
+  localName: string
+): XMLElement[] {
+  const children = parent.childNodes;
+  const results: XMLElement[] = [];
+  if (!children) {
+    return results;
+  }
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (
+      child?.nodeType === 1 &&
+      child.namespaceURI === namespace &&
+      child.localName === localName
+    ) {
+      results.push(child);
+    }
+  }
+
+  return results;
+}
+
+/**
  * Get attribute value
  */
 export function getAttribute(element: XMLElement, name: string): string | null {
@@ -281,14 +339,32 @@ export function addNamespaceDeclarations(
  * Base64 encode string
  */
 export function base64Encode(str: string): string {
-  return btoa(str);
+  return base64EncodeBytes(new TextEncoder().encode(str));
 }
 
 /**
  * Base64 decode string
  */
 export function base64Decode(str: string): string {
-  return atob(str);
+  return new TextDecoder('utf-8', { fatal: true }).decode(base64DecodeToBytes(str));
+}
+
+/**
+ * Base64 encode raw bytes.
+ */
+export function base64EncodeBytes(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/**
+ * Base64 decode to raw bytes.
+ */
+export function base64DecodeToBytes(str: string): Uint8Array {
+  return Uint8Array.from(atob(str), (char) => char.charCodeAt(0));
 }
 
 /**

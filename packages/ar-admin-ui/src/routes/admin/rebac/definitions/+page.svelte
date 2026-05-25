@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminReBACAPI,
 		type RelationDefinition,
@@ -43,6 +44,7 @@
 	let definitionToDelete: RelationDefinition | null = $state(null);
 	let deleting = $state(false);
 	let deleteError = $state('');
+	let loadedTenantId = $state('');
 
 	$effect(() => {
 		const urlObjectType = $page.url.searchParams.get('object_type');
@@ -155,9 +157,6 @@
 
 	function openDeleteDialog(def: RelationDefinition, event: Event) {
 		event.stopPropagation();
-		if (def.tenant_id === 'default') {
-			return;
-		}
 		definitionToDelete = def;
 		deleteError = '';
 		showDeleteDialog = true;
@@ -190,7 +189,17 @@
 		});
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		definitions = [];
+		error = '';
+		pagination.page = 1;
 		loadDefinitions();
 	});
 </script>
@@ -290,22 +299,18 @@
 								</span>
 							</td>
 							<td>
-								<span class="source-badge" class:default={def.tenant_id === 'default'}>
-									{def.tenant_id === 'default' ? 'Default' : 'Custom'}
-								</span>
+								<span class="source-badge"> Tenant </span>
 							</td>
 							<td>{formatDate(def.updated_at)}</td>
 							<td>
 								<div class="table-actions">
 									<a href="/admin/rebac/definitions/{def.id}" class="btn btn-ghost btn-sm">View</a>
-									{#if def.tenant_id !== 'default'}
-										<button
-											class="btn btn-ghost btn-sm text-danger"
-											onclick={(e) => openDeleteDialog(def, e)}
-										>
-											Delete
-										</button>
-									{/if}
+									<button
+										class="btn btn-ghost btn-sm text-danger"
+										onclick={(e) => openDeleteDialog(def, e)}
+									>
+										Delete
+									</button>
 								</div>
 							</td>
 						</tr>

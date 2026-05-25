@@ -1,0 +1,58 @@
+{
+  "test_id": "mail-otp-full-login-benchmark",
+  "test_name": "Mail OTP Full Login Benchmark",
+  "preset": "rps50",
+  "description": "50 RPS - High throughput (3 min)",
+  "storage_profile": "tenant-d1",
+  "transient_auth_mirror_mode": "current",
+  "timestamp": "2026-05-17T11:09:24.835Z",
+  "target": "https://first.multi-tenant.authrim.com",
+  "metrics": {
+    "iterations": 7312,
+    "flow_success_rate": 0,
+    "email_code_success_rate": 0,
+    "authorize_success_rate": 0,
+    "token_success_rate": 0,
+    "latency": {
+      "authorize_init": {
+        "p50": 207.88400000000001,
+        "p95": 299.84579999999994,
+        "p99": 0
+      },
+      "email_code_generate": {
+        "p50": 18.3915,
+        "p95": 27.246649999999995,
+        "p99": 0
+      },
+      "email_code_verify": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "authorize_code": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "token": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "full_flow": {
+        "p50": 227,
+        "p95": 324,
+        "p99": 0
+      }
+    },
+    "errors": {
+      "otp_generate": 7312,
+      "otp_verify": 0,
+      "session": 0,
+      "code": 0,
+      "rate_limit": 0,
+      "server": 0
+    },
+    "throughput": 34.40413538460149
+  }
+}

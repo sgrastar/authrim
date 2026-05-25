@@ -57,4 +57,27 @@ describe('webfingerHandler', () => {
 
     expect(body.subject).toBe('acct:alice@router.example.com');
   });
+
+  it('uses the request host in multi-tenant mode', async () => {
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as any).set('tenantId', 'tenant1');
+      await next();
+    });
+    app.get('/.well-known/webfinger', webfingerHandler);
+
+    const response = await app.fetch(
+      new Request('https://tenant1.example.com/.well-known/webfinger'),
+      {
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'tenant1',
+      } as Env
+    );
+
+    const body = (await response.json()) as {
+      links: Array<{ rel: string; href: string }>;
+    };
+
+    expect(body.links[0]?.href).toBe('https://tenant1.example.com');
+  });
 });

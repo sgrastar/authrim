@@ -26,6 +26,7 @@ export type StatusListPurpose = 'revocation' | 'suspension';
  * Status list record from database
  */
 export interface StatusListRecord {
+  internal_id: string;
   id: string;
   tenant_id: string;
   purpose: StatusListPurpose;
@@ -44,6 +45,7 @@ export interface StatusListRecord {
  */
 export interface IndexAllocation {
   listId: string;
+  listInternalId: string;
   index: number;
 }
 
@@ -59,7 +61,7 @@ export interface StatusListRepository {
   /**
    * Find status list by ID
    */
-  findById(listId: string): Promise<StatusListRecord | null>;
+  findById(tenantId: string, listId: string): Promise<StatusListRecord | null>;
 
   /**
    * Create new status list
@@ -70,6 +72,7 @@ export interface StatusListRepository {
    * Update status list
    */
   update(
+    tenantId: string,
     listId: string,
     updates: Partial<Pick<StatusListRecord, 'encoded_list' | 'used_count' | 'state' | 'sealed_at'>>
   ): Promise<void>;
@@ -77,7 +80,7 @@ export interface StatusListRepository {
   /**
    * Increment used_count and return new count (atomic)
    */
-  incrementUsedCount(listId: string): Promise<number>;
+  incrementUsedCount(tenantId: string, listId: string): Promise<number>;
 
   /**
    * List all status lists for tenant
@@ -92,6 +95,11 @@ export interface StatusListRepository {
  * Default capacity: 131072 = 16KB (1 bit per status)
  */
 const DEFAULT_CAPACITY = 131072;
+
+/**
+ * Maximum supported capacity: 1048576 = 128KB (1 bit per status)
+ */
+const MAX_CAPACITY = 1048576;
 
 /**
  * Maximum retry attempts for race condition recovery
@@ -120,12 +128,23 @@ function generateListId(tenantId: string, purpose: StatusListPurpose): string {
   return `sl_${purpose.charAt(0)}_${tenantId.substring(0, 8)}_${timestamp}_${random}`;
 }
 
+function generateInternalListId(): string {
+  return `sli_${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+function byteCountForCapacity(capacity: number): number {
+  if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > MAX_CAPACITY) {
+    throw new Error(`Status list capacity must be between 1 and ${MAX_CAPACITY}`);
+  }
+  return Math.ceil(capacity / 8);
+}
+
 /**
  * Create an empty bitstring encoded as base64url + gzip
  */
 async function createEmptyBitstring(capacity: number): Promise<string> {
   // Create zero-filled bitstring (capacity bits = capacity/8 bytes)
-  const byteCount = Math.ceil(capacity / 8);
+  const byteCount = byteCountForCapacity(capacity);
   const bitstring = new Uint8Array(byteCount);
 
   // Compress with gzip
@@ -168,12 +187,21 @@ async function createEmptyBitstring(capacity: number): Promise<string> {
 /**
  * Decode base64url encoded gzip compressed bitstring
  */
-async function decodeBitstring(encoded: string): Promise<Uint8Array> {
+async function decodeBitstring(encoded: string, capacity: number): Promise<Uint8Array> {
+  const maxBytes = byteCountForCapacity(capacity);
+  const maxEncodedLength = Math.ceil((maxBytes * 4) / 3) + 1024;
+  if (encoded.length > maxEncodedLength) {
+    throw new Error('Encoded status list exceeds maximum size');
+  }
+
   // Add padding if needed
   const padded = encoded + '==='.slice(0, (4 - (encoded.length % 4)) % 4);
   const decoded = Uint8Array.from(atob(padded.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
     c.charCodeAt(0)
   );
+  if (decoded.length > maxBytes + 1024) {
+    throw new Error('Compressed status list exceeds maximum size');
+  }
 
   // Check for GZIP magic bytes
   if (decoded.length >= 2 && decoded[0] === 0x1f && decoded[1] === 0x8b) {
@@ -187,17 +215,23 @@ async function decodeBitstring(encoded: string): Promise<Uint8Array> {
     })();
 
     const chunks: Uint8Array[] = [];
+    let totalLength = 0;
     const readPromise = (async () => {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (value) chunks.push(value);
+        if (!value) continue;
+        totalLength += value.length;
+        if (totalLength > maxBytes) {
+          await reader.cancel().catch(() => {});
+          throw new Error('Decoded status list exceeds maximum size');
+        }
+        chunks.push(value);
       }
     })();
 
     await Promise.all([writePromise, readPromise]);
 
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const result = new Uint8Array(totalLength);
     let offset = 0;
     for (const chunk of chunks) {
@@ -205,6 +239,10 @@ async function decodeBitstring(encoded: string): Promise<Uint8Array> {
       offset += chunk.length;
     }
     return result;
+  }
+
+  if (decoded.length > maxBytes) {
+    throw new Error('Decoded status list exceeds maximum size');
   }
 
   return decoded;
@@ -298,10 +336,12 @@ export class StatusListManager {
     capacity: number = DEFAULT_CAPACITY
   ): Promise<StatusListRecord> {
     const listId = generateListId(tenantId, purpose);
+    const internalId = generateInternalListId();
     const encodedList = await createEmptyBitstring(capacity);
     const now = new Date().toISOString();
 
     const record: Omit<StatusListRecord, 'created_at' | 'updated_at'> = {
+      internal_id: internalId,
       id: listId,
       tenant_id: tenantId,
       purpose,
@@ -404,7 +444,7 @@ export class StatusListManager {
     if (activeList.used_count >= activeList.capacity) {
       // Seal current list
       try {
-        await this.repository.update(activeList.id, {
+        await this.repository.update(tenantId, activeList.id, {
           state: 'sealed',
           sealed_at: new Date().toISOString(),
         });
@@ -418,7 +458,7 @@ export class StatusListManager {
 
     // Atomically increment used_count and get the new index
     try {
-      const newCount = await this.repository.incrementUsedCount(activeList.id);
+      const newCount = await this.repository.incrementUsedCount(tenantId, activeList.id);
 
       // Check if we exceeded capacity (race condition on full list)
       // This can happen if another process allocated the last slot between our check and increment
@@ -433,6 +473,7 @@ export class StatusListManager {
 
       return {
         listId: activeList.id,
+        listInternalId: activeList.internal_id,
         index,
       };
     } catch (error) {
@@ -452,42 +493,47 @@ export class StatusListManager {
    * @param index - Index in the status list
    * @param status - New status value
    */
-  async updateStatus(listId: string, index: number, status: StatusValue): Promise<void> {
-    const list = await this.repository.findById(listId);
+  async updateStatus(
+    tenantId: string,
+    listId: string,
+    index: number,
+    status: StatusValue
+  ): Promise<void> {
+    const list = await this.repository.findById(tenantId, listId);
     if (!list) {
       throw new Error(`Status list not found: ${listId}`);
     }
 
     // Decode bitstring
-    const bitstring = await decodeBitstring(list.encoded_list);
+    const bitstring = await decodeBitstring(list.encoded_list, list.capacity);
 
     // Update status
     setStatusAtIndex(bitstring, index, status);
 
     // Re-encode and save
     const encodedList = await encodeBitstring(bitstring);
-    await this.repository.update(listId, { encoded_list: encodedList });
+    await this.repository.update(tenantId, listId, { encoded_list: encodedList });
   }
 
   /**
    * Revoke a credential (set status to INVALID)
    */
-  async revoke(listId: string, index: number): Promise<void> {
-    await this.updateStatus(listId, index, StatusValue.INVALID);
+  async revoke(tenantId: string, listId: string, index: number): Promise<void> {
+    await this.updateStatus(tenantId, listId, index, StatusValue.INVALID);
   }
 
   /**
    * Suspend a credential (set status to INVALID)
    */
-  async suspend(listId: string, index: number): Promise<void> {
-    await this.updateStatus(listId, index, StatusValue.INVALID);
+  async suspend(tenantId: string, listId: string, index: number): Promise<void> {
+    await this.updateStatus(tenantId, listId, index, StatusValue.INVALID);
   }
 
   /**
    * Activate a credential (set status to VALID)
    */
-  async activate(listId: string, index: number): Promise<void> {
-    await this.updateStatus(listId, index, StatusValue.VALID);
+  async activate(tenantId: string, listId: string, index: number): Promise<void> {
+    await this.updateStatus(tenantId, listId, index, StatusValue.VALID);
   }
 
   /**
@@ -496,8 +542,8 @@ export class StatusListManager {
    * @param listId - Status list ID
    * @returns Base64url encoded gzip compressed bitstring
    */
-  async getEncodedList(listId: string): Promise<string> {
-    const list = await this.repository.findById(listId);
+  async getEncodedList(tenantId: string, listId: string): Promise<string> {
+    const list = await this.repository.findById(tenantId, listId);
     if (!list) {
       throw new Error(`Status list not found: ${listId}`);
     }
@@ -507,8 +553,8 @@ export class StatusListManager {
   /**
    * Get status list record
    */
-  async getStatusList(listId: string): Promise<StatusListRecord | null> {
-    return this.repository.findById(listId);
+  async getStatusList(tenantId: string, listId: string): Promise<StatusListRecord | null> {
+    return this.repository.findById(tenantId, listId);
   }
 
   /**
@@ -528,13 +574,13 @@ export class StatusListManager {
    * @param index - Index in the status list
    * @returns The status value (0 = valid, 1 = invalid)
    */
-  async getStatus(listId: string, index: number): Promise<StatusValue> {
-    const list = await this.repository.findById(listId);
+  async getStatus(tenantId: string, listId: string, index: number): Promise<StatusValue> {
+    const list = await this.repository.findById(tenantId, listId);
     if (!list) {
       throw new Error(`Status list not found: ${listId}`);
     }
 
-    const bitstring = await decodeBitstring(list.encoded_list);
+    const bitstring = await decodeBitstring(list.encoded_list, list.capacity);
     return getStatusAtIndex(bitstring, index) as StatusValue;
   }
 
@@ -544,8 +590,8 @@ export class StatusListManager {
    * @param listId - Status list ID
    * @returns ETag string
    */
-  async calculateETag(listId: string): Promise<string> {
-    const list = await this.repository.findById(listId);
+  async calculateETag(tenantId: string, listId: string): Promise<string> {
+    const list = await this.repository.findById(tenantId, listId);
     if (!list) {
       throw new Error(`Status list not found: ${listId}`);
     }

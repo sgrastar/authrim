@@ -6,9 +6,11 @@
 
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  createAuditLog,
   createLogger,
-  D1Adapter,
   type DatabaseAdapter,
+  type DatabaseSource,
+  ensureDatabaseAdapter,
   type JITProvisioningConfig,
   type RuleEvaluationContext,
   type RuleEvaluationResult,
@@ -22,6 +24,12 @@ import {
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
   type ResolvedOrganization,
+  validateCustomClaimWrite,
+  persistCustomClaimWrite,
+  syncUserLifecycleState,
+  type ValidatedCustomClaimWriteResult,
+  resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveUserStoreRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 import {
   ExternalIdPError,
@@ -96,7 +104,7 @@ export async function handleIdentity(
   env: Env,
   params: HandleIdentityParams
 ): Promise<HandleIdentityResult> {
-  const { provider, userInfo, tokens, linkingUserId, tenantId = 'default' } = params;
+  const { provider, userInfo, tokens, linkingUserId, tenantId } = params;
 
   // 1. Explicit linking to existing account
   if (linkingUserId) {
@@ -122,6 +130,7 @@ export async function handleIdentity(
 
     // Log audit event
     await logAuditEvent(env, {
+      tenantId,
       userId: linkingUserId,
       action: 'identity_linked',
       resourceType: 'linked_identity',
@@ -138,10 +147,10 @@ export async function handleIdentity(
   }
 
   // 2. Check for existing linked identity
-  const existingLink = await findLinkedIdentity(env, provider.id, userInfo.sub);
+  const existingLink = await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub);
   if (existingLink) {
     // Update tokens and last login
-    await updateLinkedIdentity(env, existingLink.id, {
+    await updateLinkedIdentity(env, existingLink.tenantId, existingLink.id, {
       tokens,
       lastLoginAt: Date.now(),
       rawClaims: userInfo,
@@ -193,6 +202,7 @@ export async function handleIdentity(
 
       // Log audit event for automatic stitching
       await logAuditEvent(env, {
+        tenantId,
         userId: existingUser.id,
         action: 'identity_stitched',
         resourceType: 'linked_identity',
@@ -281,6 +291,7 @@ export async function handleIdentity(
       tenantId,
       rawClaims: userInfo,
       jitConfig,
+      customClaims: extractMappedCustomClaims(userInfo, provider.attributeMapping),
     });
 
     // Check if access was denied by policy
@@ -309,6 +320,7 @@ export async function handleIdentity(
 
     // Log audit event for JIT provisioning
     await logAuditEvent(env, {
+      tenantId,
       userId: jitResult.userId,
       action: 'user_jit_provisioned',
       resourceType: 'user',
@@ -351,6 +363,24 @@ interface ExistingUser {
   email_verified: boolean;
 }
 
+async function resolveUserStoreAdapters(
+  env: Env,
+  tenantId: string
+): Promise<{
+  coreSource: DatabaseSource;
+  coreAdapter: DatabaseAdapter;
+  piiAdapter: DatabaseAdapter | null;
+}> {
+  const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
+  return {
+    coreSource: sources.coreDb,
+    coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'identity-stitching-core'),
+    piiAdapter: sources.piiDb
+      ? ensureDatabaseAdapter(sources.piiDb, 'identity-stitching-pii')
+      : null,
+  };
+}
+
 /**
  * Find user by email
  * PII/Non-PII DB separation: email lookup uses PII DB, status verification uses Core DB
@@ -361,9 +391,8 @@ async function findUserByEmail(
   tenantId: string
 ): Promise<ExistingUser | null> {
   // Search by email in PII DB
-  if (!env.DB_PII) return null;
-
-  const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
+  if (!piiAdapter) return null;
   const userPII = await piiAdapter.queryOne<{ id: string; email: string }>(
     'SELECT id, email FROM users_pii WHERE tenant_id = ? AND email = ?',
     [tenantId, email.toLowerCase()]
@@ -372,10 +401,9 @@ async function findUserByEmail(
   if (!userPII) return null;
 
   // Verify user is active and get email_verified from Core DB
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const userCore = await coreAdapter.queryOne<{ id: string; email_verified: number }>(
-    'SELECT id, email_verified FROM users_core WHERE id = ? AND is_active = 1',
-    [userPII.id]
+    'SELECT id, email_verified FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+    [userPII.id, tenantId]
   );
 
   if (!userCore) return null;
@@ -399,6 +427,113 @@ interface CreateUserParams {
   tenantId: string;
 }
 
+const CUSTOM_CLAIM_TARGET_PREFIXES = ['custom_claims.', 'custom_fields.'] as const;
+
+function getCustomClaimFieldKey(targetClaim: string): string | null {
+  for (const prefix of CUSTOM_CLAIM_TARGET_PREFIXES) {
+    if (targetClaim.startsWith(prefix) && targetClaim.length > prefix.length) {
+      return targetClaim.slice(prefix.length);
+    }
+  }
+
+  return null;
+}
+
+function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
+  const parts = path.split('.');
+  let current: unknown = obj;
+
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+
+  return current;
+}
+
+function normalizeCustomClaimValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const normalized = normalizeCustomClaimValue(entry);
+      if (normalized !== undefined) {
+        return normalized;
+      }
+    }
+    return undefined;
+  }
+
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
+/**
+ * Provider attributeMapping can target both standard OIDC claims and
+ * custom Authrim claims. Reserve:
+ * - custom_claims.<field_key>
+ * - custom_fields.<field_key>
+ */
+function extractMappedCustomClaims(
+  userInfo: UserInfo,
+  attributeMapping: Record<string, string>
+): Record<string, unknown> {
+  const customClaims: Record<string, unknown> = {};
+
+  for (const [targetClaim, sourcePath] of Object.entries(attributeMapping)) {
+    const fieldKey = getCustomClaimFieldKey(targetClaim);
+    if (!fieldKey) {
+      continue;
+    }
+
+    const normalized = normalizeCustomClaimValue(getNestedValue(userInfo, sourcePath));
+    if (normalized !== undefined) {
+      customClaims[fieldKey] = normalized;
+    }
+  }
+
+  return customClaims;
+}
+
+async function validateProvisionedCustomClaims(
+  env: Env,
+  tenantId: string,
+  submitted: Record<string, unknown>,
+  customClaimSources?: Awaited<ReturnType<typeof resolveCustomClaimRuntimeSourcesFromEnv>>
+): Promise<ValidatedCustomClaimWriteResult> {
+  const resolvedCustomClaimSources =
+    customClaimSources ?? (await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId));
+  const validation = await validateCustomClaimWrite({
+    db: resolvedCustomClaimSources.nonPiiDb,
+    dbPii: resolvedCustomClaimSources.piiDb,
+    schemaDb: resolvedCustomClaimSources.schemaDb,
+    tenantId,
+    submitted,
+    requireCompleteRecord: true,
+  });
+
+  if (!validation.ok) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.REQUIRED_CUSTOM_CLAIMS_MISSING,
+      'Automatic account creation requires additional profile attributes that are not available from the external provider.',
+      {
+        validationError: validation.error,
+        missingRequiredFields: validation.missingRequiredFields,
+      }
+    );
+  }
+
+  return validation;
+}
+
 /**
  * Create user from external identity
  * PII/Non-PII DB separation: creates records in both Core DB and PII DB
@@ -407,25 +542,26 @@ async function createUserFromExternalIdentity(
   env: Env,
   params: CreateUserParams
 ): Promise<{ id: string }> {
+  await validateProvisionedCustomClaims(env, params.tenantId, {});
+
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
   // Generate a placeholder email if not provided
   const email = params.email || `${id}@external.authrim.local`;
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, params.tenantId);
 
   // Step 1: Insert into users_core with pii_status='pending'
   await coreAdapter.execute(
     `INSERT INTO users_core (
       id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
-    ) VALUES (?, ?, ?, 'end_user', 'default', 'pending', ?, ?)`,
-    [id, params.tenantId, params.emailVerified ? 1 : 0, now, now]
+    ) VALUES (?, ?, ?, 'end_user', ?, 'pending', ?, ?)`,
+    [id, params.tenantId, params.emailVerified ? 1 : 0, params.tenantId, now, now]
   );
 
-  // Step 2: Insert into users_pii (if DB_PII is configured)
-  if (env.DB_PII) {
-    const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+  // Step 2: Insert into the configured PII store
+  if (piiAdapter) {
     await piiAdapter.execute(
       `INSERT INTO users_pii (
         id, tenant_id, email, name, given_name, family_name, picture, locale, created_at, updated_at
@@ -445,13 +581,17 @@ async function createUserFromExternalIdentity(
     );
 
     // Step 3: Update pii_status to 'active'
-    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', ['active', id]);
+    await coreAdapter.execute(
+      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
+      ['active', id, params.tenantId]
+    );
   }
 
   return { id };
 }
 
 interface AuditEventParams {
+  tenantId: string;
   userId: string;
   action: string;
   resourceType: string;
@@ -464,23 +604,17 @@ interface AuditEventParams {
  */
 async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> {
   try {
-    const id = crypto.randomUUID();
-    const now = Date.now();
-
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-    await coreAdapter.execute(
-      `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        params.userId,
-        params.action,
-        params.resourceType,
-        params.resourceId,
-        JSON.stringify(params.metadata || {}),
-        now,
-      ]
-    );
+    await createAuditLog(env, {
+      userId: params.userId,
+      tenantId: params.tenantId,
+      action: params.action,
+      resource: params.resourceType,
+      resourceId: params.resourceId,
+      ipAddress: 'system',
+      userAgent: 'identity-stitching',
+      metadata: JSON.stringify(params.metadata || {}),
+      severity: 'info',
+    });
   } catch (error) {
     // Don't fail the main operation if audit logging fails
     // PII Protection: Don't log full error (may contain DB details)
@@ -496,11 +630,15 @@ async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> 
 /**
  * Check if user has passkey credentials
  */
-export async function hasPasskeyCredential(env: Env, userId: string): Promise<boolean> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+export async function hasPasskeyCredential(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  const { coreAdapter } = await resolveUserStoreAdapters(env, tenantId);
   const result = await coreAdapter.queryOne<{ count: number }>(
-    'SELECT COUNT(*) as count FROM passkeys WHERE user_id = ?',
-    [userId]
+    'SELECT COUNT(*) as count FROM passkeys WHERE tenant_id = ? AND user_id = ?',
+    [tenantId, userId]
   );
 
   return (result?.count || 0) > 0;
@@ -513,6 +651,7 @@ export async function hasPasskeyCredential(env: Env, userId: string): Promise<bo
 interface JITProvisioningParams extends CreateUserParams {
   rawClaims: Record<string, unknown>;
   jitConfig: JITProvisioningConfig;
+  customClaims: Record<string, unknown>;
 }
 
 interface JITProvisioningResult {
@@ -551,6 +690,18 @@ async function createUserWithJITProvisioning(
   env: Env,
   params: JITProvisioningParams
 ): Promise<JITProvisioningResult> {
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, params.tenantId);
+  const { coreSource, coreAdapter, piiAdapter } = await resolveUserStoreAdapters(
+    env,
+    params.tenantId
+  );
+  const customClaimValidation = await validateProvisionedCustomClaims(
+    env,
+    params.tenantId,
+    params.customClaims,
+    customClaimSources
+  );
+
   const result: JITProvisioningResult = {
     userId: '',
     denied: false,
@@ -586,27 +737,25 @@ async function createUserWithJITProvisioning(
   }
 
   // Step 2: Create user in Core DB
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-
   await coreAdapter.execute(
     `INSERT INTO users_core (
       id, tenant_id, email_verified, email_domain_hash, email_domain_hash_version,
-      user_type, pii_partition, pii_status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'end_user', 'default', 'pending', ?, ?)`,
+      user_type, pii_partition, pii_status, lifecycle_state, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'end_user', ?, 'pending', 'provisioning', ?, ?)`,
     [
       id,
       params.tenantId,
       params.emailVerified ? 1 : 0,
       emailDomainHash || null,
       emailDomainHashVersion || null,
+      params.tenantId,
       now,
       now,
     ]
   );
 
   // Step 3: Create user in PII DB
-  if (env.DB_PII) {
-    const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+  if (piiAdapter) {
     await piiAdapter.execute(
       `INSERT INTO users_pii (
         id, tenant_id, email, name, given_name, family_name, picture, locale, created_at, updated_at
@@ -626,13 +775,58 @@ async function createUserWithJITProvisioning(
     );
 
     // Update pii_status to 'active'
-    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', ['active', id]);
+    await coreAdapter.execute(
+      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
+      ['active', id, params.tenantId]
+    );
   }
 
   result.userId = id;
 
+  try {
+    await persistCustomClaimWrite({
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      tenantId: params.tenantId,
+      userId: id,
+      validation: customClaimValidation,
+    });
+  } catch (persistError) {
+    try {
+      if (piiAdapter) {
+        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+          id,
+          params.tenantId,
+        ]);
+      }
+      await ensureDatabaseAdapter(
+        customClaimSources.nonPiiDb,
+        'identity-stitching-custom-claim-cleanup'
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
+        params.tenantId,
+        id,
+      ]);
+      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
+    } catch (cleanupError) {
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.error(
+        'Failed to cleanup user after custom claim persistence failure',
+        {
+          action: 'cleanup_user',
+          errorName: cleanupError instanceof Error ? cleanupError.name : 'Unknown error',
+        },
+        cleanupError as Error
+      );
+    }
+
+    throw persistError;
+  }
+
   // Step 4: Evaluate policy rules
-  const ruleEvaluator = createRuleEvaluator(env.DB, env.SETTINGS);
+  const ruleEvaluator = createRuleEvaluator(coreSource, env.SETTINGS);
 
   const evaluationContext: RuleEvaluationContext = {
     email_domain_hash: emailDomainHash,
@@ -655,11 +849,23 @@ async function createUserWithJITProvisioning(
 
     // Clean up: delete the user we just created
     try {
-      if (env.DB_PII) {
-        const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
+      if (piiAdapter) {
+        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+          id,
+          params.tenantId,
+        ]);
       }
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
+      await ensureDatabaseAdapter(
+        customClaimSources.nonPiiDb,
+        'identity-stitching-policy-cleanup'
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
+        params.tenantId,
+        id,
+      ]);
+      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
       const log = createLogger().module('IDENTITY-STITCHING');
@@ -696,7 +902,7 @@ async function createUserWithJITProvisioning(
     if (params.jitConfig.join_all_matching_orgs) {
       // Join all matching orgs
       const matchedOrgs = await resolveAllOrgsByDomainHash(
-        env.DB,
+        coreSource,
         emailDomainHash,
         params.tenantId,
         params.jitConfig
@@ -709,7 +915,7 @@ async function createUserWithJITProvisioning(
     } else {
       // Join first matching org only
       const matchedOrg = await resolveOrgByDomainHash(
-        env.DB,
+        coreSource,
         emailDomainHash,
         params.tenantId,
         params.jitConfig
@@ -729,11 +935,23 @@ async function createUserWithJITProvisioning(
 
     // Clean up
     try {
-      if (env.DB_PII) {
-        const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [id]);
+      if (piiAdapter) {
+        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+          id,
+          params.tenantId,
+        ]);
       }
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
+      await ensureDatabaseAdapter(
+        customClaimSources.nonPiiDb,
+        'identity-stitching-org-cleanup'
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
+        params.tenantId,
+        id,
+      ]);
+      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+        id,
+        params.tenantId,
+      ]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
       const log = createLogger().module('IDENTITY-STITCHING');
@@ -753,7 +971,7 @@ async function createUserWithJITProvisioning(
   // Actually join the organizations
   for (const orgId of orgsToJoin) {
     const joinResult = await joinOrganization(
-      env.DB,
+      coreSource,
       id,
       orgId,
       params.tenantId,
@@ -779,7 +997,7 @@ async function createUserWithJITProvisioning(
     }
 
     const assignResult = await assignRoleToUserInternal(
-      env.DB,
+      coreSource,
       id,
       roleAssignment.role_id,
       roleAssignment.scope_type,
@@ -803,7 +1021,7 @@ async function createUserWithJITProvisioning(
     const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
 
     const assignResult = await assignRoleToUserInternal(
-      env.DB,
+      coreSource,
       id,
       params.jitConfig.default_role_id,
       defaultScopeType,
@@ -820,6 +1038,15 @@ async function createUserWithJITProvisioning(
     }
   }
 
+  await syncUserLifecycleState({
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    stateDb: coreAdapter,
+    tenantId: params.tenantId,
+    userId: id,
+  });
+
   return result;
 }
 
@@ -827,7 +1054,7 @@ async function createUserWithJITProvisioning(
  * Assign role to user (internal helper)
  */
 async function assignRoleToUserInternal(
-  db: D1Database,
+  db: DatabaseSource,
   userId: string,
   roleId: string,
   scopeType: string,
@@ -838,7 +1065,7 @@ async function assignRoleToUserInternal(
   const now = Math.floor(Date.now() / 1000);
 
   try {
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db });
+    const coreAdapter = ensureDatabaseAdapter(db, 'identity-stitching-role-assignment');
 
     // Check if role exists
     const roleCheck = await coreAdapter.queryOne<{ id: string }>(
@@ -854,8 +1081,8 @@ async function assignRoleToUserInternal(
     // Check if already assigned
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE user_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ? AND tenant_id = ?`,
-      [userId, roleId, scopeType, scopeTarget, tenantId]
+       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
+      [tenantId, userId, roleId, scopeType, scopeTarget]
     );
 
     if (existing) {

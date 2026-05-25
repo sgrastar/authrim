@@ -6,10 +6,11 @@
  * admin/tenants/+page.svelte (management page) to stay in sync.
  */
 
-import { adminTenantsAPI, type Tenant } from '$lib/api/admin-tenants';
+import { adminTenantsAPI, type Tenant, type TenantListResponse } from '$lib/api/admin-tenants';
 
 function createTenantStore() {
 	let tenants = $state<Tenant[]>([]);
+	let tenantD1Pool = $state<TenantListResponse['tenant_d1_pool']>({ enabled: false });
 	let loaded = $state(false);
 	let singleTenantMode = $state(false);
 	let singleTenantReason = $state<string | null>(null);
@@ -27,6 +28,9 @@ function createTenantStore() {
 		get singleTenantReason() {
 			return singleTenantReason;
 		},
+		get tenantD1Pool() {
+			return tenantD1Pool;
+		},
 
 		/** Active tenants suitable for the header selector */
 		get activeTenants(): { id: string; name: string }[] {
@@ -35,7 +39,7 @@ function createTenantStore() {
 
 		/** The current default tenant id */
 		get defaultTenantId(): string {
-			return tenants.find((t) => t.is_default)?.id ?? 'default';
+			return tenants.find((t) => t.is_default)?.id ?? tenants[0]?.id ?? '';
 		},
 
 		/** Fetch the full tenant list from the API */
@@ -43,6 +47,7 @@ function createTenantStore() {
 			try {
 				const response = await adminTenantsAPI.list();
 				tenants = response.tenants;
+				tenantD1Pool = response.tenant_d1_pool ?? { enabled: false };
 				singleTenantMode = response.single_tenant_mode ?? false;
 				singleTenantReason = response.single_tenant_reason ?? null;
 				loaded = true;

@@ -16,6 +16,7 @@ import { loadLockFileAuto, saveLockFile, type AuthrimLock } from '../../core/loc
 import {
   deployAll,
   buildApiPackages,
+  DEFAULT_INTER_DEPLOY_DELAY_MS,
   type DeployOptions,
   type DeployResult,
 } from '../../core/deploy.js';
@@ -32,6 +33,11 @@ import { syncWranglerConfigs } from '../../core/wrangler-sync.js';
 import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
 import { AuthrimConfigSchema } from '../../core/config.js';
 import { readFile } from 'node:fs/promises';
+import {
+  buildWorkerHttpReadinessTargets,
+  waitForWorkerDeploymentsReady,
+  waitForWorkerHttpReady,
+} from '../../core/worker-readiness.js';
 
 // =============================================================================
 // Types
@@ -351,6 +357,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     rootDir: resolve(baseDir),
     maxRetries: 3,
     retryDelayMs: 5000,
+    interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
     onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
     onError: (component, error) => {
       console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));
@@ -364,6 +371,59 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     const updatedLock = updateLockWithDeploymentsAndVersions(lock, summary.results, localVersions);
     await saveLockFile(updatedLock, lockPath);
     console.log(chalk.gray(`\n  Lock file updated: ${lockPath}`));
+  }
+
+  if (!options.dryRun && summary.failedCount === 0) {
+    const verificationSpinner = ora('Verifying Worker deployments...').start();
+    const verificationResult = await waitForWorkerDeploymentsReady({
+      targets: summary.results
+        .filter((result) => result.success)
+        .map((result) => ({
+          workerName: result.workerName,
+          deployedAt: result.deployedAt,
+        })),
+      onProgress: (msg) => {
+        verificationSpinner.text = msg;
+      },
+    });
+    if (verificationResult.ready) {
+      verificationSpinner.succeed('Worker deployments are visible');
+    } else {
+      verificationSpinner.fail('Worker deployments did not become visible');
+      console.error(chalk.red(`  ${verificationResult.error || 'unknown verification error'}`));
+      process.exit(1);
+    }
+
+    const workersSubdomain = await getWorkersSubdomain();
+    let workersDevEnabled = true;
+    try {
+      const configContent = await readFile(envPaths.config, 'utf-8');
+      const config = AuthrimConfigSchema.parse(JSON.parse(configContent));
+      workersDevEnabled = !config.urls?.api?.custom;
+    } catch {
+      workersDevEnabled = true;
+    }
+    const workerHttpTargets = buildWorkerHttpReadinessTargets(
+      summary.results.filter((result) => result.success),
+      workersSubdomain,
+      { workersDevEnabled }
+    );
+    if (workerHttpTargets.length > 0) {
+      const httpSpinner = ora('Verifying Worker HTTP health...').start();
+      const httpResult = await waitForWorkerHttpReady({
+        targets: workerHttpTargets,
+        onProgress: (msg) => {
+          httpSpinner.text = msg;
+        },
+      });
+      if (httpResult.ready) {
+        httpSpinner.succeed('Worker HTTP health checks passed');
+      } else {
+        httpSpinner.fail('Worker HTTP health checks failed');
+        console.error(chalk.red(`  ${httpResult.error || 'unknown health check error'}`));
+        process.exit(1);
+      }
+    }
   }
 
   // Display summary

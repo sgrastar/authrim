@@ -165,6 +165,14 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
 
   console.log(chalk.gray('Press Ctrl+C to stop\n'));
 
+  // Handle Ctrl+C (SIGINT) gracefully.
+  // Without this, the process exits with code 130 (128 + SIGINT), which
+  // pnpm/npm treats as a failure and prints "Command failed with exit code 130".
+  process.on('SIGINT', () => {
+    console.log(chalk.gray('\nStopped.'));
+    process.exit(0);
+  });
+
   serve({
     fetch: app.fetch,
     port,
@@ -272,6 +280,13 @@ async function waitForEnterAndOpenBrowser(url: string): Promise<void> {
   });
 
   await new Promise<void>((resolve) => {
+    // Handle Ctrl+C while the readline prompt is active
+    rl.on('SIGINT', () => {
+      rl.close();
+      console.log(chalk.gray('\nStopped.'));
+      process.exit(0);
+    });
+
     rl.question('Press ENTER to open in the browser...', () => {
       rl.close();
       resolve();

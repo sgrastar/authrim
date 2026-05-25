@@ -13,23 +13,21 @@
 
 import type { Context } from 'hono';
 import {
-  D1Adapter,
   createPermissionChangeNotifier,
   createPermissionChangeEvent,
   getLogger,
-  type DatabaseAdapter,
   type ResourcePermission,
   type ResourcePermissionRow,
   type ResourcePermissionInput,
   type ResourcePermissionSubjectType,
   hasIdLevelPermission,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const DEFAULT_TENANT_ID = 'default';
 const MAX_PERMISSIONS_PER_PAGE = 100;
 
 // =============================================================================
@@ -93,7 +91,7 @@ function validatePermissionInput(input: ResourcePermissionInput): string[] {
 export async function createResourcePermission(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const body = await c.req.json<ResourcePermissionInput>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
   // Validate input
   const errors = validatePermissionInput(body);
@@ -110,7 +108,7 @@ export async function createResourcePermission(c: Context) {
   const id = `rp_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if permission already exists for this subject/resource
@@ -168,7 +166,7 @@ export async function createResourcePermission(c: Context) {
     // Phase 8.3: Publish permission change event
     try {
       const notifier = createPermissionChangeNotifier({
-        db: c.env.DB,
+        db: coreAdapter,
         cache: c.env.REBAC_CACHE,
         permissionChangeHub: c.env.PERMISSION_CHANGE_HUB,
       });
@@ -218,12 +216,13 @@ export async function createResourcePermission(c: Context) {
  */
 export async function listResourcePermissions(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_PERMISSIONS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const isActive = c.req.query('is_active');
   const subjectType = c.req.query('subject_type') as ResourcePermissionSubjectType | undefined;
   const resourceType = c.req.query('resource_type');
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     let whereClause = 'WHERE tenant_id = ?';
@@ -245,26 +244,21 @@ export async function listResourcePermissions(c: Context) {
     }
 
     // Get total count
-    const countResult = (await c.env.DB.prepare(
-      `SELECT COUNT(*) as count FROM resource_permissions ${whereClause}`
-    )
-      .bind(...values)
-      .first()) as { count: number } | null;
+    const countResult = await coreAdapter.queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count FROM resource_permissions ${whereClause}`,
+      values
+    );
     const total = countResult?.count ?? 0;
 
-    // Get permissions
-    const result = await c.env.DB.prepare(
+    const permissions = await coreAdapter.query<ResourcePermissionRow>(
       `SELECT * FROM resource_permissions ${whereClause}
        ORDER BY resource_type, resource_id, created_at DESC
-       LIMIT ? OFFSET ?`
-    )
-      .bind(...[...values, limit, offset])
-      .all();
-
-    const permissions = ((result.results || []) as ResourcePermissionRow[]).map(rowToPermission);
+       LIMIT ? OFFSET ?`,
+      [...values, limit, offset]
+    );
 
     return c.json({
-      permissions,
+      permissions: permissions.map(rowToPermission),
       total,
       limit,
       offset,
@@ -288,9 +282,9 @@ export async function listResourcePermissions(c: Context) {
 export async function deleteResourcePermission(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get permission first to know subject_id for cache invalidation
@@ -326,7 +320,7 @@ export async function deleteResourcePermission(c: Context) {
     // Phase 8.3: Publish permission change event
     try {
       const notifier = createPermissionChangeNotifier({
-        db: c.env.DB,
+        db: coreAdapter,
         cache: c.env.REBAC_CACHE,
         permissionChangeHub: c.env.PERMISSION_CHANGE_HUB,
       });
@@ -363,23 +357,21 @@ export async function getPermissionsBySubject(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const subjectId = c.req.param('id')!;
   const subjectType = (c.req.query('type') as ResourcePermissionSubjectType) || 'user';
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const result = await c.env.DB.prepare(
+    const permissions = await coreAdapter.query<ResourcePermissionRow>(
       `SELECT * FROM resource_permissions
        WHERE tenant_id = ? AND subject_type = ? AND subject_id = ? AND is_active = 1
-       ORDER BY resource_type, resource_id`
-    )
-      .bind(tenantId, subjectType, subjectId)
-      .all();
-
-    const permissions = ((result.results || []) as ResourcePermissionRow[]).map(rowToPermission);
+       ORDER BY resource_type, resource_id`,
+      [tenantId, subjectType, subjectId]
+    );
 
     return c.json({
       subject_id: subjectId,
       subject_type: subjectType,
-      permissions,
+      permissions: permissions.map(rowToPermission),
     });
   } catch (error) {
     log.error('Get by subject error', {}, error as Error);
@@ -401,23 +393,21 @@ export async function getPermissionsByResource(c: Context) {
   const log = getLogger(c).module('ResourcePermissionsAPI');
   const resourceType = c.req.param('type')!;
   const resourceId = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const result = await c.env.DB.prepare(
+    const permissions = await coreAdapter.query<ResourcePermissionRow>(
       `SELECT * FROM resource_permissions
        WHERE tenant_id = ? AND resource_type = ? AND resource_id = ? AND is_active = 1
-       ORDER BY subject_type, subject_id`
-    )
-      .bind(tenantId, resourceType, resourceId)
-      .all();
-
-    const permissions = ((result.results || []) as ResourcePermissionRow[]).map(rowToPermission);
+       ORDER BY subject_type, subject_id`,
+      [tenantId, resourceType, resourceId]
+    );
 
     return c.json({
       resource_type: resourceType,
       resource_id: resourceId,
-      permissions,
+      permissions: permissions.map(rowToPermission),
     });
   } catch (error) {
     log.error('Get by resource error', {}, error as Error);
@@ -443,11 +433,12 @@ export async function checkResourcePermission(c: Context) {
     resource_id: string;
     action: string;
   }>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveSettingsTenantId(c);
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const allowed = await hasIdLevelPermission(
-      c.env.DB,
+      coreAdapter,
       body.subject_id,
       body.resource_type,
       body.resource_id,

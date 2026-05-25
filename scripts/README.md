@@ -1,3 +1,16 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: 'This directory contains setup and deletion scripts for managing Cloudflare resources used by the Authrim OpenID Connect Provider.'
+type: reference
+tags:
+  - authrim
+  - oidc
+  - deployment
+  - cloudflare-workers
+---
+
 # Authrim Scripts Documentation
 
 This directory contains setup and deletion scripts for managing Cloudflare resources used by the Authrim OpenID Connect Provider.
@@ -26,12 +39,12 @@ Generate RSA key pair for JWT signing and initial admin setup token.
 
 **Options:**
 
-| Option | Description |
-|--------|-------------|
-| `--kid=KEY_ID` | Custom key ID for RSA key pair |
-| `--skip-setup-token` | Skip setup token generation |
-| `--setup-url=URL` | Base URL for setup page (e.g., `https://auth.example.com`) |
-| `--kv-namespace-id=ID` | AUTHRIM_CONFIG KV namespace ID to store token |
+| Option                 | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| `--kid=KEY_ID`         | Custom key ID for RSA key pair                             |
+| `--skip-setup-token`   | Skip setup token generation                                |
+| `--setup-url=URL`      | Base URL for setup page (e.g., `https://auth.example.com`) |
+| `--kv-namespace-id=ID` | AUTHRIM_CONFIG KV namespace ID to store token              |
 
 **What it does:**
 
@@ -105,7 +118,8 @@ Generate `.dev.vars` file for local development environment variables.
 - `PUBLIC_JWK_JSON` - JWT verification key
 - `KEY_ID` - JWT key identifier
 - `RESEND_API_KEY` (optional) - Resend email service API key
-- `EMAIL_FROM` (optional) - Sender email address
+- `EMAIL_FROM` (optional) - Sender email address for Cloudflare Email Service or Resend
+- `EMAIL_FROM_NAME` (optional) - Sender display name for Cloudflare bootstrap/local development
 
 ### setup-local-wrangler.sh
 

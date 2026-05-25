@@ -1,6 +1,6 @@
 /**
  * Traditional Chinese Translations for Authrim Setup Tool
- * 繁體中文翻譯（台灣用語）
+ * Traditional Chinese translations (Taiwan terminology)
  */
 
 import type { Translations } from '../types.js';
@@ -153,8 +153,8 @@ const zhTW: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI 部署方式',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': '部署到 Cloudflare Pages（推薦）',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': '部署到 Cloudflare Workers（推薦）',
   'ui.customOption': '自訂網域',
   'ui.customDesc': '使用自己的主機',
   'ui.skipOption': '跳過',
@@ -178,6 +178,41 @@ const zhTW: Translations = {
   'domain.zoneCheckSkipped': '已跳過區域檢查，繼續設定...',
   'domain.continueWithoutZone': '不驗證區域繼續？',
   'domain.configureBinding': '為 Workers 設定自訂網域綁定',
+  'domain.action.retryCheck': '重新檢查',
+  'domain.action.reloadPage': '重新載入頁面',
+  'domain.action.openCloudflareDashboard': '開啟 Cloudflare 控制台',
+  'domain.prereq.reviewTitle': '自訂網域檢查需要額外確認',
+  'domain.prereq.reviewBody':
+    '如果您打算使用自訂網域，請在重新載入頁面或更新 Cloudflare 登入狀態後再次檢查。',
+  'domain.diagnostic.zone_found.title': 'Cloudflare 區域已準備完成',
+  'domain.diagnostic.zone_found.body': '區域 "{{zone}}" 已可在目前的 Cloudflare 帳戶中使用。',
+  'domain.diagnostic.zone_found.next': '您可以繼續設定自訂網域綁定。',
+  'domain.diagnostic.not_logged_in.title': '需要登入 Cloudflare',
+  'domain.diagnostic.not_logged_in.body': 'Authrim 無法為這次區域檢查確認 Cloudflare 的登入狀態。',
+  'domain.diagnostic.not_logged_in.next':
+    '1. 在終端機執行 `wrangler login`。\n2. 重新載入此頁面。\n3. 再次檢查區域。',
+  'domain.diagnostic.token_unavailable.title': '無法載入 Cloudflare token',
+  'domain.diagnostic.token_unavailable.body':
+    '看起來 Wrangler 已登入，但目前仍無法取得存取區域所需的 API token。',
+  'domain.diagnostic.token_unavailable.next':
+    '1. 先重新載入此頁面再檢查一次。\n2. 如果仍然失敗，請重新執行 `wrangler login`。\n3. 然後再次檢查區域。',
+  'domain.diagnostic.zone_read_forbidden.title': '缺少區域清單讀取權限',
+  'domain.diagnostic.zone_read_forbidden.body':
+    '目前的 Cloudflare token 無法讀取區域清單。既有區域可能仍可使用，但自動驗證與 DNS 輔助會受到限制。',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. 先重新檢查一次。\n2. 如果仍然失敗，請重新執行 `wrangler login`。\n3. 確認 token 具備 Zone:Read 權限。\n4. 如果區域已存在，可以手動繼續。',
+  'domain.diagnostic.zone_not_found.title': '目前帳戶中找不到該區域',
+  'domain.diagnostic.zone_not_found.body': 'Cloudflare 已回應，但目前帳戶下看不到區域 "{{zone}}"。',
+  'domain.diagnostic.zone_not_found.next':
+    '1. 確認該區域存在於您正在使用的 Cloudflare 帳戶中。\n2. 如有需要，請切換帳戶或開啟 Cloudflare 控制台。\n3. 然後再次檢查區域。',
+  'domain.diagnostic.api_error.title': 'Cloudflare API 檢查失敗',
+  'domain.diagnostic.api_error.body': '檢查此區域時，Cloudflare API 回傳了非預期的回應。',
+  'domain.diagnostic.api_error.next': '請先重新檢查；如果仍然失敗，請重新載入此頁面後再試一次。',
+  'domain.diagnostic.network_error.title': 'Cloudflare 網路檢查失敗',
+  'domain.diagnostic.network_error.body':
+    '由於 Cloudflare 或網路沒有如預期回應，區域檢查未能完成。',
+  'domain.diagnostic.network_error.next':
+    '請先重新檢查；如果仍然失敗，請重新載入此頁面後再試一次。',
   'domain.issuerUrl': '發行者 URL：{{url}}',
   'domain.apiDomain': 'API / 發行者網域（例如：auth.example.com）',
   'domain.loginUiDomain': '登入 UI 網域（按 Enter 跳過）',
@@ -185,6 +220,12 @@ const zhTW: Translations = {
   'domain.enterDomains': '輸入自訂網域（留空以使用 Cloudflare 預設值）',
   'domain.singleTenantNote': '在單租戶模式中，發行者 URL = API 網域',
   'domain.usingWorkersDev': '（使用 Cloudflare workers.dev 網域）',
+  'web.form.multiTenantEnable': '啟用多租戶模式',
+  'web.form.multiTenantHint': '在您的自訂網域下建立租戶子網域',
+  'web.form.multiTenantExamples': '租戶 URL 範例',
+  'web.form.multiTenantExampleDefaultOmitted': '省略預設租戶名稱時：{{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': '包含預設租戶名稱時：{{url}}',
+  'web.form.multiTenantExampleOther': '非預設租戶時：{{url}}',
 
   // Database
   'db.title': '資料庫配置',
@@ -404,9 +445,9 @@ const zhTW: Translations = {
   'userId.note': '注意：此設定在建立使用者後無法變更。',
   'userId.selected': '使用者 ID 格式：{{format}}',
 
-  // Optional components
-  'components.title': '選用元件',
-  'components.note': '注意：社交登入和政策引擎是標準元件',
+  // Standard components
+  'components.title': '標準元件',
+  'components.note': 'SAML、Device Flow/CIBA、VC、社交登入和政策引擎預設安裝。',
   'components.samlPrompt': '啟用 SAML 支援？',
   'components.vcPrompt': '啟用可驗證憑證（VC）？',
   'components.saml': 'SAML：',
@@ -433,7 +474,7 @@ const zhTW: Translations = {
   // Sharding settings
   'sharding.configurePrompt': '配置分片？（用於高負載環境）',
   'sharding.title': '分片設定',
-  'sharding.note': '注意：建議分片數量使用 2 的冪次（8、16、32、64、128）',
+  'sharding.note': '注意：建議分片數量使用 2 的冪次（4、8、16、32、64、128）',
   'sharding.authCodeShards': '授權碼分片數量',
   'sharding.refreshTokenShards': '重新整理權杖分片數量',
 
@@ -696,7 +737,7 @@ const zhTW: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': '登入 UI',
-  'web.config.loginUiDesc': '部署到 Cloudflare Pages 的預建驗證 UI。',
+  'web.config.loginUiDesc': '部署到 Cloudflare Workers 的預建驗證 UI。',
   'web.config.adminUi': '管理 UI',
   'web.config.adminUiDesc': '用於管理使用者、用戶端和設定的管理儀表板。',
 
@@ -705,9 +746,9 @@ const zhTW: Translations = {
   'web.url.apiDomain': 'API 網域',
   'web.url.apiDomainHint': '留空以使用 workers.dev 子網域',
   'web.url.loginDomain': '登入 UI 網域',
-  'web.url.loginDomainHint': '留空以使用 pages.dev 子網域',
+  'web.url.loginDomainHint': '留空以使用 workers.dev 子網域',
   'web.url.adminDomain': '管理 UI 網域',
-  'web.url.adminDomainHint': '留空以使用 pages.dev 子網域',
+  'web.url.adminDomainHint': '留空以使用 workers.dev 子網域',
 
   // Web UI Database
   'web.db.title': '資料庫配置',
@@ -720,6 +761,16 @@ const zhTW: Translations = {
   'web.db.name': '名稱',
   'web.db.region': '地區',
   'web.db.regionAuto': '自動（最近）',
+  'web.db.storageProfileTitle': '儲存部署設定檔',
+  'web.db.storageProfileDesc': '選擇此部署中使用者 core/PII 資料的放置方式。',
+  'web.db.sharedD1Title': '共用 D1',
+  'web.db.sharedD1Desc': '整個部署共用一個 core D1 與一個 PII D1。設定成本最低，也是預設路徑。',
+  'web.db.tenantD1Title': '租戶 D1',
+  'web.db.tenantD1Desc': '每個租戶使用一組 core/PII D1。租戶啟用前需要先完成租戶資料庫佈建。',
+  'web.db.preallocatedSlotsTitle': '預先配置的租戶槽位',
+  'web.db.preallocatedSlotsDesc': '每個租戶槽位會建立兩個 D1 資料庫：core 和 PII。',
+  'web.db.slotsLabel': '槽位',
+  'web.db.slotsHelp': '預設值為 3。最多 500 個槽位。',
 
   // Web UI Email
   'web.email.title': '電子郵件提供者',
@@ -862,7 +913,7 @@ const zhTW: Translations = {
   'web.section.apiDomain': 'API / 發行者網域',
   'web.section.uiDomains': 'UI 網域（選用）',
   'web.section.uiDomainsHint':
-    '登入/管理 UI 的自訂網域。可分別設定。留空以使用 Cloudflare Pages 預設值。',
+    '登入/管理 UI 的自訂網域。可分別設定。留空以使用 Cloudflare Workers 預設值。',
   'web.section.corsHint': 'CORS：從登入/管理 UI 到 API 的跨來源請求會自動允許。',
   'web.section.configPreview': '配置預覽',
   'web.section.resourceNames': '資源名稱',
@@ -873,6 +924,19 @@ const zhTW: Translations = {
   'web.preview.issuerUrl': '發行者 URL：',
   'web.preview.loginUi': '登入 UI：',
   'web.preview.adminUi': '管理 UI：',
+  'web.preview.pagesUrl': '登入 UI Origin：',
+  'web.preview.tenantDiscover': '租戶選擇（公共入口）：',
+  'web.preview.adminAccess': '管理 UI 存取位址：',
+  'web.preview.firstTenant': '{{name}}（主租戶）',
+  'web.preview.otherTenants': '其他租戶',
+  'web.preview.allTenantsShared': '（所有租戶共用）',
+  'web.preview.loginUiOriginNote': '（部署 Origin；租戶登入使用 Issuer 的 /login）',
+  'web.preview.viaApiProxy': '（透過 API 同網域代理）',
+  'web.preview.conflictWarningTitle': '⚠️ 設定問題',
+  'web.preview.conflictWarningMsg':
+    '{{conflictUI}} 的自訂網域與 API 相同（{{baseDomain}}），由於「從 URL 中移除租戶名稱」已停用，對 {{baseDomain}} 的 API 請求（/authorize、/api/auth/* 等）將返回 404，導致登入流程無法正常運作。',
+  'web.preview.conflictActionMsg':
+    '解決方法：啟用「從 URL 中移除租戶名稱」並將第一個租戶（{{tenantName}}）設為主租戶。或將 {{conflictUI}} 的網域更改為與 API 不同的網域（例如 login.{{baseDomain}}）。',
 
   // Web UI Component Labels
   'web.comp.loginUi': '登入 UI',
@@ -917,8 +981,16 @@ const zhTW: Translations = {
   'web.email.introDesc': '用於發送郵件 OTP 和電子郵件地址驗證。您可以稍後再配置。',
   'web.email.configureLater': '稍後配置',
   'web.email.configureLaterHint': '現在跳過，稍後配置。',
+  'web.email.configureCloudflare': '設定 Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    '使用 Workers 原生 Email Service 綁定。需要 Workers Paid 方案與 Cloudflare DNS。',
   'web.email.configureResend': '配置 Resend',
   'web.email.configureResendHint': '使用 Resend 設定電子郵件發送（建議用於正式環境）。',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': '需求',
+  'web.email.cloudflareRequirementPaid': '需要 Workers Paid 方案',
+  'web.email.cloudflareRequirementDns': '需要 Cloudflare DNS / 網域導入',
+  'web.email.cloudflareRequirementManual': 'Cloudflare 控制台中的網域設定仍需手動完成',
   'web.email.resendSetup': 'Resend 配置',
   'web.email.beforeBegin': '開始之前：',
   'web.email.step1': '在以下網址建立 Resend 帳戶',
@@ -926,10 +998,17 @@ const zhTW: Translations = {
   'web.email.step3': '在以下網址建立 API 金鑰',
   'web.email.resendApiKey': 'Resend API 金鑰',
   'web.email.resendApiKeyHint': '您的 API 金鑰以「re_」開頭',
+  'web.email.resendApiKeyMissing': '請輸入您的 Resend API 金鑰',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API 金鑰不是以「re_」開頭。這可能不是有效的 Resend API 金鑰。仍要繼續嗎？',
   'web.email.fromEmailAddress': '寄件者電子郵件地址',
+  'web.email.cloudflareFromHint': '必須來自已導入 Cloudflare Email Service 的網域',
   'web.email.fromEmailHint': '必須來自您 Resend 帳戶中已驗證的網域',
+  'web.email.fromEmailMissing': '請輸入寄件者電子郵件地址',
+  'web.email.fromEmailInvalid': '請輸入有效的電子郵件地址',
   'web.email.fromDisplayName': '寄件者顯示名稱（選填）',
   'web.email.fromDisplayHint': '在電子郵件用戶端中顯示為寄件者名稱',
+  'web.email.saveConfigFailed': '儲存郵件設定失敗',
   'web.email.domainVerificationTitle': '需要網域驗證',
   'web.email.domainVerificationDesc':
     '在您的網域驗證之前，電子郵件只能從 onboarding@resend.dev 發送（用於測試）。',
@@ -969,10 +1048,10 @@ const zhTW: Translations = {
   'web.envDetail.kvNamespaces': 'KV 命名空間',
   'web.envDetail.queues': '佇列',
   'web.envDetail.r2Buckets': 'R2 儲存貯體',
-  'web.envDetail.pagesProjects': 'Pages 專案',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': '更新 Workers',
+  'web.envDetail.workerUpdate': '更新所有 Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': '已部署',
   'web.envDetail.localVersion': '本機',
@@ -981,7 +1060,7 @@ const zhTW: Translations = {
   'web.envDetail.upToDate': '最新',
   'web.envDetail.notDeployed': '未部署',
   'web.envDetail.updateOnlyChanged': '僅更新已變更的版本',
-  'web.envDetail.updateAllWorkers': '更新 Workers',
+  'web.envDetail.updateAllWorkers': '更新所有 Workers',
   'web.envDetail.refreshVersions': '重新整理',
   'web.envDetail.updateProgress': '更新進度：',
   'web.envDetail.updatesAvailable': '{{count}} 個更新可用',
@@ -990,8 +1069,8 @@ const zhTW: Translations = {
   'web.envDetail.action': '操作',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': '更新 UI（Pages）',
-  'web.envDetail.uiUpdateDesc': '單獨更新 Admin UI 或 Login UI。這些部署在 Cloudflare Pages 上。',
+  'web.envDetail.uiUpdate': '更新 UI（Workers）',
+  'web.envDetail.uiUpdateDesc': '單獨更新 Admin UI 或 Login UI。這些部署在 Cloudflare Workers 上。',
   'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
@@ -1004,7 +1083,7 @@ const zhTW: Translations = {
   'web.delete.kvNamespaces': 'KV 命名空間',
   'web.delete.queues': '佇列',
   'web.delete.r2Buckets': 'R2 儲存貯體',
-  'web.delete.pagesProjects': 'Pages 專案',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': '取消',
   'web.delete.confirmBtn': '刪除所選項目',
 

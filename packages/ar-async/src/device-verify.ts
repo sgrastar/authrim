@@ -16,10 +16,13 @@ import {
   getUIConfig,
   shouldUseBuiltinForms,
   createConfigurationError,
-  getTenantIdFromContext,
+  createErrorResponse,
+  AR_ERROR_CODES,
   getLogger,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
 import { html } from 'hono/html';
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * GET /device
@@ -89,6 +92,16 @@ async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
  */
 async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DEVICE');
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     const body = await c.req.parseBody();
     let userCode = body.user_code as string;
@@ -105,13 +118,15 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     }
 
     // Get device code metadata from DeviceCodeStore
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
+      buildDOInstanceName('device', tenantId)
+    );
     const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
 
     const getResponse = await deviceCodeStore.fetch(
       new Request('https://internal/get-by-user-code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({ user_code: userCode }),
       })
     );
@@ -142,12 +157,11 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
       // Check UI configuration
       const uiConfig = await getUIConfig(c.env);
       if (uiConfig?.baseUrl) {
-        const tenantId = getTenantIdFromContext(c);
         const deviceAuthPath = uiConfig.paths?.deviceAuthorize || '/device/authorize';
         const loginUrl = new URL(`${uiConfig.baseUrl}${deviceAuthPath}`);
         loginUrl.searchParams.set('user_code', userCode);
         // Add tenant_hint for UI branding (UX only, untrusted)
-        if (tenantId && tenantId !== 'default') {
+        if (tenantId) {
           loginUrl.searchParams.set('tenant_hint', tenantId);
         }
         return c.redirect(loginUrl.toString());
@@ -165,7 +179,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     const approveResponse = await deviceCodeStore.fetch(
       new Request('https://internal/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: internalHeaders,
         body: JSON.stringify({
           user_code: userCode,
           user_id: mockUserId,

@@ -16,6 +16,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { LogLevel, LogFormat } from '@authrim/ar-lib-core';
+import { requireTenantResourceAccess } from '../../admin-tenant-access';
 
 // KV key constants
 const KV_KEY_LOG_LEVEL = 'log_level';
@@ -241,6 +242,10 @@ export async function getTenantLoggingConfig(c: Context<{ Bindings: Env }>) {
       400
     );
   }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
 
   let globalLevel: string | null = null;
   let tenantLevel: string | null = null;
@@ -306,6 +311,10 @@ export async function updateTenantLoggingConfig(c: Context<{ Bindings: Env }>) {
       400
     );
   }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
 
   const body = await c.req.json<{ level: string }>();
   const { level } = body;
@@ -368,6 +377,10 @@ export async function resetTenantLoggingConfig(c: Context<{ Bindings: Env }>) {
       },
       400
     );
+  }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
   }
 
   const kvKey = `${KV_KEY_TENANT_OVERRIDE_PREFIX}${tenantId}`;

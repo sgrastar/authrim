@@ -1,0 +1,21 @@
+case_id,category,invalid_or_hostile_condition,expect
+NEG-001,Settings conflict,email_resolution=disabled with email_domain method,Admin API/UI rejects or normalizes; runtime does not show email.
+NEG-002,Settings conflict,non-disabled email policy without email_domain method,Admin API/UI rejects or normalizes.
+NEG-003,Settings conflict,manual_only with email_domain,Admin API/UI rejects or runtime excludes email discovery.
+NEG-004,Settings conflict,empty discovery methods,Admin API/UI rejects; runtime fails closed.
+NEG-005,Settings conflict,tenant-only with common-login redirect true,Reject or tenant-only takes precedence; no redirect loop.
+NEG-006,Settings conflict,tenant-only with require-common-discovery true,Reject or tenant-only takes precedence.
+NEG-007,Topology conflict,multi-tenant without custom domain but direct tenant-login enforcement enabled,Setup rejects or test marks as unsupported.
+NEG-008,Host attack,unrelated domain,404/not found.
+NEG-009,Host attack,sub-subdomain such as dev.first.test-tenant.authrim.com,400 invalid format.
+NEG-010,Host attack,uppercase host,Normalized or rejected consistently according to host parser.
+NEG-011,Host attack,host with port,Port stripped for matching.
+NEG-012,Tenant state,inactive tenant host/code/slug/email,"Not found, no candidate."
+NEG-013,Vanity,host is in tenant.allowed_domains but not resolved to tenant,Must not authenticate as that tenant.
+NEG-014,Vanity,host resolved to tenant but not in allowed domains,Reject/fail binding.
+NEG-015,Grant,wrong expected tenant,Does not land on wrong tenant.
+NEG-016,Grant,tampered/expired grant,Redirects to common discovery.
+NEG-017,Grant,wrong return host/path,Canonical login fallback.
+NEG-018,OIDC,client belongs to other tenant,"Reject with invalid_client, no cross-tenant challenge."
+NEG-019,OIDC,redirect URI belongs to other tenant/client,Reject.
+NEG-020,Session,session for different tenant,Not reused.

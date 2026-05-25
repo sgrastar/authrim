@@ -156,8 +156,8 @@ const pt: Translations = {
 
   // UI deployment
   'ui.prompt': 'Método de implantação da UI',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Implantar no Cloudflare Pages (recomendado)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Implantar no Cloudflare Workers (recomendado)',
   'ui.customOption': 'Domínio personalizado',
   'ui.customDesc': 'Usar sua própria hospedagem',
   'ui.skipOption': 'Pular',
@@ -182,6 +182,47 @@ const pt: Translations = {
   'domain.zoneCheckSkipped': 'Verificação de zona ignorada, continuando com a configuração...',
   'domain.continueWithoutZone': 'Continuar sem verificação de zona?',
   'domain.configureBinding': 'Configurar vinculação de domínio personalizado para Workers',
+  'domain.action.retryCheck': 'Verificar novamente',
+  'domain.action.reloadPage': 'Recarregar página',
+  'domain.action.openCloudflareDashboard': 'Abrir painel do Cloudflare',
+  'domain.prereq.reviewTitle': 'A verificação de domínio personalizado precisa de revisão',
+  'domain.prereq.reviewBody':
+    'Se você pretende usar um domínio personalizado, tente novamente após recarregar a página ou atualizar o login do Cloudflare.',
+  'domain.diagnostic.zone_found.title': 'A zona do Cloudflare está pronta',
+  'domain.diagnostic.zone_found.body':
+    'A zona "{{zone}}" está disponível na sua conta do Cloudflare.',
+  'domain.diagnostic.zone_found.next':
+    'Você pode continuar com a configuração do binding de domínio personalizado.',
+  'domain.diagnostic.not_logged_in.title': 'É necessário fazer login no Cloudflare',
+  'domain.diagnostic.not_logged_in.body':
+    'O Authrim não conseguiu confirmar um login no Cloudflare para esta verificação de zona.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Execute `wrangler login` no terminal.\n2. Recarregue esta página.\n3. Verifique a zona novamente.',
+  'domain.diagnostic.token_unavailable.title': 'Não foi possível carregar o token do Cloudflare',
+  'domain.diagnostic.token_unavailable.body':
+    'O login do Wrangler parece existir, mas o token da API necessário para acessar a zona ainda não está disponível.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Recarregue esta página e verifique novamente.\n2. Se continuar falhando, execute `wrangler login` outra vez.\n3. Depois, repita a verificação da zona.',
+  'domain.diagnostic.zone_read_forbidden.title': 'O acesso à lista de zonas está limitado',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'O token atual do Cloudflare não consegue ler a lista de zonas. Zonas existentes ainda podem funcionar, mas a verificação automática e a ajuda de DNS ficarão limitadas.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Verifique novamente primeiro.\n2. Se continuar falhando, execute `wrangler login` outra vez.\n3. Confirme que o token possui permissão Zone:Read.\n4. Se a zona já existir, você pode continuar manualmente.',
+  'domain.diagnostic.zone_not_found.title': 'A zona não foi encontrada nesta conta',
+  'domain.diagnostic.zone_not_found.body':
+    'O Cloudflare respondeu, mas a zona "{{zone}}" não está visível na conta atual.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Confirme que a zona exista na conta do Cloudflare em uso.\n2. Se necessário, troque de conta ou abra o painel do Cloudflare.\n3. Depois, verifique a zona novamente.',
+  'domain.diagnostic.api_error.title': 'A verificação da API do Cloudflare falhou',
+  'domain.diagnostic.api_error.body':
+    'O Cloudflare retornou uma resposta inesperada ao verificar esta zona.',
+  'domain.diagnostic.api_error.next':
+    'Tente verificar novamente primeiro. Se continuar falhando, recarregue esta página e tente outra vez.',
+  'domain.diagnostic.network_error.title': 'A verificação de rede com o Cloudflare falhou',
+  'domain.diagnostic.network_error.body':
+    'A verificação da zona não pôde ser concluída porque o Cloudflare ou a rede não responderam como esperado.',
+  'domain.diagnostic.network_error.next':
+    'Tente verificar novamente primeiro. Se continuar falhando, recarregue esta página e tente outra vez.',
   'domain.issuerUrl': 'URL do Emissor: {{url}}',
   'domain.apiDomain': 'Domínio API / Emissor (ex: auth.exemplo.com)',
   'domain.loginUiDomain': 'Domínio UI de Login (Enter para pular)',
@@ -190,6 +231,12 @@ const pt: Translations = {
     'Digite domínios personalizados (deixe vazio para usar padrões do Cloudflare)',
   'domain.singleTenantNote': 'No modo single-tenant, URL do Emissor = domínio API',
   'domain.usingWorkersDev': '(usando domínio workers.dev do Cloudflare)',
+  'web.form.multiTenantEnable': 'Ativar modo multi-tenant',
+  'web.form.multiTenantHint': 'Criar subdomínios de tenant sob seu domínio personalizado',
+  'web.form.multiTenantExamples': 'Exemplos de URL de tenant',
+  'web.form.multiTenantExampleDefaultOmitted': 'Tenant padrão com nome omitido: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Tenant padrão com nome explícito: {{url}}',
+  'web.form.multiTenantExampleOther': 'Tenant não padrão: {{url}}',
 
   // Database
   'db.title': 'Configuração do Banco de Dados',
@@ -413,9 +460,10 @@ const pt: Translations = {
   'userId.note': 'Nota: Esta configuração não pode ser alterada após a criação de usuários.',
   'userId.selected': 'Formato de ID de usuário: {{format}}',
 
-  // Optional components
-  'components.title': 'Componentes Opcionais',
-  'components.note': 'Nota: Login Social e Motor de Políticas são componentes padrão',
+  // Standard components
+  'components.title': 'Componentes padrão',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Login Social e Motor de Políticas são instalados por padrão.',
   'components.samlPrompt': 'Habilitar suporte SAML?',
   'components.vcPrompt': 'Habilitar Credenciais Verificáveis?',
   'components.saml': 'SAML:',
@@ -442,7 +490,7 @@ const pt: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Configurar sharding? (para ambientes de alta carga)',
   'sharding.title': 'Configurações de Sharding',
-  'sharding.note': 'Nota: Recomenda-se potência de 2 para número de shards (8, 16, 32, 64, 128)',
+  'sharding.note': 'Nota: Recomenda-se potência de 2 para número de shards (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Número de shards do Auth Code',
   'sharding.refreshTokenShards': 'Número de shards do Refresh Token',
 
@@ -711,7 +759,7 @@ const pt: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI de Login',
-  'web.config.loginUiDesc': 'UI de autenticação pré-construída implantada no Cloudflare Pages.',
+  'web.config.loginUiDesc': 'UI de autenticação pré-construída implantada no Cloudflare Workers.',
   'web.config.adminUi': 'UI de Admin',
   'web.config.adminUiDesc': 'Painel de gerenciamento para usuários, clientes e configurações.',
 
@@ -720,9 +768,9 @@ const pt: Translations = {
   'web.url.apiDomain': 'Domínio API',
   'web.url.apiDomainHint': 'Deixe vazio para usar subdomínio workers.dev',
   'web.url.loginDomain': 'Domínio UI de Login',
-  'web.url.loginDomainHint': 'Deixe vazio para usar subdomínio pages.dev',
+  'web.url.loginDomainHint': 'Deixe vazio para usar subdomínio workers.dev',
   'web.url.adminDomain': 'Domínio UI de Admin',
-  'web.url.adminDomainHint': 'Deixe vazio para usar subdomínio pages.dev',
+  'web.url.adminDomainHint': 'Deixe vazio para usar subdomínio workers.dev',
 
   // Web UI Database
   'web.db.title': 'Configuração do Banco de Dados',
@@ -737,6 +785,19 @@ const pt: Translations = {
   'web.db.name': 'Nome',
   'web.db.region': 'Região',
   'web.db.regionAuto': 'Automático (mais próximo)',
+  'web.db.storageProfileTitle': 'Perfil de implantação de armazenamento',
+  'web.db.storageProfileDesc':
+    'Selecione como os dados core/PII dos usuários serão posicionados nesta implantação.',
+  'web.db.sharedD1Title': 'D1 compartilhado',
+  'web.db.sharedD1Desc':
+    'Um D1 core e um D1 PII para toda a implantação. Menor custo de configuração e caminho padrão.',
+  'web.db.tenantD1Title': 'D1 por tenant',
+  'web.db.tenantD1Desc':
+    'Um par D1 core/PII por tenant. Requer provisionamento do banco de dados do tenant antes da ativação.',
+  'web.db.preallocatedSlotsTitle': 'Slots de tenant pré-alocados',
+  'web.db.preallocatedSlotsDesc': 'Cada slot de tenant cria dois bancos de dados D1: core e PII.',
+  'web.db.slotsLabel': 'Slots',
+  'web.db.slotsHelp': 'O padrão é 3. O máximo é 500 slots.',
 
   // Web UI Email
   'web.email.title': 'Provedor de Email',
@@ -889,7 +950,7 @@ const pt: Translations = {
   'web.section.apiDomain': 'Domínio API / Emissor',
   'web.section.uiDomains': 'Domínios UI (Opcional)',
   'web.section.uiDomainsHint':
-    'Domínios personalizados para UIs de Login/Admin. Cada um pode ser configurado independentemente. Deixe vazio para usar padrão do Cloudflare Pages.',
+    'Domínios personalizados para UIs de Login/Admin. Cada um pode ser configurado independentemente. Deixe vazio para usar padrão do Cloudflare Workers.',
   'web.section.corsHint':
     'CORS: Requisições cross-origin de UI de Login/Admin para API são permitidas automaticamente.',
   'web.section.configPreview': 'Prévia da Configuração',
@@ -901,6 +962,19 @@ const pt: Translations = {
   'web.preview.issuerUrl': 'URL do Emissor:',
   'web.preview.loginUi': 'UI de Login:',
   'web.preview.adminUi': 'UI de Admin:',
+  'web.preview.pagesUrl': 'Origem da UI de Login:',
+  'web.preview.tenantDiscover': 'Seleção de Tenant (Entrada Comum):',
+  'web.preview.adminAccess': 'Acesso à UI de Admin:',
+  'web.preview.firstTenant': '{{name}} (Tenant Principal)',
+  'web.preview.otherTenants': 'Outros Tenants',
+  'web.preview.allTenantsShared': '(compartilhado por todos os tenants)',
+  'web.preview.loginUiOriginNote': '(origem de deploy; o login do tenant usa /login do issuer)',
+  'web.preview.viaApiProxy': '(proxied pelo mesmo domínio da API)',
+  'web.preview.conflictWarningTitle': '⚠️ Problema de configuração',
+  'web.preview.conflictWarningMsg':
+    'O domínio personalizado de {{conflictUI}} é o mesmo que o da API ({{baseDomain}}). Como "Remover tenant da URL" está desabilitado, requisições à API em {{baseDomain}} (/authorize, /api/auth/*, etc.) retornarão 404 e o fluxo de login falhará.',
+  'web.preview.conflictActionMsg':
+    'Solução: Habilite "Remover tenant da URL" e defina o primeiro tenant ({{tenantName}}) como principal. Ou altere o domínio de {{conflictUI}} para um domínio diferente da API (ex. login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI de Login',
@@ -951,9 +1025,18 @@ const pt: Translations = {
     'Usado para enviar OTP por email e verificação de endereço de email. Você pode configurar isso depois se preferir.',
   'web.email.configureLater': 'Configurar depois',
   'web.email.configureLaterHint': 'Pular por agora e configurar depois.',
+  'web.email.configureCloudflare': 'Configurar Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Usa o binding nativo do Workers Email Service. Requer um plano Workers Paid e Cloudflare DNS.',
   'web.email.configureResend': 'Configurar Resend',
   'web.email.configureResendHint':
     'Configurar envio de email com Resend (recomendado para produção).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Requisitos',
+  'web.email.cloudflareRequirementPaid': 'É necessário um plano Workers Paid',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / onboarding de domínio é necessário',
+  'web.email.cloudflareRequirementManual':
+    'A configuração do domínio no painel da Cloudflare ainda é manual',
   'web.email.resendSetup': 'Configuração do Resend',
   'web.email.beforeBegin': 'Antes de começar:',
   'web.email.step1': 'Crie uma conta no Resend em',
@@ -961,10 +1044,17 @@ const pt: Translations = {
   'web.email.step3': 'Crie uma chave API em',
   'web.email.resendApiKey': 'Chave API do Resend',
   'web.email.resendApiKeyHint': 'Sua chave API começa com "re_"',
+  'web.email.resendApiKeyMissing': 'Por favor, informe sua chave API do Resend',
+  'web.email.resendApiKeyConfirmInvalid':
+    'A chave API não começa com "re_". Talvez ela não seja uma chave API válida do Resend. Deseja continuar mesmo assim?',
   'web.email.fromEmailAddress': 'Endereço de Email do Remetente',
+  'web.email.cloudflareFromHint': 'Deve ser de um domínio integrado ao Cloudflare Email Service',
   'web.email.fromEmailHint': 'Deve ser de um domínio verificado na sua conta Resend',
+  'web.email.fromEmailMissing': 'Por favor, informe um endereço de email do remetente',
+  'web.email.fromEmailInvalid': 'Por favor, informe um endereço de email válido',
   'web.email.fromDisplayName': 'Nome de Exibição do Remetente (opcional)',
   'web.email.fromDisplayHint': 'Exibido como o nome do remetente em clientes de email',
+  'web.email.saveConfigFailed': 'Falha ao salvar a configuração de email',
   'web.email.domainVerificationTitle': 'Verificação de Domínio Necessária',
   'web.email.domainVerificationDesc':
     'Antes do seu domínio ser verificado, emails só podem ser enviados de onboarding@resend.dev (para testes).',
@@ -1006,10 +1096,10 @@ const pt: Translations = {
   'web.envDetail.kvNamespaces': 'Namespaces KV',
   'web.envDetail.queues': 'Filas',
   'web.envDetail.r2Buckets': 'Buckets R2',
-  'web.envDetail.pagesProjects': 'Projetos Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Atualizar Workers',
+  'web.envDetail.workerUpdate': 'Atualizar todos os Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Implantado',
   'web.envDetail.localVersion': 'Local',
@@ -1018,7 +1108,7 @@ const pt: Translations = {
   'web.envDetail.upToDate': 'Atual',
   'web.envDetail.notDeployed': 'Não implantado',
   'web.envDetail.updateOnlyChanged': 'Atualizar apenas versões alteradas',
-  'web.envDetail.updateAllWorkers': 'Atualizar Workers',
+  'web.envDetail.updateAllWorkers': 'Atualizar todos os Workers',
   'web.envDetail.refreshVersions': 'Atualizar',
   'web.envDetail.updateProgress': 'Progresso da atualização:',
   'web.envDetail.updatesAvailable': '{{count}} atualização(ões) disponível(is)',
@@ -1027,9 +1117,9 @@ const pt: Translations = {
   'web.envDetail.action': 'Ação',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Atualizar UI (Pages)',
+  'web.envDetail.uiUpdate': 'Atualizar UI (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Atualizar Admin UI ou Login UI individualmente. Estes são implantados no Cloudflare Pages.',
+    'Atualizar Admin UI ou Login UI individualmente. Estes são implantados no Cloudflare Workers.',
   'web.envDetail.updateNow': 'Atualizar',
 
   // Web UI Delete Section
@@ -1043,7 +1133,7 @@ const pt: Translations = {
   'web.delete.kvNamespaces': 'Namespaces KV',
   'web.delete.queues': 'Filas',
   'web.delete.r2Buckets': 'Buckets R2',
-  'web.delete.pagesProjects': 'Projetos Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Cancelar',
   'web.delete.confirmBtn': 'Excluir Selecionados',
 

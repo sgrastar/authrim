@@ -9,15 +9,15 @@ const config = {
 	preprocess: sequence([vitePreprocess(), preprocessMeltUI()]),
 
 	kit: {
-		// Cloudflare Pages adapter configuration
+		// Cloudflare Workers static-assets adapter configuration
 		adapter: adapter({
-			// Cloudflare Pages specific options
+			// Keep OAuth/OIDC API endpoints on the core Authrim Workers.
 			routes: {
 				include: ['/*'],
 				exclude: [
 					'<all>',
 					// OAuth/OIDC endpoints handled by Workers
-					// Keep /api/* and /logout on the Pages worker so hooks.server.ts can proxy them.
+					// Keep /api/* and /logout on the UI Worker so hooks.server.ts can proxy them.
 					'/authorize',
 					'/authorize/*',
 					'/as/*',

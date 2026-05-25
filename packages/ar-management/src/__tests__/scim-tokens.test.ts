@@ -23,10 +23,11 @@ vi.mock('@authrim/ar-lib-scim', async (importOriginal) => {
   };
 });
 
-// Mock only scheduleAuditLogFromContext from ar-lib-core
+// Mock audit writes from ar-lib-core
 // Uses spyOn to avoid ESM import issues while preserving other exports
 import * as arLibCore from '@authrim/ar-lib-core';
 vi.spyOn(arLibCore, 'scheduleAuditLogFromContext').mockImplementation(() => {});
+vi.spyOn(arLibCore, 'createAuditLogFromContext').mockResolvedValue(undefined);
 
 describe('SCIM Token Create Handler - Input Validation', () => {
   let app: Hono<{ Bindings: Env }>;

@@ -39,11 +39,6 @@ import {
 type CredentialOfferStoreStub = DurableObjectStub;
 
 /**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
-
-/**
  * Generate a new region-sharded credential offer ID.
  *
  * Uses FNV-1a hash of tenantId:userId to determine shard.
@@ -145,13 +140,18 @@ export function parseCredentialOfferId(
 export function getCredentialOfferStoreById(
   env: Env,
   offerId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): {
   stub: CredentialOfferStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   uuid: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('Credential offer store lookup requires tenantId');
+  }
+
   const parsed = parseCredentialOfferId(offerId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded credential offer ID format: ${offerId}`);
@@ -164,7 +164,7 @@ export function getCredentialOfferStoreById(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'credoffer',
     resolution.shardIndex

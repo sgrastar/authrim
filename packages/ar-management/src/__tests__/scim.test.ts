@@ -107,6 +107,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       .mockImplementation(
         async () => `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
       ),
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
   };
 });
 
@@ -116,12 +127,46 @@ describe('SCIM 2.0 Endpoints', () => {
   let mockUsers: Map<string, any>;
   let mockGroups: Map<string, any>;
   let mockUserRoles: Map<string, any[]>;
+  let mockCustomClaimSchemas: Array<Record<string, unknown>>;
+
+  function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'schema-1',
+      tenant_id: 'default',
+      field_key: 'department',
+      display_label: 'Department',
+      field_type: 'string',
+      is_pii: 1,
+      is_required: 1,
+      is_active: 1,
+      validation_rules: null,
+      include_in_id_token: 0,
+      include_in_userinfo: 0,
+      include_in_introspection: 0,
+      required_scopes: null,
+      scope_mode: 'any',
+      is_searchable: 1,
+      is_exportable: 1,
+      is_vc_claim: 0,
+      claim_namespace: null,
+      description: null,
+      display_order: 0,
+      schema_version: 1,
+      operation_status: 'active',
+      operation_detail: null,
+      created_by: null,
+      created_at: Math.floor(Date.now() / 1000),
+      updated_at: Math.floor(Date.now() / 1000),
+      ...overrides,
+    };
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockUsers = new Map();
     mockGroups = new Map();
     mockUserRoles = new Map();
+    mockCustomClaimSchemas = [];
 
     // Seed some test data (timestamps as Unix seconds, matching D1 database format)
     const jan15 = Math.floor(new Date('2024-01-15T10:00:00Z').getTime() / 1000);
@@ -223,6 +268,24 @@ describe('SCIM 2.0 Endpoints', () => {
                   }));
                   return { results };
                 }
+                if (sql.includes('FROM custom_claim_schemas')) {
+                  return { results: mockCustomClaimSchemas };
+                }
+                if (sql.includes('FROM user_custom_fields')) {
+                  const userId = args[0];
+                  const fieldNames = args.slice(2);
+                  const user = mockUsers.get(userId);
+                  const customFields = user?.custom_fields || {};
+                  const results = Object.entries(customFields)
+                    .filter(
+                      ([fieldName]) => fieldNames.length === 0 || fieldNames.includes(fieldName)
+                    )
+                    .map(([field_name, field_value]) => ({
+                      field_name,
+                      field_value,
+                    }));
+                  return { results };
+                }
                 if (sql.includes('SELECT * FROM roles')) {
                   return { results: Array.from(mockGroups.values()) };
                 }
@@ -236,8 +299,10 @@ describe('SCIM 2.0 Endpoints', () => {
               run: vi.fn().mockImplementation(async () => {
                 // Handle INSERT into users_core (PII/Non-PII separation)
                 if (sql.includes('INSERT INTO users_core')) {
-                  // bind() order: id, tenant_id, email_verified, phone_number_verified, password_hash,
-                  // is_active, user_type, external_id, pii_partition, pii_status, created_at, updated_at
+                  // bind() order:
+                  // id, tenant_id, email_verified, phone_number_verified, email_domain_hash,
+                  // password_hash, is_active, user_type, pii_partition, pii_status,
+                  // lifecycle_state, created_at, updated_at, last_login_at
                   const userId = args[0];
                   // Timestamps are stored as Unix seconds (matching D1 database format)
                   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -245,16 +310,18 @@ describe('SCIM 2.0 Endpoints', () => {
                     id: userId,
                     tenant_id: args[1],
                     email_verified: args[2],
-                    active: args[5],
-                    external_id: args[7],
-                    created_at: nowSeconds,
-                    updated_at: nowSeconds,
+                    active: args[6],
+                    external_id: null,
+                    created_at: args[11] ?? nowSeconds,
+                    updated_at: args[12] ?? nowSeconds,
                   });
                   return { success: true };
                 }
                 // Handle UPDATE users_core SET (PII/Non-PII separation)
                 if (sql.includes('UPDATE users_core SET')) {
-                  const userId = args[args.length - 1];
+                  const userId = sql.includes('tenant_id = ?')
+                    ? args[args.length - 2]
+                    : args[args.length - 1];
                   const user = mockUsers.get(userId);
                   if (user) {
                     user.updated_at = Math.floor(Date.now() / 1000);
@@ -265,19 +332,39 @@ describe('SCIM 2.0 Endpoints', () => {
                   }
                   return { success: true };
                 }
+                if (sql.includes('INSERT INTO user_custom_fields')) {
+                  const userId = args[0];
+                  const user = mockUsers.get(userId);
+                  if (user) {
+                    user.custom_fields = user.custom_fields || {};
+                    user.custom_fields[args[1]] = args[2];
+                  }
+                  return { success: true };
+                }
+                if (sql.includes('DELETE FROM user_custom_fields')) {
+                  const userId = args[0];
+                  const user = mockUsers.get(userId);
+                  if (user?.custom_fields) {
+                    delete user.custom_fields[args[2]];
+                  }
+                  return { success: true };
+                }
                 if (sql.includes('INSERT INTO roles')) {
                   const groupId = args[0];
                   mockGroups.set(groupId, {
                     id: groupId,
-                    name: args[1],
-                    description: args[2],
-                    external_id: args[4],
-                    created_at: args[5],
+                    tenant_id: args[1],
+                    name: args[2],
+                    description: args[3],
+                    external_id: args[5],
+                    created_at: args[6],
                   });
                   return { success: true };
                 }
                 if (sql.includes('UPDATE roles SET')) {
-                  const groupId = args[args.length - 1];
+                  const groupId = sql.includes('tenant_id = ?')
+                    ? args[args.length - 2]
+                    : args[args.length - 1];
                   const group = mockGroups.get(groupId);
                   if (group) {
                     group.name = args[0];
@@ -314,6 +401,17 @@ describe('SCIM 2.0 Endpoints', () => {
             bind: vi.fn().mockImplementation((...args: any[]) => ({
               first: vi.fn().mockImplementation(async () => {
                 // Handle SELECT queries for PII data
+                if (
+                  sql.includes(
+                    'SELECT custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?'
+                  )
+                ) {
+                  const user = mockUsers.get(args[0]);
+                  if (!user) return null;
+                  return {
+                    custom_attributes_json: user.custom_attributes_json || null,
+                  };
+                }
                 if (sql.includes('SELECT') && sql.includes('FROM users_pii WHERE id = ?')) {
                   const user = mockUsers.get(args[0]);
                   if (!user) return null;
@@ -340,6 +438,7 @@ describe('SCIM 2.0 Endpoints', () => {
                     address_region: null,
                     address_postal_code: null,
                     address_country: null,
+                    custom_attributes_json: user.custom_attributes_json || null,
                   };
                 }
                 // Handle email uniqueness check
@@ -368,6 +467,7 @@ describe('SCIM 2.0 Endpoints', () => {
                         middle_name: null,
                         nickname: null,
                         preferred_username: user.preferred_username,
+                        custom_attributes_json: user.custom_attributes_json || null,
                       };
                     })
                     .filter(Boolean);
@@ -379,25 +479,38 @@ describe('SCIM 2.0 Endpoints', () => {
                 // Handle INSERT/UPDATE/DELETE for PII
                 if (sql.includes('INSERT INTO users_pii')) {
                   // bind() order for INSERT INTO users_pii:
-                  // id, tenant_id, email, name, given_name, family_name, middle_name,
-                  // nickname, preferred_username, profile, picture, website, gender,
-                  // birthdate, zoneinfo, locale, phone_number,
+                  // id, tenant_id, pii_class, email, email_blind_index, phone_number,
+                  // name, given_name, family_name, nickname, preferred_username,
+                  // picture, website, gender, birthdate, locale, zoneinfo,
                   // address_formatted, address_street_address, address_locality,
                   // address_region, address_postal_code, address_country,
-                  // created_at, updated_at
+                  // declared_residence, created_at, updated_at
                   const userId = args[0];
                   const user = mockUsers.get(userId);
                   if (user) {
                     // Update existing user with PII data
-                    user.email = args[2];
-                    user.name = args[3];
-                    user.given_name = args[4];
-                    user.family_name = args[5];
-                    user.preferred_username = args[8];
+                    user.email = args[3];
+                    user.name = args[6];
+                    user.given_name = args[7];
+                    user.family_name = args[8];
+                    user.nickname = args[9];
+                    user.preferred_username = args[10];
+                    user.picture = args[11];
+                    user.website = args[12];
+                    user.locale = args[15];
+                    user.zoneinfo = args[16];
                   }
                   return { success: true };
                 }
                 if (sql.includes('UPDATE users_pii SET')) {
+                  if (sql.includes('custom_attributes_json = ?')) {
+                    const userId = args[2];
+                    const user = mockUsers.get(userId);
+                    if (user) {
+                      user.custom_attributes_json = args[0];
+                    }
+                    return { success: true };
+                  }
                   // PII update - update mockUsers with new PII
                   const userId = args[args.length - 1];
                   const user = mockUsers.get(userId);
@@ -511,6 +624,15 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(res.status).not.toBe(401);
       expect(res.status).not.toBe(403);
     });
+
+    it('should fail closed without tenant context in multi-tenant mode', async () => {
+      const req = createRequest('/scim/v2/Users');
+      const res = await app.fetch(req, { ...mockEnv, BASE_DOMAIN: 'example.com' } as Env);
+
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as any;
+      expect(body.detail).toBe('Tenant context is required');
+    });
   });
 
   describe('GET /scim/v2/Users - List Users', () => {
@@ -577,6 +699,22 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.schemas).toContain('urn:ietf:params:scim:schemas:core:2.0:User');
       expect(body.id).toBe('user-001');
       expect(body.userName).toBeDefined();
+    });
+
+    it('should include enterprise extension when custom attributes exist', async () => {
+      mockUsers.get('user-001').custom_attributes_json = JSON.stringify({
+        department: 'Engineering',
+      });
+
+      const req = createRequest('/scim/v2/Users/user-001');
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.schemas).toContain('urn:ietf:params:scim:schemas:extension:enterprise:2.0:User');
+      expect(body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department).toBe(
+        'Engineering'
+      );
     });
 
     it('should return 404 for non-existent user', async () => {
@@ -671,6 +809,91 @@ describe('SCIM 2.0 Endpoints', () => {
       const body = (await res.json()) as any;
       expect(body.scimType).toBe('invalidValue');
     });
+
+    it('should enforce required custom claim fields on create', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow()];
+
+      const newUser = {
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+        userName: 'missing-department',
+        emails: [{ value: 'missing.department@example.com', primary: true }],
+        active: true,
+      };
+
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify(newUser),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.detail).toContain('Department is required');
+      expect(body.scimType).toBe('invalidValue');
+      expect(body.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
+
+    it('should persist enterprise extension custom attributes', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow({ is_required: 0 })];
+
+      const newUser = {
+        schemas: [
+          'urn:ietf:params:scim:schemas:core:2.0:User',
+          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User',
+        ],
+        userName: 'newuser',
+        emails: [{ value: 'new.enterprise@example.com', primary: true }],
+        active: true,
+        'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': {
+          department: 'Support',
+        },
+      };
+
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify(newUser),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as any;
+      expect(body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department).toBe(
+        'Support'
+      );
+    });
+
+    it('should create a user when a required non-PII enterprise field is satisfied', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow({ is_pii: 0, is_required: 1 })];
+
+      const newUser = {
+        schemas: [
+          'urn:ietf:params:scim:schemas:core:2.0:User',
+          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User',
+        ],
+        userName: 'required-non-pii-user',
+        emails: [{ value: 'required.nonpii@example.com', primary: true }],
+        active: true,
+        'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': {
+          department: 'Platform',
+        },
+      };
+
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify(newUser),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as any;
+      expect(body.userName).toBe('required-non-pii-user');
+    });
   });
 
   describe('PUT /scim/v2/Users/:id - Replace User', () => {
@@ -738,6 +961,38 @@ describe('SCIM 2.0 Endpoints', () => {
       const body2 = (await res2.json()) as any;
       expect(body2.scimType).toBe('invalidVers');
     });
+
+    it('should reject replace when required custom claim would be removed', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow()];
+      mockUsers.get('user-001').custom_attributes_json = JSON.stringify({
+        department: 'Engineering',
+      });
+
+      const updatedUser = {
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+        userName: 'johndoe',
+        emails: [{ value: 'john.doe@example.com', primary: true }],
+        active: true,
+      };
+
+      const req = createRequest('/scim/v2/Users/user-001', {
+        method: 'PUT',
+        body: JSON.stringify(updatedUser),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.detail).toContain('Department is required');
+      expect(body.scimType).toBe('invalidValue');
+      expect(body.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
   });
 
   describe('PATCH /scim/v2/Users/:id - Partial Update', () => {
@@ -758,6 +1013,30 @@ describe('SCIM 2.0 Endpoints', () => {
       // Verify response structure - the actual active value depends on mock implementation
       expect(body.schemas).toContain('urn:ietf:params:scim:schemas:core:2.0:User');
       expect(body.id).toBe('user-001');
+    });
+
+    it('should preserve existing required custom claim values during patch', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow()];
+      mockUsers.get('user-001').custom_attributes_json = JSON.stringify({
+        department: 'Engineering',
+      });
+
+      const patchOp = {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [{ op: 'replace', path: 'active', value: false }],
+      };
+
+      const req = createRequest('/scim/v2/Users/user-001', {
+        method: 'PATCH',
+        body: JSON.stringify(patchOp),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department).toBe(
+        'Engineering'
+      );
     });
 
     it('should return 404 for non-existent user', async () => {
@@ -907,6 +1186,167 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.Operations[0].status).toBe('201');
       expect(body.Operations[0].bulkId).toBe('user1');
       expect(body.Operations[0].location).toBeDefined();
+    });
+
+    it('should enforce required custom claim fields for bulk user POST operations', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow()];
+
+      const bulkRequest = {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+        Operations: [
+          {
+            method: 'POST',
+            path: '/Users',
+            bulkId: 'user-required',
+            data: {
+              schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+              userName: 'bulk-missing-department',
+              emails: [{ value: 'bulk.missing.department@example.com', primary: true }],
+              active: true,
+            },
+          },
+        ],
+      };
+
+      const req = createRequest('/scim/v2/Bulk', {
+        method: 'POST',
+        body: JSON.stringify(bulkRequest),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations[0].status).toBe('400');
+      expect(body.Operations[0].response.detail).toContain('Department is required');
+      expect(body.Operations[0].response.scimType).toBe('invalidValue');
+      expect(body.Operations[0].response.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
+
+    it('should persist enterprise extension custom attributes for bulk user POST operations', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow({ is_required: 0 })];
+
+      const bulkRequest = {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+        Operations: [
+          {
+            method: 'POST',
+            path: '/Users',
+            bulkId: 'user-enterprise',
+            data: {
+              schemas: [
+                'urn:ietf:params:scim:schemas:core:2.0:User',
+                'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User',
+              ],
+              userName: 'bulk-enterprise-user',
+              emails: [{ value: 'bulk.enterprise@example.com', primary: true }],
+              active: true,
+              'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': {
+                department: 'Support',
+              },
+            },
+          },
+        ],
+      };
+
+      const req = createRequest('/scim/v2/Bulk', {
+        method: 'POST',
+        body: JSON.stringify(bulkRequest),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations[0].status).toBe('201');
+      expect(body.Operations[0].response.schemas).toContain(
+        'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'
+      );
+      expect(
+        body.Operations[0].response['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']
+          ?.department
+      ).toBe('Support');
+    });
+
+    it('should reject bulk user PUT when a required custom claim would be removed', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow()];
+      mockUsers.get('user-001').custom_attributes_json = JSON.stringify({
+        department: 'Engineering',
+      });
+
+      const bulkRequest = {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+        Operations: [
+          {
+            method: 'PUT',
+            path: '/Users/user-001',
+            data: {
+              schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+              userName: 'johndoe',
+              emails: [{ value: 'john.doe@example.com', primary: true }],
+              active: true,
+            },
+          },
+        ],
+      };
+
+      const req = createRequest('/scim/v2/Bulk', {
+        method: 'POST',
+        body: JSON.stringify(bulkRequest),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations[0].status).toBe('400');
+      expect(body.Operations[0].response.detail).toContain('Department is required');
+      expect(body.Operations[0].response.scimType).toBe('invalidValue');
+      expect(body.Operations[0].response.missing_required_fields).toEqual([
+        {
+          field_key: 'department',
+          label: 'Department',
+          field_type: 'string',
+        },
+      ]);
+    });
+
+    it('should preserve existing required custom claim values for bulk user PATCH operations', async () => {
+      mockCustomClaimSchemas = [createCustomClaimSchemaRow()];
+      mockUsers.get('user-001').custom_attributes_json = JSON.stringify({
+        department: 'Engineering',
+      });
+
+      const bulkRequest = {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+        Operations: [
+          {
+            method: 'PATCH',
+            path: '/Users/user-001',
+            data: {
+              schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+              Operations: [{ op: 'replace', path: 'active', value: false }],
+            },
+          },
+        ],
+      };
+
+      const req = createRequest('/scim/v2/Bulk', {
+        method: 'POST',
+        body: JSON.stringify(bulkRequest),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations[0].status).toBe('200');
+      expect(
+        body.Operations[0].response['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']
+          ?.department
+      ).toBe('Engineering');
     });
 
     it('should reject bulk request with too many operations', async () => {

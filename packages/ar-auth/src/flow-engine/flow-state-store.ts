@@ -1,8 +1,8 @@
 /**
  * FlowStateStore - Re-export from ar-lib-core
  *
- * FlowStateStore DOは ar-lib-core に定義されています。
- * このファイルは後方互換性のための再エクスポートです。
+ * FlowStateStore DO is defined in ar-lib-core.
+ * This file re-exports it for backward compatibility.
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */

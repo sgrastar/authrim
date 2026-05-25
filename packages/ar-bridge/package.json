@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-bridge",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -9,14 +9,14 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'external-idp: lint skipped'",
-    "test": "npx vitest run",
-    "test:unit": "npx vitest run",
+    "test": "pnpm exec vitest run",
+    "test:unit": "pnpm exec vitest run",
     "test:property": "vitest run -c vitest.property.config.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
-    "hono": "^4.12.7",
+    "hono": "4.12.21",
     "jose": "^6.1.2",
     "tslib": "^2.8.1"
   },

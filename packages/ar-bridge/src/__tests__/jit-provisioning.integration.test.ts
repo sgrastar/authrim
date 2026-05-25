@@ -24,6 +24,10 @@ const {
   mockResolveOrgByDomainHash,
   mockGenerateEmailDomainHash,
   mockGetJITConfig,
+  mockValidateCustomClaimWrite,
+  mockPersistCustomClaimWrite,
+  mockSyncUserLifecycleState,
+  mockCreateAuditLog,
   MockD1Adapter,
   sqlTracker,
   mockJoinOrganization,
@@ -75,6 +79,14 @@ const {
     allow_unverified_domain_mappings: false,
   });
 
+  const validateCustomClaimWriteMock = vi.fn().mockResolvedValue({ ok: true });
+  const persistCustomClaimWriteMock = vi.fn().mockResolvedValue(undefined);
+  const syncUserLifecycleStateMock = vi.fn().mockResolvedValue({
+    lifecycleState: 'active',
+    missingRequiredFields: [],
+  });
+  const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
+
   // D1Adapter class mock
   class D1AdapterClass {
     private binding: 'core' | 'pii';
@@ -113,6 +125,10 @@ const {
     mockResolveOrgByDomainHash: resolveOrgMock,
     mockGenerateEmailDomainHash: generateHashMock,
     mockGetJITConfig: getJITConfigMock,
+    mockValidateCustomClaimWrite: validateCustomClaimWriteMock,
+    mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
+    mockSyncUserLifecycleState: syncUserLifecycleStateMock,
+    mockCreateAuditLog: createAuditLogMock,
     MockD1Adapter: D1AdapterClass,
     sqlTracker: tracker,
     mockJoinOrganization: joinOrgMock,
@@ -123,6 +139,15 @@ const {
 // Mock @authrim/ar-lib-core
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
+  createLogger: () => ({
+    module: () => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    }),
+  }),
   createRuleEvaluator: vi.fn(() => mockRuleEvaluator),
   resolveOrgByDomainHash: mockResolveOrgByDomainHash,
   resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
@@ -136,6 +161,31 @@ vi.mock('@authrim/ar-lib-core', () => ({
     deprecated_versions: [],
   }),
   getJITProvisioningConfig: mockGetJITConfig,
+  validateCustomClaimWrite: mockValidateCustomClaimWrite,
+  persistCustomClaimWrite: mockPersistCustomClaimWrite,
+  syncUserLifecycleState: mockSyncUserLifecycleState,
+  createAuditLog: mockCreateAuditLog,
+  resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    storageProfile: {
+      id: 'builtin:storage:standard',
+      kind: 'storage',
+      label: 'Standard D1 Split',
+      slices: {},
+    },
+    schemaDb: env.DB,
+    nonPiiDb: env.DB,
+    piiDb: env.DB_PII ?? null,
+  })),
+  resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    storageProfile: {
+      id: 'builtin:storage:standard',
+      kind: 'storage',
+      label: 'Standard D1 Split',
+      slices: {},
+    },
+    coreDb: env.DB,
+    piiDb: env.DB_PII ?? env.DB ?? null,
+  })),
   DEFAULT_JIT_CONFIG: {
     enabled: true,
     auto_create_org_on_domain_match: false,
@@ -227,6 +277,12 @@ describe('JIT Provisioning Integration', () => {
     mockGenerateEmailDomainHash.mockResolvedValue({
       hash: 'mock-domain-hash-abc123',
       version: 1,
+    });
+    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
+    mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
+    mockSyncUserLifecycleState.mockReset().mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
     });
     // Default: return null from SETTINGS.get (will use DEFAULT_JIT_CONFIG)
     mockSettingsGet.mockResolvedValue(null);
@@ -419,6 +475,46 @@ describe('JIT Provisioning Integration', () => {
           code: expected_code,
         });
       }
+    });
+  });
+
+  describe('Required Custom Claims', () => {
+    it('should reject JIT provisioning when required custom claims are missing', async () => {
+      vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+      mockCoreQueryOne.mockResolvedValue(null);
+      mockPiiQueryOne.mockResolvedValue(null);
+      mockValidateCustomClaimWrite.mockResolvedValueOnce({
+        ok: false,
+        error: 'Department is required',
+        missingRequiredFields: [
+          {
+            fieldKey: 'department',
+            label: 'Department',
+            fieldType: 'string',
+          },
+        ],
+      });
+
+      await expect(
+        handleIdentity(mockEnv as never, {
+          provider: mockProvider,
+          userInfo: mockUserInfo,
+          tokens: mockTokenResponse,
+          tenantId: 'default',
+        })
+      ).rejects.toMatchObject({
+        code: 'required_custom_claims_missing',
+        details: expect.objectContaining({
+          validationError: 'Department is required',
+          missingRequiredFields: [
+            {
+              fieldKey: 'department',
+              label: 'Department',
+              fieldType: 'string',
+            },
+          ],
+        }),
+      });
     });
   });
 

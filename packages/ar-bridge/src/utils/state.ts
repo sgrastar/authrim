@@ -9,7 +9,11 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter, createLogger } from '@authrim/ar-lib-core';
+import {
+  type DatabaseAdapter,
+  createLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
+} from '@authrim/ar-lib-core';
 import type { ExternalIdpAuthState } from '../types';
 
 const log = createLogger().module('EXTERNAL-IDP');
@@ -26,7 +30,10 @@ export async function storeAuthState(
   const id = crypto.randomUUID();
   const now = Date.now();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'bridge-auth-state:store'
+  );
   await coreAdapter.execute(
     `INSERT INTO external_idp_auth_states (
       id, tenant_id, client_id, provider_id, state, nonce, code_verifier, code_challenge, flow_id,
@@ -35,7 +42,7 @@ export async function storeAuthState(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      state.tenantId || 'default',
+      state.tenantId,
       state.clientId || null,
       state.providerId,
       state.state,
@@ -102,7 +109,10 @@ export async function consumeAuthState(
 ): Promise<ExternalIdpAuthState | null> {
   const now = Date.now();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'bridge-auth-state:consume'
+  );
 
   // Phase 1: Atomically mark as consumed using UPDATE with conditions
   // This only succeeds if state exists, not expired, and not already consumed
@@ -176,7 +186,10 @@ export async function cleanupExpiredStates(env: Env): Promise<number> {
   const now = Date.now();
   const consumedRetentionMs = 3600000; // 1 hour
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'bridge-auth-state:cleanup'
+  );
   // Delete expired states and old consumed states
   const result = await coreAdapter.execute(
     `DELETE FROM external_idp_auth_states

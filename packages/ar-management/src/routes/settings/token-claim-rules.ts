@@ -14,9 +14,7 @@
 
 import type { Context } from 'hono';
 import {
-  D1Adapter,
   getLogger,
-  type DatabaseAdapter,
   type TokenClaimRule,
   type TokenClaimRuleRow,
   type TokenClaimRuleInput,
@@ -29,12 +27,12 @@ import {
   createTokenClaimEvaluator,
   testTokenClaimRule,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const DEFAULT_TENANT_ID = 'default';
 const MAX_RULES_PER_PAGE = 100;
 
 /** Reserved claim names that cannot be overwritten */
@@ -113,6 +111,10 @@ function validateRuleInput(input: TokenClaimRuleInput): {
   return { errors, warnings };
 }
 
+function resolveTenantId(c: Context): string {
+  return resolveSettingsTenantId(c);
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -124,7 +126,7 @@ function validateRuleInput(input: TokenClaimRuleInput): {
 export async function createTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const body = await c.req.json<TokenClaimRuleInput>();
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   // Validate input
   const { errors, warnings } = validateRuleInput(body);
@@ -146,7 +148,7 @@ export async function createTokenClaimRule(c: Context) {
   const id = `tcr_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if name already exists
@@ -238,13 +240,13 @@ export async function createTokenClaimRule(c: Context) {
  */
 export async function listTokenClaimRules(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_RULES_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
   const isActive = c.req.query('is_active');
   const tokenType = c.req.query('token_type') as TokenType | undefined;
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     let whereClause = 'WHERE tenant_id = ?';
@@ -268,18 +270,15 @@ export async function listTokenClaimRules(c: Context) {
     const total = countResult?.count ?? 0;
 
     // Get rules
-    const result = await c.env.DB.prepare(
+    const rows = await coreAdapter.query<TokenClaimRuleRow>(
       `SELECT * FROM token_claim_rules ${whereClause}
        ORDER BY priority DESC, created_at ASC
-       LIMIT ? OFFSET ?`
-    )
-      .bind(...[...values, limit, offset])
-      .all();
-
-    const rules = ((result.results || []) as TokenClaimRuleRow[]).map(rowToRule);
+       LIMIT ? OFFSET ?`,
+      [...values, limit, offset]
+    );
 
     return c.json({
-      rules,
+      rules: rows.map(rowToRule),
       total,
       limit,
       offset,
@@ -303,9 +302,9 @@ export async function listTokenClaimRules(c: Context) {
 export async function getTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const row = await coreAdapter.queryOne<TokenClaimRuleRow>(
@@ -343,10 +342,10 @@ export async function getTokenClaimRule(c: Context) {
 export async function updateTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const body = await c.req.json<Partial<TokenClaimRuleInput>>();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Check if rule exists
@@ -477,9 +476,9 @@ export async function updateTokenClaimRule(c: Context) {
 export async function deleteTokenClaimRule(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     const result = await coreAdapter.execute(
@@ -527,7 +526,7 @@ export async function deleteTokenClaimRule(c: Context) {
 export async function testTokenClaimRuleHandler(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id')!;
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const body = await c.req.json<{
     context: {
       subject_id: string;
@@ -542,7 +541,7 @@ export async function testTokenClaimRuleHandler(c: Context) {
     };
   }>();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+  const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
     // Get rule
@@ -599,7 +598,7 @@ export async function testTokenClaimRuleHandler(c: Context) {
  */
 export async function evaluateTokenClaimRules(c: Context) {
   const log = getLogger(c).module('TokenClaimRulesAPI');
-  const tenantId = DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
   const body = await c.req.json<{
     token_type: 'access' | 'id';
     context: {
@@ -631,7 +630,7 @@ export async function evaluateTokenClaimRules(c: Context) {
     };
 
     // Create evaluator and run
-    const evaluator = createTokenClaimEvaluator(c.env.DB, c.env.SETTINGS);
+    const evaluator = createTokenClaimEvaluator(resolveSettingsCoreAdapter(c), c.env.SETTINGS);
     const result = await evaluator.evaluate(evalContext, body.token_type);
 
     return c.json({

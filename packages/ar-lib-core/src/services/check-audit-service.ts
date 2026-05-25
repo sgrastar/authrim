@@ -9,8 +9,9 @@
  * - queue: Queue-based async processing (high-scale scenarios)
  */
 
-import type { D1Database, Queue, ExecutionContext } from '@cloudflare/workers-types';
+import type { Queue, ExecutionContext } from '@cloudflare/workers-types';
 import type { ParsedPermission, ResolvedVia, FinalDecision } from '../types/check-api';
+import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('CHECK-AUDIT-SERVICE');
@@ -106,12 +107,12 @@ export const DEFAULT_CHECK_AUDIT_CONFIG: CheckAuditServiceConfig = {
  * Provides permission check audit logging with configurable modes.
  */
 export class CheckAuditService {
-  private db: D1Database;
+  private db: DatabaseAdapter;
   private config: CheckAuditServiceConfig;
   private queue?: Queue<CheckAuditQueueMessage>;
 
-  constructor(db: D1Database, config?: Partial<CheckAuditServiceConfig>, queue?: Queue) {
-    this.db = db;
+  constructor(db: DatabaseSource, config?: Partial<CheckAuditServiceConfig>, queue?: Queue) {
+    this.db = ensureDatabaseAdapter(db, 'policy-check-audit');
     this.config = { ...DEFAULT_CHECK_AUDIT_CONFIG, ...config };
     this.queue = queue as Queue<CheckAuditQueueMessage> | undefined;
   }
@@ -197,15 +198,13 @@ export class CheckAuditService {
   private async writeLog(entry: PermissionCheckAuditEntry): Promise<void> {
     const checkedAt = Math.floor(Date.now() / 1000);
 
-    await this.db
-      .prepare(
-        `INSERT INTO permission_check_audit (
+    await this.db.execute(
+      `INSERT INTO permission_check_audit (
         id, tenant_id, subject_id, permission, permission_json,
         allowed, resolved_via_json, final_decision, reason,
         api_key_id, client_id, checked_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
         entry.id,
         entry.tenantId,
         entry.subjectId,
@@ -217,9 +216,9 @@ export class CheckAuditService {
         entry.reason ?? null,
         entry.apiKeyId ?? null,
         entry.clientId ?? null,
-        checkedAt
-      )
-      .run();
+        checkedAt,
+      ]
+    );
   }
 
   /**
@@ -257,12 +256,12 @@ export class CheckAuditService {
 
     const cutoffTime = Math.floor(Date.now() / 1000) - this.config.retentionDays * 24 * 60 * 60;
 
-    const result = await this.db
-      .prepare('DELETE FROM permission_check_audit WHERE checked_at < ?')
-      .bind(cutoffTime)
-      .run();
+    const result = await this.db.execute(
+      'DELETE FROM permission_check_audit WHERE checked_at < ?',
+      [cutoffTime]
+    );
 
-    const deleted = result.meta.changes ?? 0;
+    const deleted = result.rowsAffected;
     log.info('Cleaned up old audit entries', { deleted, cutoffTime });
 
     return deleted;
@@ -273,7 +272,7 @@ export class CheckAuditService {
  * Create CheckAuditService instance
  */
 export function createCheckAuditService(
-  db: D1Database,
+  db: DatabaseSource,
   config?: Partial<CheckAuditServiceConfig>,
   queue?: Queue
 ): CheckAuditService {

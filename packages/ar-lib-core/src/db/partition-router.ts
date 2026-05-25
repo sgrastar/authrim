@@ -346,15 +346,16 @@ export class PIIPartitionRouter {
   }
 
   /**
-   * Resolve partition for an existing user.
+   * Resolve partition for an existing tenant user.
    *
+   * @param tenantId - Tenant ID that owns the user
    * @param userId - User ID
    * @returns Partition key from users_core.pii_partition
    */
-  async resolvePartitionForUser(userId: string): Promise<PartitionKey> {
+  async resolvePartitionForUser(tenantId: string, userId: string): Promise<PartitionKey> {
     const user = await this.coreAdapter.queryOne<{ pii_partition: string }>(
-      'SELECT pii_partition FROM users_core WHERE id = ?',
-      [userId]
+      'SELECT pii_partition FROM users_core WHERE tenant_id = ? AND id = ?',
+      [tenantId, userId]
     );
     return user?.pii_partition ?? DEFAULT_PARTITION;
   }

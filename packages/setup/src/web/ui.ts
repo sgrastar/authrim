@@ -5,7 +5,243 @@
  * Follows the setup flow defined in the design document.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Locale, LocaleInfo } from '../i18n/types.js';
+import { SETUP_CAPABILITY_COPY } from '../core/setup-capability-copy.js';
+import {
+  CLOUDFLARE_DNS_RECORDS_DOCS_URL,
+  WILDCARD_DNS_MANUAL_COPY,
+  getCloudflareDnsRecordsDashboardUrl,
+} from '../core/wildcard-dns-manual-action.js';
+
+const CLOUDFLARE_DNS_ADD_RECORD_IMAGE_DATA_URI = `data:image/png;base64,${readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'cloudflare-dns-add-record-example.png')
+).toString('base64')}`;
+
+const DOMAIN_FORM_BROWSER_SCRIPT = String.raw`
+    function isValidCustomDomain(domain) {
+      const normalized = String(domain || '').trim();
+      if (normalized.length === 0 || normalized.length > 253) {
+        return false;
+      }
+
+      const labels = normalized.split('.');
+      if (labels.length < 2 || labels.some(function(label) {
+        return label.length === 0 || label.length > 63;
+      })) {
+        return false;
+      }
+
+      if (labels.some(function(label) {
+        return label.toLowerCase().startsWith('xn--');
+      })) {
+        return false;
+      }
+
+      const tld = labels[labels.length - 1];
+      if (!/^[a-z]{2,63}$/i.test(tld)) {
+        return false;
+      }
+
+      return labels.every(function(label) {
+        return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label);
+      });
+    }
+
+    function validateSetupDomainInputs(input) {
+      function normalizeDomain(value) {
+        return String(value || '')
+          .trim()
+          .replace(/^https?:\/\//i, '')
+          .replace(/\/.*$/, '')
+          .replace(/\\.+$/, '')
+          .toLowerCase();
+      }
+
+      function getZoneName(hostname) {
+        const parts = hostname.split('.').filter(Boolean);
+        const twoPartTlds = new Set([
+          'co.uk',
+          'org.uk',
+          'gov.uk',
+          'ac.uk',
+          'co.jp',
+          'or.jp',
+          'ne.jp',
+          'co.nz',
+          'org.nz',
+          'net.nz',
+          'co.kr',
+          'or.kr',
+          'ne.kr',
+          'co.in',
+          'firm.in',
+          'net.in',
+          'org.in',
+          'gen.in',
+          'co.id',
+          'web.id',
+          'ac.id',
+          'or.id',
+          'co.za',
+          'org.za',
+          'net.za',
+          'com.au',
+          'net.au',
+          'org.au',
+          'com.br',
+          'net.br',
+          'org.br',
+        ]);
+        const lastTwo = parts.slice(-2).join('.');
+        if (twoPartTlds.has(lastTwo) && parts.length >= 3) {
+          return parts.slice(-3).join('.');
+        }
+        return parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+      }
+
+      function prefixLabelsFor(hostname, parentDomain) {
+        if (!hostname || !parentDomain || hostname === parentDomain) {
+          return [];
+        }
+        const suffix = '.' + parentDomain;
+        if (!hostname.endsWith(suffix)) {
+          return [];
+        }
+        return hostname.slice(0, -suffix.length).split('.').filter(Boolean);
+      }
+
+      function buildBaseMessage(hostname) {
+        return (
+          'Base Domain must be the parent domain used by tenant URLs. "' + hostname + '" has ' +
+          'two or more labels before the registered domain, which would create unsupported ' +
+          'two-label tenant hosts.'
+        );
+      }
+
+      function buildUiMessage(label, hostname, suggestion) {
+        return (
+          label + ' domain "' + hostname + '" is too deep for the standard tenant domain model. ' +
+          'Use a one-label host such as "' + suggestion + '" instead.'
+        );
+      }
+
+      const issues = [];
+      const apiDomain = normalizeDomain(input.apiDomain);
+      const loginUiDomain = normalizeDomain(input.loginUiDomain);
+      const adminUiDomain = normalizeDomain(input.adminUiDomain);
+
+      if (apiDomain && isValidCustomDomain(apiDomain)) {
+        const zoneName = getZoneName(apiDomain);
+        const apiPrefixLabels = prefixLabelsFor(apiDomain, zoneName);
+        if (apiPrefixLabels.length >= 2) {
+          const suggested = apiPrefixLabels[apiPrefixLabels.length - 1] + '.' + zoneName;
+          issues.push({
+            field: 'apiDomain',
+            message: buildBaseMessage(apiDomain),
+            suggestion: suggested,
+          });
+        }
+      }
+
+      [
+        ['loginUiDomain', 'Login UI', loginUiDomain],
+        ['adminUiDomain', 'Admin UI', adminUiDomain],
+      ].forEach(function(entry) {
+        const field = entry[0];
+        const label = entry[1];
+        const hostname = entry[2];
+        if (!hostname || !isValidCustomDomain(hostname)) {
+          return;
+        }
+
+        const parentDomain =
+          apiDomain && hostname.endsWith('.' + apiDomain) ? apiDomain : getZoneName(hostname);
+        const uiPrefixLabels = prefixLabelsFor(hostname, parentDomain);
+        if (uiPrefixLabels.length >= 2) {
+          const suggestion = uiPrefixLabels.join('-') + '.' + parentDomain;
+          issues.push({
+            field: field,
+            message: buildUiMessage(label, hostname, suggestion),
+            suggestion: suggestion,
+          });
+        }
+      });
+
+      return issues;
+    }
+
+    function computeApiDomainUiState(input) {
+      const baseDomain = input.baseDomain.trim();
+      const tenantName = input.tenantName.trim() || 'default';
+      const primaryTenant = (input.primaryTenant || '').trim();
+      const hasBaseDomain = baseDomain.length > 0;
+      const multiTenantEnabled = hasBaseDomain && input.multiTenantChecked;
+      const nakedDomainEnabled = multiTenantEnabled && input.nakedDomainChecked;
+      const nakedTenantName = primaryTenant || tenantName;
+      const exampleRows = [];
+
+      if (multiTenantEnabled) {
+        if (nakedDomainEnabled) {
+          exampleRows.push({
+            kind: 'initial-tenant',
+            tenantName: nakedTenantName,
+            url: 'https://' + baseDomain,
+          });
+          if (nakedTenantName !== tenantName) {
+            exampleRows.push({
+              kind: 'initial-tenant-explicit',
+              tenantName: tenantName,
+              url: 'https://' + tenantName + '.' + baseDomain,
+            });
+          }
+          exampleRows.push({
+            kind: 'other-tenant',
+            url: 'https://{tenantName}.' + baseDomain,
+          });
+        } else {
+          exampleRows.push({
+            kind: 'initial-tenant',
+            tenantName: tenantName,
+            url: 'https://' + tenantName + '.' + baseDomain,
+          });
+          exampleRows.push({
+            kind: 'other-tenant',
+            url: 'https://{tenantName}.' + baseDomain,
+          });
+        }
+      }
+
+      return {
+        hasBaseDomain: hasBaseDomain,
+        hasValidBaseDomain: isValidCustomDomain(baseDomain),
+        multiTenantEnabled: multiTenantEnabled,
+        showWorkersDevNote: !hasBaseDomain,
+        showNakedDomainControls: multiTenantEnabled,
+        showTenantFields: !hasBaseDomain || (multiTenantEnabled && !nakedDomainEnabled),
+        showPrimaryTenantRow: nakedDomainEnabled,
+        showExamples: multiTenantEnabled,
+        baseDomainPlaceholder: nakedDomainEnabled
+          ? 'example.com'
+          : multiTenantEnabled
+            ? 'tenant.example.com'
+            : 'oidc.example.com',
+        multiTenantHintMode: !hasBaseDomain
+          ? 'needs-custom-domain'
+          : multiTenantEnabled
+            ? 'multi-tenant'
+            : 'single-tenant',
+        nakedDomainHintMode: !multiTenantEnabled
+          ? 'hidden'
+          : nakedDomainEnabled
+            ? 'omit-tenant'
+            : 'include-tenant',
+        exampleRows: exampleRows,
+      };
+    }
+`;
 
 export function getHtmlTemplate(
   sessionToken?: string,
@@ -21,6 +257,32 @@ export function getHtmlTemplate(
   // Safely stringify translations for embedding in JavaScript
   const translationsJson = JSON.stringify(translations);
   const availableLocalesJson = JSON.stringify(availableLocales);
+  const wildcardDnsManualCopyJson = JSON.stringify(
+    Object.fromEntries(
+      Object.entries(WILDCARD_DNS_MANUAL_COPY).map(([code, copy]) => [
+        code,
+        {
+          title: copy.title,
+          summaryTemplate: copy.summary('{baseDomain}'),
+          timing: copy.timing,
+          stepsTemplate: copy.steps(
+            '{zoneName}',
+            '*.{baseDomain}',
+            '{baseDomain}',
+            '{dashboardRecordName}'
+          ),
+          retryHint: copy.retryHint,
+          continueHint: copy.continueHint,
+          dashboardLinkLabel: copy.dashboardLinkLabel,
+          docsLinkLabel: copy.docsLinkLabel,
+          confirmSuffix: copy.confirmSuffix,
+        },
+      ])
+    )
+  );
+  const cloudflareDnsAddRecordImageDataUriJson = JSON.stringify(
+    CLOUDFLARE_DNS_ADD_RECORD_IMAGE_DATA_URI
+  );
 
   // Generate locale options HTML server-side
   const localeOptionsHtml = availableLocales
@@ -516,6 +778,22 @@ export function getHtmlTemplate(
       margin-bottom: 1.25rem;
     }
 
+    .inline-field {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .inline-field input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .inline-field button {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
     label {
       display: block;
       font-family: var(--font-sans);
@@ -655,6 +933,14 @@ export function getHtmlTemplate(
       color: var(--text-muted);
     }
 
+    .standard-component-title {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
     /* ========================================
        HINT / TIP BOXES
        ======================================== */
@@ -684,6 +970,58 @@ export function getHtmlTemplate(
       color: #fcd34d;
     }
 
+    .hint-box.error-hint {
+      background: rgba(220, 38, 38, 0.1);
+      color: #dc2626;
+      border-color: rgba(220, 38, 38, 0.35);
+    }
+
+    [data-theme="dark"] .hint-box.error-hint {
+      background: rgba(248, 113, 113, 0.12);
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.3);
+    }
+
+    .preview-tenant-block {
+      margin-top: 0.5rem;
+      margin-bottom: 0.5rem;
+      padding: 0.6rem 0.75rem;
+      border-left: 2px solid var(--primary);
+      border-radius: 0 4px 4px 0;
+      background: rgba(0, 0, 0, 0.03);
+    }
+
+    [data-theme="dark"] .preview-tenant-block {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .preview-tenant-name {
+      font-weight: 600;
+      font-size: 0.83rem;
+      margin-bottom: 0.25rem;
+      color: var(--text-primary);
+    }
+
+    .preview-tenant-row {
+      display: grid;
+      grid-template-columns: 6.25rem minmax(0, 1fr);
+      column-gap: 0.75rem;
+      font-size: 0.79rem;
+      margin-top: 0.15rem;
+      align-items: baseline;
+    }
+
+    .preview-tenant-label {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .preview-tenant-url {
+      color: var(--primary);
+      overflow-wrap: break-word;
+      word-break: normal;
+    }
+
     /* ========================================
        INFRASTRUCTURE INFO SECTION
        ======================================== */
@@ -693,6 +1031,7 @@ export function getHtmlTemplate(
       border-radius: 12px;
       padding: 1.25rem;
       margin-bottom: 1.25rem;
+      --preview-label-width: 13.75rem;
     }
 
     .infra-section h4 {
@@ -706,20 +1045,63 @@ export function getHtmlTemplate(
     }
 
     .infra-item {
-      display: flex;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: var(--preview-label-width) minmax(0, 1fr);
+      column-gap: 1rem;
+      align-items: start;
       padding: 0.375rem 0;
       font-size: 0.875rem;
     }
 
     .infra-label {
       color: var(--text-muted);
+      white-space: nowrap;
     }
 
     .infra-value {
       font-family: var(--font-mono);
       font-size: 0.8rem;
       color: var(--primary);
+      min-width: 0;
+      overflow-wrap: break-word;
+      word-break: normal;
+    }
+
+    .infra-value-note {
+      display: block;
+      margin-top: 0.2rem;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+
+    .preview-component-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+      font-family: var(--font-sans);
+    }
+
+    .preview-component-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 1.5rem;
+      padding: 0.2rem 0.55rem;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.09);
+      color: var(--primary);
+      font-size: 0.78rem;
+      font-weight: 600;
+      line-height: 1.15;
+      white-space: nowrap;
+    }
+
+    [data-theme="dark"] .preview-component-badge {
+      background: rgba(96, 165, 250, 0.12);
+      border-color: rgba(96, 165, 250, 0.35);
     }
 
     /* ========================================
@@ -825,6 +1207,40 @@ export function getHtmlTemplate(
       word-break: break-all;
     }
 
+    .issuer-preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+    }
+
+    .issuer-preview-table th,
+    .issuer-preview-table td {
+      padding: 0.45rem 0;
+      border-top: 1px solid rgba(5, 150, 105, 0.14);
+      vertical-align: top;
+    }
+
+    [data-theme="dark"] .issuer-preview-table th,
+    [data-theme="dark"] .issuer-preview-table td {
+      border-top-color: rgba(52, 211, 153, 0.18);
+    }
+
+    .issuer-preview-table th {
+      width: 44%;
+      text-align: left;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding-right: 0.75rem;
+    }
+
+    .issuer-preview-table td {
+      color: var(--success);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+
     /* ========================================
        BUTTONS
        ======================================== */
@@ -917,6 +1333,24 @@ export function getHtmlTemplate(
       font-family: var(--font-mono);
       font-size: 0.8rem;
       border: 1px solid #1e293b;
+    }
+
+    .progress-log-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 0.75rem;
+    }
+
+    .progress-log-copy-btn {
+      background: #1e293b;
+      border-color: #334155;
+      color: #e2e8f0;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.75rem;
+    }
+
+    .progress-log-copy-btn:hover:not(:disabled) {
+      background: #334155;
     }
 
     .progress-log pre {
@@ -1120,6 +1554,21 @@ export function getHtmlTemplate(
       border: 1px solid rgba(37, 99, 235, 0.15);
     }
 
+    .manual-guide-visual {
+      margin-top: 0.875rem;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(15, 23, 42, 0.5);
+      box-shadow: 0 22px 48px rgba(15, 23, 42, 0.26);
+    }
+
+    .manual-guide-visual img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
     [data-theme="dark"] .alert-success {
       background: rgba(52, 211, 153, 0.1);
       border-color: rgba(52, 211, 153, 0.25);
@@ -1135,6 +1584,401 @@ export function getHtmlTemplate(
     [data-theme="dark"] .alert-info {
       background: rgba(96, 165, 250, 0.1);
       border-color: rgba(96, 165, 250, 0.2);
+    }
+
+    [data-theme="dark"] .manual-guide-visual {
+      background: rgba(2, 6, 23, 0.88);
+      border-color: rgba(148, 163, 184, 0.22);
+    }
+
+    .manual-wildcard-warning {
+      line-height: 1.55;
+    }
+
+    .manual-wildcard-warning strong {
+      display: block;
+      margin-bottom: 0.4rem;
+    }
+
+    .manual-guide-timing {
+      margin: 0.35rem 0 0;
+      font-weight: 600;
+    }
+
+    .manual-guide-steps {
+      margin-top: 0.7rem;
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .manual-guide-step-text,
+    .manual-guide-retry {
+      margin: 0;
+    }
+
+    .manual-guide-values {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0.45rem;
+      margin: 0;
+    }
+
+    .manual-guide-value {
+      min-width: 0;
+      min-height: 4.7rem;
+      padding: 0.5rem 0.6rem;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.5);
+      border: 1px solid rgba(217, 119, 6, 0.18);
+      display: grid;
+      grid-template-rows: 1rem minmax(1.7rem, 1fr);
+      gap: 0.25rem;
+      position: relative;
+    }
+
+    .manual-guide-value-main {
+      grid-column: span 2;
+    }
+
+    .manual-guide-value-secondary {
+      grid-column: span 3;
+    }
+
+    [data-theme="dark"] .manual-guide-value {
+      background: rgba(2, 6, 23, 0.24);
+      border-color: rgba(251, 191, 36, 0.2);
+    }
+
+    .manual-guide-value dt {
+      margin: 0 0 0.18rem;
+      font-family: var(--font-sans);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      opacity: 0.78;
+      padding-right: 3.25rem;
+    }
+
+    .manual-guide-value dd {
+      margin: 0;
+      min-width: 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 700;
+      overflow-wrap: break-word;
+      color: inherit;
+    }
+
+    .manual-guide-value-body {
+      min-width: 0;
+    }
+
+    .manual-guide-copy-btn {
+      position: absolute;
+      top: 0.45rem;
+      right: 0.5rem;
+      padding: 0.22rem 0.45rem;
+      border-radius: 6px;
+      border: 1px solid rgba(217, 119, 6, 0.25);
+      background: rgba(255, 255, 255, 0.42);
+      color: inherit;
+      font-family: var(--font-sans);
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .manual-guide-copy-btn:disabled {
+      cursor: default;
+      opacity: 0.85;
+    }
+
+    [data-theme="dark"] .manual-guide-copy-btn {
+      background: rgba(15, 23, 42, 0.5);
+      border-color: rgba(251, 191, 36, 0.24);
+    }
+
+    @media (max-width: 720px) {
+      .manual-guide-values {
+        grid-template-columns: 1fr;
+      }
+
+      .manual-guide-value-main,
+      .manual-guide-value-secondary {
+        grid-column: auto;
+      }
+    }
+
+    .prereq-capabilities {
+      margin-top: 1rem;
+      padding: 1rem 1.125rem;
+      border-radius: 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+    }
+
+    .prereq-capabilities-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 0.2rem;
+      color: var(--text);
+    }
+
+    .prereq-capabilities-hint {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 0.85rem;
+      line-height: 1.5;
+    }
+
+    .prereq-capability-list {
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .prereq-capability-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem 0.85rem;
+      border-radius: 10px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-light);
+    }
+
+    .prereq-capability-body {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .prereq-capability-name {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.15rem;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .prereq-capability-desc {
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+
+    .prereq-capability-pill {
+      flex: 0 0 auto;
+      min-width: 52px;
+      text-align: center;
+      padding: 0.32rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .prereq-capability-pill.ok {
+      background: rgba(5, 150, 105, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(5, 150, 105, 0.22);
+    }
+
+    .prereq-capability-pill.review {
+      background: rgba(217, 119, 6, 0.1);
+      color: var(--warning);
+      border: 1px solid rgba(217, 119, 6, 0.22);
+    }
+
+    .prereq-capability-pill.ng {
+      background: rgba(220, 38, 38, 0.1);
+      color: var(--error);
+      border: 1px solid rgba(220, 38, 38, 0.22);
+    }
+
+    .prereq-capability-hint {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.1rem;
+      height: 1.1rem;
+      border-radius: 50%;
+      font-size: 0.68rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: default;
+      flex: 0 0 auto;
+      background: rgba(120, 120, 120, 0.12);
+      color: var(--text-muted);
+      border: 1px solid rgba(120, 120, 120, 0.3);
+      user-select: none;
+    }
+
+    .prereq-capability-hint::before {
+      content: attr(data-tip);
+      position: absolute;
+      top: calc(100% + 0.4rem);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--card-bg);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      font-weight: 400;
+      line-height: 1.4;
+      white-space: nowrap;
+      padding: 0.4rem 0.65rem;
+      border-radius: 8px;
+      border: 1px solid var(--border-light);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 10;
+    }
+
+    .prereq-capability-hint:hover::before {
+      opacity: 1;
+    }
+
+    [data-theme="dark"] .prereq-capability-hint::before {
+      background: var(--bg);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+    }
+
+    [data-theme="dark"] .prereq-capability-item {
+      background: rgba(28, 25, 23, 0.68);
+    }
+
+    [data-theme="dark"] .prereq-capability-pill.ok {
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.24);
+    }
+
+    [data-theme="dark"] .prereq-capability-pill.review {
+      background: rgba(251, 191, 36, 0.14);
+      border-color: rgba(251, 191, 36, 0.26);
+    }
+
+    [data-theme="dark"] .prereq-capability-pill.ng {
+      background: rgba(248, 113, 113, 0.12);
+      border-color: rgba(248, 113, 113, 0.24);
+    }
+
+    .zone-diagnostic {
+      margin-top: 0.9rem;
+      margin-bottom: 0;
+    }
+
+    .zone-diagnostic-title {
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+      color: inherit;
+    }
+
+    .zone-diagnostic-body,
+    .zone-diagnostic-next {
+      color: inherit;
+      opacity: 0.92;
+    }
+
+    .zone-diagnostic-next {
+      margin-top: 0.45rem;
+      white-space: pre-line;
+    }
+
+    .zone-diagnostic-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 0.8rem;
+    }
+
+    .zone-diagnostic-actions .btn-secondary {
+      min-width: 0;
+    }
+
+    .domain-check-status {
+      margin-top: 0.75rem;
+    }
+
+    .keys-saved-box {
+      margin-top: 1rem;
+      padding: 1rem 1.125rem;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.08), rgba(14, 165, 233, 0.05));
+      color: #1e3a8a;
+      border: 1px solid rgba(37, 99, 235, 0.22);
+    }
+
+    [data-theme="dark"] .keys-saved-box {
+      background: linear-gradient(180deg, rgba(30, 64, 175, 0.22), rgba(8, 47, 73, 0.18));
+      color: #bfdbfe;
+      border-color: rgba(96, 165, 250, 0.3);
+    }
+
+    .keys-saved-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .keys-saved-title {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-weight: 700;
+    }
+
+    .keys-path-row {
+      display: flex;
+      align-items: stretch;
+      gap: 0.5rem;
+    }
+
+    .keys-path-code {
+      flex: 1;
+      min-width: 0;
+      display: block;
+      padding: 0.75rem 0.875rem;
+      border-radius: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      line-height: 1.4;
+      word-break: break-all;
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--primary);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    [data-theme="dark"] .keys-path-code {
+      background: rgba(15, 23, 42, 0.82);
+      color: #93c5fd;
+      border-color: rgba(96, 165, 250, 0.2);
+    }
+
+    .keys-copy-btn {
+      white-space: nowrap;
+      align-self: center;
+      min-width: 96px;
+    }
+
+    @media (max-width: 640px) {
+      .keys-saved-header,
+      .keys-path-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .keys-copy-btn {
+        width: 100%;
+      }
     }
 
     /* ========================================
@@ -1736,6 +2580,587 @@ export function getHtmlTemplate(
       return text;
     }
 
+    function appendTranslatedRichText(parent, key, params = {}) {
+      const template = _translations[key] || key;
+      const parts = template.split(/(<strong>|<\\/strong>|\\{\\{[a-zA-Z0-9_]+\\}\\})/g);
+      const stack = [parent];
+
+      for (const part of parts) {
+        if (!part) continue;
+        if (part === '<strong>') {
+          const strong = document.createElement('strong');
+          stack[stack.length - 1].appendChild(strong);
+          stack.push(strong);
+          continue;
+        }
+        if (part === '</strong>') {
+          if (stack.length > 1) stack.pop();
+          continue;
+        }
+
+        const placeholderMatch = part.match(/^\\{\\{([a-zA-Z0-9_]+)\\}\\}$/);
+        const text = placeholderMatch
+          ? String(params[placeholderMatch[1]] ?? '')
+          : part;
+        stack[stack.length - 1].appendChild(document.createTextNode(text));
+      }
+    }
+
+${DOMAIN_FORM_BROWSER_SCRIPT}
+
+    function getApiDomainUiCopy() {
+      const locale = String(_currentLocale || 'en').toLowerCase();
+      const copyByLocale = {
+        ja: {
+          initialTenantLabel: '最初のテナントID',
+          singleTenantLabel: 'テナントID',
+          randomTenantButtonLabel: 'ランダムで決める',
+          initialTenantHintGeneric:
+            '最初に作成するテナント識別子です。1〜63文字で、先頭は小文字の英字、使用できるのは小文字英字・数字・ハイフンです。URLに使わない場合でも内部設定に使います。',
+          singleTenantHintGeneric:
+            'テナント識別子です。1〜63文字で、先頭は小文字の英字、使用できるのは小文字英字・数字・ハイフンです。URLに使わない場合でも内部設定に使います。',
+          initialTenantHintSubdomain: (_tenantName, baseDomain, url) =>
+            '最初のテナントは ' + url + ' を使います。',
+          primaryTenantLabel: 'URLにテナント名を含めないテナント',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' で表示するテナントIDです。空欄なら ' + tenantName + ' を使います。',
+          multiTenantHintNeedsDomain:
+            'カスタムドメインを入力すると、テナントごとのURLを有効にできます。',
+          multiTenantHintSingleTenant:
+            '今は1つのURLだけを使います。必要になったらテナントごとのURLに切り替えられます。',
+          multiTenantHintEnabled: (baseDomain) => baseDomain + ' 配下にテナントごとのURLを作成します。',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '最初のテナントも ' + url + ' を使います。',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' のURLは ' + url + ' になります。',
+          examplesTitle: 'テナントURLの見え方',
+          tableHeaderLabel: 'ケース',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '最初のテナント (' + tenantName + ') のURL',
+          rowInitialTenantExplicit: (tenantName) =>
+            '最初のテナント名をURLに含める場合 (' + tenantName + ')',
+          rowOtherTenant: '他のテナントのURL',
+        },
+        de: {
+          initialTenantLabel: 'ID des ersten Tenants',
+          initialTenantHintGeneric:
+            'Bezeichner für den ersten Tenant. Er bleibt erhalten, auch wenn die URL keinen Tenant-Teil anzeigt.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Der erste Tenant verwendet ' + url + '.',
+          primaryTenantLabel: 'Tenant für die Domain ohne Tenant-Segment',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'Tenant-ID für ' + url + '. Leer lassen, um ' + tenantName + ' zu verwenden.',
+          multiTenantHintNeedsDomain:
+            'Geben Sie eine benutzerdefinierte Domain ein, um tenant-spezifische URLs zu aktivieren.',
+          multiTenantHintSingleTenant:
+            'Derzeit wird nur eine URL verwendet. Sie können später auf tenant-spezifische URLs umstellen.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Tenant-spezifische URLs werden unter ' + baseDomain + ' erstellt.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Der erste Tenant verwendet ebenfalls ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' verwendet ' + url + '.',
+          examplesTitle: 'So sehen die Tenant-URLs aus',
+          tableHeaderLabel: 'Fall',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL des ersten Tenants (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Erster Tenant, wenn das Tenant-Segment in der URL enthalten ist (' + tenantName + ')',
+          rowOtherTenant: 'URL für andere Tenants',
+        },
+        es: {
+          initialTenantLabel: 'ID del primer tenant',
+          initialTenantHintGeneric:
+            'Identificador del primer tenant que crea. Se conserva incluso si la URL no muestra un segmento de tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'El primer tenant usará ' + url + '.',
+          primaryTenantLabel: 'Tenant que usa la URL sin nombre de tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID del tenant que se mostrará en ' + url + '. Déjelo vacío para usar ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Ingrese un dominio personalizado para habilitar URLs por tenant.',
+          multiTenantHintSingleTenant:
+            'Por ahora solo se usa una URL. Más tarde puede cambiar a URLs por tenant.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Las URLs por tenant se crearán bajo ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'El primer tenant también usará ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' usará ' + url + '.',
+          examplesTitle: 'Cómo se verán las URLs de tenant',
+          tableHeaderLabel: 'Caso',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL del primer tenant (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Primer tenant cuando el segmento de tenant se incluye en la URL (' + tenantName + ')',
+          rowOtherTenant: 'URL de otros tenants',
+        },
+        fr: {
+          initialTenantLabel: 'ID du premier tenant',
+          initialTenantHintGeneric:
+            'Identifiant du premier tenant créé. Il est conservé même si l’URL n’affiche pas de segment tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Le premier tenant utilisera ' + url + '.',
+          primaryTenantLabel: 'Tenant utilisant l’URL sans segment tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID du tenant servi sur ' + url + '. Laissez vide pour utiliser ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Saisissez un domaine personnalisé pour activer des URL par tenant.',
+          multiTenantHintSingleTenant:
+            'Une seule URL est utilisée pour le moment. Vous pourrez passer plus tard à des URL par tenant.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Des URL par tenant seront créées sous ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Le premier tenant utilisera aussi ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' utilisera ' + url + '.',
+          examplesTitle: 'Apparence des URL de tenant',
+          tableHeaderLabel: 'Cas',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL du premier tenant (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Premier tenant lorsque le segment tenant est inclus dans l’URL (' + tenantName + ')',
+          rowOtherTenant: 'URL des autres tenants',
+        },
+        id: {
+          initialTenantLabel: 'ID tenant pertama',
+          initialTenantHintGeneric:
+            'Identifier untuk tenant pertama yang Anda buat. Tetap dipakai walaupun URL tidak menampilkan segmen tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Tenant pertama akan menggunakan ' + url + '.',
+          primaryTenantLabel: 'Tenant yang menggunakan URL tanpa nama tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID tenant yang dilayani di ' + url + '. Kosongkan untuk menggunakan ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Masukkan domain kustom untuk mengaktifkan URL per tenant.',
+          multiTenantHintSingleTenant:
+            'Saat ini hanya satu URL yang digunakan. Anda bisa beralih ke URL per tenant nanti.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'URL per tenant akan dibuat di bawah ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Tenant pertama juga akan menggunakan ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' akan menggunakan ' + url + '.',
+          examplesTitle: 'Bentuk URL tenant',
+          tableHeaderLabel: 'Kasus',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL tenant pertama (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Tenant pertama ketika segmen tenant disertakan di URL (' + tenantName + ')',
+          rowOtherTenant: 'URL tenant lain',
+        },
+        ko: {
+          initialTenantLabel: '첫 번째 테넌트 ID',
+          initialTenantHintGeneric:
+            '처음 생성하는 테넌트의 식별자입니다. URL에 테넌트 세그먼트가 없어도 내부 설정에 사용됩니다.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            '첫 번째 테넌트는 ' + url + ' 를 사용합니다.',
+          primaryTenantLabel: '테넌트 이름 없는 URL을 사용하는 테넌트',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' 에서 사용할 테넌트 ID입니다. 비워 두면 ' + tenantName + ' 를 사용합니다.',
+          multiTenantHintNeedsDomain:
+            '테넌트별 URL을 사용하려면 사용자 지정 도메인을 입력하세요.',
+          multiTenantHintSingleTenant:
+            '현재는 하나의 URL만 사용합니다. 나중에 테넌트별 URL로 전환할 수 있습니다.',
+          multiTenantHintEnabled: (baseDomain) => baseDomain + ' 아래에 테넌트별 URL이 생성됩니다.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '첫 번째 테넌트도 ' + url + ' 를 사용합니다.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' 의 URL은 ' + url + ' 입니다.',
+          examplesTitle: '테넌트 URL 예시',
+          tableHeaderLabel: '구분',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '첫 번째 테넌트 URL (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'URL에 테넌트 세그먼트가 포함된 첫 번째 테넌트 (' + tenantName + ')',
+          rowOtherTenant: '다른 테넌트 URL',
+        },
+        pt: {
+          initialTenantLabel: 'ID do primeiro tenant',
+          initialTenantHintGeneric:
+            'Identificador do primeiro tenant que você criar. Ele continua sendo usado mesmo quando a URL não expõe um segmento de tenant.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'O primeiro tenant usará ' + url + '.',
+          primaryTenantLabel: 'Tenant que usa a URL sem nome de tenant',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID do tenant servido em ' + url + '. Deixe em branco para usar ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Digite um domínio personalizado para habilitar URLs por tenant.',
+          multiTenantHintSingleTenant:
+            'No momento apenas uma URL é usada. Você pode mudar para URLs por tenant depois.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'URLs por tenant serão criadas sob ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'O primeiro tenant também usará ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' usará ' + url + '.',
+          examplesTitle: 'Como as URLs de tenant ficarão',
+          tableHeaderLabel: 'Caso',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL do primeiro tenant (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Primeiro tenant quando o segmento de tenant é incluído na URL (' + tenantName + ')',
+          rowOtherTenant: 'URL de outros tenants',
+        },
+        ru: {
+          initialTenantLabel: 'ID первого тенанта',
+          initialTenantHintGeneric:
+            'Идентификатор первого создаваемого тенанта. Он сохраняется, даже если URL не содержит сегмент тенанта.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'Первый тенант будет использовать ' + url + '.',
+          primaryTenantLabel: 'Тенант, использующий URL без имени тенанта',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'ID тенанта для ' + url + '. Оставьте пустым, чтобы использовать ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Введите пользовательский домен, чтобы включить URL для отдельных тенантов.',
+          multiTenantHintSingleTenant:
+            'Сейчас используется только один URL. Позже можно переключиться на URL для отдельных тенантов.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'URL для отдельных тенантов будут созданы под ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'Первый тенант также будет использовать ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' будет использовать ' + url + '.',
+          examplesTitle: 'Как будут выглядеть URL тенантов',
+          tableHeaderLabel: 'Случай',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'URL первого тенанта (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'Первый тенант, когда сегмент тенанта включён в URL (' + tenantName + ')',
+          rowOtherTenant: 'URL других тенантов',
+        },
+        'zh-cn': {
+          initialTenantLabel: '第一个租户 ID',
+          initialTenantHintGeneric:
+            '这是您创建的第一个租户标识。即使 URL 不显示租户段，也会在内部配置中使用。',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            '第一个租户将使用 ' + url + '。',
+          primaryTenantLabel: '使用无租户名 URL 的租户',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' 对应的租户 ID。留空则使用 ' + tenantName + '。',
+          multiTenantHintNeedsDomain:
+            '输入自定义域名后，才能启用按租户区分的 URL。',
+          multiTenantHintSingleTenant:
+            '当前只使用一个 URL，之后可以再切换为按租户区分的 URL。',
+          multiTenantHintEnabled: (baseDomain) =>
+            '将在 ' + baseDomain + ' 下创建按租户区分的 URL。',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '第一个租户也会使用 ' + url + '。',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' 将使用 ' + url + '。',
+          examplesTitle: '租户 URL 的显示方式',
+          tableHeaderLabel: '场景',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '第一个租户的 URL（' + tenantName + '）',
+          rowInitialTenantExplicit: (tenantName) =>
+            '当 URL 中包含租户段时的第一个租户（' + tenantName + '）',
+          rowOtherTenant: '其他租户的 URL',
+        },
+        'zh-tw': {
+          initialTenantLabel: '第一個租戶 ID',
+          initialTenantHintGeneric:
+            '這是您建立的第一個租戶識別碼。即使 URL 不顯示租戶段，內部設定仍會使用它。',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            '第一個租戶將使用 ' + url + '。',
+          primaryTenantLabel: '使用無租戶名稱 URL 的租戶',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            url + ' 對應的租戶 ID。留空則使用 ' + tenantName + '。',
+          multiTenantHintNeedsDomain:
+            '輸入自訂網域後，才能啟用依租戶區分的 URL。',
+          multiTenantHintSingleTenant:
+            '目前只使用一個 URL，之後可以再切換成依租戶區分的 URL。',
+          multiTenantHintEnabled: (baseDomain) =>
+            '將在 ' + baseDomain + ' 下建立依租戶區分的 URL。',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            '第一個租戶也會使用 ' + url + '。',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' 將使用 ' + url + '。',
+          examplesTitle: '租戶 URL 的顯示方式',
+          tableHeaderLabel: '情境',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => '第一個租戶的 URL（' + tenantName + '）',
+          rowInitialTenantExplicit: (tenantName) =>
+            '當 URL 包含租戶段時的第一個租戶（' + tenantName + '）',
+          rowOtherTenant: '其他租戶的 URL',
+        },
+        en: {
+          initialTenantLabel: 'Initial Tenant ID',
+          singleTenantLabel: 'Tenant ID',
+          randomTenantButtonLabel: 'Generate Random',
+          initialTenantHintGeneric:
+            'Identifier for the first tenant you create. Use 1-63 characters, start with a lowercase letter, and use only lowercase letters, digits, and hyphens. It is kept even when the URL does not expose a tenant segment.',
+          singleTenantHintGeneric:
+            'Tenant identifier. Use 1-63 characters, start with a lowercase letter, and use only lowercase letters, digits, and hyphens. It is kept even when the URL does not expose a tenant segment.',
+          initialTenantHintSubdomain: (_tenantName, _baseDomain, url) =>
+            'The first tenant will use ' + url + '.',
+          primaryTenantLabel: 'Tenant that uses the naked URL',
+          primaryTenantHint: (_baseDomain, tenantName, url) =>
+            'Tenant ID served at ' + url + '. Leave empty to use ' + tenantName + '.',
+          multiTenantHintNeedsDomain:
+            'Enter a custom domain to enable tenant-specific URLs.',
+          multiTenantHintSingleTenant:
+            'Only one URL is used right now. You can switch to tenant-specific URLs later.',
+          multiTenantHintEnabled: (baseDomain) =>
+            'Tenant-specific URLs will be created under ' + baseDomain + '.',
+          nakedDomainHintInclude: (_tenantName, _baseDomain, url) =>
+            'The first tenant will also use ' + url + '.',
+          nakedDomainHintOmit: (tenantName, _baseDomain, url) =>
+            tenantName + ' will use ' + url + '.',
+          examplesTitle: 'How tenant URLs will look',
+          tableHeaderLabel: 'Case',
+          tableHeaderUrl: 'URL',
+          rowInitialTenant: (tenantName) => 'First tenant URL (' + tenantName + ')',
+          rowInitialTenantExplicit: (tenantName) =>
+            'First tenant when the tenant segment is included (' + tenantName + ')',
+          rowOtherTenant: 'Other tenant URL',
+        },
+      };
+
+      const selected =
+        copyByLocale[locale] ||
+        copyByLocale[locale.split('-')[0]] ||
+        copyByLocale.en;
+
+      return selected;
+    }
+
+    const PREREQ_CAPABILITY_COPY = ${JSON.stringify(SETUP_CAPABILITY_COPY)};
+    const CLOUDFLARE_DNS_RECORDS_DOCS = ${JSON.stringify(CLOUDFLARE_DNS_RECORDS_DOCS_URL)};
+    const CLOUDFLARE_DASHBOARD_URL = 'https://dash.cloudflare.com/';
+
+    function getPrereqCapabilityCopy() {
+      const locale = String(_currentLocale || 'en');
+      return (
+        PREREQ_CAPABILITY_COPY[locale] ||
+        PREREQ_CAPABILITY_COPY[locale.split('-')[0]] ||
+        PREREQ_CAPABILITY_COPY.en
+      );
+    }
+
+    function renderPrereqCapabilities(container, result) {
+      if (!container) return;
+
+      const statuses = result.capabilityStatuses || {};
+      const diagnostics = result.capabilityDiagnostics || {};
+      const copy = getPrereqCapabilityCopy();
+      const wrapper = document.createElement('div');
+      wrapper.className = 'prereq-capabilities';
+
+      const title = document.createElement('div');
+      title.className = 'prereq-capabilities-title';
+      title.textContent = copy.title;
+      wrapper.appendChild(title);
+
+      const hint = document.createElement('div');
+      hint.className = 'prereq-capabilities-hint';
+      hint.textContent = copy.hint;
+      wrapper.appendChild(hint);
+
+      const list = document.createElement('div');
+      list.className = 'prereq-capability-list';
+
+      function getStatusMeta(status, okDescription, reviewDescription, ngDescription) {
+        if (status === 'ok') {
+          return { status: 'ok', description: okDescription, badgeLabel: copy.ok };
+        }
+        if (status === 'review') {
+          return { status: 'review', description: reviewDescription, badgeLabel: copy.review };
+        }
+        return { status: 'ng', description: ngDescription, badgeLabel: copy.ng };
+      }
+
+      const items = [
+        Object.assign(
+          {
+          label: copy.workersDeploy,
+          },
+          getStatusMeta(
+            statuses.workersDeploy,
+            copy.workersDeployOk,
+            copy.workersDeployReview,
+            copy.workersDeployNg
+          )
+        ),
+        Object.assign(
+          {
+          label: copy.customDomain,
+          },
+          getStatusMeta(
+            statuses.customDomain,
+            copy.customDomainOk,
+            copy.customDomainReviewZoneRead,
+            diagnostics.zoneReadAvailable ? copy.customDomainNgNoZone : copy.workersDeployNg
+          )
+        ),
+        Object.assign(
+          {
+          label: copy.pages,
+          },
+          getStatusMeta(
+            statuses.pages,
+            copy.pagesOk,
+            copy.pagesReview,
+            copy.workersDeployNg
+          )
+        ),
+      ];
+
+      items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'prereq-capability-item';
+
+        const body = document.createElement('div');
+        body.className = 'prereq-capability-body';
+
+        const name = document.createElement('div');
+        name.className = 'prereq-capability-name';
+        name.textContent = item.label;
+
+        if (item.status === 'ok') {
+          const hint = document.createElement('span');
+          hint.className = 'prereq-capability-hint';
+          hint.textContent = '?';
+          hint.setAttribute('data-tip', item.description);
+          name.appendChild(hint);
+        }
+
+        body.appendChild(name);
+
+        if (item.status !== 'ok') {
+          const desc = document.createElement('div');
+          desc.className = 'prereq-capability-desc';
+          desc.textContent = item.description;
+          body.appendChild(desc);
+        }
+
+        const right = document.createElement('div');
+        right.style.cssText = 'display:flex; align-items:center; gap:0.4rem; flex:0 0 auto;';
+
+        const pill = document.createElement('span');
+        pill.className = 'prereq-capability-pill ' + item.status;
+        pill.textContent = item.badgeLabel;
+        right.appendChild(pill);
+
+        row.appendChild(body);
+        row.appendChild(right);
+        list.appendChild(row);
+      });
+
+      wrapper.appendChild(list);
+
+      if (statuses.customDomain === 'review') {
+        wrapper.appendChild(createPrereqCustomDomainReviewAlert());
+      }
+
+      container.appendChild(wrapper);
+    }
+
+    function createZoneActionButton(action, onRetry) {
+      if (action === 'run_wrangler_login' || action === 'check_cloudflare_permissions') {
+        return null;
+      }
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn-secondary';
+
+      if (action === 'retry_check') {
+        button.textContent = t('domain.action.retryCheck');
+        button.addEventListener('click', () => onRetry?.());
+        return button;
+      }
+
+      if (action === 'reload_page') {
+        button.textContent = t('domain.action.reloadPage');
+        button.addEventListener('click', () => window.location.reload());
+        return button;
+      }
+
+      if (action === 'open_cloudflare_dashboard') {
+        button.textContent = t('domain.action.openCloudflareDashboard');
+        button.addEventListener('click', () =>
+          window.open(CLOUDFLARE_DASHBOARD_URL, '_blank', 'noopener,noreferrer')
+        );
+        return button;
+      }
+
+      return null;
+    }
+
+    function createZoneDiagnosticAlert(result, params) {
+      const diagnostic = result?.diagnostic;
+      if (!diagnostic) {
+        return null;
+      }
+
+      const code = diagnostic.code;
+      const alertType =
+        diagnostic.severity === 'success'
+          ? 'success'
+          : diagnostic.severity === 'error'
+            ? 'error'
+            : 'warning';
+      const alert = document.createElement('div');
+      alert.className = 'alert alert-' + alertType + ' zone-diagnostic';
+
+      const title = document.createElement('div');
+      title.className = 'zone-diagnostic-title';
+      title.textContent = t('domain.diagnostic.' + code + '.title', params);
+      alert.appendChild(title);
+
+      const body = document.createElement('div');
+      body.className = 'zone-diagnostic-body';
+      body.textContent = t('domain.diagnostic.' + code + '.body', params);
+      alert.appendChild(body);
+
+      const nextText = t('domain.diagnostic.' + code + '.next', params);
+      if (nextText && nextText !== 'domain.diagnostic.' + code + '.next') {
+        const next = document.createElement('div');
+        next.className = 'zone-diagnostic-next';
+        next.textContent = nextText;
+        alert.appendChild(next);
+      }
+
+      const actionButtons = (diagnostic.actions || [])
+        .map((action) => createZoneActionButton(action, params.onRetry))
+        .filter(Boolean);
+
+      if (actionButtons.length > 0) {
+        const actions = document.createElement('div');
+        actions.className = 'zone-diagnostic-actions';
+        actionButtons.forEach((button) => actions.appendChild(button));
+        alert.appendChild(actions);
+      }
+
+      return alert;
+    }
+
+    function createPrereqCustomDomainReviewAlert() {
+      const alert = document.createElement('div');
+      alert.className = 'alert alert-warning zone-diagnostic';
+
+      const title = document.createElement('div');
+      title.className = 'zone-diagnostic-title';
+      title.textContent = t('domain.prereq.reviewTitle');
+      alert.appendChild(title);
+
+      const body = document.createElement('div');
+      body.className = 'zone-diagnostic-body';
+      body.textContent = t('domain.prereq.reviewBody');
+      alert.appendChild(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'zone-diagnostic-actions';
+      const retryButton = createZoneActionButton('retry_check', checkPrerequisites);
+      const reloadButton = createZoneActionButton('reload_page');
+
+      if (retryButton) actions.appendChild(retryButton);
+      if (reloadButton) actions.appendChild(reloadButton);
+      alert.appendChild(actions);
+
+      return alert;
+    }
+
     /**
      * Update all elements with data-i18n attribute
      */
@@ -1757,6 +3182,12 @@ export function getHtmlTemplate(
       });
       // Update html lang attribute
       document.documentElement.lang = _currentLocale;
+      if (typeof window.refreshApiDomainUi === 'function') {
+        window.refreshApiDomainUi();
+      }
+      if (typeof window.renderDeployManualWildcardWarning === 'function') {
+        window.renderDeployManualWildcardWarning();
+      }
     }
 
     /**
@@ -1915,42 +3346,7 @@ export function getHtmlTemplate(
       </div>
     </div>
 
-    <!-- Step 1.6: Setup Mode Selection (Quick / Custom) -->
-    <div id="section-mode" class="card hidden">
-      <h2 class="card-title" data-i18n="web.mode.title">Setup Mode</h2>
-      <p style="margin-bottom: 1.5rem; color: var(--text-muted);" data-i18n="web.mode.subtitle">Choose how you want to set up Authrim:</p>
-
-      <div class="mode-cards">
-        <div class="mode-card" id="mode-quick">
-          <div class="mode-icon">⚡</div>
-          <h3 data-i18n="web.mode.quick">Quick Setup</h3>
-          <p data-i18n="web.mode.quickDesc">Get started in ~5 minutes</p>
-          <ul>
-            <li data-i18n="web.mode.quickEnv">Environment selection</li>
-            <li data-i18n="web.mode.quickDomain">Optional custom domain</li>
-            <li data-i18n="web.mode.quickDefault">Default components</li>
-          </ul>
-          <span class="mode-badge" data-i18n="web.mode.recommended">Recommended</span>
-        </div>
-
-        <div class="mode-card" id="mode-custom">
-          <div class="mode-icon">🔧</div>
-          <h3 data-i18n="web.mode.custom">Custom Setup</h3>
-          <p data-i18n="web.mode.customDesc">Full control over configuration</p>
-          <ul>
-            <li data-i18n="web.mode.customComp">Component selection</li>
-            <li data-i18n="web.mode.customUrl">URL configuration</li>
-            <li data-i18n="web.mode.customAdvanced">Advanced settings</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="button-group">
-        <button class="btn-secondary" id="btn-back-top" data-i18n="web.btn.back">Back</button>
-      </div>
-    </div>
-
-    <!-- Step 1.7: Load Config -->
+    <!-- Step 1.6: Load Config -->
     <div id="section-load-config" class="card hidden">
       <h2 class="card-title" data-i18n="web.loadConfig.title">Load Configuration</h2>
       <p style="margin-bottom: 1rem; color: var(--text-muted);" data-i18n="web.loadConfig.subtitle">Select your authrim-config.json file:</p>
@@ -1996,47 +3392,32 @@ export function getHtmlTemplate(
 
         <!-- API Component (required) -->
         <div class="component-card">
-          <label class="checkbox-item" style="font-weight: 600; margin-bottom: 0.25rem;">
-            <input type="checkbox" id="comp-api" checked disabled>
+          <div class="standard-component-title">
             🔐 <span data-i18n="web.config.apiRequired">API (required)</span>
-          </label>
-          <p style="margin: 0.25rem 0 0.5rem 1.5rem; font-size: 0.85rem;" data-i18n="web.config.apiDesc">
+          </div>
+          <p style="margin: 0.25rem 0 0.5rem 0; font-size: 0.85rem;" data-i18n="web.config.apiDesc">
             OIDC Provider endpoints: authorize, token, userinfo, discovery, management APIs.
           </p>
-          <div style="margin-left: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem;">
-            <label class="checkbox-item" style="font-size: 0.9rem;">
-              <input type="checkbox" id="comp-saml">
-              <span data-i18n="web.config.saml">SAML IdP</span>
-            </label>
-            <label class="checkbox-item" style="font-size: 0.9rem;">
-              <input type="checkbox" id="comp-async">
-              Device Flow / CIBA
-            </label>
-            <label class="checkbox-item" style="font-size: 0.9rem;">
-              <input type="checkbox" id="comp-vc">
-              Verifiable Credentials
-            </label>
-          </div>
         </div>
 
         <!-- Login UI Component -->
         <div class="component-card">
-          <label class="checkbox-item" style="font-weight: 600; margin-bottom: 0.25rem;">
+          <label class="checkbox-item" style="margin: 0; padding: 0; border: none; background: transparent;">
             <input type="checkbox" id="comp-login-ui" checked>
-            🖥️ <span data-i18n="web.comp.loginUi">Login UI</span>
+            <strong>🖥️ <span data-i18n="web.comp.loginUi">Login UI</span></strong>
           </label>
-          <p style="margin: 0.25rem 0 0 1.5rem; font-size: 0.85rem;" data-i18n="web.comp.loginUiDesc">
+          <p style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="web.comp.loginUiDesc">
             User-facing login, registration, consent, and account management pages.
           </p>
         </div>
 
         <!-- Admin UI Component -->
         <div class="component-card">
-          <label class="checkbox-item" style="font-weight: 600; margin-bottom: 0.25rem;">
+          <label class="checkbox-item" style="margin: 0; padding: 0; border: none; background: transparent;">
             <input type="checkbox" id="comp-admin-ui" checked>
-            ⚙️ <span data-i18n="web.comp.adminUi">Admin UI</span>
+            <strong>⚙️ <span data-i18n="web.comp.adminUi">Admin UI</span></strong>
           </label>
-          <p style="margin: 0.25rem 0 0 1.5rem; font-size: 0.85rem;" data-i18n="web.comp.adminUiDesc">
+          <p style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="web.comp.adminUiDesc">
             Admin dashboard for managing tenants, clients, users, and system settings.
           </p>
         </div>
@@ -2061,34 +3442,57 @@ export function getHtmlTemplate(
           <label for="base-domain" data-i18n="web.form.baseDomain">Base Domain (API Domain)</label>
           <input type="text" id="base-domain" placeholder="oidc.example.com" data-i18n-placeholder="web.form.baseDomainPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.baseDomainHint">Custom domain for Authrim. Leave empty to use workers.dev</small>
-          <div id="domain-check-row" style="display: none; margin-top: 0.5rem; align-items: center; gap: 0.5rem;">
+          <div id="base-domain-depth-error" class="alert alert-warning" style="display: none; margin-top: 0.5rem;" role="alert"></div>
+          <div id="domain-check-row" style="display: none; margin-top: 0.5rem;">
             <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkZoneButton">
               Check Zone
             </button>
-            <span id="domain-check-status" style="font-size: 0.85rem;"></span>
+            <div id="domain-check-status" class="domain-check-status" aria-live="polite"></div>
           </div>
-          <label class="checkbox-item" id="custom-domain-binding-row" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+          <label class="checkbox-item" id="custom-domain-binding-row" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.75rem;">
             <input type="checkbox" id="custom-domain-binding" checked>
             <span data-i18n="domain.configureBinding">Configure custom domain binding for Workers</span>
           </label>
-          <label class="checkbox-item" id="naked-domain-label" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+          <label class="checkbox-item" id="multi-tenant-label" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; opacity: 0.5;">
+            <input type="checkbox" id="enable-multi-tenant" disabled>
+            <span data-i18n="web.form.multiTenantEnable">Enable multi-tenant mode</span>
+          </label>
+          <small id="multi-tenant-hint" style="color: var(--text-muted); margin-left: 1.5rem;" data-i18n="web.form.multiTenantHint">
+            Create tenant subdomains under your custom domain
+          </small>
+          <label class="checkbox-item" id="naked-domain-label" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
             <input type="checkbox" id="naked-domain">
             <span data-i18n="web.form.nakedDomain">Exclude tenant name from URL</span>
           </label>
-          <small id="naked-domain-hint" style="color: var(--text-muted); margin-left: 1.5rem;" data-i18n="web.form.nakedDomainHint">
+          <small id="naked-domain-hint" style="color: var(--text-muted); margin-left: 1.5rem; display: none;" data-i18n="web.form.nakedDomainHint">
             Use https://example.com instead of https://{tenant}.example.com
           </small>
           <small id="workers-dev-note" style="color: #d97706; margin-left: 1.5rem; display: none;" data-i18n="web.form.nakedDomainWarning">
             ⚠️ Tenant subdomains require a custom domain. Workers.dev does not support wildcard subdomains.
           </small>
+          <div id="tenant-url-examples" class="issuer-preview" style="display: none; margin-top: 0.75rem;">
+            <div class="label" id="tenant-url-examples-title">How tenant URLs will look</div>
+            <table class="issuer-preview-table" aria-live="polite">
+              <thead>
+                <tr>
+                  <th id="tenant-url-examples-header-label">Case</th>
+                  <th id="tenant-url-examples-header-url">URL</th>
+                </tr>
+              </thead>
+              <tbody id="tenant-url-examples-body"></tbody>
+            </table>
+          </div>
         </div>
 
-        <!-- Default Tenant (hidden when naked domain is checked or using workers.dev) -->
+        <!-- Tenant (hidden when naked domain is checked) -->
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
-            <label for="tenant-name" data-i18n="web.form.tenantId">Default Tenant ID</label>
-            <input type="text" id="tenant-name" placeholder="default" value="default" disabled readonly data-i18n-placeholder="web.form.tenantIdPlaceholder">
-            <small style="color: var(--text-muted)" data-i18n="web.form.tenantIdHint">First tenant identifier (lowercase, no spaces). Leave empty to use "default".</small>
+            <label for="tenant-name" id="tenant-id-label">Initial Tenant ID</label>
+            <div class="inline-field">
+              <input type="text" id="tenant-name" placeholder="default" value="default" data-i18n-placeholder="web.form.tenantIdPlaceholder">
+              <button type="button" id="tenant-name-random" class="btn-secondary">Generate Random</button>
+            </div>
+            <small id="tenant-id-hint" style="color: var(--text-muted)">Identifier for the first tenant you create.</small>
             <small id="tenant-workers-note" style="color: #6b7280; display: none;" data-i18n="web.form.tenantIdWorkerNote">
               (Tenant ID is used internally. URL subdomain requires custom domain.)
             </small>
@@ -2103,9 +3507,9 @@ export function getHtmlTemplate(
 
         <!-- Primary Tenant (for naked domain) -->
         <div class="form-group" id="primary-tenant-row" style="margin-bottom: 0.75rem;">
-          <label for="primary-tenant">Primary Tenant (for naked domain)</label>
-          <input type="text" id="primary-tenant" placeholder="Leave empty to use default tenant">
-          <small style="color: var(--text-muted)">Tenant ID to use when accessing the naked domain (e.g., example.com). Leave empty to use the default tenant above.</small>
+          <label for="primary-tenant" id="primary-tenant-label">Tenant that uses the naked URL</label>
+          <input type="text" id="primary-tenant" placeholder="Leave empty to use initial tenant">
+          <small id="primary-tenant-hint" style="color: var(--text-muted)">Tenant ID to use when accessing the naked domain. Leave empty to use the first tenant above.</small>
         </div>
 
         <div class="form-group" style="margin-bottom: 0;">
@@ -2123,23 +3527,27 @@ export function getHtmlTemplate(
         <h4>🖥️ <span data-i18n="web.section.uiDomains">UI Domains (Optional)</span></h4>
         <div class="section-hint" data-i18n="web.section.uiDomainsHint">
           Custom domains for Login/Admin UIs. Each can be set independently.
-          Leave empty to use Cloudflare Pages default.
+          Leave empty to use the UI Worker default.
         </div>
 
         <div class="domain-row" id="login-domain-row">
           <span class="domain-label" data-i18n="web.domain.loginUi">Login UI</span>
           <div class="domain-input-wrapper">
             <input type="text" id="login-domain" placeholder="login.example.com" data-i18n-placeholder="web.form.loginDomainPlaceholder">
-            <span class="domain-default" id="login-default">{env}-ar-login-ui.pages.dev</span>
+            <span class="domain-default" id="login-default">{env}-ar-login-ui.workers.dev</span>
           </div>
+          <div id="login-domain-depth-error" class="alert alert-warning" style="display: none; margin-top: 0.5rem;" role="alert"></div>
+          <div id="login-domain-zone-status" class="domain-check-status" style="margin-top: 0.5rem;" aria-live="polite"></div>
         </div>
 
         <div class="domain-row" id="admin-domain-row">
           <span class="domain-label" data-i18n="web.domain.adminUi">Admin UI</span>
           <div class="domain-input-wrapper">
             <input type="text" id="admin-domain" placeholder="admin.example.com" data-i18n-placeholder="web.form.adminDomainPlaceholder">
-            <span class="domain-default" id="admin-default">{env}-ar-admin-ui.pages.dev</span>
+            <span class="domain-default" id="admin-default">{env}-ar-admin-ui.workers.dev</span>
           </div>
+          <div id="admin-domain-depth-error" class="alert alert-warning" style="display: none; margin-top: 0.5rem;" role="alert"></div>
+          <div id="admin-domain-zone-status" class="domain-check-status" style="margin-top: 0.5rem;" aria-live="polite"></div>
         </div>
 
         <div class="section-hint hint-box" style="margin-top: 0.75rem;" data-i18n="web.section.corsHint">
@@ -2150,25 +3558,66 @@ export function getHtmlTemplate(
       <!-- 4. Preview Section (at the bottom) -->
       <div class="infra-section" id="config-preview">
         <h4>📋 <span data-i18n="web.section.configPreview">Configuration Preview</span></h4>
+
+        <!-- Common row (always visible) -->
         <div class="infra-item">
           <span class="infra-label" data-i18n="web.preview.components">Components:</span>
-          <span class="infra-value" id="preview-components">API, Login UI, Admin UI</span>
+          <span class="infra-value preview-component-list" id="preview-components">
+            <span class="preview-component-badge">API</span>
+            <span class="preview-component-badge">Login UI</span>
+            <span class="preview-component-badge">Admin UI</span>
+          </span>
         </div>
-        <div class="infra-item">
-          <span class="infra-label" data-i18n="web.preview.workers">Workers:</span>
-          <span class="infra-value" id="preview-workers">{env}-ar-router, {env}-ar-auth, ...</span>
-        </div>
-        <div class="infra-item">
+
+        <!-- Single-tenant Issuer row (shown only when multi-tenant=off) -->
+        <div class="infra-item" id="preview-issuer-row">
           <span class="infra-label" data-i18n="web.preview.issuerUrl">Issuer URL:</span>
           <span class="infra-value" id="preview-issuer">https://{tenant}.{base-domain}</span>
         </div>
-        <div class="infra-item">
-          <span class="infra-label" data-i18n="web.preview.loginUi">Login UI:</span>
-          <span class="infra-value" id="preview-login">{env}-ar-login-ui.pages.dev</span>
+
+        <!-- Multi-tenant expansion preview (shown only when multi-tenant=on) -->
+        <div id="preview-multi-tenant-section" style="display:none;">
+          <!-- Tenant cards (rendered by JS) -->
+          <div id="preview-mt-rows" aria-live="polite"></div>
+
+          <!-- Login UI deployment origin -->
+          <div class="infra-item" id="preview-login-pages-row" style="margin-top: 0.25rem;">
+            <span class="infra-label" data-i18n="web.preview.pagesUrl">Login UI Origin:</span>
+            <span class="infra-value" id="preview-login-pages">{env}-ar-login-ui.workers.dev</span>
+          </div>
+
+          <!-- Tenant selection common entry -->
+          <div class="infra-item" id="preview-tenant-discover-row" style="margin-top: 0.25rem;">
+            <span class="infra-label" data-i18n="web.preview.tenantDiscover">Tenant Selection (Common Entry):</span>
+            <span class="infra-value" id="preview-tenant-discover">{env}-ar-login-ui.workers.dev/discover</span>
+          </div>
+
+          <!-- Admin UI access target -->
+          <div class="infra-item" id="preview-admin-access-row">
+            <span class="infra-label" data-i18n="web.preview.adminAccess">Admin UI Access:</span>
+            <span class="infra-value" id="preview-admin-access">https://{env}-ar-admin-ui.workers.dev/admin</span>
+          </div>
+
+          <!-- Invalid-configuration warning (shown only when the condition matches) -->
+          <div id="preview-config-warning" class="hint-box error-hint" style="display:none; margin-top:0.75rem;" role="alert">
+            <strong id="preview-warning-title" data-i18n="web.preview.conflictWarningTitle">⚠️ Configuration issue</strong>
+            <div id="preview-warning-message" style="margin-top: 0.25rem;"></div>
+            <div id="preview-warning-action" style="margin-top: 0.5rem; font-weight: 600;"></div>
+          </div>
         </div>
-        <div class="infra-item">
+
+        <!-- Single-tenant Login UI / Admin UI row (shown only when multi-tenant=off) -->
+        <div class="infra-item" id="preview-login-row">
+          <span class="infra-label" data-i18n="web.preview.loginUi">Login UI:</span>
+          <span class="infra-value" id="preview-login">{env}-ar-login-ui.workers.dev</span>
+        </div>
+        <div class="infra-item" id="preview-admin-row">
           <span class="infra-label" data-i18n="web.preview.adminUi">Admin UI:</span>
-          <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.pages.dev</span>
+          <span class="infra-value" id="preview-admin">{env}-ar-admin-ui.workers.dev</span>
+        </div>
+        <div class="infra-item" id="preview-admin-api-mode-row">
+          <span class="infra-label">Admin UI API mode:</span>
+          <span class="infra-value" id="preview-admin-api-mode">cross-site-proxy</span>
         </div>
       </div>
 
@@ -2189,6 +3638,41 @@ export function getHtmlTemplate(
       <p style="margin-bottom: 1.5rem; font-size: 0.85rem; color: var(--text-muted);" data-i18n="web.db.regionNote">
         Note: Database region cannot be changed after creation.
       </p>
+
+      <div class="database-card" style="margin-bottom: 1rem;">
+        <h3 data-i18n="web.db.storageProfileTitle">Storage Deployment Profile</h3>
+        <div class="db-description">
+          <p data-i18n="web.db.storageProfileDesc">Select how user core/PII data is placed for this deployment.</p>
+        </div>
+        <div class="radio-group">
+          <label class="radio-item">
+            <input type="radio" name="storage-profile" value="builtin:storage:shared-d1" checked>
+            <span style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <strong data-i18n="web.db.sharedD1Title">Shared D1</strong>
+              <small style="color: var(--text-muted);" data-i18n="web.db.sharedD1Desc">One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.</small>
+            </span>
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="storage-profile" value="builtin:storage:tenant-d1">
+            <span style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <strong data-i18n="web.db.tenantD1Title">Tenant D1</strong>
+              <small style="color: var(--text-muted);" data-i18n="web.db.tenantD1Desc">One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.</small>
+            </span>
+          </label>
+        </div>
+        <div id="tenant-d1-slot-config" class="tenant-d1-slot-config" style="margin-top: 1rem; display: none;">
+          <h3 data-i18n="web.db.preallocatedSlotsTitle">Preallocated tenant slots</h3>
+          <div class="db-description">
+            <p data-i18n="web.db.preallocatedSlotsDesc">Each tenant slot creates two D1 databases: core and PII.</p>
+          </div>
+          <label for="tenant-d1-preallocated-slots" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+            <span data-i18n="web.db.slotsLabel">Slots</span>
+            <strong id="tenant-d1-preallocated-slots-value">3</strong>
+          </label>
+          <input id="tenant-d1-preallocated-slots" type="range" min="1" max="500" step="1" value="3" style="width: 100%;">
+          <small style="color: var(--text-muted);" data-i18n="web.db.slotsHelp">Default is 3. Maximum is 500 slots.</small>
+        </div>
+      </div>
 
       <div class="database-config-stack">
         <!-- Core Database (Non-PII) -->
@@ -2326,14 +3810,47 @@ export function getHtmlTemplate(
             <small style="color: var(--text-muted);" data-i18n="web.email.configureLaterHint">Skip for now and configure later.</small>
           </span>
         </label>
+	        <label class="radio-item" style="padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.5rem;">
+	          <input type="radio" name="email-setup-choice" value="cloudflare">
+	          <span style="display: flex; flex-direction: column; gap: 0.25rem;">
+	            <strong data-i18n="web.email.configureCloudflare">Configure Cloudflare Email Service</strong>
+	            <small style="color: var(--text-muted);" data-i18n="web.email.configureCloudflareHint">Use the native Workers Email Service binding. Requires a Workers Paid plan and Cloudflare DNS.</small>
+	          </span>
+	        </label>
         <label class="radio-item" style="padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.5rem;">
-          <input type="radio" name="email-setup-choice" value="configure">
+          <input type="radio" name="email-setup-choice" value="resend">
           <span style="display: flex; flex-direction: column; gap: 0.25rem;">
             <strong data-i18n="web.email.configureResend">Configure Resend</strong>
             <small style="color: var(--text-muted);" data-i18n="web.email.configureResendHint">Set up email sending with Resend (recommended for production).</small>
           </span>
         </label>
       </div>
+
+	      <!-- Cloudflare Configuration Form (hidden by default) -->
+	      <div id="cloudflare-config-form" class="hidden" style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem;">
+	        <h3 style="margin: 0 0 1rem 0; font-size: 1rem;">☁️ <span data-i18n="web.email.cloudflareSetup">Cloudflare Email Service</span></h3>
+
+	        <div class="alert alert-warning" style="margin-bottom: 1rem;">
+	          <strong data-i18n="web.email.cloudflareRequirements">Requirements</strong>
+	          <ul style="margin: 0.5rem 0 0 1rem; padding: 0;">
+	            <li data-i18n="web.email.cloudflareRequirementPaid">Workers Paid Plan is required</li>
+	            <li data-i18n="web.email.cloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li>
+	            <li data-i18n="web.email.cloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li>
+	          </ul>
+	        </div>
+
+	        <div class="form-group">
+	          <label for="cloudflare-from-address" data-i18n="web.email.fromEmailAddress">From Email Address</label>
+	          <input type="email" id="cloudflare-from-address" placeholder="noreply@yourdomain.com" autocomplete="off">
+	          <small style="color: var(--text-muted);" data-i18n="web.email.cloudflareFromHint">Must be from a domain onboarded to Cloudflare Email Service</small>
+	        </div>
+
+	        <div class="form-group">
+	          <label for="cloudflare-from-name" data-i18n="web.email.fromDisplayName">From Display Name (optional)</label>
+	          <input type="text" id="cloudflare-from-name" placeholder="Authrim" autocomplete="off">
+	          <small style="color: var(--text-muted);" data-i18n="web.email.fromDisplayHint">Displayed as the sender name in email clients</small>
+	        </div>
+	      </div>
 
       <!-- Resend Configuration Form (hidden by default) -->
       <div id="resend-config-form" class="hidden" style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem;">
@@ -2429,13 +3946,25 @@ export function getHtmlTemplate(
       </div>
 
       <div class="progress-log hidden" id="provision-log">
+        <div class="progress-log-actions">
+          <button type="button" class="btn-secondary progress-log-copy-btn" id="provision-log-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
         <pre id="provision-output"></pre>
       </div>
 
       <!-- Keys saved location (shown after completion) -->
-      <div id="keys-saved-info" class="alert alert-info hidden" style="margin-top: 1rem;">
-        <strong>🔑 <span data-i18n="web.provision.keysSavedTo">Keys saved to:</span></strong>
-        <code style="display: block; margin-top: 0.5rem; padding: 0.5rem; background: #f1f5f9; border-radius: 4px;" id="keys-path"></code>
+      <div id="keys-saved-info" class="keys-saved-box hidden">
+        <div class="keys-saved-header">
+          <strong class="keys-saved-title">🔑 <span data-i18n="web.provision.keysSavedTo">Keys saved to:</span></strong>
+          <button type="button" class="btn-secondary keys-copy-btn" id="keys-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
+        <div class="keys-path-row">
+          <code class="keys-path-code" id="keys-path"></code>
+        </div>
         <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted);" data-i18n="web.provision.keepSafe">
           ⚠️ Keep this directory safe and add it to .gitignore
         </p>
@@ -2457,6 +3986,24 @@ export function getHtmlTemplate(
       </h2>
 
       <p id="deploy-ready-text" style="margin-bottom: 1rem;" data-i18n="web.deploy.readyText">Ready to deploy Authrim workers to Cloudflare.</p>
+      <div id="deploy-manual-wildcard-warning" class="alert alert-warning manual-wildcard-warning hidden" style="margin-bottom: 1rem;">
+        <strong id="deploy-manual-wildcard-title"></strong>
+        <p id="deploy-manual-wildcard-summary" style="margin-top: 0.5rem;"></p>
+        <p id="deploy-manual-wildcard-timing" class="manual-guide-timing"></p>
+        <div id="deploy-manual-wildcard-steps" class="manual-guide-steps"></div>
+        <div class="manual-guide-visual">
+          <img
+            id="deploy-manual-wildcard-example-image"
+            alt="Cloudflare DNS Add record example"
+            src=${cloudflareDnsAddRecordImageDataUriJson}
+          >
+        </div>
+        <p id="deploy-manual-wildcard-retry" class="manual-guide-retry" style="margin-top: 0.75rem;"></p>
+        <div class="button-group" style="margin-top: 0.75rem;">
+          <a id="deploy-manual-wildcard-dashboard-link" class="btn-secondary hidden" target="_blank" rel="noreferrer">Open Cloudflare DNS</a>
+          <a id="deploy-manual-wildcard-docs-link" class="btn-secondary" target="_blank" rel="noreferrer">Open DNS docs</a>
+        </div>
+      </div>
 
       <!-- Progress UI (shown during deployment) -->
       <div id="deploy-progress-ui" class="progress-container hidden">
@@ -2476,6 +4023,11 @@ export function getHtmlTemplate(
       </div>
 
       <div class="progress-log hidden" id="deploy-log">
+        <div class="progress-log-actions">
+          <button type="button" class="btn-secondary progress-log-copy-btn" id="deploy-log-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
         <pre id="deploy-output"></pre>
       </div>
 
@@ -2590,6 +4142,140 @@ export function getHtmlTemplate(
         </div>
       </div>
 
+      <div class="resource-section" id="env-email-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          📧 <span data-i18n="web.envDetail.emailSettings">Email Settings</span>
+        </div>
+        <p style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;" data-i18n="web.envDetail.emailDesc">
+          Enable Cloudflare Email Service later for this environment. This updates .authrim, regenerates wrangler bindings, uploads email secrets, and redeploys ar-auth and ar-management.
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-top: 1rem;">
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentProvider">Current Provider</div>
+            <div id="env-email-provider" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentStatus">Status</div>
+            <div id="env-email-status" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCurrentFrom">From Address</div>
+            <div id="env-email-from" style="margin-top: 0.35rem; font-weight: 600; word-break: break-word;">-</div>
+          </div>
+        </div>
+
+        <div class="alert alert-warning" style="margin-top: 1rem;">
+          <strong data-i18n="web.envDetail.emailCloudflareRequirements">Requirements</strong>
+          <ul style="margin: 0.5rem 0 0 1.25rem;">
+            <li data-i18n="web.envDetail.emailCloudflareRequirementPaid">Workers Paid Plan is required</li>
+            <li data-i18n="web.envDetail.emailCloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li>
+            <li data-i18n="web.envDetail.emailCloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li>
+          </ul>
+        </div>
+
+        <div style="margin-top: 1rem; display: grid; gap: 1rem;">
+          <div>
+            <label for="env-email-from-address" style="display: block; margin-bottom: 0.5rem; font-weight: 600;" data-i18n="web.envDetail.emailFromAddress">From Email Address</label>
+            <input type="email" id="env-email-from-address" placeholder="noreply@yourdomain.com" autocomplete="off">
+            <div style="margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-muted);" data-i18n="web.envDetail.emailCloudflareFromHint">
+              Must be from a domain onboarded to Cloudflare Email Service.
+            </div>
+          </div>
+          <div>
+            <label for="env-email-from-name" style="display: block; margin-bottom: 0.5rem; font-weight: 600;" data-i18n="web.envDetail.emailFromName">From Display Name (optional)</label>
+            <input type="text" id="env-email-from-name" placeholder="Authrim" autocomplete="off">
+          </div>
+        </div>
+
+        <div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
+          <button class="btn-primary" id="btn-enable-cloudflare-email">
+            ☁️ <span data-i18n="web.envDetail.emailEnableCloudflare">Enable Cloudflare Email Service</span>
+          </button>
+        </div>
+
+        <div id="env-email-progress" class="hidden" style="margin-top: 1rem;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;" data-i18n="web.envDetail.emailProgress">Email Setup Progress:</div>
+          <div id="env-email-log" class="progress-log" style="max-height: 240px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+        </div>
+      </div>
+
+      <div class="resource-section" id="env-tenant-d1-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          🧩 Tenant D1 Pool
+        </div>
+        <p id="env-tenant-d1-summary" style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;">
+          Loading tenant storage status...
+        </p>
+
+        <div id="env-tenant-d1-stats" class="hidden" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin-top: 1rem;">
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Capacity</div>
+            <div id="env-tenant-d1-capacity" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Available</div>
+            <div id="env-tenant-d1-available" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Assigned</div>
+            <div id="env-tenant-d1-assigned" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+          <div style="padding: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Needs Reset</div>
+            <div id="env-tenant-d1-reset-required" style="margin-top: 0.35rem; font-weight: 600;">-</div>
+          </div>
+        </div>
+
+        <div id="env-tenant-d1-expand" class="hidden" style="margin-top: 1rem; display: grid; gap: 0.75rem;">
+          <label for="env-tenant-d1-add-slots" style="display: block; font-weight: 600;">Add Tenant D1 Slots</label>
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+            <input id="env-tenant-d1-add-slots" type="number" min="1" max="500" value="1" style="max-width: 140px;">
+            <button class="btn-primary" id="btn-expand-tenant-d1-pool">
+              ➕ Expand Pool and Deploy
+            </button>
+            <button class="btn-secondary" id="btn-refresh-tenant-d1-pool">
+              🔄 Refresh
+            </button>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">
+            This updates the environment config, creates additional core/PII D1 databases, refreshes Worker bindings, and redeploys workers.
+          </div>
+        </div>
+
+      <div id="env-tenant-d1-progress" class="hidden" style="margin-top: 1rem;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;">Tenant D1 Pool Progress:</div>
+          <div id="env-tenant-d1-log" class="progress-log" style="max-height: 260px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+        </div>
+      </div>
+
+      <div class="resource-section" id="env-r2-provision-section" style="margin-bottom: 1.5rem;">
+        <div class="resource-section-title">
+          📁 Dedicated R2 Buckets
+        </div>
+        <p id="env-r2-provision-summary" style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;">
+          Loading R2 bucket status...
+        </p>
+
+        <div id="env-r2-provision-actions" style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+          <button class="btn-primary" id="btn-provision-r2-buckets">
+            📁 Provision R2 and Deploy
+          </button>
+          <button class="btn-secondary" id="btn-refresh-r2-buckets">
+            🔄 Refresh
+          </button>
+        </div>
+
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem;">
+          This creates Authrim R2 buckets, records lock bindings, enables the R2 feature flag, and redeploys workers.
+        </div>
+
+        <div id="env-r2-provision-progress" class="hidden" style="margin-top: 1rem;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;">R2 Provisioning Progress:</div>
+          <div id="env-r2-provision-log" class="progress-log" style="max-height: 240px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+        </div>
+      </div>
+
       <div id="detail-resources">
         <!-- Workers -->
         <div class="resource-section">
@@ -2602,7 +4288,7 @@ export function getHtmlTemplate(
         <!-- Worker Update Section -->
         <div class="resource-section" id="worker-update-section" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
           <div class="resource-section-title">
-            🔄 <span data-i18n="web.envDetail.workerUpdate">Update Workers</span>
+            🔄 <span data-i18n="web.envDetail.workerUpdate">Update All Workers</span>
           </div>
 
           <!-- Version comparison table -->
@@ -2635,7 +4321,7 @@ export function getHtmlTemplate(
           <!-- Action buttons -->
           <div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
             <button class="btn-primary" id="btn-update-workers" disabled>
-              🚀 <span data-i18n="web.envDetail.updateAllWorkers">Update Workers</span>
+              🚀 <span data-i18n="web.envDetail.updateAllWorkers">Update All Workers</span>
             </button>
             <button class="btn-secondary" id="btn-refresh-versions">
               🔄 <span data-i18n="web.envDetail.refreshVersions">Refresh</span>
@@ -2652,10 +4338,10 @@ export function getHtmlTemplate(
         <!-- UI Update Section (Admin UI, Login UI) -->
         <div class="resource-section" id="ui-update-section" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
           <div class="resource-section-title">
-            📱 <span data-i18n="web.envDetail.uiUpdate">Update UI (Pages)</span>
+            📱 <span data-i18n="web.envDetail.uiUpdate">Update UI (Workers)</span>
           </div>
           <p style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;" data-i18n="web.envDetail.uiUpdateDesc">
-            Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.
+            Update Admin UI or Login UI individually. These are deployed to Cloudflare Workers.
           </p>
 
           <!-- UI Components -->
@@ -2664,7 +4350,7 @@ export function getHtmlTemplate(
             <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
               <div>
                 <div style="font-weight: 600;">🖥️ Admin UI</div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-admin-ui • Cloudflare Pages</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-admin-ui • Cloudflare Worker</div>
               </div>
               <button class="btn-primary btn-sm" id="btn-update-admin-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
                 🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
@@ -2675,7 +4361,7 @@ export function getHtmlTemplate(
             <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
               <div>
                 <div style="font-weight: 600;">🔐 Login UI</div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-login-ui • Cloudflare Pages</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-login-ui • Cloudflare Worker</div>
               </div>
               <button class="btn-primary btn-sm" id="btn-update-login-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
                 🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
@@ -2722,10 +4408,10 @@ export function getHtmlTemplate(
           <div class="resource-list" id="detail-r2-list"></div>
         </div>
 
-        <!-- Pages Projects -->
+        <!-- Legacy Pages Projects -->
         <div class="resource-section" id="detail-pages-section">
           <div class="resource-section-title">
-            📄 <span data-i18n="web.envDetail.pagesProjects">Pages Projects</span> <span class="count" id="detail-pages-count">(0)</span>
+            📄 <span data-i18n="web.envDetail.pagesProjects">Legacy Pages Projects</span> <span class="count" id="detail-pages-count">(0)</span>
           </div>
           <div class="resource-list" id="detail-pages-list"></div>
         </div>
@@ -2799,7 +4485,7 @@ export function getHtmlTemplate(
           <label class="checkbox-item delete-option">
             <input type="checkbox" id="delete-pages" checked>
             <span>
-              <strong data-i18n="web.delete.pagesProjects">Pages Projects</strong>
+              <strong data-i18n="web.delete.pagesProjects">Legacy Pages Projects</strong>
               <small id="delete-pages-count">(0 projects)</small>
             </span>
           </label>
@@ -2825,6 +4511,11 @@ export function getHtmlTemplate(
       </div>
 
       <div class="progress-log hidden" id="delete-log">
+        <div class="progress-log-actions">
+          <button type="button" class="btn-secondary progress-log-copy-btn" id="delete-log-copy-btn">
+            <span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span>
+          </button>
+        </div>
         <pre id="delete-output"></pre>
       </div>
 
@@ -2923,11 +4614,81 @@ export function getHtmlTemplate(
 
     // State
     let currentStep = 1;
-    let setupMode = 'quick'; // 'quick' or 'custom'
     let config = {};
     let loadedConfig = null;
     let provisioningCompleted = false;
     let provisionPollInterval = null;
+    let lastPrerequisitesResult = null;
+
+    function normalizeStorageProfileId(value) {
+      return value === 'builtin:storage:tenant-d1'
+        ? 'builtin:storage:tenant-d1'
+        : 'builtin:storage:shared-d1';
+    }
+
+    function buildProfilesConfig(storageProfileId) {
+      return {
+        defaults: {
+          storage: normalizeStorageProfileId(storageProfileId),
+          audit: 'builtin:audit:standard',
+          residency: 'builtin:residency:default',
+        },
+        registry: {
+          backend: 'kv',
+        },
+        references: {
+          hyperdrive: {},
+        },
+        seed: {
+          storage: [],
+          audit: [],
+          residency: [],
+        },
+      };
+    }
+
+    function getSelectedStorageProfileId() {
+      return normalizeStorageProfileId(
+        document.querySelector('input[name="storage-profile"]:checked')?.value
+      );
+    }
+
+    function getTenantD1PreallocatedSlots() {
+      const value = Number.parseInt(
+        document.getElementById('tenant-d1-preallocated-slots')?.value || '3',
+        10
+      );
+      return Number.isInteger(value) ? Math.min(500, Math.max(1, value)) : 3;
+    }
+
+    function setTenantD1PreallocatedSlots(value) {
+      const normalized = Math.min(500, Math.max(1, Number.parseInt(value || '3', 10) || 3));
+      const input = document.getElementById('tenant-d1-preallocated-slots');
+      const label = document.getElementById('tenant-d1-preallocated-slots-value');
+      if (input) input.value = String(normalized);
+      if (label) label.textContent = String(normalized);
+    }
+
+    function updateTenantD1SlotConfigVisibility() {
+      const visible = getSelectedStorageProfileId() === 'builtin:storage:tenant-d1';
+      const panel = document.getElementById('tenant-d1-slot-config');
+      if (panel) panel.style.display = visible ? 'block' : 'none';
+    }
+
+    function setSelectedStorageProfileId(profileId) {
+      const normalized = normalizeStorageProfileId(profileId);
+      document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
+        input.checked = input.value === normalized;
+      });
+      updateTenantD1SlotConfigVisibility();
+    }
+
+    document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
+      input.addEventListener('change', updateTenantD1SlotConfigVisibility);
+    });
+    document.getElementById('tenant-d1-preallocated-slots')?.addEventListener('input', (event) => {
+      setTenantD1PreallocatedSlots(event.currentTarget.value);
+    });
 
     // Elements
     const steps = {
@@ -2944,7 +4705,6 @@ export function getHtmlTemplate(
     const sections = {
       prerequisites: document.getElementById('section-prerequisites'),
       topMenu: document.getElementById('section-top-menu'),
-      mode: document.getElementById('section-mode'),
       loadConfig: document.getElementById('section-load-config'),
       config: document.getElementById('section-config'),
       database: document.getElementById('section-database'),
@@ -2960,6 +4720,7 @@ export function getHtmlTemplate(
     // Environment management state
     let detectedEnvironments = [];
     let selectedEnvForDetail = null;
+    let selectedEnvDetailConfig = null;
     let selectedEnvForDelete = null;
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
@@ -2977,6 +4738,238 @@ export function getHtmlTemplate(
         body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
       });
       return response.json();
+    }
+
+    const WILDCARD_DNS_MANUAL_COPY_DATA = ${wildcardDnsManualCopyJson};
+
+    function getWildcardDnsManualCopy() {
+      const locale = String(_currentLocale || 'en');
+      return (
+        WILDCARD_DNS_MANUAL_COPY_DATA[locale] ||
+        WILDCARD_DNS_MANUAL_COPY_DATA[locale.split('-')[0]] ||
+        WILDCARD_DNS_MANUAL_COPY_DATA.en
+      );
+    }
+
+    function buildWildcardDnsManualMessage(baseDomain, includeConfirmSuffix = false) {
+      const copy = getWildcardDnsManualCopy();
+      const recordName = '*.' + baseDomain;
+      const zoneName = getManualWildcardDnsZoneName(baseDomain);
+      const dashboardRecordName = getManualWildcardDnsRecordName(baseDomain, zoneName);
+      const summary = copy.summaryTemplate.replaceAll('{baseDomain}', baseDomain);
+      const steps = copy.stepsTemplate.map((step) =>
+        step
+          .replaceAll('*.{baseDomain}', recordName)
+          .replaceAll('{baseDomain}', baseDomain)
+          .replaceAll('{zoneName}', zoneName)
+          .replaceAll('{dashboardRecordName}', dashboardRecordName)
+      );
+      const lines = [
+        copy.title,
+        copy.timing,
+        '',
+        ...steps.map((step, index) => (index + 1) + '. ' + step),
+        '',
+        copy.retryHint,
+        copy.continueHint,
+      ];
+
+      if (summary) {
+        lines.splice(1, 0, summary);
+      }
+
+      if (includeConfirmSuffix) {
+        lines.push('', copy.confirmSuffix);
+      }
+
+      return lines.join('\\n');
+    }
+
+    function getManualWildcardDnsBaseDomain() {
+      return config?.tenant?.multiTenant === true ? config.tenant.baseDomain : '';
+    }
+
+    function getManualWildcardDnsZoneName(domain) {
+      const normalized = String(domain || '').trim().toLowerCase();
+      if (!normalized) return '';
+      const parts = normalized.split('.').filter(Boolean);
+      const twoPartTlds = new Set([
+        'co.uk',
+        'org.uk',
+        'gov.uk',
+        'ac.uk',
+        'co.jp',
+        'or.jp',
+        'ne.jp',
+        'co.nz',
+        'org.nz',
+        'net.nz',
+        'co.kr',
+        'or.kr',
+        'ne.kr',
+        'co.in',
+        'firm.in',
+        'net.in',
+        'org.in',
+        'gen.in',
+        'co.id',
+        'web.id',
+        'ac.id',
+        'or.id',
+        'co.za',
+        'org.za',
+        'net.za',
+        'com.au',
+        'net.au',
+        'org.au',
+        'com.br',
+        'net.br',
+        'org.br',
+      ]);
+      const lastTwo = parts.slice(-2).join('.');
+      if (twoPartTlds.has(lastTwo) && parts.length >= 3) {
+        return parts.slice(-3).join('.');
+      }
+      return parts.length >= 2 ? parts.slice(-2).join('.') : normalized;
+    }
+
+    function getManualWildcardDnsRecordName(baseDomain, zoneName) {
+      if (baseDomain === zoneName) {
+        return '*';
+      }
+
+      const suffix = '.' + zoneName;
+      if (baseDomain.endsWith(suffix)) {
+        return '*.' + baseDomain.slice(0, -suffix.length);
+      }
+
+      return '*.' + baseDomain;
+    }
+
+    function getManualWildcardDnsDashboardUrl() {
+      const accountId = lastPrerequisitesResult?.auth?.accountId || null;
+      const baseDomain = getManualWildcardDnsBaseDomain();
+      return ${getCloudflareDnsRecordsDashboardUrl.toString()}(accountId, baseDomain);
+    }
+
+    function shouldPromptManualWildcardDnsBeforeDeploy() {
+      const baseDomain = getManualWildcardDnsBaseDomain();
+      const status = lastPrerequisitesResult?.capabilityStatuses?.multiTenant;
+      return !!baseDomain && status && status !== 'ok';
+    }
+
+    function renderDeployManualWildcardWarning() {
+      const warning = document.getElementById('deploy-manual-wildcard-warning');
+      const baseDomain = getManualWildcardDnsBaseDomain();
+
+      if (!shouldPromptManualWildcardDnsBeforeDeploy()) {
+        warning.classList.add('hidden');
+        return;
+      }
+
+      const copy = getWildcardDnsManualCopy();
+      const recordName = '*.' + baseDomain;
+      const zoneName = getManualWildcardDnsZoneName(baseDomain);
+      const dashboardRecordName = getManualWildcardDnsRecordName(baseDomain, zoneName);
+      const dashboardUrl = getManualWildcardDnsDashboardUrl();
+      const summary = copy.summaryTemplate.replaceAll('{baseDomain}', baseDomain);
+      const stepsTemplate = copy.stepsTemplate.map((step) =>
+        step
+          .replaceAll('*.{baseDomain}', recordName)
+          .replaceAll('{baseDomain}', baseDomain)
+          .replaceAll('{zoneName}', zoneName)
+          .replaceAll('{dashboardRecordName}', dashboardRecordName)
+      );
+
+      document.getElementById('deploy-manual-wildcard-title').textContent = copy.title;
+      const summaryEl = document.getElementById('deploy-manual-wildcard-summary');
+      summaryEl.textContent = summary;
+      summaryEl.style.display = summary ? '' : 'none';
+      document.getElementById('deploy-manual-wildcard-timing').textContent = copy.timing;
+      document.getElementById('deploy-manual-wildcard-retry').textContent = copy.retryHint;
+
+      const steps = document.getElementById('deploy-manual-wildcard-steps');
+      steps.textContent = '';
+
+      const valueRows = [];
+      const textSteps = [];
+      stepsTemplate.forEach((step) => {
+        const separatorIndex = step.indexOf(':');
+        const label = separatorIndex >= 0 ? step.slice(0, separatorIndex).trim() : '';
+        const value = separatorIndex >= 0 ? step.slice(separatorIndex + 1).trim() : '';
+        if (['Type', 'Name (required)', 'Target (required)', 'Proxy status', 'TTL'].includes(label)) {
+          valueRows.push({ label, value });
+        } else if (step) {
+          textSteps.push(step);
+        }
+      });
+
+      if (textSteps[0]) {
+        const intro = document.createElement('p');
+        intro.className = 'manual-guide-step-text';
+        intro.textContent = textSteps[0];
+        steps.appendChild(intro);
+      }
+
+      if (valueRows.length > 0) {
+        const values = document.createElement('dl');
+        values.className = 'manual-guide-values';
+        valueRows.forEach(({ label, value }) => {
+          const item = document.createElement('div');
+          const isSecondary = ['Proxy status', 'TTL'].includes(label);
+          const isCopyable = ['Name (required)', 'Target (required)'].includes(label);
+          item.className =
+            'manual-guide-value ' +
+            (isSecondary ? 'manual-guide-value-secondary' : 'manual-guide-value-main');
+          const dt = document.createElement('dt');
+          dt.textContent = label.replace(' (required)', '');
+          const body = document.createElement('div');
+          body.className = 'manual-guide-value-body';
+          const dd = document.createElement('dd');
+          dd.textContent = value;
+          body.appendChild(dd);
+          if (isCopyable) {
+            const copyButton = document.createElement('button');
+            copyButton.type = 'button';
+            copyButton.className = 'manual-guide-copy-btn';
+            const copyLabel = document.createElement('span');
+            copyLabel.setAttribute('data-copy-label', '');
+            copyLabel.textContent = t('web.envDetail.copyBtn');
+            copyButton.appendChild(copyLabel);
+            copyButton.addEventListener('click', () =>
+              copyTextWithFeedback(copyButton, value, 'web.envDetail.copyBtn')
+            );
+            body.appendChild(copyButton);
+          }
+          item.appendChild(dt);
+          item.appendChild(body);
+          values.appendChild(item);
+        });
+        steps.appendChild(values);
+      }
+
+      textSteps.slice(1).forEach((step) => {
+        const detail = document.createElement('p');
+        detail.className = 'manual-guide-step-text';
+        detail.textContent = step;
+        steps.appendChild(detail);
+      });
+
+      const dashboardLink = document.getElementById('deploy-manual-wildcard-dashboard-link');
+      dashboardLink.textContent = copy.dashboardLinkLabel;
+      if (dashboardUrl) {
+        dashboardLink.href = dashboardUrl;
+        dashboardLink.classList.remove('hidden');
+      } else {
+        dashboardLink.removeAttribute('href');
+        dashboardLink.classList.add('hidden');
+      }
+
+      const docsLink = document.getElementById('deploy-manual-wildcard-docs-link');
+      docsLink.textContent = copy.docsLinkLabel;
+      docsLink.href = CLOUDFLARE_DNS_RECORDS_DOCS;
+
+      warning.classList.remove('hidden');
     }
 
     // Step navigation
@@ -3001,6 +4994,30 @@ export function getHtmlTemplate(
       }
     }
 
+    async function copyTextWithFeedback(button, text, copyKey = 'web.envDetail.copyBtn') {
+      if (!button || !text) return;
+
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const tempInput = document.createElement('input');
+        tempInput.value = text;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+      }
+
+      const label = button.querySelector('[data-copy-label]') || button;
+      label.textContent = t('web.complete.copied');
+      button.disabled = true;
+
+      setTimeout(() => {
+        label.textContent = t(copyKey);
+        button.disabled = false;
+      }, 2000);
+    }
+
     // Log toggle functionality
     function setupLogToggle(toggleId, logId) {
       const toggle = document.getElementById(toggleId);
@@ -3021,10 +5038,23 @@ export function getHtmlTemplate(
       }
     }
 
+    function setupLogCopyButton(buttonId, outputId) {
+      const button = document.getElementById(buttonId);
+      const output = document.getElementById(outputId);
+      if (!button || !output) return;
+
+      button.addEventListener('click', async () => {
+        await copyTextWithFeedback(button, output.textContent || '');
+      });
+    }
+
     // Setup all log toggles
     setupLogToggle('deploy-log-toggle', 'deploy-log');
     setupLogToggle('provision-log-toggle', 'provision-log');
     setupLogToggle('delete-log-toggle', 'delete-log');
+    setupLogCopyButton('deploy-log-copy-btn', 'deploy-output');
+    setupLogCopyButton('provision-log-copy-btn', 'provision-output');
+    setupLogCopyButton('delete-log-copy-btn', 'delete-output');
 
     // Progress UI update helper
     function updateProgressUI(prefix, current, total, currentTask) {
@@ -3043,7 +5073,8 @@ export function getHtmlTemplate(
           const percent = Math.min(Math.round((current / total) * 100), 100);
           progressText.textContent = percent + '% complete';
         } else {
-          progressText.textContent = current + ' / ' + total + ' resources';
+          const displayCurrent = Math.min(current, total);
+          progressText.textContent = displayCurrent + ' / ' + total + ' resources';
         }
       }
       if (currentTaskEl && currentTask) {
@@ -3112,6 +5143,136 @@ export function getHtmlTemplate(
       return null;
     }
 
+    function getExpectedDeployWorkerCount() {
+      return 12;
+    }
+
+    function createDeployProgressTracker() {
+      let percent = 0;
+      let currentTask = t('web.status.initializing') || 'Initializing...';
+      let expectedWorkers = getExpectedDeployWorkerCount();
+      let finalUiStarted = false;
+      const workerCompleted = new Set();
+      const counters = {};
+
+      function setProgress(nextPercent, task) {
+        const normalized = Math.max(0, Math.min(Math.round(nextPercent), 99));
+        percent = Math.max(percent, normalized);
+        if (task) currentTask = task;
+        updateProgressUI('deploy', percent, 100, currentTask);
+      }
+
+      function complete(task) {
+        percent = 100;
+        currentTask = task || 'Deployment complete!';
+        updateProgressUI('deploy', 100, 100, currentTask);
+      }
+
+      function bump(key, start, end, step, task) {
+        counters[key] = (counters[key] || 0) + 1;
+        setProgress(Math.min(start + counters[key] * step, end), task);
+      }
+
+      function trackWorkerSuccess(message) {
+        const match = message.match(/^\\s*✓\\s+([a-z0-9-]+-ar-[a-z0-9-]+)\\s+deployed successfully/i);
+        if (!match) return false;
+
+        workerCompleted.add(match[1]);
+        const completed = workerCompleted.size;
+        const workerPercent = 45 + (Math.min(completed, expectedWorkers) / expectedWorkers) * 21;
+        setProgress(workerPercent, 'Deploying API Workers (' + completed + '/' + expectedWorkers + ')');
+        return true;
+      }
+
+      return {
+        handle(message) {
+          const taskInfo = parseProgressMessage(message);
+          const totalMatch = message.match(/^Total:\\s+(\\d+)\\s*$/);
+          if (totalMatch) {
+            expectedWorkers = Math.max(parseInt(totalMatch[1], 10), 1);
+            setProgress(66, 'API Workers deployed (' + workerCompleted.size + '/' + expectedWorkers + ')');
+            return;
+          }
+
+          if (message.includes('Clearing build cache')) {
+            setProgress(2, 'Preparing build...');
+          } else if (message.includes('Building packages')) {
+            setProgress(6, 'Building packages...');
+          } else if (message.includes('Packages built successfully')) {
+            setProgress(12, 'Packages built successfully');
+          } else if (message.includes('Uploading secrets from')) {
+            setProgress(14, 'Uploading secrets...');
+          } else if (message.includes('uploaded')) {
+            bump('secrets', 14, 29, 1, 'Uploading secrets...');
+          } else if (message.includes('Refreshing wrangler.toml')) {
+            setProgress(31, 'Refreshing Worker configuration...');
+          } else if (message.includes('wrangler.toml files refreshed')) {
+            setProgress(34, 'Worker configuration refreshed');
+          } else if (message.includes('Ensuring wildcard DNS')) {
+            setProgress(36, 'Checking wildcard DNS...');
+          } else if (message.includes('Wildcard DNS resolves')) {
+            setProgress(38, 'Wildcard DNS ready');
+          } else if (message.includes('Preparing UI Worker binding targets')) {
+            setProgress(39, 'Preparing UI Worker bindings...');
+          } else if (
+            !finalUiStarted &&
+            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
+          ) {
+            bump('uiBindingBuild', 39, 42, 1.5, taskInfo || 'Preparing UI Worker bindings...');
+          } else if (!finalUiStarted && message.includes('deployed as UI Worker')) {
+            bump('uiBindingDeploy', 42, 44, 1, 'UI Worker bindings ready');
+          } else if (message.includes('Starting Authrim deployment')) {
+            setProgress(45, 'Deploying API Workers (0/' + expectedWorkers + ')');
+          } else if (trackWorkerSuccess(message)) {
+            return;
+          } else if (message.includes('Deployment Summary')) {
+            setProgress(66, 'API Worker deployment summary');
+          } else if (message.includes('Verifying Worker deployments')) {
+            setProgress(68, 'Verifying Worker deployments...');
+          } else if (message.includes('Worker deployments are visible')) {
+            setProgress(71, 'Worker deployments are visible');
+          } else if (message.includes('Verifying Worker HTTP health')) {
+            setProgress(73, 'Checking Worker health...');
+          } else if (message.includes('Worker HTTP health checks passed')) {
+            setProgress(76, 'Worker health checks passed');
+          } else if (message.includes('Waiting for API router')) {
+            setProgress(78, 'Waiting for API router...');
+          } else if (message.includes('API router is reachable')) {
+            setProgress(80, 'API router is reachable');
+          } else if (message.includes('Running D1 database migrations')) {
+            setProgress(82, 'Running database migrations...');
+          } else if (message.includes('Database migrations completed successfully')) {
+            setProgress(87, 'Database migrations complete');
+          } else if (
+            message.includes('Ensuring initial tenant') ||
+            message.includes('Ensuring initial admin roles') ||
+            message.includes('Ensuring setup machine access') ||
+            message.includes('Seeding runtime profiles') ||
+            message.includes('runtime snapshot')
+          ) {
+            bump('bootstrap', 87, 91, 1, taskInfo || 'Finalizing runtime bootstrap...');
+          } else if (message.includes('Deploying Login/Admin UI')) {
+            finalUiStarted = true;
+            setProgress(92, 'Deploying Login/Admin UI...');
+          } else if (
+            finalUiStarted &&
+            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
+          ) {
+            bump('finalUiBuild', 92, 95, 1.5, taskInfo || 'Building UI Workers...');
+          } else if (finalUiStarted && message.includes('deployed as UI Worker')) {
+            bump('finalUiDeploy', 95, 98, 1.5, 'Deploying UI Workers...');
+          } else if (message.includes('All UI packages deployed to Workers')) {
+            setProgress(98, 'UI Workers deployed');
+          } else if (message.includes('Deployment complete')) {
+            complete('✓ Deployment complete!');
+          } else if (taskInfo) {
+            setProgress(percent, taskInfo);
+          }
+        },
+        complete,
+      };
+    }
+
     // Safe DOM element creation helpers
     function createAlert(type, content) {
       const div = document.createElement('div');
@@ -3152,6 +5313,199 @@ export function getHtmlTemplate(
       return div;
     }
 
+    async function resetServerState() {
+      try {
+        await api('/reset', { method: 'POST' });
+      } catch (error) {
+        console.warn('Failed to reset setup state:', error);
+      }
+    }
+
+    function resetLogToggle(toggleId, logId) {
+      const toggle = document.getElementById(toggleId);
+      const log = document.getElementById(logId);
+      if (toggle && log) {
+        log.classList.add('hidden');
+        toggle.classList.remove('open');
+        const label = toggle.querySelector('span:last-child');
+        if (label) {
+          label.textContent = t('web.provision.showLog');
+        }
+      }
+    }
+
+    function resetProgressContainer(prefix) {
+      const progressBar = document.getElementById(prefix + '-progress-bar');
+      const progressText = document.getElementById(prefix + '-progress-text');
+      const currentTaskEl = document.getElementById(prefix + '-current-task');
+      const spinner = document.getElementById(prefix + '-spinner');
+      const progressDiv = document.getElementById(prefix + '-progress-ui');
+
+      if (progressBar) progressBar.style.width = '0%';
+      if (spinner) spinner.style.display = 'block';
+      if (progressDiv) progressDiv.classList.add('hidden');
+
+      if (currentTaskEl) {
+        currentTaskEl.textContent = t('web.provision.initializing') || 'Initializing...';
+      }
+
+      if (progressText) {
+        progressText.textContent =
+          prefix === 'deploy' ? '0% complete' : '0 / 0 resources';
+      }
+    }
+
+    function resetDynamicCompleteSections() {
+      const dynamicSection = document.getElementById('complete-admin-setup-section');
+      if (dynamicSection) {
+        dynamicSection.remove();
+      }
+    }
+
+    function resetLoadConfigUI() {
+      loadedConfig = null;
+
+      const configFile = document.getElementById('config-file');
+      if (configFile) configFile.value = '';
+
+      document.getElementById('config-file-name').textContent = '';
+      document.getElementById('config-validation-error').classList.add('hidden');
+      document.getElementById('config-validation-success').classList.add('hidden');
+      document.getElementById('config-preview-section').classList.add('hidden');
+      document.getElementById('config-preview-content').textContent = '';
+      document.getElementById('btn-load-config').disabled = true;
+
+      const errorList = document.getElementById('config-validation-errors');
+      while (errorList.firstChild) {
+        errorList.removeChild(errorList.firstChild);
+      }
+    }
+
+    function resetConfigurationForm() {
+      config = {};
+      provisioningCompleted = false;
+      domainZoneId = null;
+
+      document.getElementById('advanced-options').classList.remove('hidden');
+
+      document.getElementById('env').value = '';
+      document.getElementById('base-domain').value = '';
+      document.getElementById('login-domain').value = '';
+      document.getElementById('admin-domain').value = '';
+      document.getElementById('tenant-name').value = 'default';
+      document.getElementById('tenant-display').value = '';
+      document.getElementById('primary-tenant').value = '';
+      document.getElementById('enable-multi-tenant').checked = false;
+      document.getElementById('naked-domain').checked = false;
+      document.getElementById('user-id-format').value = 'nanoid';
+
+      document.getElementById('domain-check-row').style.display = 'none';
+      document.getElementById('domain-check-status').replaceChildren();
+      document.getElementById('login-domain-zone-status').replaceChildren();
+      document.getElementById('admin-domain-zone-status').replaceChildren();
+      document.getElementById('custom-domain-binding-row').style.display = 'none';
+      document.getElementById('custom-domain-binding').checked = true;
+
+      const envInput = document.getElementById('env');
+      const envError = document.getElementById('env-error');
+      envInput.style.borderColor = '';
+      if (envError) envError.style.display = 'none';
+
+      updateBaseDomainUI();
+
+      const loginDomainRow = document.getElementById('login-domain-row');
+      const adminDomainRow = document.getElementById('admin-domain-row');
+      loginDomainRow.style.opacity = '1';
+      adminDomainRow.style.opacity = '1';
+      document.getElementById('login-domain').disabled = false;
+      document.getElementById('admin-domain').disabled = false;
+
+      updatePreview();
+    }
+
+    function resetDatabaseAndEmailForm() {
+      setSelectedStorageProfileId('builtin:storage:shared-d1');
+
+      document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
+        input.checked = input.value === 'auto';
+      });
+      document.querySelectorAll('input[name="db-pii-location"]').forEach((input) => {
+        input.checked = input.value === 'auto';
+      });
+
+      document.querySelectorAll('input[name="email-setup-choice"]').forEach((input) => {
+        input.checked = input.value === 'later';
+      });
+      document.getElementById('cloudflare-config-form').classList.add('hidden');
+      document.getElementById('resend-config-form').classList.add('hidden');
+      document.getElementById('cloudflare-from-address').value = '';
+      document.getElementById('cloudflare-from-name').value = '';
+      document.getElementById('resend-api-key').value = '';
+      document.getElementById('email-from-address').value = '';
+      document.getElementById('email-from-name').value = '';
+      document.getElementById('btn-continue-email').disabled = false;
+      document.getElementById('btn-continue-email').textContent = t('web.btn.continue');
+    }
+
+    function resetProvisionSection() {
+      if (provisionPollInterval) {
+        clearInterval(provisionPollInterval);
+        provisionPollInterval = null;
+      }
+
+      document.getElementById('provision-status').textContent = t('web.provision.ready');
+      document.getElementById('provision-status').className = 'status-badge status-pending';
+      document.getElementById('resource-preview').classList.remove('hidden');
+      document.getElementById('keys-saved-info').classList.add('hidden');
+      document.getElementById('keys-path').textContent = '';
+      document.getElementById('provision-output').textContent = '';
+      document.getElementById('btn-provision').disabled = false;
+      resetProgressContainer('provision');
+      resetLogToggle('provision-log-toggle', 'provision-log');
+      updateProvisionButtons();
+    }
+
+    function resetDeploySection() {
+      document.getElementById('deploy-status').textContent = t('web.provision.ready');
+      document.getElementById('deploy-status').className = 'status-badge status-pending';
+      document.getElementById('deploy-ready-text').classList.remove('hidden');
+      document.getElementById('deploy-output').textContent = '';
+      document.getElementById('btn-deploy').disabled = false;
+      document.getElementById('btn-deploy').classList.remove('hidden');
+      resetProgressContainer('deploy');
+      resetLogToggle('deploy-log-toggle', 'deploy-log');
+    }
+
+    function resetCompleteSection() {
+      document.getElementById('urls').textContent = '';
+      resetDynamicCompleteSections();
+    }
+
+    function resetDeleteSection() {
+      document.getElementById('delete-output').textContent = '';
+      document.getElementById('delete-result').classList.add('hidden');
+      document.getElementById('delete-result').textContent = '';
+      document.getElementById('delete-options-section').classList.remove('hidden');
+      document.getElementById('btn-confirm-delete').classList.remove('hidden');
+      document.getElementById('btn-confirm-delete').disabled = false;
+      resetProgressContainer('delete');
+      resetLogToggle('delete-log-toggle', 'delete-log');
+    }
+
+    async function resetSetupFlowState() {
+      await resetServerState();
+      resetLoadConfigUI();
+      resetConfigurationForm();
+      resetDatabaseAndEmailForm();
+      resetProvisionSection();
+      resetDeploySection();
+      resetCompleteSection();
+      resetDeleteSection();
+      selectedEnvForDetail = null;
+      selectedEnvForDelete = null;
+      setStep(1);
+    }
+
     // Check prerequisites
     async function checkPrerequisites() {
       const prereqStatus = document.getElementById('prereq-status');
@@ -3159,6 +5513,7 @@ export function getHtmlTemplate(
 
       try {
         const result = await api('/prerequisites');
+        lastPrerequisitesResult = result;
 
         // Clear existing content
         prereqContent.textContent = '';
@@ -3188,6 +5543,7 @@ export function getHtmlTemplate(
           alertDiv.appendChild(code);
 
           prereqContent.appendChild(alertDiv);
+          renderPrereqCapabilities(prereqContent, result);
           return false;
         }
 
@@ -3221,6 +5577,7 @@ export function getHtmlTemplate(
           alertDiv.appendChild(para2);
 
           prereqContent.appendChild(alertDiv);
+          renderPrereqCapabilities(prereqContent, result);
           return false;
         }
 
@@ -3244,6 +5601,7 @@ export function getHtmlTemplate(
         alertDiv.appendChild(p2);
 
         prereqContent.appendChild(alertDiv);
+        renderPrereqCapabilities(prereqContent, result);
 
         const buttonGroup = document.createElement('div');
         buttonGroup.className = 'button-group';
@@ -3273,37 +5631,16 @@ export function getHtmlTemplate(
     }
 
     // Top menu handlers
-    document.getElementById('menu-new-setup').addEventListener('click', () => {
-      showSection('mode');
-    });
-
-    document.getElementById('menu-load-config').addEventListener('click', () => {
-      showSection('loadConfig');
-    });
-
-    // Setup mode handlers
-    document.getElementById('mode-quick').addEventListener('click', () => {
-      setupMode = 'quick';
-      document.getElementById('mode-quick').classList.add('selected');
-      document.getElementById('mode-custom').classList.remove('selected');
-      document.getElementById('advanced-options').classList.add('hidden');
-      setStep(2);
-      showSection('config');
-      updatePreview();
-    });
-
-    document.getElementById('mode-custom').addEventListener('click', () => {
-      setupMode = 'custom';
-      document.getElementById('mode-custom').classList.add('selected');
-      document.getElementById('mode-quick').classList.remove('selected');
+    document.getElementById('menu-new-setup').addEventListener('click', async () => {
+      await resetSetupFlowState();
       document.getElementById('advanced-options').classList.remove('hidden');
       setStep(2);
       showSection('config');
       updatePreview();
     });
 
-    document.getElementById('btn-back-top').addEventListener('click', () => {
-      showSection('topMenu');
+    document.getElementById('menu-load-config').addEventListener('click', () => {
+      showSection('loadConfig');
     });
 
     document.getElementById('btn-back-top-2').addEventListener('click', () => {
@@ -3411,35 +5748,32 @@ export function getHtmlTemplate(
 
       const tenant = loadedConfig.tenant || {
         name: 'default',
-        displayName: 'Default Tenant',
+        displayName: 'Initial Tenant',
         multiTenant: false,
       };
 
-      const components = loadedConfig.components || {
+      const components = {
         api: true,
-        loginUi: true,
-        adminUi: true,
-        saml: false,
-        async: false,
-        vc: false,
+        ...(loadedConfig.components || {}),
+        loginUi: loadedConfig.components?.loginUi ?? true,
+        adminUi: loadedConfig.components?.adminUi ?? true,
+        saml: true,
+        async: true,
+        vc: true,
         bridge: true,
         policy: true,
       };
+      const profiles = loadedConfig.profiles || buildProfilesConfig('builtin:storage:shared-d1');
 
       // Build internal config
       config = {
         env,
-        apiDomain: apiDomain || null,
-        loginUiDomain: loginUiDomain || null,
-        adminUiDomain: adminUiDomain || null,
+        apiDomain: stripProtocol(apiDomain) || null,
+        loginUiDomain: stripProtocol(loginUiDomain) || null,
+        adminUiDomain: stripProtocol(adminUiDomain) || null,
         tenant,
         components,
-      };
-
-      // Helper to remove https:// prefix for display in input fields
-      const stripProtocol = (url) => {
-        if (!url) return '';
-        return url.replace(/^https?:[/][/]/, '');
+        profiles,
       };
 
       // Set form values
@@ -3448,7 +5782,8 @@ export function getHtmlTemplate(
       document.getElementById('login-domain').value = stripProtocol(config.loginUiDomain);
       document.getElementById('admin-domain').value = stripProtocol(config.adminUiDomain);
       document.getElementById('tenant-name').value = config.tenant?.name || 'default';
-      document.getElementById('tenant-display').value = config.tenant?.displayName || 'Default Tenant';
+      document.getElementById('tenant-display').value = config.tenant?.displayName || 'Initial Tenant';
+      document.getElementById('enable-multi-tenant').checked = config.tenant?.multiTenant === true;
       document.getElementById('naked-domain').checked = config.tenant?.nakedDomain || false;
       if (document.getElementById('user-id-format')) {
         document.getElementById('user-id-format').value = config.tenant?.userIdFormat || 'nanoid';
@@ -3456,28 +5791,17 @@ export function getHtmlTemplate(
       if (document.getElementById('primary-tenant')) {
         document.getElementById('primary-tenant').value = config.tenant?.primaryTenant || '';
       }
-
-      // Set component checkboxes
-      if (document.getElementById('comp-login-ui')) {
-        document.getElementById('comp-login-ui').checked = components.loginUi !== false;
-      }
-      if (document.getElementById('comp-admin-ui')) {
-        document.getElementById('comp-admin-ui').checked = components.adminUi !== false;
-      }
-      if (document.getElementById('comp-saml')) {
-        document.getElementById('comp-saml').checked = components.saml === true;
-      }
-      if (document.getElementById('comp-async')) {
-        document.getElementById('comp-async').checked = components.async === true;
-      }
-      if (document.getElementById('comp-vc')) {
-        document.getElementById('comp-vc').checked = components.vc === true;
-      }
+      updateBaseDomainUI();
+      setSelectedStorageProfileId(config.profiles?.defaults?.storage);
+      setTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots || 3);
+      document.getElementById('comp-login-ui').checked = config.components.loginUi !== false;
+      document.getElementById('comp-admin-ui').checked = config.components.adminUi !== false;
+      updateComponentOptionUi();
 
       // Restore domain check UI if custom domain is set
       const loadedBaseDomain = document.getElementById('base-domain').value.trim();
       if (loadedBaseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(loadedBaseDomain)) {
-        document.getElementById('domain-check-row').style.display = 'flex';
+        document.getElementById('domain-check-row').style.display = 'block';
         // Auto-trigger zone check for loaded domain
         setTimeout(() => document.getElementById('check-domain-btn').click(), 300);
       }
@@ -3487,7 +5811,7 @@ export function getHtmlTemplate(
 
       // Show configuration screen for review/editing
       // User can modify settings before proceeding to provision
-      setupMode = 'custom'; // Enable all options for editing
+      // Loaded configurations always expose all component options for editing.
       document.getElementById('advanced-options').classList.remove('hidden');
       setStep(2);
       showSection('config');
@@ -3496,94 +5820,502 @@ export function getHtmlTemplate(
 
     // Configuration handlers
     // Update preview section when any input changes
+    function getCurrentApiDomainUiState() {
+      return computeApiDomainUiState({
+        baseDomain: document.getElementById('base-domain').value.trim(),
+        multiTenantChecked: document.getElementById('enable-multi-tenant').checked,
+        nakedDomainChecked: document.getElementById('naked-domain').checked,
+        tenantName: document.getElementById('tenant-name').value.trim(),
+        primaryTenant: document.getElementById('primary-tenant').value.trim(),
+      });
+    }
+
+    function getCurrentSetupDomainValidationIssues() {
+      const loginUiEnabled = document.getElementById('comp-login-ui')?.checked !== false;
+      const adminUiEnabled = document.getElementById('comp-admin-ui')?.checked !== false;
+      return validateSetupDomainInputs({
+        apiDomain: document.getElementById('base-domain').value.trim(),
+        loginUiDomain: loginUiEnabled ? document.getElementById('login-domain').value.trim() : '',
+        adminUiDomain: adminUiEnabled ? document.getElementById('admin-domain').value.trim() : '',
+        tenantName: document.getElementById('tenant-name').value.trim(),
+      });
+    }
+
+    function renderDomainDepthError(elementId, issue) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      if (!issue) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+
+      el.textContent = issue.suggestion
+        ? issue.message + ' Suggested host: ' + issue.suggestion
+        : issue.message;
+      el.style.display = 'block';
+    }
+
+    function refreshDomainDepthValidation() {
+      const issues = getCurrentSetupDomainValidationIssues();
+      const byField = new Map(issues.map((issue) => [issue.field, issue]));
+
+      renderDomainDepthError('base-domain-depth-error', byField.get('apiDomain'));
+      renderDomainDepthError('login-domain-depth-error', byField.get('loginUiDomain'));
+      renderDomainDepthError('admin-domain-depth-error', byField.get('adminUiDomain'));
+
+      const configureButton = document.getElementById('btn-configure');
+      if (configureButton) {
+        configureButton.disabled = issues.length > 0;
+      }
+
+      return issues;
+    }
+
+    function renderTenantUrlExamples(state, copy) {
+      const body = document.getElementById('tenant-url-examples-body');
+      body.textContent = '';
+
+      state.exampleRows.forEach((row) => {
+        const tr = document.createElement('tr');
+        const th = document.createElement('th');
+        const td = document.createElement('td');
+
+        if (row.kind === 'initial-tenant') {
+          th.textContent = copy.rowInitialTenant(row.tenantName || 'default');
+        } else if (row.kind === 'initial-tenant-explicit') {
+          th.textContent = copy.rowInitialTenantExplicit(row.tenantName || 'default');
+        } else {
+          th.textContent = copy.rowOtherTenant;
+        }
+
+        td.textContent = row.url;
+        tr.appendChild(th);
+        tr.appendChild(td);
+        body.appendChild(tr);
+      });
+    }
+
+    function generateRandomTenantIdInBrowser() {
+      const alphabet = 'abcdefghjkmnpqrstuvwxyz';
+      const bytes = new Uint8Array(12);
+      globalThis.crypto.getRandomValues(bytes);
+      let body = '';
+      for (let i = 0; i < bytes.length; i += 1) {
+        body += alphabet[bytes[i] % alphabet.length];
+      }
+      return body;
+    }
+
+    function refreshApiDomainUi() {
+      const state = getCurrentApiDomainUiState();
+      const copy = getApiDomainUiCopy();
+      const baseDomain = document.getElementById('base-domain').value.trim();
+      const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
+      const primaryTenant = document.getElementById('primary-tenant').value.trim() || tenantName;
+      const singleTenantMode = !state.multiTenantEnabled;
+
+      document.getElementById('tenant-id-label').textContent =
+        singleTenantMode
+          ? copy.singleTenantLabel || copy.initialTenantLabel
+          : copy.initialTenantLabel;
+      document.getElementById('tenant-name-random').textContent =
+        copy.randomTenantButtonLabel || 'Generate Random';
+      document.getElementById('primary-tenant-label').textContent = copy.primaryTenantLabel;
+      document.getElementById('tenant-url-examples-title').textContent = copy.examplesTitle;
+      document.getElementById('tenant-url-examples-header-label').textContent =
+        copy.tableHeaderLabel;
+      document.getElementById('tenant-url-examples-header-url').textContent = copy.tableHeaderUrl;
+
+      if (state.multiTenantHintMode === 'needs-custom-domain') {
+        document.getElementById('multi-tenant-hint').textContent = copy.multiTenantHintNeedsDomain;
+      } else if (state.multiTenantHintMode === 'single-tenant') {
+        document.getElementById('multi-tenant-hint').textContent = copy.multiTenantHintSingleTenant;
+      } else {
+        document.getElementById('multi-tenant-hint').textContent =
+          copy.multiTenantHintEnabled(baseDomain);
+      }
+
+      if (state.showTenantFields && state.multiTenantEnabled) {
+        document.getElementById('tenant-id-hint').textContent = copy.initialTenantHintSubdomain(
+          tenantName,
+          baseDomain,
+          'https://' + tenantName + '.' + baseDomain
+        );
+      } else {
+        document.getElementById('tenant-id-hint').textContent =
+          singleTenantMode
+            ? copy.singleTenantHintGeneric || copy.initialTenantHintGeneric
+            : copy.initialTenantHintGeneric;
+      }
+
+      document.getElementById('primary-tenant-hint').textContent = copy.primaryTenantHint(
+        baseDomain || 'example.com',
+        primaryTenant,
+        'https://' + (baseDomain || 'example.com')
+      );
+
+      if (state.nakedDomainHintMode === 'omit-tenant') {
+        document.getElementById('naked-domain-hint').textContent = copy.nakedDomainHintOmit(
+          primaryTenant,
+          baseDomain,
+          'https://' + (baseDomain || 'example.com')
+        );
+      } else if (state.nakedDomainHintMode === 'include-tenant') {
+        document.getElementById('naked-domain-hint').textContent = copy.nakedDomainHintInclude(
+          tenantName,
+          baseDomain,
+          'https://' + tenantName + '.' + baseDomain
+        );
+      } else {
+        document.getElementById('naked-domain-hint').textContent = '';
+      }
+
+      renderTenantUrlExamples(state, copy);
+    }
+
+    window.refreshApiDomainUi = refreshApiDomainUi;
+    window.renderDeployManualWildcardWarning = renderDeployManualWildcardWarning;
+
+    function getOriginFromPreviewUrl(value) {
+      try {
+        return new URL(value).origin;
+      } catch {
+        return '';
+      }
+    }
+
+    function hostWithinBaseDomain(host, baseDomain) {
+      if (!host || !baseDomain) return false;
+      const normalizedHost = host.toLowerCase();
+      const normalizedBase = baseDomain.toLowerCase();
+      return normalizedHost === normalizedBase || normalizedHost.endsWith('.' + normalizedBase);
+    }
+
+    function normalizeDomainHostname(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      try {
+        return new URL(raw.match(/^https?:\\/\\//i) ? raw : 'https://' + raw).hostname.toLowerCase();
+      } catch {
+        return raw
+          .replace(/^https?:\\/\\//i, '')
+          .replace(/\\/.*$/, '')
+          .replace(/[.]+$/, '')
+          .toLowerCase();
+      }
+    }
+
+    function isImmediateSubdomainOfBaseDomain(host, baseDomain) {
+      if (!host || !baseDomain || !host.endsWith('.' + baseDomain)) return false;
+      const prefix = host.slice(0, -baseDomain.length - 1);
+      return prefix.length > 0 && !prefix.includes('.');
+    }
+
+    function isRoutedByMultiTenantRouterHost(host, baseDomain) {
+      return host === baseDomain || isImmediateSubdomainOfBaseDomain(host, baseDomain);
+    }
+
+    function uiDomainRequiresOwnRoute(domain) {
+      const uiHost = normalizeDomainHostname(domain);
+      if (!uiHost) return false;
+
+      const apiHost = normalizeDomainHostname(document.getElementById('base-domain').value);
+      if (apiHost && uiHost === apiHost) return false;
+
+      const domainUiState = getCurrentApiDomainUiState();
+      if (domainUiState.multiTenantEnabled && apiHost) {
+        return !isRoutedByMultiTenantRouterHost(uiHost, apiHost);
+      }
+
+      return true;
+    }
+
+    function describeAdminPreviewMode(mode) {
+      if (mode === 'same-origin') {
+        return 'same-origin - relative Admin API calls on the same origin';
+      }
+      if (mode === 'same-site-cross-origin') {
+        return 'same-site-cross-origin - direct Admin API calls with credentialed CORS';
+      }
+      return 'cross-site-proxy - Admin UI Worker BFF via Service Binding';
+    }
+
+    function resolveAdminPreviewMode(apiUrl, adminUrl, baseDomain) {
+      const apiOrigin = getOriginFromPreviewUrl(apiUrl);
+      const adminOrigin = getOriginFromPreviewUrl(adminUrl);
+      if (apiOrigin && adminOrigin && apiOrigin === adminOrigin) {
+        return 'same-origin';
+      }
+
+      try {
+        const apiHost = new URL(apiUrl).hostname;
+        const adminHost = new URL(adminUrl).hostname;
+        if (
+          hostWithinBaseDomain(apiHost, baseDomain) &&
+          hostWithinBaseDomain(adminHost, baseDomain)
+        ) {
+          return 'same-site-cross-origin';
+        }
+      } catch {
+        // Fall through to proxy mode for incomplete preview input.
+      }
+
+      return 'cross-site-proxy';
+    }
+
     function updatePreview() {
       const env = document.getElementById('env').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '{env}';
       const baseDomain = document.getElementById('base-domain').value.trim();
-      const nakedDomain = document.getElementById('naked-domain').checked;
-      const tenantName = document.getElementById('tenant-name').value.trim();
+      const domainUiState = getCurrentApiDomainUiState();
+      const multiTenantEnabled = domainUiState.multiTenantEnabled;
+      const nakedDomain = multiTenantEnabled && document.getElementById('naked-domain').checked;
+      const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
+      const loginUiEnabled = document.getElementById('comp-login-ui')?.checked !== false;
+      const adminUiEnabled = document.getElementById('comp-admin-ui')?.checked !== false;
+      updateComponentOptionUi();
+      refreshDomainDepthValidation();
 
-      // Components - build list based on mode and selections
-      const components = ['API'];
-      if (setupMode === 'quick') {
-        components.push('Login UI', 'Admin UI');
-      } else {
-        if (document.getElementById('comp-login-ui').checked) components.push('Login UI');
-        if (document.getElementById('comp-admin-ui').checked) components.push('Admin UI');
-        if (document.getElementById('comp-saml').checked) components.push('SAML IdP');
-        if (document.getElementById('comp-async').checked) components.push('Device Flow/CIBA');
-        if (document.getElementById('comp-vc').checked) components.push('Verifiable Credentials');
-      }
-      document.getElementById('preview-components').textContent = components.join(', ');
+      // Components - build list based on selections
+      const components = [
+        'API',
+        ...(loginUiEnabled ? ['Login UI'] : []),
+        ...(adminUiEnabled ? ['Admin UI'] : []),
+      ];
+      const previewComponents = document.getElementById('preview-components');
+      previewComponents.textContent = '';
+      components.forEach((component) => {
+        const badge = document.createElement('span');
+        badge.className = 'preview-component-badge';
+        badge.textContent = component;
+        previewComponents.appendChild(badge);
+      });
 
-      // Workers
-      document.getElementById('preview-workers').textContent = env + '-ar-router, ' + env + '-ar-auth, ...';
+      const setPreviewValue = (element, value, note) => {
+        element.textContent = '';
+        const main = document.createElement('span');
+        main.textContent = value;
+        element.appendChild(main);
+        if (note) {
+          const noteEl = document.createElement('span');
+          noteEl.className = 'infra-value-note';
+          noteEl.textContent = note;
+          element.appendChild(noteEl);
+        }
+      };
 
       // Generate domains with account subdomain
       const workersDomain = workersSubdomain
         ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
         : env + '-ar-router.workers.dev';
-      // Note: Pages uses {project}.pages.dev format (no account subdomain, unlike Workers)
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
+      const loginUiWorkerDomain = workersSubdomain
+        ? env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-login-ui.workers.dev';
+      const adminUiWorkerDomain = workersSubdomain
+        ? env + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-admin-ui.workers.dev';
 
       // Issuer URL
       // Note: Tenant subdomain is only supported with custom domains, NOT workers.dev
       // Workers.dev doesn't support wildcard subdomains, so tenant prefix cannot be used
 
-      if (baseDomain) {
-        // Custom domain - tenant prefix can be used
+      if (multiTenantEnabled) {
         if (nakedDomain) {
           document.getElementById('preview-issuer').textContent = 'https://' + baseDomain;
         } else {
-          // Multi-tenant: show placeholder or actual tenant name
-          const tenantDisplay = tenantName || '{tenant}';
-          document.getElementById('preview-issuer').textContent = 'https://' + tenantDisplay + '.' + baseDomain;
+          document.getElementById('preview-issuer').textContent =
+            'https://' + tenantName + '.' + baseDomain;
         }
+      } else if (baseDomain) {
+        document.getElementById('preview-issuer').textContent = 'https://' + baseDomain;
       } else {
         // Workers.dev - no tenant prefix (wildcard subdomains not supported)
         document.getElementById('preview-issuer').textContent = 'https://' + workersDomain;
       }
 
-      // Login UI - check if component is enabled (in custom mode)
-      const loginUiEnabled = document.getElementById('comp-login-ui').checked;
+      document.getElementById('tenant-url-examples').style.display =
+        domainUiState.showExamples ? 'block' : 'none';
+      refreshApiDomainUi();
+
       const previewLogin = document.getElementById('preview-login');
-      if (!loginUiEnabled) {
-        previewLogin.textContent = '(Not deployed)';
-        previewLogin.style.color = 'var(--text-muted)';
-      } else if (loginDomain) {
+      if (loginDomain) {
         previewLogin.textContent = 'https://' + loginDomain;
         previewLogin.style.color = '';
       } else {
-        previewLogin.textContent = 'https://' + loginPagesDomain;
+        previewLogin.textContent = 'https://' + loginUiWorkerDomain;
         previewLogin.style.color = '';
       }
-      document.getElementById('login-default').textContent = loginPagesDomain;
+      document.getElementById('login-default').textContent = loginUiWorkerDomain;
 
-      // Admin UI - check if component is enabled (in custom mode)
-      const adminUiEnabled = document.getElementById('comp-admin-ui').checked;
       const previewAdmin = document.getElementById('preview-admin');
-      if (!adminUiEnabled) {
-        previewAdmin.textContent = '(Not deployed)';
-        previewAdmin.style.color = 'var(--text-muted)';
-      } else if (adminDomain) {
+      if (adminDomain) {
         previewAdmin.textContent = 'https://' + adminDomain;
         previewAdmin.style.color = '';
       } else {
-        previewAdmin.textContent = 'https://' + adminPagesDomain;
+        previewAdmin.textContent = 'https://' + adminUiWorkerDomain;
         previewAdmin.style.color = '';
       }
-      document.getElementById('admin-default').textContent = adminPagesDomain;
+      document.getElementById('admin-default').textContent = adminUiWorkerDomain;
+
+      const apiPreviewUrl = document.getElementById('preview-issuer').textContent.trim();
+      const adminPreviewUrl = previewAdmin.textContent.trim();
+      const adminApiModeRow = document.getElementById('preview-admin-api-mode-row');
+      const adminApiModeEl = document.getElementById('preview-admin-api-mode');
+      if (adminUiEnabled && adminPreviewUrl.startsWith('https://')) {
+        adminApiModeRow.style.display = '';
+        adminApiModeEl.textContent = describeAdminPreviewMode(
+          resolveAdminPreviewMode(apiPreviewUrl, adminPreviewUrl, baseDomain)
+        );
+      } else {
+        adminApiModeRow.style.display = 'none';
+      }
+
+      // === Multi-tenant expansion preview ===
+      const previewMtSection = document.getElementById('preview-multi-tenant-section');
+      const previewIssuerRow = document.getElementById('preview-issuer-row');
+      const previewLoginRow  = document.getElementById('preview-login-row');
+      const previewAdminRow  = document.getElementById('preview-admin-row');
+
+      if (multiTenantEnabled && baseDomain) {
+        // Hide single-tenant rows and show the multi-tenant section
+        previewIssuerRow.style.display = 'none';
+        previewLoginRow.style.display  = 'none';
+        previewAdminRow.style.display  = 'none';
+        adminApiModeRow.style.display = 'none';
+        previewMtSection.style.display = '';
+
+        // Base URL of the first tenant
+        const firstBase = nakedDomain
+          ? 'https://' + baseDomain
+          : 'https://' + tenantName + '.' + baseDomain;
+        const otherBase = 'https://{tenantName}.' + baseDomain;
+
+        // Render tenant cards (prevent XSS with createElement + textContent)
+        const mtRowsContainer = document.getElementById('preview-mt-rows');
+        mtRowsContainer.textContent = '';
+
+        const makeUrlRow = (label, url) => {
+          const row = document.createElement('div');
+          row.className = 'preview-tenant-row';
+          const lbl = document.createElement('span');
+          lbl.className = 'preview-tenant-label';
+          lbl.textContent = label;
+          const val = document.createElement('span');
+          val.className = 'preview-tenant-url';
+          val.textContent = url;
+          row.appendChild(lbl);
+          row.appendChild(val);
+          return row;
+        };
+
+        const makeBlock = (tenantLabel, baseUrl) => {
+          const block = document.createElement('div');
+          block.className = 'preview-tenant-block';
+          const name = document.createElement('div');
+          name.className = 'preview-tenant-name';
+          name.textContent = tenantLabel;
+          block.appendChild(name);
+          block.appendChild(makeUrlRow('Issuer:', baseUrl));
+          block.appendChild(makeUrlRow('Login URL:', baseUrl + '/login'));
+          block.appendChild(makeUrlRow('OIDC Discovery:', baseUrl + '/.well-known/openid-configuration'));
+          return block;
+        };
+
+        mtRowsContainer.appendChild(makeBlock(t('web.preview.firstTenant', { name: tenantName }), firstBase));
+        mtRowsContainer.appendChild(makeBlock(t('web.preview.otherTenants'), otherBase));
+
+        // Login UI deployment origin. Tenant login remains canonical on each issuer host.
+        const loginPagesRow = document.getElementById('preview-login-pages-row');
+        const tenantDiscoverRow = document.getElementById('preview-tenant-discover-row');
+        const loginUiBase = loginDomain ? loginDomain : loginUiWorkerDomain;
+        loginPagesRow.style.display = loginUiEnabled ? '' : 'none';
+        setPreviewValue(
+          document.getElementById('preview-login-pages'),
+          'https://' + loginUiBase,
+          t('web.preview.loginUiOriginNote')
+        );
+        // Tenant discovery uses the shared Login UI custom domain when one is configured.
+        // Without a Login UI custom domain, the router-owned base domain remains the fallback.
+        tenantDiscoverRow.style.display = loginUiEnabled ? '' : 'none';
+        document.getElementById('preview-tenant-discover').textContent =
+          'https://' + (loginDomain || baseDomain) + '/discover';
+
+        // Admin UI access target
+        const adminAccessRow = document.getElementById('preview-admin-access-row');
+        const adminAccessEl  = document.getElementById('preview-admin-access');
+        adminAccessRow.style.display = adminUiEnabled ? '' : 'none';
+        const adminSameAsApi = adminDomain !== '' && adminDomain === baseDomain;
+        if (adminSameAsApi) {
+          setPreviewValue(adminAccessEl, firstBase + '/admin/info', t('web.preview.viaApiProxy'));
+        } else if (adminDomain) {
+          adminAccessEl.textContent = 'https://' + adminDomain + '/admin/info';
+        } else {
+          adminAccessEl.textContent = 'https://' + adminUiWorkerDomain + '/admin/info';
+        }
+
+        // Detect invalid settings and show a warning
+        // sameAsApi with nakedDomain=false makes API calls to the naked domain return 404
+        const loginSameAsApi = loginDomain !== '' && loginDomain === baseDomain;
+        const adminSameAsApi2 = adminDomain !== '' && adminDomain === baseDomain;
+        const hasConflict =
+          ((loginUiEnabled && loginSameAsApi) || (adminUiEnabled && adminSameAsApi2)) &&
+          !nakedDomain;
+
+        const warningDiv = document.getElementById('preview-config-warning');
+        if (hasConflict) {
+          const conflictUI =
+            loginUiEnabled && loginSameAsApi ? t('web.comp.loginUi') : t('web.comp.adminUi');
+          warningDiv.style.display = '';
+          document.getElementById('preview-warning-message').textContent =
+            t('web.preview.conflictWarningMsg', { conflictUI, baseDomain });
+          document.getElementById('preview-warning-action').textContent =
+            t('web.preview.conflictActionMsg', { conflictUI, tenantName, baseDomain });
+        } else {
+          warningDiv.style.display = 'none';
+        }
+
+      } else {
+        // Single-tenant mode: show existing rows
+        previewIssuerRow.style.display = '';
+        previewLoginRow.style.display  = loginUiEnabled ? '' : 'none';
+        previewAdminRow.style.display  = adminUiEnabled ? '' : 'none';
+        previewMtSection.style.display = 'none';
+      }
+    }
+
+    function updateComponentOptionUi() {
+      const loginUiEnabled = document.getElementById('comp-login-ui')?.checked !== false;
+      const adminUiEnabled = document.getElementById('comp-admin-ui')?.checked !== false;
+      const loginDomainRow = document.getElementById('login-domain-row');
+      const adminDomainRow = document.getElementById('admin-domain-row');
+      const loginDomainInput = document.getElementById('login-domain');
+      const adminDomainInput = document.getElementById('admin-domain');
+
+      if (loginDomainRow) loginDomainRow.style.display = loginUiEnabled ? '' : 'none';
+      if (adminDomainRow) adminDomainRow.style.display = adminUiEnabled ? '' : 'none';
+      if (loginDomainInput) loginDomainInput.disabled = !loginUiEnabled;
+      if (adminDomainInput) adminDomainInput.disabled = !adminUiEnabled;
     }
 
     // Attach event listeners to all inputs
-    ['env', 'base-domain', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain', 'comp-login-ui', 'comp-admin-ui', 'comp-saml', 'comp-async', 'comp-vc'].forEach(id => {
+    ['env', 'base-domain', 'enable-multi-tenant', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain', 'comp-login-ui', 'comp-admin-ui'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener('input', updatePreview);
         el.addEventListener('change', updatePreview);
       }
+    });
+
+    document.getElementById('tenant-name-random').addEventListener('click', () => {
+      const tenantNameInput = document.getElementById('tenant-name');
+      if (tenantNameInput.disabled) {
+        return;
+      }
+
+      tenantNameInput.value = generateRandomTenantIdInBrowser();
+      updatePreview();
     });
 
     // Validate environment name on blur
@@ -3615,6 +6347,9 @@ export function getHtmlTemplate(
     // Update UI based on base domain presence
     function updateBaseDomainUI() {
       const baseDomain = document.getElementById('base-domain').value.trim();
+      const domainUiState = getCurrentApiDomainUiState();
+      const multiTenantCheckbox = document.getElementById('enable-multi-tenant');
+      const multiTenantLabel = document.getElementById('multi-tenant-label');
       const nakedDomainCheckbox = document.getElementById('naked-domain');
       const nakedDomainLabel = document.getElementById('naked-domain-label');
       const nakedDomainHint = document.getElementById('naked-domain-hint');
@@ -3622,38 +6357,56 @@ export function getHtmlTemplate(
       const tenantWorkersNote = document.getElementById('tenant-workers-note');
       const tenantFields = document.getElementById('tenant-fields');
       const tenantNameInput = document.getElementById('tenant-name');
+      const tenantNameRandomButton = document.getElementById('tenant-name-random');
       const primaryTenantRow = document.getElementById('primary-tenant-row');
       const primaryTenantInput = document.getElementById('primary-tenant');
 
       if (baseDomain) {
-        // Custom domain - enable tenant subdomain options
-        nakedDomainCheckbox.disabled = false;
-        nakedDomainLabel.style.opacity = '1';
-        nakedDomainHint.style.display = 'block';
+        multiTenantCheckbox.disabled = false;
+        multiTenantLabel.style.opacity = '1';
         workersDevNote.style.display = 'none';
-        tenantWorkersNote.style.display = 'none';
-        tenantNameInput.disabled = false;
-        tenantNameInput.readOnly = false;
-        // Show tenant fields if naked domain is not checked
-        if (!nakedDomainCheckbox.checked) {
-          tenantFields.style.display = 'block';
-        }
-        primaryTenantRow.style.display = nakedDomainCheckbox.checked ? 'block' : 'none';
       } else {
         // Workers.dev - tenant subdomains not supported
+        multiTenantCheckbox.checked = false;
+        multiTenantCheckbox.disabled = true;
+        multiTenantLabel.style.opacity = '0.5';
         nakedDomainCheckbox.disabled = true;
         nakedDomainCheckbox.checked = false;
         nakedDomainLabel.style.opacity = '0.5';
+        primaryTenantInput.value = '';
+      }
+
+      if (domainUiState.showNakedDomainControls) {
+        nakedDomainCheckbox.disabled = false;
+        nakedDomainLabel.style.display = 'flex';
+        nakedDomainLabel.style.opacity = '1';
+        nakedDomainHint.style.display = 'block';
+      } else {
+        nakedDomainCheckbox.disabled = true;
+        nakedDomainCheckbox.checked = false;
+        nakedDomainLabel.style.display = 'none';
         nakedDomainHint.style.display = 'none';
-        workersDevNote.style.display = 'block';
-        tenantWorkersNote.style.display = 'block';
-        tenantFields.style.display = 'block';
-        tenantNameInput.value = 'default';
+      }
+
+      workersDevNote.style.display = domainUiState.showWorkersDevNote ? 'block' : 'none';
+      tenantWorkersNote.style.display = domainUiState.showWorkersDevNote ? 'block' : 'none';
+      tenantFields.style.display = domainUiState.showTenantFields ? 'block' : 'none';
+      primaryTenantRow.style.display = domainUiState.showPrimaryTenantRow ? 'block' : 'none';
+
+      if (domainUiState.showTenantFields) {
+        tenantNameInput.disabled = false;
+        tenantNameInput.readOnly = false;
+        tenantNameRandomButton.disabled = false;
+      } else {
         tenantNameInput.disabled = true;
         tenantNameInput.readOnly = true;
-        primaryTenantInput.value = '';
-        primaryTenantRow.style.display = 'none';
+        tenantNameRandomButton.disabled = true;
       }
+
+      document.getElementById('base-domain').placeholder = domainUiState.baseDomainPlaceholder;
+      document.getElementById('tenant-url-examples').style.display =
+        domainUiState.showExamples ? 'block' : 'none';
+      refreshApiDomainUi();
     }
 
     // Base domain change - update UI for tenant subdomain options
@@ -3663,13 +6416,18 @@ export function getHtmlTemplate(
       // Show/hide domain check row
       const domainCheckRow = document.getElementById('domain-check-row');
       const baseDomain = document.getElementById('base-domain').value.trim();
-      if (baseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(baseDomain)) {
-        domainCheckRow.style.display = 'flex';
+      if (baseDomain && isValidCustomDomain(baseDomain)) {
+        domainCheckRow.style.display = 'block';
       } else {
         domainCheckRow.style.display = 'none';
-        document.getElementById('domain-check-status').textContent = '';
+        document.getElementById('domain-check-status').replaceChildren();
         document.getElementById('custom-domain-binding-row').style.display = 'none';
       }
+    });
+
+    document.getElementById('enable-multi-tenant').addEventListener('change', (e) => {
+      updateBaseDomainUI();
+      updatePreview();
     });
 
     // Check Domain button handler
@@ -3680,8 +6438,7 @@ export function getHtmlTemplate(
 
       const statusEl = document.getElementById('domain-check-status');
       const bindingRow = document.getElementById('custom-domain-binding-row');
-      statusEl.textContent = t('domain.checkingZone', { domain });
-      statusEl.style.color = 'var(--text-muted)';
+      statusEl.replaceChildren(createAlert('info', t('domain.checkingZone', { domain })));
       domainZoneId = null;
 
       try {
@@ -3689,28 +6446,131 @@ export function getHtmlTemplate(
           method: 'POST',
           body: { domain },
         });
+        const zoneName = result.zone?.name || result.zoneName || domain;
+        const diagnosticAlert = createZoneDiagnosticAlert(result, {
+          domain,
+          zone: zoneName,
+          onRetry: () => document.getElementById('check-domain-btn').click(),
+        });
 
-        if (result.found) {
-          statusEl.textContent = '✓ ' + t('domain.zoneFound', { zone: result.zone.name, status: result.zone.status });
-          statusEl.style.color = 'var(--success, #22c55e)';
-          bindingRow.style.display = 'flex';
-          domainZoneId = result.zone.id;
-        } else {
-          const errorMsg = result.error
-            ? '⚠ ' + t('domain.zoneCheckFailed') + ': ' + result.error
-            : '⚠ ' + t('domain.zoneNotFound', { zone: domain });
-          statusEl.textContent = errorMsg;
-          statusEl.style.color = 'var(--warning, #d97706)';
-          bindingRow.style.display = 'none';
-          domainZoneId = null;
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
         }
+
+        bindingRow.style.display = result.diagnostic?.allowBinding ? 'flex' : 'none';
+        domainZoneId = result.found && result.zone ? result.zone.id : null;
       } catch (e) {
-        statusEl.textContent = '⚠ ' + t('domain.zoneCheckFailed');
-        statusEl.style.color = 'var(--warning, #d97706)';
+        const diagnosticAlert = createZoneDiagnosticAlert(
+          {
+            found: false,
+            zoneName: domain,
+            diagnostic: {
+              code: 'api_error',
+              severity: 'error',
+              allowBinding: false,
+              actions: ['retry_check', 'reload_page'],
+            },
+          },
+          {
+            domain,
+            zone: domain,
+            onRetry: () => document.getElementById('check-domain-btn').click(),
+          }
+        );
+
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
+        }
         bindingRow.style.display = 'none';
         domainZoneId = null;
       }
     });
+
+    async function checkUiCustomDomainZone(field, options) {
+      const inputId = field === 'login' ? 'login-domain' : 'admin-domain';
+      const statusId = field === 'login' ? 'login-domain-zone-status' : 'admin-domain-zone-status';
+      const label = field === 'login' ? 'Login UI' : 'Admin UI';
+      const domain = document.getElementById(inputId).value.trim();
+      const statusEl = document.getElementById(statusId);
+      const blockOnFailure = options?.blockOnFailure === true;
+
+      statusEl.replaceChildren();
+      if (!domain || !isValidCustomDomain(domain) || !uiDomainRequiresOwnRoute(domain)) {
+        return true;
+      }
+
+      statusEl.replaceChildren(
+        createAlert(
+          'info',
+          label + ': ' + t('domain.checkingZone', { domain })
+        )
+      );
+
+      try {
+        const result = await api('/cloudflare/check-zone', {
+          method: 'POST',
+          body: { domain },
+        });
+        const zoneName = result.zone?.name || result.zoneName || domain;
+        const diagnosticAlert = createZoneDiagnosticAlert(result, {
+          domain,
+          zone: zoneName,
+          onRetry: () => checkUiCustomDomainZone(field, options),
+        });
+
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
+        }
+
+        const ok = Boolean(result.found && result.zone);
+        if (!ok && blockOnFailure) {
+          statusEl.appendChild(
+            createAlert(
+              'error',
+              label +
+                ' custom domain requires a direct Worker custom-domain route. Confirm that the Cloudflare zone is available before continuing.'
+            )
+          );
+        }
+        return ok || !blockOnFailure;
+      } catch (e) {
+        const diagnosticAlert = createZoneDiagnosticAlert(
+          {
+            found: false,
+            zoneName: domain,
+            diagnostic: {
+              code: 'api_error',
+              severity: 'error',
+              allowBinding: false,
+              actions: ['retry_check', 'reload_page'],
+            },
+          },
+          {
+            domain,
+            zone: domain,
+            onRetry: () => checkUiCustomDomainZone(field, options),
+          }
+        );
+
+        statusEl.replaceChildren();
+        if (diagnosticAlert) {
+          statusEl.appendChild(diagnosticAlert);
+        }
+        if (blockOnFailure) {
+          statusEl.appendChild(
+            createAlert(
+              'error',
+              label +
+                ' custom domain route cannot be verified right now. Retry the zone check before continuing.'
+            )
+          );
+        }
+        return !blockOnFailure;
+      }
+    }
 
     // Auto-check domain on blur (debounced)
     let domainCheckTimer;
@@ -3718,68 +6578,67 @@ export function getHtmlTemplate(
       clearTimeout(domainCheckTimer);
       domainCheckTimer = setTimeout(() => {
         const domain = document.getElementById('base-domain').value.trim();
-        if (domain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(domain)) {
+        if (domain && isValidCustomDomain(domain)) {
           document.getElementById('check-domain-btn').click();
         }
       }, 500);
+    });
+
+    let loginDomainCheckTimer;
+    let adminDomainCheckTimer;
+    document.getElementById('login-domain').addEventListener('blur', () => {
+      clearTimeout(loginDomainCheckTimer);
+      loginDomainCheckTimer = setTimeout(() => {
+        checkUiCustomDomainZone('login', { blockOnFailure: false });
+      }, 500);
+    });
+    document.getElementById('admin-domain').addEventListener('blur', () => {
+      clearTimeout(adminDomainCheckTimer);
+      adminDomainCheckTimer = setTimeout(() => {
+        checkUiCustomDomainZone('admin', { blockOnFailure: false });
+      }, 500);
+    });
+
+    ['login-domain', 'admin-domain', 'base-domain', 'enable-multi-tenant', 'naked-domain'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        document.getElementById('login-domain-zone-status').replaceChildren();
+        document.getElementById('admin-domain-zone-status').replaceChildren();
+      });
+      el.addEventListener('change', () => {
+        document.getElementById('login-domain-zone-status').replaceChildren();
+        document.getElementById('admin-domain-zone-status').replaceChildren();
+      });
     });
 
     // Initial UI state
     updateBaseDomainUI();
 
     // Naked domain toggle - show/hide tenant name field and update placeholder
-    document.getElementById('naked-domain').addEventListener('change', (e) => {
-      const tenantFields = document.getElementById('tenant-fields');
-      const primaryTenantRow = document.getElementById('primary-tenant-row');
-      const baseDomainInput = document.getElementById('base-domain');
-      if (e.target.checked) {
-        tenantFields.style.display = 'none';
-        primaryTenantRow.style.display = 'block';
-        baseDomainInput.placeholder = 'example.com';
-      } else {
-        tenantFields.style.display = 'block';
-        primaryTenantRow.style.display = 'none';
-        baseDomainInput.placeholder = 'oidc.example.com';
-      }
-      updatePreview();
-    });
-
-    // Login UI component toggle - grey out domain settings when unchecked
-    document.getElementById('comp-login-ui').addEventListener('change', (e) => {
-      const loginDomainRow = document.getElementById('login-domain-row');
-      const loginDomainInput = document.getElementById('login-domain');
-      if (e.target.checked) {
-        loginDomainRow.style.opacity = '1';
-        loginDomainInput.disabled = false;
-      } else {
-        loginDomainRow.style.opacity = '0.4';
-        loginDomainInput.disabled = true;
-        loginDomainInput.value = '';
-      }
-      updatePreview();
-    });
-
-    // Admin UI component toggle - grey out domain settings when unchecked
-    document.getElementById('comp-admin-ui').addEventListener('change', (e) => {
-      const adminDomainRow = document.getElementById('admin-domain-row');
-      const adminDomainInput = document.getElementById('admin-domain');
-      if (e.target.checked) {
-        adminDomainRow.style.opacity = '1';
-        adminDomainInput.disabled = false;
-      } else {
-        adminDomainRow.style.opacity = '0.4';
-        adminDomainInput.disabled = true;
-        adminDomainInput.value = '';
-      }
+    document.getElementById('naked-domain').addEventListener('change', () => {
+      updateBaseDomainUI();
       updatePreview();
     });
 
     document.getElementById('btn-back-mode').addEventListener('click', () => {
       setStep(1);
-      showSection('mode');
+      showSection('topMenu');
     });
 
     document.getElementById('btn-configure').addEventListener('click', async () => {
+      const domainDepthIssues = refreshDomainDepthValidation();
+      if (domainDepthIssues.length > 0) {
+        const firstIssue = domainDepthIssues[0];
+        const focusMap = {
+          apiDomain: 'base-domain',
+          loginUiDomain: 'login-domain',
+          adminUiDomain: 'admin-domain',
+        };
+        document.getElementById(focusMap[firstIssue.field])?.focus();
+        return;
+      }
+
       // Get and validate environment name
       const envRaw = document.getElementById('env').value.trim();
       if (!envRaw || !validateEnvName(envRaw)) {
@@ -3811,22 +6670,35 @@ export function getHtmlTemplate(
         console.warn('Environment check failed:', e);
       } finally {
         configureBtn.textContent = originalText;
-        configureBtn.disabled = false;
+        configureBtn.disabled = refreshDomainDepthValidation().length > 0;
       }
 
       const baseDomain = document.getElementById('base-domain').value.trim();
       const hasCustomApiDomain = !!baseDomain;
-      const nakedDomain = hasCustomApiDomain && document.getElementById('naked-domain').checked;
-      const tenantName = hasCustomApiDomain
+      const multiTenantEnabled =
+        hasCustomApiDomain && document.getElementById('enable-multi-tenant').checked;
+      const nakedDomain = multiTenantEnabled && document.getElementById('naked-domain').checked;
+      const tenantName = multiTenantEnabled
         ? (document.getElementById('tenant-name').value.trim() || 'default')
         : 'default';
-      const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Default Tenant';
+      const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Initial Tenant';
       const userIdFormat = document.getElementById('user-id-format').value || 'nanoid';
-      const primaryTenant = hasCustomApiDomain && nakedDomain
+      const primaryTenant = multiTenantEnabled && nakedDomain
         ? (document.getElementById('primary-tenant').value.trim() || undefined)
         : undefined;
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
+      const loginUiEnabled = document.getElementById('comp-login-ui')?.checked !== false;
+      const adminUiEnabled = document.getElementById('comp-admin-ui')?.checked !== false;
+
+      const loginZoneOk =
+        !loginUiEnabled || (await checkUiCustomDomainZone('login', { blockOnFailure: true }));
+      const adminZoneOk =
+        !adminUiEnabled || (await checkUiCustomDomainZone('admin', { blockOnFailure: true }));
+      if (!loginZoneOk || !adminZoneOk) {
+        document.getElementById(!loginZoneOk ? 'login-domain' : 'admin-domain').focus();
+        return;
+      }
 
       config = {
         env,
@@ -3836,22 +6708,23 @@ export function getHtmlTemplate(
         tenant: {
           name: tenantName,
           displayName: tenantDisplayName,
-          multiTenant: hasCustomApiDomain,
-          baseDomain: hasCustomApiDomain ? baseDomain : undefined,
+          multiTenant: multiTenantEnabled,
+          baseDomain: multiTenantEnabled ? baseDomain : undefined,
           nakedDomain: nakedDomain,
           userIdFormat: userIdFormat,
           primaryTenant: primaryTenant,
         },
         components: {
           api: true,
-          loginUi: setupMode === 'quick' || document.getElementById('comp-login-ui').checked,
-          adminUi: setupMode === 'quick' || document.getElementById('comp-admin-ui').checked,
-          saml: setupMode === 'custom' && document.getElementById('comp-saml').checked,
-          async: setupMode === 'custom' && document.getElementById('comp-async').checked,
-          vc: setupMode === 'custom' && document.getElementById('comp-vc').checked,
+          loginUi: loginUiEnabled,
+          adminUi: adminUiEnabled,
+          saml: true,
+          async: true,
+          vc: true,
           bridge: true, // Standard component
           policy: true, // Standard component
         },
+        profiles: buildProfilesConfig('builtin:storage:shared-d1'),
       };
 
       // Create default config with component settings
@@ -3867,12 +6740,14 @@ export function getHtmlTemplate(
           components: config.components,
           zoneId: domainZoneId || null,
           customDomainBinding: config.apiDomain ? customDomainBinding : false,
+          profiles: config.profiles,
         },
       });
 
       // Update resource preview with the selected env
       updateResourcePreview(env);
       updateProvisionButtons();
+      renderDeployManualWildcardWarning();
 
       // Go to database configuration step
       setStep(4);
@@ -3893,6 +6768,7 @@ export function getHtmlTemplate(
 
     document.getElementById('btn-continue-database').addEventListener('click', () => {
       // Get selected values
+      const storageProfileId = getSelectedStorageProfileId();
       const coreLocation = document.querySelector('input[name="db-core-location"]:checked').value;
       const piiLocation = document.querySelector('input[name="db-pii-location"]:checked').value;
 
@@ -3909,6 +6785,22 @@ export function getHtmlTemplate(
         core: parseDbLocation(coreLocation),
         pii: parseDbLocation(piiLocation),
       };
+      config.tenantD1 = {
+        ...(config.tenantD1 || {}),
+        preallocatedSlots: getTenantD1PreallocatedSlots(),
+      };
+      config.profiles = {
+        ...(config.profiles || buildProfilesConfig(storageProfileId)),
+        defaults: {
+          ...((config.profiles && config.profiles.defaults) || {}),
+          storage: storageProfileId,
+          audit: config.profiles?.defaults?.audit || 'builtin:audit:standard',
+          residency: config.profiles?.defaults?.residency || 'builtin:residency:default',
+        },
+        registry: config.profiles?.registry || { backend: 'kv' },
+        references: config.profiles?.references || { hyperdrive: {} },
+        seed: config.profiles?.seed || { storage: [], audit: [], residency: [] },
+      };
 
       // Proceed to email configuration
       setStep(5);
@@ -3919,11 +6811,17 @@ export function getHtmlTemplate(
     // Toggle resend config form visibility
     document.querySelectorAll('input[name="email-setup-choice"]').forEach(radio => {
       radio.addEventListener('change', () => {
+        const cloudflareForm = document.getElementById('cloudflare-config-form');
         const resendForm = document.getElementById('resend-config-form');
         const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
-        if (choice === 'configure') {
+        if (choice === 'cloudflare') {
+          cloudflareForm.classList.remove('hidden');
+          resendForm.classList.add('hidden');
+        } else if (choice === 'resend') {
+          cloudflareForm.classList.add('hidden');
           resendForm.classList.remove('hidden');
         } else {
+          cloudflareForm.classList.add('hidden');
           resendForm.classList.add('hidden');
         }
       });
@@ -3938,32 +6836,37 @@ export function getHtmlTemplate(
       const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
       const btn = document.getElementById('btn-continue-email');
 
-      if (choice === 'configure') {
+      if (choice === 'cloudflare' || choice === 'resend') {
         // Validate and store email configuration
+        const isCloudflare = choice === 'cloudflare';
         const apiKey = document.getElementById('resend-api-key').value.trim();
-        const fromAddress = document.getElementById('email-from-address').value.trim();
-        const fromName = document.getElementById('email-from-name').value.trim();
+        const fromAddress = isCloudflare
+          ? document.getElementById('cloudflare-from-address').value.trim()
+          : document.getElementById('email-from-address').value.trim();
+        const fromName = isCloudflare
+          ? document.getElementById('cloudflare-from-name').value.trim()
+          : document.getElementById('email-from-name').value.trim();
 
-        // Validate API key format
-        if (!apiKey) {
-          alert('Please enter your Resend API key');
-          return;
-        }
-        if (!apiKey.startsWith('re_')) {
-          if (!confirm('API key does not start with "re_". This may not be a valid Resend API key. Continue anyway?')) {
-            return;
-          }
-        }
+	        // Validate API key format
+	        if (!isCloudflare && !apiKey) {
+	          alert(t('web.email.resendApiKeyMissing'));
+	          return;
+	        }
+	        if (!isCloudflare && !apiKey.startsWith('re_')) {
+	          if (!confirm(t('web.email.resendApiKeyConfirmInvalid'))) {
+	            return;
+	          }
+	        }
 
-        // Validate email address
-        if (!fromAddress) {
-          alert('Please enter a From email address');
-          return;
-        }
-        if (!fromAddress.includes('@')) {
-          alert('Please enter a valid email address');
-          return;
-        }
+	        // Validate email address
+	        if (!fromAddress) {
+	          alert(t('web.email.fromEmailMissing'));
+	          return;
+	        }
+	        if (!fromAddress.includes('@')) {
+	          alert(t('web.email.fromEmailInvalid'));
+	          return;
+	        }
 
         // Save email configuration to server
         btn.disabled = true;
@@ -3974,29 +6877,29 @@ export function getHtmlTemplate(
             method: 'POST',
             body: {
               env: config.env,
-              provider: 'resend',
-              apiKey: apiKey,
+              provider: isCloudflare ? 'cloudflare' : 'resend',
+              apiKey: isCloudflare ? undefined : apiKey,
               fromAddress: fromAddress,
               fromName: fromName || undefined,
             },
-          });
+	          });
 
-          if (!result.success) {
-            throw new Error(result.error || 'Failed to save email configuration');
-          }
+	          if (!result.success) {
+	            throw new Error(result.error || t('web.email.saveConfigFailed'));
+	          }
 
           // Store email configuration (without apiKey for config file)
           config.email = {
-            provider: 'resend',
+            provider: isCloudflare ? 'cloudflare' : 'resend',
             fromAddress: fromAddress,
             fromName: fromName || undefined,
             configured: true,
           };
-        } catch (error) {
-          alert('Failed to save email configuration: ' + error.message);
-          btn.disabled = false;
-          btn.textContent = t('web.btn.continue');
-          return;
+	        } catch (error) {
+	          alert(t('web.email.saveConfigFailed') + ': ' + error.message);
+	          btn.disabled = false;
+	          btn.textContent = t('web.btn.continue');
+	          return;
         }
 
         btn.disabled = false;
@@ -4046,6 +6949,7 @@ export function getHtmlTemplate(
 
     function proceedToProvision() {
       updateResourcePreview(config.env);
+      renderDeployManualWildcardWarning();
       setStep(6);
       showSection('provision');
     }
@@ -4110,7 +7014,8 @@ export function getHtmlTemplate(
               // Count completed items (lines with checkmark)
               if (msg.includes('✓') || msg.includes('✅')) {
                 provisionCompleted++;
-                updateProgressUI('provision', provisionCompleted, totalResources, taskInfo || ('Completed ' + provisionCompleted + ' items'));
+                const displayCompleted = Math.min(provisionCompleted, totalResources);
+                updateProgressUI('provision', provisionCompleted, totalResources, taskInfo || ('Completed ' + displayCompleted + ' / ' + totalResources + ' items'));
               }
             });
             lastProgressLength = statusResult.progress.length;
@@ -4153,7 +7058,12 @@ export function getHtmlTemplate(
 
         const result = await api('/provision', {
           method: 'POST',
-          body: { env: config.env, databaseConfig: config.database, createR2: true },
+          body: {
+            env: config.env,
+            databaseConfig: config.database,
+            createR2: true,
+            storageProfileId: config.profiles?.defaults?.storage || 'builtin:storage:shared-d1',
+          },
         });
 
         // Stop polling
@@ -4169,6 +7079,9 @@ export function getHtmlTemplate(
           if (result.savedPaths) {
             output.textContent += '📁 Config: ' + result.savedPaths.config + '\\n';
             output.textContent += '📁 Lock:   ' + result.savedPaths.lock + '\\n';
+            if (result.savedPaths.log) {
+              output.textContent += '📝 Log:    ' + result.savedPaths.log + '\\n';
+            }
           }
           scrollToBottom(log);
           status.textContent = t('web.status.complete');
@@ -4187,6 +7100,9 @@ export function getHtmlTemplate(
           btn.disabled = false;
           btnGotoDeploy.classList.remove('hidden');
         } else {
+          if (result.logPath) {
+            output.textContent += '\\n📝 Log: ' + result.logPath + '\\n';
+          }
           throw new Error(result.error);
         }
       } catch (error) {
@@ -4223,6 +7139,11 @@ export function getHtmlTemplate(
       showSection('provision');
     });
 
+    document.getElementById('keys-copy-btn').addEventListener('click', async () => {
+      const keysPath = document.getElementById('keys-path').textContent || '';
+      await copyTextWithFeedback(document.getElementById('keys-copy-btn'), keysPath);
+    });
+
     // Deploy
     document.getElementById('btn-deploy').addEventListener('click', async () => {
       const btn = document.getElementById('btn-deploy');
@@ -4241,10 +7162,8 @@ export function getHtmlTemplate(
       log.classList.add('hidden'); // Log is hidden by default, toggled via button
       output.textContent = t('web.status.startingDeploy') + '\\n\\n';
 
-      let completedCount = 0;
-      // Use indeterminate progress - actual step count varies based on components
-      // We'll update the total dynamically based on actual progress
-      let totalComponents = 0; // Will be calculated from actual progress
+      const deployProgress = createDeployProgressTracker();
+      let pollInterval = null;
       updateProgressUI('deploy', 0, 100, t('web.status.initializing'));
 
       try {
@@ -4264,31 +7183,24 @@ export function getHtmlTemplate(
 
         // Poll for status updates
         let lastProgressLength = 0;
-        const pollInterval = setInterval(async () => {
-          const statusResult = await api('/deploy/status');
-          if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
-            const newMessages = statusResult.progress.slice(lastProgressLength);
-            newMessages.forEach(msg => {
-              output.textContent += msg + '\\n';
-              // Update progress UI based on message content
-              const taskInfo = parseProgressMessage(msg);
-              // Count completed items (lines with checkmark)
-              if (msg.includes('✓') || msg.includes('✅')) {
-                completedCount++;
-              }
-              // Update total when we see completion markers (e.g., "5/5")
-              const progressMatch = msg.match(/(\\d+)\\/(\\d+)/);
-              if (progressMatch) {
-                const [, , total] = progressMatch;
-                totalComponents = Math.max(totalComponents, parseInt(total, 10) + completedCount);
-              }
-              // Display progress as percentage or show current task
-              const displayTotal = totalComponents > 0 ? totalComponents : completedCount + 10;
-              const percent = Math.min(Math.round((completedCount / displayTotal) * 100), 99);
-              updateProgressUI('deploy', percent, 100, taskInfo || ('Processing... ' + completedCount + ' steps completed'));
-            });
-            lastProgressLength = statusResult.progress.length;
-            scrollToBottom(log);
+        pollInterval = setInterval(async () => {
+          try {
+            const statusResult = await api('/deploy/status');
+            const progress = statusResult.progress || [];
+            if (progress.length < lastProgressLength) {
+              lastProgressLength = 0;
+            }
+            if (progress.length > lastProgressLength) {
+              const newMessages = progress.slice(lastProgressLength);
+              newMessages.forEach(msg => {
+                output.textContent += msg + '\\n';
+                deployProgress.handle(msg);
+              });
+              lastProgressLength = progress.length;
+              scrollToBottom(log);
+            }
+          } catch (e) {
+            // Ignore transient polling errors while deployment is running.
           }
         }, 1000);
 
@@ -4300,12 +7212,18 @@ export function getHtmlTemplate(
           },
         });
 
-        clearInterval(pollInterval);
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
 
         if (result.success) {
           // Final progress update
-          updateProgressUI('deploy', 100, 100, '✓ Deployment complete!');
+          deployProgress.complete('✓ Deployment complete!');
           output.textContent += '\\n✓ Deployment complete!\\n';
+          if (result.logPath) {
+            output.textContent += '📝 Log: ' + result.logPath + '\\n';
+          }
           scrollToBottom(log);
 
           // Complete admin setup to get setup URL
@@ -4318,25 +7236,26 @@ export function getHtmlTemplate(
           // Note: Tenant subdomain only works with custom domains, NOT workers.dev
           let apiUrl;
           if (config.apiDomain) {
-            // Custom domain - add tenant prefix if not naked domain
-            if (config.tenant && config.tenant.name && !config.tenant.nakedDomain) {
-              apiUrl = 'https://' + config.tenant.name + '.' + config.apiDomain;
+            const apiDomain = stripProtocol(config.apiDomain);
+            if (config.tenant?.multiTenant && config.tenant.name && !config.tenant.nakedDomain) {
+              apiUrl = 'https://' + config.tenant.name + '.' + apiDomain;
             } else {
-              apiUrl = 'https://' + config.apiDomain;
+              apiUrl = 'https://' + apiDomain;
             }
           } else {
             // Workers.dev - no tenant prefix (wildcard subdomains not supported)
             apiUrl = 'https://' + workersDomain;
           }
           // Login UI URL for setup page (setup page is in Login UI, not API)
-          const loginUiEnabled = config.components?.loginUi !== false;
-          const loginPagesDomain = config.env + '-ar-login-ui.pages.dev';
-          const loginUiUrl = loginUiEnabled
-            ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain)
-            : null;
+          const loginUiWorkerDomain = workersSubdomain
+            ? config.env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+            : config.env + '-ar-login-ui.workers.dev';
+          const loginUiUrl = config.loginUiDomain
+            ? ensureHttpsUrl(config.loginUiDomain)
+            : 'https://' + loginUiWorkerDomain;
 
           output.textContent += '  API URL: ' + apiUrl + '\\n';
-          output.textContent += '  Login UI URL: ' + (loginUiUrl || 'Not deployed') + '\\n';
+          output.textContent += '  Login UI URL: ' + loginUiUrl + '\\n';
           output.textContent += '  Keys Dir: .authrim-keys/' + config.env + '/\\n';
           scrollToBottom(log);
 
@@ -4380,15 +7299,34 @@ export function getHtmlTemplate(
             expiresAt: adminSetupResult.expiresAt,
             adminSetupDebug: adminSetupResult,
           });
+        } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
+          output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
+          if (result.logPath) {
+            output.textContent += '\\n📝 Log: ' + result.logPath + '\\n';
+          }
+          scrollToBottom(log);
+          status.textContent = t('web.status.error');
+          status.className = 'status-badge status-warning';
+          btn.disabled = false;
+          btn.classList.remove('hidden');
+          return;
         } else {
+          if (result.logPath) {
+            output.textContent += '\\n📝 Log: ' + result.logPath + '\\n';
+          }
           throw new Error(result.error || 'Deployment failed');
         }
       } catch (error) {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
         output.textContent += '\\n✗ Error: ' + error.message + '\\n';
         scrollToBottom(log);
         status.textContent = t('web.status.error');
         status.className = 'status-badge status-error';
         btn.disabled = false;
+        btn.classList.remove('hidden');
       }
     });
 
@@ -4396,45 +7334,31 @@ export function getHtmlTemplate(
     function showComplete(result) {
       const urlsEl = document.getElementById('urls');
       const env = config.env;
-
-      // Generate correct URLs with account subdomain
-      const workersDomain = workersSubdomain
-        ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
-        : env + '-ar-router.workers.dev';
-      // Note: Pages uses {project}.pages.dev format (no account subdomain, unlike Workers)
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
-
-      // Build API URL
-      // Note: Tenant subdomain only works with custom domains, NOT workers.dev
-      let apiUrl;
-      if (config.apiDomain) {
-        // Custom domain - add tenant prefix if not naked domain
-        if (config.tenant && config.tenant.name && !config.tenant.nakedDomain) {
-          apiUrl = 'https://' + config.tenant.name + '.' + config.apiDomain;
-        } else {
-          apiUrl = 'https://' + config.apiDomain;
-        }
-      } else {
-        // Workers.dev - no tenant prefix (wildcard subdomains not supported)
-        apiUrl = 'https://' + workersDomain;
-      }
-      const loginUiEnabled = config.components?.loginUi !== false;
-      const loginUrl = loginUiEnabled
-        ? (config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain)
-        : null;
-      const adminUrl = (config.adminUiDomain ? 'https://' + config.adminUiDomain : 'https://' + adminPagesDomain) + '/admin';
+      const completeEnv = {
+        env,
+        workers: [
+          ...(config.components?.loginUi === false ? [] : [{ name: env + '-ar-login-ui' }]),
+          ...(config.components?.adminUi === false ? [] : [{ name: env + '-ar-admin-ui' }]),
+        ],
+      };
+      const completeUrls = buildEnvDetailUrls(completeEnv, config);
+      const labelMap = {
+        Issuer: 'Issuer:',
+        'API Health': 'API Health:',
+        'OIDC Discovery': 'Discovery:',
+        'Tenant Discovery': 'Tenant Discovery:',
+        'Login UI': 'Login UI:',
+        'Admin UI': 'Admin UI:',
+      };
 
       // Clear and rebuild URLs section safely
       urlsEl.textContent = '';
 
-      // API URL with OIDC Discovery link
-      urlsEl.appendChild(createUrlItem('API (Issuer):', apiUrl, apiUrl));
-      const discoveryUrl = apiUrl + '/.well-known/openid-configuration';
-      urlsEl.appendChild(createUrlItem('Discovery:', discoveryUrl, discoveryUrl));
-
-      urlsEl.appendChild(createUrlItem('Login UI:', loginUrl || t('web.status.notDeployed'), loginUrl || undefined));
-      urlsEl.appendChild(createUrlItem('Admin UI:', adminUrl, adminUrl));
+      for (const item of completeUrls) {
+        urlsEl.appendChild(
+          createUrlItem(labelMap[item.label] || (item.label + ':'), item.value, item.href)
+        );
+      }
 
       // Show custom domain propagation note when any custom domain is set
       if (config.apiDomain || config.loginUiDomain || config.adminUiDomain) {
@@ -4447,7 +7371,10 @@ export function getHtmlTemplate(
       }
 
       // Create Admin Setup section (separate, prominent box)
+      resetDynamicCompleteSections();
+
       const adminSetupSection = document.createElement('div');
+      adminSetupSection.id = 'complete-admin-setup-section';
       adminSetupSection.style.cssText = 'margin-top: 1.5rem; padding: 1.25rem; background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%); border: 2px solid var(--primary); border-radius: 12px;';
 
       if (result && result.setupUrl) {
@@ -4523,16 +7450,14 @@ export function getHtmlTemplate(
         openLink.setAttribute('data-i18n', 'web.complete.openSetup');
         openDiv.appendChild(openLink);
 
-        // Warning hint (uses innerHTML for <strong> tags — not updated on language change)
+        // Warning hint with limited rich text from trusted translations.
         const hintDiv = document.createElement('div');
         hintDiv.className = 'hint-box';
         hintDiv.style.marginTop = '0.75rem';
-        const warningTemplate = t('web.complete.urlWarning', { date: expiresText });
-        // warningTemplate may contain <strong> tags — parse safely
         const warningPrefix = document.createTextNode('⚠️ ');
         hintDiv.appendChild(warningPrefix);
         const warningSpan = document.createElement('span');
-        warningSpan.innerHTML = warningTemplate; // safe: value from our own translation strings only
+        appendTranslatedRichText(warningSpan, 'web.complete.urlWarning', { date: expiresText });
         hintDiv.appendChild(warningSpan);
 
         adminSetupSection.appendChild(headerDiv);
@@ -4600,6 +7525,7 @@ export function getHtmlTemplate(
           env + '-REBAC_CACHE',
           env + '-USER_CACHE',
           env + '-AUTHRIM_CONFIG',
+          env + '-TENANT_RUNTIME_REGISTRY',
           env + '-STATE_STORE',
           env + '-CONSENT_CACHE'
         ],
@@ -4607,8 +7533,14 @@ export function getHtmlTemplate(
           keysDir + '/private.pem (RSA Private Key)',
           keysDir + '/public.jwk.json (JWK Public Key)',
           keysDir + '/rp_token_encryption_key.txt',
+          keysDir + '/object_encryption_root_key.txt',
+          keysDir + '/version_manager_secret.txt',
           keysDir + '/admin_api_secret.txt',
           keysDir + '/key_manager_secret.txt',
+          keysDir + '/setup_machine_private.pem',
+          keysDir + '/setup_machine_public.jwk.json',
+          keysDir + '/admin_ui_bff_private.pem',
+          keysDir + '/admin_ui_bff_public.jwk.json',
           keysDir + '/setup_token.txt'
         ]
       };
@@ -4653,17 +7585,16 @@ export function getHtmlTemplate(
       // admin-db uses the same region as pii-db (both contain sensitive data)
       const adminRegion = piiRegion;
 
-      const coreLi = document.createElement('li');
-      coreLi.innerHTML = coreDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(coreRegion.location, coreRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(coreLi);
-
-      const piiLi = document.createElement('li');
-      piiLi.innerHTML = piiDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(piiRegion.location, piiRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(piiLi);
-
-      const adminLi = document.createElement('li');
-      adminLi.innerHTML = adminDbName + ' <span style="color: var(--text-muted); font-size: 0.85em;">(' + getRegionLabel(adminRegion.location, adminRegion.jurisdiction) + ')</span>';
-      d1List.appendChild(adminLi);
+      appendDatabasePreviewItem(d1List, coreDbName, getRegionLabel(coreRegion.location, coreRegion.jurisdiction));
+      appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
+      appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
+      if (config.profiles?.defaults?.storage === 'builtin:storage:tenant-d1') {
+        const slots = config.tenantD1?.preallocatedSlots || 3;
+        const li = document.createElement('li');
+        li.textContent = 'Preallocated tenant D1 slots: ' + slots + ' (' + (slots * 2) + ' D1 databases)';
+        li.style.color = 'var(--text-muted)';
+        d1List.appendChild(li);
+      }
 
       resources.kv.forEach(name => {
         const li = document.createElement('li');
@@ -4676,6 +7607,16 @@ export function getHtmlTemplate(
         li.textContent = name;
         keysList.appendChild(li);
       });
+    }
+
+    function appendDatabasePreviewItem(list, dbName, regionLabel) {
+      const li = document.createElement('li');
+      li.appendChild(document.createTextNode(dbName + ' '));
+      const regionSpan = document.createElement('span');
+      regionSpan.style.cssText = 'color: var(--text-muted); font-size: 0.85em;';
+      regionSpan.textContent = '(' + regionLabel + ')';
+      li.appendChild(regionSpan);
+      list.appendChild(li);
     }
 
     // Update provision button state based on completion status
@@ -4715,8 +7656,12 @@ export function getHtmlTemplate(
       const workersDomain = workersSubdomain
         ? env + '-ar-router.' + workersSubdomain + '.workers.dev'
         : env + '-ar-router.workers.dev';
-      const loginPagesDomain = env + '-ar-login-ui.pages.dev';
-      const adminPagesDomain = env + '-ar-admin-ui.pages.dev';
+      const loginUiWorkerDomain = workersSubdomain
+        ? env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-login-ui.workers.dev';
+      const adminUiWorkerDomain = workersSubdomain
+        ? env + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : env + '-ar-admin-ui.workers.dev';
 
       // Build config in AuthrimConfigSchema format
       const configToSave = {
@@ -4735,29 +7680,30 @@ export function getHtmlTemplate(
           },
           loginUi: {
             custom: config.loginUiDomain || null,
-            auto: 'https://' + loginPagesDomain,
+            auto: 'https://' + loginUiWorkerDomain,
           },
           adminUi: {
             custom: config.adminUiDomain || null,
-            auto: 'https://' + adminPagesDomain,
+            auto: 'https://' + adminUiWorkerDomain,
           },
         },
         tenant: {
           name: config.tenant?.name || 'default',
-          displayName: config.tenant?.displayName || 'Default Tenant',
+          displayName: config.tenant?.displayName || 'Initial Tenant',
           multiTenant: config.tenant?.multiTenant || false,
           baseDomain: config.tenant?.baseDomain || undefined,
           nakedDomain: config.tenant?.nakedDomain ?? false,
           userIdFormat: config.tenant?.userIdFormat || 'nanoid',
           primaryTenant: config.tenant?.primaryTenant || undefined,
         },
-        components: config.components || {
+        components: {
           api: true,
-          loginUi: true,
-          adminUi: true,
-          saml: false,
-          async: false,
-          vc: false,
+          ...(config.components || {}),
+          loginUi: config.components?.loginUi ?? true,
+          adminUi: config.components?.adminUi ?? true,
+          saml: true,
+          async: true,
+          vc: true,
           bridge: true,
           policy: true,
         },
@@ -4769,12 +7715,13 @@ export function getHtmlTemplate(
           core: { location: 'auto', jurisdiction: 'none' },
           pii: { location: 'auto', jurisdiction: 'none' },
         },
+        profiles: config.profiles || buildProfilesConfig('builtin:storage:shared-d1'),
         features: {
           email: {
             provider: config.email?.provider || 'none',
             fromAddress: config.email?.fromAddress || undefined,
             fromName: config.email?.fromName || undefined,
-            configured: config.email?.provider === 'resend' && config.email?.apiKey ? true : false,
+            configured: config.email?.provider && config.email?.provider !== 'none' ? true : false,
           },
         },
       };
@@ -4797,7 +7744,7 @@ export function getHtmlTemplate(
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'authrim-config.json';
+      a.download = 'authrim-' + env + '-config.json';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -4809,9 +7756,9 @@ export function getHtmlTemplate(
     document.getElementById('btn-save-config-complete').addEventListener('click', saveConfigToFile);
 
     // Back to main button (from complete screen)
-    document.getElementById('btn-back-to-main').addEventListener('click', () => {
+    document.getElementById('btn-back-to-main').addEventListener('click', async () => {
+      await resetSetupFlowState();
       showSection('topMenu');
-      setStep(1);
     });
 
     // =============================================================================
@@ -4978,9 +7925,21 @@ export function getHtmlTemplate(
     // Show environment details
     function showEnvDetail(env) {
       selectedEnvForDetail = env;
+      selectedEnvDetailConfig = null;
 
       document.getElementById('detail-env-name').textContent = env.env;
       renderEnvDetailUrls(env);
+      loadEnvEmailStatus(env.env);
+      document.getElementById('env-email-progress').classList.add('hidden');
+      document.getElementById('env-email-log').textContent = '';
+      document.getElementById('btn-enable-cloudflare-email').disabled = false;
+      const enableCloudflareBtnSpan = document
+        .getElementById('btn-enable-cloudflare-email')
+        ?.querySelector('span');
+      if (enableCloudflareBtnSpan) {
+        enableCloudflareBtnSpan.textContent =
+          t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
+      }
 
       // Render resource lists with loading state
       renderResourceList('detail-workers-list', 'detail-workers-count', env.workers, 'name', 'worker');
@@ -5017,6 +7976,14 @@ export function getHtmlTemplate(
         checkAndShowAdminSetup(configKv.id);
       }
 
+      document.getElementById('env-tenant-d1-progress').classList.add('hidden');
+      document.getElementById('env-tenant-d1-log').textContent = '';
+      loadTenantD1PoolStatus(env.env);
+      document.getElementById('env-r2-provision-progress').classList.add('hidden');
+      document.getElementById('env-r2-provision-log').textContent = '';
+      document.getElementById('btn-provision-r2-buckets').disabled = false;
+      loadR2ProvisionStatus(env.env);
+
       // Reset and load worker version comparison
       resetWorkerUpdateUI();
       loadWorkerVersionComparison(env.env);
@@ -5032,7 +7999,39 @@ export function getHtmlTemplate(
       return value.endsWith('/') ? value.slice(0, -1) : value;
     }
 
-    function createEnvDetailUrlRow(label, url, description) {
+    function stripProtocol(urlOrDomain) {
+      return String(urlOrDomain || '').trim().replace(/^https?:[/][/]/, '').replace(/[/]+$/, '');
+    }
+
+    function ensureHttpsUrl(urlOrDomain) {
+      const normalized = stripProtocol(urlOrDomain);
+      return normalized ? 'https://' + normalized : '';
+    }
+
+    function firstConfiguredValue(...values) {
+      for (const value of values) {
+        const normalized = String(value || '').trim();
+        if (normalized) return normalized;
+      }
+      return '';
+    }
+
+    function firstConfiguredUrl(...values) {
+      const value = firstConfiguredValue(...values);
+      return value ? stripTrailingSlash(ensureHttpsUrl(value)) : '';
+    }
+
+    function isMultiTenantConfigured(config) {
+      return !!(
+        config &&
+        config.tenant &&
+        config.tenant.multiTenant === true &&
+        config.tenant.baseDomain &&
+        String(config.tenant.baseDomain).trim()
+      );
+    }
+
+    function createEnvDetailUrlRow(label, value, description, href) {
       const row = document.createElement('div');
       row.style.cssText = 'display: flex; flex-direction: column; gap: 0.35rem; padding: 0.875rem 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;';
 
@@ -5044,21 +8043,27 @@ export function getHtmlTemplate(
       labelEl.textContent = label;
       top.appendChild(labelEl);
 
-      const open = document.createElement('a');
-      open.href = url;
-      open.target = '_blank';
-      open.rel = 'noopener noreferrer';
-      open.className = 'btn-secondary';
-      open.style.cssText = 'padding: 0.35rem 0.75rem; font-size: 0.8rem; white-space: nowrap;';
-      open.textContent = 'Open';
-      top.appendChild(open);
+      if (href) {
+        const open = document.createElement('a');
+        open.href = href;
+        open.target = '_blank';
+        open.rel = 'noopener noreferrer';
+        open.className = 'btn-secondary';
+        open.style.cssText = 'padding: 0.35rem 0.75rem; font-size: 0.8rem; white-space: nowrap;';
+        open.textContent = 'Open';
+        top.appendChild(open);
+      }
 
-      const urlEl = document.createElement('a');
-      urlEl.href = url;
-      urlEl.target = '_blank';
-      urlEl.rel = 'noopener noreferrer';
-      urlEl.style.cssText = 'font-family: var(--font-mono); font-size: 0.85rem; color: var(--primary); word-break: break-all;';
-      urlEl.textContent = url;
+      const urlEl = href ? document.createElement('a') : document.createElement('div');
+      if (href) {
+        urlEl.href = href;
+        urlEl.target = '_blank';
+        urlEl.rel = 'noopener noreferrer';
+        urlEl.style.cssText = 'font-family: var(--font-mono); font-size: 0.85rem; color: var(--primary); word-break: break-all;';
+      } else {
+        urlEl.style.cssText = 'font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); word-break: break-all;';
+      }
+      urlEl.textContent = value;
 
       row.appendChild(top);
       row.appendChild(urlEl);
@@ -5073,50 +8078,154 @@ export function getHtmlTemplate(
       return row;
     }
 
-    function buildEnvDetailUrls(envName, config) {
+    function hasUiWorker(env, workerName) {
+      return (env.workers || []).some((worker) => worker && worker.name === workerName);
+    }
+
+    function resolveEnvDetailIssuerUrl(env, config) {
+      const envName = env.env;
       const workersDomain = workersSubdomain
         ? envName + '-ar-router.' + workersSubdomain + '.workers.dev'
         : envName + '-ar-router.workers.dev';
       const fallbackIssuer = 'https://' + workersDomain;
 
-      const tenant = config?.tenant || {};
-      const tenantName = tenant.name || 'default';
-      const baseDomain = tenant.baseDomain;
-      const nakedDomain = tenant.nakedDomain === true;
-
-      let issuerUrl = fallbackIssuer;
-      if (baseDomain) {
-        issuerUrl = nakedDomain
+      if (isMultiTenantConfigured(config)) {
+        const tenantName = (config.tenant.name || 'default').trim();
+        const baseDomain = String(config.tenant.baseDomain).trim();
+        return config.tenant.nakedDomain === true
           ? 'https://' + baseDomain
           : 'https://' + tenantName + '.' + baseDomain;
-      } else if (config?.urls?.api?.custom) {
-        issuerUrl = stripTrailingSlash(config.urls.api.custom);
       }
 
-      const loginBaseUrl = stripTrailingSlash(
-        config?.urls?.loginUi?.custom || 'https://' + envName + '-ar-login-ui.pages.dev'
+      const apiUrl = firstConfiguredUrl(
+        config?.urls?.api?.custom,
+        config?.apiDomain,
+        config?.urls?.api?.auto
       );
-      const adminBaseUrl = stripTrailingSlash(
-        config?.urls?.adminUi?.custom || 'https://' + envName + '-ar-admin-ui.pages.dev'
-      );
+      return apiUrl ? stripTrailingSlash(apiUrl) : fallbackIssuer;
+    }
 
-      return [
+    function resolveEnvDetailSharedLoginBase(env, config) {
+      const envName = env.env;
+      const fallbackLoginWorkerUrl = workersSubdomain
+        ? 'https://' + envName + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
+        : 'https://' + envName + '-ar-login-ui.workers.dev';
+      return firstConfiguredUrl(
+        config?.urls?.loginUi?.custom,
+        config?.loginUiDomain,
+        config?.urls?.loginUi?.auto,
+        fallbackLoginWorkerUrl
+      );
+    }
+
+    function isWorkersDevUrl(url) {
+      try {
+        const hostname = new URL(url).hostname;
+        return hostname === 'workers.dev' || hostname.endsWith('.workers.dev');
+      } catch {
+        return false;
+      }
+    }
+
+    function resolveEnvDetailAdminBase(env, config) {
+      const envName = env.env;
+      const fallbackAdminWorkerUrl = workersSubdomain
+        ? 'https://' + envName + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
+        : 'https://' + envName + '-ar-admin-ui.workers.dev';
+      return firstConfiguredUrl(
+        config?.urls?.adminUi?.custom,
+        config?.adminUiDomain,
+        config?.urls?.adminUi?.auto,
+        fallbackAdminWorkerUrl
+      );
+    }
+
+    function buildEnvDetailUrls(env, config) {
+      const envName = env.env;
+      const loginProjectName = envName + '-ar-login-ui';
+      const adminProjectName = envName + '-ar-admin-ui';
+      const loginUiDeployed = hasUiWorker(env, loginProjectName);
+      const adminUiDeployed = hasUiWorker(env, adminProjectName);
+      const multiTenantConfigured = isMultiTenantConfigured(config);
+      const issuerUrl = resolveEnvDetailIssuerUrl(env, config);
+      const apiHealthUrl = issuerUrl + '/api/health';
+      const discoveryUrl = issuerUrl + '/.well-known/openid-configuration';
+      const loginSharedBaseUrl = resolveEnvDetailSharedLoginBase(env, config);
+      const adminBaseUrl = resolveEnvDetailAdminBase(env, config);
+      const loginEntryUrl = loginUiDeployed
+        ? (
+            multiTenantConfigured || config?.urls?.loginUi?.sameAsApi === true
+              ? issuerUrl
+              : loginSharedBaseUrl
+          ) + '/login'
+        : null;
+      const tenantDiscoverBaseUrl =
+        multiTenantConfigured && config?.tenant?.baseDomain
+          ? (
+              config?.urls?.loginUi?.sameAsApi !== true &&
+              loginSharedBaseUrl &&
+              !isWorkersDevUrl(loginSharedBaseUrl)
+                ? loginSharedBaseUrl
+                : 'https://' + String(config.tenant.baseDomain).trim()
+            )
+          : loginSharedBaseUrl;
+      const tenantDiscoverUrl = multiTenantConfigured && loginUiDeployed
+        ? tenantDiscoverBaseUrl + '/discover'
+        : null;
+      const adminEntryUrl = adminUiDeployed
+        ? (
+            config?.urls?.adminUi?.sameAsApi === true
+              ? issuerUrl
+              : adminBaseUrl
+          ) + '/admin/info'
+        : null;
+      const notDeployed = t('web.envDetail.notDeployed') || 'Not Deployed';
+
+      const urls = [
         {
           label: 'Issuer',
-          url: issuerUrl,
-          description: 'Canonical OIDC issuer URL',
+          value: issuerUrl,
+          href: null,
+          description: 'Canonical OIDC issuer value',
+        },
+        {
+          label: 'API Health',
+          value: apiHealthUrl,
+          href: apiHealthUrl,
+          description: 'API router health check',
+        },
+        {
+          label: 'OIDC Discovery',
+          value: discoveryUrl,
+          href: discoveryUrl,
+          description: 'OpenID Provider metadata endpoint',
         },
         {
           label: 'Login UI',
-          url: loginBaseUrl + '/login',
-          description: 'Login screen entry point',
+          value: loginEntryUrl || notDeployed,
+          href: loginEntryUrl,
+          description: multiTenantConfigured
+            ? 'Tenant login entry point'
+            : 'Login screen entry point',
         },
         {
           label: 'Admin UI',
-          url: adminBaseUrl + '/admin/info',
+          value: adminEntryUrl || notDeployed,
+          href: adminEntryUrl,
           description: 'Admin console entry point',
         },
       ];
+
+      if (tenantDiscoverUrl) {
+        urls.splice(2, 0, {
+          label: 'Tenant Discovery',
+          value: tenantDiscoverUrl,
+          href: tenantDiscoverUrl,
+          description: 'Shared login entry point for tenant selection',
+        });
+      }
+
+      return urls;
     }
 
     async function renderEnvDetailUrls(env) {
@@ -5133,9 +8242,403 @@ export function getHtmlTemplate(
         console.warn('Failed to load config for env detail URLs:', error);
       }
 
-      const urls = buildEnvDetailUrls(env.env, config);
+      const urls = buildEnvDetailUrls(env, config);
       for (const item of urls) {
-        listEl.appendChild(createEnvDetailUrlRow(item.label, item.url, item.description));
+        listEl.appendChild(createEnvDetailUrlRow(item.label, item.value, item.description, item.href));
+      }
+    }
+
+    function renderEnvEmailStatus(configResponse) {
+      const providerEl = document.getElementById('env-email-provider');
+      const statusEl = document.getElementById('env-email-status');
+      const fromEl = document.getElementById('env-email-from');
+      const fromAddressInput = document.getElementById('env-email-from-address');
+      const fromNameInput = document.getElementById('env-email-from-name');
+      const emailConfig = configResponse?.config?.features?.email || null;
+      const provider = emailConfig?.provider || 'none';
+      const configured = emailConfig?.configured === true;
+      const fromAddress = emailConfig?.fromAddress || '';
+      const fromName = emailConfig?.fromName || '';
+
+      selectedEnvDetailConfig = configResponse?.config || null;
+
+      providerEl.textContent =
+        provider === 'none'
+          ? (t('web.envDetail.emailProviderNone') || 'Not configured')
+          : provider;
+      statusEl.textContent = configured
+        ? (t('web.envDetail.emailConfigured') || 'Configured')
+        : (t('web.envDetail.emailNotConfigured') || 'Not configured');
+      fromEl.textContent = fromAddress || '—';
+
+      fromAddressInput.value = fromAddress;
+      fromNameInput.value = fromName;
+    }
+
+    async function loadEnvEmailStatus(envName) {
+      try {
+        const configResponse = await api('/config?env=' + encodeURIComponent(envName));
+        if (configResponse.exists && configResponse.config) {
+          renderEnvEmailStatus(configResponse);
+          return;
+        }
+      } catch (error) {
+        console.warn('Failed to load env email config:', error);
+      }
+
+      renderEnvEmailStatus(null);
+    }
+
+    function renderTenantD1PoolStatus(response) {
+      const summaryEl = document.getElementById('env-tenant-d1-summary');
+      const statsEl = document.getElementById('env-tenant-d1-stats');
+      const expandEl = document.getElementById('env-tenant-d1-expand');
+      const addInput = document.getElementById('env-tenant-d1-add-slots');
+
+      if (!response || !response.success) {
+        summaryEl.textContent = response?.error || 'Failed to load tenant storage status.';
+        statsEl.classList.add('hidden');
+        expandEl.classList.add('hidden');
+        return;
+      }
+
+      const pool = response.tenantD1Pool || {};
+      if (!pool.enabled) {
+        summaryEl.textContent =
+          'Shared D1 mode: tenant additions use the existing deployment-wide core/PII D1 databases. No pool expansion is required.';
+        statsEl.classList.add('hidden');
+        expandEl.classList.add('hidden');
+        return;
+      }
+
+      expandEl.classList.remove('hidden');
+      const configuredSlots = Number(pool.configuredSlots || pool.capacity || 0);
+      const maxAdd = Math.max(0, 500 - configuredSlots);
+      addInput.max = String(maxAdd || 1);
+      if (Number(addInput.value || '1') > maxAdd && maxAdd > 0) {
+        addInput.value = String(maxAdd);
+      }
+
+      if (!pool.tableReady) {
+        summaryEl.textContent =
+          'Tenant D1 pool is configured, but slot inventory is not available yet. Run deployment to create slots and publish inventory.';
+        statsEl.classList.add('hidden');
+        document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
+        return;
+      }
+
+      const counts = pool.counts || {};
+      document.getElementById('env-tenant-d1-capacity').textContent = String(pool.capacity ?? 0);
+      document.getElementById('env-tenant-d1-available').textContent = String(pool.available ?? 0);
+      document.getElementById('env-tenant-d1-assigned').textContent = String(counts.assigned || 0);
+      document.getElementById('env-tenant-d1-reset-required').textContent = String(
+        counts.reset_required || 0
+      );
+      summaryEl.textContent =
+        'Tenant D1 pool mode: Admin UI can add tenants while available slots remain. Expand only when capacity is low or exhausted.';
+      statsEl.classList.remove('hidden');
+      document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
+    }
+
+    async function loadTenantD1PoolStatus(envName) {
+      const summaryEl = document.getElementById('env-tenant-d1-summary');
+      summaryEl.textContent = 'Loading tenant storage status...';
+      try {
+        const response = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/status');
+        renderTenantD1PoolStatus(response);
+      } catch (error) {
+        renderTenantD1PoolStatus({ success: false, error: error.message });
+      }
+    }
+
+    async function expandTenantD1PoolForEnv() {
+      if (!selectedEnvForDetail) {
+        alert('No environment selected');
+        return;
+      }
+
+      const envName = selectedEnvForDetail.env;
+      const addSlots = Number.parseInt(
+        document.getElementById('env-tenant-d1-add-slots').value || '0',
+        10
+      );
+      if (!Number.isInteger(addSlots) || addSlots < 1) {
+        alert('Enter a positive slot count.');
+        return;
+      }
+
+      const confirmed = confirm(
+        'This will update the environment config, create additional tenant D1 databases, refresh Worker bindings, and redeploy workers. Continue?'
+      );
+      if (!confirmed) return;
+
+      const btn = document.getElementById('btn-expand-tenant-d1-pool');
+      const progressDiv = document.getElementById('env-tenant-d1-progress');
+      const logDiv = document.getElementById('env-tenant-d1-log');
+      btn.disabled = true;
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (message) => {
+        const line = document.createElement('div');
+        line.textContent = message;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      let pollInterval = null;
+      try {
+        addLog('Updating Tenant D1 pool config...');
+        const expansion = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/expand', {
+          method: 'POST',
+          body: { addSlots },
+        });
+        if (!expansion.success) {
+          throw new Error(expansion.error || 'Failed to update Tenant D1 pool config');
+        }
+        addLog('Configured slots: ' + expansion.currentSlots + ' -> ' + expansion.nextSlots);
+        addLog('Starting deployment...');
+
+        let lastProgressLength = 0;
+        pollInterval = setInterval(async () => {
+          try {
+            const statusResult = await api('/deploy/status');
+            if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
+              const newMessages = statusResult.progress.slice(lastProgressLength);
+              newMessages.forEach(addLog);
+              lastProgressLength = statusResult.progress.length;
+            }
+          } catch (error) {
+            // Ignore transient polling errors while deploy is running.
+          }
+        }, 1000);
+
+        const deployResult = await api('/deploy', {
+          method: 'POST',
+          body: {
+            env: envName,
+            dryRun: false,
+          },
+        });
+
+        if (!deployResult.success) {
+          throw new Error(deployResult.error || 'Deployment failed');
+        }
+
+        addLog('✅ Tenant D1 pool expansion completed.');
+        await loadTenantD1PoolStatus(envName);
+        await loadWorkerVersionComparison(envName);
+      } catch (error) {
+        addLog('❌ ' + error.message);
+      } finally {
+        if (pollInterval !== null) {
+          clearInterval(pollInterval);
+        }
+        btn.disabled = false;
+      }
+    }
+
+    function renderR2ProvisionStatus(response) {
+      const summaryEl = document.getElementById('env-r2-provision-summary');
+      const provisionBtn = document.getElementById('btn-provision-r2-buckets');
+
+      if (!response || !response.success) {
+        summaryEl.textContent = response?.error || 'Failed to load R2 bucket status.';
+        provisionBtn.disabled = false;
+        return;
+      }
+
+      if (response.enabled) {
+        summaryEl.textContent =
+          'R2 buckets are configured: ' + response.configured + ' / ' + response.required + '.';
+        provisionBtn.disabled = true;
+        return;
+      }
+
+      summaryEl.textContent =
+        'R2 buckets need provisioning: ' +
+        response.configured +
+        ' / ' +
+        response.required +
+        ' configured.';
+      provisionBtn.disabled = false;
+    }
+
+    async function loadR2ProvisionStatus(envName) {
+      const summaryEl = document.getElementById('env-r2-provision-summary');
+      summaryEl.textContent = 'Loading R2 bucket status...';
+      try {
+        const response = await api('/r2/' + encodeURIComponent(envName) + '/status');
+        renderR2ProvisionStatus(response);
+      } catch (error) {
+        renderR2ProvisionStatus({ success: false, error: error.message });
+      }
+    }
+
+    async function provisionR2BucketsForEnv() {
+      if (!selectedEnvForDetail) {
+        alert('No environment selected');
+        return;
+      }
+
+      const envName = selectedEnvForDetail.env;
+      const confirmed = confirm(
+        'This will create missing R2 buckets, refresh Worker bindings, and redeploy workers. Continue?'
+      );
+      if (!confirmed) return;
+
+      const btn = document.getElementById('btn-provision-r2-buckets');
+      const progressDiv = document.getElementById('env-r2-provision-progress');
+      const logDiv = document.getElementById('env-r2-provision-log');
+      btn.disabled = true;
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (message) => {
+        const line = document.createElement('div');
+        line.textContent = message;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      let pollInterval = null;
+      try {
+        addLog('Provisioning R2 buckets...');
+        const provisionResult = await api('/r2/' + encodeURIComponent(envName) + '/provision', {
+          method: 'POST',
+        });
+        if (!provisionResult.success) {
+          throw new Error(provisionResult.error || 'Failed to provision R2 buckets');
+        }
+        addLog('Configured buckets: ' + provisionResult.buckets.length);
+        addLog('Starting deployment...');
+
+        let lastProgressLength = 0;
+        pollInterval = setInterval(async () => {
+          try {
+            const statusResult = await api('/deploy/status');
+            if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
+              const newMessages = statusResult.progress.slice(lastProgressLength);
+              newMessages.forEach(addLog);
+              lastProgressLength = statusResult.progress.length;
+            }
+          } catch (error) {
+            // Ignore transient polling errors while deploy is running.
+          }
+        }, 1000);
+
+        const deployResult = await api('/deploy', {
+          method: 'POST',
+          body: {
+            env: envName,
+            dryRun: false,
+          },
+        });
+
+        if (!deployResult.success) {
+          throw new Error(deployResult.error || 'Deployment failed');
+        }
+
+        addLog('✅ R2 bucket provisioning completed.');
+        await loadR2ProvisionStatus(envName);
+        await loadWorkerVersionComparison(envName);
+      } catch (error) {
+        addLog('❌ ' + error.message);
+        btn.disabled = false;
+      } finally {
+        if (pollInterval !== null) {
+          clearInterval(pollInterval);
+        }
+      }
+    }
+
+    async function enableCloudflareEmailForEnv() {
+      if (!selectedEnvForDetail) {
+        alert('No environment selected');
+        return;
+      }
+
+      const btn = document.getElementById('btn-enable-cloudflare-email');
+      const btnSpan = btn.querySelector('span');
+      const progressDiv = document.getElementById('env-email-progress');
+      const logDiv = document.getElementById('env-email-log');
+      const fromAddress = document.getElementById('env-email-from-address').value.trim();
+      const fromName = document.getElementById('env-email-from-name').value.trim();
+      const currentProvider = selectedEnvDetailConfig?.features?.email?.provider;
+
+      if (!fromAddress) {
+        alert(t('web.envDetail.emailFromMissing') || 'Please enter a From email address.');
+        return;
+      }
+
+      const emailInput = document.getElementById('env-email-from-address');
+      if (emailInput && !emailInput.checkValidity()) {
+        alert(t('web.envDetail.emailFromInvalid') || 'Please enter a valid email address.');
+        return;
+      }
+
+      if (
+        currentProvider &&
+        currentProvider !== 'none' &&
+        currentProvider !== 'cloudflare' &&
+        !confirm(
+          t('web.envDetail.emailSwitchProviderConfirm') ||
+            'This environment already has another email provider configured. Switch it to Cloudflare Email Service?'
+        )
+      ) {
+        return;
+      }
+
+      btn.disabled = true;
+      if (btnSpan) {
+        btnSpan.textContent = t('web.envDetail.emailDeploying') || 'Applying...';
+      }
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      try {
+        addLog(t('web.envDetail.emailStarting') || 'Starting Cloudflare Email setup...');
+        const response = await api('/env/email/cloudflare/enable', {
+          method: 'POST',
+          body: {
+            env: selectedEnvForDetail.env,
+            fromAddress,
+            fromName,
+          },
+        });
+
+        if (response.progress && Array.isArray(response.progress)) {
+          for (const msg of response.progress) {
+            addLog(msg);
+          }
+        }
+
+        if (!response.success) {
+          addLog('');
+          addLog('❌ ' + (response.error || (t('web.envDetail.emailUpdateFailed') || 'Failed')));
+          return;
+        }
+
+        addLog('');
+        addLog('✅ ' + (t('web.envDetail.emailUpdatedSuccess') || 'Cloudflare Email enabled.'));
+        await loadEnvEmailStatus(selectedEnvForDetail.env);
+        resetWorkerUpdateUI();
+        await loadWorkerVersionComparison(selectedEnvForDetail.env);
+      } catch (error) {
+        addLog('❌ ' + error.message);
+      } finally {
+        btn.disabled = false;
+        if (btnSpan) {
+          btnSpan.textContent =
+            t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
+        }
       }
     }
 
@@ -5167,6 +8670,24 @@ export function getHtmlTemplate(
       document.getElementById('ui-update-log') && (document.getElementById('ui-update-log').textContent = '');
     }
 
+    function updateWorkerUpdateButtonState() {
+      const updateButton = document.getElementById('btn-update-workers');
+      const onlyChangedCheckbox = document.getElementById('update-only-changed');
+
+      if (!updateButton || !onlyChangedCheckbox) {
+        return;
+      }
+
+      if (workerVersionComparison.length === 0) {
+        updateButton.disabled = true;
+        return;
+      }
+
+      const onlyChanged = onlyChangedCheckbox.checked;
+      const hasUpdates = workerVersionComparison.some((item) => item.needsUpdate);
+      updateButton.disabled = onlyChanged ? !hasUpdates : false;
+    }
+
     // Load and compare worker versions
     async function loadWorkerVersionComparison(envName) {
       currentEnvForUpdate = envName;
@@ -5185,9 +8706,7 @@ export function getHtmlTemplate(
             ? (t('web.envDetail.updatesAvailable', { count: summary.needsUpdate }) || summary.needsUpdate + ' update(s) available')
             : (t('web.envDetail.allUpToDate') || 'All up to date');
           document.getElementById('update-summary').textContent = summaryText;
-
-          // Enable button if there are updates
-          document.getElementById('btn-update-workers').disabled = summary.needsUpdate === 0;
+          updateWorkerUpdateButtonState();
         } else {
           tbody.textContent = '';
           const errorRow = document.createElement('tr');
@@ -5341,13 +8860,19 @@ export function getHtmlTemplate(
         } else {
           addLog('');
           addLog('❌ Update failed: ' + (response.error || 'Unknown error'));
+          if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
+            addLog('');
+            buildWildcardDnsManualMessage(response.manualAction.baseDomain)
+              .split('\\n')
+              .forEach((line) => addLog(line));
+          }
         }
       } catch (error) {
         addLog('❌ Error: ' + error.message);
       } finally {
-        btn.disabled = false;
+        updateWorkerUpdateButtonState();
         const btnSpan2 = btn.querySelector('span');
-        if (btnSpan2) btnSpan2.textContent = t('web.envDetail.updateAllWorkers') || 'Update Workers';
+        if (btnSpan2) btnSpan2.textContent = t('web.envDetail.updateAllWorkers') || 'Update All Workers';
       }
     }
 
@@ -5401,7 +8926,7 @@ export function getHtmlTemplate(
       }
     }
 
-    // Update UI component (Pages)
+    // Update UI component (Workers)
     async function updateUIComponent(componentName) {
       if (!currentEnvForUpdate) {
         alert('No environment selected');
@@ -5429,7 +8954,7 @@ export function getHtmlTemplate(
       };
 
       addLog('Updating ' + componentName + ' for ' + currentEnvForUpdate + '...');
-      addLog('This may take a few minutes (building and deploying to Pages)...');
+      addLog('This may take a few minutes (building and deploying to Workers)...');
 
       try {
         const response = await api('/deploy/component/' + encodeURIComponent(componentName), {
@@ -5460,6 +8985,9 @@ export function getHtmlTemplate(
 
     // Event listeners for Worker Update
     document.getElementById('btn-update-workers')?.addEventListener('click', startWorkerUpdate);
+    document.getElementById('update-only-changed')?.addEventListener('change', () => {
+      updateWorkerUpdateButtonState();
+    });
     document.getElementById('btn-refresh-versions')?.addEventListener('click', () => {
       if (currentEnvForUpdate) {
         resetWorkerUpdateUI();
@@ -5470,6 +8998,19 @@ export function getHtmlTemplate(
     // Event listeners for UI Update
     document.getElementById('btn-update-admin-ui')?.addEventListener('click', () => updateUIComponent('ar-admin-ui'));
     document.getElementById('btn-update-login-ui')?.addEventListener('click', () => updateUIComponent('ar-login-ui'));
+    document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
+    document.getElementById('btn-refresh-tenant-d1-pool')?.addEventListener('click', () => {
+      if (selectedEnvForDetail) {
+        loadTenantD1PoolStatus(selectedEnvForDetail.env);
+      }
+    });
+    document.getElementById('btn-expand-tenant-d1-pool')?.addEventListener('click', expandTenantD1PoolForEnv);
+    document.getElementById('btn-refresh-r2-buckets')?.addEventListener('click', () => {
+      if (selectedEnvForDetail) {
+        loadR2ProvisionStatus(selectedEnvForDetail.env);
+      }
+    });
+    document.getElementById('btn-provision-r2-buckets')?.addEventListener('click', provisionR2BucketsForEnv);
 
     // ===========================================
     // Admin Setup Functions
@@ -5880,7 +9421,11 @@ export function getHtmlTemplate(
           result.appendChild(createAlert('success', '✅ Environment deleted successfully!'));
 
           // Refresh environment list after a short delay
-          setTimeout(() => {
+          setTimeout(async () => {
+            await resetServerState();
+            resetDeleteSection();
+            selectedEnvForDelete = null;
+            selectedEnvForDetail = null;
             loadEnvironments();
             showSection('envList');
           }, 2000);

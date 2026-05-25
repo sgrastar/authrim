@@ -12,15 +12,84 @@
  * - Complex: tenant-xyz.example.com → "tenant-xyz"
  *
  * Naked domain routing:
- * - If PRIMARY_TENANT_ID is set: example.com → specified tenant
- * - Otherwise: example.com → DEFAULT_TENANT_ID (default: "default")
+ * - If NAKED_DOMAIN_AS_ISSUER=true and PRIMARY_TENANT_ID is set:
+ *   example.com → specified tenant
+ * - If NAKED_DOMAIN_AS_ISSUER=true and PRIMARY_TENANT_ID is not set:
+ *   example.com → DEFAULT_TENANT_ID (default: "default")
+ * - Otherwise the naked domain is not treated as a tenant endpoint
  *
  * Security: Issuer determination is based on Host header (trusted),
  * NOT tenant_hint (untrusted UX hint).
  */
 
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
+
+export interface IssuerEnvLike {
+  ISSUER_URL?: string;
+  BASE_DOMAIN?: string;
+  NAKED_DOMAIN_AS_ISSUER?: string;
+  PRIMARY_TENANT_ID?: string;
+  DEFAULT_TENANT_ID?: string;
+}
+
+/**
+ * Validate that a tenant exists and is active using D1 + KV positive cache.
+ *
+ * - Positive cache TTL: 300s (negative results are NOT cached to allow immediate
+ *   recognition after tenant creation)
+ * - DB error → fail-open to prevent outage from blocking all requests
+ *
+ * @param db - D1 database binding (undefined = fail-open)
+ * @param kv - KV namespace for caching (undefined = skip cache)
+ * @param tenantId - Tenant ID to validate
+ * @returns true if tenant exists and is active, false if not found or inactive
+ */
+export async function validateTenantExistsAsync(
+  db: DatabaseSource | undefined,
+  kv: KVNamespace | undefined,
+  tenantId: string
+): Promise<boolean> {
+  const cacheKey = `v1:tenant-exists:${tenantId}`;
+
+  // Check KV positive cache first
+  if (kv) {
+    try {
+      const cached = await kv.get(cacheKey);
+      if (cached === 'true') return true;
+    } catch {
+      // KV error → fall through to D1
+    }
+  }
+
+  // Fail-open if no DB binding
+  if (!db) return true;
+
+  try {
+    const adapter = ensureDatabaseAdapter(db, 'tenant-exists');
+    const row = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM tenants WHERE id = ? AND is_active = 1',
+      [tenantId]
+    );
+
+    if (!row) {
+      const health = await adapter.isHealthy().catch(() => ({
+        healthy: false,
+      }));
+      return health.healthy ? false : true;
+    }
+
+    // Write positive cache only (never cache negative to ensure immediate visibility)
+    if (kv) {
+      await kv.put(cacheKey, 'true', { expirationTtl: 300 }).catch(() => {});
+    }
+    return true;
+  } catch {
+    // D1 error → fail-open to prevent outage from blocking requests
+    return true;
+  }
+}
 
 /**
  * Result of Host validation
@@ -35,26 +104,34 @@ export interface HostValidationResult {
 /**
  * Get the effective default tenant ID for the current environment.
  */
-export function getDefaultTenantId(env: Partial<Env>): string {
+export function getDefaultTenantId(env: Partial<IssuerEnvLike>): string {
   return env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
 }
 
 /**
  * Get the tenant ID that should own the naked domain when BASE_DOMAIN is used.
  */
-export function getPrimaryTenantId(env: Partial<Env>): string {
+export function getPrimaryTenantId(env: Partial<IssuerEnvLike>): string {
   return env.PRIMARY_TENANT_ID || getDefaultTenantId(env);
+}
+
+function requireIssuerTenantId(tenantId: string, context: string): string {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalizedTenantId;
 }
 
 /**
  * Returns true when the provided tenant should use the naked BASE_DOMAIN as its canonical issuer.
  */
-export function usesNakedDomainIssuer(env: Partial<Env>, tenantId?: string): boolean {
+export function usesNakedDomainIssuer(env: Partial<IssuerEnvLike>, tenantId: string): boolean {
   if (env.NAKED_DOMAIN_AS_ISSUER !== 'true' || !env.BASE_DOMAIN) {
     return false;
   }
 
-  return (tenantId || getDefaultTenantId(env)) === getPrimaryTenantId(env);
+  return requireIssuerTenantId(tenantId, 'usesNakedDomainIssuer') === getPrimaryTenantId(env);
 }
 
 /**
@@ -64,22 +141,21 @@ export function usesNakedDomainIssuer(env: Partial<Env>, tenantId?: string): boo
  * from subdomain and BASE_DOMAIN.
  *
  * @param env - Cloudflare Workers environment bindings
- * @param tenantSubdomain - Tenant subdomain (optional)
+ * @param tenantSubdomain - Tenant subdomain
  * @returns The issuer URL string
  *
  * @example
  * // With BASE_DOMAIN = "authrim.com"
- * buildIssuerUrl(env)               // => 'https://default.authrim.com' (or primary tenant)
  * buildIssuerUrl(env, 'acme')       // => 'https://acme.authrim.com'
  * buildIssuerUrl(env, 'acme-test')  // => 'https://acme-test.authrim.com'
  *
  * // Legacy fallback (ISSUER_URL set, no BASE_DOMAIN)
- * buildIssuerUrl(env)               // => 'https://auth.example.com' (ISSUER_URL)
+ * buildIssuerUrl(env, tenantId)     // => 'https://auth.example.com' (ISSUER_URL)
  */
-export function buildIssuerUrl(env: Env, tenantSubdomain?: string): string {
+export function buildIssuerUrl(env: IssuerEnvLike, tenantSubdomain: string): string {
   // Multi-tenant mode: construct from subdomain + BASE_DOMAIN
   if (env.BASE_DOMAIN) {
-    const sub = tenantSubdomain || getDefaultTenantId(env);
+    const sub = requireIssuerTenantId(tenantSubdomain, 'buildIssuerUrl');
 
     if (usesNakedDomainIssuer(env, sub)) {
       return `https://${env.BASE_DOMAIN}`;
@@ -89,7 +165,97 @@ export function buildIssuerUrl(env: Env, tenantSubdomain?: string): string {
   }
 
   // Legacy single-tenant mode: use configured ISSUER_URL
-  return env.ISSUER_URL;
+  return env.ISSUER_URL || '';
+}
+
+function normalizeHostCandidate(candidate: string | null | undefined): string | null {
+  const value = candidate?.split(',')[0]?.trim();
+  if (!value) {
+    return null;
+  }
+
+  const host = value.toLowerCase();
+  return isValidHostFormat(host) ? host : null;
+}
+
+export function getRequestHost(request?: Request | null): string | null {
+  if (!request) {
+    return null;
+  }
+
+  return (
+    normalizeHostCandidate(request.headers.get('Host')) ||
+    normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host')) ||
+    normalizeHostCandidate(request.headers.get('X-Forwarded-Host')) ||
+    (() => {
+      try {
+        return normalizeHostCandidate(new URL(request.url).host);
+      } catch {
+        return null;
+      }
+    })()
+  );
+}
+
+export function buildRequestIssuerUrl(
+  request: Request | null | undefined,
+  env: Partial<IssuerEnvLike>,
+  tenantId: string
+): string {
+  const explicitHost =
+    request &&
+    (normalizeHostCandidate(request.headers.get('Host')) ||
+      normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host')) ||
+      normalizeHostCandidate(request.headers.get('X-Forwarded-Host')));
+  const requestHost = getRequestHost(request);
+  const requestHostname = requestHost?.split(':')[0];
+  const shouldIgnoreImplicitLocalhost =
+    !explicitHost &&
+    !!requestHostname &&
+    ['localhost', '127.0.0.1', '::1'].includes(requestHostname) &&
+    (!!env.BASE_DOMAIN || !!env.ISSUER_URL);
+
+  if (!env.BASE_DOMAIN) {
+    if (env.ISSUER_URL) {
+      return env.ISSUER_URL;
+    }
+
+    if (requestHost && !shouldIgnoreImplicitLocalhost) {
+      return `https://${requestHost.split(':')[0]}`;
+    }
+
+    return buildIssuerUrl(env, tenantId);
+  }
+
+  if (requestHost && !shouldIgnoreImplicitLocalhost) {
+    return `https://${requestHost.split(':')[0]}`;
+  }
+
+  return buildIssuerUrl(env, tenantId);
+}
+
+export function buildRequestIdentifier(
+  request: Request | null | undefined,
+  env: Partial<IssuerEnvLike>,
+  tenantId: string,
+  configuredIdentifier?: string
+): string {
+  const issuerUrl = buildRequestIssuerUrl(request, env, tenantId);
+  const hostname = new URL(issuerUrl).hostname;
+
+  if (!configuredIdentifier) {
+    return `did:web:${hostname}`;
+  }
+
+  if (configuredIdentifier.startsWith('https://') || configuredIdentifier.startsWith('http://')) {
+    return issuerUrl;
+  }
+
+  if (configuredIdentifier.startsWith('did:web:')) {
+    return `did:web:${hostname}`;
+  }
+
+  return configuredIdentifier;
 }
 
 /**
@@ -155,7 +321,16 @@ export function validateHostHeader(
 
   // Check if hostname matches BASE_DOMAIN
   if (hostname === env.BASE_DOMAIN) {
-    // Naked domain access
+    // Naked domain access is only valid when explicitly enabled.
+    if (env.NAKED_DOMAIN_AS_ISSUER !== 'true') {
+      return {
+        valid: false,
+        tenantId: null,
+        error: 'tenant_not_found',
+        statusCode: 404,
+      };
+    }
+
     const tenantId = getPrimaryTenantId(env);
     return {
       valid: true,

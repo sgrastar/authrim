@@ -112,10 +112,12 @@ export function resolveTenantFromRequest(
     return hostResult;
   }
 
-  const forwardedHost =
-    request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim() ||
-    request.headers.get('X-Forwarded-Host')?.split(',')[0]?.trim();
-  if (forwardedHost) {
+  const forwardedHosts = [
+    request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim(),
+    request.headers.get('X-Forwarded-Host')?.split(',')[0]?.trim(),
+  ].filter((value, index, array): value is string => !!value && array.indexOf(value) === index);
+
+  for (const forwardedHost of forwardedHosts) {
     const forwardedHostResult = getTenantIdFromHost(forwardedHost, env);
     if (forwardedHostResult.success) {
       return forwardedHostResult;
@@ -155,24 +157,27 @@ export function getTenantIdOrThrow(host: string | undefined, env: Partial<Env>):
   }
 }
 
+function requireTenantId(tenantId: string, context: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 /**
  * Build a Durable Object key with tenant prefix.
  *
  * @param resourceType - Type of resource (e.g., 'session', 'auth-code')
  * @param resourceId - Unique identifier for the resource
- * @param tenantId - Optional tenant ID (defaults to DEFAULT_TENANT_ID)
+ * @param tenantId - Tenant ID
  * @returns Tenant-prefixed key string
  *
  * @example
- * buildDOKey('session', 'abc123') // => 'tenant:default:session:abc123'
  * buildDOKey('session', 'abc123', 'acme') // => 'tenant:acme:session:abc123'
  */
-export function buildDOKey(
-  resourceType: string,
-  resourceId: string,
-  tenantId: string = DEFAULT_TENANT_ID
-): string {
-  return `tenant:${tenantId}:${resourceType}:${resourceId}`;
+export function buildDOKey(resourceType: string, resourceId: string, tenantId: string): string {
+  return `tenant:${requireTenantId(tenantId, 'buildDOKey')}:${resourceType}:${resourceId}`;
 }
 
 /**
@@ -180,19 +185,14 @@ export function buildDOKey(
  *
  * @param prefix - Key prefix (e.g., 'client', 'state')
  * @param key - Unique key value
- * @param tenantId - Optional tenant ID (defaults to DEFAULT_TENANT_ID)
+ * @param tenantId - Tenant ID
  * @returns Tenant-prefixed key string
  *
  * @example
- * buildKVKey('client', 'my-client-id') // => 'tenant:default:client:my-client-id'
  * buildKVKey('client', 'my-client-id', 'acme') // => 'tenant:acme:client:my-client-id'
  */
-export function buildKVKey(
-  prefix: string,
-  key: string,
-  tenantId: string = DEFAULT_TENANT_ID
-): string {
-  return `tenant:${tenantId}:${prefix}:${key}`;
+export function buildKVKey(prefix: string, key: string, tenantId: string): string {
+  return `tenant:${requireTenantId(tenantId, 'buildKVKey')}:${prefix}:${key}`;
 }
 
 /**
@@ -200,19 +200,15 @@ export function buildKVKey(
  * Used when creating DO instance IDs via idFromName().
  *
  * @param resourceType - Type of DO resource (e.g., 'session', 'key-manager')
- * @param tenantId - Optional tenant ID (defaults to DEFAULT_TENANT_ID)
+ * @param tenantId - Tenant ID
  * @returns Tenant-prefixed instance name
  *
  * @example
- * buildDOInstanceName('session') // => 'tenant:default:session'
  * buildDOInstanceName('session', 'acme') // => 'tenant:acme:session'
  * env.SESSION_STORE.idFromName(buildDOInstanceName('session', tenantId))
  */
-export function buildDOInstanceName(
-  resourceType: string,
-  tenantId: string = DEFAULT_TENANT_ID
-): string {
-  return `tenant:${tenantId}:${resourceType}`;
+export function buildDOInstanceName(resourceType: string, tenantId: string): string {
+  return `tenant:${requireTenantId(tenantId, 'buildDOInstanceName')}:${resourceType}`;
 }
 
 /**
@@ -224,7 +220,7 @@ export function buildDOInstanceName(
  * @returns Tenant-prefixed instance name
  */
 export function buildDOInstanceNameForTenant(tenantId: string, resourceType: string): string {
-  return `tenant:${tenantId}:${resourceType}`;
+  return `tenant:${requireTenantId(tenantId, 'buildDOInstanceNameForTenant')}:${resourceType}`;
 }
 
 /**
@@ -237,7 +233,7 @@ export function buildDOInstanceNameForTenant(tenantId: string, resourceType: str
  * @returns Tenant-prefixed key string
  */
 export function buildKVKeyForTenant(tenantId: string, prefix: string, key: string): string {
-  return `tenant:${tenantId}:${prefix}:${key}`;
+  return `tenant:${requireTenantId(tenantId, 'buildKVKeyForTenant')}:${prefix}:${key}`;
 }
 
 /**
@@ -270,7 +266,7 @@ export function fnv1a32(str: string): number {
  *
  * @param userId - User identifier (sub claim)
  * @param clientId - OAuth client identifier
- * @param shardCount - Number of shards (default: 64)
+ * @param shardCount - Number of shards (default: 4)
  * @returns Shard index (0 to shardCount - 1)
  */
 export function getAuthCodeShardIndex(
@@ -329,14 +325,11 @@ export function parseShardedAuthCode(
  * Build a sharded Durable Object instance name for auth codes.
  *
  * @param shardIndex - Shard index
- * @param tenantId - Optional tenant ID (defaults to DEFAULT_TENANT_ID)
+ * @param tenantId - Tenant ID
  * @returns DO instance name for the shard
  */
-export function buildAuthCodeShardInstanceName(
-  shardIndex: number,
-  tenantId: string = DEFAULT_TENANT_ID
-): string {
-  return `tenant:${tenantId}:auth-code:shard-${shardIndex}`;
+export function buildAuthCodeShardInstanceName(shardIndex: number, tenantId: string): string {
+  return `tenant:${requireTenantId(tenantId, 'buildAuthCodeShardInstanceName')}:auth-code:shard-${shardIndex}`;
 }
 
 /**
@@ -511,14 +504,11 @@ export async function getSessionShardCount(env: Env): Promise<number> {
  * Build a sharded Durable Object instance name for sessions.
  *
  * @param shardIndex - Shard index
- * @param tenantId - Optional tenant ID (defaults to DEFAULT_TENANT_ID)
+ * @param tenantId - Tenant ID
  * @returns DO instance name for the shard
  */
-export function buildSessionShardInstanceName(
-  shardIndex: number,
-  tenantId: string = DEFAULT_TENANT_ID
-): string {
-  return `tenant:${tenantId}:session:shard-${shardIndex}`;
+export function buildSessionShardInstanceName(shardIndex: number, tenantId: string): string {
+  return `tenant:${requireTenantId(tenantId, 'buildSessionShardInstanceName')}:session:shard-${shardIndex}`;
 }
 
 // Re-export issuer utilities for convenience

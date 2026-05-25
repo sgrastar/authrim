@@ -6,6 +6,7 @@
  */
 
 import type { AuthrimConfig } from './config.js';
+import type { AuthrimLock } from './lock.js';
 import { extractZoneName } from './cloudflare.js';
 import {
   getWorkerName,
@@ -15,6 +16,9 @@ import {
   type WorkerComponent,
   type KVNamespace,
 } from './naming.js';
+import { getSecretNamesForWorker } from './secrets.js';
+import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
+import { isTenantDatabaseBinding } from './tenant-database.js';
 
 // =============================================================================
 // Types
@@ -27,6 +31,26 @@ export interface ResourceIds {
   r2?: Record<string, { name: string }>;
 }
 
+export function buildResourceIdsFromLock(lock: AuthrimLock): ResourceIds {
+  return {
+    d1: Object.fromEntries(
+      Object.entries(lock.d1 || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
+    ),
+    kv: Object.fromEntries(
+      Object.entries(lock.kv || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
+    ),
+    queues: lock.queues
+      ? Object.fromEntries(
+          Object.entries(lock.queues).map(([key, value]) => [
+            key,
+            { id: value.id, name: value.name },
+          ])
+        )
+      : undefined,
+    r2: lock.r2 ? Object.fromEntries(Object.entries(lock.r2)) : undefined,
+  };
+}
+
 export interface WranglerConfig {
   name: string;
   main: string;
@@ -36,6 +60,7 @@ export interface WranglerConfig {
   placement?: { mode: string };
   kv_namespaces?: Array<{ binding: string; id: string; preview_id?: string }>;
   d1_databases?: Array<{ binding: string; database_name: string; database_id: string }>;
+  hyperdrive?: Array<{ binding: string; id: string }>;
   r2_buckets?: Array<{ binding: string; bucket_name: string }>;
   durable_objects?: {
     bindings: Array<{ name: string; class_name: string; script_name?: string }>;
@@ -43,10 +68,104 @@ export interface WranglerConfig {
   migrations?: Array<{ tag: string; new_sqlite_classes?: string[] }>;
   vars: Record<string, string>;
   routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
+  triggers?: {
+    crons: string[];
+  };
   queues?: {
     producers?: Array<{ queue: string; binding: string }>;
+    consumers?: Array<{
+      queue: string;
+      max_batch_size?: number;
+      max_batch_timeout?: number;
+      max_retries?: number;
+      dead_letter_queue?: string;
+    }>;
   };
   services?: Array<{ binding: string; service: string }>;
+  send_email?: Array<{
+    name: string;
+    destination_address?: string;
+    allowed_destination_addresses?: string[];
+    allowed_sender_addresses?: string[];
+  }>;
+}
+
+const LOGGING_DELIVERY_QUEUE_DEFINITIONS = [
+  {
+    binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+    resourceKey: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+    fallbackName: (env: string) => `${env}-logging-delivery-critical-queue`,
+  },
+  {
+    binding: 'LOGGING_DELIVERY_QUEUE',
+    resourceKey: 'LOGGING_DELIVERY_QUEUE',
+    fallbackName: (env: string) => `${env}-logging-delivery-queue`,
+  },
+  {
+    binding: 'LOGGING_DELIVERY_BULK_QUEUE',
+    resourceKey: 'LOGGING_DELIVERY_BULK_QUEUE',
+    fallbackName: (env: string) => `${env}-logging-delivery-bulk-queue`,
+  },
+] as const;
+
+const LOGGING_DELIVERY_PRODUCER_COMPONENTS: readonly WorkerComponent[] = [
+  'ar-auth',
+  'ar-management',
+  'ar-token',
+  'ar-userinfo',
+  'ar-async',
+  'ar-saml',
+  'ar-bridge',
+  'ar-vc',
+];
+
+function collectConfiguredHyperdriveBindings(
+  config: AuthrimConfig
+): Array<{ binding: string; id: string }> {
+  const configured = Object.values(config.profiles?.references?.hyperdrive ?? {});
+  const deduped = new Map<string, { binding: string; id: string }>();
+  for (const entry of configured) {
+    if (!entry.binding || !entry.id) {
+      continue;
+    }
+    deduped.set(`${entry.binding}:${entry.id}`, {
+      binding: entry.binding,
+      id: entry.id,
+    });
+  }
+  return Array.from(deduped.values()).sort((left, right) =>
+    left.binding.localeCompare(right.binding)
+  );
+}
+
+function shouldAttachConfiguredHyperdriveBindings(component: WorkerComponent): boolean {
+  return component !== 'ar-router';
+}
+
+function collectD1DatabaseBindings(
+  component: WorkerComponent,
+  resourceIds: ResourceIds
+): Array<{ binding: string; database_name: string; database_id: string }> {
+  if (component === 'ar-router' || component === 'ar-async') {
+    return [];
+  }
+
+  const builtins = D1_DATABASES.map((db) => ({
+    binding: db.binding,
+    database_name: resourceIds.d1[db.binding]?.name || '',
+    database_id: resourceIds.d1[db.binding]?.id || '',
+  })).filter((db) => db.database_id);
+
+  const tenantDatabases = Object.entries(resourceIds.d1)
+    .filter(([binding]) => isTenantDatabaseBinding(binding))
+    .map(([binding, resource]) => ({
+      binding,
+      database_name: resource.name,
+      database_id: resource.id,
+    }))
+    .sort((left, right) => left.binding.localeCompare(right.binding));
+
+  return [...builtins, ...tenantDatabases];
 }
 
 // =============================================================================
@@ -56,22 +175,37 @@ export interface WranglerConfig {
 const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   'ar-lib-core': ['AUTHRIM_CONFIG'],
   'ar-discovery': ['AUTHRIM_CONFIG'],
-  'ar-auth': ['CLIENTS_CACHE', 'SETTINGS', 'USER_CACHE', 'CONSENT_CACHE', 'AUTHRIM_CONFIG'],
-  'ar-token': ['CLIENTS_CACHE', 'SETTINGS', 'USER_CACHE', 'REBAC_CACHE', 'AUTHRIM_CONFIG'],
-  'ar-userinfo': ['CLIENTS_CACHE', 'USER_CACHE', 'AUTHRIM_CONFIG'],
+  'ar-auth': [
+    'CLIENTS_CACHE',
+    'SETTINGS',
+    'USER_CACHE',
+    'CONSENT_CACHE',
+    'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
+  ],
+  'ar-token': [
+    'CLIENTS_CACHE',
+    'SETTINGS',
+    'USER_CACHE',
+    'REBAC_CACHE',
+    'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
+  ],
+  'ar-userinfo': ['CLIENTS_CACHE', 'USER_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-management': [
     'CLIENTS_CACHE',
     'SETTINGS',
     'USER_CACHE',
     'INITIAL_ACCESS_TOKENS',
     'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
   ],
   'ar-router': ['AUTHRIM_CONFIG'],
   'ar-async': ['AUTHRIM_CONFIG'],
   'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
-  'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG'],
-  'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG'],
-  'ar-vc': ['AUTHRIM_CONFIG'],
+  'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-vc': ['AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
 };
 
 // =============================================================================
@@ -121,8 +255,15 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-router': ['VERSION_MANAGER'],
   'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE', 'VERSION_MANAGER'],
   'ar-policy': ['PERMISSION_CHANGE_HUB', 'VERSION_MANAGER'],
-  'ar-saml': ['KEY_MANAGER', 'SAML_REQUEST_STORE', 'SESSION_STORE', 'VERSION_MANAGER'],
-  'ar-bridge': ['SESSION_STORE', 'VERSION_MANAGER'],
+  'ar-saml': [
+    'KEY_MANAGER',
+    'SAML_REQUEST_STORE',
+    'SAML_AGGREGATE_METADATA_STORE',
+    'SESSION_STORE',
+    'CHALLENGE_STORE',
+    'VERSION_MANAGER',
+  ],
+  'ar-bridge': ['SESSION_STORE', 'CHALLENGE_STORE', 'VERSION_MANAGER'],
   'ar-vc': ['KEY_MANAGER', 'VERSION_MANAGER'],
 };
 
@@ -180,6 +321,19 @@ export function normalizeWorkersDevUrl(url: string, workersSubdomain?: string): 
   }
 }
 
+function normalizeHostnameCandidate(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    return new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`).hostname.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
 /**
  * Add origin to set, normalizing workers.dev URLs to include subdomain
  */
@@ -192,13 +346,27 @@ function addOriginWithSubdomain(
   origins.add(normalizedUrl);
 }
 
+function getAdminUiApiMode(
+  apiUrl: string,
+  adminUiUrl: string,
+  baseDomain?: string
+): 'same-origin' | 'same-site-cross-origin' | 'cross-site-proxy' {
+  const classification: UiApiSiteClassification = classifyUiApiSite(apiUrl, adminUiUrl, {
+    baseDomain,
+  });
+  return classification === 'cross-site' ? 'cross-site-proxy' : classification;
+}
+
 /**
- * Derive CORS allowed origins from config URLs
+ * Derive CORS allowed origins from config URLs.
+ *
+ * Setup exposes web_origin_registry semantics to operators, but this generator
+ * still materializes the current internal ALLOWED_ORIGINS representation.
  *
  * Includes:
  * - API origin (router) - needed for admin-init-setup WebAuthn operations
  * - LoginUI origin - for cross-origin requests from login UI
- * - AdminUI origin - for cross-origin requests from admin UI
+ * - AdminUI origin only when Admin UI is same-site with the API
  *
  * Workers.dev URLs are normalized to the correct format:
  *   {name}.{subdomain}.workers.dev
@@ -223,12 +391,22 @@ export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: s
   }
 
   // AdminUI origin
-  // When sameAsApi=true, the actual origin is the API domain (UI is proxied)
+  // Direct cross-site browser mode is not supported. Cross-site Admin UI uses
+  // the Admin UI Worker/BFF, so the public Admin API CORS allowlist must not
+  // include that cross-site browser origin.
   const adminUiUrl = config.urls?.adminUi?.sameAsApi
     ? apiUrl
     : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto;
-  if (adminUiUrl) {
-    addOriginWithSubdomain(origins, adminUiUrl, workersSubdomain);
+  if (adminUiUrl && apiUrl) {
+    const normalizedApiUrl = normalizeWorkersDevUrl(apiUrl || '', workersSubdomain);
+    const normalizedAdminUiUrl = normalizeWorkersDevUrl(adminUiUrl, workersSubdomain);
+    const adminUiSiteClassification = classifyUiApiSite(normalizedApiUrl, normalizedAdminUiUrl, {
+      baseDomain: config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined,
+    });
+
+    if (adminUiSiteClassification !== 'cross-site') {
+      origins.add(normalizedAdminUiUrl);
+    }
   }
 
   return Array.from(origins);
@@ -253,6 +431,9 @@ export function generateWranglerConfig(
   workersSubdomain?: string
 ): WranglerConfig {
   const env = config.environment.prefix;
+  const multiTenantBaseDomain =
+    config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
+  const multiTenantEnabled = !!multiTenantBaseDomain;
   const workerName = getWorkerName(env, component);
 
   // Base configuration
@@ -261,7 +442,7 @@ export function generateWranglerConfig(
     main: COMPONENT_ENTRY_POINTS[component],
     compatibility_date: '2024-09-23',
     compatibility_flags: ['nodejs_compat'],
-    // With Service Binding, Pages can reach ar-router internally without workers.dev.
+    // With Service Binding, UI Workers can reach ar-router internally without workers.dev.
     // Disable workers.dev when a custom API domain is set to avoid dual public endpoints.
     workers_dev: !config.urls?.api?.custom,
     vars: generateEnvVars(component, config, workersSubdomain),
@@ -269,6 +450,18 @@ export function generateWranglerConfig(
 
   // Placement (off for better performance with sharded DOs)
   wranglerConfig.placement = { mode: 'off' };
+
+  if (component === 'ar-bridge') {
+    wranglerConfig.triggers = {
+      crons: ['*/15 * * * *'],
+    };
+  }
+
+  if (component === 'ar-management') {
+    wranglerConfig.triggers = {
+      crons: ['0 */6 * * *'],
+    };
+  }
 
   // KV Namespaces
   const kvBindings = COMPONENT_KV_BINDINGS[component];
@@ -281,13 +474,15 @@ export function generateWranglerConfig(
       }));
   }
 
-  // D1 Databases (most components need both)
-  if (component !== 'ar-router' && component !== 'ar-async') {
-    wranglerConfig.d1_databases = D1_DATABASES.map((db) => ({
-      binding: db.binding,
-      database_name: resourceIds.d1[db.binding]?.name || '',
-      database_id: resourceIds.d1[db.binding]?.id || '',
-    })).filter((db) => db.database_id);
+  // D1 Databases (most components need shared D1; tenant-d1 adds generated TDB_* bindings)
+  const d1Databases = collectD1DatabaseBindings(component, resourceIds);
+  if (d1Databases.length > 0) {
+    wranglerConfig.d1_databases = d1Databases;
+  }
+
+  const hyperdriveBindings = collectConfiguredHyperdriveBindings(config);
+  if (shouldAttachConfiguredHyperdriveBindings(component) && hyperdriveBindings.length > 0) {
+    wranglerConfig.hyperdrive = hyperdriveBindings;
   }
 
   // Durable Objects
@@ -343,6 +538,25 @@ export function generateWranglerConfig(
         binding: 'DIAGNOSTIC_LOGS',
         bucket_name: resourceIds.r2['DIAGNOSTIC_LOGS']?.name || `${env}-diagnostic-logs`,
       });
+      r2Buckets.push({
+        binding: 'AUDIT_ARCHIVE',
+        bucket_name: resourceIds.r2['AUDIT_ARCHIVE']?.name || `${env}-audit-archive`,
+      });
+    }
+
+    if (component === 'ar-management') {
+      r2Buckets.push({
+        binding: 'IMPORT_ARTIFACTS',
+        bucket_name: resourceIds.r2['IMPORT_ARTIFACTS']?.name || `${env}-import-artifacts`,
+      });
+      r2Buckets.push({
+        binding: 'EXPORT_ARTIFACTS',
+        bucket_name: resourceIds.r2['EXPORT_ARTIFACTS']?.name || `${env}-export-artifacts`,
+      });
+      r2Buckets.push({
+        binding: 'SENSITIVE_DETAILS',
+        bucket_name: resourceIds.r2['SENSITIVE_DETAILS']?.name || `${env}-sensitive-details`,
+      });
     }
 
     if (r2Buckets.length > 0) {
@@ -352,16 +566,61 @@ export function generateWranglerConfig(
 
   // Queues (optional)
   if (config.features.queue?.enabled && resourceIds.queues) {
+    const producers: Array<{ queue: string; binding: string }> = [];
+    const consumers: Array<{
+      queue: string;
+      max_batch_size?: number;
+      max_batch_timeout?: number;
+      max_retries?: number;
+      dead_letter_queue?: string;
+    }> = [];
+
     if (component === 'ar-auth' || component === 'ar-token') {
-      wranglerConfig.queues = {
-        producers: [
-          {
-            queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
-            binding: 'AUDIT_QUEUE',
-          },
-        ],
-      };
+      producers.push({
+        queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
+        binding: 'AUDIT_QUEUE',
+      });
     }
+
+    if (LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component)) {
+      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
+        producers.push({
+          queue: resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
+          binding: definition.binding,
+        });
+      }
+    }
+
+    if (component === 'ar-management') {
+      consumers.push({
+        queue: resourceIds.queues['AUDIT_QUEUE']?.name || `${env}-audit-queue`,
+      });
+      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
+        consumers.push({
+          queue: resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
+        });
+      }
+    }
+
+    if (producers.length > 0 || consumers.length > 0) {
+      wranglerConfig.queues = {
+        ...(producers.length > 0 ? { producers } : {}),
+        ...(consumers.length > 0 ? { consumers } : {}),
+      };
+      if (component === 'ar-management') {
+        wranglerConfig.vars.LOGGING_DELIVERY_QUEUE_NAMES = LOGGING_DELIVERY_QUEUE_DEFINITIONS.map(
+          (definition) =>
+            resourceIds.queues?.[definition.resourceKey]?.name ?? definition.fallbackName(env)
+        ).join(',');
+      }
+    }
+  }
+
+  if (
+    config.features.email?.provider === 'cloudflare' &&
+    (component === 'ar-auth' || component === 'ar-management')
+  ) {
+    wranglerConfig.send_email = [{ name: 'EMAIL' }];
   }
 
   // Service Bindings for ar-router (required for routing to other workers)
@@ -375,21 +634,17 @@ export function generateWranglerConfig(
       { binding: 'OP_MANAGEMENT', service: `${env}-ar-management` },
     ];
 
-    // Optional services (only if enabled in config)
-    if (config.components.bridge) {
-      services.push({ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` });
+    // Standard services are installed by default. Some features still require runtime setup.
+    services.push({ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` });
+    services.push({ binding: 'POLICY_SERVICE', service: `${env}-ar-policy` });
+    services.push({ binding: 'OP_ASYNC', service: `${env}-ar-async` });
+    services.push({ binding: 'OP_SAML', service: `${env}-ar-saml` });
+    services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
+    if (config.components.loginUi) {
+      services.push({ binding: 'LOGIN_UI_WORKER', service: `${env}-ar-login-ui` });
     }
-    if (config.components.policy) {
-      services.push({ binding: 'POLICY_SERVICE', service: `${env}-ar-policy` });
-    }
-    if (config.components.async) {
-      services.push({ binding: 'OP_ASYNC', service: `${env}-ar-async` });
-    }
-    if (config.components.saml) {
-      services.push({ binding: 'OP_SAML', service: `${env}-ar-saml` });
-    }
-    if (config.components.vc) {
-      services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
+    if (config.components.adminUi) {
+      services.push({ binding: 'ADMIN_UI_WORKER', service: `${env}-ar-admin-ui` });
     }
 
     wranglerConfig.services = services;
@@ -398,15 +653,32 @@ export function generateWranglerConfig(
     if (config.urls?.api?.custom) {
       try {
         const customUrl = new URL(config.urls.api.custom);
-        const hostname = customUrl.hostname;
+        const hostname =
+          multiTenantEnabled && config.tenant?.baseDomain
+            ? normalizeHostnameCandidate(config.tenant.baseDomain) || customUrl.hostname
+            : customUrl.hostname;
+        const zoneName = extractZoneName(hostname);
         if (config.urls?.api?.customDomainBinding) {
-          // Custom Domain Binding: Cloudflare assigns the domain directly to the Worker.
-          // No zone_name required; pattern is just the hostname.
-          wranglerConfig.routes = [{ pattern: hostname, custom_domain: true }];
+          // In multi-tenant mode, the naked domain can use a custom domain binding, but
+          // tenant subdomains still need wildcard route matching.
+          if (multiTenantEnabled) {
+            wranglerConfig.routes = [
+              { pattern: hostname, custom_domain: true },
+              { pattern: `*.${hostname}`, zone_name: zoneName },
+              { pattern: `*.${hostname}/*`, zone_name: zoneName },
+            ];
+          } else {
+            // Custom Domain Binding: Cloudflare assigns the domain directly to the Worker.
+            // No zone_name required; pattern is just the hostname.
+            wranglerConfig.routes = [{ pattern: hostname, custom_domain: true }];
+          }
         } else {
           // Route: Pattern-based routing via DNS zone.
-          const zoneName = extractZoneName(hostname);
           wranglerConfig.routes = [{ pattern: `${hostname}/*`, zone_name: zoneName }];
+          if (multiTenantEnabled) {
+            wranglerConfig.routes.push({ pattern: `*.${hostname}`, zone_name: zoneName });
+            wranglerConfig.routes.push({ pattern: `*.${hostname}/*`, zone_name: zoneName });
+          }
         }
       } catch {
         // Invalid URL, skip routing configuration
@@ -435,23 +707,58 @@ export function generateEnvVars(
   workersSubdomain?: string
 ): Record<string, string> {
   const vars: Record<string, string> = {};
+  const multiTenantBaseDomain =
+    config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
+  const multiTenantEnabled = !!multiTenantBaseDomain;
+  const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
 
   // Determine issuer URL
   // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
   // Otherwise: use workers.dev or custom API domain
   let issuerUrl: string;
-  if (config.tenant?.baseDomain) {
+  if (multiTenantEnabled) {
     // Multi-tenant mode: use BASE_DOMAIN (ISSUER_URL is not used, kept for fallback)
-    issuerUrl = config.urls?.api?.auto || '';
+    issuerUrl = normalizeWorkersDevUrl(config.urls?.api?.auto || '', workersSubdomain);
   } else {
     // Single-tenant or workers.dev mode: use explicit issuer URL
-    issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+    issuerUrl = normalizeWorkersDevUrl(
+      config.urls?.api?.custom || config.urls?.api?.auto || '',
+      workersSubdomain
+    );
   }
   // UI_URL: when sameAsApi=true, UI is proxied through the API domain
-  const apiUrlForUi = config.urls?.api?.custom || config.urls?.api?.auto || '';
-  const uiUrl = config.urls?.loginUi?.sameAsApi
+  const apiUrlForUi = normalizeWorkersDevUrl(
+    config.urls?.api?.custom || config.urls?.api?.auto || '',
+    workersSubdomain
+  );
+  const uiUrl = loginUiUsesApiDomain
     ? apiUrlForUi
-    : config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl;
+    : normalizeWorkersDevUrl(
+        config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl,
+        workersSubdomain
+      );
+  const adminUiUrl = config.urls?.adminUi?.sameAsApi
+    ? apiUrlForUi
+    : normalizeWorkersDevUrl(
+        config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl,
+        workersSubdomain
+      );
+  const adminUiApiMode = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+  const profileDefaults = config.profiles?.defaults ?? {
+    storage: 'builtin:storage:shared-d1',
+    audit: 'builtin:audit:standard',
+    residency: 'builtin:residency:default',
+  };
+  const profileRegistryBackend = config.profiles?.registry?.backend ?? 'kv';
+  const profileAwareComponents: WorkerComponent[] = [
+    'ar-auth',
+    'ar-management',
+    'ar-token',
+    'ar-userinfo',
+    'ar-discovery',
+    'ar-saml',
+    'ar-bridge',
+  ];
 
   // Issuer URL (single-tenant mode uses this directly)
   // In multi-tenant mode, issuer is dynamically built from subdomain + BASE_DOMAIN
@@ -468,22 +775,34 @@ export function generateEnvVars(
   // Tenant configuration
   // Multi-tenant mode is always enabled when BASE_DOMAIN is set.
   // Domain pattern: {tenant}.{baseDomain}
-  if (
-    component === 'ar-auth' ||
-    component === 'ar-management' ||
-    component === 'ar-router' ||
-    component === 'ar-discovery'
-  ) {
+  const tenantAwareComponents: WorkerComponent[] = [
+    'ar-discovery',
+    'ar-auth',
+    'ar-token',
+    'ar-userinfo',
+    'ar-management',
+    'ar-router',
+    'ar-async',
+    'ar-policy',
+    'ar-saml',
+    'ar-bridge',
+    'ar-vc',
+  ];
+
+  if (tenantAwareComponents.includes(component)) {
     vars['DEFAULT_TENANT_ID'] = config.tenant?.name || 'default';
 
     // User ID format (nanoid or uuid)
     vars['USER_ID_FORMAT'] = config.tenant?.userIdFormat || 'nanoid';
 
-    if (config.tenant?.baseDomain) {
-      vars['BASE_DOMAIN'] = config.tenant.baseDomain;
+    if (multiTenantEnabled) {
+      vars['BASE_DOMAIN'] = multiTenantBaseDomain;
 
-      if (config.tenant.primaryTenant) {
-        vars['PRIMARY_TENANT_ID'] = config.tenant.primaryTenant;
+      const primaryTenantId =
+        config.tenant.primaryTenant || (config.tenant.nakedDomain ? config.tenant.name : undefined);
+
+      if (primaryTenantId) {
+        vars['PRIMARY_TENANT_ID'] = primaryTenantId;
       }
 
       // Naked domain as issuer (use naked domain instead of tenant subdomain)
@@ -493,46 +812,56 @@ export function generateEnvVars(
     }
   }
 
-  if (component === 'ar-auth' || component === 'ar-management') {
+  if (component === 'ar-auth' || component === 'ar-management' || component === 'ar-saml') {
     vars['UI_URL'] = uiUrl;
     vars['LOGIN_UI_ENABLED'] = config.components.loginUi ? 'true' : 'false';
+  }
+
+  if (component === 'ar-auth' || component === 'ar-management') {
     vars['ADMIN_UI_ENABLED'] = config.components.adminUi ? 'true' : 'false';
+    if (config.features.email?.fromAddress) {
+      vars['EMAIL_FROM'] = config.features.email.fromAddress;
+    }
+    if (config.features.email?.fromName) {
+      vars['EMAIL_FROM_NAME'] = config.features.email.fromName;
+    }
+  }
+
+  if (component === 'ar-auth' || component === 'ar-saml') {
+    vars['ENABLE_CONFORMANCE_MODE'] = 'false';
   }
 
   if (component === 'ar-auth') {
-    vars['ENABLE_CONFORMANCE_MODE'] = 'false';
-
     // Cookie SameSite configuration based on origin relationship
     // If UI is served from same domain as API (via proxy), use 'Lax' (more secure)
     // If UI is on different domain, use 'None' (required for cross-origin)
-    const loginUiSameOrigin = config.urls?.loginUi?.sameAsApi === true;
+    const loginUiSameOrigin = loginUiUsesApiDomain;
     vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
 
-    // Admin UI URL and cookie configuration
-    const adminUiUrl = config.urls?.adminUi?.sameAsApi
-      ? apiUrlForUi
-      : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
-    const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
-    vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
+    vars['ADMIN_UI_API_MODE'] = adminUiApiMode;
+    vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
   }
 
   // ar-management also needs cookie configuration for admin sessions
   if (component === 'ar-management') {
-    // Admin UI URL and cookie configuration (same logic as ar-auth)
-    const adminUiUrl = config.urls?.adminUi?.sameAsApi
-      ? apiUrlForUi
-      : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
-    const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
-    vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
-    vars['SAML_ENABLED'] = config.components.saml ? 'true' : 'false';
-    vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
-    vars['VC_ENABLED'] = config.components.vc ? 'true' : 'false';
+    vars['ADMIN_UI_API_MODE'] = adminUiApiMode;
+    vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
+    vars['SAML_ENABLED'] = 'true';
+    vars['ASYNC_ENABLED'] = 'true';
+    vars['VC_ENABLED'] = 'true';
   }
 
   if (component === 'ar-discovery') {
-    vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
+    vars['ASYNC_ENABLED'] = 'true';
+  }
+
+  if (profileAwareComponents.includes(component)) {
+    vars['PROFILE_REGISTRY_BACKEND'] = profileRegistryBackend;
+    vars['DEFAULT_STORAGE_PROFILE_ID'] = profileDefaults.storage;
+    vars['DEFAULT_AUDIT_PROFILE_ID'] = profileDefaults.audit;
+    vars['DEFAULT_RESIDENCY_PROFILE_ID'] = profileDefaults.residency;
   }
 
   // OIDC settings
@@ -559,57 +888,58 @@ export function generateEnvVars(
     vars['AUTHRIM_SESSION_SHARDS'] = (config.sharding.sessionShards ?? 4).toString();
     vars['AUTHRIM_CHALLENGE_SHARDS'] = (config.sharding.challengeShards ?? 4).toString();
   }
-  // Flow Engine sharding (for ar-auth only)
-  if (component === 'ar-auth') {
-    vars['AUTHRIM_FLOW_STATE_SHARDS'] = (config.sharding.flowStateShards ?? 32).toString();
-  }
 
-  // Secrets placeholders (will be set via wrangler secret put)
-  // KEY_MANAGER_SECRET is needed by workers that access KeyManager DO
-  const needsKeyManagerSecret = [
-    'ar-lib-core',
-    'ar-auth',
-    'ar-token',
-    'ar-userinfo',
-    'ar-discovery',
-    'ar-management',
-    'ar-saml',
-  ];
-  // ADMIN_API_SECRET is needed by workers that expose Admin API endpoints
-  const needsAdminApiSecret = ['ar-lib-core', 'ar-auth', 'ar-token', 'ar-management'];
-
-  if (needsKeyManagerSecret.includes(component)) {
+  const componentSecrets = getSecretNamesForWorker(component);
+  if (componentSecrets.includes('KEY_MANAGER_SECRET')) {
     vars['KEY_MANAGER_SECRET'] = ''; // Set via secret
   }
-  if (needsAdminApiSecret.includes(component)) {
+  if (componentSecrets.includes('VERSION_MANAGER_SECRET')) {
+    vars['VERSION_MANAGER_SECRET'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('ADMIN_API_SECRET')) {
     vars['ADMIN_API_SECRET'] = ''; // Set via secret
   }
 
   // ar-router: UI proxy configuration
-  // When sameAsApi=true, the router proxies /admin/* and /login/* to the Pages projects
+  // In multi-tenant mode, the login UI must also be reachable on issuer/tenant hosts so
+  // tenant-specific /login, /discover, and /signup URLs stay canonical and host-bound.
+  // Admin UI custom domains inside the multi-tenant base domain are also handled here because
+  // the router owns the wildcard route for tenant hosts.
   if (component === 'ar-router') {
     const adminSameAsApi = config.urls?.adminUi?.sameAsApi === true;
-    vars['ENABLE_ADMIN_UI_PROXY'] = adminSameAsApi ? 'true' : 'false';
-    if (adminSameAsApi) {
-      const adminPagesUrl = config.urls?.adminUi?.auto || config.urls?.adminUi?.custom || '';
-      if (adminPagesUrl) {
-        vars['AR_ADMIN_UI_URL'] = adminPagesUrl;
+    const adminProxyEnabled = adminSameAsApi || multiTenantEnabled;
+    vars['ENABLE_ADMIN_UI_PROXY'] = adminProxyEnabled ? 'true' : 'false';
+    const adminUiPublicUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto;
+    if (adminUiPublicUrl) {
+      vars['ADMIN_UI_URL'] = adminUiPublicUrl;
+    }
+    if (adminProxyEnabled) {
+      const adminUiWorkerUrl = normalizeWorkersDevUrl(
+        config.urls?.adminUi?.auto || adminUiPublicUrl || '',
+        workersSubdomain
+      );
+      if (adminUiWorkerUrl) {
+        vars['AR_ADMIN_UI_URL'] = adminUiWorkerUrl;
       }
     }
 
-    const loginSameAsApi = config.urls?.loginUi?.sameAsApi === true;
-    vars['ENABLE_LOGIN_UI_PROXY'] = loginSameAsApi ? 'true' : 'false';
-    if (loginSameAsApi) {
-      const loginPagesUrl = config.urls?.loginUi?.auto || config.urls?.loginUi?.custom || '';
-      if (loginPagesUrl) {
-        vars['AR_LOGIN_UI_URL'] = loginPagesUrl;
+    const loginProxyEnabled = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
+    vars['ENABLE_LOGIN_UI_PROXY'] = loginProxyEnabled ? 'true' : 'false';
+    if (loginProxyEnabled) {
+      const loginUiWorkerUrl = normalizeWorkersDevUrl(
+        config.urls?.loginUi?.auto || config.urls?.loginUi?.custom || '',
+        workersSubdomain
+      );
+      if (loginUiWorkerUrl) {
+        vars['AR_LOGIN_UI_URL'] = loginUiWorkerUrl;
       }
     }
   }
 
-  // CORS allowed origins for workers that handle cross-origin requests
+  // CORS allowed origins for workers that handle cross-origin requests.
+  // This is the setup-side web_origin_registry -> ALLOWED_ORIGINS materialization boundary.
   // Workers.dev URLs are normalized to correct format: {name}.{subdomain}.workers.dev
-  if (['ar-auth', 'ar-management', 'ar-router'].includes(component)) {
+  if (['ar-auth', 'ar-management', 'ar-router', 'ar-saml'].includes(component)) {
     const allowedOrigins = deriveAllowedOrigins(config, workersSubdomain);
     if (allowedOrigins.length > 0) {
       vars['ALLOWED_ORIGINS'] = allowedOrigins.join(',');
@@ -662,6 +992,14 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
       tag: 'v8',
       new_sqlite_classes: ['FlowStateStore'],
     },
+    {
+      tag: 'v9',
+      new_sqlite_classes: ['SessionClientStore'],
+    },
+    {
+      tag: 'v10',
+      new_sqlite_classes: ['SAMLAggregateMetadataStore'],
+    },
   ];
 }
 
@@ -683,6 +1021,36 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
  */
 export function toToml(config: WranglerConfig, envName?: string): string {
   const lines: string[] = [];
+  const appendSendEmailBindings = (prefix?: string) => {
+    if (!config.send_email || config.send_email.length === 0) {
+      return;
+    }
+
+    lines.push('# Email Service Bindings');
+    for (const binding of config.send_email) {
+      const tableName = prefix ? `[[${prefix}.send_email]]` : '[[send_email]]';
+      lines.push(tableName);
+      lines.push(`name = "${binding.name}"`);
+      if (binding.destination_address) {
+        lines.push(`destination_address = "${binding.destination_address}"`);
+      }
+      if (binding.allowed_destination_addresses?.length) {
+        lines.push(
+          `allowed_destination_addresses = [${binding.allowed_destination_addresses
+            .map((value) => `"${value}"`)
+            .join(', ')}]`
+        );
+      }
+      if (binding.allowed_sender_addresses?.length) {
+        lines.push(
+          `allowed_sender_addresses = [${binding.allowed_sender_addresses
+            .map((value) => `"${value}"`)
+            .join(', ')}]`
+        );
+      }
+      lines.push('');
+    }
+  };
 
   if (envName) {
     // =========================================================================
@@ -729,6 +1097,12 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       lines.push('');
     }
 
+    if (config.triggers?.crons && config.triggers.crons.length > 0) {
+      lines.push(`[env.${envName}.triggers]`);
+      lines.push(`crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`);
+      lines.push('');
+    }
+
     // KV Namespaces
     if (config.kv_namespaces && config.kv_namespaces.length > 0) {
       lines.push('# KV Namespaces');
@@ -766,14 +1140,49 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       }
     }
 
-    // Queues
-    if (config.queues?.producers && config.queues.producers.length > 0) {
-      lines.push('# Cloudflare Queues');
-      for (const producer of config.queues.producers) {
-        lines.push(`[[env.${envName}.queues.producers]]`);
-        lines.push(`queue = "${producer.queue}"`);
-        lines.push(`binding = "${producer.binding}"`);
+    // Hyperdrive
+    if (config.hyperdrive && config.hyperdrive.length > 0) {
+      lines.push('# Hyperdrive');
+      for (const binding of config.hyperdrive) {
+        lines.push(`[[env.${envName}.hyperdrive]]`);
+        lines.push(`binding = "${binding.binding}"`);
+        lines.push(`id = "${binding.id}"`);
         lines.push('');
+      }
+    }
+
+    // Queues
+    if (
+      (config.queues?.producers && config.queues.producers.length > 0) ||
+      (config.queues?.consumers && config.queues.consumers.length > 0)
+    ) {
+      lines.push('# Cloudflare Queues');
+      if (config.queues?.producers) {
+        for (const producer of config.queues.producers) {
+          lines.push(`[[env.${envName}.queues.producers]]`);
+          lines.push(`queue = "${producer.queue}"`);
+          lines.push(`binding = "${producer.binding}"`);
+          lines.push('');
+        }
+      }
+      if (config.queues?.consumers) {
+        for (const consumer of config.queues.consumers) {
+          lines.push(`[[env.${envName}.queues.consumers]]`);
+          lines.push(`queue = "${consumer.queue}"`);
+          if (consumer.max_batch_size !== undefined) {
+            lines.push(`max_batch_size = ${consumer.max_batch_size}`);
+          }
+          if (consumer.max_batch_timeout !== undefined) {
+            lines.push(`max_batch_timeout = ${consumer.max_batch_timeout}`);
+          }
+          if (consumer.max_retries !== undefined) {
+            lines.push(`max_retries = ${consumer.max_retries}`);
+          }
+          if (consumer.dead_letter_queue) {
+            lines.push(`dead_letter_queue = "${consumer.dead_letter_queue}"`);
+          }
+          lines.push('');
+        }
       }
     }
 
@@ -814,6 +1223,8 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       }
     }
 
+    appendSendEmailBindings(`env.${envName}`);
+
     // Routes
     if (config.routes && config.routes.length > 0) {
       lines.push('# Routes');
@@ -848,6 +1259,12 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     if (config.placement) {
       lines.push('[placement]');
       lines.push(`mode = "${config.placement.mode}"`);
+      lines.push('');
+    }
+
+    if (config.triggers?.crons && config.triggers.crons.length > 0) {
+      lines.push('[triggers]');
+      lines.push(`crons = [${config.triggers.crons.map((cron) => `"${cron}"`).join(', ')}]`);
       lines.push('');
     }
 
@@ -888,14 +1305,49 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       }
     }
 
-    // Queues
-    if (config.queues?.producers && config.queues.producers.length > 0) {
-      lines.push('# Cloudflare Queues');
-      for (const producer of config.queues.producers) {
-        lines.push('[[queues.producers]]');
-        lines.push(`queue = "${producer.queue}"`);
-        lines.push(`binding = "${producer.binding}"`);
+    // Hyperdrive
+    if (config.hyperdrive && config.hyperdrive.length > 0) {
+      lines.push('# Hyperdrive');
+      for (const binding of config.hyperdrive) {
+        lines.push('[[hyperdrive]]');
+        lines.push(`binding = "${binding.binding}"`);
+        lines.push(`id = "${binding.id}"`);
         lines.push('');
+      }
+    }
+
+    // Queues
+    if (
+      (config.queues?.producers && config.queues.producers.length > 0) ||
+      (config.queues?.consumers && config.queues.consumers.length > 0)
+    ) {
+      lines.push('# Cloudflare Queues');
+      if (config.queues?.producers) {
+        for (const producer of config.queues.producers) {
+          lines.push('[[queues.producers]]');
+          lines.push(`queue = "${producer.queue}"`);
+          lines.push(`binding = "${producer.binding}"`);
+          lines.push('');
+        }
+      }
+      if (config.queues?.consumers) {
+        for (const consumer of config.queues.consumers) {
+          lines.push('[[queues.consumers]]');
+          lines.push(`queue = "${consumer.queue}"`);
+          if (consumer.max_batch_size !== undefined) {
+            lines.push(`max_batch_size = ${consumer.max_batch_size}`);
+          }
+          if (consumer.max_batch_timeout !== undefined) {
+            lines.push(`max_batch_timeout = ${consumer.max_batch_timeout}`);
+          }
+          if (consumer.max_retries !== undefined) {
+            lines.push(`max_retries = ${consumer.max_retries}`);
+          }
+          if (consumer.dead_letter_queue) {
+            lines.push(`dead_letter_queue = "${consumer.dead_letter_queue}"`);
+          }
+          lines.push('');
+        }
       }
     }
 
@@ -968,6 +1420,8 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         lines.push('');
       }
     }
+
+    appendSendEmailBindings();
   }
 
   return lines.join('\n');
@@ -1015,7 +1469,10 @@ export function generateRoutes(
       );
       break;
     case 'ar-userinfo':
-      routes.push({ pattern: `${domain}/userinfo`, zone_name: zoneName });
+      routes.push(
+        { pattern: `${domain}/userinfo`, zone_name: zoneName },
+        { pattern: `${domain}/api/protected/customer-profiles/*`, zone_name: zoneName }
+      );
       break;
     case 'ar-discovery':
       routes.push(
@@ -1040,7 +1497,7 @@ export interface WranglerValidationResult {
   valid: boolean;
   mismatches: Array<{
     component: string;
-    type: 'kv' | 'd1';
+    type: 'kv' | 'd1' | 'r2' | 'queue';
     binding: string;
     expected: string;
     actual: string;
@@ -1053,42 +1510,85 @@ export interface WranglerValidationResult {
 export function parseWranglerToml(
   content: string,
   env: string
-): { kv: Record<string, string>; d1: Record<string, string> } {
-  const result = { kv: {} as Record<string, string>, d1: {} as Record<string, string> };
-
-  // Find the [env.{env}] section
-  const envSectionRegex = new RegExp(`\\[env\\.${env}\\]`, 'g');
-  const envStart = content.search(envSectionRegex);
-  if (envStart === -1) {
-    return result;
-  }
-
-  // Find the next [env.*] section or end of file
-  const nextEnvMatch = content.slice(envStart + 1).search(/\[env\.[^\]]+\]/);
-  const envEnd = nextEnvMatch === -1 ? content.length : envStart + 1 + nextEnvMatch;
-  const envSection = content.slice(envStart, envEnd);
+): {
+  kv: Record<string, string>;
+  d1: Record<string, string>;
+  hyperdrive: Record<string, string>;
+  r2: Record<string, string>;
+  queueProducers: Record<string, string>;
+  queueConsumers: string[];
+} {
+  const result = {
+    kv: {} as Record<string, string>,
+    d1: {} as Record<string, string>,
+    hyperdrive: {} as Record<string, string>,
+    r2: {} as Record<string, string>,
+    queueProducers: {} as Record<string, string>,
+    queueConsumers: [] as string[],
+  };
+  const escapedEnv = escapeRegExp(env);
 
   // Parse KV namespaces: [[env.{env}.kv_namespaces]]
   const kvRegex = new RegExp(
-    `\\[\\[env\\.${env}\\.kv_namespaces\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
+    `\\[\\[env\\.${escapedEnv}\\.kv_namespaces\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
     'g'
   );
   let kvMatch;
-  while ((kvMatch = kvRegex.exec(envSection)) !== null) {
+  while ((kvMatch = kvRegex.exec(content)) !== null) {
     result.kv[kvMatch[1]] = kvMatch[2];
   }
 
   // Parse D1 databases: [[env.{env}.d1_databases]]
   const d1Regex = new RegExp(
-    `\\[\\[env\\.${env}\\.d1_databases\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\ndatabase_name\\s*=\\s*"[^"]+"\\s*\\ndatabase_id\\s*=\\s*"([^"]+)"`,
+    `\\[\\[env\\.${escapedEnv}\\.d1_databases\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\ndatabase_name\\s*=\\s*"[^"]+"\\s*\\ndatabase_id\\s*=\\s*"([^"]+)"`,
     'g'
   );
   let d1Match;
-  while ((d1Match = d1Regex.exec(envSection)) !== null) {
+  while ((d1Match = d1Regex.exec(content)) !== null) {
     result.d1[d1Match[1]] = d1Match[2];
   }
 
+  const hyperdriveRegex = new RegExp(
+    `\\[\\[env\\.${escapedEnv}\\.hyperdrive\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nid\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let hyperdriveMatch;
+  while ((hyperdriveMatch = hyperdriveRegex.exec(content)) !== null) {
+    result.hyperdrive[hyperdriveMatch[1]] = hyperdriveMatch[2];
+  }
+
+  const r2Regex = new RegExp(
+    `\\[\\[env\\.${escapedEnv}\\.r2_buckets\\]\\]\\s*\\nbinding\\s*=\\s*"([^"]+)"\\s*\\nbucket_name\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let r2Match;
+  while ((r2Match = r2Regex.exec(content)) !== null) {
+    result.r2[r2Match[1]] = r2Match[2];
+  }
+
+  const queueProducerRegex = new RegExp(
+    `\\[\\[env\\.${escapedEnv}\\.queues\\.producers\\]\\]\\s*\\nqueue\\s*=\\s*"([^"]+)"\\s*\\nbinding\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let queueProducerMatch;
+  while ((queueProducerMatch = queueProducerRegex.exec(content)) !== null) {
+    result.queueProducers[queueProducerMatch[2]] = queueProducerMatch[1];
+  }
+
+  const queueConsumerRegex = new RegExp(
+    `\\[\\[env\\.${escapedEnv}\\.queues\\.consumers\\]\\]\\s*\\nqueue\\s*=\\s*"([^"]+)"`,
+    'g'
+  );
+  let queueConsumerMatch;
+  while ((queueConsumerMatch = queueConsumerRegex.exec(content)) !== null) {
+    result.queueConsumers.push(queueConsumerMatch[1]);
+  }
+
   return result;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -1144,41 +1644,99 @@ export async function validateWranglerConfigs(
         });
       }
     }
+
+    for (const [binding, bucketName] of Object.entries(parsed.r2)) {
+      const expected = lockResourceIds.r2?.[binding]?.name;
+      if (expected && bucketName !== expected) {
+        result.valid = false;
+        result.mismatches.push({
+          component,
+          type: 'r2',
+          binding,
+          expected,
+          actual: bucketName,
+        });
+      }
+    }
+
+    for (const [binding, queueName] of Object.entries(parsed.queueProducers)) {
+      const expected = lockResourceIds.queues?.[binding]?.name;
+      if (expected && queueName !== expected) {
+        result.valid = false;
+        result.mismatches.push({
+          component,
+          type: 'queue',
+          binding,
+          expected,
+          actual: queueName,
+        });
+      }
+    }
   }
 
   return result;
 }
 
 // ---------------------------------------------------------------------------
-// Pages wrangler.toml generation
+// UI Workers wrangler.toml generation
 // ---------------------------------------------------------------------------
 
-export interface PagesWranglerOptions {
+export interface UiWorkersWranglerOptions {
   component: 'ar-login-ui' | 'ar-admin-ui';
   env: string;
   needsProxy: boolean;
+  workersDev?: boolean;
+  routes?: Array<{ pattern: string; zone_name?: string; custom_domain?: boolean }>;
+  vars?: Record<string, string | undefined>;
 }
 
 /**
- * Generate wrangler.toml content for a Cloudflare Pages component.
+ * Generate wrangler.toml content for a Workers static-assets UI component.
  *
- * When needsProxy=true, includes a [[services]] binding so the Pages Function
+ * When needsProxy=true, includes a [[services]] binding so the UI Worker
  * can reach ar-router via Service Binding (no workers.dev needed, ITP-safe).
- *
- * Pages projects are separate per environment (e.g., test-ar-login-ui,
- * prod-ar-login-ui), so no [env.*] sections are required — the file is flat.
  */
-export function generatePagesWranglerConfig(options: PagesWranglerOptions): string {
-  const { component, env, needsProxy } = options;
+export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOptions): string {
+  const { component, env, needsProxy, workersDev = true, routes = [], vars = {} } = options;
   const workerName = `${env}-ar-router`;
+  const uiWorkerName = `${env}-${component}`;
 
   const lines = [
     `# Auto-generated by @authrim/setup - do not edit manually`,
-    `name = "${env}-${component}"`,
+    `name = "${uiWorkerName}"`,
+    `workers_dev = ${workersDev}`,
     `compatibility_date = "2024-01-01"`,
     `compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]`,
-    `pages_build_output_dir = ".svelte-kit/cloudflare"`,
+    `main = ".svelte-kit/cloudflare/_worker.js"`,
+    ``,
+    `[assets]`,
+    `directory = ".svelte-kit/cloudflare"`,
+    `binding = "ASSETS"`,
   ];
+
+  const definedVars = Object.entries(vars).filter((entry): entry is [string, string] => {
+    const [, value] = entry;
+    return typeof value === 'string' && value.length > 0;
+  });
+  if (definedVars.length > 0) {
+    lines.push(``, `[vars]`);
+    for (const [key, value] of definedVars) {
+      lines.push(`${key} = ${JSON.stringify(value)}`);
+    }
+  }
+
+  if (routes.length > 0) {
+    for (const route of routes) {
+      lines.push(``, `[[routes]]`);
+      lines.push(`pattern = ${JSON.stringify(route.pattern)}`);
+      if (route.zone_name) {
+        lines.push(`zone_name = ${JSON.stringify(route.zone_name)}`);
+      }
+      if (route.custom_domain) {
+        lines.push(`custom_domain = true`);
+      }
+    }
+  }
 
   if (needsProxy) {
     lines.push(``, `[[services]]`);

@@ -8,6 +8,7 @@
 import type { Env } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import { importSPKI, exportSPKI } from 'jose';
+import { requireSAMLTenantId } from './tenant';
 
 /**
  * Cached signing key data
@@ -20,27 +21,86 @@ interface SigningKeyCache {
   cachedAt: number;
 }
 
-// Cache for signing key (5 minutes TTL)
-let signingKeyCache: SigningKeyCache | null = null;
+interface KeyManagerSigningKey {
+  kid: string;
+  privatePEM: string;
+  publicJWK: JWK;
+  certificatePEM?: string;
+  certificateCreatedAt?: number;
+  certificateSha256Thumbprint?: string;
+}
+
+export interface SAMLSigningCertificateSubject {
+  countryName?: string;
+  stateOrProvinceName?: string;
+  localityName?: string;
+  organizationName?: string;
+  organizationalUnitName?: string;
+  commonName?: string;
+}
+
+export const DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT: Required<SAMLSigningCertificateSubject> = {
+  countryName: '',
+  stateOrProvinceName: '',
+  localityName: '',
+  organizationName: 'Authrim',
+  organizationalUnitName: '',
+  commonName: 'Authrim SAML Signing',
+};
+
+// Cache for signing key (5 minutes TTL), scoped by tenant
+const signingKeyCache = new Map<string, SigningKeyCache>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+export interface SigningKeyLookupOptions {
+  keyRef?: string;
+  certificateSubject?: SAMLSigningCertificateSubject;
+}
+
+export interface SecretLookupOptions {
+  secretRef: string;
+}
+
+export interface KeyManagerSecret {
+  secretRef: string;
+  active: {
+    kid: string;
+    value: string;
+    createdAt: number;
+  };
+  previous?: {
+    kid: string;
+    value: string;
+    createdAt: number;
+  };
+  updatedAt: number;
+}
 
 /**
  * Get signing key from KeyManager
  */
 export async function getSigningKey(
-  env: Env
+  env: Env,
+  tenantId: string,
+  options: SigningKeyLookupOptions = {}
 ): Promise<{ privateKeyPem: string; publicKeyPem: string; kid: string }> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
+  const cacheKey = buildSigningKeyCacheKey(resolvedTenantId, options.keyRef);
+
   // Check cache
-  if (signingKeyCache && Date.now() - signingKeyCache.cachedAt < CACHE_TTL_MS) {
+  const cached = signingKeyCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
     return {
-      privateKeyPem: signingKeyCache.privateKeyPem,
-      publicKeyPem: signingKeyCache.publicKeyPem,
-      kid: signingKeyCache.kid,
+      privateKeyPem: cached.privateKeyPem,
+      publicKeyPem: cached.publicKeyPem,
+      kid: cached.kid,
     };
   }
 
   // Get from KeyManager
-  const keyManagerId = env.KEY_MANAGER.idFromName('default');
+  const keyManagerId = env.KEY_MANAGER.idFromName(
+    buildKeyManagerInstanceName(resolvedTenantId, options.keyRef)
+  );
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   const response = await keyManager.fetch(
@@ -69,45 +129,53 @@ export async function getSigningKey(
       }
 
       const rotateData = (await rotateResponse.json()) as {
-        key: { kid: string; privatePEM: string; publicJWK: JWK };
+        key: KeyManagerSigningKey;
       };
       const publicKeyPem = await jwkToPublicKeyPem(rotateData.key.publicJWK);
+      const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
+        keyData: rotateData.key,
+        certificateSubject: options.certificateSubject,
+      });
 
       // Update cache
-      signingKeyCache = {
+      signingKeyCache.set(cacheKey, {
         privateKeyPem: rotateData.key.privatePEM,
         publicKeyPem,
-        certificate: await generateSelfSignedCertificate(rotateData.key.publicJWK),
+        certificate,
         kid: rotateData.key.kid,
         cachedAt: Date.now(),
-      };
+      });
 
       return {
-        privateKeyPem: signingKeyCache.privateKeyPem,
-        publicKeyPem: signingKeyCache.publicKeyPem,
-        kid: signingKeyCache.kid,
+        privateKeyPem: signingKeyCache.get(cacheKey)!.privateKeyPem,
+        publicKeyPem: signingKeyCache.get(cacheKey)!.publicKeyPem,
+        kid: signingKeyCache.get(cacheKey)!.kid,
       };
     }
 
     throw new Error(`KeyManager error: ${response.status}`);
   }
 
-  const keyData = (await response.json()) as { kid: string; privatePEM: string; publicJWK: JWK };
+  const keyData = (await response.json()) as KeyManagerSigningKey;
   const publicKeyPem = await jwkToPublicKeyPem(keyData.publicJWK);
+  const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
+    keyData,
+    certificateSubject: options.certificateSubject,
+  });
 
   // Update cache
-  signingKeyCache = {
+  signingKeyCache.set(cacheKey, {
     privateKeyPem: keyData.privatePEM,
     publicKeyPem,
-    certificate: await generateSelfSignedCertificate(keyData.publicJWK),
+    certificate,
     kid: keyData.kid,
     cachedAt: Date.now(),
-  };
+  });
 
   return {
-    privateKeyPem: signingKeyCache.privateKeyPem,
-    publicKeyPem: signingKeyCache.publicKeyPem,
-    kid: signingKeyCache.kid,
+    privateKeyPem: signingKeyCache.get(cacheKey)!.privateKeyPem,
+    publicKeyPem: signingKeyCache.get(cacheKey)!.publicKeyPem,
+    kid: signingKeyCache.get(cacheKey)!.kid,
   };
 }
 
@@ -115,20 +183,151 @@ export async function getSigningKey(
  * Get signing certificate from KeyManager
  * Returns X.509 certificate in PEM format
  */
-export async function getSigningCertificate(env: Env): Promise<string> {
+export async function getSigningCertificate(
+  env: Env,
+  tenantId: string,
+  options: SigningKeyLookupOptions = {}
+): Promise<string> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing certificate tenant');
+  const cacheKey = buildSigningKeyCacheKey(resolvedTenantId, options.keyRef);
+
   // Check cache
-  if (signingKeyCache && Date.now() - signingKeyCache.cachedAt < CACHE_TTL_MS) {
-    return signingKeyCache.certificate;
+  const cached = signingKeyCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
+    return cached.certificate;
   }
 
   // Get signing key (this will update cache)
-  await getSigningKey(env);
+  await getSigningKey(env, resolvedTenantId, options);
 
-  if (!signingKeyCache) {
+  const nextCached = signingKeyCache.get(cacheKey);
+  if (!nextCached) {
     throw new Error('Failed to get signing certificate');
   }
 
-  return signingKeyCache.certificate;
+  return nextCached.certificate;
+}
+
+export async function getKeyManagerSecret(
+  env: Env,
+  tenantId: string,
+  options: SecretLookupOptions
+): Promise<KeyManagerSecret> {
+  requireSAMLTenantId(tenantId, 'SAML KeyManager secret tenant');
+  const keyManagerId = env.KEY_MANAGER.idFromName(options.secretRef);
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+
+  const response = await keyManager.fetch(
+    new Request(`https://key-manager/internal/secrets/${encodeURIComponent(options.secretRef)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+      },
+    })
+  );
+
+  if (!response.ok) {
+    throw new Error(`KeyManager secret error: ${response.status}`);
+  }
+
+  return (await response.json()) as KeyManagerSecret;
+}
+
+async function getOrPersistSigningCertificate(
+  keyManager: Pick<DurableObjectStub, 'fetch'>,
+  keyManagerSecret: string | undefined,
+  options: {
+    keyData: KeyManagerSigningKey;
+    certificateSubject?: SAMLSigningCertificateSubject;
+  }
+): Promise<string> {
+  const { keyData } = options;
+  if (keyData.certificatePEM) {
+    return keyData.certificatePEM;
+  }
+
+  if (!keyManagerSecret) {
+    throw new Error('KEY_MANAGER_SECRET is required to store SAML signing certificate');
+  }
+
+  const certificatePEM = await generateSelfSignedCertificate(
+    keyData.publicJWK,
+    keyData.privatePEM,
+    options.certificateSubject
+  );
+  const response = await keyManager.fetch(
+    new Request('https://key-manager/internal/certificate', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${keyManagerSecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        kid: keyData.kid,
+        certificatePEM,
+        certificateCreatedAt: Date.now(),
+        certificateSha256Thumbprint: await calculateCertificateThumbprint(certificatePEM),
+      }),
+    })
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to store SAML signing certificate: ${response.status}`);
+  }
+
+  const storedKey = (await response.json()) as { certificatePEM?: string };
+  if (!storedKey.certificatePEM) {
+    throw new Error('KeyManager did not return stored SAML signing certificate');
+  }
+
+  return storedKey.certificatePEM;
+}
+
+export async function rotateSigningKeyWithCertificate(
+  env: Env,
+  tenantId: string,
+  options: {
+    keyRef: string;
+    certificateSubject?: SAMLSigningCertificateSubject;
+  }
+): Promise<{ keyRef: string; kid: string; certificate: string }> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
+  const keyManagerId = env.KEY_MANAGER.idFromName(options.keyRef);
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+
+  const rotateResponse = await keyManager.fetch(
+    new Request('https://key-manager/internal/rotate', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+      },
+    })
+  );
+
+  if (!rotateResponse.ok) {
+    throw new Error(`Failed to rotate SAML signing key: ${rotateResponse.status}`);
+  }
+
+  const rotateData = (await rotateResponse.json()) as { key: KeyManagerSigningKey };
+  const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
+    keyData: rotateData.key,
+    certificateSubject: options.certificateSubject,
+  });
+
+  signingKeyCache.delete(buildSigningKeyCacheKey(resolvedTenantId, options.keyRef));
+  return {
+    keyRef: options.keyRef,
+    kid: rotateData.key.kid,
+    certificate,
+  };
+}
+
+function buildSigningKeyCacheKey(tenantId: string, keyRef?: string): string {
+  return keyRef ? `${tenantId}:${keyRef}` : tenantId;
+}
+
+function buildKeyManagerInstanceName(tenantId: string, keyRef?: string): string {
+  return keyRef || `${tenantId}-v3`;
 }
 
 /**
@@ -165,10 +364,14 @@ async function jwkToPublicKeyPem(jwk: JWK): Promise<string> {
  * - Serial Number: Random
  * - Signature Algorithm: SHA256WithRSAEncryption
  * - Issuer/Subject: CN=Authrim IdP
- * - Validity: 1 year
+ * - Validity: 10 years
  * - Subject Public Key Info: RSA public key
  */
-async function generateSelfSignedCertificate(jwk: JWK): Promise<string> {
+export async function generateSelfSignedCertificate(
+  jwk: JWK,
+  privateKeyPem: string,
+  subject?: SAMLSigningCertificateSubject
+): Promise<string> {
   // Import JWK to CryptoKey (cast JWK to JsonWebKey for Web Crypto API compatibility)
   const publicKey = await crypto.subtle.importKey(
     'jwk',
@@ -180,30 +383,311 @@ async function generateSelfSignedCertificate(jwk: JWK): Promise<string> {
 
   // Export as SPKI (SubjectPublicKeyInfo)
   const spki = await crypto.subtle.exportKey('spki', publicKey);
-  const spkiArray = new Uint8Array(spki as ArrayBuffer);
+  const tbsCertificate = buildSelfSignedCertificateTbs(
+    new Uint8Array(spki as ArrayBuffer),
+    normalizeCertificateSubject(subject)
+  );
+  const privateKey = await importPrivateKey(privateKeyPem);
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    privateKey,
+    toArrayBuffer(tbsCertificate)
+  );
+  const signatureAlgorithm = buildSha256WithRsaAlgorithmIdentifier();
+  const certificateDer = derSequence(
+    tbsCertificate,
+    signatureAlgorithm,
+    derBitString(new Uint8Array(signature))
+  );
 
-  // For a proper X.509 certificate, we would need to:
-  // 1. Build the TBSCertificate structure in ASN.1/DER
-  // 2. Sign it with the private key
-  // 3. Wrap in Certificate structure
+  return formatPem('CERTIFICATE', arrayBufferToBase64(certificateDer));
+}
 
-  // Since we don't have access to ASN.1 encoding in Workers without a library,
-  // and xml-crypto/xml-dsig accepts raw public keys in many cases,
-  // we'll return the SPKI as a pseudo-certificate.
+function buildSelfSignedCertificateTbs(
+  subjectPublicKeyInfo: Uint8Array,
+  subject: Required<SAMLSigningCertificateSubject>
+): Uint8Array {
+  const now = new Date();
+  const notBefore = new Date(now.getTime() - 5 * 60 * 1000);
+  const notAfter = new Date(now);
+  notAfter.setUTCFullYear(notAfter.getUTCFullYear() + 10);
 
-  // For production use, consider:
-  // 1. Pre-generating certificates
-  // 2. Using a proper X.509 library (e.g., pkijs)
-  // 3. Having the KeyManager generate and store certificates
+  return derSequence(
+    derExplicit(0, derInteger(2)), // X.509 v3
+    derInteger(generateCertificateSerialNumber()),
+    buildSha256WithRsaAlgorithmIdentifier(),
+    buildCertificateName(subject),
+    derSequence(derUtcTime(notBefore), derUtcTime(notAfter)),
+    buildCertificateName(subject),
+    subjectPublicKeyInfo,
+    derExplicit(3, buildCertificateExtensions())
+  );
+}
 
-  // Return SPKI as base64 PEM (many SAML implementations accept this)
-  const spkiBase64 = btoa(String.fromCharCode(...spkiArray));
-  const lines = spkiBase64.match(/.{1,64}/g) || [];
+function normalizeCertificateSubject(
+  subject: SAMLSigningCertificateSubject | undefined
+): Required<SAMLSigningCertificateSubject> {
+  return {
+    countryName: sanitizeSubjectValue(subject?.countryName, 2).toUpperCase(),
+    stateOrProvinceName: sanitizeSubjectValue(subject?.stateOrProvinceName, 128),
+    localityName: sanitizeSubjectValue(subject?.localityName, 128),
+    organizationName:
+      sanitizeSubjectValue(subject?.organizationName, 128) ||
+      DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT.organizationName,
+    organizationalUnitName: sanitizeSubjectValue(subject?.organizationalUnitName, 128),
+    commonName:
+      sanitizeSubjectValue(subject?.commonName, 128) ||
+      DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT.commonName,
+  };
+}
 
-  // Note: This is technically a public key, not a certificate.
-  // For full compatibility, you should use a proper certificate.
-  // However, many SAML implementations will accept this for testing.
-  return `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----`;
+function sanitizeSubjectValue(value: string | undefined, maxLength: number): string {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function buildCertificateName(subject: Required<SAMLSigningCertificateSubject>): Uint8Array {
+  const attributes: Uint8Array[] = [];
+  if (subject.countryName) {
+    attributes.push(
+      derSet(derSequence(derObjectIdentifier('2.5.4.6'), derPrintableString(subject.countryName)))
+    );
+  }
+  if (subject.stateOrProvinceName) {
+    attributes.push(
+      derSet(
+        derSequence(derObjectIdentifier('2.5.4.8'), derUtf8String(subject.stateOrProvinceName))
+      )
+    );
+  }
+  if (subject.localityName) {
+    attributes.push(
+      derSet(derSequence(derObjectIdentifier('2.5.4.7'), derUtf8String(subject.localityName)))
+    );
+  }
+  if (subject.organizationName) {
+    attributes.push(
+      derSet(derSequence(derObjectIdentifier('2.5.4.10'), derUtf8String(subject.organizationName)))
+    );
+  }
+  if (subject.organizationalUnitName) {
+    attributes.push(
+      derSet(
+        derSequence(derObjectIdentifier('2.5.4.11'), derUtf8String(subject.organizationalUnitName))
+      )
+    );
+  }
+  attributes.push(
+    derSet(derSequence(derObjectIdentifier('2.5.4.3'), derUtf8String(subject.commonName)))
+  );
+  return derSequence(...attributes);
+}
+
+function buildCertificateExtensions(): Uint8Array {
+  const basicConstraints = derSequence(
+    derObjectIdentifier('2.5.29.19'),
+    derBoolean(true),
+    derOctetString(derSequence())
+  );
+  const keyUsage = derSequence(
+    derObjectIdentifier('2.5.29.15'),
+    derBoolean(true),
+    derOctetString(derBitString(new Uint8Array([0x80]), 7))
+  );
+
+  return derSequence(basicConstraints, keyUsage);
+}
+
+function buildSha256WithRsaAlgorithmIdentifier(): Uint8Array {
+  return derSequence(derObjectIdentifier('1.2.840.113549.1.1.11'), derNull());
+}
+
+function generateCertificateSerialNumber(): Uint8Array {
+  const serial = new Uint8Array(16);
+  crypto.getRandomValues(serial);
+  serial[0] &= 0x7f;
+  if (serial.every((value) => value === 0)) {
+    serial[15] = 1;
+  }
+  return serial;
+}
+
+function derSequence(...values: Uint8Array[]): Uint8Array {
+  return derTag(0x30, concatBytes(...values));
+}
+
+function derSet(...values: Uint8Array[]): Uint8Array {
+  return derTag(0x31, concatBytes(...values));
+}
+
+function derExplicit(tagNumber: number, value: Uint8Array): Uint8Array {
+  return derTag(0xa0 + tagNumber, value);
+}
+
+function derInteger(value: number | Uint8Array): Uint8Array {
+  let bytes =
+    typeof value === 'number'
+      ? integerToBytes(value)
+      : trimLeadingZeros(value.length === 0 ? new Uint8Array([0]) : value);
+  if (bytes.length === 0) {
+    bytes = new Uint8Array([0]);
+  }
+  if ((bytes[0] & 0x80) !== 0) {
+    bytes = concatBytes(new Uint8Array([0]), bytes);
+  }
+  return derTag(0x02, bytes);
+}
+
+function derBoolean(value: boolean): Uint8Array {
+  return derTag(0x01, new Uint8Array([value ? 0xff : 0x00]));
+}
+
+function derBitString(value: Uint8Array, unusedBits = 0): Uint8Array {
+  return derTag(0x03, concatBytes(new Uint8Array([unusedBits]), value));
+}
+
+function derOctetString(value: Uint8Array): Uint8Array {
+  return derTag(0x04, value);
+}
+
+function derNull(): Uint8Array {
+  return derTag(0x05, new Uint8Array());
+}
+
+function derObjectIdentifier(oid: string): Uint8Array {
+  const parts = oid.split('.').map((part) => Number.parseInt(part, 10));
+  if (parts.length < 2 || parts.some((part) => !Number.isInteger(part) || part < 0)) {
+    throw new Error(`Invalid object identifier: ${oid}`);
+  }
+
+  const [first, second, ...rest] = parts;
+  const encoded = [40 * first + second, ...rest].flatMap(encodeOidArc);
+  return derTag(0x06, new Uint8Array(encoded));
+}
+
+function derUtf8String(value: string): Uint8Array {
+  return derTag(0x0c, new TextEncoder().encode(value));
+}
+
+function derPrintableString(value: string): Uint8Array {
+  return derTag(0x13, new TextEncoder().encode(value));
+}
+
+function derUtcTime(value: Date): Uint8Array {
+  const year = value.getUTCFullYear();
+  if (year < 1950 || year > 2049) {
+    throw new Error('UTCTime only supports years from 1950 to 2049');
+  }
+  const twoDigitYear = String(year % 100).padStart(2, '0');
+  const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(value.getUTCDate()).padStart(2, '0');
+  const hours = String(value.getUTCHours()).padStart(2, '0');
+  const minutes = String(value.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(value.getUTCSeconds()).padStart(2, '0');
+  return derTag(
+    0x17,
+    new TextEncoder().encode(`${twoDigitYear}${month}${day}${hours}${minutes}${seconds}Z`)
+  );
+}
+
+function derTag(tag: number, value: Uint8Array): Uint8Array {
+  return concatBytes(new Uint8Array([tag]), derLength(value.length), value);
+}
+
+function derLength(length: number): Uint8Array {
+  if (length < 0x80) {
+    return new Uint8Array([length]);
+  }
+  const bytes: number[] = [];
+  let remaining = length;
+  while (remaining > 0) {
+    bytes.unshift(remaining & 0xff);
+    remaining >>= 8;
+  }
+  return new Uint8Array([0x80 | bytes.length, ...bytes]);
+}
+
+function integerToBytes(value: number): Uint8Array {
+  if (value === 0) {
+    return new Uint8Array([0]);
+  }
+
+  const bytes: number[] = [];
+  let remaining = value;
+  while (remaining > 0) {
+    bytes.unshift(remaining & 0xff);
+    remaining >>= 8;
+  }
+  return new Uint8Array(bytes);
+}
+
+function trimLeadingZeros(value: Uint8Array): Uint8Array {
+  let offset = 0;
+  while (offset < value.length - 1 && value[offset] === 0) {
+    offset += 1;
+  }
+  return value.slice(offset);
+}
+
+function encodeOidArc(value: number): number[] {
+  if (value === 0) {
+    return [0];
+  }
+
+  const bytes: number[] = [];
+  let remaining = value;
+  bytes.unshift(remaining & 0x7f);
+  remaining >>= 7;
+  while (remaining > 0) {
+    bytes.unshift((remaining & 0x7f) | 0x80);
+    remaining >>= 7;
+  }
+  return bytes;
+}
+
+function concatBytes(...values: Uint8Array[]): Uint8Array {
+  const length = values.reduce((sum, value) => sum + value.length, 0);
+  const output = new Uint8Array(length);
+  let offset = 0;
+  for (const value of values) {
+    output.set(value, offset);
+    offset += value.length;
+  }
+  return output;
+}
+
+function arrayBufferToBase64(value: Uint8Array): string {
+  let binary = '';
+  for (const byte of value) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+async function calculateCertificateThumbprint(certificatePEM: string): Promise<string> {
+  const certificateDer = Uint8Array.from(atob(extractPemBase64(certificatePEM)), (c) =>
+    c.charCodeAt(0)
+  );
+  const digest = await crypto.subtle.digest('SHA-256', toArrayBuffer(certificateDer));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function extractPemBase64(pem: string): string {
+  return pem
+    .replace(/-----BEGIN CERTIFICATE-----/g, '')
+    .replace(/-----END CERTIFICATE-----/g, '')
+    .replace(/\s+/g, '');
+}
+
+function toArrayBuffer(value: Uint8Array): ArrayBuffer {
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer;
+}
+
+function formatPem(label: string, base64: string): string {
+  const lines = base64.match(/.{1,64}/g) || [];
+  return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----`;
 }
 
 /**
@@ -263,5 +747,5 @@ export async function importPrivateKey(privateKeyPem: string): Promise<CryptoKey
  * Useful when keys are rotated
  */
 export function clearSigningKeyCache(): void {
-  signingKeyCache = null;
+  signingKeyCache.clear();
 }

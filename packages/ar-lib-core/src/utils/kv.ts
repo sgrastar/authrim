@@ -11,15 +11,69 @@
 
 import type { Env } from '../types/env';
 import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
-import { D1Adapter } from '../db/adapters/d1-adapter';
-import type { DatabaseAdapter } from '../db/adapter';
+import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
+import { createCompatibilityError, OIDCError } from './errors';
 import { getCacheTTL } from './cache-config';
+import { getDefaultTenantId } from './issuer';
+import { readResponseTextWithLimit } from './url-security';
+import {
+  storeRefreshToken as storeRefreshTokenCanonical,
+  getRefreshToken as getRefreshTokenCanonical,
+  deleteRefreshToken as deleteRefreshTokenCanonical,
+} from './refresh-token-store';
 
 const log = createLogger().module('KV');
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+const PII_CACHE_PURPOSE = 'user-pii-cache';
+const PII_CACHE_ALGORITHM = 'AES-256-GCM';
+const PII_CACHE_DEFAULT_TTL_SECONDS = 5 * 60;
+const PII_CACHE_ROOT_KEY_HEX_LENGTH = 64;
+const TOKEN_REVOCATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
+
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
+export interface UserCacheSources {
+  coreDb: DatabaseSource;
+  piiDb?: DatabaseSource | null;
+  cacheScope?: UserCacheScope;
+  piiCacheMode?: UserPiiCacheMode;
+}
+
+export type UserPiiCacheMode = 'merged' | 'encrypted_short_ttl' | 'no_cross_request_pii';
+
+export interface UserCacheScope {
+  storageProfileId: string;
+  sourceGeneration?: string | number;
+  schemaVersion?: string | number;
+}
+
+interface EncryptedCachedUserEnvelope {
+  version: 1;
+  algorithm: typeof PII_CACHE_ALGORITHM;
+  purpose: typeof PII_CACHE_PURPOSE;
+  tenantId: string;
+  keyVersion: number;
+  keyState: 'current';
+  iv: string;
+  ciphertext: string;
+  metadata: {
+    storageProfileId?: string;
+    sourceGeneration?: string | number;
+    schemaVersion?: string | number;
+  };
+}
 
 // ===== User Cache =====
 // Read-Through Cache for user metadata with invalidation hook support
@@ -31,6 +85,7 @@ const log = createLogger().module('KV');
  */
 export interface CachedUser {
   id: string;
+  pii_status?: PIIStatus;
   email: string;
   email_verified: boolean;
   name: string | null;
@@ -52,6 +107,194 @@ export interface CachedUser {
   updated_at: number;
 }
 
+export function buildUserCacheKey(
+  tenantId: string,
+  userId: string,
+  scope?: UserCacheScope
+): string {
+  if (!scope) {
+    return buildKVKey('user', userId, tenantId);
+  }
+
+  const profile = encodeURIComponent(scope.storageProfileId);
+  const generation = encodeURIComponent(String(scope.sourceGeneration ?? 'default'));
+  const schema = encodeURIComponent(String(scope.schemaVersion ?? '1'));
+  return buildKVKey(`user:v2:sp:${profile}:gen:${generation}:schema:${schema}`, userId, tenantId);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = Number.parseInt(hex.slice(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function fromBase64Url(value: string): Uint8Array {
+  const padded = value
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(value.length / 4) * 4, '=');
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function getPiiCacheRootKey(env: Env): string | null {
+  const key = env.OBJECT_ENCRYPTION_ROOT_KEY?.trim();
+  if (!key) return null;
+  if (key.length !== PII_CACHE_ROOT_KEY_HEX_LENGTH || !/^[0-9a-fA-F]+$/.test(key)) {
+    throw new Error('PII cache encryption root key must be a 64-character hex string');
+  }
+  return key;
+}
+
+function getPiiCacheKeyVersion(env: Env): number {
+  return Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
+}
+
+function getPiiCacheTtl(env: Env, configuredUserCacheTtl: number): number {
+  const configuredPiiTtl =
+    Number.parseInt(env.PII_CACHE_TTL || String(PII_CACHE_DEFAULT_TTL_SECONDS), 10) ||
+    PII_CACHE_DEFAULT_TTL_SECONDS;
+  return Math.max(1, Math.min(configuredUserCacheTtl, configuredPiiTtl));
+}
+
+function buildPiiCacheAdditionalData(
+  tenantId: string,
+  userId: string,
+  cacheKey: string,
+  scope: UserCacheScope | undefined,
+  keyVersion: number
+): Uint8Array {
+  return textEncoder.encode(
+    JSON.stringify({
+      tenant_id: tenantId,
+      user_id: userId,
+      cache_key: cacheKey,
+      purpose: PII_CACHE_PURPOSE,
+      key_version: keyVersion,
+      storage_profile_id: scope?.storageProfileId ?? null,
+      source_generation: scope?.sourceGeneration ?? null,
+      schema_version: scope?.schemaVersion ?? null,
+    })
+  );
+}
+
+async function derivePiiCacheKey(
+  rootKeyHex: string,
+  tenantId: string,
+  keyVersion: number
+): Promise<CryptoKey> {
+  const material = await crypto.subtle.importKey('raw', hexToBytes(rootKeyHex), 'HKDF', false, [
+    'deriveKey',
+  ]);
+  return crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: textEncoder.encode('authrim-cache-envelope-root'),
+      info: textEncoder.encode(`${PII_CACHE_PURPOSE}:tenant:${tenantId}:v${keyVersion}`),
+    },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptCachedUser(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  cacheKey: string,
+  user: CachedUser,
+  scope: UserCacheScope | undefined
+): Promise<EncryptedCachedUserEnvelope | null> {
+  const rootKey = getPiiCacheRootKey(env);
+  if (!rootKey) return null;
+  const keyVersion = getPiiCacheKeyVersion(env);
+  const key = await derivePiiCacheKey(rootKey, tenantId, keyVersion);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv,
+      additionalData: buildPiiCacheAdditionalData(tenantId, userId, cacheKey, scope, keyVersion),
+      tagLength: 128,
+    },
+    key,
+    textEncoder.encode(JSON.stringify(user))
+  );
+  return {
+    version: 1,
+    algorithm: PII_CACHE_ALGORITHM,
+    purpose: PII_CACHE_PURPOSE,
+    tenantId,
+    keyVersion,
+    keyState: 'current',
+    iv: toBase64Url(iv),
+    ciphertext: toBase64Url(new Uint8Array(ciphertext)),
+    metadata: {
+      storageProfileId: scope?.storageProfileId,
+      sourceGeneration: scope?.sourceGeneration,
+      schemaVersion: scope?.schemaVersion,
+    },
+  };
+}
+
+async function decryptCachedUser(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  cacheKey: string,
+  cached: string,
+  scope: UserCacheScope | undefined
+): Promise<CachedUser> {
+  const envelope = JSON.parse(cached) as EncryptedCachedUserEnvelope;
+  if (
+    envelope.version !== 1 ||
+    envelope.algorithm !== PII_CACHE_ALGORITHM ||
+    envelope.purpose !== PII_CACHE_PURPOSE ||
+    envelope.tenantId !== tenantId
+  ) {
+    throw new Error('invalid_encrypted_pii_cache_envelope');
+  }
+  const rootKey = getPiiCacheRootKey(env);
+  if (!rootKey) {
+    throw new Error('pii_cache_encryption_key_not_configured');
+  }
+  const key = await derivePiiCacheKey(rootKey, tenantId, envelope.keyVersion);
+  const plaintext = await crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: fromBase64Url(envelope.iv),
+      additionalData: buildPiiCacheAdditionalData(
+        tenantId,
+        userId,
+        cacheKey,
+        scope,
+        envelope.keyVersion
+      ),
+      tagLength: 128,
+    },
+    key,
+    fromBase64Url(envelope.ciphertext)
+  );
+  return JSON.parse(textDecoder.decode(plaintext)) as CachedUser;
+}
+
 /**
  * Get user from cache or D1 (Read-Through Cache pattern)
  *
@@ -64,20 +307,32 @@ export interface CachedUser {
  * @param userId - User ID to retrieve
  * @returns Promise<CachedUser | null>
  */
-export async function getCachedUser(env: Env, userId: string): Promise<CachedUser | null> {
-  // If USER_CACHE is not configured, fall back to D1 directly
-  if (!env.USER_CACHE) {
-    return await getUserFromD1(env, userId);
+export async function getCachedUser(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  sources: UserCacheSources
+): Promise<CachedUser | null> {
+  const piiCacheMode = sources.piiCacheMode ?? 'encrypted_short_ttl';
+  if (piiCacheMode === 'no_cross_request_pii') {
+    return await getUserFromD1(tenantId, userId, sources);
   }
 
-  const cacheKey = buildKVKey('user', userId);
+  // If USER_CACHE is not configured, fall back to D1 directly
+  if (!env.USER_CACHE) {
+    return await getUserFromD1(tenantId, userId, sources);
+  }
+
+  const cacheKey = buildUserCacheKey(tenantId, userId, sources.cacheScope);
 
   // Step 1: Try USER_CACHE (Read-Through Cache)
   const cached = await env.USER_CACHE.get(cacheKey);
 
   if (cached) {
     try {
-      return JSON.parse(cached) as CachedUser;
+      return piiCacheMode === 'encrypted_short_ttl'
+        ? await decryptCachedUser(env, tenantId, userId, cacheKey, cached, sources.cacheScope)
+        : (JSON.parse(cached) as CachedUser);
     } catch (error) {
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
@@ -89,7 +344,7 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
   }
 
   // Step 2: Cache miss - fetch from D1
-  const user = await getUserFromD1(env, userId);
+  const user = await getUserFromD1(tenantId, userId, sources);
 
   if (!user) {
     return null;
@@ -99,9 +354,25 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
   try {
     const configManager = createOAuthConfigManager(env);
     const userCacheTTL = await configManager.getUserCacheTTL();
-    await env.USER_CACHE.put(cacheKey, JSON.stringify(user), {
-      expirationTtl: userCacheTTL,
-    });
+    if (piiCacheMode === 'encrypted_short_ttl') {
+      const encrypted = await encryptCachedUser(
+        env,
+        tenantId,
+        userId,
+        cacheKey,
+        user,
+        sources.cacheScope
+      );
+      if (encrypted) {
+        await env.USER_CACHE.put(cacheKey, JSON.stringify(encrypted), {
+          expirationTtl: getPiiCacheTtl(env, userCacheTTL),
+        });
+      }
+    } else {
+      await env.USER_CACHE.put(cacheKey, JSON.stringify(user), {
+        expirationTtl: userCacheTTL,
+      });
+    }
   } catch (error) {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId (can be used for tracking)
@@ -115,17 +386,24 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
  * Fetch user directly from D1 database
  * PII/Non-PII DB separation: fetches from Core DB and PII DB in parallel and merges
  */
-async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | null> {
+async function getUserFromD1(
+  tenantId: string,
+  userId: string,
+  sources: UserCacheSources
+): Promise<CachedUser | null> {
   // Query Core DB for existence and non-PII fields
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.coreDb, 'user-cache-core');
   const coreResult = await coreAdapter.queryOne<{
     id: string;
+    pii_status: PIIStatus;
     email_verified: number;
     phone_number_verified: number;
     updated_at: number;
   }>(
-    'SELECT id, email_verified, phone_number_verified, updated_at FROM users_core WHERE id = ? AND is_active = 1',
-    [userId]
+    `SELECT id, pii_status, email_verified, phone_number_verified, updated_at
+       FROM users_core
+      WHERE id = ? AND tenant_id = ? AND is_active = 1`,
+    [userId, tenantId]
   );
 
   if (!coreResult) {
@@ -157,8 +435,8 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
     zoneinfo: string | null;
   } | null = null;
 
-  if (env.DB_PII) {
-    const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+  if (sources.piiDb) {
+    const piiAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.piiDb, 'user-cache-pii');
     piiResult = await piiAdapter.queryOne<{
       email: string | null;
       name: string | null;
@@ -187,8 +465,8 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
               address_formatted, address_street_address, address_locality,
               address_region, address_postal_code, address_country,
               birthdate, gender, profile, website, zoneinfo
-       FROM users_pii WHERE id = ?`,
-      [userId]
+       FROM users_pii WHERE id = ? AND tenant_id = ?`,
+      [userId, tenantId]
     );
   }
 
@@ -209,6 +487,7 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
 
   return {
     id: coreResult.id,
+    pii_status: coreResult.pii_status,
     email,
     email_verified: coreResult.email_verified === 1,
     name: piiResult?.name ?? null,
@@ -238,12 +517,16 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
  * @param env - Cloudflare environment bindings
  * @param userId - User ID to invalidate
  */
-export async function invalidateUserCache(env: Env, userId: string): Promise<void> {
+export async function invalidateUserCache(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<void> {
   if (!env.USER_CACHE) {
     return;
   }
 
-  const cacheKey = buildKVKey('user', userId);
+  const cacheKey = buildKVKey('user', userId, tenantId);
 
   try {
     await env.USER_CACHE.delete(cacheKey);
@@ -263,6 +546,7 @@ export async function invalidateUserCache(env: Env, userId: string): Promise<voi
  */
 export interface UserCoreExistence {
   id: string;
+  pii_status?: PIIStatus;
   email_verified: boolean;
   phone_number_verified: boolean;
   updated_at: number;
@@ -287,18 +571,23 @@ export interface UserCoreExistence {
  */
 export async function getCachedUserCore(
   env: Env,
-  userId: string
+  tenantId: string,
+  userId: string,
+  coreDbSource: DatabaseSource
 ): Promise<UserCoreExistence | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'user-core-cache');
   const coreResult = await coreAdapter.queryOne<{
     id: string;
+    pii_status: PIIStatus;
     email_verified: number;
     phone_number_verified: number;
     updated_at: number;
     user_type: string | null;
   }>(
-    'SELECT id, email_verified, phone_number_verified, updated_at, user_type FROM users_core WHERE id = ? AND is_active = 1',
-    [userId]
+    `SELECT id, pii_status, email_verified, phone_number_verified, updated_at, user_type
+       FROM users_core
+      WHERE id = ? AND tenant_id = ? AND is_active = 1`,
+    [userId, tenantId]
   );
 
   if (!coreResult) {
@@ -307,6 +596,7 @@ export async function getCachedUserCore(
 
   return {
     id: coreResult.id,
+    pii_status: coreResult.pii_status,
     email_verified: coreResult.email_verified === 1,
     phone_number_verified: coreResult.phone_number_verified === 1,
     updated_at: coreResult.updated_at,
@@ -343,14 +633,16 @@ export interface CachedConsent {
 export async function getCachedConsent(
   env: Env,
   userId: string,
-  clientId: string
+  clientId: string,
+  tenantId: string,
+  coreDbSource: DatabaseSource
 ): Promise<CachedConsent | null> {
   // If CONSENT_CACHE is not configured, fall back to D1 directly
   if (!env.CONSENT_CACHE) {
-    return await getConsentFromD1(env, userId, clientId);
+    return await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
   }
 
-  const cacheKey = buildKVKey('consent', `${userId}:${clientId}`);
+  const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
 
   // Step 1: Try CONSENT_CACHE (Read-Through Cache)
   const cached = await env.CONSENT_CACHE.get(cacheKey);
@@ -369,7 +661,7 @@ export async function getCachedConsent(
   }
 
   // Step 2: Cache miss - fetch from D1
-  const consent = await getConsentFromD1(env, userId, clientId);
+  const consent = await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
 
   if (!consent) {
     return null;
@@ -392,21 +684,24 @@ export async function getCachedConsent(
 }
 
 /**
- * Fetch consent directly from D1 database
+ * Fetch consent directly from the configured core database.
  */
-async function getConsentFromD1(
-  env: Env,
+async function getConsentFromDatabase(
   userId: string,
-  clientId: string
+  clientId: string,
+  tenantId: string,
+  coreDbSource: DatabaseSource
 ): Promise<CachedConsent | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'consent-cache');
   const result = await coreAdapter.queryOne<{
     scope: string;
     granted_at: number;
     expires_at: number | null;
   }>(
-    'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?',
-    [userId, clientId]
+    `SELECT scope, granted_at, expires_at
+       FROM oauth_client_consents
+      WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+    [tenantId, userId, clientId]
   );
 
   if (!result) {
@@ -431,6 +726,7 @@ async function getConsentFromD1(
 export async function invalidateConsentCache(
   env: Env,
   userId: string,
+  tenantId: string,
   clientId?: string
 ): Promise<void> {
   if (!env.CONSENT_CACHE) {
@@ -439,7 +735,7 @@ export async function invalidateConsentCache(
 
   if (clientId) {
     // Invalidate specific consent
-    const cacheKey = buildKVKey('consent', `${userId}:${clientId}`);
+    const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
     try {
       await env.CONSENT_CACHE.delete(cacheKey);
     } catch (error) {
@@ -461,13 +757,19 @@ export async function invalidateConsentCache(
  * @param env - Cloudflare environment bindings
  * @param state - State parameter value
  * @param clientId - Client ID that initiated the request
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function storeState(env: Env, state: string, clientId: string): Promise<void> {
+export async function storeState(
+  env: Env,
+  state: string,
+  clientId: string,
+  tenantId: string
+): Promise<void> {
   // KV > env > default priority
   const configManager = createOAuthConfigManager(env);
   const ttl = await configManager.getStateExpiry();
-  const key = buildKVKey('state', state);
+  const key = buildKVKey('state', state, tenantId);
 
   await env.STATE_STORE.put(key, clientId, {
     expirationTtl: ttl,
@@ -479,10 +781,11 @@ export async function storeState(env: Env, state: string, clientId: string): Pro
  *
  * @param env - Cloudflare environment bindings
  * @param state - State parameter to validate
+ * @param tenantId - Tenant ID
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
-export async function getState(env: Env, state: string): Promise<string | null> {
-  const key = buildKVKey('state', state);
+export async function getState(env: Env, state: string, tenantId: string): Promise<string | null> {
+  const key = buildKVKey('state', state, tenantId);
   return await env.STATE_STORE.get(key);
 }
 
@@ -491,10 +794,11 @@ export async function getState(env: Env, state: string): Promise<string | null> 
  *
  * @param env - Cloudflare environment bindings
  * @param state - State parameter to delete
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function deleteState(env: Env, state: string): Promise<void> {
-  const key = buildKVKey('state', state);
+export async function deleteState(env: Env, state: string, tenantId: string): Promise<void> {
+  const key = buildKVKey('state', state, tenantId);
   await env.STATE_STORE.delete(key);
 }
 
@@ -504,13 +808,19 @@ export async function deleteState(env: Env, state: string): Promise<void> {
  * @param env - Cloudflare environment bindings
  * @param nonce - Nonce parameter value
  * @param clientId - Client ID that initiated the request
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function storeNonce(env: Env, nonce: string, clientId: string): Promise<void> {
+export async function storeNonce(
+  env: Env,
+  nonce: string,
+  clientId: string,
+  tenantId: string
+): Promise<void> {
   // KV > env > default priority
   const configManager = createOAuthConfigManager(env);
   const ttl = await configManager.getNonceExpiry();
-  const key = buildKVKey('nonce', nonce);
+  const key = buildKVKey('nonce', nonce, tenantId);
 
   await env.NONCE_STORE.put(key, clientId, {
     expirationTtl: ttl,
@@ -522,10 +832,11 @@ export async function storeNonce(env: Env, nonce: string, clientId: string): Pro
  *
  * @param env - Cloudflare environment bindings
  * @param nonce - Nonce parameter to validate
+ * @param tenantId - Tenant ID
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
-export async function getNonce(env: Env, nonce: string): Promise<string | null> {
-  const key = buildKVKey('nonce', nonce);
+export async function getNonce(env: Env, nonce: string, tenantId: string): Promise<string | null> {
+  const key = buildKVKey('nonce', nonce, tenantId);
   return await env.NONCE_STORE.get(key);
 }
 
@@ -534,10 +845,11 @@ export async function getNonce(env: Env, nonce: string): Promise<string | null> 
  *
  * @param env - Cloudflare environment bindings
  * @param nonce - Nonce parameter to delete
+ * @param tenantId - Tenant ID
  * @returns Promise<void>
  */
-export async function deleteNonce(env: Env, nonce: string): Promise<void> {
-  const key = buildKVKey('nonce', nonce);
+export async function deleteNonce(env: Env, nonce: string, tenantId: string): Promise<void> {
+  const key = buildKVKey('nonce', nonce, tenantId);
   await env.NONCE_STORE.delete(key);
 }
 
@@ -617,6 +929,12 @@ function normalizeOptionalStringArray(value: unknown): string[] | undefined {
 }
 
 function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
+  if (
+    Object.prototype.hasOwnProperty.call(client as unknown as Record<string, unknown>, 'app_suite')
+  ) {
+    throw createCompatibilityError('legacy_app_suite_not_supported');
+  }
+
   return {
     ...client,
     redirect_uris: normalizeStringArray(client.redirect_uris, []),
@@ -633,6 +951,15 @@ function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
     post_logout_redirect_uris: normalizeOptionalStringArray(client.post_logout_redirect_uris),
     requestable_scopes: normalizeOptionalStringArray(client.requestable_scopes),
     allowed_redirect_origins: normalizeOptionalStringArray(client.allowed_redirect_origins),
+    device_secret_revoke_trust_groups: normalizeOptionalStringArray(
+      client.device_secret_revoke_trust_groups
+    ),
+    device_secret_introspection_trust_groups: normalizeOptionalStringArray(
+      client.device_secret_introspection_trust_groups
+    ),
+    allowed_channels: normalizeOptionalStringArray(client.allowed_channels) as
+      | Array<'browser' | 'native' | 'server'>
+      | undefined,
   };
 }
 
@@ -652,8 +979,13 @@ function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
  * @param clientId - Client ID to retrieve
  * @returns Promise<ClientMetadata | null>
  */
-export async function getClient(env: Env, clientId: string): Promise<ClientMetadata | null> {
-  const cacheKey = buildKVKey('client', clientId);
+export async function getClient(
+  env: Env,
+  tenantId: string,
+  clientId: string,
+  coreDbSource: DatabaseSource
+): Promise<ClientMetadata | null> {
+  const cacheKey = buildKVKey('client', clientId, tenantId);
 
   // Get cache TTL based on cache mode (client-specific > platform > default)
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientId);
@@ -665,6 +997,10 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     try {
       return normalizeClientMetadata(JSON.parse(cached) as ClientMetadata);
     } catch (error) {
+      if (error instanceof OIDCError && error.error === 'legacy_app_suite_not_supported') {
+        throw error;
+      }
+
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
       log.error('Failed to parse cached client data', {}, error as Error);
@@ -675,7 +1011,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
   }
 
   // Step 2: Cache miss - fetch from D1 (source of truth)
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'client-cache');
   const result = await coreAdapter.queryOne<{
     client_id: string;
     client_secret_hash: string | null;
@@ -700,6 +1036,12 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     is_trusted: number | null;
     skip_consent: number | null;
     allow_claims_without_scope: number | null;
+    claims_parameter_policy: string | null;
+    asc_enabled: number | null;
+    asc_protected_request_required: number | null;
+    asc_sao_enabled: number | null;
+    asc_transformed_claims_enabled: number | null;
+    asc_allowed_transformed_claims: string | null;
     // RFC 8693: Token Exchange settings
     token_exchange_allowed: number | null;
     allowed_subject_token_clients: string | null;
@@ -710,6 +1052,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     allowed_scopes: string | null;
     default_scope: string | null;
     default_audience: string | null;
+    default_resource: string | null;
     // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
     initiate_login_uri: string | null;
     // RFC 7592: Client Configuration Endpoint
@@ -735,9 +1078,21 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     require_pkce: number | null;
     // Multi-tenant support
     tenant_id: string;
+    application_type: string | null;
+    trust_group: string | null;
+    trust_group_id: string | null;
+    browser_public_client_mode: string | null;
+    browser_refresh_token_policy: string | null;
+    native_sso_enabled: number | null;
+    native_channel_allowed: number | null;
+    allowed_channels: string | null;
+    device_secret_revoke_enabled: number | null;
+    device_secret_revoke_trust_groups: string | null;
+    device_secret_introspection_enabled: number | null;
+    device_secret_introspection_trust_groups: string | null;
     created_at: number;
     updated_at: number;
-  }>('SELECT * FROM oauth_clients WHERE client_id = ?', [clientId]);
+  }>('SELECT * FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [tenantId, clientId]);
 
   if (!result) {
     return null;
@@ -749,6 +1104,43 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     client_id: result.client_id,
     client_secret_hash: result.client_secret_hash ?? undefined,
     client_name: result.client_name ?? undefined,
+    application_type: result.application_type ?? undefined,
+    trust_group: result.trust_group ?? undefined,
+    trust_group_id: result.trust_group_id ?? undefined,
+    browser_public_client_mode:
+      result.browser_public_client_mode === 'strict' ||
+      result.browser_public_client_mode === 'cookie_fallback'
+        ? result.browser_public_client_mode
+        : undefined,
+    browser_refresh_token_policy:
+      (result.browser_refresh_token_policy as 'disabled' | 'dpop_bound' | null) ?? 'disabled',
+    native_sso_enabled:
+      result.native_sso_enabled === null || result.native_sso_enabled === undefined
+        ? undefined
+        : result.native_sso_enabled === 1,
+    native_channel_allowed:
+      result.native_channel_allowed === null || result.native_channel_allowed === undefined
+        ? undefined
+        : result.native_channel_allowed === 1,
+    allowed_channels: normalizeOptionalStringArray(result.allowed_channels) as
+      | Array<'browser' | 'native' | 'server'>
+      | undefined,
+    device_secret_revoke_enabled:
+      result.device_secret_revoke_enabled === null ||
+      result.device_secret_revoke_enabled === undefined
+        ? undefined
+        : result.device_secret_revoke_enabled === 1,
+    device_secret_revoke_trust_groups: normalizeOptionalStringArray(
+      result.device_secret_revoke_trust_groups
+    ),
+    device_secret_introspection_enabled:
+      result.device_secret_introspection_enabled === null ||
+      result.device_secret_introspection_enabled === undefined
+        ? undefined
+        : result.device_secret_introspection_enabled === 1,
+    device_secret_introspection_trust_groups: normalizeOptionalStringArray(
+      result.device_secret_introspection_trust_groups
+    ),
     redirect_uris: normalizeStringArray(result.redirect_uris, []),
     grant_types: normalizeStringArray(result.grant_types, ['authorization_code']),
     response_types: normalizeStringArray(result.response_types, ['code']),
@@ -769,6 +1161,30 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     is_trusted: result.is_trusted === 1,
     skip_consent: result.skip_consent === 1,
     allow_claims_without_scope: result.allow_claims_without_scope === 1,
+    claims_parameter_policy: result.claims_parameter_policy
+      ? JSON.parse(result.claims_parameter_policy)
+      : undefined,
+    asc_enabled:
+      result.asc_enabled === null || result.asc_enabled === undefined
+        ? true
+        : result.asc_enabled === 1,
+    asc_protected_request_required:
+      result.asc_protected_request_required === null ||
+      result.asc_protected_request_required === undefined
+        ? true
+        : result.asc_protected_request_required === 1,
+    asc_sao_enabled:
+      result.asc_sao_enabled === null || result.asc_sao_enabled === undefined
+        ? true
+        : result.asc_sao_enabled === 1,
+    asc_transformed_claims_enabled:
+      result.asc_transformed_claims_enabled === null ||
+      result.asc_transformed_claims_enabled === undefined
+        ? true
+        : result.asc_transformed_claims_enabled === 1,
+    asc_allowed_transformed_claims: normalizeOptionalStringArray(
+      result.asc_allowed_transformed_claims
+    ),
     // RFC 8693: Token Exchange settings
     token_exchange_allowed: result.token_exchange_allowed === 1,
     allowed_subject_token_clients: normalizeOptionalStringArray(
@@ -784,6 +1200,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     allowed_scopes: normalizeOptionalStringArray(result.allowed_scopes),
     default_scope: result.default_scope ?? undefined,
     default_audience: result.default_audience ?? undefined,
+    default_resource: result.default_resource ?? undefined,
     // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
     initiate_login_uri: result.initiate_login_uri ?? undefined,
     // RFC 7592: Client Configuration Endpoint (hash only, not exposed)
@@ -810,7 +1227,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     // PKCE settings
     require_pkce: result.require_pkce === 1,
     // Multi-tenant support
-    tenant_id: result.tenant_id || 'default',
+    tenant_id: result.tenant_id || tenantId,
     created_at: result.created_at,
     updated_at: result.updated_at,
   };
@@ -843,11 +1260,13 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
  * @returns Promise<void>
  */
 export async function putClient(env: Env, clientData: ClientMetadata): Promise<void> {
-  const cacheKey = buildKVKey('client', clientData.client_id);
+  const tenantId = requireTenantId(clientData.tenant_id, 'Client cache write');
+  const cacheKey = buildKVKey('client', clientData.client_id, tenantId);
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientData.client_id);
+  const normalizedClientData = normalizeClientMetadata(clientData);
 
   try {
-    await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(clientData), {
+    await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(normalizedClientData), {
       expirationTtl: cacheTtl,
     });
     log.debug('Client data cached to KV (Write-Through)');
@@ -867,8 +1286,12 @@ export async function putClient(env: Env, clientData: ClientMetadata): Promise<v
  * @param clientId - Client ID to delete from cache
  * @returns Promise<void>
  */
-export async function deleteClientFromKV(env: Env, clientId: string): Promise<void> {
-  const cacheKey = buildKVKey('client', clientId);
+export async function deleteClientFromKV(
+  env: Env,
+  tenantId: string,
+  clientId: string
+): Promise<void> {
+  const cacheKey = buildKVKey('client', clientId, tenantId);
 
   try {
     await env.CLIENTS_CACHE.delete(cacheKey);
@@ -895,14 +1318,15 @@ export async function revokeToken(
   env: Env,
   jti: string,
   expiresIn: number,
-  reason?: string
+  reason: string | undefined,
+  tenantId: string
 ): Promise<void> {
   if (!env.TOKEN_REVOCATION_STORE) {
     throw new Error('TOKEN_REVOCATION_STORE Durable Object not available');
   }
 
   // Use sharded Durable Object instance for token revocations
-  const { stub } = await getRevocationStoreByJti(env, jti);
+  const { stub } = await getRevocationStoreByJti(env, jti, tenantId);
 
   const response = await stub.fetch('http://internal/revoke', {
     method: 'POST',
@@ -915,7 +1339,7 @@ export async function revokeToken(
   });
 
   if (!response.ok) {
-    const error = await response.text();
+    const error = await readResponseTextWithLimit(response, TOKEN_REVOCATION_ERROR_BODY_MAX_BYTES);
     throw new Error(`Failed to revoke token: ${error}`);
   }
 }
@@ -927,7 +1351,7 @@ export async function revokeToken(
  * @param jti - JWT ID of the token to check
  * @returns Promise<boolean> - True if token is revoked
  */
-export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
+export async function isTokenRevoked(env: Env, jti: string, tenantId: string): Promise<boolean> {
   if (!env.TOKEN_REVOCATION_STORE) {
     log.warn('TOKEN_REVOCATION_STORE binding is not configured; skipping revocation check');
     return false;
@@ -935,7 +1359,7 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
 
   try {
     // Use sharded Durable Object instance for token revocation checks
-    const { stub } = await getRevocationStoreByJti(env, jti);
+    const { stub } = await getRevocationStoreByJti(env, jti, tenantId);
 
     const response = await stub.fetch(`http://internal/check?jti=${encodeURIComponent(jti)}`, {
       method: 'GET',
@@ -957,152 +1381,42 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
 // RefreshTokenData is now imported from types/oidc
 
 /**
- * Store refresh token using RefreshTokenRotator DO
- * Creates a new token family for the refresh token
+ * Legacy internal shim for refresh token storage.
  *
- * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI (unique identifier) - this is the actual token value
- * @param data - Refresh token metadata
- * @returns Promise<void>
+ * Canonical public exports live in `utils/refresh-token-store.ts`.
+ * Keep this wrapper only to avoid rewriting every internal reference in one step.
  */
-export async function storeRefreshToken(
+async function storeRefreshToken(
   env: Env,
   jti: string,
-  data: RefreshTokenData
+  data: RefreshTokenData,
+  tenantId: string
 ): Promise<void> {
-  if (!env.REFRESH_TOKEN_ROTATOR) {
-    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
-  }
-
-  // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
-    await import('./refresh-token-sharding');
-  const parsedJti = parseRefreshTokenJti(jti);
-  const instanceName = buildRefreshTokenRotatorInstanceName(
-    data.client_id,
-    parsedJti.generation,
-    parsedJti.shardIndex
-  );
-
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
-
-  // KV > env > default priority for refresh token TTL
-  const configManager = createOAuthConfigManager(env);
-  const refreshTokenTTL = await configManager.getRefreshTokenExpiry();
-
-  // Use RPC for family creation
-  await stub.createFamilyRpc({
-    jti: jti,
-    userId: data.sub,
-    clientId: data.client_id,
-    scope: data.scope || '',
-    ttl: refreshTokenTTL,
-    // V3: Include generation and shard for DO to store
-    ...(parsedJti.generation > 0 &&
-      parsedJti.shardIndex !== null && {
-        generation: parsedJti.generation,
-        shardIndex: parsedJti.shardIndex,
-      }),
-  });
+  return storeRefreshTokenCanonical(env, jti, data, tenantId);
 }
 
 /**
- * Retrieve refresh token metadata using RefreshTokenRotator DO (V2)
- * Note: This validates the token and returns metadata if valid
- *
- * V2 API uses version-based validation. The token's userId and version (rtv claim)
- * are used to look up the token family in the DO.
- *
- * @param env - Cloudflare environment bindings
- * @param userId - User ID from the refresh token's sub claim
- * @param version - Token version from the refresh token's rtv claim
- * @param clientId - Client ID (required to locate the correct DO instance)
- * @param jti - JWT ID for verification against stored last_jti
- * @returns Promise<RefreshTokenData | null>
+ * Legacy internal shim for refresh token lookup.
  */
-export async function getRefreshToken(
+async function getRefreshToken(
   env: Env,
   userId: string,
   version: number,
   clientId: string,
-  jti: string
+  jti: string,
+  tenantId: string
 ): Promise<RefreshTokenData | null> {
-  if (!env.REFRESH_TOKEN_ROTATOR) {
-    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
-  }
-
-  // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
-    await import('./refresh-token-sharding');
-  const parsedJti = parseRefreshTokenJti(jti);
-  const instanceName = buildRefreshTokenRotatorInstanceName(
-    clientId,
-    parsedJti.generation,
-    parsedJti.shardIndex
-  );
-
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
-
-  try {
-    // V2: Use RPC for version-based validation
-    const result = await stub.validateRpc(userId, version, clientId);
-
-    if (!result.valid || !result.family) {
-      return null;
-    }
-
-    // Convert DO response to RefreshTokenData format
-    // familyId is constructed from userId:clientId (matches DO key structure)
-    return {
-      jti,
-      client_id: clientId,
-      sub: userId,
-      scope: result.family.allowed_scope || '',
-      iat: Math.floor(Date.now() / 1000), // V2 doesn't return createdAt
-      exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
-      familyId: `${userId}:${clientId}`,
-    };
-  } catch (error) {
-    // PII Protection: Don't log full error (may contain token details)
-    log.error('Failed to get refresh token', {}, error as Error);
-    return null;
-  }
+  return getRefreshTokenCanonical(env, userId, version, clientId, jti, tenantId);
 }
 
 /**
- * Delete refresh token using RefreshTokenRotator DO
- * Revokes the entire token family for security
- *
- * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI (the actual token value)
- * @param client_id - Client ID (required to locate the correct DO instance)
- * @returns Promise<void>
+ * Legacy internal shim for refresh token deletion.
  */
-export async function deleteRefreshToken(env: Env, jti: string, client_id: string): Promise<void> {
-  if (!env.REFRESH_TOKEN_ROTATOR) {
-    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
-  }
-
-  // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
-    await import('./refresh-token-sharding');
-  const parsedJti = parseRefreshTokenJti(jti);
-  const instanceName = buildRefreshTokenRotatorInstanceName(
-    client_id,
-    parsedJti.generation,
-    parsedJti.shardIndex
-  );
-
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
-
-  // Use RPC to revoke by JTI (internally finds family and revokes)
-  try {
-    await stub.revokeByJtiRpc(jti, 'Token revocation requested');
-  } catch (error) {
-    // Token doesn't exist or already revoked - that's OK for delete operations
-    log.debug('Token revocation completed (may already be revoked)');
-  }
+async function deleteRefreshToken(
+  env: Env,
+  jti: string,
+  client_id: string,
+  tenantId: string
+): Promise<void> {
+  return deleteRefreshTokenCanonical(env, jti, client_id, tenantId);
 }

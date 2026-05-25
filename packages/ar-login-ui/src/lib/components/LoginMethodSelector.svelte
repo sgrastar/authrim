@@ -1,14 +1,15 @@
 <script lang="ts">
 	import { Button, Input, Alert } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { SocialProvider } from '$lib/api/login-methods';
+	import type { ExternalProvider } from '$lib/api/login-methods';
+	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { sanitizeColor } from '$lib/utils/url-validation';
 
 	interface Props {
 		passkeyEnabled: boolean;
 		emailCodeEnabled: boolean;
-		socialEnabled: boolean;
-		socialProviders: SocialProvider[];
+		externalEnabled: boolean;
+		externalProviders: ExternalProvider[];
 		passkeyLoading?: boolean;
 		emailCodeLoading?: boolean;
 		externalIdpLoading?: string | null;
@@ -16,15 +17,15 @@
 		email?: string;
 		onPasskeyLogin?: () => void;
 		onEmailCodeSend?: (email: string) => void;
-		onExternalLogin?: (providerId: string) => void;
+		onExternalLogin?: (provider: ExternalProvider) => void;
 		onErrorDismiss?: () => void;
 	}
 
 	let {
 		passkeyEnabled,
 		emailCodeEnabled,
-		socialEnabled,
-		socialProviders,
+		externalEnabled,
+		externalProviders,
 		passkeyLoading = false,
 		emailCodeLoading = false,
 		externalIdpLoading = null,
@@ -45,18 +46,11 @@
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
 
-	function getProviderIcon(provider: SocialProvider): string {
-		if (provider.iconUrl) return provider.iconUrl;
-		const name = (provider.name || '').toLowerCase();
-		if (name.includes('google')) return 'i-logos-google-icon';
-		if (name.includes('github')) return 'i-logos-github-icon';
-		if (name.includes('microsoft') || name.includes('azure')) return 'i-logos-microsoft-icon';
-		if (name.includes('apple')) return 'i-logos-apple';
-		if (name.includes('facebook')) return 'i-logos-facebook';
-		return 'i-heroicons-arrow-right-end-on-rectangle';
+	function getProviderIcon(provider: ExternalProvider): string {
+		return getExternalProviderIconClass(provider);
 	}
 
-	function getProviderButtonText(provider: SocialProvider): string {
+	function getProviderButtonText(provider: ExternalProvider): string {
 		if (provider.buttonText) return provider.buttonText;
 		return $LL.login_continueWith({ provider: provider.name });
 	}
@@ -134,8 +128,8 @@
 	</Button>
 {/if}
 
-<!-- Social Login Section -->
-{#if socialEnabled && socialProviders.length > 0}
+<!-- External Login Section -->
+{#if externalEnabled && externalProviders.length > 0}
 	<div class="auth-divider" style="margin: 24px 0;">
 		<div class="auth-divider__line"></div>
 		<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -143,7 +137,7 @@
 	</div>
 
 	<div class="space-y-3">
-		{#each socialProviders as provider (provider.id)}
+		{#each externalProviders as provider (provider.id)}
 			{@const safeColor = sanitizeColor(provider.buttonColor)}
 			<Button
 				variant="secondary"
@@ -152,10 +146,19 @@
 				disabled={passkeyLoading ||
 					emailCodeLoading ||
 					(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
-				onclick={() => onExternalLogin?.(provider.id)}
+				onclick={() => onExternalLogin?.(provider)}
 				style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 			>
-				<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+				{#if provider.iconUrl}
+					<img
+						src={provider.iconUrl}
+						alt=""
+						loading="lazy"
+						style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
+					/>
+				{:else if getProviderIcon(provider)}
+					<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+				{/if}
 				{getProviderButtonText(provider)}
 			</Button>
 		{/each}

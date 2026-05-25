@@ -25,7 +25,7 @@ export interface UiEnvConfig {
   /** API base URL for UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   PUBLIC_API_BASE_URL: string;
   /**
-   * Public fallback backend URL for the Pages proxy.
+   * Public fallback backend URL for the UI Worker proxy.
    * Used when the runtime API_BACKEND_URL secret is missing or stale.
    */
   PUBLIC_API_PROXY_BACKEND_URL?: string;
@@ -52,6 +52,11 @@ export interface UiEnvConfig {
    * Defaults to 'false' to avoid affecting OIDC conformance test results.
    */
   PUBLIC_DIAGNOSTIC_LOGGING_ENABLED?: string;
+  /**
+   * Admin UI to Admin API browser deployment mode.
+   * Generated only for Admin UI builds.
+   */
+  ADMIN_UI_API_MODE?: string;
 }
 
 // =============================================================================

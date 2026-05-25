@@ -1,3 +1,17 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-23
+description: "This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects)."
+type: reference
+tags:
+  - authrim
+  - ar-lib-core
+  - database
+  - durable-objects
+  - cloudflare-workers
+  - storage
+---
 # Storage Abstraction Layer
 
 This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects).
@@ -10,12 +24,12 @@ The storage abstraction layer integrates multiple storage backends and provides 
 
 | Prefix           | Routing Target                            | Description                     |
 | ---------------- | ----------------------------------------- | ------------------------------- |
-| `session:*`      | SessionStore Durable Object + D1 fallback | Hot data in DO, cold data in D1 |
+| `session:*`      | SessionStore Durable Object               | Region-sharded hot path + cold persistence adapter |
 | `client:*`       | D1 + KV Cache                             | Read-through cache pattern      |
 | `user:*`         | D1 Database                               | User data                       |
 | `authcode:*`     | AuthorizationCodeStore Durable Object     | One-time use guarantee          |
-| `refreshtoken:*` | RefreshTokenRotator Durable Object        | Atomic rotation                 |
-| Others           | KV Storage                                | Fallback                        |
+| `refreshtoken:*` | Deprecated low-level shim                 | Use refresh token helpers instead |
+| Others           | Unsupported                               | Legacy KV fallback removed      |
 
 ## Architecture
 
@@ -82,7 +96,7 @@ export default {
     // Get client (D1 + KV cache)
     const client = await clientStore.get('client_abc');
 
-    // Create session (Durable Object + D1)
+    // Create session (region-sharded Durable Object + cold persistence adapter)
     const session = await sessionStore.create({
       user_id: 'user_123',
       data: { amr: ['pwd'] },
@@ -100,7 +114,7 @@ For low-level API usage:
 ```typescript
 // Key-based access (automatic routing)
 const value = await adapter.get('client:test-client');
-await adapter.set('custom:key', 'value', 3600); // TTL: 1 hour
+await adapter.set('client:test-client', JSON.stringify({ client_id: 'test-client' }));
 await adapter.delete('session:abc123');
 
 // D1 SQL queries (PII/Non-PII separation: users_core for non-PII, users_pii for PII)
@@ -164,7 +178,7 @@ const clients = await clientStore.list({ limit: 10, offset: 0 });
 // Get session (Durable Object → D1 fallback)
 const session = await sessionStore.get('session_abc123');
 
-// Create session (Durable Object + D1)
+// Create session (returns a region-sharded session ID)
 const newSession = await sessionStore.create({
   user_id: 'user_123',
   data: { amr: ['pwd', 'mfa'] },
@@ -173,8 +187,8 @@ const newSession = await sessionStore.create({
 // Invalidate session
 await sessionStore.delete('session_abc123');
 
-// Get all sessions for user
-const sessions = await sessionStore.listByUser('user_123');
+// listByUser is not supported on the region-sharded Cloudflare SessionStore
+// without a dedicated user-session index. Use higher-level admin/session APIs instead.
 
 // Extend session expiration (Active TTL)
 const extended = await sessionStore.extend('session_abc123', 3600); // +1 hour
@@ -273,7 +287,7 @@ pnpm test src/storage/adapters/__tests__/cloudflare-adapter.test.ts
 
 ## References
 
-- [Storage Strategy](../../../docs/architecture/storage-strategy.md)
+- [Storage Strategy](../../../docs/architecture/storage/storage-strategy.md)
 - [Database Schema](../../../docs/architecture/database-schema.md)
 - [Durable Objects](../../../docs/architecture/durable-objects.md)
 - [Phase 5 Planning](../../../docs/project-management/PHASE5_PLANNING.md)

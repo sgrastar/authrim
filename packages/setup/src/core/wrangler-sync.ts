@@ -17,7 +17,7 @@ import { join, basename } from 'node:path';
 import { getEnvironmentPaths } from './paths.js';
 import { generateWranglerConfig, toToml, type ResourceIds } from './wrangler.js';
 import type { AuthrimConfig } from './config.js';
-import { CORE_WORKER_COMPONENTS } from './naming.js';
+import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from './naming.js';
 import { getWorkersSubdomain } from './cloudflare.js';
 
 // =============================================================================
@@ -82,6 +82,63 @@ function normalizeToml(content: string): string {
     .join('\n');
 }
 
+function isTargetEnvLine(line: string, env: string): boolean {
+  const trimmed = line.trim();
+  return (
+    trimmed === `# Environment: ${env}` ||
+    trimmed === `[env.${env}]` ||
+    trimmed.startsWith(`[env.${env}.`) ||
+    trimmed.startsWith(`[[env.${env}.`)
+  );
+}
+
+function isOtherEnvBoundary(line: string, env: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('# Environment: ')) {
+    return trimmed !== `# Environment: ${env}`;
+  }
+
+  const envHeader = trimmed.match(/^\[\[?env\.([a-z0-9-]+)/);
+  return !!envHeader && envHeader[1] !== env;
+}
+
+export function removeEnvironmentSectionFromToml(
+  content: string,
+  env: string
+): { content: string; removed: boolean } {
+  const lines = content.split('\n');
+  const kept: string[] = [];
+  let skipping = false;
+  let removed = false;
+
+  for (const line of lines) {
+    if (!skipping && isTargetEnvLine(line, env)) {
+      skipping = true;
+      removed = true;
+      continue;
+    }
+
+    if (skipping) {
+      if (isOtherEnvBoundary(line, env)) {
+        skipping = false;
+        kept.push(line);
+      }
+      continue;
+    }
+
+    kept.push(line);
+  }
+
+  const normalized = kept
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+  return {
+    content: normalized.length > 0 ? normalized + '\n' : '',
+    removed,
+  };
+}
+
 /**
  * Get the master wrangler.toml path for a component
  */
@@ -102,6 +159,10 @@ export function getDeployWranglerPath(packagesDir: string, component: string): s
   return join(packagesDir, component, 'wrangler.toml');
 }
 
+function getWranglerComponentsForConfig(config: AuthrimConfig): WorkerComponent[] {
+  return Array.from(getEnabledComponents(config.components));
+}
+
 // =============================================================================
 // Status Check
 // =============================================================================
@@ -119,7 +180,7 @@ export async function checkWranglerStatus(
   const envPaths = getEnvironmentPaths({ baseDir, env });
   const results: WranglerFileStatus[] = [];
 
-  for (const component of CORE_WORKER_COMPONENTS) {
+  for (const component of WORKER_COMPONENTS) {
     const masterPath = getMasterWranglerPath(envPaths, component);
     const deployPath = getDeployWranglerPath(packagesDir, component);
 
@@ -175,7 +236,7 @@ export async function saveMasterWranglerConfigs(
   // Workers.dev URLs must be in format: {name}.{subdomain}.workers.dev
   const workersSubdomain = await getWorkersSubdomain();
 
-  for (const component of CORE_WORKER_COMPONENTS) {
+  for (const component of getWranglerComponentsForConfig(config)) {
     try {
       const wranglerConfig = generateWranglerConfig(
         component,
@@ -237,7 +298,7 @@ export async function syncWranglerConfigs(
     return result;
   }
 
-  for (const component of CORE_WORKER_COMPONENTS) {
+  for (const component of WORKER_COMPONENTS) {
     const masterPath = getMasterWranglerPath(envPaths, component);
     const deployPath = getDeployWranglerPath(packagesDir, component);
     const componentDir = join(packagesDir, component);
@@ -326,7 +387,7 @@ export async function backupDeployConfigs(
   const { packagesDir, onProgress } = options;
   const backedUp: string[] = [];
 
-  for (const component of CORE_WORKER_COMPONENTS) {
+  for (const component of WORKER_COMPONENTS) {
     const deployPath = getDeployWranglerPath(packagesDir, component);
 
     if (existsSync(deployPath)) {
@@ -350,7 +411,7 @@ export async function restoreDeployConfigs(
   const { packagesDir, onProgress } = options;
   const restored: string[] = [];
 
-  for (const component of CORE_WORKER_COMPONENTS) {
+  for (const component of WORKER_COMPONENTS) {
     const deployPath = getDeployWranglerPath(packagesDir, component);
     const backupPath = deployPath + '.backup';
 

@@ -9,7 +9,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { createAuditLog, DEFAULT_TENANT_ID } from '@authrim/ar-lib-core';
+import { createAuditLog } from '@authrim/ar-lib-core';
 
 /**
  * SCIM resource types for audit logging
@@ -55,9 +55,12 @@ export async function createScimAuditLog(
   metadata: Record<string, unknown>,
   severity: 'info' | 'warning' | 'critical' = 'info'
 ): Promise<void> {
-  // Get tenantId from context (set by requestContextMiddleware if available)
+  // Get tenantId from context (set by requestContextMiddleware).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tenantId = ((c as any).get?.('tenantId') as string | undefined) || DEFAULT_TENANT_ID;
+  const tenantId = ((c as any).get?.('tenantId') as string | undefined)?.trim();
+  if (!tenantId) {
+    return;
+  }
 
   // Extract IP address (Cloudflare-aware)
   const ipAddress =

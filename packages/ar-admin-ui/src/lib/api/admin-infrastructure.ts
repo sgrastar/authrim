@@ -1,8 +1,8 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Infrastructure API Client
  *
  * Provides API calls for infrastructure sharding configuration:
- * - Flow State Shards: GET/PUT /api/admin/settings/flow-state-shards
  * - Session Shards: GET/PUT /api/admin/settings/session-shards
  * - Challenge Shards: GET/PUT /api/admin/settings/challenge-shards
  * - Code Shards: GET/PUT /api/admin/settings/code-shards
@@ -96,54 +96,6 @@ export interface RefreshTokenShardingResponse {
  * Admin Infrastructure API
  */
 export const adminInfrastructureAPI = {
-	/**
-	 * Get flow state shard configuration
-	 * GET /api/admin/settings/flow-state-shards
-	 */
-	async getFlowStateShards(): Promise<ShardConfig> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/flow-state-shards`, {
-			credentials: 'include'
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.message || error.error || 'Failed to fetch flow state shards');
-		}
-
-		return response.json();
-	},
-
-	/**
-	 * Update flow state shard count
-	 * PUT /api/admin/settings/flow-state-shards
-	 *
-	 * Note: Changing shard count affects routing of new sessions.
-	 * Existing sessions will continue to work as they use embedded routing.
-	 *
-	 * @param shards - Number of shards (1-256)
-	 */
-	async updateFlowStateShards(shards: number): Promise<ShardUpdateResponse> {
-		if (!Number.isInteger(shards) || shards < 1 || shards > 256) {
-			throw new Error('Shard count must be an integer between 1 and 256');
-		}
-
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/flow-state-shards`, {
-			method: 'PUT',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			credentials: 'include',
-			body: JSON.stringify({ shards })
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.message || error.error || 'Failed to update flow state shards');
-		}
-
-		return response.json();
-	},
-
 	// =========================================================================
 	// Session Shards API
 	// =========================================================================
@@ -153,7 +105,7 @@ export const adminInfrastructureAPI = {
 	 * GET /api/admin/settings/session-shards
 	 */
 	async getSessionShards(): Promise<ShardConfig> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/session-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/session-shards`, {
 			credentials: 'include'
 		});
 
@@ -179,7 +131,7 @@ export const adminInfrastructureAPI = {
 			throw new Error('Shard count must be an integer between 1 and 256');
 		}
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/session-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/session-shards`, {
 			method: 'PUT',
 			headers: {
 				'Content-Type': 'application/json'
@@ -205,7 +157,7 @@ export const adminInfrastructureAPI = {
 	 * GET /api/admin/settings/challenge-shards
 	 */
 	async getChallengeShards(): Promise<ShardConfig> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/challenge-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/challenge-shards`, {
 			credentials: 'include'
 		});
 
@@ -231,7 +183,7 @@ export const adminInfrastructureAPI = {
 			throw new Error('Shard count must be an integer between 1 and 256');
 		}
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/challenge-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/challenge-shards`, {
 			method: 'PUT',
 			headers: {
 				'Content-Type': 'application/json'
@@ -257,7 +209,7 @@ export const adminInfrastructureAPI = {
 	 * GET /api/admin/settings/code-shards
 	 */
 	async getCodeShards(): Promise<ShardConfig> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/code-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/code-shards`, {
 			credentials: 'include'
 		});
 
@@ -284,7 +236,7 @@ export const adminInfrastructureAPI = {
 			throw new Error('Shard count must be an integer between 1 and 256');
 		}
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/code-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/code-shards`, {
 			method: 'PUT',
 			headers: {
 				'Content-Type': 'application/json'
@@ -308,7 +260,7 @@ export const adminInfrastructureAPI = {
 	 * GET /api/admin/settings/revocation-shards
 	 */
 	async getRevocationShards(): Promise<ShardConfig> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/revocation-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/revocation-shards`, {
 			credentials: 'include'
 		});
 
@@ -331,7 +283,7 @@ export const adminInfrastructureAPI = {
 			throw new Error('Shard count must be an integer between 1 and 256');
 		}
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/revocation-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/revocation-shards`, {
 			method: 'PUT',
 			headers: {
 				'Content-Type': 'application/json'
@@ -357,7 +309,7 @@ export const adminInfrastructureAPI = {
 	 * GET /api/admin/settings/region-shards
 	 */
 	async getRegionShards(): Promise<RegionShardConfig> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/region-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/region-shards`, {
 			credentials: 'include'
 		});
 
@@ -377,7 +329,7 @@ export const adminInfrastructureAPI = {
 		totalShards: number,
 		regionDistribution: Record<string, number>
 	): Promise<{ success: boolean; generation: number }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/region-shards`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/region-shards`, {
 			method: 'PUT',
 			headers: {
 				'Content-Type': 'application/json'
@@ -411,7 +363,7 @@ export const adminInfrastructureAPI = {
 			url.searchParams.set('clientId', clientId);
 		}
 
-		const response = await fetch(url.toString(), {
+		const response = await adminFetch(url.toString(), {
 			credentials: 'include'
 		});
 
@@ -445,7 +397,7 @@ export const adminInfrastructureAPI = {
 			throw new Error('Shard count must be an integer between 1 and 256');
 		}
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/settings/refresh-token-sharding`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/refresh-token-sharding`, {
 			method: 'PUT',
 			headers: {
 				'Content-Type': 'application/json'

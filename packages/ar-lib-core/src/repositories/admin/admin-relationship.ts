@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 
 /**
@@ -100,7 +101,7 @@ export class AdminRelationshipRepository extends BaseRepository<AdminRelationshi
 
     const entity: AdminRelationshipEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       relationship_type: input.relationship_type,
       from_type: input.from_type ?? 'admin_user',
       from_id: input.from_id,

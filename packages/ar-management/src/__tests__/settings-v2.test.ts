@@ -10,7 +10,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env, SettingsGetResult, SettingsPatchResult } from '@authrim/ar-lib-core';
+import type { D1Database } from '@cloudflare/workers-types';
+import type {
+  Env,
+  SettingsGetResult,
+  SettingsPatchResult,
+  StorageProfile,
+} from '@authrim/ar-lib-core';
 import settingsV2 from '../routes/settings-v2';
 
 // Response types
@@ -45,8 +51,44 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
+function makeStorageProfile(id: string, slices: StorageProfile['slices']): StorageProfile {
+  return {
+    id,
+    kind: 'storage',
+    label: id,
+    slices,
+  };
+}
+
+function createMockDB(): D1Database {
+  return {
+    prepare: vi.fn().mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      run: vi.fn().mockResolvedValue({ success: true }),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      first: vi.fn().mockResolvedValue(null),
+    }),
+    batch: vi.fn(),
+    dump: vi.fn(),
+    exec: vi.fn(),
+  } as unknown as D1Database;
+}
+
 // Create test app with settings-v2 routes
-function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string> } = {}) {
+function createTestApp(
+  options: {
+    kv?: KVNamespace;
+    db?: D1Database;
+    tenantId?: string;
+    env?: Record<string, string>;
+    adminAuth?: {
+      userId: string;
+      authMethod: 'bearer' | 'session';
+      roles: string[];
+      org_id?: string;
+    };
+  } = {}
+) {
   const mockKV = options.kv ?? createMockKV();
 
   const app = new Hono<{
@@ -58,16 +100,21 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
         roles: string[];
         org_id?: string;
       };
+      tenantId?: string;
     };
   }>();
 
   // Mock admin auth middleware - set adminAuth with system_admin role
   app.use('*', async (c, next) => {
-    c.set('adminAuth', {
-      userId: 'test_admin',
-      authMethod: 'bearer',
-      roles: ['system_admin'], // system_admin has access to all settings
-    });
+    c.set(
+      'adminAuth',
+      options.adminAuth ?? {
+        userId: 'test_admin',
+        authMethod: 'bearer',
+        roles: ['system_admin'], // system_admin has access to all settings
+      }
+    );
+    c.set('tenantId', options.tenantId ?? 'default');
     await next();
   });
 
@@ -80,6 +127,7 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
   const mockEnv = {
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockKV,
+    DB: options.db ?? createMockDB(),
     BASE_DOMAIN: 'example.com', // enable multi-tenant mode so ensureSupportedTenantId passes
     ...options.env,
   } as unknown as Env;
@@ -147,6 +195,52 @@ describe('Settings API v2', () => {
 
         expect(body.values['oauth.access_token_expiry']).toBe(7200);
         expect(body.sources['oauth.access_token_expiry']).toBe('kv');
+      });
+
+      it('should return login-entry settings with default values', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('login-entry');
+        expect(body.values['login-entry.override_enabled']).toBe(false);
+        expect(body.values['login-entry.mode']).toBe('discovery_optional');
+        expect(body.values['login-entry.discovery_methods']).toBe(
+          '["email_domain","tenant_code","tenant_slug"]'
+        );
+        expect(body.values['login-entry.email_resolution_policy']).toBe('exact_email_then_domain');
+        expect(body.values['login-entry.selection_policy']).toBe('select_if_multiple');
+        expect(body.values['login-entry.allow_manual_tenant_entry']).toBe(true);
+        expect(body.values['login-entry.remember_last_tenant']).toBe(true);
+        expect(body.values['login-entry.redirect_default_login_to_discovery']).toBe(true);
+        expect(body.values['login-entry.require_common_discovery_before_login']).toBe(true);
+        expect(body.values['login-entry.skip_discovery_if_only_one_tenant']).toBe(false);
+        expect(body.values['login-entry.redirect_tenant_discover_to_common_entry']).toBe(true);
+      });
+
+      it('should return tenant-discovery-ui settings for tenant scope', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant-discovery-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('tenant-discovery-ui');
+        expect(body.values['tenant-discovery-ui.override_enabled']).toBe(false);
+        expect(body.values['tenant-discovery-ui.inherit_from_login_ui']).toBe(true);
+        expect(body.values['tenant-discovery-ui.theme']).toBe('');
       });
     });
 
@@ -222,6 +316,113 @@ describe('Settings API v2', () => {
 
         expect(body.applied).toContain('oauth.access_token_expiry');
         expect(body.version).toBeDefined();
+      });
+
+      it('rejects tenant storage profile overrides that change the auth core plane', async () => {
+        const disallowedProfile = makeStorageProfile('tenant-external-storage', {
+          users_core: {
+            driver: 'postgres',
+            connectionRef: 'tenant-a-core',
+            role: 'core',
+          },
+          users_pii: {
+            driver: 'postgres',
+            connectionRef: 'tenant-a-pii',
+            role: 'pii',
+          },
+        });
+        const mockKV = createMockKV({
+          'profile-registry:storage:tenant-external-storage': JSON.stringify(disallowedProfile),
+        });
+        const { app, mockEnv } = createTestApp({
+          kv: mockKV,
+          env: {
+            DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
+          },
+        });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const patchRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: {
+                'tenant.storage_profile_id': 'tenant-external-storage',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(patchRes.status).toBe(400);
+        const body = (await patchRes.json()) as ApiResponse;
+        expect(body.error).toBe('bad_request');
+        expect(body.message as string).toContain('auth core plane');
+        expect(body.code).toBe('tenant_auth_core_override_not_allowed');
+      });
+
+      it('allows tenant storage profile overrides when the auth core plane is compatible', async () => {
+        const allowedProfile = makeStorageProfile('tenant-pii-storage', {
+          users_pii: {
+            driver: 'postgres',
+            connectionRef: 'tenant-a-pii',
+            role: 'pii',
+          },
+          custom_pii: {
+            driver: 'postgres',
+            connectionRef: 'tenant-a-pii',
+            role: 'pii',
+          },
+        });
+        const mockKV = createMockKV({
+          'profile-registry:storage:tenant-pii-storage': JSON.stringify(allowedProfile),
+        });
+        const { app, mockEnv } = createTestApp({
+          kv: mockKV,
+          env: {
+            DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
+          },
+        });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const patchRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: {
+                'tenant.storage_profile_id': 'tenant-pii-storage',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(patchRes.status).toBe(200);
+        const verifyRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await verifyRes.json()) as SettingsGetResult;
+        expect(body.values['tenant.storage_profile_id']).toBe('tenant-pii-storage');
       });
 
       it('should return 409 on version conflict', async () => {
@@ -314,6 +515,147 @@ describe('Settings API v2', () => {
         expect(body.cleared).toContain('oauth.access_token_expiry');
         expect(body.disabled).toContain('oauth.state_required');
       });
+
+      it('should patch login-entry settings', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'login-entry.mode': 'tenant_only',
+                'login-entry.discovery_methods': '["tenant_slug"]',
+                'login-entry.email_resolution_policy': 'disabled',
+                'login-entry.selection_policy': 'manual_only',
+                'login-entry.allow_manual_tenant_entry': false,
+                'login-entry.remember_last_tenant': false,
+                'login-entry.redirect_default_login_to_discovery': false,
+                'login-entry.require_common_discovery_before_login': false,
+                'login-entry.skip_discovery_if_only_one_tenant': true,
+                'login-entry.redirect_tenant_discover_to_common_entry': false,
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+
+        expect(body.applied).toContain('login-entry.mode');
+        expect(body.applied).toContain('login-entry.discovery_methods');
+        expect(body.applied).toContain('login-entry.email_resolution_policy');
+        expect(body.applied).toContain('login-entry.selection_policy');
+        expect(body.applied).toContain('login-entry.allow_manual_tenant_entry');
+        expect(body.applied).toContain('login-entry.remember_last_tenant');
+        expect(body.applied).toContain('login-entry.redirect_default_login_to_discovery');
+        expect(body.applied).toContain('login-entry.require_common_discovery_before_login');
+        expect(body.applied).toContain('login-entry.skip_discovery_if_only_one_tenant');
+        expect(body.applied).toContain('login-entry.redirect_tenant_discover_to_common_entry');
+      });
+
+      it('should patch tenant-discovery-ui settings for tenant scope', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant-discovery-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/tenant-discovery-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'tenant-discovery-ui.theme': 'dark',
+                'tenant-discovery-ui.title_text': 'Find your workspace',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+        expect(body.applied).toContain('tenant-discovery-ui.theme');
+        expect(body.applied).toContain('tenant-discovery-ui.title_text');
+      });
+
+      it('should reject unknown keys in login-entry settings', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: { 'login-entry.unknown_key': 'value' },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse & { rejected: Record<string, string> };
+        expect(body.error).toBe('validation_failed');
+        expect(body.rejected['login-entry.unknown_key']).toContain('Unknown');
+      });
+
+      it('should reject tenant edits for viewer role', async () => {
+        const { app, mockEnv } = createTestApp({
+          adminAuth: {
+            userId: 'viewer_1',
+            authMethod: 'bearer',
+            roles: ['viewer'],
+            org_id: 'tenant_123',
+          },
+        });
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/oauth',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: 'sha256:test-version',
+              set: { 'oauth.access_token_expiry': 1800 },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(403);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('forbidden');
+      });
     });
   });
 
@@ -322,13 +664,13 @@ describe('Settings API v2', () => {
       it('should return client settings', async () => {
         // Create KV with client metadata (required for tenant lookup)
         const mockKV = createMockKV({
-          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'test_tenant' }),
+          'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
         });
         const { app, mockEnv } = createTestApp({ kv: mockKV });
 
         const res = await app.request(
           '/api/admin/clients/client_abc/settings',
-          { method: 'GET' },
+          { method: 'GET', headers: { 'X-Tenant-Id': 'test-tenant' } },
           mockEnv
         );
 
@@ -336,8 +678,33 @@ describe('Settings API v2', () => {
         const body = (await res.json()) as SettingsGetResult;
 
         expect(body.category).toBe('client');
-        expect(body.scope).toEqual({ type: 'client', id: 'client_abc' });
+        expect(body.scope).toEqual({ type: 'client', id: 'client_abc', tenantId: 'test-tenant' });
         expect(body.values).toBeDefined();
+      });
+
+      it('should reject access to clients in another tenant', async () => {
+        const mockKV = createMockKV({
+          'client:tenant-other:client_abc:metadata': JSON.stringify({ tenant_id: 'tenant-other' }),
+        });
+        const { app, mockEnv } = createTestApp({
+          kv: mockKV,
+          adminAuth: {
+            userId: 'org_admin_1',
+            authMethod: 'bearer',
+            roles: ['org_admin'],
+            org_id: 'tenant_123',
+          },
+        });
+
+        const res = await app.request(
+          '/api/admin/clients/client_abc/settings',
+          { method: 'GET', headers: { 'X-Tenant-Id': 'tenant-other' } },
+          mockEnv
+        );
+
+        expect(res.status).toBe(403);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('forbidden');
       });
     });
 
@@ -345,14 +712,14 @@ describe('Settings API v2', () => {
       it('should update client settings', async () => {
         // Create KV with client metadata (required for tenant lookup)
         const mockKV = createMockKV({
-          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'test_tenant' }),
+          'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
         });
         const { app, mockEnv } = createTestApp({ kv: mockKV });
 
         // Get current version
         const getRes = await app.request(
           '/api/admin/clients/client_abc/settings',
-          { method: 'GET' },
+          { method: 'GET', headers: { 'X-Tenant-Id': 'test-tenant' } },
           mockEnv
         );
         const getData = (await getRes.json()) as SettingsGetResult;
@@ -362,7 +729,7 @@ describe('Settings API v2', () => {
           '/api/admin/clients/client_abc/settings',
           {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' },
             body: JSON.stringify({
               ifMatch: getData.version,
               set: {
@@ -382,7 +749,7 @@ describe('Settings API v2', () => {
     });
   });
 
-  describe('Platform Settings (Read-Only)', () => {
+  describe('Platform Settings', () => {
     describe('GET /platform/settings/:category', () => {
       it('should return platform settings', async () => {
         const { app, mockEnv } = createTestApp();
@@ -399,10 +766,31 @@ describe('Settings API v2', () => {
         expect(body.category).toBe('infrastructure');
         expect(body.scope).toEqual({ type: 'platform' });
       });
+
+      it('should return login-entry settings for platform scope', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/platform/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('login-entry');
+        expect(body.scope).toEqual({ type: 'platform' });
+        expect(body.values['login-entry.discovery_methods']).toBe(
+          '["email_domain","tenant_code","tenant_slug"]'
+        );
+        expect(body.values['login-entry.require_common_discovery_before_login']).toBe(true);
+        expect(body.values['login-entry.skip_discovery_if_only_one_tenant']).toBe(false);
+      });
     });
 
     describe('PATCH /platform/settings/:category', () => {
-      it('should return 405 Method Not Allowed', async () => {
+      it('should return 405 Method Not Allowed for read-only categories', async () => {
         const { app, mockEnv } = createTestApp();
 
         const res = await app.request(
@@ -421,6 +809,76 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(405);
         const body = (await res.json()) as ApiResponse;
         expect(body.error).toBe('method_not_allowed');
+      });
+
+      it('should patch writable platform categories', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/platform/settings/tenant-discovery-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/platform/settings/tenant-discovery-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'tenant-discovery-ui.brand_name': 'Shared Discovery',
+                'tenant-discovery-ui.theme': 'dark',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+        expect(body.applied).toContain('tenant-discovery-ui.brand_name');
+        expect(body.applied).toContain('tenant-discovery-ui.theme');
+      });
+
+      it('should patch platform login-entry settings', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+
+        const getRes = await app.request(
+          '/api/admin/platform/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const getData = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/platform/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: getData.version,
+              set: {
+                'login-entry.discovery_methods': '["tenant_code"]',
+                'login-entry.email_resolution_policy': 'disabled',
+                'login-entry.require_common_discovery_before_login': false,
+                'login-entry.skip_discovery_if_only_one_tenant': true,
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+        expect(body.applied).toContain('login-entry.discovery_methods');
+        expect(body.applied).toContain('login-entry.email_resolution_policy');
+        expect(body.applied).toContain('login-entry.require_common_discovery_before_login');
+        expect(body.applied).toContain('login-entry.skip_discovery_if_only_one_tenant');
       });
     });
 
@@ -474,6 +932,24 @@ describe('Settings API v2', () => {
         expect(typeof body.settings).toBe('object');
       });
 
+      it('should return login-entry metadata with eleven settings', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/settings/meta/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as ApiResponse & {
+          settings: Record<string, unknown>;
+        };
+
+        expect(body.category).toBe('login-entry');
+        expect(Object.keys(body.settings)).toHaveLength(11);
+      });
+
       it('should return 404 for unknown category', async () => {
         const { app, mockEnv } = createTestApp();
 
@@ -525,6 +1001,7 @@ describe('Settings API v2', () => {
       'external-idp',
       'credentials',
       'federation',
+      'login-entry',
     ];
 
     // Platform-only categories (not available at tenant scope)
@@ -578,5 +1055,64 @@ describe('Settings API v2', () => {
         expect(body.category).toBe(category);
       }
     );
+  });
+
+  describe('Single-tenant tenant guard', () => {
+    it('should allow login-entry settings for the default tenant', async () => {
+      const { app, mockEnv } = createTestApp({
+        env: {
+          BASE_DOMAIN: '',
+          DEFAULT_TENANT_ID: 'default',
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/tenants/default/settings/login-entry',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+    });
+
+    it('should reject login-entry settings for non-default tenant in single-tenant mode', async () => {
+      const { app, mockEnv } = createTestApp({
+        env: {
+          BASE_DOMAIN: '',
+          DEFAULT_TENANT_ID: 'default',
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/tenants/acme/settings/login-entry',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('Authorization Boundaries', () => {
+    it('should reject tenant settings access across tenant boundaries', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: {
+          userId: 'org_admin_1',
+          authMethod: 'bearer',
+          roles: ['org_admin'],
+          org_id: 'tenant_123',
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/tenants/tenant_other/settings/oauth',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as ApiResponse;
+      expect(body.error).toBe('forbidden');
+    });
   });
 });

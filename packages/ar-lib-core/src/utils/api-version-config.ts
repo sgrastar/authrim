@@ -10,7 +10,7 @@
  * 3. Environment variable (deploy-time default)
  * 4. Code default
  *
- * Fail-safe: If KV is unavailable, fall back to env/default (don't stop)
+ * fail-safe: If KV is unavailable, fall back to env/default (don't stop)
  *
  * @module api-version-config
  */
@@ -165,7 +165,7 @@ export async function getApiVersionConfig(env: Env): Promise<ApiVersionConfig> {
         }
       }
     } catch (error) {
-      // Fail-safe: log sanitized error and continue with env/default
+      // fail-safe: log sanitized error and continue with env/default
       // Security: Only log error type/message, not full stack traces
       log.warn('Error reading KV config');
     }

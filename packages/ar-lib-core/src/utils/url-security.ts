@@ -59,7 +59,85 @@ const BLOCKED_HOSTNAME_PATTERNS = [
 /**
  * Domain suffixes that should be blocked for SSRF protection
  */
-const BLOCKED_DOMAIN_SUFFIXES = ['.local', '.internal', '.localhost'];
+const BLOCKED_DOMAIN_SUFFIXES = ['.local', '.internal', '.localhost', '.localdomain'];
+
+function parseIPv4(hostname: string): number[] | null {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(hostname);
+  if (!match) {
+    return null;
+  }
+  const octets = match.slice(1).map((part) => Number.parseInt(part, 10));
+  return octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)
+    ? octets
+    : null;
+}
+
+function isBlockedIPv4(hostname: string): boolean {
+  const octets = parseIPv4(hostname);
+  if (!octets) {
+    return false;
+  }
+  const [a, b] = octets;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 168 && b === 63 && octets[2] === 129 && octets[3] === 16) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 192 && b === 0 && octets[2] === 2) ||
+    (a === 198 && (b === 18 || b === 19 || (b === 51 && octets[2] === 100))) ||
+    (a === 203 && b === 0 && octets[2] === 113) ||
+    a >= 224
+  );
+}
+
+function ipv4FromMappedIPv6(ipv6: string): string | null {
+  const dottedMatch = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/u.exec(ipv6);
+  if (dottedMatch) {
+    return dottedMatch[1];
+  }
+  const hexMatch = /^::ffff:([0-9a-f]+):([0-9a-f]+)$/u.exec(ipv6);
+  if (!hexMatch) {
+    return null;
+  }
+  const highWord = Number.parseInt(hexMatch[1], 16);
+  const lowWord = Number.parseInt(hexMatch[2], 16);
+  if (
+    !Number.isFinite(highWord) ||
+    !Number.isFinite(lowWord) ||
+    highWord < 0 ||
+    highWord > 0xffff ||
+    lowWord < 0 ||
+    lowWord > 0xffff
+  ) {
+    return null;
+  }
+  return `${(highWord >> 8) & 0xff}.${highWord & 0xff}.${(lowWord >> 8) & 0xff}.${lowWord & 0xff}`;
+}
+
+function isBlockedIPv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const mappedIPv4 = ipv4FromMappedIPv6(normalized);
+  if (mappedIPv4) {
+    return isBlockedIPv4(mappedIPv4);
+  }
+  return (
+    normalized === '::' ||
+    normalized === '::1' ||
+    normalized === '0:0:0:0:0:0:0:0' ||
+    normalized === '0:0:0:0:0:0:0:1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe8') ||
+    normalized.startsWith('fe9') ||
+    normalized.startsWith('fea') ||
+    normalized.startsWith('feb') ||
+    normalized.startsWith('ff')
+  );
+}
 
 /**
  * Check if a URL hostname points to an internal/private address
@@ -83,21 +161,19 @@ export function isInternalUrl(url: string | URL): boolean {
     return true;
   }
 
-  const hostname = parsed.hostname.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
 
-  // Check against blocked patterns
-  const matchesBlockedPattern = BLOCKED_HOSTNAME_PATTERNS.some(
-    (pattern) => hostname === pattern || hostname.startsWith(pattern)
-  );
-
-  if (matchesBlockedPattern) {
+  if (isBlockedIPv4(hostname) || (hostname.includes(':') && isBlockedIPv6(hostname))) {
     return true;
   }
 
-  // Check against blocked domain suffixes
+  // Check against blocked hostname patterns and domain suffixes
+  const matchesBlockedPattern = BLOCKED_HOSTNAME_PATTERNS.some(
+    (pattern) => hostname === pattern || hostname.startsWith(pattern)
+  );
   const matchesBlockedSuffix = BLOCKED_DOMAIN_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 
-  if (matchesBlockedSuffix) {
+  if (matchesBlockedPattern || matchesBlockedSuffix) {
     return true;
   }
 
@@ -253,12 +329,13 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
   try {
     const response = await fetch(url, {
       ...fetchOptions,
+      redirect: fetchOptions.redirect === 'error' ? 'error' : 'manual',
       signal: controller.signal,
     });
 
     // Check response size if Content-Length header is present
     if (maxResponseSize > 0) {
-      const contentLength = response.headers.get('Content-Length');
+      const contentLength = response.headers?.get?.('Content-Length');
       if (contentLength && parseInt(contentLength, 10) > maxResponseSize) {
         throw new Error(
           `Response size exceeds limit: ${contentLength} bytes > ${maxResponseSize} bytes`
@@ -309,15 +386,155 @@ export async function safeFetchJson<T = unknown>(
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
 
-  // Read body with size limit
   const maxSize = options.maxResponseSize ?? DEFAULT_MAX_RESPONSE_SIZE;
   if (maxSize > 0) {
-    const text = await response.text();
-    if (text.length > maxSize) {
-      throw new Error(`Response body exceeds limit: ${text.length} > ${maxSize} bytes`);
-    }
+    const text = await readResponseTextWithLimit(response, maxSize);
     return JSON.parse(text) as T;
   }
 
   return response.json() as Promise<T>;
+}
+
+/**
+ * Safe fetch for text responses with size-limited body reading.
+ *
+ * Use this for externally supplied XML, metadata, or other text payloads where
+ * `response.text()` would otherwise buffer an unbounded response body.
+ */
+export async function safeFetchText(url: string, options: SafeFetchOptions = {}): Promise<string> {
+  const response = await safeFetch(url, options);
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  const maxSize = options.maxResponseSize ?? DEFAULT_MAX_RESPONSE_SIZE;
+  if (maxSize > 0) {
+    return readResponseTextWithLimit(response, maxSize);
+  }
+
+  return response.text();
+}
+
+/**
+ * Read a response body as text while enforcing a byte limit.
+ *
+ * This caps streamed responses even when the peer omits Content-Length.
+ */
+export async function readResponseTextWithLimit(
+  response: Response,
+  maxBytes: number
+): Promise<string> {
+  if (maxBytes <= 0) {
+    return response.text();
+  }
+
+  if (!response.body) {
+    const text =
+      typeof response.text === 'function'
+        ? await response.text()
+        : typeof response.json === 'function'
+          ? JSON.stringify(await response.json())
+          : '';
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    if (byteLength > maxBytes) {
+      throw new Error(`Response body exceeds limit: ${byteLength} > ${maxBytes} bytes`);
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        void reader.cancel().catch(() => {});
+        throw new Error(`Response body exceeds limit: ${totalBytes} > ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(body);
+}
+
+/**
+ * Read at most `maxBytes` of a response body as text and cancel the remaining
+ * stream. Use for diagnostic previews where oversized responses should be
+ * truncated instead of rejected.
+ */
+export async function readResponseTextPreview(
+  response: Response,
+  maxBytes: number
+): Promise<string> {
+  if (maxBytes <= 0) {
+    return '';
+  }
+
+  if (!response.body) {
+    const text =
+      typeof response.text === 'function'
+        ? await response.text()
+        : typeof response.json === 'function'
+          ? JSON.stringify(await response.json())
+          : '';
+    return text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let truncated = false;
+
+  try {
+    while (totalBytes < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      const remaining = maxBytes - totalBytes;
+      if (value.byteLength > remaining) {
+        chunks.push(value.slice(0, remaining));
+        totalBytes += remaining;
+        truncated = true;
+        break;
+      }
+
+      chunks.push(value);
+      totalBytes += value.byteLength;
+    }
+    if (totalBytes >= maxBytes) {
+      truncated = true;
+    }
+    if (truncated) {
+      void reader.cancel().catch(() => {});
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(body);
 }

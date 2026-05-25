@@ -156,8 +156,8 @@ const ru: Translations = {
 
   // UI deployment
   'ui.prompt': 'Способ развёртывания UI',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Развернуть на Cloudflare Pages (рекомендуется)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Развернуть на Cloudflare Workers (рекомендуется)',
   'ui.customOption': 'Собственный домен',
   'ui.customDesc': 'Использовать собственный хостинг',
   'ui.skipOption': 'Пропустить',
@@ -182,6 +182,45 @@ const ru: Translations = {
   'domain.zoneCheckSkipped': 'Проверка зоны пропущена, продолжение настройки...',
   'domain.continueWithoutZone': 'Продолжить без проверки зоны?',
   'domain.configureBinding': 'Настроить привязку пользовательского домена для Workers',
+  'domain.action.retryCheck': 'Проверить снова',
+  'domain.action.reloadPage': 'Перезагрузить страницу',
+  'domain.action.openCloudflareDashboard': 'Открыть панель Cloudflare',
+  'domain.prereq.reviewTitle': 'Проверка пользовательского домена требует уточнения',
+  'domain.prereq.reviewBody':
+    'Если вы планируете использовать пользовательский домен, повторите проверку после перезагрузки страницы или обновления входа в Cloudflare.',
+  'domain.diagnostic.zone_found.title': 'Зона Cloudflare готова',
+  'domain.diagnostic.zone_found.body': 'Зона "{{zone}}" доступна в вашем аккаунте Cloudflare.',
+  'domain.diagnostic.zone_found.next':
+    'Можно продолжать настройку привязки пользовательского домена.',
+  'domain.diagnostic.not_logged_in.title': 'Требуется вход в Cloudflare',
+  'domain.diagnostic.not_logged_in.body':
+    'Authrim не смог подтвердить вход в Cloudflare для этой проверки зоны.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. Выполните `wrangler login` в терминале.\n2. Перезагрузите эту страницу.\n3. Повторно проверьте зону.',
+  'domain.diagnostic.token_unavailable.title': 'Не удалось загрузить токен Cloudflare',
+  'domain.diagnostic.token_unavailable.body':
+    'Похоже, вход Wrangler есть, но API-токен, нужный для доступа к зоне, пока недоступен.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. Перезагрузите эту страницу и проверьте снова.\n2. Если ошибка останется, заново выполните `wrangler login`.\n3. После этого повторите проверку зоны.',
+  'domain.diagnostic.zone_read_forbidden.title': 'Доступ к списку зон ограничен',
+  'domain.diagnostic.zone_read_forbidden.body':
+    'Текущий токен Cloudflare не может читать список зон. Существующие зоны могут продолжить работать, но автоматическая проверка и помощь с DNS будут ограничены.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. Сначала проверьте снова.\n2. Если ошибка останется, заново выполните `wrangler login`.\n3. Убедитесь, что у токена есть разрешение Zone:Read.\n4. Если зона уже существует, можно продолжить вручную.',
+  'domain.diagnostic.zone_not_found.title': 'Зона не найдена в этом аккаунте',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare ответил, но зона "{{zone}}" не видна в текущем аккаунте.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. Убедитесь, что зона существует в используемом аккаунте Cloudflare.\n2. При необходимости переключите аккаунт или откройте панель Cloudflare.\n3. Затем повторно проверьте зону.',
+  'domain.diagnostic.api_error.title': 'Проверка Cloudflare API завершилась ошибкой',
+  'domain.diagnostic.api_error.body': 'Cloudflare вернул неожиданный ответ при проверке этой зоны.',
+  'domain.diagnostic.api_error.next':
+    'Сначала повторите проверку. Если ошибка останется, перезагрузите страницу и попробуйте снова.',
+  'domain.diagnostic.network_error.title': 'Ошибка сетевой проверки Cloudflare',
+  'domain.diagnostic.network_error.body':
+    'Проверку зоны не удалось завершить, потому что Cloudflare или сеть ответили не так, как ожидалось.',
+  'domain.diagnostic.network_error.next':
+    'Сначала повторите проверку. Если ошибка останется, перезагрузите страницу и попробуйте снова.',
   'domain.issuerUrl': 'URL издателя: {{url}}',
   'domain.apiDomain': 'Домен API / издателя (например, auth.example.com)',
   'domain.loginUiDomain': 'Домен UI для входа (Enter для пропуска)',
@@ -190,6 +229,12 @@ const ru: Translations = {
     'Введите собственные домены (оставьте пустым для использования Cloudflare по умолчанию)',
   'domain.singleTenantNote': 'В однотенантном режиме URL издателя = домен API',
   'domain.usingWorkersDev': '(используется домен Cloudflare workers.dev)',
+  'web.form.multiTenantEnable': 'Включить мультитенантный режим',
+  'web.form.multiTenantHint': 'Создавать субдомены тенантов под вашим пользовательским доменом',
+  'web.form.multiTenantExamples': 'Примеры URL тенантов',
+  'web.form.multiTenantExampleDefaultOmitted': 'Тенант по умолчанию без имени в URL: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': 'Тенант по умолчанию с явным именем: {{url}}',
+  'web.form.multiTenantExampleOther': 'Неосновной тенант: {{url}}',
 
   // Database
   'db.title': 'Конфигурация базы данных',
@@ -411,10 +456,10 @@ const ru: Translations = {
   'userId.note': 'Примечание: Этот параметр нельзя изменить после создания пользователей.',
   'userId.selected': 'Формат ID пользователя: {{format}}',
 
-  // Optional components
-  'components.title': 'Дополнительные компоненты',
+  // Standard components
+  'components.title': 'Стандартные компоненты',
   'components.note':
-    'Примечание: Социальный вход и Policy Engine являются стандартными компонентами',
+    'SAML, Device Flow/CIBA, VC, социальный вход и Policy Engine устанавливаются по умолчанию.',
   'components.samlPrompt': 'Включить поддержку SAML?',
   'components.vcPrompt': 'Включить верифицируемые учётные данные (VC)?',
   'components.saml': 'SAML:',
@@ -441,7 +486,8 @@ const ru: Translations = {
   // Sharding settings
   'sharding.configurePrompt': 'Настроить шардинг? (для высоконагруженных окружений)',
   'sharding.title': 'Настройки шардинга',
-  'sharding.note': 'Примечание: рекомендуется степень 2 для количества шардов (8, 16, 32, 64, 128)',
+  'sharding.note':
+    'Примечание: рекомендуется степень 2 для количества шардов (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': 'Количество шардов кода авторизации',
   'sharding.refreshTokenShards': 'Количество шардов токена обновления',
 
@@ -708,7 +754,7 @@ const ru: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': 'UI для входа',
-  'web.config.loginUiDesc': 'Готовый UI аутентификации на Cloudflare Pages.',
+  'web.config.loginUiDesc': 'Готовый UI аутентификации на Cloudflare Workers.',
   'web.config.adminUi': 'Панель администратора',
   'web.config.adminUiDesc': 'Панель управления пользователями, клиентами и настройками.',
 
@@ -717,9 +763,9 @@ const ru: Translations = {
   'web.url.apiDomain': 'Домен API',
   'web.url.apiDomainHint': 'Оставьте пустым для использования поддомена workers.dev',
   'web.url.loginDomain': 'Домен UI для входа',
-  'web.url.loginDomainHint': 'Оставьте пустым для использования поддомена pages.dev',
+  'web.url.loginDomainHint': 'Оставьте пустым для использования поддомена workers.dev',
   'web.url.adminDomain': 'Домен панели администратора',
-  'web.url.adminDomainHint': 'Оставьте пустым для использования поддомена pages.dev',
+  'web.url.adminDomainHint': 'Оставьте пустым для использования поддомена workers.dev',
 
   // Web UI Database
   'web.db.title': 'Конфигурация базы данных',
@@ -734,6 +780,19 @@ const ru: Translations = {
   'web.db.name': 'Имя',
   'web.db.region': 'Регион',
   'web.db.regionAuto': 'Автоматически (ближайший)',
+  'web.db.storageProfileTitle': 'Профиль развертывания хранилища',
+  'web.db.storageProfileDesc':
+    'Выберите, как размещать пользовательские core/PII данные для этого развертывания.',
+  'web.db.sharedD1Title': 'Общий D1',
+  'web.db.sharedD1Desc':
+    'Один core D1 и один PII D1 на все развертывание. Минимальная стоимость настройки и путь по умолчанию.',
+  'web.db.tenantD1Title': 'D1 для tenant',
+  'web.db.tenantD1Desc':
+    'Одна пара core/PII D1 на tenant. Требуется подготовить базу данных tenant перед активацией.',
+  'web.db.preallocatedSlotsTitle': 'Предварительно выделенные слоты tenant',
+  'web.db.preallocatedSlotsDesc': 'Каждый слот tenant создает две базы данных D1: core и PII.',
+  'web.db.slotsLabel': 'Слоты',
+  'web.db.slotsHelp': 'По умолчанию 3. Максимум 500 слотов.',
 
   // Web UI Email
   'web.email.title': 'Провайдер email',
@@ -885,7 +944,7 @@ const ru: Translations = {
   'web.section.apiDomain': 'Домен API / издателя',
   'web.section.uiDomains': 'Домены UI (необязательно)',
   'web.section.uiDomainsHint':
-    'Собственные домены для UI входа/администратора. Каждый можно настроить независимо. Оставьте пустым для использования Cloudflare Pages по умолчанию.',
+    'Собственные домены для UI входа/администратора. Каждый можно настроить независимо. Оставьте пустым для использования Cloudflare Workers по умолчанию.',
   'web.section.corsHint':
     'CORS: кросс-доменные запросы от UI входа/администратора к API разрешены автоматически.',
   'web.section.configPreview': 'Предпросмотр конфигурации',
@@ -897,6 +956,19 @@ const ru: Translations = {
   'web.preview.issuerUrl': 'URL издателя:',
   'web.preview.loginUi': 'UI для входа:',
   'web.preview.adminUi': 'Панель администратора:',
+  'web.preview.pagesUrl': 'Origin UI для входа:',
+  'web.preview.tenantDiscover': 'Выбор тенанта (общий вход):',
+  'web.preview.adminAccess': 'Доступ к панели администратора:',
+  'web.preview.firstTenant': '{{name}} (основной тенант)',
+  'web.preview.otherTenants': 'Другие тенанты',
+  'web.preview.allTenantsShared': '(общий для всех тенантов)',
+  'web.preview.loginUiOriginNote': '(origin развертывания; вход тенанта использует /login issuer)',
+  'web.preview.viaApiProxy': '(проксируется через тот же домен API)',
+  'web.preview.conflictWarningTitle': '⚠️ Проблема конфигурации',
+  'web.preview.conflictWarningMsg':
+    'Пользовательский домен {{conflictUI}} совпадает с доменом API ({{baseDomain}}). Поскольку "Удалить тенант из URL" отключено, API-запросы к {{baseDomain}} (/authorize, /api/auth/*, и т.д.) будут возвращать 404 и процесс входа не будет работать.',
+  'web.preview.conflictActionMsg':
+    'Решение: включите "Удалить тенант из URL" и установите первого тенанта ({{tenantName}}) как основного. Или измените домен {{conflictUI}} на домен, отличный от API (например, login.{{baseDomain}}).',
 
   // Web UI Component Labels
   'web.comp.loginUi': 'UI для входа',
@@ -946,9 +1018,18 @@ const ru: Translations = {
     'Используется для отправки OTP по email и подтверждения адреса. Можете настроить позже.',
   'web.email.configureLater': 'Настроить позже',
   'web.email.configureLaterHint': 'Пропустить сейчас и настроить позже.',
+  'web.email.configureCloudflare': 'Настроить Cloudflare Email Service',
+  'web.email.configureCloudflareHint':
+    'Использует нативный binding Workers Email Service. Требуется тариф Workers Paid и Cloudflare DNS.',
   'web.email.configureResend': 'Настроить Resend',
   'web.email.configureResendHint':
     'Настроить отправку email через Resend (рекомендуется для продакшна).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': 'Требования',
+  'web.email.cloudflareRequirementPaid': 'Требуется тариф Workers Paid',
+  'web.email.cloudflareRequirementDns': 'Требуется Cloudflare DNS / онбординг домена',
+  'web.email.cloudflareRequirementManual':
+    'Настройка домена в панели Cloudflare по-прежнему выполняется вручную',
   'web.email.resendSetup': 'Конфигурация Resend',
   'web.email.beforeBegin': 'Перед началом:',
   'web.email.step1': 'Создайте аккаунт Resend на',
@@ -956,10 +1037,18 @@ const ru: Translations = {
   'web.email.step3': 'Создайте API-ключ на',
   'web.email.resendApiKey': 'API-ключ Resend',
   'web.email.resendApiKeyHint': 'Ваш API-ключ начинается с "re_"',
+  'web.email.resendApiKeyMissing': 'Введите API-ключ Resend',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API-ключ не начинается с "re_". Возможно, это недействительный API-ключ Resend. Всё равно продолжить?',
   'web.email.fromEmailAddress': 'Адрес отправителя email',
+  'web.email.cloudflareFromHint':
+    'Должен относиться к домену, подключённому к Cloudflare Email Service',
   'web.email.fromEmailHint': 'Должен быть с подтверждённого домена в вашем аккаунте Resend',
+  'web.email.fromEmailMissing': 'Введите адрес отправителя email',
+  'web.email.fromEmailInvalid': 'Введите корректный email-адрес',
   'web.email.fromDisplayName': 'Отображаемое имя отправителя (необязательно)',
   'web.email.fromDisplayHint': 'Отображается как имя отправителя в почтовых клиентах',
+  'web.email.saveConfigFailed': 'Не удалось сохранить настройки email',
   'web.email.domainVerificationTitle': 'Требуется верификация домена',
   'web.email.domainVerificationDesc':
     'До верификации домена письма можно отправлять только с onboarding@resend.dev (для тестирования).',
@@ -1001,10 +1090,10 @@ const ru: Translations = {
   'web.envDetail.kvNamespaces': 'Пространства имён KV',
   'web.envDetail.queues': 'Очереди',
   'web.envDetail.r2Buckets': 'Бакеты R2',
-  'web.envDetail.pagesProjects': 'Проекты Pages',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Обновить Workers',
+  'web.envDetail.workerUpdate': 'Обновить все Workers',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': 'Развёрнутый',
   'web.envDetail.localVersion': 'Локальный',
@@ -1013,7 +1102,7 @@ const ru: Translations = {
   'web.envDetail.upToDate': 'Актуально',
   'web.envDetail.notDeployed': 'Не развёрнут',
   'web.envDetail.updateOnlyChanged': 'Обновить только изменённые версии',
-  'web.envDetail.updateAllWorkers': 'Обновить Workers',
+  'web.envDetail.updateAllWorkers': 'Обновить все Workers',
   'web.envDetail.refreshVersions': 'Обновить',
   'web.envDetail.updateProgress': 'Прогресс обновления:',
   'web.envDetail.updatesAvailable': '{{count}} обновление(й) доступно',
@@ -1022,9 +1111,9 @@ const ru: Translations = {
   'web.envDetail.action': 'Действие',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'Обновить UI (Pages)',
+  'web.envDetail.uiUpdate': 'Обновить UI (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Обновить Admin UI или Login UI по отдельности. Они развёрнуты на Cloudflare Pages.',
+    'Обновить Admin UI или Login UI по отдельности. Они развёрнуты на Cloudflare Workers.',
   'web.envDetail.updateNow': 'Обновить',
 
   // Web UI Delete Section
@@ -1038,7 +1127,7 @@ const ru: Translations = {
   'web.delete.kvNamespaces': 'Пространства имён KV',
   'web.delete.queues': 'Очереди',
   'web.delete.r2Buckets': 'Бакеты R2',
-  'web.delete.pagesProjects': 'Проекты Pages',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': 'Отмена',
   'web.delete.confirmBtn': 'Удалить выбранное',
 

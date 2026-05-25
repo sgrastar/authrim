@@ -9,7 +9,6 @@ import type { Env } from '../../types';
 import {
   createSDJWTVC,
   type SDJWTVCCreateOptions,
-  D1Adapter,
   IssuedCredentialRepository,
   D1StatusListRepository,
   StatusListManager,
@@ -20,10 +19,15 @@ import {
   createCustomClaimSchemaResolver,
   SchemaLoader,
   ClaimNameResolver,
+  ensureDatabaseAdapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveUserStoreRuntimeSourcesFromEnv,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { generateSecureNonce } from '../../utils/crypto';
 import { importPKCS8 } from 'jose';
 import { validateVCIAccessToken, validateProofOfPossession } from '../services/token-validation';
+import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
 
 interface CredentialRequest {
   format: string;
@@ -117,6 +121,8 @@ function validateCredentialResponse(response: CredentialResponse): void {
 export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const log = getLogger(c as any).module('VC-ISSUER');
+  const requestIssuerIdentifier = getRequestIssuerIdentifier(c);
+  const requestIssuerUrl = getRequestIssuerUrl(c);
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
@@ -127,7 +133,12 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const accessToken = authHeader.substring(7);
 
     // Validate access token and extract user/credential info
-    const tokenResult = await validateVCIAccessToken(c.env, accessToken);
+    const tokenResult = await validateVCIAccessToken(
+      c.env,
+      accessToken,
+      requestIssuerIdentifier,
+      getTenantIdFromContext(c)
+    );
 
     if (!tokenResult.valid) {
       return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
@@ -150,7 +161,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Get expected c_nonce from KV (stored during token request)
     const expectedNonce = await c.env.AUTHRIM_CONFIG.get(`cnonce:${tokenResult.userId}`);
-    const expectedAudience = c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
+    const expectedAudience = requestIssuerIdentifier;
 
     // Verify proof of possession if provided
     let holderBinding = tokenResult.holderBinding;
@@ -186,11 +197,22 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     try {
       const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
       if (ccFeatureConfig.enabled && tokenResult.userId) {
-        const dbPii =
-          'DB_PII' in c.env ? (c.env as unknown as { DB_PII: D1Database }).DB_PII : null;
+        const authAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+          c.env,
+          'vc-issuer-core',
+          { tenantId: tokenResult.tenantId }
+        );
+        const runtimeSources = await resolveUserStoreRuntimeSourcesFromEnv(
+          c.env,
+          tokenResult.tenantId
+        );
+        const piiAdapter = ensureDatabaseAdapter(
+          runtimeSources.piiDb ?? runtimeSources.coreDb,
+          'vc-issuer-pii'
+        );
         const ccResolver = createCustomClaimSchemaResolver(
-          c.env.DB,
-          dbPii,
+          authAdapter,
+          piiAdapter,
           c.env.AUTHRIM_CONFIG || null,
           ccFeatureConfig
         );
@@ -204,7 +226,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
         // Collect PII claim names for SD-JWT selective disclosure
         if (vcResult.pii_accessed) {
-          const schemaLoader = new SchemaLoader(c.env.DB, c.env.AUTHRIM_CONFIG || null);
+          const schemaLoader = new SchemaLoader(authAdapter, c.env.AUTHRIM_CONFIG || null);
           const allSchemas = await schemaLoader.loadActiveSchemas(tokenResult.tenantId);
           const nameResolver = new ClaimNameResolver();
           vcPiiClaimNames = allSchemas
@@ -218,37 +240,31 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // Get issuer key from KeyManager
-    const issuerKey = await getIssuerKey(c.env);
+    const issuerKey = await getIssuerKey(c.env, tokenResult.tenantId);
 
     // Determine VCT (from request or token)
     const vct = body.vct || tokenResult.vct || 'https://authrim.com/credentials/identity/v1';
 
     // Initialize repositories
-    const adapter = new D1Adapter({ db: c.env.DB });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core', {
+      tenantId: tokenResult.tenantId,
+    });
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
 
     // Allocate status list index for revocation tracking
-    const { listId, index } = await statusListManager.allocateIndex(
+    const { listId, listInternalId, index } = await statusListManager.allocateIndex(
       tokenResult.tenantId,
       'revocation'
     );
-
-    // Build issuer URL for credentialStatus reference
-    // SECURITY: Never trust Host header - always use configured ISSUER_IDENTIFIER
-    const issuerUrl = c.env.ISSUER_IDENTIFIER;
-    if (!issuerUrl) {
-      log.error('ISSUER_IDENTIFIER is not configured');
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
 
     // Add credentialStatus claim (W3C VC compatible format)
     const credentialStatus = {
       type: 'BitstringStatusListEntry',
       statusPurpose: 'revocation',
       statusListIndex: index,
-      statusListCredential: `${issuerUrl}/vci/status/${listId}`,
+      statusListCredential: `${requestIssuerUrl}/vci/status/${listId}`,
     };
 
     // Create SD-JWT VC with credentialStatus
@@ -260,7 +276,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     const sdjwtvc = await createSDJWTVC(
       { ...claims, credentialStatus },
-      c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com',
+      requestIssuerIdentifier,
       issuerKey.privateKey,
       'ES256',
       issuerKey.kid,
@@ -298,6 +314,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       claims: {}, // Don't store actual claims
       status: 'active',
       status_list_id: listId,
+      status_list_internal_id: listInternalId,
       status_list_index: index,
       holder_binding: holderBinding ? holderBinding : null,
     });
@@ -312,8 +329,11 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 /**
  * Get issuer signing key from KeyManager
  */
-async function getIssuerKey(env: Env): Promise<{ privateKey: CryptoKey; kid: string }> {
-  const doId = env.KEY_MANAGER.idFromName('issuer-keys');
+async function getIssuerKey(
+  env: Env,
+  tenantId: string
+): Promise<{ privateKey: CryptoKey; kid: string }> {
+  const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const stub = env.KEY_MANAGER.get(doId);
 
   // Use internal endpoint to get private key

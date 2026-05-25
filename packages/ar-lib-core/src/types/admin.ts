@@ -9,6 +9,41 @@
 
 import type { UserType } from './rbac';
 
+export type AdminTransportPrincipalType =
+  | 'setup_tool'
+  | 'admin_ui_bff'
+  | 'automation'
+  | 'ci'
+  | 'mcp_server'
+  | 'ai_agent'
+  | 'internal_service'
+  | 'integration';
+
+export interface AdminTransportAuthContext {
+  /** Transport authentication method used by a trusted proxy/workload hop */
+  authMethod: 'machine_access_token';
+  /** Workload actor type */
+  actorType: 'machine';
+  /** Stable machine principal identifier */
+  actorId: string;
+  /** Machine principal type */
+  principalType?: AdminTransportPrincipalType;
+  /** Machine credential identifier */
+  credentialId: string;
+  /** OAuth client_id bound to the machine principal */
+  clientId?: string;
+  /** Client authentication method used before issuing this access token */
+  clientAuthMethod?: 'private_key_jwt' | 'service_binding' | 'none';
+  /** Credential strength classification */
+  credentialStrength?: 'asymmetric_key' | 'service_binding' | 'none';
+  /** Whether the token is sender constrained with DPoP/mTLS */
+  senderConstrained?: boolean;
+  /** Tenant scope carried by the machine access token */
+  tenantScope?: string[];
+  /** Machine token permissions/scopes */
+  permissions?: string[];
+}
+
 /**
  * Admin authentication context
  * Contains authenticated user information and authentication method
@@ -22,7 +57,27 @@ export interface AdminAuthContext {
   /** Admin user ID (from admin_users table) */
   userId: string;
   /** Authentication method used (Bearer token or session) */
-  authMethod: 'bearer' | 'session';
+  authMethod: 'bearer' | 'session' | 'machine_access_token';
+  /** Authenticated actor type for audit and policy decisions */
+  actorType?: 'human' | 'machine' | 'internal_service' | 'bootstrap';
+  /** Stable actor identifier */
+  actorId?: string;
+  /** Credential identifier for machine actors */
+  credentialId?: string;
+  /** Machine principal type */
+  principalType?: AdminTransportPrincipalType;
+  /** OAuth client_id bound to the machine principal */
+  clientId?: string;
+  /** Transport/workload authentication context for BFF or service-binding hops */
+  transportAuth?: AdminTransportAuthContext;
+  /** Client authentication method used before issuing this access token */
+  clientAuthMethod?: 'private_key_jwt' | 'service_binding' | 'none';
+  /** Credential strength classification */
+  credentialStrength?: 'asymmetric_key' | 'service_binding' | 'none';
+  /** Whether the token is sender constrained with DPoP/mTLS */
+  senderConstrained?: boolean;
+  /** Tenant scope carried by a machine access token */
+  tenantScope?: string[];
   /** User roles (e.g., ['admin', 'super_admin']) */
   roles: string[];
   // ==========================================================================

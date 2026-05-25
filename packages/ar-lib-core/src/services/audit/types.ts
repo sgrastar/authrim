@@ -93,8 +93,8 @@ export interface EventLogEntry {
 
   // -- Details (R2 or inline) --
   /**
-   * R2 key for detailed data (if > 2KB).
-   * Path format: event-details/{tenantId}/{YYYY-MM-DD}/{entryId}.json
+   * Sensitive detail catalog reference for detailed data (if > 2KB).
+   * Format: sensitive-detail-catalog:{objectCatalogId}
    */
   detailsR2Key?: string;
 
@@ -197,8 +197,8 @@ export interface PIILogEntry {
 
   // -- Encrypted data --
   /**
-   * R2 key for encrypted values (if > 4KB).
-   * Path format: pii-values/{tenantId}/{YYYY-MM-DD}/{entryId}.json
+   * Sensitive detail catalog reference for encrypted values (if > 4KB).
+   * Format: sensitive-detail-catalog:{objectCatalogId}
    */
   valuesR2Key?: string;
 
@@ -518,6 +518,29 @@ export interface IAuditService {
  */
 export type AuditQueueMessageType = 'event_log' | 'pii_log';
 
+export interface AuditQueueFanoutPlan {
+  /** Resolved audit profile ID that produced this plan */
+  auditProfileId: string;
+
+  /** Archive targets */
+  archives: AuditTarget[];
+
+  /** Transitional legacy single-archive alias */
+  archive?: AuditTarget | null;
+
+  /** Forwarding sinks */
+  sinks: AuditTarget[];
+
+  /** Archive failure policy */
+  archiveFailureMode?: AuditProfile['archiveFailureMode'];
+
+  /** Sink failure policy */
+  sinkFailureMode?: AuditProfile['sinkFailureMode'];
+
+  /** Matching routing rules for diagnostics */
+  matchedRuleNames?: string[];
+}
+
 /**
  * Audit queue message structure.
  */
@@ -533,6 +556,14 @@ export interface AuditQueueMessage {
 
   /** Message timestamp (epoch milliseconds) */
   timestamp: number;
+
+  /**
+   * Optional fan-out plan for archive/sink delivery.
+   *
+   * When present, the request path is expected to have already handled the
+   * primary write (or intentionally skipped it for archive-only profiles).
+   */
+  fanout?: AuditQueueFanoutPlan;
 }
 
 // =============================================================================
@@ -581,3 +612,4 @@ export const DEFAULT_AUDIT_WRITE_CONFIG: AuditWriteConfig = {
     retryLimit: 5,
   },
 };
+import type { AuditProfile, AuditTarget } from '../../types/runtime-profile';

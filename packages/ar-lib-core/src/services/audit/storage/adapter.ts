@@ -5,6 +5,7 @@
  * - D1: Hot data storage for recent logs
  * - R2: Archive storage for long-term retention
  * - Hyperdrive: External PostgreSQL for enterprise deployments
+ * - Logpush / Firehose: Forwarding sinks for external delivery
  */
 
 import type { EventLogEntry, PIILogEntry } from '../types';
@@ -16,7 +17,7 @@ import type { EventLogEntry, PIILogEntry } from '../types';
 /**
  * Supported storage backend types.
  */
-export type AuditStorageBackendType = 'D1' | 'R2' | 'HYPERDRIVE';
+export type AuditStorageBackendType = 'D1' | 'R2' | 'HYPERDRIVE' | 'LOGPUSH' | 'FIREHOSE' | 'HTTP';
 
 /**
  * Log type for routing.
@@ -178,7 +179,7 @@ export interface IAuditStorageAdapter {
 
   /**
    * Write a single event log entry.
-   * Must be idempotent (use UPSERT or ON CONFLICT DO NOTHING).
+   * Must be idempotent.
    */
   writeEventLog(entry: EventLogEntry): Promise<AuditWriteResult>;
 
@@ -219,18 +220,62 @@ export interface IAuditStorageAdapter {
   // ---------------------------------------------------------------------------
 
   /**
+   * List entries that have exceeded their retention period.
+   *
+   * Implementations should return entries in a stable oldest-first order so a
+   * follow-up delete operation can operate on the same batch window.
+   */
+  listTenantRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  listTenantRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  listGlobalRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  listGlobalRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+
+  /**
    * Delete entries that have exceeded their retention period.
    *
    * @param logType - Type of log to clean up
    * @param beforeTime - Delete entries with retention_until < beforeTime (epoch ms)
-   * @param tenantId - Optional tenant ID to scope the cleanup
    * @param batchSize - Maximum entries to delete in one call
    * @returns Number of entries deleted
    */
-  deleteByRetention(
+  deleteTenantByRetention(
     logType: AuditLogType,
     beforeTime: number,
-    tenantId?: string,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<number>;
+
+  /**
+   * Delete entries that have exceeded their retention period across all tenants.
+   *
+   * This is a system maintenance operation and must not be used from tenant request paths.
+   *
+   * @param logType - Type of log to clean up
+   * @param beforeTime - Delete entries with retention_until < beforeTime (epoch ms)
+   * @param batchSize - Maximum entries to delete in one call
+   * @returns Number of entries deleted
+   */
+  deleteGlobalByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
     batchSize?: number
   ): Promise<number>;
 
@@ -291,10 +336,44 @@ export interface AuditBackendConfig {
   hyperdriveConfig?: {
     /** Hyperdrive binding name */
     binding: string;
+    /** External database engine */
+    driver?: 'postgres' | 'mysql';
     /** Schema name */
     schema: string;
     /** Connection pool size */
     poolSize?: number;
+  };
+
+  /** Logpush-specific configuration */
+  logpushConfig?: {
+    /** Destination reference or binding */
+    destinationRef: string;
+    /** Optional dataset/category name */
+    dataset?: string;
+  };
+
+  /** Firehose-specific configuration */
+  firehoseConfig?: {
+    /** Stream reference or binding */
+    streamRef: string;
+    /** Optional delivery region hint */
+    region?: string;
+  };
+
+  /** Generic HTTP sink configuration */
+  httpConfig?: {
+    /** Direct URL (non-secret) */
+    url?: string;
+    /** Environment variable / binding reference for the URL */
+    urlRef?: string;
+    /** Optional secret/env reference for bearer token */
+    authTokenRef?: string;
+    /** Additional static headers */
+    headers?: Record<string, string>;
+    /** HTTP method */
+    method?: 'POST';
+    /** Payload format */
+    format?: 'json';
   };
 }
 
@@ -313,6 +392,25 @@ export interface AuditRetentionConfig {
 
   /** Minimum retention required by regulations */
   minimumRetentionDays?: number;
+}
+
+/**
+ * Fan-out targets for a routing rule.
+ *
+ * A single matching rule may:
+ * - write hot data to one primary store
+ * - mirror or archive into one or more archive stores
+ * - forward to one or more sinks such as Logpush or Firehose
+ */
+export interface AuditStorageRoutingTargets {
+  /** Primary queryable store for matched logs */
+  primaryStore?: string;
+
+  /** Archive stores that should receive a copy */
+  archiveStores?: string[];
+
+  /** Forwarding sinks that should receive a copy */
+  forwardingSinks?: string[];
 }
 
 /**
@@ -337,8 +435,16 @@ export interface AuditStorageRoutingRule {
     region?: string | string[];
   };
 
-  /** Target backend ID */
-  backend: string;
+  /** Canonical fan-out targets for this rule */
+  targets: AuditStorageRoutingTargets;
+
+  /**
+   * Deprecated single-backend alias.
+   *
+   * Pre-Phase 4 configs may still persist `backend`; runtime/admin code should
+   * normalize it into `targets.primaryStore` on read and write.
+   */
+  backend?: string;
 
   /** Override retention for matching logs */
   retention?: Partial<AuditRetentionConfig>;
@@ -372,6 +478,44 @@ export interface AuditStorageConfig {
     /** Maximum batch size for writes */
     maxBatchSize: number;
   };
+}
+
+function normalizeTargetList(values: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+
+  const normalized = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+/**
+ * Normalize legacy and partial routing targets into the Phase 4 canonical shape.
+ */
+export function normalizeAuditStorageRoutingTargets(
+  targets: AuditStorageRoutingTargets | undefined,
+  backend?: string | null
+): AuditStorageRoutingTargets {
+  const primaryStore = targets?.primaryStore?.trim() || backend?.trim() || undefined;
+  const archiveStores = normalizeTargetList(targets?.archiveStores);
+  const forwardingSinks = normalizeTargetList(targets?.forwardingSinks);
+
+  return {
+    ...(primaryStore ? { primaryStore } : {}),
+    ...(archiveStores ? { archiveStores } : {}),
+    ...(forwardingSinks ? { forwardingSinks } : {}),
+  };
+}
+
+/**
+ * Returns true when the routing rule has at least one effective target.
+ */
+export function hasAuditStorageRoutingTargets(targets: AuditStorageRoutingTargets): boolean {
+  return Boolean(
+    targets.primaryStore ||
+    (targets.archiveStores && targets.archiveStores.length > 0) ||
+    (targets.forwardingSinks && targets.forwardingSinks.length > 0)
+  );
 }
 
 /**

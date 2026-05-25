@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { calculateDsHash, parseToken, DEVICE_SECRET_TOKEN_TYPE } from '@authrim/ar-lib-core';
+import { validateNativeSSODeviceSecretBinding } from '../token';
 
 // Helper to create a valid JWT for testing (base64url encoded)
 function createTestJWT(header: object, payload: object): string {
@@ -164,6 +165,31 @@ describe('OIDC Native SSO 1.0 (draft-07) Tests', () => {
 
       expect(payload.ds_hash).toBeUndefined();
       expect(payload.at_hash).toBe('some-at-hash');
+    });
+  });
+
+  describe('Server-side device_secret binding validation', () => {
+    it('should accept a matching ds_hash and presented device_secret', async () => {
+      const deviceSecret = 'server-side-device-secret';
+      const dsHash = await calculateDsHash(deviceSecret);
+
+      await expect(
+        validateNativeSSODeviceSecretBinding({ ds_hash: dsHash }, deviceSecret)
+      ).resolves.toBe(true);
+    });
+
+    it('should reject an ID Token without ds_hash', async () => {
+      await expect(
+        validateNativeSSODeviceSecretBinding({}, 'server-side-device-secret')
+      ).resolves.toBe(false);
+    });
+
+    it('should reject a mismatched ds_hash and presented device_secret', async () => {
+      const dsHash = await calculateDsHash('original-device-secret');
+
+      await expect(
+        validateNativeSSODeviceSecretBinding({ ds_hash: dsHash }, 'presented-device-secret')
+      ).resolves.toBe(false);
     });
   });
 

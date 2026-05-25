@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminReBACAPI,
 		type RelationDefinition,
@@ -37,6 +38,7 @@
 		$state(null);
 	let testing = $state(false);
 	let testError = $state('');
+	let loadedTenantId = $state('');
 
 	const definitionId = $derived($page.params.id);
 
@@ -191,7 +193,22 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		definition = null;
+		isEditing = false;
+		saveError = '';
+		expressionError = '';
+		showExpressionEditor = false;
+		showTestPanel = false;
+		testResult = null;
+		testError = '';
 		loadDefinition();
 	});
 </script>
@@ -220,9 +237,7 @@
 				</div>
 				<div class="action-buttons">
 					{#if !isEditing}
-						{#if definition.tenant_id !== 'default'}
-							<button class="btn btn-secondary" onclick={startEditing}>Edit</button>
-						{/if}
+						<button class="btn btn-secondary" onclick={startEditing}>Edit</button>
 						<button
 							class="status-badge"
 							class:status-active={definition.is_active}
@@ -327,9 +342,7 @@
 					</div>
 					<div class="info-row">
 						<span class="info-label">Source</span>
-						<span class="source-badge" class:default={definition.tenant_id === 'default'}>
-							{definition.tenant_id === 'default' ? 'Default' : 'Custom'}
-						</span>
+						<span class="source-badge"> Tenant </span>
 					</div>
 					<div class="info-row">
 						<span class="info-label">Created</span>

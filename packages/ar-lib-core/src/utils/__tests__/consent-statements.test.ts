@@ -5,6 +5,7 @@ import {
   resolveClaimValue,
   evaluateConditionalRules,
   getActiveConsentStatements,
+  getLocalization,
   resolveConsentRequirements,
   checkUserConsentSatisfaction,
   getConsentItemsForScreen,
@@ -278,6 +279,37 @@ describe('Consent Statements Utility', () => {
     });
   });
 
+  describe('getLocalization', () => {
+    it('should constrain localization lookup by tenant and version id', async () => {
+      const mockQuery = vi.fn(async () => [
+        {
+          id: 'loc-1',
+          tenant_id: 'tenant-a',
+          version_id: 'ver-1',
+          language: 'en',
+          title: 'Terms',
+          description: 'Terms text',
+          document_url: null,
+          inline_content: 'Terms text',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ]);
+      const adapter = {
+        query: mockQuery,
+        execute: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const result = await getLocalization(adapter, 'tenant-a', 'ver-1', 'en');
+
+      expect(result?.title).toBe('Terms');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE tenant_id = ? AND version_id = ?'),
+        ['tenant-a', 'ver-1']
+      );
+    });
+  });
+
   describe('checkUserConsentSatisfaction', () => {
     it('should return satisfied when user has granted all required items', async () => {
       const adapter = createMockAdapter({
@@ -464,6 +496,14 @@ describe('Consent Statements Utility', () => {
 
       await expect(activateVersion(adapter, 'default', 'stmt-1', 'ver-1')).resolves.not.toThrow();
       expect(adapter.execute).toHaveBeenCalledTimes(2); // Deactivate old + activate new
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE tenant_id = ? AND version_id = ?'),
+        ['default', 'ver-1']
+      );
+      expect(adapter.execute).toHaveBeenLastCalledWith(
+        expect.stringContaining('WHERE id = ? AND statement_id = ? AND tenant_id = ?'),
+        expect.arrayContaining(['ver-1', 'stmt-1', 'default'])
+      );
     });
   });
 
@@ -506,6 +546,30 @@ describe('Consent Statements Utility', () => {
       const hash2 = await computeContentHash(adapter, 'ver-1');
 
       expect(hash1).toBe(hash2);
+    });
+
+    it('should constrain content hash inputs by tenant when tenant is provided', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          ['version_content_type', [{ content_type: 'inline' }]],
+          [
+            'localizations',
+            [{ language: 'en', document_url: null, inline_content: 'Tenant A terms' }],
+          ],
+        ]),
+      });
+
+      const hash = await computeContentHash(adapter, 'ver-1', 'tenant-a');
+
+      expect(hash).toHaveLength(64);
+      expect(adapter.query).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE id = ? AND tenant_id = ?'),
+        ['ver-1', 'tenant-a']
+      );
+      expect(adapter.query).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE tenant_id = ? AND version_id = ?'),
+        ['tenant-a', 'ver-1']
+      );
     });
   });
 
@@ -601,6 +665,63 @@ describe('Consent Statements Utility', () => {
       await processConsentItemDecisions(adapter, 'default', 'user-1', decisions, evidence);
 
       expect(adapter.execute).toHaveBeenCalled();
+    });
+  });
+
+  describe('getUserClaimsForRules', () => {
+    it('should load email and locale from users_pii using id and tenant_id', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          ['users_core', [{ email_verified: 1 }]],
+          [
+            'users_pii',
+            [
+              {
+                email: 'claims@example.com',
+                locale: 'ja',
+                given_name: 'Yuta',
+                family_name: 'Sato',
+                phone_number: '+819012345678',
+                birthdate: '1990-01-01',
+                address_country: 'JP',
+                address_region: 'Tokyo',
+                zoneinfo: 'Asia/Tokyo',
+                metadata: '{"segment":"enterprise"}',
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const claims = await getUserClaimsForRules(adapter, 'tenant-claims', 'user-claims');
+
+      expect(claims).toMatchObject({
+        email: 'claims@example.com',
+        email_verified: true,
+        locale: 'ja',
+        given_name: 'Yuta',
+        family_name: 'Sato',
+        phone_number: '+819012345678',
+        birthdate: '1990-01-01',
+        zoneinfo: 'Asia/Tokyo',
+        metadata: { segment: 'enterprise' },
+        address: {
+          country: 'JP',
+          region: 'Tokyo',
+        },
+      });
+
+      const queryCalls = (adapter.query as any).mock.calls as Array<[string, unknown[]]>;
+      expect(queryCalls).toContainEqual([
+        'SELECT email_verified FROM users_core WHERE id = ? AND tenant_id = ?',
+        ['user-claims', 'tenant-claims'],
+      ]);
+      expect(queryCalls).toContainEqual([
+        `SELECT email, locale, given_name, family_name, birthdate, phone_number,
+              address_country, address_region, zoneinfo, metadata
+       FROM users_pii WHERE id = ? AND tenant_id = ?`,
+        ['user-claims', 'tenant-claims'],
+      ]);
     });
   });
 });

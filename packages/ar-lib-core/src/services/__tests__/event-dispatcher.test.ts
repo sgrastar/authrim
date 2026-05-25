@@ -3,11 +3,17 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+
+vi.mock('../logging-runtime-emitter', () => ({
+  emitRuntimeLogRecords: vi.fn(async () => ({ tenantKey: 'tk_test', targetResults: [] })),
+}));
+
 import {
   EventDispatcherImpl,
   createEventDispatcher,
   type EventDispatcherConfig,
 } from '../event-dispatcher';
+import { emitRuntimeLogRecords } from '../logging-runtime-emitter';
 import type { DatabaseAdapter, ExecuteResult, HealthStatus } from '../../db/adapter';
 import type { UnifiedEvent } from '../../types/events/unified-event';
 import type { EventHandlerContext } from '../../types/events/handler';
@@ -97,6 +103,7 @@ describe('EventDispatcher', () => {
     hookRegistry = createMockHookRegistry();
     mockFetch.mockReset();
     decryptSecret.mockClear();
+    vi.mocked(emitRuntimeLogRecords).mockClear();
 
     dispatcher = createEventDispatcher({
       adapter,
@@ -453,6 +460,58 @@ describe('EventDispatcher', () => {
       consoleErrorSpy.mockRestore();
     });
 
+    it('should emit metadata-only runtime logs for normal webhook delivery', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+      webhookRegistry.findByEventType.mockResolvedValue([
+        {
+          id: 'wh_1',
+          tenantId: 'tenant_default',
+          url: 'https://example.com/webhook?token=secret',
+          secretEncrypted: 'encrypted_secret',
+          timeoutMs: 10000,
+          events: ['auth.*'],
+          active: true,
+        },
+      ]);
+
+      const runtimeDispatcher = createEventDispatcher({
+        adapter,
+        kv,
+        webhookRegistry,
+        handlerRegistry,
+        hookRegistry,
+        decryptSecret,
+        runtimeLogging: {
+          env: { DB_ADMIN: adapter },
+          tenantKeyResolver: async () => 'tk_registry',
+        },
+      });
+
+      await runtimeDispatcher.publish({
+        type: 'auth.login.succeeded',
+        tenantId: 'tenant_default',
+        data: { userId: 'user_123', secretValue: 'must-not-log' },
+      });
+
+      expect(emitRuntimeLogRecords).toHaveBeenCalledTimes(1);
+      const input = vi.mocked(emitRuntimeLogRecords).mock.calls[0][0];
+      expect(input.logType).toBe('webhook');
+      expect(input.surface).toBe('webhook_delivery');
+      expect(input.planes).toEqual(['archive', 'external_sink']);
+      expect(input.records[0].payload).toMatchObject({
+        kind: 'webhook_delivery',
+        event_type: 'auth.login.succeeded',
+        webhook_id: 'wh_1',
+        status: 'delivered',
+        status_code: 200,
+        endpoint_host: 'example.com',
+        error_class: null,
+      });
+      expect(JSON.stringify(input.records[0].payload)).not.toContain('must-not-log');
+      expect(JSON.stringify(input.records[0].payload)).not.toContain('token=secret');
+    });
+
     it('should skip webhooks without secrets', async () => {
       webhookRegistry.findByEventType.mockResolvedValue([
         {
@@ -492,6 +551,32 @@ describe('EventDispatcher', () => {
       const calls = (adapter.execute as any).mock.calls;
       const auditLogCall = calls.find((c: any) => c[0].includes('audit_log'));
       expect(auditLogCall).toBeDefined();
+      expect(result.delivery.auditLog).toBe(true);
+    });
+
+    it('should use a custom auditLogWriter when provided', async () => {
+      const auditLogWriter = vi.fn().mockResolvedValue(undefined);
+      const customDispatcher = createEventDispatcher({
+        adapter,
+        kv,
+        webhookRegistry,
+        handlerRegistry,
+        hookRegistry,
+        decryptSecret,
+        auditLogWriter,
+      });
+
+      const result = await customDispatcher.publish({
+        type: 'auth.login.succeeded',
+        tenantId: 'tenant_default',
+        data: { userId: 'user_123' },
+      });
+
+      expect(auditLogWriter).toHaveBeenCalledTimes(1);
+      expect(adapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit_log'),
+        expect.any(Array)
+      );
       expect(result.delivery.auditLog).toBe(true);
     });
 

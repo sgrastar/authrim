@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-saml",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -9,14 +9,14 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-saml: lint skipped (uses root eslint config)'",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "test:property": "vitest run -c vitest.property.config.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
-    "@xmldom/xmldom": "^0.9.6",
-    "hono": "^4.12.7",
+    "@xmldom/xmldom": "^0.8.13",
+    "hono": "4.12.21",
     "jose": "^6.1.2",
     "pako": "^2.1.0",
     "xml-crypto": "^6.0.0"

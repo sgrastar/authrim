@@ -21,6 +21,7 @@
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
   createSettingsHistoryManager,
   type SettingsHistoryManager,
   type ListVersionsOptions,
@@ -30,6 +31,7 @@ import {
   SETTINGS_EVENTS,
   type SettingsEventData,
   getLogger,
+  getTenantIdFromContext,
   // Authorization
   getScopedCategoryMeta,
   type CategoryName,
@@ -128,8 +130,6 @@ function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: stri
 // Constants
 // =============================================================================
 
-const DEFAULT_TENANT_ID = 'default';
-
 // Valid settings categories
 const VALID_CATEGORIES = [
   'oauth',
@@ -155,12 +155,16 @@ function isValidCategory(category: string): category is SettingsCategory {
   return VALID_CATEGORIES.includes(category as SettingsCategory);
 }
 
+function resolveTenantId(c: SettingsContext): string {
+  return getTenantIdFromContext(c as unknown as BaseContext);
+}
+
 function getHistoryManager(c: SettingsContext): SettingsHistoryManager {
-  if (!c.env.DB) {
-    throw new Error('Database not configured');
-  }
-  const tenantId = DEFAULT_TENANT_ID;
-  return createSettingsHistoryManager(c.env.DB, tenantId);
+  const tenantId = resolveTenantId(c);
+  return createSettingsHistoryManager(
+    createAuthContextFromHono(c as unknown as BaseContext, tenantId).coreAdapter,
+    tenantId
+  );
 }
 
 /**
@@ -251,7 +255,7 @@ export async function listSettingsHistory(c: SettingsContext) {
   // Authorization check
   const adminAuth = c.get('adminAuth');
   const userRoles = adminAuth?.roles || [];
-  const tenantId = c.req.query('tenantId') || DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   if (!checkRolePermission(userRoles, category as CategoryName, 'tenant', 'view')) {
     return c.json({ error: 'forbidden', error_description: 'Insufficient permissions' }, 403);
@@ -325,7 +329,7 @@ export async function getSettingsVersion(c: SettingsContext) {
   // Authorization check
   const adminAuth = c.get('adminAuth');
   const userRoles = adminAuth?.roles || [];
-  const tenantId = c.req.query('tenantId') || DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   if (!checkRolePermission(userRoles, category as CategoryName, 'tenant', 'view')) {
     return c.json({ error: 'forbidden', error_description: 'Insufficient permissions' }, 403);
@@ -398,7 +402,7 @@ export async function getSettingsVersion(c: SettingsContext) {
 export async function rollbackSettings(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category')!;
-  const tenantId = c.req.query('tenantId') || DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   if (!isValidCategory(category)) {
     return c.json(
@@ -568,7 +572,7 @@ export async function getCurrentSettings(c: SettingsContext) {
   // Authorization check
   const adminAuth = c.get('adminAuth');
   const userRoles = adminAuth?.roles || [];
-  const tenantId = c.req.query('tenantId') || DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   if (!checkRolePermission(userRoles, category as CategoryName, 'tenant', 'view')) {
     return c.json({ error: 'forbidden', error_description: 'Insufficient permissions' }, 403);
@@ -626,7 +630,7 @@ export async function compareSettingsVersions(c: SettingsContext) {
   // Authorization check
   const adminAuth = c.get('adminAuth');
   const userRoles = adminAuth?.roles || [];
-  const tenantId = c.req.query('tenantId') || DEFAULT_TENANT_ID;
+  const tenantId = resolveTenantId(c);
 
   if (!checkRolePermission(userRoles, category as CategoryName, 'tenant', 'view')) {
     return c.json({ error: 'forbidden', error_description: 'Insufficient permissions' }, 403);

@@ -1,0 +1,775 @@
+import { adminFetch } from '$lib/api/admin-request';
+
+const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+
+export interface SAMLMetadataDiffSummary {
+	changed: boolean;
+	expired: boolean;
+	validUntil?: string;
+	expiresInSeconds?: number;
+	entityIdChanged?: boolean;
+	validUntilChanged?: boolean;
+	certificatesAdded?: string[];
+	certificatesRemoved?: string[];
+	endpointsAdded?: unknown[];
+	endpointsRemoved?: unknown[];
+}
+
+export interface SAMLMetadataRefreshStatus {
+	lastCheckedAt: number;
+	lastChangedAt?: number;
+	previousHash?: string;
+	currentHash: string;
+	diff: SAMLMetadataDiffSummary;
+}
+
+export interface SAMLSigningKeyReference {
+	slot: 'active' | 'next' | 'backup';
+	keyRef?: string;
+	kid?: string;
+	certificate?: string;
+	state?: string;
+	metadataPublishFrom?: number;
+	plannedActivationAt?: number;
+}
+
+export interface SAMLSigningKeyPolicy {
+	scope?: 'tenant_role' | 'provider';
+	metadataCertificatePublication?: 'active_only' | 'active_next' | 'active_next_backup';
+	active?: SAMLSigningKeyReference;
+	next?: SAMLSigningKeyReference;
+	backup?: SAMLSigningKeyReference;
+}
+
+export interface SAMLSigningCertificateSubject {
+	countryName: string;
+	stateOrProvinceName: string;
+	localityName: string;
+	organizationName: string;
+	organizationalUnitName: string;
+	commonName: string;
+}
+
+export interface SAMLCertificateValidationStatus {
+	validFrom?: string;
+	validTo?: string;
+	expired: boolean;
+	notYetValid: boolean;
+	signatureAlgorithm?: string;
+	publicKeyAlgorithm?: string;
+	publicKeySizeBits?: number;
+	fingerprintSha1?: string;
+	fingerprintSha256?: string;
+	warnings: string[];
+}
+
+export interface SAMLCertificateValidationSummary {
+	checkedAt: number;
+	certificates: SAMLCertificateValidationStatus[];
+	validUntil?: string;
+	allExpired: boolean;
+	hasExpired: boolean;
+	hasWeakSignature: boolean;
+	warnings: string[];
+}
+
+export interface SAMLRequestedAttribute {
+	name: string;
+	nameFormat?: string;
+	friendlyName?: string;
+	isRequired?: boolean;
+	attributeConsumingServiceIndex?: number;
+	attributeConsumingServiceName?: string;
+}
+
+export interface SAMLAttributeReleaseRule {
+	name: string;
+	friendlyName?: string;
+	nameFormat?: string;
+	valueType?: string;
+	source?: string;
+	claim?: string;
+	computed?: string;
+	value?: string | string[];
+	required?: boolean;
+}
+
+export interface SAMLProviderConfig {
+	description?: string;
+	providerName?: string;
+	logoUrl?: string;
+	iconName?: string;
+	entityId?: string;
+	metadataUrl?: string;
+	metadataXml?: string;
+	metadataRefreshStatus?: SAMLMetadataRefreshStatus;
+	metadataRequestedAttributes?: SAMLRequestedAttribute[];
+	metadataAttributeReleasePolicySuggestion?: {
+		attributes: SAMLAttributeReleaseRule[];
+	};
+	signingKeyPolicy?: SAMLSigningKeyPolicy;
+	samlProfile?: string;
+	authnRequestSignaturePolicy?: 'required' | 'optional' | 'disabled';
+	logoutRequestSignaturePolicy?: 'required' | 'optional' | 'disabled';
+	authnContextPolicy?: {
+		mode: 'observe' | 'require_any';
+		allowedClassRefs?: string[];
+	};
+	authnContextClassRefMode?: 'legacy_static' | 'session';
+	defaultAuthnContextClassRef?: string;
+	passkeyAuthnContextClassRef?: string;
+	acsUrl?: string;
+	acsUrls?: string[];
+	ssoUrl?: string;
+	sloUrl?: string;
+	certificate?: string;
+	certificates?: string[];
+	certificateValidation?: SAMLCertificateValidationSummary;
+	nameIdFormat?: string;
+	attributeMapping?: Record<string, string>;
+	attributeReleasePolicy?: {
+		attributes: SAMLAttributeReleaseRule[];
+	};
+	attributePresetId?: string;
+	attributePresetVersion?: string;
+	signAssertions?: boolean;
+	signResponses?: boolean;
+	allowedBindings?: string[];
+	aggregateImport?: {
+		aggregateSourceUrl?: string;
+		aggregateEntityId: string;
+		federationTrustProfileId?: string;
+		verification: SAMLMetadataVerificationSummary;
+		importedAt: number;
+	};
+}
+
+export interface SAMLProvider {
+	id: string;
+	name: string;
+	providerType: 'saml_idp' | 'saml_sp';
+	config: SAMLProviderConfig;
+	enabled: boolean;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export type SAMLEntityIdStyle = 'metadata_url' | 'role_url';
+export type SAMLInteractiveLoginUrlPolicy = 'tenant_host' | 'ui_base_url';
+
+export interface SAMLSettings {
+	tenantId: string;
+	entityIdStyle: SAMLEntityIdStyle;
+	interactiveLoginUrlPolicy: SAMLInteractiveLoginUrlPolicy;
+	certificateSubject?: SAMLSigningCertificateSubject;
+	signingKeyPolicies?: {
+		idp?: SAMLSigningKeyPolicy;
+		sp?: SAMLSigningKeyPolicy;
+	};
+	localSigning?: {
+		certificateSubject: SAMLSigningCertificateSubject;
+		idpSigningKeyPolicy: SAMLSigningKeyPolicy;
+		spSigningKeyPolicy: SAMLSigningKeyPolicy;
+	};
+	metadata: {
+		signingMode: 'disabled' | 'enabled';
+		signingEnabled: boolean;
+		validUntilEnabled: boolean;
+		idpValidUntil: string;
+		spValidUntil: string;
+		validityDays: number;
+		cacheDuration: string;
+	};
+	generated: {
+		issuerUrl: string;
+		idpEntityId: string;
+		spEntityId: string;
+		idpMetadataUrl: string;
+		spMetadataUrl: string;
+	};
+}
+
+export interface SAMLAttributePreset {
+	id: string;
+	version: string;
+	profile: string;
+	label: string;
+	description: string;
+	stability: string;
+	applicationMode: string;
+	appliesTo: 'sp_attribute_release';
+	isCustom?: boolean;
+	attributeReleasePolicy: {
+		attributes: SAMLAttributeReleaseRule[];
+	};
+}
+
+export interface CreateSAMLAttributePresetRequest {
+	label: string;
+	description?: string;
+	profile?: string;
+	appliesTo?: 'sp_attribute_release';
+	attributeReleasePolicy: {
+		attributes: SAMLAttributeReleaseRule[];
+	};
+}
+
+export interface CreateSAMLProviderRequest {
+	name: string;
+	providerType: SAMLProvider['providerType'];
+	config?: SAMLProviderConfig;
+	metadataUrl?: string;
+	metadataXml?: string;
+	samlProfile?: string;
+	attributePresetId?: string;
+	enabled?: boolean;
+}
+
+export interface UpdateSAMLProviderRequest {
+	name?: string;
+	config?: SAMLProviderConfig;
+	enabled?: boolean;
+}
+
+export interface ImportSAMLMetadataRequest {
+	metadataUrl?: string;
+	metadataXml?: string;
+	samlProfile?: string;
+	attributePresetId?: string;
+}
+
+export type PreviewSAMLMetadataRequest = ImportSAMLMetadataRequest;
+
+export interface PreviewSAMLMetadataResponse {
+	kind?: 'single';
+	providerType: SAMLProvider['providerType'];
+	config: SAMLProviderConfig;
+}
+
+export interface SAMLMetadataVerificationSummary {
+	status: 'verified' | 'unverified' | 'skipped' | 'failed';
+	policy: 'strict' | 'warn' | 'disabled';
+	trustProfileId?: string;
+	trustProfileName?: string;
+	certificateFingerprintSha256?: string;
+	signedElementId?: string;
+	verifiedAt?: number;
+	warnings?: string[];
+	error?: string;
+}
+
+export interface SAMLMetadataEntitySummary {
+	entityId: string;
+	role: 'saml_idp' | 'saml_sp' | 'ambiguous' | 'unknown';
+	displayName?: string;
+	acsUrl?: string;
+	ssoUrl?: string;
+	sloUrl?: string;
+	certificateCount: number;
+	validUntil?: string;
+	keywords?: string[];
+	logoUrl?: string;
+}
+
+export interface SAMLMetadataKeywordFacet {
+	category: string;
+	label: string;
+	values: Array<{
+		keyword: string;
+		label: string;
+		count: number;
+	}>;
+}
+
+export interface SAMLMetadataAggregatePreviewResponse {
+	kind: 'aggregate';
+	previewId: string;
+	metadataUrl?: string;
+	entityCount: number;
+	expiresAt: number;
+	verification: SAMLMetadataVerificationSummary;
+}
+
+export type PreviewSAMLMetadataResult =
+	| PreviewSAMLMetadataResponse
+	| SAMLMetadataAggregatePreviewResponse;
+
+export interface SAMLFederationTrustProfile {
+	id: string;
+	tenantId: string;
+	name: string;
+	description?: string;
+	metadataUrlPatterns: string[];
+	certificates: Array<{
+		id: string;
+		name?: string;
+		certificate: string;
+		fingerprintSha256: string;
+		createdAt: number;
+	}>;
+	policy?: 'strict' | 'warn' | 'disabled';
+	enabled: boolean;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface SAMLFederationTrustProfileRequest {
+	name: string;
+	description?: string;
+	metadataUrlPatterns: string[];
+	certificates: Array<{ name?: string; certificate: string }>;
+	policy?: 'strict' | 'warn' | 'disabled';
+	enabled?: boolean;
+}
+
+export interface SAMLTrustCertificatePreview {
+	certificate: string;
+	source: 'url' | 'pem' | 'der';
+	subject: string;
+	issuer: string;
+	serialNumber: string;
+	version: string;
+	validFrom: string;
+	validTo: string;
+	signatureAlgorithm: string;
+	publicKeyAlgorithm: string;
+	publicKeySizeBits?: number;
+	fingerprintSha1: string;
+	fingerprintSha256: string;
+	warnings: string[];
+}
+
+export interface SAMLMetadataBatchStatus {
+	batchId: string;
+	tenantId: string;
+	status: 'pending' | 'running' | 'completed' | 'failed';
+	total: number;
+	processed: number;
+	succeeded: number;
+	failed: number;
+	startedAt: number;
+	completedAt?: number;
+	results: Array<{
+		entityId: string;
+		success: boolean;
+		providerId?: string;
+		providerType?: SAMLProvider['providerType'];
+		name?: string;
+		error?: string;
+	}>;
+	error?: string;
+}
+
+async function handleAPIError(response: Response, fallbackMessage: string): Promise<Error> {
+	try {
+		const errorBody = await response.json();
+		return new Error(errorBody.error_description || errorBody.error || fallbackMessage);
+	} catch {
+		return new Error(fallbackMessage);
+	}
+}
+
+export const adminSAMLAPI = {
+	async getSettings(): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to load SAML settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async updateSettings(request: {
+		entityIdStyle?: SAMLEntityIdStyle;
+		interactiveLoginUrlPolicy?: SAMLInteractiveLoginUrlPolicy;
+		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
+	}): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update SAML settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async updateLocalSigning(request: {
+		role: 'idp' | 'sp';
+		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup';
+		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
+		keepPreviousAsBackup?: boolean;
+	}): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings/local-signing`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update SAML local signing settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async listProviders(): Promise<{ providers: SAMLProvider[] }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list SAML providers');
+		}
+
+		return (await response.json()) as { providers: SAMLProvider[] };
+	},
+
+	async getProvider(providerId: string): Promise<SAMLProvider> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}`,
+			{ method: 'GET' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to load SAML provider');
+		}
+
+		return (await response.json()) as SAMLProvider;
+	},
+
+	async createProvider(request: CreateSAMLProviderRequest): Promise<SAMLProvider> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to create SAML provider');
+		}
+
+		return (await response.json()) as SAMLProvider;
+	},
+
+	async updateProvider(
+		providerId: string,
+		request: UpdateSAMLProviderRequest
+	): Promise<SAMLProvider> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}`,
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update SAML provider');
+		}
+
+		return (await response.json()) as SAMLProvider;
+	},
+
+	async deleteProvider(providerId: string): Promise<{ success: boolean }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}`,
+			{ method: 'DELETE' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to delete SAML provider');
+		}
+
+		return (await response.json()) as { success: boolean };
+	},
+
+	async listAttributePresets(): Promise<{ presets: SAMLAttributePreset[] }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-attribute-presets`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list SAML attribute presets');
+		}
+
+		return (await response.json()) as { presets: SAMLAttributePreset[] };
+	},
+
+	async createAttributePreset(
+		request: CreateSAMLAttributePresetRequest
+	): Promise<{ preset: SAMLAttributePreset }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-attribute-presets`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to create SAML attribute preset');
+		}
+
+		return (await response.json()) as { preset: SAMLAttributePreset };
+	},
+
+	async deleteAttributePreset(presetId: string): Promise<{ success: boolean }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-attribute-presets/${encodeURIComponent(presetId)}`,
+			{ method: 'DELETE' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to delete SAML attribute preset');
+		}
+
+		return (await response.json()) as { success: boolean };
+	},
+
+	async previewMetadata(request: PreviewSAMLMetadataRequest): Promise<PreviewSAMLMetadataResult> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-metadata/preview`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to import SAML metadata');
+		}
+
+		return (await response.json()) as PreviewSAMLMetadataResult;
+	},
+
+	async listAggregatePreviewEntities(
+		previewId: string,
+		options: { query?: string; keywords?: string[]; offset?: number; limit?: number } = {}
+	): Promise<{
+		previewId: string;
+		total: number;
+		offset: number;
+		limit: number;
+		entities: SAMLMetadataEntitySummary[];
+		keywordFacets?: SAMLMetadataKeywordFacet[];
+	}> {
+		const params = new URLSearchParams();
+		if (options.query) params.set('query', options.query);
+		for (const keyword of options.keywords ?? []) {
+			params.append('keyword', keyword);
+		}
+		params.set('offset', String(options.offset ?? 0));
+		params.set('limit', String(options.limit ?? 50));
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/previews/${encodeURIComponent(previewId)}/entities?${params.toString()}`,
+			{ method: 'GET' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list aggregate metadata entities');
+		}
+
+		return await response.json();
+	},
+
+	async startAggregateBatchCreate(
+		previewId: string,
+		request: {
+			entityIds: string[];
+			providerType?: SAMLProvider['providerType'];
+			samlProfile?: string;
+			attributePresetId?: string;
+			enabled?: boolean;
+		}
+	): Promise<SAMLMetadataBatchStatus> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/previews/${encodeURIComponent(previewId)}/batch-create`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to start aggregate metadata import');
+		}
+
+		return await response.json();
+	},
+
+	async getAggregateBatchStatus(batchId: string): Promise<SAMLMetadataBatchStatus> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/batches/${encodeURIComponent(batchId)}`,
+			{ method: 'GET' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to get aggregate import status');
+		}
+
+		return await response.json();
+	},
+
+	async previewTrustCertificate(request: {
+		certificateUrl?: string;
+		certificate?: string;
+	}): Promise<SAMLTrustCertificatePreview> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/certificate-preview`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to preview federation trust certificate');
+		}
+
+		return await response.json();
+	},
+
+	async listFederationTrustProfiles(): Promise<{ profiles: SAMLFederationTrustProfile[] }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-federation-trust-profiles`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list federation trust profiles');
+		}
+
+		return await response.json();
+	},
+
+	async createFederationTrustProfile(
+		request: SAMLFederationTrustProfileRequest
+	): Promise<SAMLFederationTrustProfile> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-federation-trust-profiles`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to create federation trust profile');
+		}
+
+		return await response.json();
+	},
+
+	async updateFederationTrustProfile(
+		id: string,
+		request: SAMLFederationTrustProfileRequest
+	): Promise<SAMLFederationTrustProfile> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-federation-trust-profiles/${encodeURIComponent(id)}`,
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update federation trust profile');
+		}
+
+		return await response.json();
+	},
+
+	async deleteFederationTrustProfile(id: string): Promise<{ success: boolean }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-federation-trust-profiles/${encodeURIComponent(id)}`,
+			{ method: 'DELETE' }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to delete federation trust profile');
+		}
+
+		return await response.json();
+	},
+
+	async importMetadata(
+		providerId: string,
+		request: ImportSAMLMetadataRequest
+	): Promise<{
+		success: boolean;
+		config: SAMLProviderConfig;
+		metadataRefreshStatus: SAMLMetadataRefreshStatus;
+	}> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}/import-metadata`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to import SAML metadata');
+		}
+
+		return await response.json();
+	},
+
+	async refreshMetadata(providerId: string): Promise<{
+		success: boolean;
+		changed: boolean;
+		expired?: boolean;
+		config: SAMLProviderConfig;
+		metadataRefreshStatus: SAMLMetadataRefreshStatus;
+	}> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}/refresh-metadata`,
+			{ method: 'POST', headers: { 'Content-Type': 'application/json' } }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to refresh SAML metadata');
+		}
+
+		return await response.json();
+	},
+
+	async promoteSigningNext(
+		providerId: string
+	): Promise<{ success: boolean; config: SAMLProviderConfig }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}/signing-rollover/promote-next`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ keepPreviousAsBackup: true })
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to promote SAML signing certificate');
+		}
+
+		return await response.json();
+	},
+
+	async retireSigningBackup(
+		providerId: string
+	): Promise<{ success: boolean; config: SAMLProviderConfig }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(providerId)}/signing-rollover/retire-backup`,
+			{ method: 'POST', headers: { 'Content-Type': 'application/json' } }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to retire SAML backup certificate');
+		}
+
+		return await response.json();
+	}
+};

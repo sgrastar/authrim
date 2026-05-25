@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminRolesAPI,
 		type Role,
@@ -21,6 +23,7 @@
 	// Submit state
 	let submitting = $state(false);
 	let error = $state('');
+	let loadedTenantId = $state('');
 
 	// Validation
 	let nameError = $derived(
@@ -48,8 +51,16 @@
 		}
 	}
 
-	// Initialize on mount
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
 	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		inheritsFrom = '';
+		error = '';
 		loadAvailableRoles();
 	});
 

@@ -9,9 +9,8 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import type { Env, AdminAuthContext, AdminAuditLogEntry } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   AdminAuditLogRepository,
   AdminUserRepository,
   createErrorResponse,
@@ -19,7 +18,13 @@ import {
   getTenantIdFromContext,
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import {
+  auditAdminSensitiveRead,
+  requireAdminPermissionOrElevationGrant,
+} from '../../admin-elevation-access';
+import { loadAdminAuditDetail } from '../../admin-shared';
 
 // Define context type with adminAuth variable
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -43,10 +48,59 @@ adminAuditRouter.use(
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getAdminAdapter(c: Context<any, any, any>) {
-  if (!c.env.DB_ADMIN) {
-    throw new Error('DB_ADMIN is not configured');
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
+}
+
+function getMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function buildAuditActorView(
+  log: AdminAuditLogEntry,
+  adminUserName?: string | null
+): Record<string, unknown> {
+  const metadata = log.metadata;
+  const metadataActorType = getMetadataString(metadata, 'admin_actor_type');
+  const machinePrincipalId = getMetadataString(metadata, 'admin_machine_principal_id');
+
+  if (metadataActorType === 'machine' || machinePrincipalId) {
+    const clientId = getMetadataString(metadata, 'admin_machine_client_id');
+    const principalType = getMetadataString(metadata, 'admin_machine_principal_type');
+    const actorId =
+      getMetadataString(metadata, 'admin_actor_id') ||
+      machinePrincipalId ||
+      log.admin_user_id ||
+      null;
+
+    return {
+      actor_type: 'machine',
+      actor_id: actorId,
+      actor_display_name: clientId || actorId || 'Machine',
+      machine_principal_id: machinePrincipalId || actorId,
+      machine_principal_type: principalType,
+      machine_credential_id: getMetadataString(metadata, 'admin_machine_credential_id'),
+      machine_client_id: clientId,
+      machine_client_auth_method: getMetadataString(metadata, 'admin_machine_client_auth_method'),
+    };
   }
-  return new D1Adapter({ db: c.env.DB_ADMIN });
+
+  if (metadataActorType === 'system' || log.admin_user_id === 'system') {
+    return {
+      actor_type: 'system',
+      actor_id: getMetadataString(metadata, 'admin_actor_id') || 'system',
+      actor_display_name: 'System',
+    };
+  }
+
+  return {
+    actor_type: 'admin_user',
+    actor_id: getMetadataString(metadata, 'admin_actor_id') || log.admin_user_id,
+    actor_display_name: log.admin_email || adminUserName || log.admin_user_id || 'Admin user',
+  };
 }
 
 /**
@@ -123,6 +177,7 @@ adminAuditRouter.get('/', async (c) => {
         return {
           ...log,
           admin_user_name: adminUserName,
+          ...buildAuditActorView(log, adminUserName),
         };
       })
     );
@@ -148,13 +203,44 @@ adminAuditRouter.get('/:id', async (c) => {
     const adapter = getAdminAdapter(c);
     const auditRepo = new AdminAuditLogRepository(adapter);
     const userRepo = new AdminUserRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
-    const log = await auditRepo.getAuditLog(id);
+    const logRecord = await auditRepo.getAuditLogWithDetailReference(id);
 
-    if (!log) {
+    if (!logRecord) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    const access = await requireAdminPermissionOrElevationGrant(c as AdminContext, {
+      directPermission: ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
+      requestSurface: 'admin_audit',
+      requestedAction: 'detail_read',
+      resourceClass: 'admin_audit_detail',
+      resourceIds: [id, logRecord.detailArtifactId, logRecord.detailObjectCatalogId],
+      detailClass: 'before_after_metadata',
+      targetAudience: 'admin_api',
+    });
+    if (access instanceof Response) {
+      return access;
+    }
+    const detail = await loadAdminAuditDetail(
+      c,
+      adapter,
+      tenantId,
+      logRecord.detailArtifactId,
+      logRecord.detailObjectCatalogId
+    );
+    const log = detail
+      ? {
+          ...logRecord.entry,
+          before: detail.before,
+          after: detail.after,
+          metadata: {
+            ...(detail.metadata ?? {}),
+            ...(logRecord.entry.metadata ?? {}),
+          },
+        }
+      : logRecord.entry;
 
     // Enrich with admin user info
     let adminUser: {
@@ -174,10 +260,20 @@ adminAuditRouter.get('/:id', async (c) => {
       }
     }
 
+    await auditAdminSensitiveRead(c as AdminContext, access, {
+      action: 'admin_audit.detail_read',
+      resourceType: 'admin_audit_log',
+      resourceId: id,
+      metadata: {
+        target_admin_user_id: log.admin_user_id,
+      },
+    });
+
     // Return log with enriched admin user info
     return c.json({
       ...log,
       admin_user: adminUser,
+      ...buildAuditActorView(log, adminUser?.name ?? null),
     });
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

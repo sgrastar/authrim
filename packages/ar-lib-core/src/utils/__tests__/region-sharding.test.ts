@@ -518,7 +518,7 @@ describe('Region Sharding Utilities', () => {
 
       expect(config.currentGeneration).toBe(1);
       expect(config.currentTotalShards).toBeGreaterThan(0);
-      expect(Object.keys(config.currentRegions).length).toBeGreaterThan(0);
+      expect(Object.keys(config.currentRegions)).toEqual(['apac', 'enam', 'weur', 'wnam']);
       expect(config.previousGenerations).toEqual([]);
     });
 

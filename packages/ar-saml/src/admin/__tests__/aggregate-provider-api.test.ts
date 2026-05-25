@@ -1,0 +1,489 @@
+import type { Env } from '@authrim/ar-lib-core';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  handleCreateProvider,
+  handleGetAggregateBatchStatus,
+  handleListAggregatePreviewEntities,
+  handlePreviewMetadata,
+  handleStartAggregateBatchCreate,
+} from '../providers';
+
+const mocks = vi.hoisted(() => ({
+  safeFetchText: vi.fn(),
+  createAuthContextFromHono: vi.fn(),
+  resolveAuthCorePersistenceAdapterFromEnv: vi.fn(),
+  createAuditLog: vi.fn(),
+}));
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    safeFetchText: mocks.safeFetchText,
+    createAuthContextFromHono: mocks.createAuthContextFromHono,
+    resolveAuthCorePersistenceAdapterFromEnv: mocks.resolveAuthCorePersistenceAdapterFromEnv,
+    createAuditLog: mocks.createAuditLog,
+    getLogger: () => ({
+      module: () => ({
+        info: vi.fn(),
+        debug: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      }),
+    }),
+  };
+});
+
+const singleSPMetadata = `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+  entityID="https://sp.example.test/sp">
+  <md:SPSSODescriptor
+    AuthnRequestsSigned="false"
+    WantAssertionsSigned="false"
+    protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:AssertionConsumerService
+      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+      Location="https://sp.example.test/acs"
+      index="0"
+      isDefault="true" />
+  </md:SPSSODescriptor>
+</md:EntityDescriptor>`;
+
+const expiredCertificate = `-----BEGIN CERTIFICATE-----
+MIIDHzCCAgegAwIBAgIUF7MHaoSdF7RMgRQElv5lZZAWkZIwDQYJKoZIhvcNAQEL
+BQAwHzEdMBsGA1UEAwwUZXhwaXJlZC5leGFtcGxlLnRlc3QwHhcNMjYwNTIyMTY1
+MzMxWhcNMjYwNTIzMTY1MzMxWjAfMR0wGwYDVQQDDBRleHBpcmVkLmV4YW1wbGUu
+dGVzdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMG7NH941H6F3eIi
+GEGCmTykMs8CjWOhTDjlE9d70Md7bJGAfbiBotNEWYjIo8GLySggWoHJ8U/GnG0n
+g3HDDTjP0O6K6QuTMI0mQXqr75I9s2ZSxDDvyomL+02HwQK0iZ9gN4fxbA+T65gI
+7inzt8fLEGqqx1+yBmgtKYX9F5nptT4DjVRKL9ucMrxpoiB6DBR1brcGkDhCew8m
+1oyMf+jGo/m33+a1TqZP8TeQ6jqCwZl6dZOWNEAcqvDLTQFrZl8GWNqHQmCKspgN
+vuAua4of0EQwFprh8l36ALBI58N6WfE0wKaj1VAIJ93/sGiKP+FADcSSyDjFYfHM
+yOyK2y0CAwEAAaNTMFEwHQYDVR0OBBYEFORT4oGycoEMB9/K+gTPAM/KEYZ8MB8G
+A1UdIwQYMBaAFORT4oGycoEMB9/K+gTPAM/KEYZ8MA8GA1UdEwEB/wQFMAMBAf8w
+DQYJKoZIhvcNAQELBQADggEBAEmUSKRdP2IPclAe4NrgVXm5ikNqZlLIO7mtOVyV
+RyJ+le6OUcVZCwqNfqH+uPTovGj+CNrhhSpqlIXgnRPGwpKRASwvXgET2QDner5g
+Y+Ai2YMpaTEBjaJu2jwebGLsqq2b0mIgNbb/yrrZn3Uf/tm0Rg9AJPKPKiqrOfnG
+Fhu7ks1O+KVZTKyJbcORXbgHafugVqGxgQ6nNnOt0YD9BrBBEhUvCPeZ3+0vdJgH
+5dKk1P3VukPi0tYWYFn6tVOpGSQYK28poXqhs+SKaQzV3DJ5hlLc9tG+Haj+s5Rn
+umujb/SYqcIZQxAGJz7CNWlJgruDTwBXd0TE1f8LUr5mPzo=
+-----END CERTIFICATE-----`;
+
+const aggregateXml = `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor
+  xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+  ID="_aggregate">
+  <md:EntityDescriptor entityID="https://sp.example.test/sp">
+    <md:SPSSODescriptor
+      AuthnRequestsSigned="false"
+      WantAssertionsSigned="false"
+      protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+      <md:AssertionConsumerService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+        Location="https://sp.example.test/acs"
+        index="0"
+        isDefault="true" />
+    </md:SPSSODescriptor>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`;
+
+interface StoredBatch {
+  batchId: string;
+  tenantId: string;
+  status: 'running' | 'completed' | 'failed';
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  startedAt: number;
+  completedAt?: number;
+  results: unknown[];
+}
+
+function createMockAdapter() {
+  return {
+    query: vi.fn().mockResolvedValue([]),
+    queryOne: vi.fn().mockResolvedValue(null),
+    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    transaction: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+    batch: vi.fn().mockResolvedValue([]),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('mock'),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function createAggregateStoreNamespace(input: {
+  previewId?: string;
+  preview?: unknown;
+}): DurableObjectNamespace {
+  const batches = new Map<string, StoredBatch>();
+
+  return {
+    idFromName: vi.fn(() => ({ toString: () => 'aggregate-store' }) as unknown as DurableObjectId),
+    get: vi.fn(() => ({
+      fetch: vi.fn(async (request: Request | string, init?: RequestInit) => {
+        const url = new URL(typeof request === 'string' ? request : request.url);
+        const method = init?.method ?? (typeof request === 'string' ? 'GET' : request.method);
+        const readJson = async () =>
+          init?.body ? JSON.parse(init.body as string) : await (request as Request).json();
+
+        if (url.pathname === `/preview/${input.previewId}` && method === 'GET') {
+          return json(input.preview ?? {}, input.preview ? 200 : 404);
+        }
+        if (url.pathname === `/preview/${input.previewId}/entities` && method === 'GET') {
+          const preview = input.preview as { entities?: unknown[] } | undefined;
+          if (!preview) {
+            return json({ error: 'not_found' }, 404);
+          }
+          return json({
+            previewId: input.previewId,
+            total: preview.entities?.length ?? 0,
+            offset: Number(url.searchParams.get('offset') ?? 0),
+            limit: Number(url.searchParams.get('limit') ?? 50),
+            entities: preview.entities ?? [],
+          });
+        }
+        if (url.pathname === '/preview' && method === 'POST') {
+          const body = await readJson();
+          return json({ ...body, expiresAt: Date.now() + 30 * 60 * 1000 });
+        }
+        if (url.pathname === '/batch' && method === 'POST') {
+          const body = (await readJson()) as { batchId: string; tenantId: string; total: number };
+          const status: StoredBatch = {
+            batchId: body.batchId,
+            tenantId: body.tenantId,
+            status: 'running',
+            total: body.total,
+            processed: 0,
+            succeeded: 0,
+            failed: 0,
+            startedAt: Date.now(),
+            results: [],
+          };
+          batches.set(body.batchId, status);
+          return json(status);
+        }
+        if (url.pathname.endsWith('/result') && method === 'POST') {
+          const batchId = url.pathname.slice('/batch/'.length, -'/result'.length);
+          const status = batches.get(batchId)!;
+          const result = await readJson();
+          status.results.push(result);
+          status.processed = status.results.length;
+          status.succeeded = status.results.filter(
+            (item) => (item as { success: boolean }).success
+          ).length;
+          status.failed = status.results.filter(
+            (item) => !(item as { success: boolean }).success
+          ).length;
+          return json({ success: true });
+        }
+        if (url.pathname.endsWith('/complete') && method === 'POST') {
+          const batchId = url.pathname.slice('/batch/'.length, -'/complete'.length);
+          const status = batches.get(batchId)!;
+          status.status = 'completed';
+          status.completedAt = Date.now();
+          return json({ success: true });
+        }
+        if (url.pathname.startsWith('/batch/') && method === 'GET') {
+          const batchId = url.pathname.substring('/batch/'.length);
+          const status = batches.get(batchId);
+          return status ? json(status) : json({ error: 'not_found' }, 404);
+        }
+        return json({ error: 'not_found' }, 404);
+      }),
+    })),
+  } as unknown as DurableObjectNamespace;
+}
+
+function createContext(input: {
+  body?: unknown;
+  params?: Record<string, string>;
+  query?: Record<string, string | undefined>;
+  tenantId?: string;
+  env?: Partial<Env>;
+  waitUntil?: Array<Promise<unknown>>;
+}) {
+  return {
+    req: {
+      json: async () => input.body,
+      header: () => undefined,
+      query: (name: string) => input.query?.[name],
+      param: (name: string) => input.params?.[name],
+    },
+    get: (key: string) => {
+      if (key === 'adminAuth') {
+        return {
+          permissions: [
+            'admin:saml_providers:create',
+            'admin:saml_providers:list',
+            'admin:saml_providers:update',
+          ],
+        };
+      }
+      if (key === 'tenantId') {
+        return input.tenantId ?? 'tenant-a';
+      }
+      return undefined;
+    },
+    json: (value: unknown, status?: number) =>
+      new Response(JSON.stringify(value), {
+        status: status ?? 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    env: {
+      DEFAULT_TENANT_ID: 'tenant-a',
+      ...(input.env ?? {}),
+    },
+    executionCtx: {
+      waitUntil: (promise: Promise<unknown>) => {
+        input.waitUntil?.push(promise);
+      },
+    },
+  } as never;
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+describe('SAML aggregate provider API', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('uses the 10 MiB fetch limit for aggregate preview URLs', async () => {
+    const adminAdapter = createMockAdapter();
+    mocks.safeFetchText.mockResolvedValue(aggregateXml);
+
+    const response = await handlePreviewMetadata(
+      createContext({
+        body: { metadataUrl: 'https://metadata.example.test/aggregate.xml' },
+        env: {
+          DB_ADMIN: adminAdapter as never,
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({}) as never,
+          SAML_AGGREGATE_METADATA_SIGNATURE_POLICY: 'disabled',
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.safeFetchText).toHaveBeenCalledWith(
+      'https://metadata.example.test/aggregate.xml',
+      expect.objectContaining({ maxResponseSize: 10 * 1024 * 1024 })
+    );
+  });
+
+  it('returns a validation error for unsafe XML during metadata preview', async () => {
+    const response = await handlePreviewMetadata(
+      createContext({
+        body: {
+          metadataXml:
+            '<!DOCTYPE md:EntityDescriptor [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><md:EntityDescriptor />',
+        },
+      })
+    );
+    const body = (await response.json()) as { error_description: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error_description).toContain('DOCTYPE declarations are not allowed');
+  });
+
+  it('keeps the 1 MiB fetch limit for direct single-entity provider creation', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocks.safeFetchText.mockResolvedValue(singleSPMetadata);
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Example SP',
+          providerType: 'saml_sp',
+          metadataUrl: 'https://sp.example.test/metadata.xml',
+        },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.safeFetchText).toHaveBeenCalledWith(
+      'https://sp.example.test/metadata.xml',
+      expect.objectContaining({ maxResponseSize: 1024 * 1024 })
+    );
+  });
+
+  it('disables newly created providers when every configured signing certificate is expired', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2027-01-01T00:00:00Z'));
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Expired IdP',
+          providerType: 'saml_idp',
+          enabled: true,
+          config: {
+            entityId: 'https://idp.example.test/idp',
+            ssoUrl: 'https://idp.example.test/sso',
+            certificate: expiredCertificate,
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+          },
+        },
+      })
+    );
+
+    const body = (await response.json()) as {
+      enabled: boolean;
+      config: { certificateValidation?: { allExpired: boolean; validUntil?: string } };
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.enabled).toBe(false);
+    expect(body.config.certificateValidation).toMatchObject({
+      allExpired: true,
+      validUntil: '2026-05-23T16:53:31.000Z',
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO identity_providers'),
+      expect.arrayContaining([0])
+    );
+  });
+
+  it.each(['single tenant', 'multi tenant', 'shared D1', 'tenant D1', 'external DB'])(
+    'creates selected aggregate entities through the batch API using the runtime storage resolver: %s',
+    async () => {
+      const coreAdapter = createMockAdapter();
+      const waitUntil: Array<Promise<unknown>> = [];
+      mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(coreAdapter);
+      const previewId = 'preview-1';
+      const env = {
+        DEFAULT_TENANT_ID: 'tenant-a',
+        SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
+          previewId,
+          preview: {
+            tenantId: 'tenant-a',
+            metadataXml: aggregateXml,
+            metadataUrl: 'https://metadata.example.test/aggregate.xml',
+            verification: { status: 'skipped', policy: 'disabled' },
+          },
+        }) as never,
+      };
+
+      const startResponse = await handleStartAggregateBatchCreate(
+        createContext({
+          params: { previewId },
+          body: { entityIds: ['https://sp.example.test/sp'], enabled: true },
+          env,
+          waitUntil,
+        })
+      );
+
+      expect(startResponse.status).toBe(202);
+      await Promise.all(waitUntil);
+
+      expect(mocks.resolveAuthCorePersistenceAdapterFromEnv).toHaveBeenCalledWith(env, 'core', {
+        tenantId: 'tenant-a',
+      });
+
+      const startBody = (await startResponse.json()) as { batchId: string };
+      const statusResponse = await handleGetAggregateBatchStatus(
+        createContext({
+          params: { batchId: startBody.batchId },
+          env,
+        })
+      );
+      const status = (await statusResponse.json()) as {
+        status: string;
+        tenantId: string;
+        processed: number;
+        succeeded: number;
+        failed: number;
+        results: unknown[];
+      };
+
+      expect(status).toMatchObject({
+        status: 'completed',
+        tenantId: 'tenant-a',
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
+      });
+      expect(coreAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO identity_providers'),
+        expect.arrayContaining([
+          expect.any(String),
+          'tenant-a',
+          'sp.example.test SP',
+          'saml_sp',
+          expect.stringContaining('"aggregateEntityId":"https://sp.example.test/sp"'),
+          1,
+          expect.any(Number),
+          expect.any(Number),
+        ])
+      );
+    }
+  );
+
+  it('does not expose aggregate preview entities across tenants', async () => {
+    const previewId = 'preview-foreign';
+    const response = await handleListAggregatePreviewEntities(
+      createContext({
+        params: { previewId },
+        tenantId: 'tenant-a',
+        env: {
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
+            previewId,
+            preview: {
+              tenantId: 'tenant-b',
+              metadataXml: aggregateXml,
+              verification: { status: 'skipped', policy: 'disabled' },
+              entities: [{ entityId: 'https://sp.example.test/sp', role: 'saml_sp' }],
+            },
+          }) as never,
+        },
+      })
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it('does not expose aggregate batch status across tenants', async () => {
+    const aggregateStore = createAggregateStoreNamespace({
+      previewId: 'preview-1',
+      preview: {
+        tenantId: 'tenant-b',
+        metadataXml: aggregateXml,
+        verification: { status: 'skipped', policy: 'disabled' },
+        entities: [{ entityId: 'https://sp.example.test/sp', role: 'saml_sp' }],
+      },
+    });
+    const env = {
+      SAML_AGGREGATE_METADATA_STORE: aggregateStore as never,
+    };
+    const startResponse = await handleStartAggregateBatchCreate(
+      createContext({
+        params: { previewId: 'preview-1' },
+        tenantId: 'tenant-b',
+        body: { entityIds: ['https://sp.example.test/sp'] },
+        env,
+      })
+    );
+    const status = (await startResponse.json()) as { batchId: string };
+
+    const response = await handleGetAggregateBatchStatus(
+      createContext({
+        params: { batchId: status.batchId },
+        tenantId: 'tenant-a',
+        env,
+      })
+    );
+
+    expect(response.status).toBe(404);
+  });
+});

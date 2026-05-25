@@ -153,8 +153,8 @@ const ko: Translations = {
 
   // UI deployment
   'ui.prompt': 'UI 배포 방법',
-  'ui.pagesOption': 'Cloudflare Pages',
-  'ui.pagesDesc': 'Cloudflare Pages에 배포 (권장)',
+  'ui.pagesOption': 'Cloudflare Workers',
+  'ui.pagesDesc': 'Cloudflare Workers에 배포 (권장)',
   'ui.customOption': '사용자 정의 도메인',
   'ui.customDesc': '자체 호스팅 사용',
   'ui.skipOption': '건너뛰기',
@@ -179,6 +179,47 @@ const ko: Translations = {
   'domain.zoneCheckSkipped': '영역 확인을 건너뛰고 설정을 계속합니다...',
   'domain.continueWithoutZone': '영역 확인 없이 계속하시겠습니까?',
   'domain.configureBinding': 'Workers에 대한 사용자 정의 도메인 바인딩 구성',
+  'domain.action.retryCheck': '다시 확인',
+  'domain.action.reloadPage': '페이지 새로고침',
+  'domain.action.openCloudflareDashboard': 'Cloudflare 대시보드 열기',
+  'domain.prereq.reviewTitle': '사용자 정의 도메인 확인에 추가 검토가 필요합니다',
+  'domain.prereq.reviewBody':
+    '사용자 정의 도메인을 사용할 예정이라면 페이지를 새로고침하거나 Cloudflare 로그인 상태를 다시 맞춘 뒤 다시 확인하세요.',
+  'domain.diagnostic.zone_found.title': 'Cloudflare 영역을 확인했습니다',
+  'domain.diagnostic.zone_found.body':
+    '"{{zone}}" 영역을 현재 Cloudflare 계정에서 사용할 수 있습니다.',
+  'domain.diagnostic.zone_found.next':
+    '이제 사용자 정의 도메인 바인딩 설정으로 계속할 수 있습니다.',
+  'domain.diagnostic.not_logged_in.title': 'Cloudflare 로그인이 필요합니다',
+  'domain.diagnostic.not_logged_in.body':
+    '이 영역 확인에서 Cloudflare 로그인 상태를 확인할 수 없었습니다.',
+  'domain.diagnostic.not_logged_in.next':
+    '1. 터미널에서 `wrangler login`을 실행합니다.\n2. 이 페이지를 새로고침합니다.\n3. 영역을 다시 확인합니다.',
+  'domain.diagnostic.token_unavailable.title': 'Cloudflare 토큰을 불러올 수 없습니다',
+  'domain.diagnostic.token_unavailable.body':
+    'Wrangler 로그인 상태는 있는 것 같지만, 영역 확인에 필요한 API 토큰을 아직 사용할 수 없습니다.',
+  'domain.diagnostic.token_unavailable.next':
+    '1. 먼저 이 페이지를 새로고침하고 다시 확인합니다.\n2. 계속 실패하면 `wrangler login`을 다시 실행합니다.\n3. 그다음 영역 확인을 다시 시도합니다.',
+  'domain.diagnostic.zone_read_forbidden.title': '영역 목록 조회 권한이 부족합니다',
+  'domain.diagnostic.zone_read_forbidden.body':
+    '현재 Cloudflare 토큰으로는 영역 목록을 읽을 수 없습니다. 기존 영역은 계속 사용할 수 있을 수 있지만 자동 확인과 DNS 보조는 제한됩니다.',
+  'domain.diagnostic.zone_read_forbidden.next':
+    '1. 먼저 다시 확인합니다.\n2. 계속 실패하면 `wrangler login`을 다시 실행합니다.\n3. 토큰에 Zone:Read 권한이 있는지 확인합니다.\n4. 이미 있는 영역이라면 수동으로 계속할 수 있습니다.',
+  'domain.diagnostic.zone_not_found.title': '현재 계정에서 영역을 찾지 못했습니다',
+  'domain.diagnostic.zone_not_found.body':
+    'Cloudflare 응답은 있었지만 "{{zone}}" 영역은 현재 계정에서 보이지 않았습니다.',
+  'domain.diagnostic.zone_not_found.next':
+    '1. 사용 중인 Cloudflare 계정에 해당 영역이 있는지 확인합니다.\n2. 필요하면 계정을 전환하거나 Cloudflare 대시보드를 엽니다.\n3. 그 후 영역을 다시 확인합니다.',
+  'domain.diagnostic.api_error.title': 'Cloudflare API 확인에 실패했습니다',
+  'domain.diagnostic.api_error.body':
+    '이 영역을 확인하는 동안 Cloudflare API가 예상하지 못한 응답을 반환했습니다.',
+  'domain.diagnostic.api_error.next':
+    '먼저 다시 확인하고, 계속 실패하면 이 페이지를 새로고침한 뒤 다시 시도하세요.',
+  'domain.diagnostic.network_error.title': 'Cloudflare 네트워크 확인에 실패했습니다',
+  'domain.diagnostic.network_error.body':
+    'Cloudflare 또는 네트워크 응답이 불안정하여 영역 확인을 완료할 수 없었습니다.',
+  'domain.diagnostic.network_error.next':
+    '먼저 다시 확인하고, 계속 실패하면 이 페이지를 새로고침한 뒤 다시 시도하세요.',
   'domain.issuerUrl': '발급자 URL: {{url}}',
   'domain.apiDomain': 'API / 발급자 도메인 (예: auth.example.com)',
   'domain.loginUiDomain': '로그인 UI 도메인 (건너뛰려면 Enter)',
@@ -186,6 +227,12 @@ const ko: Translations = {
   'domain.enterDomains': '사용자 정의 도메인 입력 (Cloudflare 기본값을 사용하려면 비워두세요)',
   'domain.singleTenantNote': '단일 테넌트 모드에서는 발급자 URL = API 도메인',
   'domain.usingWorkersDev': '(Cloudflare workers.dev 도메인 사용)',
+  'web.form.multiTenantEnable': '멀티 테넌트 모드 활성화',
+  'web.form.multiTenantHint': '사용자 지정 도메인 아래에 테넌트 서브도메인을 생성합니다',
+  'web.form.multiTenantExamples': '테넌트 URL 예시',
+  'web.form.multiTenantExampleDefaultOmitted': '기본 테넌트 이름 생략: {{url}}',
+  'web.form.multiTenantExampleDefaultIncluded': '기본 테넌트 이름 명시: {{url}}',
+  'web.form.multiTenantExampleOther': '기본 이외 테넌트: {{url}}',
 
   // Database
   'db.title': '데이터베이스 구성',
@@ -406,9 +453,9 @@ const ko: Translations = {
   'userId.note': '참고: 이 설정은 사용자 생성 후 변경할 수 없습니다.',
   'userId.selected': '사용자 ID 형식: {{format}}',
 
-  // Optional components
-  'components.title': '선택적 컴포넌트',
-  'components.note': '참고: 소셜 로그인과 정책 엔진은 표준 컴포넌트입니다',
+  // Standard components
+  'components.title': '표준 컴포넌트',
+  'components.note': 'SAML, Device Flow/CIBA, VC, 소셜 로그인, 정책 엔진은 기본으로 설치됩니다',
   'components.samlPrompt': 'SAML 지원을 활성화하시겠습니까?',
   'components.vcPrompt': '검증 가능한 자격 증명(VC)을 활성화하시겠습니까?',
   'components.saml': 'SAML:',
@@ -435,7 +482,7 @@ const ko: Translations = {
   // Sharding settings
   'sharding.configurePrompt': '샤딩을 구성하시겠습니까? (고부하 환경용)',
   'sharding.title': '샤딩 설정',
-  'sharding.note': '참고: 샤드 수는 2의 거듭제곱을 권장합니다 (8, 16, 32, 64, 128)',
+  'sharding.note': '참고: 샤드 수는 2의 거듭제곱을 권장합니다 (4, 8, 16, 32, 64, 128)',
   'sharding.authCodeShards': '인증 코드 샤드 수',
   'sharding.refreshTokenShards': '리프레시 토큰 샤드 수',
 
@@ -701,7 +748,7 @@ const ko: Translations = {
   'web.config.deviceFlow': 'Device Flow / CIBA',
   'web.config.vcSdJwt': 'VC SD-JWT',
   'web.config.loginUi': '로그인 UI',
-  'web.config.loginUiDesc': 'Cloudflare Pages에 배포되는 사전 구축된 인증 UI.',
+  'web.config.loginUiDesc': 'Cloudflare Workers에 배포되는 사전 구축된 인증 UI.',
   'web.config.adminUi': '관리자 UI',
   'web.config.adminUiDesc': '사용자, 클라이언트 및 설정을 위한 관리 대시보드.',
 
@@ -710,9 +757,9 @@ const ko: Translations = {
   'web.url.apiDomain': 'API 도메인',
   'web.url.apiDomainHint': 'workers.dev 서브도메인을 사용하려면 비워두세요',
   'web.url.loginDomain': '로그인 UI 도메인',
-  'web.url.loginDomainHint': 'pages.dev 서브도메인을 사용하려면 비워두세요',
+  'web.url.loginDomainHint': 'workers.dev 서브도메인을 사용하려면 비워두세요',
   'web.url.adminDomain': '관리자 UI 도메인',
-  'web.url.adminDomainHint': 'pages.dev 서브도메인을 사용하려면 비워두세요',
+  'web.url.adminDomainHint': 'workers.dev 서브도메인을 사용하려면 비워두세요',
 
   // Web UI Database
   'web.db.title': '데이터베이스 구성',
@@ -726,6 +773,19 @@ const ko: Translations = {
   'web.db.name': '이름',
   'web.db.region': '지역',
   'web.db.regionAuto': '자동 (가장 가까운 지역)',
+  'web.db.storageProfileTitle': '스토리지 배포 프로필',
+  'web.db.storageProfileDesc': '이 배포에서 사용자 core/PII 데이터를 어떻게 배치할지 선택합니다.',
+  'web.db.sharedD1Title': '공유 D1',
+  'web.db.sharedD1Desc':
+    '배포 전체에서 하나의 core D1과 PII D1을 사용합니다. 설정 비용이 가장 낮은 기본 경로입니다.',
+  'web.db.tenantD1Title': '테넌트 D1',
+  'web.db.tenantD1Desc':
+    '테넌트마다 core/PII D1 쌍을 하나씩 사용합니다. 테넌트 활성화 전에 테넌트 데이터베이스 프로비저닝이 필요합니다.',
+  'web.db.preallocatedSlotsTitle': '사전 할당된 테넌트 슬롯',
+  'web.db.preallocatedSlotsDesc':
+    '각 테넌트 슬롯은 core와 PII 두 개의 D1 데이터베이스를 생성합니다.',
+  'web.db.slotsLabel': '슬롯',
+  'web.db.slotsHelp': '기본값은 3입니다. 최대 500 슬롯입니다.',
 
   // Web UI Email
   'web.email.title': '이메일 제공자',
@@ -871,7 +931,7 @@ const ko: Translations = {
   'web.section.apiDomain': 'API / 발급자 도메인',
   'web.section.uiDomains': 'UI 도메인 (선택 사항)',
   'web.section.uiDomainsHint':
-    '로그인/관리자 UI용 사용자 정의 도메인. 각각 독립적으로 설정할 수 있습니다. Cloudflare Pages 기본값을 사용하려면 비워두세요.',
+    '로그인/관리자 UI용 사용자 정의 도메인. 각각 독립적으로 설정할 수 있습니다. Cloudflare Workers 기본값을 사용하려면 비워두세요.',
   'web.section.corsHint':
     'CORS: 로그인/관리자 UI에서 API로의 교차 출처 요청은 자동으로 허용됩니다.',
   'web.section.configPreview': '구성 미리보기',
@@ -883,6 +943,19 @@ const ko: Translations = {
   'web.preview.issuerUrl': '발급자 URL:',
   'web.preview.loginUi': '로그인 UI:',
   'web.preview.adminUi': '관리자 UI:',
+  'web.preview.pagesUrl': '로그인 UI Origin:',
+  'web.preview.tenantDiscover': '테넌트 선택 (공통 입구):',
+  'web.preview.adminAccess': '관리자 UI 접속:',
+  'web.preview.firstTenant': '{{name}} (기본 테넌트)',
+  'web.preview.otherTenants': '다른 테넌트',
+  'web.preview.allTenantsShared': '(모든 테넌트 공통)',
+  'web.preview.loginUiOriginNote': '(배포 Origin. 테넌트 로그인은 Issuer /login 사용)',
+  'web.preview.viaApiProxy': '(API와 동일 도메인 경유 프록시)',
+  'web.preview.conflictWarningTitle': '⚠️ 구성 문제',
+  'web.preview.conflictWarningMsg':
+    '{{conflictUI}}의 커스텀 도메인이 API와 동일합니다（{{baseDomain}}）. "URL에서 테넌트 제거"가 비활성화되어 있어 {{baseDomain}}으로의 API 요청（/authorize, /api/auth/* 등）이 404를 반환하고 로그인 흐름이 작동하지 않습니다.',
+  'web.preview.conflictActionMsg':
+    '해결 방법: "URL에서 테넌트 제거"를 활성화하고 첫 번째 테넌트（{{tenantName}}）를 기본 테넌트로 설정하세요. 또는 {{conflictUI}}의 도메인을 API와 다른 도메인으로 변경하세요（예: login.{{baseDomain}}）.',
 
   // Web UI Component Labels
   'web.comp.loginUi': '로그인 UI',
@@ -931,8 +1004,17 @@ const ko: Translations = {
     '메일 OTP 및 이메일 주소 인증 발송에 사용됩니다. 원하시면 나중에 구성할 수 있습니다.',
   'web.email.configureLater': '나중에 구성',
   'web.email.configureLaterHint': '지금은 건너뛰고 나중에 구성합니다.',
+  'web.email.configureCloudflare': 'Cloudflare Email Service 구성',
+  'web.email.configureCloudflareHint':
+    'Workers의 기본 Email Service 바인딩을 사용합니다. Workers Paid 플랜과 Cloudflare DNS가 필요합니다.',
   'web.email.configureResend': 'Resend 구성',
   'web.email.configureResendHint': 'Resend로 이메일 발송 설정 (프로덕션 권장).',
+  'web.email.cloudflareSetup': 'Cloudflare Email Service',
+  'web.email.cloudflareRequirements': '요구 사항',
+  'web.email.cloudflareRequirementPaid': 'Workers Paid 플랜이 필요합니다',
+  'web.email.cloudflareRequirementDns': 'Cloudflare DNS / 도메인 온보딩이 필요합니다',
+  'web.email.cloudflareRequirementManual':
+    'Cloudflare 대시보드에서의 도메인 설정은 여전히 수동입니다',
   'web.email.resendSetup': 'Resend 구성',
   'web.email.beforeBegin': '시작하기 전에:',
   'web.email.step1': '다음에서 Resend 계정 생성',
@@ -940,10 +1022,17 @@ const ko: Translations = {
   'web.email.step3': '다음에서 API 키 생성',
   'web.email.resendApiKey': 'Resend API 키',
   'web.email.resendApiKeyHint': 'API 키는 "re_"로 시작합니다',
+  'web.email.resendApiKeyMissing': 'Resend API 키를 입력해 주세요',
+  'web.email.resendApiKeyConfirmInvalid':
+    'API 키가 "re_"로 시작하지 않습니다. 유효한 Resend API 키가 아닐 수 있습니다. 그래도 계속하시겠습니까?',
   'web.email.fromEmailAddress': '발신 이메일 주소',
+  'web.email.cloudflareFromHint': 'Cloudflare Email Service에 온보딩된 도메인의 주소여야 합니다',
   'web.email.fromEmailHint': 'Resend 계정에서 인증된 도메인이어야 합니다',
+  'web.email.fromEmailMissing': '발신 이메일 주소를 입력해 주세요',
+  'web.email.fromEmailInvalid': '유효한 이메일 주소를 입력해 주세요',
   'web.email.fromDisplayName': '발신자 표시 이름 (선택 사항)',
   'web.email.fromDisplayHint': '이메일 클라이언트에서 발신자 이름으로 표시됩니다',
+  'web.email.saveConfigFailed': '이메일 구성 저장에 실패했습니다',
   'web.email.domainVerificationTitle': '도메인 인증 필요',
   'web.email.domainVerificationDesc':
     '도메인이 인증되기 전에는 onboarding@resend.dev (테스트용)에서만 이메일을 보낼 수 있습니다.',
@@ -984,10 +1073,10 @@ const ko: Translations = {
   'web.envDetail.kvNamespaces': 'KV 네임스페이스',
   'web.envDetail.queues': '큐',
   'web.envDetail.r2Buckets': 'R2 버킷',
-  'web.envDetail.pagesProjects': 'Pages 프로젝트',
+  'web.envDetail.pagesProjects': 'Legacy Pages Projects',
 
   // Web UI Worker Update Section
-  'web.envDetail.workerUpdate': 'Workers 업데이트',
+  'web.envDetail.workerUpdate': '모든 Workers 업데이트',
   'web.envDetail.workerName': 'Worker',
   'web.envDetail.deployedVersion': '배포됨',
   'web.envDetail.localVersion': '로컬',
@@ -996,7 +1085,7 @@ const ko: Translations = {
   'web.envDetail.upToDate': '최신',
   'web.envDetail.notDeployed': '미배포',
   'web.envDetail.updateOnlyChanged': '변경된 버전만 업데이트',
-  'web.envDetail.updateAllWorkers': 'Workers 업데이트',
+  'web.envDetail.updateAllWorkers': '모든 Workers 업데이트',
   'web.envDetail.refreshVersions': '새로고침',
   'web.envDetail.updateProgress': '업데이트 진행:',
   'web.envDetail.updatesAvailable': '{{count}}개 업데이트 가능',
@@ -1005,9 +1094,9 @@ const ko: Translations = {
   'web.envDetail.action': '작업',
 
   // Web UI Update Section
-  'web.envDetail.uiUpdate': 'UI 업데이트 (Pages)',
+  'web.envDetail.uiUpdate': 'UI 업데이트 (Workers)',
   'web.envDetail.uiUpdateDesc':
-    'Admin UI 또는 Login UI를 개별적으로 업데이트합니다. 이들은 Cloudflare Pages에 배포됩니다.',
+    'Admin UI 또는 Login UI를 개별적으로 업데이트합니다. 이들은 Cloudflare Workers에 배포됩니다.',
   'web.envDetail.updateNow': '업데이트',
 
   // Web UI Delete Section
@@ -1020,7 +1109,7 @@ const ko: Translations = {
   'web.delete.kvNamespaces': 'KV 네임스페이스',
   'web.delete.queues': '큐',
   'web.delete.r2Buckets': 'R2 버킷',
-  'web.delete.pagesProjects': 'Pages 프로젝트',
+  'web.delete.pagesProjects': 'Legacy Pages Projects',
   'web.delete.cancelBtn': '취소',
   'web.delete.confirmBtn': '선택 항목 삭제',
 

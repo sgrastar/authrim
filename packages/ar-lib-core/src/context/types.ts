@@ -32,6 +32,7 @@
 import type { Context as HonoContext } from 'hono';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { PIIPartitionRouter, PartitionKey } from '../db/partition-router';
+import type { UserCacheScope, UserPiiCacheMode } from '../utils/kv';
 import type {
   UserCoreRepository,
   ClientRepository,
@@ -53,7 +54,7 @@ import type {
 // =============================================================================
 
 /**
- * Core repositories (Non-PII data in D1_CORE)
+ * Core repositories (Non-PII data in the configured core user store)
  */
 export interface CoreRepositories {
   /** User core data (pii_partition, pii_status, password_hash, etc.) */
@@ -79,7 +80,7 @@ export interface CoreRepositories {
 }
 
 /**
- * PII repositories (Personal information in D1_PII)
+ * PII repositories (Personal information in the configured PII user store)
  */
 export interface PIIRepositories {
   /** User PII data (email, name, address, etc.) */
@@ -130,6 +131,12 @@ export interface AuthContext {
 
   /** Original Hono context (for request/env access) */
   honoContext: HonoContext;
+
+  /** Profile-aware user cache key scope for cross-request caches. */
+  userCacheScope?: UserCacheScope;
+
+  /** Runtime PII cache behavior selected by the active storage profile. */
+  piiCacheMode?: UserPiiCacheMode;
 }
 
 /**
@@ -233,8 +240,8 @@ export interface ContextFactoryOptions {
   /** Partition router (required for PIIContext) */
   partitionRouter?: PIIPartitionRouter;
 
-  /** Tenant ID (defaults to 'default') */
-  tenantId?: string;
+  /** Tenant ID for repository scoping. */
+  tenantId: string;
 }
 
 /**

@@ -1,8 +1,8 @@
 /**
- * ConditionEvaluator - Flow Engine 条件評価エンジン
+ * ConditionEvaluator - Flow Engine condition evaluation engine
  *
- * FlowCondition と ConditionGroup を再帰的に評価する。
- * Decision/Switch ノードの分岐判定に使用。
+ * Recursively evaluate FlowCondition and ConditionGroup..
+ * Used for Decision/Switch node branch decisions..
  *
  * @see types.ts - FlowCondition, ConditionGroup, FlowRuntimeContext
  */
@@ -15,50 +15,50 @@ import type {
   ConditionOperator,
 } from './types.js';
 
-// セキュリティ制限
-const MAX_RECURSION_DEPTH = 10; // 再帰深さ制限
-const MAX_REGEX_LENGTH = 100; // 正規表現の最大長
-const REGEX_TIMEOUT_MS = 100; // 正規表現実行タイムアウト（実質的な制限）
-const DANGEROUS_KEYS = ['__proto__', 'constructor', 'prototype']; // Prototype Pollution対策
-const MAX_STRING_LENGTH = 10000; // 文字列操作の最大長（DoS対策）
-const MAX_ARRAY_LENGTH = 1000; // 配列操作の最大長（DoS対策）
+// Security limits
+const MAX_RECURSION_DEPTH = 10; // Recursion depth limit
+const MAX_REGEX_LENGTH = 100; // Maximum regular expression length
+const REGEX_TIMEOUT_MS = 100; // Regular expression execution timeout (effective limit)
+const DANGEROUS_KEYS = ['__proto__', 'constructor', 'prototype']; // Prototype pollution mitigation
+const MAX_STRING_LENGTH = 10000; // Maximum string operation length (DoS mitigation)
+const MAX_ARRAY_LENGTH = 1000; // Maximum array operation length (DoS mitigation)
 
 /**
- * 条件評価のメインエントリーポイント
- * FlowCondition または ConditionGroup を評価して真偽値を返す
+ * Main entry point for condition evaluation
+ * Evaluate FlowCondition or ConditionGroup and return a boolean
  *
- * @param condition - 評価する条件
- * @param context - ランタイムコンテキスト
- * @param depth - 再帰深さ（内部使用）
- * @returns 評価結果（true: 条件を満たす, false: 条件を満たさない）
+ * @param condition - condition to evaluate
+ * @param context - runtime context
+ * @param depth - recursion depth (internal use)
+ * @returns evaluation result (true: condition satisfied, false: condition not satisfied)
  */
 export function evaluate(
   condition: FlowCondition | ConditionGroup,
   context: FlowRuntimeContext,
   depth = 0
 ): boolean {
-  // 再帰深さチェック（無限ループ/スタックオーバーフロー対策）
+  // Recursion depth check (infinite loop / stack overflow mitigation)
   if (depth > MAX_RECURSION_DEPTH) {
     console.error(`[Security] Maximum condition nesting depth (${MAX_RECURSION_DEPTH}) exceeded`);
     return false;
   }
 
-  // ConditionGroup かどうかを判定
+  // Determine whether it is a ConditionGroup
   if ('logic' in condition) {
     return evaluateGroup(condition, context, depth);
   }
 
-  // 単一条件の評価
+  // Evaluate a single condition
   return evaluateSingle(condition, context);
 }
 
 /**
- * ConditionGroup の評価（AND/OR ロジック）
+ * Evaluate ConditionGroup (AND/OR logic)
  *
- * @param group - 条件グループ
- * @param context - ランタイムコンテキスト
- * @param depth - 再帰深さ
- * @returns 評価結果
+ * @param group - Condition group
+ * @param context - runtime context
+ * @param depth - recursion depth
+ * @returns evaluation result
  */
 export function evaluateGroup(
   group: ConditionGroup,
@@ -66,27 +66,27 @@ export function evaluateGroup(
   depth: number
 ): boolean {
   if (group.conditions.length === 0) {
-    // セキュリティ対策（High 7）: 空の条件グループは false （Fail-safe）
-    // 空の条件を「すべて満たす」とみなすのは危険なため、false を返す
+    // Security mitigation (High 7): Empty condition groups return false  (fail-safe)
+    // Return false because treating empty conditions as "all satisfied" is dangerous
     console.warn('[Security] Empty condition group evaluated to false (fail-safe)');
     return false;
   }
 
   if (group.logic === 'and') {
-    // AND: すべての条件が true である必要がある
+    // AND: All conditions must be true
     return group.conditions.every((cond) => evaluate(cond, context, depth + 1));
   } else {
-    // OR: いずれかの条件が true であればよい
+    // OR: Any condition may be true
     return group.conditions.some((cond) => evaluate(cond, context, depth + 1));
   }
 }
 
 /**
- * 単一条件の評価
+ * Evaluate a single condition
  *
- * @param condition - 単一条件
- * @param context - ランタイムコンテキスト
- * @returns 評価結果
+ * @param condition - Single condition
+ * @param context - runtime context
+ * @returns evaluation result
  */
 export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeContext): boolean {
   const actualValue = getValueByKey(condition.key, context);
@@ -101,7 +101,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'contains':
       if (typeof actualValue === 'string' && typeof expectedValue === 'string') {
-        // DoS対策: 文字列サイズ制限
+        // DoS mitigation: string size limit
         if (actualValue.length > MAX_STRING_LENGTH) {
           console.warn(
             `[Security] String too long for contains operation: ${actualValue.length} > ${MAX_STRING_LENGTH}`
@@ -111,7 +111,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
         return actualValue.includes(expectedValue);
       }
       if (Array.isArray(actualValue)) {
-        // DoS対策: 配列サイズ制限
+        // DoS mitigation: array size limit
         if (actualValue.length > MAX_ARRAY_LENGTH) {
           console.warn(
             `[Security] Array too long for contains operation: ${actualValue.length} > ${MAX_ARRAY_LENGTH}`
@@ -124,7 +124,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'notContains':
       if (typeof actualValue === 'string' && typeof expectedValue === 'string') {
-        // DoS対策: 文字列サイズ制限
+        // DoS mitigation: string size limit
         if (actualValue.length > MAX_STRING_LENGTH) {
           console.warn(
             `[Security] String too long for notContains operation: ${actualValue.length} > ${MAX_STRING_LENGTH}`
@@ -134,7 +134,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
         return !actualValue.includes(expectedValue);
       }
       if (Array.isArray(actualValue)) {
-        // DoS対策: 配列サイズ制限
+        // DoS mitigation: array size limit
         if (actualValue.length > MAX_ARRAY_LENGTH) {
           console.warn(
             `[Security] Array too long for notContains operation: ${actualValue.length} > ${MAX_ARRAY_LENGTH}`
@@ -143,11 +143,11 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
         }
         return !actualValue.includes(expectedValue);
       }
-      return true;
+      return false;
 
     case 'startsWith':
       if (typeof actualValue === 'string' && typeof expectedValue === 'string') {
-        // DoS対策: 文字列サイズ制限
+        // DoS mitigation: string size limit
         if (actualValue.length > MAX_STRING_LENGTH) {
           console.warn(
             `[Security] String too long for startsWith operation: ${actualValue.length} > ${MAX_STRING_LENGTH}`
@@ -160,7 +160,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'endsWith':
       if (typeof actualValue === 'string' && typeof expectedValue === 'string') {
-        // DoS対策: 文字列サイズ制限
+        // DoS mitigation: string size limit
         if (actualValue.length > MAX_STRING_LENGTH) {
           console.warn(
             `[Security] String too long for endsWith operation: ${actualValue.length} > ${MAX_STRING_LENGTH}`
@@ -173,7 +173,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'greaterThan':
       if (typeof actualValue === 'number' && typeof expectedValue === 'number') {
-        // NaN/Infinity対策
+        // NaN/Infinity mitigation
         if (!Number.isFinite(actualValue) || !Number.isFinite(expectedValue)) {
           console.warn(
             `[Security] Non-finite number in greaterThan: actual=${actualValue}, expected=${expectedValue}`
@@ -186,7 +186,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'lessThan':
       if (typeof actualValue === 'number' && typeof expectedValue === 'number') {
-        // NaN/Infinity対策
+        // NaN/Infinity mitigation
         if (!Number.isFinite(actualValue) || !Number.isFinite(expectedValue)) {
           console.warn(
             `[Security] Non-finite number in lessThan: actual=${actualValue}, expected=${expectedValue}`
@@ -199,7 +199,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'greaterOrEqual':
       if (typeof actualValue === 'number' && typeof expectedValue === 'number') {
-        // NaN/Infinity対策
+        // NaN/Infinity mitigation
         if (!Number.isFinite(actualValue) || !Number.isFinite(expectedValue)) {
           console.warn(
             `[Security] Non-finite number in greaterOrEqual: actual=${actualValue}, expected=${expectedValue}`
@@ -212,7 +212,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'lessOrEqual':
       if (typeof actualValue === 'number' && typeof expectedValue === 'number') {
-        // NaN/Infinity対策
+        // NaN/Infinity mitigation
         if (!Number.isFinite(actualValue) || !Number.isFinite(expectedValue)) {
           console.warn(
             `[Security] Non-finite number in lessOrEqual: actual=${actualValue}, expected=${expectedValue}`
@@ -225,7 +225,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
     case 'in':
       if (Array.isArray(expectedValue)) {
-        // DoS対策: 配列サイズ制限
+        // DoS mitigation: array size limit
         if (expectedValue.length > MAX_ARRAY_LENGTH) {
           console.warn(
             `[Security] Array too long for 'in' operation: ${expectedValue.length} > ${MAX_ARRAY_LENGTH}`
@@ -234,13 +234,13 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
         }
         return expectedValue.includes(actualValue);
       }
-      // セキュリティ対策（Medium 11）: 配列型安全性チェック
+      // Security mitigation (Medium 11): Array type-safety check
       console.warn(`[Security] 'in' operator expects array, got ${typeof expectedValue}`);
       return false;
 
     case 'notIn':
       if (Array.isArray(expectedValue)) {
-        // DoS対策: 配列サイズ制限
+        // DoS mitigation: array size limit
         if (expectedValue.length > MAX_ARRAY_LENGTH) {
           console.warn(
             `[Security] Array too long for 'notIn' operation: ${expectedValue.length} > ${MAX_ARRAY_LENGTH}`
@@ -249,9 +249,9 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
         }
         return !expectedValue.includes(actualValue);
       }
-      // セキュリティ対策（Medium 11）: 配列型安全性チェック
+      // Security mitigation (Medium 11): Array type-safety check
       console.warn(`[Security] 'notIn' operator expects array, got ${typeof expectedValue}`);
-      return true;
+      return false;
 
     case 'exists':
       return actualValue !== null && actualValue !== undefined;
@@ -262,9 +262,9 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
     case 'matches':
       if (typeof actualValue === 'string' && typeof expectedValue === 'string') {
         try {
-          // ReDoS（正規表現DoS攻撃）対策
+          // ReDoS (regular expression DoS attack) mitigation
 
-          // 1. 正規表現の長さ制限
+          // 1. Regular expression length limit
           if (expectedValue.length > MAX_REGEX_LENGTH) {
             console.warn(
               `[Security] Regex pattern too long (${expectedValue.length} > ${MAX_REGEX_LENGTH}), rejecting`
@@ -272,27 +272,27 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
             return false;
           }
 
-          // 2. 危険なパターンの包括的検出
+          // 2. Comprehensive dangerous pattern detection
           const REDOS_PATTERNS = [
-            // ネストされた量指定子: (a+)+, (a*)+, (.{1,10})+
-            // グループ内に量指定子があり、その後にさらに量指定子が続くパターン
+            // Nested quantifiers: (a+)+, (a*)+, (.{1,10})+
+            // Pattern with a quantifier inside a group followed by another quantifier
             /\([^)]*[\*\+\{][^)]*\)[\*\+\{]/,
-            // バックトラッキング: (.*)*, (.+)+
+            // Backtracking: (.*)*, (.+)+
             /\(\.\*[\*\+]\)/,
             /\(\.\+[\*\+]\)/,
-            // 選択肢付き量指定子: (a|a)*, (a|ab)*
+            // Quantifier with alternatives: (a|a)*, (a|ab)*
             /\([^)]*\|[^)]*\)[\*\+]/,
-            // 重複する選択肢: (x+x+)+
+            // Overlapping alternatives: (x+x+)+
             /\([^)]*\+[^)]*\+[^)]*\)\+/,
-            // バックリファレンス付き量指定子: (a+)\1+
+            // Quantifier with backreference: (a+)\1+
             /\([^)]+\)\\[0-9][\*\+]/,
-            // Lookahead/Lookbehindの乱用: (?=...)*, (?<=...)+
+            // Lookahead/lookbehind abuse: (?=...)*, (?<=...)+
             /\(\?[=!<].*?\)[\*\+]/,
-            // Possessive quantifiers（一部JSエンジンで対応）: .++, .*+
+            // Possessive quantifiers (supported by some JS engines): .++, .*+
             /\.\*\+|\.\+\+/,
-            // Character classの過剰な繰り返し: [a-z]{100,1000}
+            // Excessive character class repetition: [a-z]{100,1000}
             /\[[^\]]+\]\{[0-9]{3,}(,[0-9]*)?\}/,
-            // 長い選択肢の連鎖: (aa|aaa|aaaa|...)*
+            // Long chain of alternatives: (aa|aaa|aaaa|...)*
             /\([^)]{20,}\|[^)]{20,}\)[\*\+]/,
           ];
 
@@ -305,13 +305,13 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
             }
           }
 
-          // 4. 正規表現のコンパイルと実行
+          // 4. Compile and execute the regular expression
           const startTime = Date.now();
           const regex = new RegExp(expectedValue);
           const result = regex.test(actualValue);
           const elapsed = Date.now() - startTime;
 
-          // 5. 実行時間の監視（パフォーマンス問題の検出）
+          // 5. Monitor execution time (detect performance issues)
           if (elapsed > REGEX_TIMEOUT_MS) {
             console.warn(
               `[Security] Slow regex execution detected: ${elapsed}ms (pattern: ${expectedValue.substring(0, 50)}...)`
@@ -320,8 +320,8 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 
           return result;
         } catch (error) {
-          // 不正な正規表現の場合は false
-          // セキュリティ対策（High 9）: error オブジェクトをそのまま出力せず、メッセージのみ
+          // Return false for invalid regular expressions
+          // Security mitigation (High 9): Log only the message instead of the raw error object
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
           console.error(`[Security] Invalid regex pattern: ${errorMsg}`);
           return false;
@@ -336,7 +336,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
       return actualValue === false;
 
     default: {
-      // 未知のオペレーターは false を返す
+      // Unknown operators return false
       const _exhaustiveCheck: never = operator;
       console.warn(`Unknown operator: ${_exhaustiveCheck}`);
       return false;
@@ -345,15 +345,15 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 }
 
 /**
- * ドット記法でネストされたオブジェクトから値を取得
+ * Get a value from a nested object using dot notation
  *
- * Prototype Pollution 対策:
- * - __proto__, constructor, prototype などの危険なキーを拒否
- * - hasOwnProperty でプロトタイプチェーンを遡らない
+ * Prototype Pollution mitigation:
+ * - __proto__, constructor, prototype and other dangerous keys
+ * - Use hasOwnProperty to avoid walking the prototype chain
  *
- * @param key - 条件キー（例: "user.email", "request.country"）
- * @param context - ランタイムコンテキスト
- * @returns 取得した値（存在しない場合は undefined）
+ * @param key - Condition key (example: "user.email", "request.country")
+ * @param context - runtime context
+ * @returns Retrieved value, or undefined when it does not exist
  *
  * @example
  * getValueByKey('user.email', { user: { email: 'test@example.com' } })
@@ -365,7 +365,7 @@ export function evaluateSingle(condition: FlowCondition, context: FlowRuntimeCon
 export function getValueByKey(key: ConditionKey | string, context: FlowRuntimeContext): unknown {
   const parts = key.split('.');
 
-  // Prototype Pollution 対策: 危険なキーのチェック
+  // Prototype Pollution mitigation: Check dangerous keys
   for (const part of parts) {
     if (DANGEROUS_KEYS.includes(part)) {
       console.error(
@@ -375,7 +375,7 @@ export function getValueByKey(key: ConditionKey | string, context: FlowRuntimeCo
     }
   }
 
-  // contextから値を辿る
+  // Traverse values from context
   let current: unknown = context;
 
   for (const part of parts) {
@@ -387,7 +387,7 @@ export function getValueByKey(key: ConditionKey | string, context: FlowRuntimeCo
       return undefined;
     }
 
-    // hasOwnProperty を使用してプロトタイプチェーンを遡らない
+    // Use hasOwnProperty to avoid walking the prototype chain
     if (!Object.prototype.hasOwnProperty.call(current, part)) {
       return undefined;
     }
@@ -399,7 +399,7 @@ export function getValueByKey(key: ConditionKey | string, context: FlowRuntimeCo
 }
 
 /**
- * ConditionEvaluator ユーティリティ関数群のエクスポート
+ * ConditionEvaluator utility function exports
  */
 export const ConditionEvaluator = {
   evaluate,

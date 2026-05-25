@@ -13,7 +13,10 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getClient,
+  createAuthContextFromHono,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * GET /api/ciba/pending
@@ -43,6 +46,16 @@ import {
  */
 export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    'X-Authrim-Tenant-Id': tenantId,
+  };
   try {
     // User identification for CIBA pending requests
     //
@@ -75,7 +88,9 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get CIBA request metadata from CIBARequestStore
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
+    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
+      buildDOInstanceName('ciba', tenantId)
+    );
     const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
 
     // Use login_hint if provided, otherwise fall back to user_id
@@ -84,7 +99,7 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
       getResponse = await cibaRequestStore.fetch(
         new Request('https://internal/get-by-login-hint', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalHeaders,
           body: JSON.stringify({ login_hint: loginHint }),
         })
       );
@@ -94,7 +109,7 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
       getResponse = await cibaRequestStore.fetch(
         new Request('https://internal/get-by-login-hint', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalHeaders,
           body: JSON.stringify({ login_hint: `sub:${userId}` }),
         })
       );
@@ -121,7 +136,12 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Enrich with client metadata from KV cache (with D1 fallback)
-    const client = await getClient(c.env, metadata.client_id);
+    const client = await getClient(
+      c.env,
+      tenantId,
+      metadata.client_id,
+      createAuthContextFromHono(c, tenantId).coreAdapter
+    );
 
     const request = {
       auth_req_id: metadata.auth_req_id,

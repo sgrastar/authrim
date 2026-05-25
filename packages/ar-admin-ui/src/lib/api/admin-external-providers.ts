@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin External IdP Providers API Client
  *
@@ -33,6 +34,7 @@ export interface ExternalIdPProvider {
 	alwaysFetchUserinfo?: boolean;
 	enableSso?: boolean;
 	iconUrl?: string;
+	iconName?: string;
 	buttonColor?: string;
 	buttonColorDark?: string;
 	buttonText?: string;
@@ -142,7 +144,8 @@ export interface CreateProviderRequest {
 	jit_provisioning?: boolean;
 	require_email_verified?: boolean;
 	always_fetch_userinfo?: boolean;
-	icon_url?: string;
+	icon_url?: string | null;
+	icon_name?: string | null;
 	button_color?: string;
 	button_color_dark?: string;
 	button_text?: string;
@@ -189,7 +192,8 @@ export interface UpdateProviderRequest {
 	require_email_verified?: boolean;
 	always_fetch_userinfo?: boolean;
 	enable_sso?: boolean;
-	icon_url?: string;
+	icon_url?: string | null;
+	icon_name?: string | null;
 	button_color?: string;
 	button_color_dark?: string;
 	button_text?: string;
@@ -209,7 +213,7 @@ export const adminExternalProvidersAPI = {
 		if (params.tenant_id) searchParams.set('tenant_id', params.tenant_id);
 		const query = searchParams.toString();
 
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/external-providers${query ? '?' + query : ''}`,
 			{ credentials: 'include' }
 		);
@@ -224,7 +228,7 @@ export const adminExternalProvidersAPI = {
 	 * Get a single provider by ID
 	 */
 	async get(providerId: string): Promise<ExternalIdPProvider> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/external-providers/${encodeURIComponent(providerId)}`,
 			{ credentials: 'include' }
 		);
@@ -239,7 +243,7 @@ export const adminExternalProvidersAPI = {
 	 * Create a new external IdP provider
 	 */
 	async create(data: CreateProviderRequest): Promise<ExternalIdPProvider> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/external-providers`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/external-providers`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -256,7 +260,7 @@ export const adminExternalProvidersAPI = {
 	 * Update an existing provider
 	 */
 	async update(providerId: string, data: UpdateProviderRequest): Promise<ExternalIdPProvider> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/external-providers/${encodeURIComponent(providerId)}`,
 			{
 				method: 'PUT',
@@ -276,7 +280,7 @@ export const adminExternalProvidersAPI = {
 	 * Delete a provider
 	 */
 	async delete(providerId: string): Promise<{ success: boolean }> {
-		const response = await fetch(
+		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/external-providers/${encodeURIComponent(providerId)}`,
 			{
 				method: 'DELETE',
@@ -298,12 +302,15 @@ export const adminExternalProvidersAPI = {
 	 * @returns OpenID Configuration object
 	 */
 	async discoverOidcConfig(url: string): Promise<OidcDiscoveryResponse> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/external-providers/discover-oidc`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
-			body: JSON.stringify({ url })
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/external-providers/discover-oidc`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify({ url })
+			}
+		);
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error || error.message || 'Failed to discover OIDC configuration');

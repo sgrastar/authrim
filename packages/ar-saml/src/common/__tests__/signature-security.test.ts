@@ -197,6 +197,27 @@ describe('XML Signature Security - SAML 2.0 Core Section 5', () => {
       ).toThrow();
     });
 
+    it('should reject SHA-1 digest algorithm before cryptographic verification', () => {
+      const sha1DigestXml = `<?xml version="1.0"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_test">
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="#_test">
+        <ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>
+        <ds:DigestValue>fake</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>fake</ds:SignatureValue>
+  </ds:Signature>
+</samlp:Response>`;
+
+      expect(() =>
+        verifyXmlSignature(sha1DigestXml, { certificateOrKey: testCertificate })
+      ).toThrow('SHA-1 digest algorithm is not allowed');
+    });
+
     it('should accept RSA-SHA256 signature algorithm', async () => {
       const xml = createTestSAMLResponse();
       const signedXml = signXml(xml, {
@@ -444,6 +465,18 @@ describe('XML Signature Security - SAML 2.0 Core Section 5', () => {
 });
 
 describe('Signature Creation', () => {
+  it('should reject unsafe fragment reference IDs before building XPath', () => {
+    const xml = createTestSAMLResponse('_new_response');
+
+    expect(() =>
+      signXml(xml, {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: "#_new_response' or @ID='_other",
+      })
+    ).toThrow('Invalid XML signature reference URI');
+  });
+
   it('should create valid signature with all required elements', async () => {
     const xml = createTestSAMLResponse('_new_response');
     const signedXml = signXml(xml, {
@@ -539,6 +572,30 @@ describe('XSW Attack Protection - Enhanced', () => {
       ).toThrow(/XSW Protection: Reference URI/);
     });
 
+    it('should reject empty Reference URI when expectedId is required', () => {
+      const emptyUriXml = `<?xml version="1.0"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_test">
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="">
+        <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        <ds:DigestValue>fake</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>fake</ds:SignatureValue>
+  </ds:Signature>
+</samlp:Response>`;
+
+      expect(() =>
+        verifyXmlSignature(emptyUriXml, {
+          certificateOrKey: testCertificate,
+          expectedId: '_test',
+        })
+      ).toThrow('XSW Protection: Reference URI does not match expected "#_test"');
+    });
+
     it('should reject when expectedId element does not exist', () => {
       const xml = createTestSAMLResponse('_existing_id');
       const signedXml = signXml(xml, {
@@ -561,7 +618,7 @@ describe('XSW Attack Protection - Enhanced', () => {
   });
 
   describe('strictXswProtection Mode', () => {
-    it('should require expectedId in strict mode', () => {
+    it('should validate the signed Reference URI in strict mode without expectedId', () => {
       const xml = createTestSAMLResponse('_strict_test');
       const signedXml = signXml(xml, {
         privateKey: testPrivateKey,
@@ -569,13 +626,84 @@ describe('XSW Attack Protection - Enhanced', () => {
         referenceUri: '#_strict_test',
       });
 
+      const isValid = verifyXmlSignature(signedXml, {
+        certificateOrKey: testCertificate,
+        strictXswProtection: true,
+      });
+      expect(isValid).toBe(true);
+    });
+
+    it('should validate Response and Assertion signatures in strict mode without expectedId', () => {
+      const xml = createTestSAMLResponse('_strict_response');
+      const assertionSignedXml = signXml(xml, {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: '#_assertion_456',
+      });
+      const responseAndAssertionSignedXml = signXml(assertionSignedXml, {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: '#_strict_response',
+      });
+
+      const isValid = verifyXmlSignature(responseAndAssertionSignedXml, {
+        certificateOrKey: testCertificate,
+        strictXswProtection: true,
+      });
+      expect(isValid).toBe(true);
+    });
+
+    it('should reject empty Reference URI in strict mode', () => {
+      const emptyUriXml = `<?xml version="1.0"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_test">
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="">
+        <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        <ds:DigestValue>fake</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>fake</ds:SignatureValue>
+  </ds:Signature>
+</samlp:Response>`;
+
       expect(() =>
-        verifyXmlSignature(signedXml, {
+        verifyXmlSignature(emptyUriXml, {
           certificateOrKey: testCertificate,
           strictXswProtection: true,
-          // Missing expectedId
         })
-      ).toThrow('XSW Protection: expectedId is required in strict mode');
+      ).toThrow('XSW Protection: Reference URI is required in strict mode');
+    });
+
+    it('should reject multiple References in a strict-mode signature', () => {
+      const multipleReferencesXml = `<?xml version="1.0"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_response">
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_assertion"/>
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="#_response">
+        <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        <ds:DigestValue>fake</ds:DigestValue>
+      </ds:Reference>
+      <ds:Reference URI="#_assertion">
+        <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        <ds:DigestValue>fake</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>fake</ds:SignatureValue>
+  </ds:Signature>
+</samlp:Response>`;
+
+      expect(() =>
+        verifyXmlSignature(multipleReferencesXml, {
+          certificateOrKey: testCertificate,
+          strictXswProtection: true,
+        })
+      ).toThrow('XSW Protection: Signature must contain exactly one Reference in strict mode');
     });
 
     it('should pass strict mode with valid expectedId', () => {

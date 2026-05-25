@@ -10,12 +10,12 @@ import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  D1Adapter,
   type DatabaseAdapter,
   getSessionStoreForNewSession,
   getUIConfig,
   buildIssuerUrl,
   shouldUseBuiltinForms,
+  getDefaultTenantId,
   getTenantIdFromContext,
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
@@ -31,11 +31,13 @@ import {
   // Logger
   getLogger,
   createLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
   // Audit Log
   createAuditLog,
   // Errors
   AR_ERROR_CODES,
   createErrorResponse,
+  safeFetchJson,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
@@ -71,11 +73,11 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
   user: string | undefined; // Apple-specific: user data JSON
 }> {
   // Try GET parameters first (standard OAuth)
+  const tenantId = getTenantIdFromContext(c);
   let code = c.req.query('code');
   let state = c.req.query('state');
   let error = c.req.query('error');
   let errorDescription = c.req.query('error_description');
-  let tenantId = c.req.query('tenant_id') || 'default';
   let user = c.req.query('user');
 
   // If POST request (Apple form_post), try to get from body
@@ -104,15 +106,17 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
  */
 async function generateAuthCode(
   env: Env,
+  tenantId: string,
   userId: string,
   codeChallenge: string,
   metadata?: Record<string, unknown>
 ): Promise<string> {
   const authCode = crypto.randomUUID();
-  const challengeStore = await getChallengeStoreByChallengeId(env, authCode);
+  const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
 
   await challengeStore.storeChallengeRpc({
     id: `direct_auth:${authCode}`,
+    tenantId,
     type: 'direct_auth_code',
     userId,
     challenge: codeChallenge, // Store code_challenge for verification
@@ -502,13 +506,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       );
     }
 
-    // 11. SSO判定: デフォルトはSSO有効（ハンドオフフロー）
-    const enableSso = authState.enableSso !== false; // デフォルト: true
+    // 11. SSO decision: SSO is enabled by default (handoff flow)
+    const enableSso = authState.enableSso !== false; // Default: true
 
     if (enableSso) {
-      // SSO有効: ハンドオフフロー
+      // SSO enabled: handoff flow
 
-      // 11a. ユーザー検証（セッション作成前に実施）
+      // 11a. User verification (performed before session creation)
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       const userCore = await authCtx.repositories.userCore.findById(result.userId);
@@ -517,20 +521,26 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
       }
 
-      // 11b. セッション作成（SSOセッション）
-      const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
+      // 11b. Create session (SSO session)
+      const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
       const sessionTTL = 24 * 60 * 60; // 24 hours
 
-      await sessionStore.createSessionRpc(sessionId, result.userId, sessionTTL, {
-        email: userInfo.email || null,
-        name: userInfo.name || null,
-        amr: ['external_idp'],
-        acr: 'urn:mace:incommon:iap:bronze',
-        client_id: clientId,
-        external_idp: provider.id,
-      });
+      await sessionStore.createSessionRpc(
+        sessionId,
+        result.userId,
+        sessionTTL,
+        {
+          email: userInfo.email || null,
+          name: userInfo.name || null,
+          amr: ['external_idp'],
+          acr: 'urn:mace:incommon:iap:bronze',
+          client_id: clientId,
+          external_idp: provider.id,
+        },
+        tenantId
+      );
 
-      // セッションCookie設定
+      // Set session cookie
       const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
       const isSecure = issuerUrl.startsWith('https://');
 
@@ -542,25 +552,26 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         maxAge: sessionTTL,
       });
 
-      // 11c. ハンドオフトークン生成
+      // 11c. handoff tokengenerate
       const handoffToken = crypto.randomUUID();
-      const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken);
+      const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken, tenantId);
 
       await handoffStore.storeChallengeRpc({
         id: `handoff:${handoffToken}`,
+        tenantId,
         type: 'handoff',
         userId: result.userId,
-        challenge: sessionId, // sessionIdを格納
-        ttl: 30, // 30秒（リダイレクト+JS実行で十分）
+        challenge: sessionId, // Store sessionId
+        ttl: 30, // 30 seconds (enough for redirect + JS execution)
         metadata: {
           client_id: clientId,
           state: authState.state,
-          aud: 'handoff', // トークン再利用事故防止
+          aud: 'handoff', // prevent accidental token reuse
           created_at: Date.now(),
         },
       });
 
-      // 11d. RPへリダイレクト（ハンドオフトークン付き + Referrer対策）
+      // 11d. Redirect to the RP (with handoff token + Referrer mitigation)
       const redirectUrl = new URL(authState.redirectUri);
       redirectUrl.searchParams.set('handoff_token', handoffToken);
       redirectUrl.searchParams.set('state', authState.state);
@@ -569,13 +580,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         status: 302,
         headers: {
           Location: redirectUrl.toString(),
-          'Referrer-Policy': 'no-referrer', // ブラウザ履歴・リファラ漏洩対策
-          'Cache-Control': 'no-store', // キャッシュ防止
+          'Referrer-Policy': 'no-referrer', // Mitigate browser-history and referrer leakage
+          'Cache-Control': 'no-store', // Prevent caching
         },
       });
     } else {
-      // SSO無効: 従来のDirect Auth フロー（authCodeを返す）
-      const authCode = await generateAuthCode(c.env, result.userId, codeChallenge, {
+      // SSO disabled: legacy Direct Auth flow (returns authCode)
+      const authCode = await generateAuthCode(c.env, tenantId, result.userId, codeChallenge, {
         method: 'external_idp',
         provider: provider.id,
         provider_id: provider.id,
@@ -638,8 +649,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         );
       }
 
-      // Log for debugging but return a generic message
-      log.error('Unexpected error in callback', { stack: error.stack });
+      log.error('Unexpected error in callback', {});
       return redirectWithError(
         c,
         ExternalIdPErrorCode.CALLBACK_FAILED,
@@ -690,7 +700,7 @@ async function redirectWithError(
     redirectUrl.searchParams.set('error_description', description);
   }
   // Add tenant_hint for UI branding (UX only)
-  if (tenantId && tenantId !== 'default') {
+  if (tenantId && tenantId !== getDefaultTenantId(c.env)) {
     redirectUrl.searchParams.set('tenant_hint', tenantId);
   }
 
@@ -702,6 +712,7 @@ async function redirectWithError(
  */
 interface CreateSessionOptions {
   userId: string;
+  tenantId: string;
   /** External provider ID used for authentication */
   externalProviderId: string;
   /** Subject ID from the external provider (for backchannel logout) */
@@ -716,7 +727,10 @@ interface CreateSessionOptions {
  */
 async function createSession(env: Env, options: CreateSessionOptions): Promise<string> {
   try {
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
+      env,
+      options.tenantId
+    );
     const now = Date.now();
     const ttl = 3600; // 1 hour in seconds
     const expiresAt = now + ttl * 1000;
@@ -748,10 +762,15 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
     // 2. Also record in D1 for backchannel logout queries
     // This allows us to find sessions by (provider_id, provider_sub)
     try {
-      const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+      const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'bridge-callback-session-record',
+        { tenantId: options.tenantId }
+      );
       await coreAdapter.execute(
-        `INSERT INTO sessions (id, user_id, expires_at, created_at, external_provider_id, external_provider_sub)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sessions (
+           id, user_id, expires_at, created_at, external_provider_id, external_provider_sub, tenant_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           sessionId,
           options.userId,
@@ -759,6 +778,7 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
           now,
           options.externalProviderId,
           options.externalProviderSub,
+          options.tenantId,
         ]
       );
     } catch (dbError) {
@@ -950,22 +970,15 @@ async function fetchGitHubPrimaryEmail(
   allowUnverified: boolean = false
 ): Promise<{ email: string; verified: boolean } | null> {
   try {
-    const response = await fetch(GITHUB_USER_EMAILS_ENDPOINT, {
+    const emails = await safeFetchJson<GitHubEmail[]>(GITHUB_USER_EMAILS_ENDPOINT, {
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
-
-    if (!response.ok) {
-      // Security: Only log HTTP status code (safe), not response body (may contain user data)
-      const log = createLogger().module('CALLBACK');
-      log.warn('GitHub /user/emails failed', { status: response.status });
-      return null;
-    }
-
-    const emails: GitHubEmail[] = await response.json();
 
     // Find primary email
     const primaryEmail = emails.find((e) => e.primary);
@@ -1044,15 +1057,10 @@ async function fetchFacebookUserInfo(
       url.searchParams.set('appsecret_proof', proof);
     }
 
-    const response = await fetch(url.toString());
-
-    if (!response.ok) {
-      const log = createLogger().module('CALLBACK');
-      log.warn('Facebook /me failed', { status: response.status });
-      return null;
-    }
-
-    const data: Record<string, unknown> = await response.json();
+    const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
+    });
     return data;
   } catch (error) {
     const log = createLogger().module('CALLBACK');
@@ -1108,19 +1116,13 @@ async function fetchTwitterUserInfo(
       url.searchParams.set('expansions', quirks.expansions);
     }
 
-    const response = await fetch(url.toString(), {
+    const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {
+      timeoutMs: 5000,
+      maxResponseSize: 64 * 1024,
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
     });
-
-    if (!response.ok) {
-      const log = createLogger().module('CALLBACK');
-      log.warn('Twitter /users/me failed', { status: response.status });
-      return null;
-    }
-
-    const data: Record<string, unknown> = await response.json();
     return data;
   } catch (error) {
     const log = createLogger().module('CALLBACK');

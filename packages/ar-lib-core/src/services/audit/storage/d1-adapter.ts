@@ -5,7 +5,7 @@
  * Used for hot data storage with fast query access.
  *
  * Features:
- * - Idempotent writes using ON CONFLICT DO NOTHING
+ * - Idempotent writes using insert-if-not-exists
  * - Batch operations for efficiency
  * - Index-optimized queries
  */
@@ -85,8 +85,11 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           error_code, error_message, anonymized_user_id, client_id,
           session_id, request_id, duration_ms, details_r2_key, details_json,
           retention_until, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO NOTHING
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM event_log WHERE id = ?
+        )
       `);
 
       const batch = entries.map((e) =>
@@ -107,7 +110,8 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           e.detailsR2Key ?? null,
           e.detailsJson ?? null,
           e.retentionUntil ?? null,
-          e.createdAt
+          e.createdAt,
+          e.id
         )
       );
 
@@ -157,8 +161,11 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
           actor_user_id, actor_type, request_id, legal_basis, consent_reference,
           retention_until, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO NOTHING
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pii_log WHERE id = ?
+        )
       `);
 
       const batch = entries.map((e) =>
@@ -179,7 +186,8 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           e.legalBasis ?? null,
           e.consentReference ?? null,
           e.retentionUntil,
-          e.createdAt
+          e.createdAt,
+          e.id
         )
       );
 
@@ -574,7 +582,175 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
   // Maintenance Operations
   // ---------------------------------------------------------------------------
 
-  async deleteByRetention(
+  async listTenantRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listTenantRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listTenantRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('Audit retention candidate listing requires tenantId');
+    }
+    return this.listRetentionCandidatesInternal(logType, beforeTime, normalizedTenantId, batchSize);
+  }
+
+  async listGlobalRetentionCandidates(
+    logType: 'event',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  async listGlobalRetentionCandidates(
+    logType: 'pii',
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  async listGlobalRetentionCandidates(
+    logType: AuditLogType,
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    return this.listRetentionCandidatesInternal(logType, beforeTime, undefined, batchSize);
+  }
+
+  async deleteTenantByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId: string,
+    batchSize?: number
+  ): Promise<number> {
+    const normalizedTenantId = tenantId.trim();
+    if (!normalizedTenantId) {
+      throw new Error('Audit retention deletion requires tenantId');
+    }
+    return this.deleteByRetentionInternal(logType, beforeTime, normalizedTenantId, batchSize);
+  }
+
+  async deleteGlobalByRetention(
+    logType: AuditLogType,
+    beforeTime: number,
+    batchSize?: number
+  ): Promise<number> {
+    return this.deleteByRetentionInternal(logType, beforeTime, undefined, batchSize);
+  }
+
+  private async listRetentionCandidatesInternal(
+    logType: 'event',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[]>;
+  private async listRetentionCandidatesInternal(
+    logType: 'pii',
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<PIILogEntry[]>;
+  private async listRetentionCandidatesInternal(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId?: string,
+    batchSize?: number
+  ): Promise<EventLogEntry[] | PIILogEntry[]>;
+  private async listRetentionCandidatesInternal(
+    logType: AuditLogType,
+    beforeTime: number,
+    tenantId?: string,
+    batchSize: number = 1000
+  ): Promise<EventLogEntry[] | PIILogEntry[]> {
+    const table = logType === 'event' ? 'event_log' : 'pii_log';
+    const selectColumns =
+      logType === 'event'
+        ? `id, tenant_id, event_type, event_category, result, severity,
+           error_code, error_message, anonymized_user_id, client_id,
+           session_id, request_id, duration_ms, details_r2_key, details_json,
+           retention_until, created_at`
+        : `id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
+           values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
+           actor_user_id, actor_type, request_id, legal_basis, consent_reference,
+           retention_until, created_at`;
+
+    const sql = tenantId
+      ? `SELECT ${selectColumns}
+         FROM ${table}
+         WHERE retention_until < ? AND tenant_id = ?
+         ORDER BY retention_until ASC, created_at ASC, id ASC
+         LIMIT ?`
+      : `SELECT ${selectColumns}
+         FROM ${table}
+         WHERE retention_until < ?
+         ORDER BY retention_until ASC, created_at ASC, id ASC
+         LIMIT ?`;
+    const params = tenantId ? [beforeTime, tenantId, batchSize] : [beforeTime, batchSize];
+
+    try {
+      if (logType === 'event') {
+        const result = await this.db
+          .prepare(sql)
+          .bind(...params)
+          .all<{
+            id: string;
+            tenant_id: string;
+            event_type: string;
+            event_category: string;
+            result: string;
+            severity: string;
+            error_code: string | null;
+            error_message: string | null;
+            anonymized_user_id: string | null;
+            client_id: string | null;
+            session_id: string | null;
+            request_id: string | null;
+            duration_ms: number | null;
+            details_r2_key: string | null;
+            details_json: string | null;
+            retention_until: number | null;
+            created_at: number;
+          }>();
+        return (result.results ?? []).map((row) => this.mapEventLogRow(row));
+      }
+
+      const result = await this.db
+        .prepare(sql)
+        .bind(...params)
+        .all<{
+          id: string;
+          tenant_id: string;
+          user_id: string;
+          anonymized_user_id: string;
+          change_type: string;
+          affected_fields: string;
+          values_r2_key: string | null;
+          values_encrypted: string | null;
+          encryption_key_id: string;
+          encryption_iv: string;
+          actor_user_id: string | null;
+          actor_type: string;
+          request_id: string | null;
+          legal_basis: string | null;
+          consent_reference: string | null;
+          retention_until: number;
+          created_at: number;
+        }>();
+      return (result.results ?? []).map((row) => this.mapPIILogRow(row));
+    } catch {
+      return [];
+    }
+  }
+
+  private async deleteByRetentionInternal(
     logType: AuditLogType,
     beforeTime: number,
     tenantId?: string,
@@ -583,8 +759,22 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
     const table = logType === 'event' ? 'event_log' : 'pii_log';
 
     const sql = tenantId
-      ? `DELETE FROM ${table} WHERE retention_until < ? AND tenant_id = ? LIMIT ?`
-      : `DELETE FROM ${table} WHERE retention_until < ? LIMIT ?`;
+      ? `DELETE FROM ${table}
+         WHERE id IN (
+           SELECT id
+           FROM ${table}
+           WHERE retention_until < ? AND tenant_id = ?
+           ORDER BY retention_until ASC, created_at ASC, id ASC
+           LIMIT ?
+         )`
+      : `DELETE FROM ${table}
+         WHERE id IN (
+           SELECT id
+           FROM ${table}
+           WHERE retention_until < ?
+           ORDER BY retention_until ASC, created_at ASC, id ASC
+           LIMIT ?
+         )`;
 
     const params = tenantId ? [beforeTime, tenantId, batchSize] : [beforeTime, batchSize];
 

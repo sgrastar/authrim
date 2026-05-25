@@ -11,7 +11,7 @@
  * Routes:
  * - GET/PATCH /api/admin/tenants/:tenantId/settings/:category
  * - GET/PATCH /api/admin/clients/:clientId/settings
- * - GET /api/admin/platform/settings/:category (read-only)
+ * - GET/PATCH /api/admin/platform/settings/:category
  * - GET /api/admin/settings/meta/:category
  * - POST /api/admin/settings/migrate (v1 → v2 migration)
  * - GET /api/admin/settings/migrate/status
@@ -26,8 +26,7 @@
  */
 
 import { Hono, type Context } from 'hono';
-import type { D1Database } from '@cloudflare/workers-types';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, StorageProfile } from '@authrim/ar-lib-core';
 import migrateRouter from './migrate';
 import {
   listSettingsHistory,
@@ -56,8 +55,15 @@ import {
   createLogger,
   // Security
   sanitizeObject,
+  createAuditLogFromContext,
   // Admin Auth
   type AdminAuthContext,
+  ensureDatabaseAdapter,
+  createRuntimeProfileRegistryFromEnv,
+  loadEnvironmentProfileDefaultsFromEnv,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  getTenantIdFromContext,
+  validateTenantStorageProfileOverride,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 
@@ -99,34 +105,42 @@ function isCategoryAllowedAtScope(category: CategoryName, scopeLevel: SettingSco
   return scopeConfig?.allowedScopes.includes(scopeLevel) ?? false;
 }
 
+function isCategoryWritableAtScope(category: CategoryName, scopeLevel: SettingScopeLevel): boolean {
+  const scopedMeta = getScopedCategoryMeta(category);
+  return scopedMeta.scopePermissions[scopeLevel].editRoles.length > 0;
+}
+
 /**
  * Get the tenant ID that owns a client
  * Returns null if client not found
  */
-async function getClientTenantId(env: Env, clientId: string): Promise<string | null> {
+async function getClientTenantId(
+  env: Env,
+  clientId: string,
+  tenantId: string
+): Promise<string | null> {
   try {
     // Try to get client metadata from KV
-    const clientKey = `client:${clientId}:metadata`;
+    const clientKey = `client:${tenantId}:${clientId}:metadata`;
     const clientData = (await env.AUTHRIM_CONFIG?.get(clientKey, 'json')) as {
       tenant_id?: string;
     } | null;
-    if (clientData?.tenant_id) {
+    if (clientData?.tenant_id === tenantId) {
       return clientData.tenant_id;
     }
 
-    // Fallback: Try to get from D1 database if available
-    const db = env.DB as D1Database | undefined;
-    if (db) {
-      const result = await db
-        .prepare('SELECT tenant_id FROM oauth_clients WHERE client_id = ?')
-        .bind(clientId)
-        .first<{ tenant_id: string }>();
-      return result?.tenant_id ?? null;
-    }
-
-    return null;
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'settings-v2-client-tenant',
+      { tenantId }
+    );
+    const result = await adapter.queryOne<{ tenant_id: string }>(
+      'SELECT tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      [tenantId, clientId]
+    );
+    return result?.tenant_id ?? null;
   } catch {
-    log.warn('Failed to get client tenant ID', { clientId });
+    log.warn('Failed to get client tenant ID', { clientId, tenantId });
     return null;
   }
 }
@@ -197,13 +211,15 @@ const settingsV2 = new Hono<{
 /**
  * Get or create SettingsManager for the request
  */
-function getSettingsManager(env: Env): SettingsManager {
+function getSettingsManager(
+  env: Env,
+  auditContext?: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>
+): SettingsManager {
   const manager = createSettingsManager({
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS ?? null,
     cacheTTL: 5000, // 5 seconds (as per plan)
     auditCallback: async (event) => {
-      // Log audit event (can be extended to write to KV/R2)
       log.info('Settings change', {
         action: event.event,
         scope: event.scope,
@@ -212,6 +228,21 @@ function getSettingsManager(env: Env): SettingsManager {
         actor: event.actor,
         diff: event.diff,
       });
+      if (auditContext) {
+        await createAuditLogFromContext(
+          auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
+          `settings.${event.event}`,
+          'settings',
+          `${event.scope}:${event.scopeId}:${event.category}`,
+          {
+            scope: event.scope,
+            scope_id: event.scopeId,
+            category: event.category,
+            actor: event.actor,
+            diff: sanitizeObject(event.diff),
+          }
+        );
+      }
     },
   });
 
@@ -221,6 +252,42 @@ function getSettingsManager(env: Env): SettingsManager {
   }
 
   return manager;
+}
+
+async function recordSettingsAuditFailure(
+  c: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>,
+  input: {
+    category: CategoryName;
+    scope: SettingScope;
+    reason: string;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  const scopeId =
+    'id' in input.scope && typeof input.scope.id === 'string' ? input.scope.id : 'platform';
+  try {
+    await createAuditLogFromContext(
+      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      'settings.patch.failure',
+      'settings',
+      `${input.scope.type}:${scopeId}:${input.category}`,
+      {
+        scope: input.scope.type,
+        scope_id: scopeId,
+        category: input.category,
+        result: 'failure',
+        reason: input.reason,
+        ...(input.metadata ? sanitizeObject(input.metadata) : {}),
+      },
+      'warning'
+    );
+  } catch {
+    log.warn('Failed to mirror settings failure audit', {
+      category: input.category,
+      scope: input.scope.type,
+      reason: input.reason,
+    });
+  }
 }
 
 /**
@@ -236,6 +303,83 @@ function errorResponse(
   details?: Record<string, unknown>
 ) {
   return c.json({ error, message, ...details }, status);
+}
+
+async function validateTenantRuntimeProfilePatch(
+  env: Env,
+  category: CategoryName,
+  body: SettingsPatchRequest
+): Promise<
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      message: string;
+      details?: Record<string, unknown>;
+    }
+> {
+  if (category !== 'tenant') {
+    return { ok: true };
+  }
+
+  const requestedStorageProfileId = body.set?.['tenant.storage_profile_id'];
+  if (typeof requestedStorageProfileId !== 'string') {
+    return { ok: true };
+  }
+
+  const trimmedId = requestedStorageProfileId.trim();
+  if (!trimmedId) {
+    return { ok: true };
+  }
+
+  const registry = createRuntimeProfileRegistryFromEnv(env);
+  const [defaults, candidateProfile] = await Promise.all([
+    loadEnvironmentProfileDefaultsFromEnv(env),
+    registry.get<StorageProfile>('storage', trimmedId),
+  ]);
+
+  if (!candidateProfile) {
+    return {
+      ok: false,
+      status: 404,
+      error: 'not_found',
+      message: `Storage profile "${trimmedId}" not found`,
+    };
+  }
+
+  const defaultProfile = await registry.get<StorageProfile>('storage', defaults.storageProfileId);
+  if (!defaultProfile) {
+    return {
+      ok: false,
+      status: 500,
+      error: 'internal_error',
+      message: `Default storage profile "${defaults.storageProfileId}" not found`,
+    };
+  }
+
+  if (candidateProfile.id === defaultProfile.id) {
+    return { ok: true };
+  }
+
+  const violation = validateTenantStorageProfileOverride(defaultProfile, candidateProfile);
+  if (!violation) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    status: 400,
+    error: 'bad_request',
+    message: violation.message,
+    details: {
+      code: violation.code,
+      defaultStorageProfileId: defaultProfile.id,
+      candidateStorageProfileId: candidateProfile.id,
+    },
+  };
 }
 
 // =============================================================================
@@ -271,7 +415,7 @@ settingsV2.use('/clients/:clientId/settings', async (c, next) => {
   })(c as unknown as RateLimitContext, next);
 });
 
-// Platform settings - lenient (read-only)
+// Platform settings - lenient
 settingsV2.use('/platform/settings/:category', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
@@ -337,7 +481,7 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Cannot access settings for this tenant', 403);
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
 
   try {
@@ -387,7 +531,7 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
 
   try {
@@ -397,7 +541,19 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
 
     // Validate ifMatch is provided
     if (!body.ifMatch) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+    }
+
+    const runtimeProfileValidation = await validateTenantRuntimeProfilePatch(c.env, category, body);
+    if (!runtimeProfileValidation.ok) {
+      return errorResponse(
+        c,
+        runtimeProfileValidation.error,
+        runtimeProfileValidation.message,
+        runtimeProfileValidation.status,
+        runtimeProfileValidation.details
+      );
     }
 
     // Get actor from context (set by auth middleware)
@@ -414,6 +570,12 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     // 200 OK if anything was applied (even with rejections)
     // 400 Bad Request if everything was rejected
     if (!hasApplied && hasRejections) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'validation_failed',
+        metadata: { rejected: result.rejected },
+      });
       return c.json(
         {
           error: 'validation_failed',
@@ -428,9 +590,16 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
   } catch (error) {
     // Handle JSON parse errors
     if (error instanceof SyntaxError) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
       return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
     }
     if (error instanceof ConflictError) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'version_conflict',
+        metadata: { current_version: error.currentVersion },
+      });
       return c.json(
         {
           error: 'conflict',
@@ -442,12 +611,20 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     }
     if (error instanceof Error) {
       if (error.message.includes('Unknown category')) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
         return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
       }
       if (error.message.includes('read-only')) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'read_only' });
         return errorResponse(c, 'forbidden', error.message, 403);
       }
     }
+    await recordSettingsAuditFailure(c, {
+      category,
+      scope,
+      reason: 'unhandled_error',
+      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+    });
     throw error;
   }
 });
@@ -473,7 +650,8 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
   }
 
   // Security Check 2: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -488,8 +666,8 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const manager = getSettingsManager(c.env, c);
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     // Client settings are stored under a single category
@@ -535,7 +713,8 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
   }
 
   // Security Check 4: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -550,8 +729,8 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const manager = getSettingsManager(c.env, c);
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     const result = await manager.getAll(category, scope);
@@ -581,7 +760,8 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
   }
 
   // Security Check 2: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -596,8 +776,8 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const manager = getSettingsManager(c.env, c);
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     // Parse and sanitize request body (prevent prototype pollution)
@@ -605,6 +785,7 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     const body = parsePatchRequest(rawBody);
 
     if (!body.ifMatch) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
@@ -616,6 +797,12 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
       result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
 
     if (!hasApplied && hasRejections) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'validation_failed',
+        metadata: { rejected: result.rejected },
+      });
       return c.json(
         {
           error: 'validation_failed',
@@ -630,9 +817,16 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
   } catch (error) {
     // Handle JSON parse errors
     if (error instanceof SyntaxError) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
       return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
     }
     if (error instanceof ConflictError) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'version_conflict',
+        metadata: { current_version: error.currentVersion },
+      });
       return c.json(
         {
           error: 'conflict',
@@ -642,6 +836,12 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
         409
       );
     }
+    await recordSettingsAuditFailure(c, {
+      category,
+      scope,
+      reason: 'unhandled_error',
+      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+    });
     throw error;
   }
 });
@@ -678,7 +878,8 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
   }
 
   // Security Check 4: Get client's tenant and verify access
-  const clientTenantId = await getClientTenantId(c.env, clientId);
+  const requestedTenantId = getTenantIdFromContext(c);
+  const clientTenantId = await getClientTenantId(c.env, clientId, requestedTenantId);
   if (!clientTenantId) {
     return errorResponse(c, 'not_found', `Client "${clientId}" not found`, 404);
   }
@@ -693,14 +894,15 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env);
-  const scope: SettingScope = { type: 'client', id: clientId };
+  const manager = getSettingsManager(c.env, c);
+  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     const rawBody = await c.req.json();
     const body = parsePatchRequest(rawBody);
 
     if (!body.ifMatch) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
@@ -712,6 +914,12 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
       result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
 
     if (!hasApplied && hasRejections) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'validation_failed',
+        metadata: { rejected: result.rejected },
+      });
       return c.json(
         {
           error: 'validation_failed',
@@ -725,9 +933,16 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     return c.json(result);
   } catch (error) {
     if (error instanceof SyntaxError) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
       return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
     }
     if (error instanceof ConflictError) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'version_conflict',
+        metadata: { current_version: error.currentVersion },
+      });
       return c.json(
         {
           error: 'conflict',
@@ -738,8 +953,15 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
       );
     }
     if (error instanceof Error && error.message.includes('Unknown category')) {
+      await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
       return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
     }
+    await recordSettingsAuditFailure(c, {
+      category,
+      scope,
+      reason: 'unhandled_error',
+      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+    });
     throw error;
   }
 });
@@ -750,7 +972,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
 
 /**
  * GET /api/admin/platform/settings/:category
- * Get platform settings (read-only)
+ * Get platform settings
  */
 settingsV2.get('/platform/settings/:category', async (c) => {
   const category = c.req.param('category')! as CategoryName;
@@ -778,7 +1000,7 @@ settingsV2.get('/platform/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view platform settings', 403);
   }
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const scope: SettingScope = { type: 'platform' };
 
   try {
@@ -793,19 +1015,124 @@ settingsV2.get('/platform/settings/:category', async (c) => {
 });
 
 /**
- * PUT/PATCH/DELETE /api/admin/platform/settings/:category
- * Platform settings are read-only - return 405
+ * PATCH /api/admin/platform/settings/:category
+ * Partial update settings for a platform category
  */
-settingsV2.put('/platform/settings/:category', (c) => {
-  return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+settingsV2.patch('/platform/settings/:category', (c) => {
+  return (async () => {
+    const category = c.req.param('category')! as CategoryName;
+
+    if (!ALL_CATEGORY_META[category]) {
+      return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+    }
+
+    if (!isCategoryAllowedAtScope(category, 'platform')) {
+      return errorResponse(
+        c,
+        'bad_request',
+        `Category "${category}" is not available at platform scope`,
+        400
+      );
+    }
+
+    if (!isCategoryWritableAtScope(category, 'platform')) {
+      return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+    }
+
+    const adminAuth = c.get('adminAuth');
+    const userRoles = adminAuth?.roles || [];
+
+    if (!checkRolePermission(userRoles, category, 'platform', 'edit')) {
+      return errorResponse(
+        c,
+        'forbidden',
+        'Insufficient permissions to edit platform settings',
+        403
+      );
+    }
+
+    const manager = getSettingsManager(c.env, c);
+    const scope: SettingScope = { type: 'platform' };
+
+    try {
+      const rawBody = await c.req.json();
+      const body = parsePatchRequest(rawBody);
+
+      if (!body.ifMatch) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+        return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+      }
+
+      const actor = adminAuth?.userId ?? 'unknown';
+      const result = await manager.patch(category, scope, body, actor);
+      const hasRejections = Object.keys(result.rejected).length > 0;
+      const hasApplied =
+        result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+      if (!hasApplied && hasRejections) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'validation_failed',
+          metadata: { rejected: result.rejected },
+        });
+        return c.json(
+          {
+            error: 'validation_failed',
+            message: 'All changes were rejected',
+            ...result,
+          },
+          400
+        );
+      }
+
+      return c.json(result);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+        return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+      }
+      if (error instanceof ConflictError) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'version_conflict',
+          metadata: { current_version: error.currentVersion },
+        });
+        return c.json(
+          {
+            error: 'conflict',
+            message: error.message,
+            currentVersion: error.currentVersion,
+          },
+          409
+        );
+      }
+      if (error instanceof Error && error.message.includes('Unknown category')) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
+        return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+      }
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'unhandled_error',
+        metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+      });
+      throw error;
+    }
+  })();
 });
 
-settingsV2.patch('/platform/settings/:category', (c) => {
-  return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+/**
+ * PUT/DELETE /api/admin/platform/settings/:category
+ * Not supported
+ */
+settingsV2.put('/platform/settings/:category', (c) => {
+  return errorResponse(c, 'method_not_allowed', 'Platform settings do not support PUT', 405);
 });
 
 settingsV2.delete('/platform/settings/:category', (c) => {
-  return errorResponse(c, 'method_not_allowed', 'Platform settings are read-only', 405);
+  return errorResponse(c, 'method_not_allowed', 'Platform settings do not support DELETE', 405);
 });
 
 // =============================================================================
@@ -819,7 +1146,7 @@ settingsV2.delete('/platform/settings/:category', (c) => {
 settingsV2.get('/settings/meta/:category', async (c) => {
   const category = c.req.param('category')!;
 
-  const manager = getSettingsManager(c.env);
+  const manager = getSettingsManager(c.env, c);
   const meta = manager.getMeta(category);
 
   if (!meta) {

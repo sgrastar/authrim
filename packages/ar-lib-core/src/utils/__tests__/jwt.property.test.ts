@@ -32,14 +32,17 @@ import type { KeyLike } from 'jose';
 
 let privateKey: KeyLike;
 let publicKey: KeyLike;
+let differentPublicKey: KeyLike;
 const kid = 'test-property-key';
 const issuer = 'https://test.authrim.com';
 const clientId = 'test-property-client';
 
 beforeAll(async () => {
   const keySet = await generateKeySet(kid);
+  const differentKeySet = await generateKeySet('different-key');
   privateKey = keySet.privateKey;
   publicKey = keySet.publicKey;
+  differentPublicKey = differentKeySet.publicKey;
 });
 
 // Helper: alphanumeric arbitrary
@@ -379,12 +382,8 @@ describe('JWT Verification Properties', () => {
         };
 
         const token = await createIDToken(claims, privateKey, kid, 3600);
-
-        // Generate a different key (RSA key generation is slow, so limit numRuns)
-        const differentKeySet = await generateKeySet('different-key');
-
         await expect(
-          verifyToken(token, differentKeySet.publicKey, issuer, { audience: clientId })
+          verifyToken(token, differentPublicKey, issuer, { audience: clientId })
         ).rejects.toThrow();
       }),
       { numRuns: 5 }

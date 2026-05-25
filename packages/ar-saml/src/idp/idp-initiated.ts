@@ -11,24 +11,44 @@ import type { SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
-  D1Adapter,
-  type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
   shouldUseBuiltinForms,
   createConfigurationError,
-  getTenantIdFromContext,
-  buildIssuerUrl,
+  usesNakedDomainIssuer,
   getLogger,
 } from '@authrim/ar-lib-core';
-import { generateSAMLId, nowAsDateTime, offsetDateTime } from '../common/xml-utils';
-import { NAMEID_FORMATS, AUTHN_CONTEXT, DEFAULTS, STATUS_CODES } from '../common/constants';
-import { getSigningKey, getSigningCertificate } from '../common/key-utils';
-import { signXml } from '../common/signature';
+import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
+import { base64Encode, generateSAMLId } from '../common/xml-utils';
+import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
+import { getSamlUserInfoById } from '../common/user-store';
+import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
+import { resolveSAMLTenantIdFromContext } from '../common/tenant';
+import { buildSAMLAttributesForSP } from './attributes';
+import { applySAMLResponseSigningPolicy } from './signing';
+import {
+  createSAMLSessionIndex,
+  resolveSAMLNameIDValue,
+  resolveSAMLPairwiseSecret,
+  resolveSAMLPersistentNameIDRegistryStore,
+  resolveSAMLTransientNameIDStore,
+} from './subject';
+import { buildSAMLAssertionTiming } from './assertion-timing';
+import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
+import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
+import { resolveSAMLAuthnContextClassRef } from './authn-context';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
+
+interface AuthenticatedSAMLSession {
+  userId: string;
+  sessionId: string;
+  acr?: string;
+  amr?: string[];
+}
 
 /**
  * Handle IdP-initiated SSO
@@ -40,25 +60,25 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
   try {
     // Get SP entity ID from query parameter
     const spEntityId = c.req.query('sp');
-    const tenantId = getTenantIdFromContext(c);
-    const issuerUrl = buildIssuerUrl(env, tenantId);
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
     if (!spEntityId) {
       // Return list of available SPs if no SP specified
-      const sps = await listSPConfigs(env);
+      const sps = await listSPConfigs(env, tenantId);
       return c.html(buildSPSelectionPage(issuerUrl, sps));
     }
 
     // Get SP configuration
-    const spConfig = await getSPConfig(env, spEntityId);
+    const spConfig = await getSPConfig(env, tenantId, spEntityId);
     if (!spConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check user authentication
-    const userId = await checkUserAuthentication(c, env);
+    const authenticatedSession = await checkUserAuthentication(c, env);
 
-    if (!userId) {
+    if (!authenticatedSession) {
       // Redirect to login with return URL
       const returnTo = `${issuerUrl}/saml/idp/init?sp=${encodeURIComponent(spEntityId)}`;
 
@@ -75,26 +95,43 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         return c.json(createConfigurationError(), 500);
       }
 
-      const loginUrl = buildUIUrl(
-        uiConfig,
-        'login',
-        { return_to: returnTo },
-        tenantId !== 'default' ? tenantId : undefined
-      );
+      const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
+      const loginUrl =
+        loginUrlPolicy === 'tenant_host'
+          ? new URL(uiConfig.paths?.login || '/login', issuerUrl).toString()
+          : buildUIUrl(
+              uiConfig,
+              'login',
+              { return_to: returnTo },
+              usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
+            );
+      if (loginUrlPolicy === 'tenant_host') {
+        const tenantLoginUrl = new URL(loginUrl);
+        tenantLoginUrl.searchParams.set('return_to', returnTo);
+        return c.redirect(tenantLoginUrl.toString());
+      }
       return c.redirect(loginUrl);
     }
 
     // Get user information
-    const userInfo = await getUserInfo(env, userId);
+    const userInfo = await getUserInfo(env, tenantId, authenticatedSession.userId);
     if (!userInfo) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Generate SAML Response (no InResponseTo since this is IdP-initiated)
-    const responseXml = await generateIdPInitiatedResponse(issuerUrl, env, spConfig, userInfo);
+    const responseXml = await generateIdPInitiatedResponse(
+      issuerUrl,
+      idpEntityId,
+      env,
+      spConfig,
+      userInfo,
+      tenantId,
+      authenticatedSession
+    );
 
     // Return auto-submit form
-    return sendSAMLResponse(c, spConfig, responseXml);
+    return sendSAMLResponse(spConfig, responseXml);
   } catch (error) {
     log.error('IdP-Initiated SSO Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -107,8 +144,8 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
 async function checkUserAuthentication(
   c: Context<{ Bindings: Env }>,
   env: Env
-): Promise<string | null> {
-  const sessionId = c.req.header('Cookie')?.match(/authrim_session=([^;]+)/)?.[1];
+): Promise<AuthenticatedSAMLSession | null> {
+  const sessionId = extractAuthrimSessionIdFromCookieHeader(c.req.header('Cookie'));
 
   if (!sessionId) {
     return null;
@@ -120,19 +157,33 @@ async function checkUserAuthentication(
   }
 
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionId);
-    const response = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'GET',
-      })
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      env,
+      sessionId,
+      resolveSAMLTenantIdFromContext(c)
     );
+    const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
+      method: 'GET',
+    });
 
     if (!response.ok) {
       return null;
     }
 
-    const session = (await response.json()) as { userId?: string };
-    return session.userId || null;
+    const session = (await response.json()) as {
+      userId?: string;
+      data?: { acr?: unknown; amr?: unknown };
+    };
+    return session.userId
+      ? {
+          userId: session.userId,
+          sessionId,
+          acr: typeof session.data?.acr === 'string' ? session.data.acr : undefined,
+          amr: Array.isArray(session.data?.amr)
+            ? session.data.amr.filter((value): value is string => typeof value === 'string')
+            : undefined,
+        }
+      : null;
   } catch {
     return null;
   }
@@ -143,42 +194,10 @@ async function checkUserAuthentication(
  */
 async function getUserInfo(
   env: Env,
+  tenantId: string,
   userId: string
 ): Promise<{ id: string; email: string; name?: string } | null> {
-  // PII/Non-PII DB separation: verify user in Core DB, fetch email/name from PII DB
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
-    [userId]
-  );
-
-  if (!userCore) {
-    return null;
-  }
-
-  // Fetch PII from PII DB
-  let email: string | null = null;
-  let name: string | undefined = undefined;
-
-  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
-  if (piiAdapter) {
-    const userPII = await piiAdapter.queryOne<{ email: string; name: string }>(
-      'SELECT email, name FROM users_pii WHERE id = ?',
-      [userId]
-    );
-    email = userPII?.email || null;
-    name = userPII?.name || undefined;
-  }
-
-  if (!email) {
-    return null;
-  }
-
-  return {
-    id: userCore.id,
-    email,
-    name,
-  };
+  return getSamlUserInfoById(env, tenantId, userId);
 }
 
 /**
@@ -186,141 +205,102 @@ async function getUserInfo(
  */
 async function generateIdPInitiatedResponse(
   issuerUrl: string,
+  idpEntityId: string,
   env: Env,
   spConfig: SAMLSPConfig,
-  userInfo: { id: string; email: string; name?: string }
+  userInfo: { id: string; email: string; name?: string },
+  tenantId: string,
+  authSession: AuthenticatedSAMLSession
 ): Promise<string> {
-  const { privateKeyPem } = await getSigningKey(env);
-  const certificate = await getSigningCertificate(env);
+  const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+    tenantId,
+    role: 'idp',
+    counterpartyEntityId: spConfig.entityId,
+    policy: getSAMLSigningPolicy(spConfig),
+  });
 
-  // Determine NameID value
-  let nameIdValue: string;
   const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
-
-  switch (nameIdFormat) {
-    case NAMEID_FORMATS.EMAIL:
-      nameIdValue = userInfo.email;
-      break;
-    case NAMEID_FORMATS.PERSISTENT:
-    case NAMEID_FORMATS.TRANSIENT:
-      nameIdValue = userInfo.id;
-      break;
-    default:
-      nameIdValue = userInfo.email;
-  }
+  const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
+    tenantId,
+    spEntityId: spConfig.entityId,
+    pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
+    persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
+    allowCreate: true,
+    transientStore: resolveSAMLTransientNameIDStore(env),
+    transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    sessionId: authSession.sessionId,
+  });
 
   // Build attributes from mapping
-  const attributes = buildAttributes(userInfo, spConfig.attributeMapping);
+  const attributes = buildSAMLAttributesForSP(userInfo, spConfig);
+  const timing = buildSAMLAssertionTiming({
+    assertionValiditySeconds:
+      spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+  });
 
   // Build SAML Response (no InResponseTo for IdP-initiated)
   const responseId = generateSAMLId();
   const responseXml = buildSAMLResponse({
     responseId,
     assertionId: generateSAMLId(),
-    issueInstant: nowAsDateTime(),
-    issuer: `${issuerUrl}/saml/idp`,
+    issueInstant: timing.issueInstant,
+    issuer: idpEntityId,
     destination: spConfig.acsUrl,
     // No inResponseTo for IdP-initiated
     recipientUrl: spConfig.acsUrl,
     audienceRestriction: spConfig.entityId,
     nameId: nameIdValue,
     nameIdFormat,
-    authnInstant: nowAsDateTime(),
-    sessionIndex: generateSAMLId(),
-    notBefore: nowAsDateTime(),
-    notOnOrAfter: offsetDateTime(
-      spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS
+    authnInstant: timing.authnInstant,
+    sessionIndex: await createSAMLSessionIndex(env.STATE_STORE, {
+      tenantId,
+      spEntityId: spConfig.entityId,
+      sessionId: authSession.sessionId,
+      ttlSeconds: DEFAULTS.SESSION_VALIDITY_SECONDS,
+    }),
+    notBefore: timing.notBefore,
+    notOnOrAfter: timing.notOnOrAfter,
+    authnContextClassRef: resolveSAMLAuthnContextClassRef(
+      {
+        id: responseId,
+        issueInstant: timing.issueInstant,
+        issuer: spConfig.entityId,
+      },
+      {
+        spConfig,
+        session: authSession,
+      }
     ),
-    authnContextClassRef: AUTHN_CONTEXT.PASSWORD_PROTECTED_TRANSPORT,
     attributes,
   });
 
   // Sign if required
   if (spConfig.signResponses || spConfig.signAssertions) {
-    return signXml(responseXml, {
-      privateKey: privateKeyPem,
-      certificate,
-      referenceUri: `#${responseId}`,
-      signatureLocation: 'prepend',
-      includeKeyInfo: true,
-    });
+    return applySAMLResponseSigningPolicy(responseXml, spConfig, { privateKeyPem, certificate });
   }
 
   return responseXml;
 }
 
 /**
- * Build SAML attributes from user info and mapping
- */
-function buildAttributes(
-  userInfo: { id: string; email: string; name?: string },
-  attributeMapping: Record<string, string>
-): Array<{ name: string; values: string[] }> {
-  const attributes: Array<{ name: string; values: string[] }> = [];
-
-  for (const [claim, samlAttr] of Object.entries(attributeMapping)) {
-    let value: string | undefined;
-
-    switch (claim) {
-      case 'email':
-        value = userInfo.email;
-        break;
-      case 'name':
-        value = userInfo.name;
-        break;
-      case 'sub':
-        value = userInfo.id;
-        break;
-      default:
-        continue;
-    }
-
-    if (value) {
-      attributes.push({ name: samlAttr, values: [value] });
-    }
-  }
-
-  return attributes;
-}
-
-/**
  * Send SAML Response via auto-submit form
  */
 function sendSAMLResponse(
-  c: Context<{ Bindings: Env }>,
   spConfig: SAMLSPConfig,
   responseXml: string,
   relayState?: string
 ): Response {
-  const encodedResponse = btoa(responseXml);
+  const encodedResponse = base64Encode(responseXml);
+  const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
+  if (relayState) {
+    fields.push({ name: 'RelayState', value: relayState });
+  }
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>SAML SSO - Redirecting...</title>
-</head>
-<body onload="document.forms[0].submit()">
-  <noscript>
-    <p>JavaScript is disabled. Click the button to continue.</p>
-  </noscript>
-  <form method="POST" action="${escapeHtml(spConfig.acsUrl)}">
-    <input type="hidden" name="SAMLResponse" value="${escapeHtml(encodedResponse)}" />
-    ${relayState ? `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}" />` : ''}
-    <noscript>
-      <button type="submit">Continue to Service Provider</button>
-    </noscript>
-  </form>
-</body>
-</html>
-`;
-
-  return new Response(html, {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-    },
+  return buildSAMLPostBindingResponse({
+    title: 'SAML SSO - Redirecting...',
+    actionUrl: spConfig.acsUrl,
+    fields,
+    buttonText: 'Continue to Service Provider',
   });
 }
 

@@ -99,6 +99,13 @@
 		goto(`/admin/admin-rbac/${role.id}`);
 	}
 
+	function handleRoleCardKeydown(event: KeyboardEvent, role: AdminRole) {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			viewRole(role);
+		}
+	}
+
 	function openEditDialog(role: AdminRole) {
 		editingRole = role;
 		editDisplayName = role.display_name || '';
@@ -195,7 +202,13 @@
 	{:else}
 		<div class="roles-grid">
 			{#each roles as role (role.id)}
-				<button class="role-card" onclick={() => viewRole(role)} type="button">
+				<div
+					class="role-card"
+					role="button"
+					tabindex="0"
+					onclick={() => viewRole(role)}
+					onkeydown={(event) => handleRoleCardKeydown(event, role)}
+				>
 					<div class="role-header">
 						<div class="role-title">
 							<h3>{role.display_name || role.name}</h3>
@@ -230,19 +243,33 @@
 					<div class="role-meta">
 						<span>Level: {role.hierarchy_level}</span>
 					</div>
-					<div class="role-actions" onclick={(e) => e.stopPropagation()}>
+					<div class="role-actions">
 						{#if canEditAdminRole(role)}
-							<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(role)}>
+							<button
+								class="btn btn-sm btn-secondary"
+								type="button"
+								onclick={(event) => {
+									event.stopPropagation();
+									openEditDialog(role);
+								}}
+							>
 								Edit
 							</button>
 						{/if}
 						{#if canDeleteAdminRole(role)}
-							<button class="btn btn-sm btn-danger" onclick={() => handleDelete(role)}>
+							<button
+								class="btn btn-sm btn-danger"
+								type="button"
+								onclick={(event) => {
+									event.stopPropagation();
+									handleDelete(role);
+								}}
+							>
 								Delete
 							</button>
 						{/if}
 					</div>
-				</button>
+				</div>
 			{/each}
 		</div>
 	{/if}

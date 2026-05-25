@@ -1,20 +1,21 @@
 /**
- * FlowRegistry - Flow定義の取得・管理
+ * FlowRegistry - retrieve and manage flow definitions
  *
- * 責務:
- * - D1からのカスタムFlow取得（Admin UI経由）
- * - ビルトインFlowの取得
- * - KVからのカスタムFlow取得（レガシー）
+ * Responsibilities:
+ * - get custom flow from relational store (via Admin UI)
+ * - get built-in flow
+ * - from KVcustom flowget (legacy)
  *
- * 優先順位:
- * 1. D1: client-specific flow (tenant_id + client_id + profile_id)
- * 2. D1: tenant default flow (tenant_id + profile_id, client_id = NULL)
- * 3. ビルトインFlow
- * 4. KV: カスタムFlow（レガシー）
+ * Priority order:
+ * 1. relational store: client-specific flow (tenant_id + client_id + profile_id)
+ * 2. relational store: tenant default flow (tenant_id + profile_id, client_id = NULL)
+ * 3. built-in flow
+ * 4. KV: custom flow (legacy)
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
 
+import { ensureDatabaseAdapter, type DatabaseSource } from '@authrim/ar-lib-core';
 import type { GraphDefinition } from './types';
 import { BUILTIN_FLOWS, getBuiltinFlow } from './flows/login-flow';
 
@@ -23,7 +24,7 @@ import { BUILTIN_FLOWS, getBuiltinFlow } from './flows/login-flow';
 // =============================================================================
 
 /**
- * FlowType - サポートするフロータイプ
+ * FlowType - supported flow type
  */
 export type FlowType = 'login' | 'authorization' | 'consent' | 'logout';
 
@@ -31,10 +32,10 @@ export type FlowType = 'login' | 'authorization' | 'consent' | 'logout';
  * FlowRegistryOptions
  */
 export interface FlowRegistryOptions {
-  /** KVNamespace（カスタムFlow用、レガシー） */
+  /** KVNamespace (custom flowfor, legacy) */
   kv?: KVNamespace;
-  /** D1Database（推奨: Admin UIからのカスタムFlow） */
-  db?: D1Database;
+  /** DatabaseSource (recommended: custom flow from Admin UI) */
+  db?: DatabaseSource;
 }
 
 // =============================================================================
@@ -42,16 +43,16 @@ export interface FlowRegistryOptions {
 // =============================================================================
 
 /**
- * FlowRegistry - Flow定義の取得・管理
+ * FlowRegistry - retrieve and manage flow definitions
  *
- * ヘッドレス運用対応:
- * - ビルトインFlowのみでも動作
- * - D1が設定されていればAdmin UIからのカスタムFlowを取得
- * - KVが設定されていればレガシーカスタムFlowも取得可能
+ * Supports headless operation:
+ * - Works with built-in flows only
+ * - get custom flows from Admin UI when relational store is configured
+ * - can also get legacy custom flows when KV is configured
  */
 export class FlowRegistry {
   private kv?: KVNamespace;
-  private db?: D1Database;
+  private db?: DatabaseSource;
 
   constructor(options: FlowRegistryOptions = {}) {
     this.kv = options.kv;
@@ -59,44 +60,44 @@ export class FlowRegistry {
   }
 
   /**
-   * FlowTypeからGraphDefinitionを取得
+   * Get a GraphDefinition from FlowType
    *
-   * 優先順位:
-   * 1. D1: client-specific flow (tenant_id + client_id + profile_id)
-   * 2. D1: tenant default flow (tenant_id + profile_id, client_id = NULL)
-   * 3. ビルトインFlow
-   * 4. KV: カスタムFlow（レガシー）
+   * Priority order:
+   * 1. Database: client-specific flow (tenant_id + client_id + profile_id)
+   * 2. Database: tenant default flow (tenant_id + profile_id, client_id = NULL)
+   * 3. built-in flow
+   * 4. KV: custom flow (legacy)
    *
-   * @param flowType - フロータイプ
-   * @param tenantId - テナントID
-   * @param clientId - クライアントID（オプション、client-specific flow用）
-   * @returns GraphDefinition または null
+   * @param flowType - Flow type
+   * @param tenantId - Tenant ID
+   * @param clientId - Client ID (options, client-specific flowfor)
+   * @returns GraphDefinition or null
    */
   async getFlow(
     flowType: FlowType,
     tenantId?: string,
     clientId?: string
   ): Promise<GraphDefinition | null> {
-    // profileIdを解決（flowType → profileId）
+    // Resolve profileId (flowType -> profileId)
     const profileId = this.flowTypeToProfileId(flowType);
 
-    // 1. D1: client-specific flow
+    // 1. Database: client-specific flow
     if (this.db && tenantId && clientId) {
-      const clientFlow = await this.getFlowFromD1(tenantId, profileId, clientId);
+      const clientFlow = await this.getFlowFromDatabase(tenantId, profileId, clientId);
       if (clientFlow) {
         return clientFlow;
       }
     }
 
-    // 2. D1: tenant default flow
+    // 2. Database: tenant default flow
     if (this.db && tenantId) {
-      const tenantFlow = await this.getFlowFromD1(tenantId, profileId, null);
+      const tenantFlow = await this.getFlowFromDatabase(tenantId, profileId, null);
       if (tenantFlow) {
         return tenantFlow;
       }
     }
 
-    // 3. ビルトインFlowを検索
+    // 3. Find built-in flow
     const builtinFlowId = this.getBuiltinFlowId(flowType);
     const builtinFlow = getBuiltinFlow(builtinFlowId);
 
@@ -104,7 +105,7 @@ export class FlowRegistry {
       return builtinFlow;
     }
 
-    // 4. カスタムFlow（KV）を検索（レガシー）
+    // 4. Find custom flow in KV (legacy)
     if (this.kv && tenantId) {
       const customFlow = await this.getCustomFlowFromKV(tenantId, flowType);
       if (customFlow) {
@@ -112,38 +113,38 @@ export class FlowRegistry {
       }
     }
 
-    // 5. 見つからない場合はnull
+    // 5. Return null when not found
     return null;
   }
 
   /**
-   * すべてのビルトインFlowIDを取得
+   * Get all built-in flow IDs
    */
   getBuiltinFlowIds(): string[] {
     return Object.keys(BUILTIN_FLOWS);
   }
 
   /**
-   * FlowTypeからビルトインFlowIDを解決
+   * Resolve a built-in flow ID from FlowType
    */
   private getBuiltinFlowId(flowType: FlowType): string {
-    // FlowType → ビルトインFlowIDのマッピング
+    // FlowType -> built-in flow ID mapping
     const flowTypeToId: Record<FlowType, string> = {
       login: 'human-basic-login',
-      authorization: 'human-basic-authorization', // 将来追加
-      consent: 'human-basic-consent', // 将来追加
-      logout: 'human-basic-logout', // 将来追加
+      authorization: 'human-basic-authorization', // Add in the future
+      consent: 'human-basic-consent', // Add in the future
+      logout: 'human-basic-logout', // Add in the future
     };
 
     return flowTypeToId[flowType];
   }
 
   /**
-   * FlowTypeからProfileIdを解決
+   * Resolve ProfileId from FlowType
    */
   private flowTypeToProfileId(flowType: FlowType): string {
-    // FlowType → ProfileIDのマッピング
-    // 現在はすべて 'human-basic' を使用
+    // FlowType -> ProfileID mapping
+    // Currently all use 'human-basic'
     const flowTypeToProfile: Record<FlowType, string> = {
       login: 'human-basic',
       authorization: 'human-basic',
@@ -155,13 +156,13 @@ export class FlowRegistry {
   }
 
   /**
-   * D1からFlow定義を取得
+   * Get the flow definition from Database
    *
-   * @param tenantId - テナントID
-   * @param profileId - プロファイルID
-   * @param clientId - クライアントID（NULLの場合はテナントデフォルト）
+   * @param tenantId - Tenant ID
+   * @param profileId - profile ID
+   * @param clientId - Client ID (tenant default when NULL)
    */
-  private async getFlowFromD1(
+  private async getFlowFromDatabase(
     tenantId: string,
     profileId: string,
     clientId: string | null
@@ -171,32 +172,27 @@ export class FlowRegistry {
     }
 
     try {
-      let result: D1Result<{ graph_definition: string }>;
+      const adapter = ensureDatabaseAdapter(this.db, 'flow-registry');
+      let rows: Array<{ graph_definition: string }>;
 
       if (clientId) {
-        // client-specific flow
-        result = await this.db
-          .prepare(
-            `SELECT graph_definition FROM flows
+        rows = await adapter.query<{ graph_definition: string }>(
+          `SELECT graph_definition FROM flows
              WHERE tenant_id = ? AND profile_id = ? AND client_id = ?
-             AND is_active = 1`
-          )
-          .bind(tenantId, profileId, clientId)
-          .all();
+             AND is_active = 1`,
+          [tenantId, profileId, clientId]
+        );
       } else {
-        // tenant default flow (client_id IS NULL)
-        result = await this.db
-          .prepare(
-            `SELECT graph_definition FROM flows
+        rows = await adapter.query<{ graph_definition: string }>(
+          `SELECT graph_definition FROM flows
              WHERE tenant_id = ? AND profile_id = ? AND client_id IS NULL
-             AND is_active = 1`
-          )
-          .bind(tenantId, profileId)
-          .all();
+             AND is_active = 1`,
+          [tenantId, profileId]
+        );
       }
 
-      if (result.results.length > 0) {
-        const row = result.results[0];
+      if (rows.length > 0) {
+        const row = rows[0];
         const graphDef = JSON.parse(row.graph_definition);
 
         if (this.isValidGraphDefinition(graphDef)) {
@@ -206,17 +202,17 @@ export class FlowRegistry {
 
       return null;
     } catch (error) {
-      // セキュリティ対策（High 9）: error オブジェクトをそのまま出力せず、メッセージのみ
+      // Security mitigation (High 9): Log only the message instead of the raw error object
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`Failed to get flow from D1: ${errorMsg}`);
+      console.error(`Failed to get flow from database: ${errorMsg}`);
       return null;
     }
   }
 
   /**
-   * KVからカスタムFlow定義を取得（レガシー）
+   * Get custom flow definition from KV (legacy)
    *
-   * キー形式: flow:{tenantId}:{flowType}
+   * Key format: flow:{tenantId}:{flowType}
    */
   private async getCustomFlowFromKV(
     tenantId: string,
@@ -237,7 +233,7 @@ export class FlowRegistry {
   }
 
   /**
-   * GraphDefinitionの簡易バリデーション
+   * Basic GraphDefinition validation
    */
   private isValidGraphDefinition(obj: unknown): obj is GraphDefinition {
     if (!obj || typeof obj !== 'object') {
@@ -261,19 +257,19 @@ export class FlowRegistry {
 // =============================================================================
 
 /**
- * FlowRegistryを作成
+ * Create a FlowRegistry
  *
- * @param options - オプション
- * @returns FlowRegistry インスタンス
+ * @param options - options
+ * @returns FlowRegistry instance
  *
  * @example
- * // ビルトインFlowのみ
+ * // built-in flows only
  * const registry = createFlowRegistry();
  *
- * // D1対応（推奨: Admin UIからのカスタムFlow）
+ * // DatabaseSource support (recommended: custom flow from Admin UI)
  * const registry = createFlowRegistry({ db: env.DB });
  *
- * // D1 + KV対応（フルオプション）
+ * // DatabaseSource + KVsupport (full options)
  * const registry = createFlowRegistry({ db: env.DB, kv: env.AUTHRIM_CONFIG });
  */
 export function createFlowRegistry(options: FlowRegistryOptions = {}): FlowRegistry {

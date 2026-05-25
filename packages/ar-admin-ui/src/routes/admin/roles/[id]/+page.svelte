@@ -13,6 +13,7 @@
 		type RoleType
 	} from '$lib/api/admin-roles';
 	import { Modal } from '$lib/components';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let role: RoleDetail | null = $state(null);
 	let loading = $state(true);
@@ -35,6 +36,7 @@
 	let showDeleteDialog = $state(false);
 	let deleting = $state(false);
 	let deleteError = $state('');
+	let loadedTenantId = $state('');
 
 	// Computed values
 	let roleType = $derived(role ? getRoleType(role) : null);
@@ -110,7 +112,19 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		role = null;
+		error = '';
+		deleteError = '';
+		assignedUsers = [];
+		assignedUsersError = '';
 		loadRole();
 		loadAssignedUsers();
 	});

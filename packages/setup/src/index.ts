@@ -17,6 +17,7 @@
 
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
+import type { AuthrimConfig } from './core/config.js';
 import { initCommand } from './cli/commands/init.js';
 import { deployCommand, statusCommand } from './cli/commands/deploy.js';
 import { updateCommand } from './cli/commands/update.js';
@@ -24,10 +25,41 @@ import { configCommand } from './cli/commands/config.js';
 import { deleteCommand } from './cli/commands/delete.js';
 import { infoCommand } from './cli/commands/info.js';
 import { migrateCommand, migrateStatusCommand } from './cli/commands/migrate.js';
+import { tenantDatabaseCommand } from './cli/commands/tenant-db.js';
+import { tenantDatabasePoolExpandCommand } from './cli/commands/tenant-db-pool-expand.js';
+import { tenantDatabasePoolStatusCommand } from './cli/commands/tenant-db-pool-status.js';
+import { tenantDatabaseSlotResetCommand } from './cli/commands/tenant-db-slot-reset.js';
+import { tenantDatabaseMigrateAllCommand } from './cli/commands/tenant-db-migrate-all.js';
+import { r2ProvisionCommand } from './cli/commands/r2-provision.js';
+import { resolveIssuerUrl } from './core/url-config.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
+
+// Handle Ctrl+C from @inquirer prompts gracefully.
+// @inquirer throws ExitPromptError on SIGINT inside prompt handlers.
+// Without these handlers the error surfaces as an unhandled rejection,
+// printing a stack trace and exiting with code 1.
+const isExitPromptError = (reason: unknown): boolean =>
+  reason instanceof Error && reason.name === 'ExitPromptError';
+
+process.on('unhandledRejection', (reason) => {
+  if (isExitPromptError(reason)) {
+    process.exit(0);
+  }
+  // Re-throw so Node.js prints the error and exits with failure
+  throw reason;
+});
+
+process.on('uncaughtException', (error) => {
+  if (isExitPromptError(error)) {
+    process.exit(0);
+  }
+  // Default handling for genuine errors
+  console.error(error);
+  process.exit(1);
+});
 
 const program = new Command();
 
@@ -56,8 +88,9 @@ program
   .option('--dry-run', 'Show what would be deployed without actually deploying')
   .option('--skip-secrets', 'Skip uploading secrets')
   .option('--skip-build', 'Skip building packages')
-  .option('--skip-ui', 'Skip UI deployment to Cloudflare Pages')
+  .option('--skip-ui', 'Skip UI deployment to Cloudflare Workers')
   .option('--skip-migrations', 'Skip D1 database migrations')
+  .option('--keys-dir <path>', 'Keys directory')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
 
@@ -70,6 +103,66 @@ program
   .option('--skip-build', 'Skip building packages')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(updateCommand);
+
+program
+  .command('tenant-db')
+  .description('Create tenant-d1 core and PII databases for one tenant')
+  .requiredOption('--tenant-id <id>', 'Tenant ID')
+  .option('--tenant-slug <slug>', 'Tenant slug used for generated names and bindings')
+  .option('--generation <n>', 'Tenant database generation to create for retry/recreation', '1')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--activate', 'Also move tenant database active pointers to the created generation')
+  .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabaseCommand);
+
+program
+  .command('tenant-db-migrate-all')
+  .description('Run migrations for generated tenant-d1 databases from the lock file')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--role <roles>', 'Comma-separated roles: tenant_core,tenant_pii')
+  .option('--binding <bindings>', 'Comma-separated generated TDB_* bindings to migrate')
+  .option('--concurrency <n>', 'Fixed broad migration concurrency', '2')
+  .option('--canary-binding <bindings>', 'Comma-separated TDB_* bindings to run first')
+  .option('--canary-count <n>', 'Automatically select the first N targets as canaries', '0')
+  .option('--skip-failed', 'Continue remaining tenant migrations after a target fails')
+  .option('--dry-run', 'Show migration targets without running migrations')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabaseMigrateAllCommand);
+
+program
+  .command('tenant-db-pool-expand')
+  .description('Add preallocated tenant-d1 slots to an existing environment and redeploy workers')
+  .requiredOption('--add-slots <n>', 'Number of tenant slots to add')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--dry-run', 'Show what would change without updating config or deploying')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabasePoolExpandCommand);
+
+program
+  .command('tenant-db-pool-status')
+  .description('Show preallocated tenant-d1 slot capacity and availability')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--json', 'Print machine-readable JSON')
+  .action(tenantDatabasePoolStatusCommand);
+
+program
+  .command('tenant-db-slot-reset')
+  .description('Reset a failed/unavailable preallocated tenant-d1 slot and mark it available')
+  .requiredOption('--slot <n>', 'Slot number to reset, for example 1 or 0001')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--dry-run', 'Show what would be reset without changing D1 or slot state')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(tenantDatabaseSlotResetCommand);
+
+program
+  .command('r2-provision')
+  .description('Create dedicated R2 buckets for an existing environment and deploy bindings')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
+  .option('--skip-deploy', 'Create buckets and update config/lock without deploying workers')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(r2ProvisionCommand);
 
 program
   .command('upgrade')
@@ -89,7 +182,7 @@ program
 
     const { isWranglerInstalled, checkAuth } = await import('./core/cloudflare.js');
     const { WORKER_COMPONENTS } = await import('./core/naming.js');
-    const { deployWorker, deployPagesComponent, buildApiPackages, PAGES_COMPONENTS } =
+    const { deployWorker, deployUiWorkerComponent, buildApiPackages, UI_WORKER_COMPONENTS } =
       await import('./core/deploy.js');
     const { loadLockFileAuto, saveLockFile } = await import('./core/lock.js');
     const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
@@ -101,18 +194,18 @@ program
     const { env, component: componentName, skipBuild, dryRun, yes } = options;
 
     // Validate component name
-    const isPagesComponent = (PAGES_COMPONENTS as readonly string[]).includes(componentName);
+    const isUiWorkerComponent = (UI_WORKER_COMPONENTS as readonly string[]).includes(componentName);
     const isWorkerComponent = (WORKER_COMPONENTS as readonly string[]).includes(componentName);
 
-    if (!isPagesComponent && !isWorkerComponent) {
+    if (!isUiWorkerComponent && !isWorkerComponent) {
       console.error(chalk.red(`Unknown component: ${componentName}`));
       console.log(chalk.yellow('\nAvailable components:'));
       console.log(chalk.cyan('\n  Workers:'));
       for (const w of WORKER_COMPONENTS) {
         console.log(chalk.gray(`    • ${w}`));
       }
-      console.log(chalk.cyan('\n  UI (Pages):'));
-      for (const p of PAGES_COMPONENTS) {
+      console.log(chalk.cyan('\n  UI Workers:'));
+      for (const p of UI_WORKER_COMPONENTS) {
         console.log(chalk.gray(`    • ${p}`));
       }
       process.exit(1);
@@ -137,7 +230,7 @@ program
     spinner.succeed(`Logged in as ${auth.email || 'unknown'}`);
 
     const baseDir = findAuthrimBaseDir(process.cwd());
-    const componentType = isPagesComponent ? 'Pages UI' : 'Worker';
+    const componentType = isUiWorkerComponent ? 'UI Worker' : 'Worker';
 
     console.log(chalk.cyan(`\nComponent:   ${componentName}`));
     console.log(chalk.cyan(`Type:        ${componentType}`));
@@ -158,9 +251,9 @@ program
       }
     }
 
-    // Load config for API URL (needed for Pages deployment)
+    // Load config for API URL (needed for UI Worker deployment)
     const resolved = resolvePaths({ baseDir, env });
-    let cfg: Record<string, unknown> | null = null;
+    let cfg: AuthrimConfig | null = null;
     try {
       const configPath =
         resolved.type === 'new'
@@ -174,8 +267,8 @@ program
       // Config is optional for worker deployment
     }
 
-    if (isPagesComponent) {
-      // Deploy Pages component
+    if (isUiWorkerComponent) {
+      // Deploy UI Worker component.
       if (!skipBuild && !dryRun) {
         const buildSpinner = ora(`Building ${componentName}...`).start();
         const uiDir = join(baseDir, 'packages', componentName);
@@ -186,9 +279,7 @@ program
         }
 
         // Get API base URL
-        const cfgUrls = (cfg as { urls?: { api?: { custom?: string; auto?: string } } })?.urls;
-        const apiBaseUrl =
-          cfgUrls?.api?.custom || cfgUrls?.api?.auto || `https://${env}-ar-router.workers.dev`;
+        const apiBaseUrl = resolveIssuerUrl(cfg, { env });
 
         let loginUiClientId: string | undefined;
         if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
@@ -197,7 +288,7 @@ program
               ?.custom ||
             (cfg as { urls?: { loginUi?: { custom?: string; auto?: string } } })?.urls?.loginUi
               ?.auto ||
-            `https://${env}-ar-login-ui.pages.dev`;
+            `https://${env}-ar-login-ui.workers.dev`;
           const foundKeys = findKeysDirectory({
             env,
             sourceDir: baseDir,
@@ -207,19 +298,66 @@ program
             ? join(foundKeys.path, 'admin_api_secret.txt')
             : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keyFiles
                 .adminApiSecret;
+          const keysDir = foundKeys
+            ? foundKeys.path
+            : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keys;
 
-          const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
-          const clientResult = await ensureLoginUiClient({
+          const { waitForRouterWorkerReady } = await import('./core/worker-readiness.js');
+          const readinessResult = await waitForRouterWorkerReady({
             apiBaseUrl,
-            loginUiUrl,
-            adminApiSecretPath,
             onProgress: (msg) => {
               buildSpinner.text = msg;
             },
           });
+          if (!readinessResult.ready) {
+            buildSpinner.fail(
+              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+            );
+            process.exit(1);
+          }
 
-          if (clientResult.success && clientResult.clientId) {
-            loginUiClientId = clientResult.clientId;
+          const { ensureSetupMachineAccessInD1, cleanupSetupMachineAccessInD1 } =
+            await import('./core/cloudflare.js');
+          const setupMachineResult = await ensureSetupMachineAccessInD1(
+            env,
+            cfg as AuthrimConfig,
+            keysDir,
+            (msg) => {
+              buildSpinner.text = msg;
+            }
+          );
+          if (!setupMachineResult.success) {
+            buildSpinner.fail(
+              `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
+            );
+            process.exit(1);
+          }
+
+          let loginUiClientError: string | undefined;
+          try {
+            const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
+            const clientResult = await ensureLoginUiClient({
+              apiBaseUrl,
+              loginUiUrl,
+              adminApiSecretPath,
+              keysDir,
+              tenantId: (cfg as AuthrimConfig | null)?.tenant?.name,
+              onProgress: (msg) => {
+                buildSpinner.text = msg;
+              },
+            });
+
+            if (clientResult.success && clientResult.clientId) {
+              loginUiClientId = clientResult.clientId;
+            } else {
+              loginUiClientError = clientResult.error || 'unknown error';
+            }
+          } finally {
+            await cleanupSetupMachineAccessInD1(env, keysDir);
+          }
+          if (loginUiClientError) {
+            buildSpinner.fail(`Login UI client creation failed: ${loginUiClientError}`);
+            process.exit(1);
           }
         }
 
@@ -228,22 +366,28 @@ program
         const deploySpinner = ora(`Deploying ${componentName}...`).start();
         const uiSettings = resolveUiDeploymentSettings({
           component: componentName as 'ar-admin-ui' | 'ar-login-ui',
-          config: cfg as any,
+          config: cfg as AuthrimConfig,
           apiBaseUrl,
           loginUiClientId,
         });
 
-        const result = await deployPagesComponent(componentName as 'ar-admin-ui' | 'ar-login-ui', {
-          env,
-          rootDir: resolve(baseDir),
-          dryRun: dryRun || false,
-          apiBaseUrl: uiSettings.apiBaseUrl,
-          runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
-          uiEnvConfig: uiSettings.uiEnv,
-          onProgress: (msg) => {
-            deploySpinner.text = msg;
-          },
-        });
+        const result = await deployUiWorkerComponent(
+          componentName as 'ar-admin-ui' | 'ar-login-ui',
+          {
+            env,
+            rootDir: resolve(baseDir),
+            dryRun: dryRun || false,
+            apiBaseUrl: uiSettings.apiBaseUrl,
+            runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
+            uiEnvConfig: uiSettings.uiEnv,
+            serviceBindingName: uiSettings.serviceBindingName,
+            workersDev: uiSettings.workersDev,
+            routes: uiSettings.routes,
+            onProgress: (msg) => {
+              deploySpinner.text = msg;
+            },
+          }
+        );
 
         if (result.success) {
           deploySpinner.succeed(`${componentName} deployed successfully`);
@@ -513,4 +657,18 @@ program
   .description('Show current directory structure status and migration recommendation')
   .action(migrateStatusCommand);
 
-program.parse();
+function normalizePnpmScriptArgv(argv: string[]): string[] {
+  const [, , commandName, firstCommandArg] = argv;
+  if (!commandName || firstCommandArg !== '--') {
+    return argv;
+  }
+
+  const commandExists = program.commands.some((command) => command.name() === commandName);
+  if (!commandExists) {
+    return argv;
+  }
+
+  return [...argv.slice(0, 3), ...argv.slice(4)];
+}
+
+program.parse(normalizePnpmScriptArgv(process.argv));

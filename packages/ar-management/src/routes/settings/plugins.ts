@@ -25,7 +25,13 @@
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger, createLogger } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  createLogger,
+  invalidatePluginRuntimeCaches,
+} from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
   validateExternalUrl,
@@ -37,7 +43,10 @@ import {
   // Builtin plugin registration
   registerBuiltinPlugins,
   needsBuiltinRegistration,
+  cloudflareEmailPlugin,
+  resendEmailPlugin,
 } from '@authrim/ar-lib-plugin';
+import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 
 // =============================================================================
 // Types
@@ -138,6 +147,8 @@ interface PluginStatus {
   pluginId: string;
   enabled: boolean;
   configSource: 'kv' | 'env' | 'default';
+  configured: boolean;
+  missingRequiredFields: string[];
   loadedAt?: number;
   lastHealthCheck?: {
     status: 'healthy' | 'degraded' | 'unhealthy';
@@ -160,6 +171,14 @@ interface PluginDetailResponse {
   disclaimer: string | null;
 }
 
+export interface ResolvedPluginConfigState {
+  config: Record<string, unknown>;
+  source: 'kv' | 'env' | 'default';
+  configured: boolean;
+  missingRequiredFields: string[];
+  schema?: Record<string, unknown>;
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -177,6 +196,55 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
  */
 function getPluginKV(env: Env): KVNamespace | undefined {
   return env.SETTINGS;
+}
+
+type PluginTenantScope = 'tenant' | 'platform';
+
+const PLUGIN_TENANT_SCOPE_KEY = 'pluginTenantScope';
+
+export async function platformPluginScopeMiddleware(
+  c: Context<{ Bindings: Env }>,
+  next: () => Promise<void>
+): Promise<void> {
+  (c as any).set(PLUGIN_TENANT_SCOPE_KEY, 'platform');
+  await next();
+}
+
+function getPluginTenantScope(c: Context<{ Bindings: Env }>): PluginTenantScope {
+  return ((c as any).get(PLUGIN_TENANT_SCOPE_KEY) as PluginTenantScope | undefined) ?? 'tenant';
+}
+
+function getContextTenantId(c: Context<{ Bindings: Env }>): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const tenantId = ((c as any).get('tenantId') as string | null | undefined)?.trim();
+    return tenantId || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getRequestTenantId(
+  c: Context<{ Bindings: Env }>,
+  explicitTenantId?: string
+): string | undefined {
+  if (getPluginTenantScope(c) === 'tenant') {
+    const tenantId = getContextTenantId(c);
+    if (!tenantId) {
+      throw new Error('Plugin tenant-scope routes require tenant context');
+    }
+    return tenantId;
+  }
+
+  const candidates = [explicitTenantId, c.req.query('tenant_id'), c.req.header('X-Tenant-Id')];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -330,60 +398,186 @@ async function decryptConfigIfNeeded(
   }
 }
 
+async function getPluginSchema(
+  kv: KVNamespace,
+  pluginId: string
+): Promise<Record<string, unknown> | undefined> {
+  try {
+    const schemaData = await kv.get(`plugins:schema:${pluginId}`);
+    if (!schemaData) {
+      return undefined;
+    }
+
+    const parsed = JSON.parse(schemaData);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasConfiguredValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  return true;
+}
+
+function getMissingRequiredFields(
+  schema: Record<string, unknown> | undefined,
+  config: Record<string, unknown>
+): string[] {
+  const required = schema?.required;
+  if (!Array.isArray(required)) {
+    return [];
+  }
+
+  return required.filter(
+    (field): field is string =>
+      typeof field === 'string' && !hasConfiguredValue(config[field as keyof typeof config])
+  );
+}
+
+function getGenericPluginEnvConfig(env: Env, pluginId: string): Record<string, unknown> {
+  const envKey = `PLUGIN_${pluginId.toUpperCase().replace(/-/g, '_')}_CONFIG`;
+  const envValue = (env as unknown as Record<string, unknown>)[envKey];
+
+  if (typeof envValue !== 'string' || envValue.trim() === '') {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(envValue);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getBuiltinBootstrapConfig(env: Env, pluginId: string): Record<string, unknown> {
+  return resolveBuiltinPluginBootstrapConfig(env, pluginId);
+}
+
+function isMaskedSecretReplacement(value: unknown): value is string {
+  return typeof value === 'string' && value.includes('****');
+}
+
+function mergeConfigPreservingSecrets(
+  existingConfig: Record<string, unknown>,
+  patch: Record<string, unknown>
+): Record<string, unknown> {
+  const merged = { ...existingConfig };
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (
+      matchesSecretPattern(key) &&
+      isMaskedSecretReplacement(value) &&
+      typeof existingConfig[key] === 'string'
+    ) {
+      merged[key] = existingConfig[key];
+      continue;
+    }
+
+    merged[key] = value;
+  }
+
+  return merged;
+}
+
 /**
  * Get plugin configuration
  */
-async function getPluginConfig(
+export async function getPluginConfig(
   kv: KVNamespace,
   env: Env,
   pluginId: string,
   tenantId?: string
 ): Promise<{ config: Record<string, unknown>; source: 'kv' | 'env' | 'default' }> {
+  let hasKvConfig = false;
+  let globalConfig: Record<string, unknown> = {};
+  let tenantConfig: Record<string, unknown> = {};
+
+  const envConfig = {
+    ...getGenericPluginEnvConfig(env, pluginId),
+    ...getBuiltinBootstrapConfig(env, pluginId),
+  };
+
+  const readKvConfig = async (key: string): Promise<Record<string, unknown> | null> => {
+    const rawValue = await kv.get(key);
+    if (!rawValue) {
+      return null;
+    }
+
+    try {
+      const parsedConfig = JSON.parse(rawValue);
+      const decryptedConfig = await decryptConfigIfNeeded(parsedConfig, env);
+      return decryptedConfig;
+    } catch {
+      return null;
+    }
+  };
+
+  const resolvedGlobalConfig = await readKvConfig(`plugins:config:${pluginId}`);
+  if (resolvedGlobalConfig) {
+    globalConfig = resolvedGlobalConfig;
+    hasKvConfig = true;
+  }
+
   // Check tenant-specific first
   if (tenantId) {
-    const tenantKey = `plugins:config:${pluginId}:tenant:${tenantId}`;
-    const tenantValue = await kv.get(tenantKey);
-    if (tenantValue) {
-      try {
-        const tenantConfig = JSON.parse(tenantValue);
-        const decryptedTenantConfig = await decryptConfigIfNeeded(tenantConfig, env);
-        // Merge with global config
-        const globalConfig = await getPluginConfig(kv, env, pluginId);
-        return {
-          config: { ...globalConfig.config, ...decryptedTenantConfig },
-          source: 'kv',
-        };
-      } catch {
-        // Ignore parse errors
-      }
+    const resolvedTenantConfig = await readKvConfig(
+      `plugins:config:${pluginId}:tenant:${tenantId}`
+    );
+    if (resolvedTenantConfig) {
+      tenantConfig = resolvedTenantConfig;
+      hasKvConfig = true;
     }
   }
 
-  // Check global KV
-  const globalKey = `plugins:config:${pluginId}`;
-  const kvValue = await kv.get(globalKey);
-  if (kvValue) {
-    try {
-      const parsedConfig = JSON.parse(kvValue);
-      const decryptedConfig = await decryptConfigIfNeeded(parsedConfig, env);
-      return { config: decryptedConfig, source: 'kv' };
-    } catch {
-      // Ignore parse errors
-    }
+  const mergedConfig = {
+    ...envConfig,
+    ...globalConfig,
+    ...tenantConfig,
+  };
+
+  if (hasKvConfig) {
+    return { config: mergedConfig, source: 'kv' };
   }
 
-  // Check environment variable
-  const envKey = `PLUGIN_${pluginId.toUpperCase().replace(/-/g, '_')}_CONFIG`;
-  const envValue = (env as unknown as Record<string, unknown>)[envKey];
-  if (typeof envValue === 'string') {
-    try {
-      return { config: JSON.parse(envValue), source: 'env' };
-    } catch {
-      // Ignore parse errors
-    }
+  if (Object.keys(envConfig).length > 0) {
+    return { config: mergedConfig, source: 'env' };
   }
 
   return { config: {}, source: 'default' };
+}
+
+export async function getResolvedPluginConfigState(
+  kv: KVNamespace,
+  env: Env,
+  pluginId: string,
+  tenantId?: string
+): Promise<ResolvedPluginConfigState> {
+  const [{ config, source }, schema] = await Promise.all([
+    getPluginConfig(kv, env, pluginId, tenantId),
+    getPluginSchema(kv, pluginId),
+  ]);
+  const missingRequiredFields = getMissingRequiredFields(schema, config);
+
+  return {
+    config,
+    source,
+    configured: missingRequiredFields.length === 0,
+    missingRequiredFields,
+    schema,
+  };
 }
 
 /**
@@ -399,6 +593,69 @@ function identifySecretFields(config: Record<string, unknown>): string[] {
   return secretFields;
 }
 
+function createUnsupportedPluginService<T>(serviceName: string): T {
+  return new Proxy(
+    {},
+    {
+      get(_target, property) {
+        throw new Error(
+          `Admin plugin tooling does not provide ${serviceName}; attempted to access ${String(property)}`
+        );
+      },
+    }
+  ) as T;
+}
+
+function getBuiltinEmailPluginById(pluginId: string) {
+  switch (pluginId) {
+    case cloudflareEmailPlugin.id:
+      return cloudflareEmailPlugin;
+    case resendEmailPlugin.id:
+      return resendEmailPlugin;
+    default:
+      return null;
+  }
+}
+
+function createEmailNotifierCaptureRegistry(env: Env): {
+  registerNotifier(channel: string, handler: unknown): void;
+  registerIdP(): void;
+  registerAuthenticator(): void;
+  getEmailNotifier():
+    | { send: (notification: Record<string, unknown>) => Promise<unknown> }
+    | undefined;
+} {
+  let emailNotifier:
+    | { send: (notification: Record<string, unknown>) => Promise<unknown> }
+    | undefined;
+
+  return {
+    registerNotifier(channel: string, handler: unknown) {
+      if (channel !== 'email' || !handler || typeof handler !== 'object') {
+        return;
+      }
+
+      Object.defineProperty(handler, '__authrimWorkerEnv', {
+        value: env,
+        configurable: true,
+        enumerable: false,
+      });
+      emailNotifier = handler as {
+        send: (notification: Record<string, unknown>) => Promise<unknown>;
+      };
+    },
+    registerIdP() {
+      // No-op: plugin email test only needs notifier registration.
+    },
+    registerAuthenticator() {
+      // No-op: plugin email test only needs notifier registration.
+    },
+    getEmailNotifier() {
+      return emailNotifier;
+    },
+  };
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -412,6 +669,7 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
   if (!kv) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+  const tenantId = getRequestTenantId(c);
 
   // Lazy initialization: Ensure builtin plugins are registered
   // This runs once per Worker isolate and is a no-op if already registered
@@ -421,8 +679,13 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
   const plugins: Array<PluginRegistryEntry & PluginStatus> = [];
 
   for (const [pluginId, entry] of Object.entries(registry)) {
-    const enabled = await isPluginEnabled(kv, pluginId);
-    const { source } = await getPluginConfig(kv, c.env, pluginId);
+    const enabled = await isPluginEnabled(kv, pluginId, tenantId);
+    const { source, configured, missingRequiredFields } = await getResolvedPluginConfigState(
+      kv,
+      c.env,
+      pluginId,
+      tenantId
+    );
 
     // Try to get last health check from KV
     let lastHealthCheck: PluginStatus['lastHealthCheck'];
@@ -440,6 +703,8 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
       pluginId,
       enabled,
       configSource: source,
+      configured,
+      missingRequiredFields,
       lastHealthCheck,
     });
   }
@@ -462,6 +727,7 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
 export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
   const pluginId = c.req.param('id')!;
   const kv = getPluginKV(c.env);
+  const tenantId = getRequestTenantId(c);
 
   if (!kv) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -474,19 +740,14 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
-  const enabled = await isPluginEnabled(kv, pluginId);
-  const { config, source } = await getPluginConfig(kv, c.env, pluginId);
-
-  // Get schema from registry (stored when plugin was registered)
-  let configSchema: Record<string, unknown> | undefined;
-  try {
-    const schemaData = await kv.get(`plugins:schema:${pluginId}`);
-    if (schemaData) {
-      configSchema = JSON.parse(schemaData);
-    }
-  } catch {
-    // Ignore
-  }
+  const enabled = await isPluginEnabled(kv, pluginId, tenantId);
+  const {
+    config,
+    source,
+    configured,
+    missingRequiredFields,
+    schema: configSchema,
+  } = await getResolvedPluginConfigState(kv, c.env, pluginId, tenantId);
 
   // Get last health check
   let lastHealthCheck: PluginStatus['lastHealthCheck'];
@@ -508,6 +769,8 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
       pluginId,
       enabled,
       configSource: source,
+      configured,
+      missingRequiredFields,
       lastHealthCheck,
     },
     config: maskSensitiveFields(config),
@@ -524,20 +787,27 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function getPluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const pluginId = c.req.param('id')!;
-  const tenantId = c.req.query('tenant_id');
+  const tenantId = getRequestTenantId(c);
   const kv = getPluginKV(c.env);
 
   if (!kv) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
-  const { config, source } = await getPluginConfig(kv, c.env, pluginId, tenantId);
+  const { config, source, configured, missingRequiredFields } = await getResolvedPluginConfigState(
+    kv,
+    c.env,
+    pluginId,
+    tenantId
+  );
 
   return c.json({
     pluginId,
     tenantId: tenantId ?? null,
     config: maskSensitiveFields(config),
     source,
+    configured,
+    missingRequiredFields,
   });
 }
 
@@ -579,15 +849,16 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Get existing config for audit logging
-  const { config: existingConfig } = await getPluginConfig(kv, c.env, pluginId, body.tenant_id);
+  const tenantId = getRequestTenantId(c, body.tenant_id);
+  const { config: existingConfig } = await getPluginConfig(kv, c.env, pluginId, tenantId);
 
   // Determine the key
-  const configKey = body.tenant_id
-    ? `plugins:config:${pluginId}:tenant:${body.tenant_id}`
+  const configKey = tenantId
+    ? `plugins:config:${pluginId}:tenant:${tenantId}`
     : `plugins:config:${pluginId}`;
 
   // Merge with existing config
-  const newConfig = { ...existingConfig, ...body.config };
+  const newConfig = mergeConfigPreservingSecrets(existingConfig, body.config);
 
   // Identify secret fields to encrypt
   const secretFields = body.secret_fields ?? identifySecretFields(newConfig);
@@ -609,13 +880,14 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
 
   // Save to KV
   await kv.put(configKey, JSON.stringify(configToStore));
+  invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
 
   // Log the change (with masked values for audit)
   log.info(
     'Plugin config updated',
     buildPluginAuditLog('update', adminId, {
       pluginId,
-      tenantId: body.tenant_id ?? null,
+      tenantId: tenantId ?? null,
       changedFields: Object.keys(body.config),
       encryptedFields: secretFields,
     })
@@ -624,7 +896,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   return c.json({
     success: true,
     pluginId,
-    tenantId: body.tenant_id ?? null,
+    tenantId: tenantId ?? null,
     config: maskSensitiveFields(newConfig),
     encryptedFields: secretFields,
   });
@@ -654,9 +926,9 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
   let tenantId: string | undefined;
   try {
     const body = await c.req.json<{ tenant_id?: string }>();
-    tenantId = body.tenant_id;
+    tenantId = getRequestTenantId(c, body.tenant_id);
   } catch {
-    // No body or invalid JSON, proceed without tenant_id
+    tenantId = getRequestTenantId(c);
   }
 
   const enableKey = tenantId
@@ -664,6 +936,7 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
     : `plugins:enabled:${pluginId}`;
 
   await kv.put(enableKey, 'true');
+  invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
 
   log.info(
     'Plugin enabled',
@@ -705,9 +978,9 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
   let tenantId: string | undefined;
   try {
     const body = await c.req.json<{ tenant_id?: string }>();
-    tenantId = body.tenant_id;
+    tenantId = getRequestTenantId(c, body.tenant_id);
   } catch {
-    // No body or invalid JSON, proceed without tenant_id
+    tenantId = getRequestTenantId(c);
   }
 
   const enableKey = tenantId
@@ -715,6 +988,7 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
     : `plugins:enabled:${pluginId}`;
 
   await kv.put(enableKey, 'false');
+  invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
 
   log.info(
     'Plugin disabled',
@@ -730,6 +1004,175 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
     tenantId: tenantId ?? null,
     enabled: false,
   });
+}
+
+/**
+ * POST /api/admin/plugins/:id/test-email
+ * Send a test email using the selected plugin's current configuration.
+ */
+export async function sendPluginTestEmailHandler(c: Context<{ Bindings: Env }>) {
+  const pluginId = c.req.param('id')!;
+  const kv = getPluginKV(c.env);
+  const logger = getLogger(c).module('PluginAdminAPI');
+
+  if (!kv) {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+
+  const registry = await getPluginRegistry(kv);
+  const entry = registry[pluginId];
+  if (!entry) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+  }
+
+  if (!entry.capabilities.includes('notifier.email')) {
+    return c.json(
+      {
+        error: 'invalid_plugin',
+        error_description: 'Test email is only supported for email notifier plugins',
+      },
+      400
+    );
+  }
+
+  const plugin = getBuiltinEmailPluginById(pluginId);
+  if (!plugin) {
+    return c.json(
+      {
+        error: 'unsupported_plugin',
+        error_description: 'Test email is currently supported for builtin email plugins only',
+      },
+      400
+    );
+  }
+
+  const body = await c.req
+    .json<{
+      to?: string;
+      tenant_id?: string;
+      config?: Record<string, unknown>;
+    }>()
+    .catch(() => null);
+
+  const to = body?.to?.trim();
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return c.json(
+      {
+        error: 'invalid_email',
+        error_description: 'A valid recipient email address is required',
+      },
+      400
+    );
+  }
+
+  const tenantId = getRequestTenantId(c, body?.tenant_id);
+  const enabled = await isPluginEnabled(kv, pluginId, tenantId);
+  if (!enabled) {
+    return c.json(
+      {
+        error: 'plugin_disabled',
+        error_description: 'Enable this plugin before sending a test email',
+      },
+      400
+    );
+  }
+
+  const { config: existingConfig } = await getPluginConfig(kv, c.env, pluginId, tenantId);
+  const effectiveConfig = mergeConfigPreservingSecrets(existingConfig, body?.config ?? {});
+
+  let parsedConfig: never;
+  try {
+    parsedConfig = plugin.configSchema.parse(effectiveConfig) as never;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Plugin configuration is invalid';
+    return c.json(
+      {
+        error: 'invalid_config',
+        error_description: message,
+      },
+      400
+    );
+  }
+
+  try {
+    if (plugin.initialize) {
+      await plugin.initialize(
+        {
+          storage: createUnsupportedPluginService('storage'),
+          policy: createUnsupportedPluginService('policy'),
+          config: createUnsupportedPluginService('config'),
+          logger,
+          audit: {
+            async log() {
+              // Admin-triggered test emails do not write plugin audit events.
+            },
+          },
+          tenantId: tenantId ?? 'platform',
+          env: c.env as never,
+        },
+        parsedConfig
+      );
+    }
+
+    const notifierRegistry = createEmailNotifierCaptureRegistry(c.env);
+    plugin.register(notifierRegistry as never, parsedConfig);
+    const notifier = notifierRegistry.getEmailNotifier();
+
+    if (!notifier) {
+      return c.json(
+        {
+          error: 'missing_notifier',
+          error_description: 'The plugin did not register an email notifier',
+        },
+        500
+      );
+    }
+
+    const result = (await notifier.send({
+      channel: 'email',
+      to,
+      subject: 'Authrim test email',
+      body: `<p>This is a test email from Authrim.</p><p>Provider: ${entry.meta?.name ?? pluginId}</p>`,
+      metadata: {
+        textBody: `This is a test email from Authrim.\nProvider: ${entry.meta?.name ?? pluginId}`,
+      },
+    })) as {
+      success: boolean;
+      messageId?: string;
+      error?: string;
+      retryable?: boolean;
+      providerResponse?: unknown;
+    };
+
+    if (!result.success) {
+      return c.json(
+        {
+          error: 'test_email_failed',
+          error_description: result.error ?? 'The plugin could not send the test email',
+          retryable: result.retryable ?? false,
+        },
+        502
+      );
+    }
+
+    return c.json({
+      success: true,
+      pluginId,
+      tenantId: tenantId ?? null,
+      to,
+      messageId: result.messageId ?? null,
+      providerResponse: result.providerResponse ?? null,
+    });
+  } catch (error) {
+    logger.warn('Plugin test email failed', { pluginId, tenantId }, error as Error);
+    return c.json(
+      {
+        error: 'test_email_failed',
+        error_description: error instanceof Error ? error.message : 'Failed to send test email',
+      },
+      502
+    );
+  }
 }
 
 /**

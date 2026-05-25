@@ -307,7 +307,7 @@ describe('Multi-tenant Isolation Tests', () => {
   });
 
   describe('Default Tenant Handling', () => {
-    it('should use "default" tenant when tenant_id is not specified', async () => {
+    it('should reject missing tenant_id', async () => {
       const roleAssignments = new Map([
         ['default', new Map([['user_1', ['docs:read']]])],
         ['other', new Map<string, string[]>()],
@@ -315,14 +315,12 @@ describe('Multi-tenant Isolation Tests', () => {
       mockD1 = createTenantAwareD1(roleAssignments);
       const service = createUnifiedCheckService({ db: mockD1 });
 
-      // No tenant_id specified - should use 'default'
-      const result = await service.check({
-        subject_id: 'user_1',
-        permission: 'docs:read',
-        // tenant_id not specified
-      } as CheckApiRequest);
-
-      expect(result.allowed).toBe(true);
+      await expect(
+        service.check({
+          subject_id: 'user_1',
+          permission: 'docs:read',
+        } as CheckApiRequest)
+      ).rejects.toThrow('UnifiedCheckService requires tenant_id');
     });
 
     it('should not confuse default tenant with other tenants', async () => {
@@ -387,7 +385,7 @@ describe('Multi-tenant Isolation Tests', () => {
       ).toBe(true);
     });
 
-    it('should handle empty string tenant_id as different from default', async () => {
+    it('should reject empty string tenant_id', async () => {
       const roleAssignments = new Map([
         ['default', new Map([['user_1', ['docs:read']]])],
         ['', new Map<string, string[]>()],
@@ -395,16 +393,13 @@ describe('Multi-tenant Isolation Tests', () => {
       mockD1 = createTenantAwareD1(roleAssignments);
       const service = createUnifiedCheckService({ db: mockD1 });
 
-      // Empty string tenant should NOT match 'default'
-      expect(
-        (
-          await service.check({
-            subject_id: 'user_1',
-            permission: 'docs:read',
-            tenant_id: '',
-          })
-        ).allowed
-      ).toBe(false);
+      await expect(
+        service.check({
+          subject_id: 'user_1',
+          permission: 'docs:read',
+          tenant_id: '',
+        })
+      ).rejects.toThrow('UnifiedCheckService requires tenant_id');
     });
 
     it('should treat tenant_id as case-sensitive', async () => {

@@ -11,7 +11,7 @@
  *
  * Data sources:
  *   - SETTINGS KV ("system_settings") → passkeyEnabled, magicLinkEnabled, UI theme
- *   - EXTERNAL_IDP service binding → enabled social providers
+ *   - EXTERNAL_IDP service binding → enabled external login providers
  *
  * Security:
  *   - No secrets or internal config exposed
@@ -21,7 +21,11 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { getLogger } from '@authrim/ar-lib-core';
+import {
+  getLogger,
+  getTenantIdFromContext,
+  resolveAuthCorePersistenceAdapterFromEnv,
+} from '@authrim/ar-lib-core';
 
 // =============================================================================
 // Types
@@ -37,24 +41,31 @@ interface EmailCodeMethod {
   steps: string[];
 }
 
-interface SocialProvider {
+type ExternalLoginProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
+type ExternalLoginStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
+
+interface ExternalLoginProvider {
   id: string;
   name: string;
+  type: ExternalLoginProviderType;
+  startMode: ExternalLoginStartMode;
   slug?: string;
   iconUrl?: string;
+  iconName?: string;
   buttonColor?: string;
   buttonText?: string;
+  startUrl?: string;
 }
 
-interface SocialMethod {
+interface ExternalLoginMethod {
   enabled: boolean;
-  providers: SocialProvider[];
+  providers: ExternalLoginProvider[];
 }
 
 interface LoginMethods {
   passkey: PasskeyMethod;
   emailCode: EmailCodeMethod;
-  social: SocialMethod;
+  external: ExternalLoginMethod;
 }
 
 interface UIConfig {
@@ -105,9 +116,47 @@ interface LoginMethodsErrorResponse {
 // =============================================================================
 
 const DEFAULT_CACHE_TTL = 300; // 5 minutes (seconds)
-const MAX_SOCIAL_PROVIDERS = 20;
+const MAX_EXTERNAL_LOGIN_PROVIDERS = 20;
 const MAX_STRING_LENGTH = 256;
 const MAX_URL_LENGTH = 2048;
+
+const LOGIN_PROVIDER_ICON_NAMES = new Set([
+  'buildings',
+  'house',
+  'house-simple',
+  'bank',
+  'building',
+  'city',
+  'graduation-cap',
+  'student',
+  'books',
+  'chalkboard-teacher',
+  'globe',
+  'globe-hemisphere-east',
+  'shield-check',
+  'seal-check',
+  'certificate',
+  'identification-card',
+  'fingerprint',
+  'key',
+  'briefcase',
+  'users-three',
+  'network',
+  'share-network',
+  'tree-structure',
+  'handshake',
+  'cloud',
+  'cloud-check',
+  'database',
+  'hard-drives',
+  'devices',
+  'terminal-window',
+  'book-open',
+  'presentation-chart',
+  'rocket-launch',
+  'compass',
+  'none',
+]);
 
 const DEFAULT_UI_CONFIG: UIConfig = {
   theme: 'light',
@@ -188,6 +237,25 @@ interface LoginUIKVSettings {
   'login-ui.custom_blocks'?: string;
 }
 
+interface LoginMethodKVSettings {
+  'login-methods.cache_ttl'?: number;
+  'login-methods.external_providers'?: string | ExternalLoginProviderConfig[];
+}
+
+interface ExternalLoginProviderConfig {
+  id?: string;
+  name?: string;
+  type?: string;
+  startMode?: string;
+  slug?: string;
+  iconUrl?: string;
+  iconName?: string;
+  buttonColor?: string;
+  buttonText?: string;
+  startUrl?: string;
+  enabled?: boolean;
+}
+
 /**
  * Read Login UI settings from AUTHRIM_CONFIG KV (settings-v2 system)
  * Falls back to system_settings.loginUI for backward compatibility
@@ -233,6 +301,7 @@ function safeParseJsonArray<T>(json: string | undefined): T[] {
  */
 async function getLoginUISettings(
   env: Env,
+  tenantId: string,
   systemSettings: SystemSettings
 ): Promise<LoginUIResolved> {
   const defaults: LoginUIResolved = {
@@ -250,9 +319,9 @@ async function getLoginUISettings(
     customBlocks: [...DEFAULT_UI_CONFIG.appearance.customBlocks],
   };
 
-  // Try settings-v2 (SETTINGS KV) first
+  // Try settings-v2 (SETTINGS KV) first — tenant-aware
   try {
-    const kvJson = await env.SETTINGS?.get('settings:tenant:default:login-ui');
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`);
     if (kvJson) {
       const kvSettings = JSON.parse(kvJson) as LoginUIKVSettings;
       return {
@@ -335,11 +404,79 @@ function truncateString(value: string | undefined, maxLen: number = MAX_STRING_L
   return value.slice(0, maxLen);
 }
 
+function normalizeLoginProviderIconName(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && LOGIN_PROVIDER_ICON_NAMES.has(normalized) ? normalized : undefined;
+}
+
 /**
- * Fetch enabled social providers from ar-bridge via service binding
+ * Normalize provider types for the Login UI. Unknown future protocols remain displayable.
  */
-async function fetchSocialProviders(env: Env): Promise<SocialProvider[]> {
-  if (!env.EXTERNAL_IDP || !env.ADMIN_API_SECRET) {
+function normalizeExternalProviderType(value: string | undefined): ExternalLoginProviderType {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === 'saml' || normalized === 'saml_idp' || normalized === 'saml_sp') {
+    return 'saml';
+  }
+  if (normalized === 'vc' || normalized === 'openid4vc' || normalized === 'openid4vp') {
+    return 'vc';
+  }
+  if (normalized === 'oauth2' || normalized === 'oauth') {
+    return 'oauth2';
+  }
+  if (normalized === 'oidc' || normalized === 'openid_connect') {
+    return 'oidc';
+  }
+  return normalized ? 'custom' : 'oidc';
+}
+
+function normalizeExternalStartMode(
+  value: string | undefined,
+  type: ExternalLoginProviderType
+): ExternalLoginStartMode {
+  const normalized = value?.trim().toLowerCase();
+  if (
+    normalized === 'oauth_redirect' ||
+    normalized === 'oauth' ||
+    normalized === 'oidc' ||
+    normalized === 'oauth2'
+  ) {
+    return 'oauth_redirect';
+  }
+  if (normalized === 'saml_sp' || normalized === 'saml') {
+    return 'saml_sp';
+  }
+  if (normalized === 'direct' || normalized === 'url') {
+    return 'direct';
+  }
+  if (type === 'saml') return 'saml_sp';
+  if (type === 'oidc' || type === 'oauth2') return 'oauth_redirect';
+  return 'direct';
+}
+
+function isValidStartUrl(value: string | undefined): value is string {
+  if (!value || typeof value !== 'string') return false;
+  if (value.startsWith('//')) return false;
+  try {
+    const parsed = new URL(value, 'https://authrim.local');
+    if (parsed.origin === 'https://authrim.local') {
+      return value.startsWith('/');
+    }
+    return parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function buildSAMLSPLoginStartUrl(providerId: string): string {
+  const params = new URLSearchParams({ idp: providerId });
+  return `/saml/sp/login?${params.toString()}`;
+}
+
+/**
+ * Fetch enabled external login providers from ar-bridge via service binding.
+ */
+async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvider[]> {
+  if (!env.EXTERNAL_IDP) {
     return [];
   }
 
@@ -348,7 +485,6 @@ async function fetchSocialProviders(env: Env): Promise<SocialProvider[]> {
       method: 'GET',
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${env.ADMIN_API_SECRET}`,
       },
     });
 
@@ -363,6 +499,7 @@ async function fetchSocialProviders(env: Env): Promise<SocialProvider[]> {
         name: string;
         providerType?: string;
         iconUrl?: string;
+        iconName?: string;
         buttonColor?: string;
         buttonText?: string;
         enabled?: boolean;
@@ -376,18 +513,135 @@ async function fetchSocialProviders(env: Env): Promise<SocialProvider[]> {
     return data.providers
       .filter((p) => p.enabled !== false)
       .filter((p) => p.id && typeof p.id === 'string' && p.name && typeof p.name === 'string')
-      .slice(0, MAX_SOCIAL_PROVIDERS)
-      .map((p) => ({
-        id: truncateString(p.slug || p.id),
-        name: truncateString(p.name),
-        slug: p.slug ? truncateString(p.slug) : undefined,
-        iconUrl: isValidHttpsUrl(p.iconUrl) ? p.iconUrl : undefined,
-        buttonColor: p.buttonColor ? truncateString(p.buttonColor, 50) : undefined,
-        buttonText: p.buttonText ? truncateString(p.buttonText, 100) : undefined,
+      .slice(0, MAX_EXTERNAL_LOGIN_PROVIDERS)
+      .map((p) => {
+        const type = normalizeExternalProviderType(p.providerType);
+        const id = truncateString(p.slug || p.id);
+        return {
+          id,
+          name: truncateString(p.name),
+          type,
+          startMode: 'oauth_redirect',
+          slug: p.slug ? truncateString(p.slug) : undefined,
+          iconUrl: isValidHttpsUrl(p.iconUrl) ? p.iconUrl : undefined,
+          iconName: normalizeLoginProviderIconName(p.iconName),
+          buttonColor: p.buttonColor ? truncateString(p.buttonColor, 50) : undefined,
+          buttonText: p.buttonText ? truncateString(p.buttonText, 100) : undefined,
+          startUrl: `/api/external/${encodeURIComponent(id)}/start`,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+async function fetchSAMLLoginProviders(
+  env: Env,
+  tenantId: string
+): Promise<ExternalLoginProvider[]> {
+  try {
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'login-methods-saml', {
+      tenantId,
+    });
+    const rows = await adapter.query<{ id: string; name: string; config_json: string }>(
+      `SELECT id, name, config_json
+       FROM identity_providers
+       WHERE tenant_id = ? AND provider_type = 'saml_idp' AND enabled = 1
+       ORDER BY name ASC
+       LIMIT ?`,
+      [tenantId, MAX_EXTERNAL_LOGIN_PROVIDERS]
+    );
+
+    return rows
+      .filter((row) => row.id && row.name)
+      .map((row) => ({
+        id: `saml:${truncateString(row.id)}`,
+        name: truncateString(row.name),
+        type: 'saml',
+        startMode: 'saml_sp',
+        iconUrl: getSAMLProviderLogoUrl(row.config_json),
+        iconName: getSAMLProviderIconName(row.config_json),
+        startUrl: buildSAMLSPLoginStartUrl(row.id),
       }));
   } catch {
     return [];
   }
+}
+
+function getSAMLProviderLogoUrl(configJson: string): string | undefined {
+  try {
+    const config = JSON.parse(configJson) as { logoUrl?: string };
+    return isValidHttpsUrl(config.logoUrl) ? config.logoUrl : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getSAMLProviderIconName(configJson: string): string | undefined {
+  try {
+    const config = JSON.parse(configJson) as { iconName?: string };
+    return normalizeLoginProviderIconName(config.iconName);
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchConfiguredExternalLoginProviders(
+  env: Env,
+  tenantId: string
+): Promise<ExternalLoginProvider[]> {
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    if (!kvJson) return [];
+
+    const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
+    const rawProviders = kvSettings['login-methods.external_providers'];
+    const providers =
+      typeof rawProviders === 'string'
+        ? safeParseJsonArray<ExternalLoginProviderConfig>(rawProviders)
+        : rawProviders;
+
+    if (!Array.isArray(providers)) return [];
+
+    return providers
+      .filter((provider) => provider.enabled !== false)
+      .filter(
+        (provider) =>
+          typeof provider.id === 'string' &&
+          typeof provider.name === 'string' &&
+          isValidStartUrl(provider.startUrl)
+      )
+      .slice(0, MAX_EXTERNAL_LOGIN_PROVIDERS)
+      .map((provider) => {
+        const type = normalizeExternalProviderType(provider.type);
+        return {
+          id: truncateString(provider.id),
+          name: truncateString(provider.name),
+          type,
+          startMode: normalizeExternalStartMode(provider.startMode, type),
+          slug: provider.slug ? truncateString(provider.slug) : undefined,
+          iconUrl: isValidHttpsUrl(provider.iconUrl) ? provider.iconUrl : undefined,
+          iconName: normalizeLoginProviderIconName(provider.iconName),
+          buttonColor: provider.buttonColor ? truncateString(provider.buttonColor, 50) : undefined,
+          buttonText: provider.buttonText ? truncateString(provider.buttonText, 100) : undefined,
+          startUrl: provider.startUrl,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+function mergeExternalLoginProviders(
+  providerGroups: ExternalLoginProvider[][]
+): ExternalLoginProvider[] {
+  const providers = new Map<string, ExternalLoginProvider>();
+  for (const provider of providerGroups.flat()) {
+    if (!providers.has(provider.id)) {
+      providers.set(provider.id, provider);
+    }
+  }
+  return Array.from(providers.values()).slice(0, MAX_EXTERNAL_LOGIN_PROVIDERS);
 }
 
 /**
@@ -418,12 +672,12 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
  * Resolve cache TTL from KV → env → default
  * Priority: KV (SETTINGS) → env (LOGIN_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
  */
-async function resolveCacheTTL(env: Env): Promise<number> {
-  // 1. Try KV (settings-v2)
+async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
+  // 1. Try KV (settings-v2) — tenant-aware
   try {
-    const kvJson = await env.SETTINGS?.get('settings:tenant:default:login-methods');
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
     if (kvJson) {
-      const kvSettings = JSON.parse(kvJson) as { 'login-methods.cache_ttl'?: number };
+      const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
       const kvTTL = kvSettings['login-methods.cache_ttl'];
       if (typeof kvTTL === 'number' && kvTTL >= 0 && kvTTL <= 3600) {
         return kvTTL;
@@ -460,19 +714,27 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
 
   try {
     const env = c.env as Env;
+    const tenantId = getTenantIdFromContext(c);
 
     // Fetch data in parallel
-    const [settings, socialProviders] = await Promise.all([
+    const [settings, bridgeProviders, samlProviders, configuredProviders] = await Promise.all([
       getSystemSettings(env),
-      fetchSocialProviders(env),
+      fetchExternalLoginProviders(env),
+      fetchSAMLLoginProviders(env, tenantId),
+      fetchConfiguredExternalLoginProviders(env, tenantId),
+    ]);
+    const externalProviders = mergeExternalLoginProviders([
+      bridgeProviders,
+      samlProviders,
+      configuredProviders,
     ]);
 
     const passkeyEnabled = settings.advanced?.passkeyEnabled !== false;
     const emailCodeEnabled = settings.advanced?.magicLinkEnabled !== false;
-    const socialEnabled = socialProviders.length > 0;
+    const externalEnabled = externalProviders.length > 0;
 
     // Check if at least one method is available
-    if (!passkeyEnabled && !emailCodeEnabled && !socialEnabled) {
+    if (!passkeyEnabled && !emailCodeEnabled && !externalEnabled) {
       log.warn('No login method available', {});
       const errorResponse: LoginMethodsErrorResponse = {
         error: {
@@ -493,16 +755,16 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
         enabled: emailCodeEnabled,
         steps: emailCodeEnabled ? ['email', 'code'] : [],
       },
-      social: {
-        enabled: socialEnabled,
-        providers: socialProviders,
+      external: {
+        enabled: externalEnabled,
+        providers: externalProviders,
       },
     };
 
-    // Resolve Login UI settings and cache TTL in parallel
+    // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
     const [loginUISettings, cacheTTL] = await Promise.all([
-      getLoginUISettings(env, settings),
-      resolveCacheTTL(env),
+      getLoginUISettings(env, tenantId, settings),
+      resolveCacheTTL(env, tenantId),
     ]);
     const ui = buildUIConfig(loginUISettings);
 

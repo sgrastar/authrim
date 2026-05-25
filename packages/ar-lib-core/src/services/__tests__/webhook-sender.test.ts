@@ -130,7 +130,7 @@ describe('sendWebhook', () => {
     const result = await sendWebhook({
       url: 'https://example.com/webhook',
       payload: '{"event":"test"}',
-      signature: 'abc123',
+      secret: 'secret-123',
       timeoutMs: 30000,
     });
 
@@ -143,7 +143,8 @@ describe('sendWebhook', () => {
     expect(url).toBe('https://example.com/webhook');
     expect(options.method).toBe('POST');
     expect(options.headers['Content-Type']).toBe('application/json');
-    expect(options.headers['X-Authrim-Signature-256']).toBe('sha256=abc123');
+    expect(options.headers['X-Authrim-Signature-256']).toMatch(/^sha256=[0-9a-f]{64}$/);
+    expect(options.headers['X-Authrim-Signature-Version']).toBe('v1');
     expect(options.headers['X-Authrim-Timestamp']).toBeDefined();
     expect(options.headers['X-Authrim-Delivery']).toBeDefined();
     expect(options.headers['User-Agent']).toBe('Authrim-Webhook/1.0');
@@ -211,7 +212,7 @@ describe('sendWebhook', () => {
     await sendWebhook({
       url: 'https://example.com/webhook',
       payload: '{}',
-      signature: 'sig',
+      secret: 'secret-123',
       timeoutMs: 30000,
       customHeaders: {
         'X-Custom-Header': 'custom-value',
@@ -220,6 +221,21 @@ describe('sendWebhook', () => {
 
     const [, options] = mockFetch.mock.calls[0];
     expect(options.headers['X-Custom-Header']).toBe('custom-value');
+    expect(options.headers['X-Authrim-Signature-Version']).toBe('v1');
+  });
+
+  it('should reject internal webhook URLs before fetch', async () => {
+    const result = await sendWebhook({
+      url: 'https://169.254.169.254/latest/meta-data',
+      payload: '{}',
+      signature: 'sig',
+      timeoutMs: 30000,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Invalid webhook URL');
+    expect(result.retryable).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 

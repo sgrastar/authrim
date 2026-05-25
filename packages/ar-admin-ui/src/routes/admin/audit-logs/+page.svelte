@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminAuditLogsAPI,
 		type AuditLogEntry,
@@ -17,6 +18,8 @@
 	// Filter state
 	let userIdFilter = $state('');
 	let actionFilter = $state('');
+	let resourceTypeFilter = $state('');
+	let resourceIdFilter = $state('');
 	let startDate = $state('');
 	let endDate = $state('');
 	let currentPage = $state(1);
@@ -27,6 +30,7 @@
 
 	// Debounce timer for user ID search
 	let searchTimeout: ReturnType<typeof setTimeout>;
+	let loadedTenantId = $state('');
 
 	async function loadAuditLogs() {
 		loading = true;
@@ -43,6 +47,12 @@
 			}
 			if (actionFilter) {
 				params.action = actionFilter;
+			}
+			if (resourceTypeFilter.trim()) {
+				params.resource_type = resourceTypeFilter.trim();
+			}
+			if (resourceIdFilter.trim()) {
+				params.resource_id = resourceIdFilter.trim();
 			}
 			if (startDate) {
 				params.start_date = new Date(startDate).toISOString();
@@ -65,7 +75,15 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		currentPage = 1;
 		loadAuditLogs();
 	});
 
@@ -85,6 +103,8 @@
 	function clearFilters() {
 		userIdFilter = '';
 		actionFilter = '';
+		resourceTypeFilter = '';
+		resourceIdFilter = '';
 		startDate = '';
 		endDate = '';
 		currentPage = 1;
@@ -243,8 +263,35 @@
 				</div>
 			</div>
 
+			<div class="filter-row">
+				<div class="form-group">
+					<label for="resource_type" class="form-label">Resource Type</label>
+					<input
+						id="resource_type"
+						type="text"
+						class="form-input"
+						placeholder="user, client, session..."
+						bind:value={resourceTypeFilter}
+						oninput={handleUserIdSearch}
+					/>
+				</div>
+
+				<div class="form-group">
+					<label for="resource_id" class="form-label">Resource ID</label>
+					<input
+						id="resource_id"
+						type="text"
+						class="form-input"
+						placeholder="Filter by resource ID..."
+						bind:value={resourceIdFilter}
+						oninput={handleUserIdSearch}
+					/>
+				</div>
+			</div>
+
 			<p class="filter-hint">
-				Tip: Use date filters to narrow down large result sets for better performance.
+				Tip: Archive-only search supports user, action, resource, and date filters. Use date ranges
+				to narrow large result sets.
 			</p>
 		</div>
 	{/if}

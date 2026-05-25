@@ -130,6 +130,10 @@ describe('Dynamic Client Registration Handler', () => {
 
     // Create fresh app instance
     app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+      await next();
+    });
     app.post('/register', registerHandler);
 
     // Setup mock KV namespaces
@@ -230,6 +234,35 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.scope).toBe('openid profile email');
     });
 
+    it('uses the request host for registration_client_uri in multi-tenant mode', async () => {
+      const localApp = new Hono<{ Bindings: Env }>();
+      localApp.use('*', async (c, next) => {
+        (c as any).set('tenantId', 'tenant1');
+        await next();
+      });
+      localApp.post('/register', registerHandler);
+
+      const response = await localApp.fetch(
+        new Request('https://tenant1.example.com/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+          }),
+        }),
+        {
+          ...mockEnv,
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'tenant1',
+        } as Env
+      );
+
+      const json = (await response.json()) as RegistrationResponse;
+      expect(json.registration_client_uri).toMatch(/^https:\/\/tenant1\.example\.com\/clients\//);
+    });
+
     it('should store client metadata in D1 database', async () => {
       const mockDB = createMockDB();
       const localMockEnv = createMockEnv({ db: mockDB });
@@ -258,10 +291,9 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.client_id).toBeDefined();
       expect(json.client_name).toBe('Test Client');
 
-      // Verify client was stored in D1 (source of truth)
-      // The implementation uses INSERT OR REPLACE into oauth_clients table
+      // Verify client was stored in the core relational source of truth.
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT OR REPLACE INTO oauth_clients')
+        expect.stringContaining('INSERT INTO oauth_clients')
       );
 
       // Verify the run method was called (client was actually inserted)
@@ -771,6 +803,62 @@ describe('Dynamic Client Registration Handler', () => {
       const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('application_type');
+    });
+
+    it('should reject legacy app_suite in public registration', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        app_suite: 'wallet-suite',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json).toMatchObject({
+        error: 'legacy_app_suite_not_supported',
+        error_uri: 'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
+        error_details: expect.objectContaining({
+          code: 'legacy_app_suite_not_supported',
+          severity: 'fatal',
+        }),
+      });
+    });
+
+    it('should reject managed trust group fields in public registration', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        trust_group_id: 'wallet-suite',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('trust_group_id is not supported');
     });
   });
 
@@ -1285,6 +1373,60 @@ describe('Dynamic Client Registration Handler', () => {
       expect(mockDB.prepare).toHaveBeenCalledWith(
         expect.stringContaining('post_logout_redirect_uris')
       );
+    });
+  });
+
+  describe('Validation - backchannel_logout_uri', () => {
+    it('should reject backchannel_logout_uri that targets internal addresses', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        backchannel_logout_uri: 'https://169.254.169.254/latest/meta-data',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('internal addresses');
+    });
+  });
+
+  describe('Validation - jwks_uri', () => {
+    it('should reject jwks_uri that targets internal addresses', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        jwks_uri: 'https://169.254.169.254/latest/meta-data',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('internal addresses');
     });
   });
 });

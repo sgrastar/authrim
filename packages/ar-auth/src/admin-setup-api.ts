@@ -18,11 +18,12 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   generateId,
   createLogger,
-  D1Adapter,
   AdminUserRepository,
   AdminPasskeyRepository,
   AdminSessionRepository,
+  getDefaultTenantId,
   getAdminCookieSameSite,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 
 import {
@@ -94,7 +95,7 @@ adminSetupApiApp.post('/api/admin/setup-token/verify', async (c) => {
       );
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Find the setup token
     const tokenResult = await adminAdapter.queryOne<{
@@ -174,7 +175,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/options', async (c) => {
       );
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Verify token (same as above)
     const tokenResult = await adminAdapter.queryOne<{
@@ -314,7 +315,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
       return c.json({ error: 'invalid_token', error_description: 'Token mismatch' }, 401);
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Verify token is still valid
     const tokenResult = await adminAdapter.queryOne<{
@@ -475,7 +476,7 @@ adminSetupApiApp.post('/api/admin/setup-token/generate', async (c) => {
       }
     }
 
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Verify admin user exists and hasn't completed passkey setup
     const adminUserRepo = new AdminUserRepository(adminAdapter);
@@ -508,8 +509,8 @@ adminSetupApiApp.post('/api/admin/setup-token/generate', async (c) => {
 
     await adminAdapter.execute(
       `INSERT INTO admin_setup_tokens (id, tenant_id, admin_user_id, status, expires_at, created_at, created_by)
-       VALUES (?, 'default', ?, 'pending', ?, ?, 'cli')`,
-      [tokenId, admin_user_id, expiresAt, now]
+       VALUES (?, ?, ?, 'pending', ?, ?, 'cli')`,
+      [tokenId, getDefaultTenantId(c.env), admin_user_id, expiresAt, now]
     );
 
     logger.info('Setup token generated via CLI', {
@@ -639,7 +640,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
 
     // Find passkey by credential ID
     const credentialIdB64 = toBase64URLString(credential.id);
-    const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
     const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
 
     const passkey = await adminPasskeyRepo.findByCredentialId(credentialIdB64);
@@ -702,7 +703,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
     try {
       await adminSessionRepo.createSession({
         id: sessionId,
-        tenant_id: 'default',
+        tenant_id: getDefaultTenantId(c.env),
         admin_user_id: adminUser.id,
         ip_address:
           c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,

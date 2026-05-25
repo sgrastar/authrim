@@ -22,7 +22,10 @@ import {
   getLogger,
   getJwksWithCache,
   publishEvent,
+  buildDOInstanceName,
 } from '@authrim/ar-lib-core';
+import { getRequestIssuer } from './issuer';
+import { resolveAsyncTenantId } from './tenant';
 
 /**
  * POST /bc-authorize
@@ -32,6 +35,13 @@ import {
  */
 export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CIBA');
+  const tenantId = resolveAsyncTenantId(c);
+  if (!tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenant context' },
+    });
+  }
+  const requestIssuer = getRequestIssuer(c, tenantId);
 
   try {
     // Parse request body
@@ -120,9 +130,9 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // Validate id_token_hint if provided (JWT signed by this server)
     if (id_token_hint) {
       // Get JWKS for signature verification (this server's keys)
-      const { keys: jwksKeys } = await getJwksWithCache(c.env);
+      const { keys: jwksKeys } = await getJwksWithCache(c.env, tenantId);
       const idTokenValidation = await validateCIBAIdTokenHint(id_token_hint, {
-        issuerUrl: c.env.ISSUER_URL,
+        issuerUrl: requestIssuer,
         jwks: { keys: jwksKeys },
       });
 
@@ -143,7 +153,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       // Currently we validate without signature verification for third-party tokens
       // In production, implement dynamic JWKS fetching based on the token's issuer
       const loginHintTokenValidation = await validateCIBALoginHintToken(login_hint_token, {
-        audience: c.env.ISSUER_URL,
+        audience: requestIssuer,
         // Note: Third-party JWKS not yet implemented
         // jwks would need to be fetched from the third-party issuer's jwks_uri
       });
@@ -178,6 +188,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // Create CIBA request metadata
     const metadata: CIBARequestMetadata = {
+      tenant_id: tenantId,
       auth_req_id: authReqId,
       client_id,
       scope,
@@ -203,13 +214,15 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     };
 
     // Store in CIBARequestStore Durable Object
-    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
+    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName(
+      buildDOInstanceName('ciba', tenantId)
+    );
     const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
 
     const storeResponse = await cibaRequestStore.fetch(
       new Request('https://internal/store', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Authrim-Tenant-Id': tenantId },
         body: JSON.stringify(metadata),
       })
     );
@@ -255,7 +268,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // External systems can subscribe to this event to send notifications
     publishEvent(c, {
       type: 'ciba.request.created',
-      tenantId: clientMetadata.tenant_id as string,
+      tenantId,
       data: {
         auth_req_id: authReqId,
         client_id,

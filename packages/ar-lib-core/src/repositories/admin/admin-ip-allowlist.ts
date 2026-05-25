@@ -7,6 +7,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 import type {
   AdminIpAllowlistEntry,
@@ -61,7 +62,7 @@ export class AdminIpAllowlistRepository extends BaseRepository<AdminIpAllowlistE
 
     const entry: AdminIpAllowlistEntity = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       ip_range: input.ip_range,
       ip_version: ipVersion,
       description: input.description ?? null,

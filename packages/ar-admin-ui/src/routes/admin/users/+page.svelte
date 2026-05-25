@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminUsersAPI,
 		type User,
@@ -35,6 +36,7 @@
 
 	// Debounce timer for search
 	let searchTimeout: ReturnType<typeof setTimeout>;
+	let loadedTenantId = $state('');
 
 	async function loadUsers() {
 		loading = true;
@@ -69,7 +71,15 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		currentPage = 1;
 		loadUsers();
 	});
 

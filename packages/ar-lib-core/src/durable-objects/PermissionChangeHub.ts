@@ -46,6 +46,14 @@ interface WebSocketAttachment {
   connectedAt: number;
 }
 
+function requireTenantId(tenantId: string | undefined, context: string): string {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${context} requires tenantId`);
+  }
+  return normalized;
+}
+
 // =============================================================================
 // PermissionChangeHub Durable Object
 // =============================================================================
@@ -55,7 +63,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
   private subscriptions: Map<string, Subscription> = new Map();
 
   /** Tenant ID for this hub instance */
-  private tenantId: string = 'default';
+  private tenantId?: string;
 
   private readonly log: Logger = createLogger().module('PermissionChangeHub');
 
@@ -110,8 +118,15 @@ export class PermissionChangeHub extends DurableObject<Env> {
    */
   private async handleSetup(request: Request): Promise<Response> {
     try {
-      const body = (await request.json()) as { tenant_id: string };
-      this.tenantId = body.tenant_id;
+      const body = (await request.json()) as { tenant_id?: string };
+      const tenantId = requireTenantId(body.tenant_id, 'PermissionChangeHub setup');
+      if (this.tenantId && this.tenantId !== tenantId) {
+        return new Response(JSON.stringify({ error: 'Tenant mismatch' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      this.tenantId = tenantId;
       await this.ctx.storage.put('tenantId', this.tenantId);
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json' },
@@ -128,6 +143,12 @@ export class PermissionChangeHub extends DurableObject<Env> {
    * Get hub statistics
    */
   private handleStats(): Response {
+    if (!this.tenantId) {
+      return new Response(JSON.stringify({ error: 'Tenant not initialized' }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const websockets = this.ctx.getWebSockets();
 
     return new Response(
@@ -146,6 +167,10 @@ export class PermissionChangeHub extends DurableObject<Env> {
    * Handle WebSocket upgrade request
    */
   private handleWebSocketUpgrade(_request: Request): Response {
+    if (!this.tenantId) {
+      return new Response('Tenant not initialized', { status: 409 });
+    }
+
     // Create WebSocket pair
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
@@ -302,6 +327,17 @@ export class PermissionChangeHub extends DurableObject<Env> {
   private async handleBroadcast(request: Request): Promise<Response> {
     try {
       const event = (await request.json()) as PermissionChangeEvent;
+      const eventTenantId = requireTenantId(event.tenant_id, 'PermissionChangeHub broadcast');
+      if (this.tenantId && this.tenantId !== eventTenantId) {
+        return new Response(JSON.stringify({ error: 'Tenant mismatch' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (!this.tenantId) {
+        this.tenantId = eventTenantId;
+        await this.ctx.storage.put('tenantId', this.tenantId);
+      }
 
       // Get all connected WebSockets
       const websockets = this.ctx.getWebSockets();

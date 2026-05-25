@@ -47,11 +47,18 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
 
   const app = new Hono<{
     Bindings: Env;
-    Variables: { adminUser?: { id: string } };
+    Variables: { adminAuth?: unknown; adminUser?: { id: string } };
   }>();
 
   // Mock admin auth middleware
   app.use('*', async (c, next) => {
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      tenantId: 'tenant-1',
+      tenantScope: ['tenant-1'],
+    });
     c.set('adminUser', { id: 'test_admin' });
     await next();
   });

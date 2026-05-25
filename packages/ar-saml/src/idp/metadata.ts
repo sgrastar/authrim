@@ -7,13 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  AR_ERROR_CODES,
-  buildIssuerUrl,
-  getTenantIdFromContext,
-  getLogger,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import {
   SAML_NAMESPACES,
   BINDING_URIS,
@@ -29,9 +23,24 @@ import {
   appendChild,
   addNamespaceDeclarations,
   serializeXml,
-  generateSAMLId,
 } from '../common/xml-utils';
-import { getSigningCertificate } from '../common/key-utils';
+import {
+  getSAMLMetadataSigningCertificates,
+  type SAMLMetadataSigningCertificate,
+} from '../common/saml-signing-keys';
+import { resolveSAMLTenantIdFromContext } from '../common/tenant';
+import {
+  buildSAMLMetadataResponse,
+  buildSAMLMetadataValidUntil,
+  buildStableSAMLMetadataDescriptorId,
+  SAML_METADATA_CACHE_DURATION,
+} from '../common/metadata-cache';
+import {
+  getSAMLMetadataSigningMaterial,
+  shouldSignSAMLMetadata,
+  signSAMLMetadata,
+} from '../common/metadata-signing';
+import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../common/entity-id';
 
 /**
  * Handle IdP metadata request
@@ -39,53 +48,78 @@ import { getSigningCertificate } from '../common/key-utils';
 export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-IDP');
+  const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  const issuerUrl = buildIssuerUrl(env, getTenantIdFromContext(c));
-  const entityId = `${issuerUrl}/saml/idp`;
+  const [{ issuerUrl, idpEntityId: entityId }, settings] = await Promise.all([
+    getSAMLLocalEntityIds(env, tenantId),
+    getSAMLPublicSettings(env, tenantId),
+  ]);
 
-  // Get signing certificate from KeyManager
-  let signingCertificate: string;
+  // Get signing certificates from KeyManager / SAML rollover policy.
+  let signingCertificates: SAMLMetadataSigningCertificate[];
   try {
-    signingCertificate = await getSigningCertificate(env);
+    signingCertificates = await getSAMLMetadataSigningCertificates(env, {
+      tenantId,
+      role: 'idp',
+      policy: settings.signingKeyPolicies.idp,
+      certificateSubject: settings.certificateSubject,
+    });
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Build metadata XML
-  const metadataXml = buildIdPMetadata({
+  let metadataXml = buildIdPMetadata({
     entityId,
     issuerUrl,
-    signingCertificate,
+    signingCertificates,
   });
+
+  if (shouldSignSAMLMetadata(env)) {
+    try {
+      const signingMaterial = await getSAMLMetadataSigningMaterial(env, {
+        tenantId,
+        role: 'idp',
+        policy: settings.signingKeyPolicies.idp,
+        certificateSubject: settings.certificateSubject,
+      });
+      metadataXml = signSAMLMetadata(metadataXml, signingMaterial);
+    } catch (error) {
+      log.error('Failed to sign IdP metadata', {}, error as Error);
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+  }
 
   // Return XML response
-  return new Response(metadataXml, {
-    headers: {
-      'Content-Type': 'application/samlmetadata+xml',
-      'Cache-Control': 'public, max-age=86400', // Cache for 24 hours
-    },
-  });
+  return buildSAMLMetadataResponse(
+    metadataXml,
+    c.req.header('If-None-Match'),
+    'authrim-saml-idp-metadata.xml'
+  );
 }
 
-interface IdPMetadataOptions {
+export interface IdPMetadataOptions {
   entityId: string;
   issuerUrl: string;
-  signingCertificate: string;
+  signingCertificates: SAMLMetadataSigningCertificate[];
+  validUntil?: string;
 }
 
 /**
  * Build IdP metadata XML document
  */
-function buildIdPMetadata(options: IdPMetadataOptions): string {
-  const { entityId, issuerUrl, signingCertificate } = options;
+export function buildIdPMetadata(options: IdPMetadataOptions): string {
+  const { entityId, issuerUrl, signingCertificates } = options;
 
   const doc = createDocument();
 
   // Create root EntityDescriptor element
   const entityDescriptor = createElement(doc, SAML_NAMESPACES.MD, 'EntityDescriptor', 'md');
   setAttribute(entityDescriptor, 'entityID', entityId);
-  setAttribute(entityDescriptor, 'ID', generateSAMLId());
+  setAttribute(entityDescriptor, 'ID', buildStableSAMLMetadataDescriptorId('idp', entityId));
+  setAttribute(entityDescriptor, 'cacheDuration', SAML_METADATA_CACHE_DURATION);
+  setAttribute(entityDescriptor, 'validUntil', options.validUntil ?? buildSAMLMetadataValidUntil());
 
   // Add namespace declarations
   addNamespaceDeclarations(entityDescriptor, {
@@ -103,25 +137,21 @@ function buildIdPMetadata(options: IdPMetadataOptions): string {
   );
   setAttribute(idpSsoDescriptor, 'WantAuthnRequestsSigned', 'false');
 
-  // Add KeyDescriptor for signing
-  const keyDescriptor = createElement(doc, SAML_NAMESPACES.MD, 'KeyDescriptor', 'md');
-  setAttribute(keyDescriptor, 'use', 'signing');
+  for (const signingCertificate of signingCertificates) {
+    appendChild(idpSsoDescriptor, buildSigningKeyDescriptor(doc, signingCertificate));
+  }
 
-  const keyInfo = createElement(doc, SAML_NAMESPACES.DS, 'KeyInfo', 'ds');
-  const x509Data = createElement(doc, SAML_NAMESPACES.DS, 'X509Data', 'ds');
-  const x509Certificate = createElement(doc, SAML_NAMESPACES.DS, 'X509Certificate', 'ds');
+  // Add SingleLogoutService endpoints. In the SAML metadata schema this belongs to
+  // SSODescriptorType and must appear before NameIDFormat.
+  const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+  setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
+  setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
+  appendChild(idpSsoDescriptor, sloPost);
 
-  // Clean certificate (remove headers and whitespace)
-  const cleanCert = signingCertificate
-    .replace(/-----BEGIN CERTIFICATE-----/g, '')
-    .replace(/-----END CERTIFICATE-----/g, '')
-    .replace(/\s+/g, '');
-  setTextContent(x509Certificate, cleanCert);
-
-  appendChild(x509Data, x509Certificate);
-  appendChild(keyInfo, x509Data);
-  appendChild(keyDescriptor, keyInfo);
-  appendChild(idpSsoDescriptor, keyDescriptor);
+  const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+  setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
+  setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
+  appendChild(idpSsoDescriptor, sloRedirect);
 
   // Add NameIDFormat elements
   const supportedFormats = [
@@ -150,20 +180,6 @@ function buildIdPMetadata(options: IdPMetadataOptions): string {
   setAttribute(ssoRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
   setAttribute(ssoRedirect, 'Location', `${issuerUrl}/saml/idp/sso`);
   appendChild(idpSsoDescriptor, ssoRedirect);
-
-  // Add SingleLogoutService endpoints
-
-  // HTTP-POST Binding for SLO
-  const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
-  setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloPost);
-
-  // HTTP-Redirect Binding for SLO
-  const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
-  setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloRedirect);
 
   appendChild(entityDescriptor, idpSsoDescriptor);
 
@@ -209,4 +225,28 @@ function buildIdPMetadata(options: IdPMetadataOptions): string {
 
   // Add XML declaration
   return `<?xml version="1.0" encoding="UTF-8"?>\n${xmlString}`;
+}
+
+function buildSigningKeyDescriptor(
+  doc: XMLDocument,
+  signingCertificate: SAMLMetadataSigningCertificate
+): Element {
+  const keyDescriptor = createElement(doc, SAML_NAMESPACES.MD, 'KeyDescriptor', 'md');
+  setAttribute(keyDescriptor, 'use', 'signing');
+
+  const keyInfo = createElement(doc, SAML_NAMESPACES.DS, 'KeyInfo', 'ds');
+  const x509Data = createElement(doc, SAML_NAMESPACES.DS, 'X509Data', 'ds');
+  const x509Certificate = createElement(doc, SAML_NAMESPACES.DS, 'X509Certificate', 'ds');
+
+  const cleanCert = signingCertificate.certificate
+    .replace(/-----BEGIN CERTIFICATE-----/g, '')
+    .replace(/-----END CERTIFICATE-----/g, '')
+    .replace(/\s+/g, '');
+  setTextContent(x509Certificate, cleanCert);
+
+  appendChild(x509Data, x509Certificate);
+  appendChild(keyInfo, x509Data);
+  appendChild(keyDescriptor, keyInfo);
+
+  return keyDescriptor;
 }

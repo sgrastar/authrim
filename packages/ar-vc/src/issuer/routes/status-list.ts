@@ -14,7 +14,12 @@
 import type { Context } from 'hono';
 import type { JWK } from 'jose';
 import type { Env } from '../../types';
-import { getLogger } from '@authrim/ar-lib-core';
+import {
+  getLogger,
+  getTenantIdFromContext,
+  resolveAuthCorePersistenceAdapterFromEnv,
+} from '@authrim/ar-lib-core';
+import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /**
  * Status List Credential response format
@@ -67,20 +72,20 @@ async function calculateETag(
 /**
  * Get status list from database
  */
-async function getStatusList(env: Env, listId: string): Promise<StatusListData | null> {
-  const db = env.DB;
-  if (!db) {
-    return null;
-  }
-
-  const result = await db
-    .prepare(
-      'SELECT id, tenant_id, purpose, encoded_list, updated_at FROM status_lists WHERE id = ?'
-    )
-    .bind(listId)
-    .first<StatusListData>();
-
-  return result;
+async function getStatusList(
+  env: Env,
+  tenantId: string,
+  listId: string
+): Promise<StatusListData | null> {
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'vc-status-list', {
+    tenantId,
+  });
+  return adapter.queryOne<StatusListData>(
+    `SELECT public_id AS id, tenant_id, purpose, encoded_list, updated_at
+     FROM status_lists
+     WHERE tenant_id = ? AND public_id = ?`,
+    [tenantId, listId]
+  );
 }
 
 /**
@@ -92,7 +97,7 @@ async function generateStatusListCredentialJWT(
   issuerUrl: string
 ): Promise<string> {
   // Get signing key from KeyManager
-  const keyManagerId = env.KEY_MANAGER.idFromName('default');
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${listData.tenant_id}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Get active EC key for signing
@@ -195,8 +200,9 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
     );
   }
 
+  const tenantId = getTenantIdFromContext(c);
   // Get status list from database
-  const listData = await getStatusList(c.env, listId);
+  const listData = await getStatusList(c.env, tenantId, listId);
 
   if (!listData) {
     // SECURITY: Do not expose status list ID in error message to prevent enumeration
@@ -221,16 +227,7 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
     });
   }
 
-  // Determine issuer URL from environment
-  // SECURITY: Never trust Host header - always use configured ISSUER_IDENTIFIER
-  const issuerUrl = c.env.ISSUER_IDENTIFIER;
-  if (!issuerUrl) {
-    log.error('ISSUER_IDENTIFIER is not configured');
-    return c.json(
-      { error: 'temporarily_unavailable', error_description: 'Service temporarily unavailable' },
-      503
-    );
-  }
+  const issuerUrl = getRequestIssuerUrl(c);
 
   try {
     // Generate JWT credential
@@ -271,7 +268,8 @@ export async function statusListJsonRoute(c: Context<{ Bindings: Env }>): Promis
     );
   }
 
-  const listData = await getStatusList(c.env, listId);
+  const tenantId = getTenantIdFromContext(c);
+  const listData = await getStatusList(c.env, tenantId, listId);
 
   if (!listData) {
     // SECURITY: Do not expose status list ID in error message to prevent enumeration

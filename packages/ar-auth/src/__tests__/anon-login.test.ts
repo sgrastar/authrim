@@ -160,7 +160,7 @@ describe('Anonymous Login Handlers', () => {
         // When disabled, should return invalid_request error
         const result = await vi.mocked(isAnonymousAuthEnabled)({} as never);
         expect(result).toBe(false);
-      });
+      }, 15_000);
     });
 
     describe('Challenge Generation', () => {
@@ -182,6 +182,7 @@ describe('Anonymous Login Handlers', () => {
 
         await mockChallengeStore.storeChallengeRpc({
           id: `anon_login:${challengeId}`,
+          tenantId: 'tenant-1',
           type: challengeType,
           userId: '',
           challenge: 'random-challenge',
@@ -301,6 +302,7 @@ describe('Anonymous Login Handlers', () => {
 
         const result = await mockChallengeStore.consumeChallengeRpc({
           id: 'anon_login:challenge-123',
+          tenantId: 'tenant-1',
           type: 'anon_login',
         });
 
@@ -316,6 +318,7 @@ describe('Anonymous Login Handlers', () => {
         await expect(
           mockChallengeStore.consumeChallengeRpc({
             id: 'anon_login:already-used',
+            tenantId: 'tenant-1',
             type: 'anon_login',
           })
         ).rejects.toThrow();

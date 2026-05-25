@@ -8,8 +8,7 @@
  * - Suspend, lock users
  */
 
-// API Base URL - empty string for same-origin, or full URL for cross-origin
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from './admin-request';
 
 /**
  * User entity
@@ -124,9 +123,7 @@ export const adminUsersAPI = {
 		const queryString = searchParams.toString();
 		const url = `${API_BASE_URL}/api/admin/users${queryString ? `?${queryString}` : ''}`;
 
-		const response = await fetch(url, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(url);
 
 		if (!response.ok) {
 			throw new Error('Failed to fetch users');
@@ -140,9 +137,7 @@ export const adminUsersAPI = {
 	 * GET /api/admin/users/:id
 	 */
 	async get(id: string): Promise<User> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users/${id}`, {
-			credentials: 'include'
-		});
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}`);
 
 		if (!response.ok) {
 			if (response.status === 404) {
@@ -160,10 +155,9 @@ export const adminUsersAPI = {
 	 * POST /api/admin/users
 	 */
 	async create(data: CreateUserInput): Promise<User> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -181,10 +175,9 @@ export const adminUsersAPI = {
 	 * PUT /api/admin/users/:id
 	 */
 	async update(id: string, data: UpdateUserInput): Promise<User> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users/${id}`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}`, {
 			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify(data)
 		});
 
@@ -202,9 +195,8 @@ export const adminUsersAPI = {
 	 * DELETE /api/admin/users/:id
 	 */
 	async delete(id: string): Promise<void> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users/${id}`, {
-			method: 'DELETE',
-			credentials: 'include'
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}`, {
+			method: 'DELETE'
 		});
 
 		if (!response.ok) {
@@ -221,10 +213,9 @@ export const adminUsersAPI = {
 		reasonCode: string = 'admin_action',
 		options?: { durationHours?: number; reasonDetail?: string }
 	): Promise<void> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users/${id}/suspend`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}/suspend`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify({
 				reason_code: reasonCode,
 				...(options?.durationHours && { duration_hours: options.durationHours }),
@@ -247,10 +238,9 @@ export const adminUsersAPI = {
 		reasonCode: string = 'admin_action',
 		options?: { unlockAt?: string; reasonDetail?: string }
 	): Promise<void> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users/${id}/lock`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}/lock`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify({
 				reason_code: reasonCode,
 				...(options?.unlockAt && { unlock_at: options.unlockAt }),
@@ -273,10 +263,9 @@ export const adminUsersAPI = {
 		reasonCode: string = 'admin_action',
 		options?: { reasonDetail?: string }
 	): Promise<{ user_id: string; status: string; previous_status: string; effective_at: string }> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/users/${id}/activate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}/activate`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'include',
+			includeJsonContentType: true,
 			body: JSON.stringify({
 				reason_code: reasonCode,
 				...(options?.reasonDetail && { reason_detail: options.reasonDetail })

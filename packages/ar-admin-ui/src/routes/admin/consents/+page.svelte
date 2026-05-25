@@ -37,6 +37,7 @@
 	let error = $state('');
 	let tenantSuccessMessage = $state('');
 	let clientSuccessMessage = $state('');
+	let loadedTenantId = $state('');
 
 	// Permissions
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
@@ -92,9 +93,18 @@
 		await loadData();
 	});
 
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (tenantId && tenantId !== loadedTenantId) {
+			loadedTenantId = tenantId;
+			void loadData();
+		}
+	});
+
 	async function loadData() {
 		loading = true;
 		error = '';
+		loadedTenantId = settingsContext.tenantId;
 
 		try {
 			// 1. Fetch consent metadata
@@ -104,7 +114,7 @@
 			// 2. Fetch tenant-level consent settings
 			const tenantResult = await scopedSettingsAPI.getSettingsForScope('consent', {
 				level: 'tenant',
-				tenantId: 'default'
+				tenantId: settingsContext.tenantId
 			});
 			tenantSettings = tenantResult;
 			tenantPatches = [];
@@ -237,7 +247,7 @@
 
 			const result = await scopedSettingsAPI.updateSettingsForScope(
 				'consent',
-				{ level: 'tenant', tenantId: 'default' },
+				{ level: 'tenant', tenantId: settingsContext.tenantId },
 				{
 					ifMatch: tenantSettings.version,
 					...patchData
@@ -338,11 +348,13 @@
 	<title>Consents - Admin Dashboard - Authrim</title>
 </svelte:head>
 
-<div class="consents-page">
+<div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
-		<h1 class="page-title">Consents</h1>
-		<p class="page-description">Manage user consent settings at tenant and client levels</p>
+		<div>
+			<h1 class="page-title">Consents</h1>
+			<p class="page-description">Manage user consent settings at tenant and client levels</p>
+		</div>
 	</div>
 
 	<!-- Error message -->
@@ -942,31 +954,10 @@
 </div>
 
 <style>
-	.consents-page {
-		max-width: 1400px;
-	}
-
-	.page-header {
-		margin-bottom: 32px;
-	}
-
-	.page-title {
-		font-size: 28px;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0 0 8px 0;
-	}
-
-	.page-description {
-		font-size: 15px;
-		color: var(--text-secondary);
-		margin: 0;
-	}
-
 	/* Consent Sections */
 	.consent-section {
-		background: var(--card-bg);
-		border: 1px solid var(--border-color);
+		background: var(--bg-card);
+		border: 1px solid var(--border);
 		border-radius: 12px;
 		padding: 24px;
 		margin-bottom: 24px;
@@ -1027,7 +1018,7 @@
 		border-radius: 6px;
 		font-size: 13px;
 		font-weight: 500;
-		background: var(--bg-secondary);
+		background: var(--bg-subtle);
 		color: var(--text-secondary);
 	}
 
@@ -1054,14 +1045,14 @@
 
 	/* Settings Form Card */
 	.settings-form-card {
-		background: var(--bg-primary);
-		border: 1px solid var(--border-color);
+		background: var(--bg-card);
+		border: 1px solid var(--border);
 		border-radius: 8px;
 		overflow: hidden;
 	}
 
 	.setting-item {
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: 1px solid var(--border);
 		transition: background-color 0.15s ease;
 	}
 
@@ -1130,9 +1121,9 @@
 	.settings-select {
 		width: 100%;
 		padding: 8px 12px;
-		border: 1px solid var(--border-color);
+		border: 1px solid var(--border);
 		border-radius: 6px;
-		background: var(--bg-primary);
+		background: var(--bg-card);
 		color: var(--text-primary);
 		font-size: 14px;
 	}
@@ -1145,8 +1136,8 @@
 
 	/* Client Selector Section */
 	.client-selector-section {
-		background: var(--card-bg);
-		border: 1px solid var(--border-color);
+		background: var(--bg-card);
+		border: 1px solid var(--border);
 		border-radius: 12px;
 		padding: 24px;
 		margin-bottom: 24px;
@@ -1166,9 +1157,9 @@
 
 	.client-selector {
 		padding: 10px 14px;
-		border: 1px solid var(--border-color);
+		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: var(--bg-primary);
+		background: var(--bg-card);
 		color: var(--text-primary);
 		font-size: 14px;
 		cursor: pointer;
@@ -1189,7 +1180,7 @@
 		gap: 12px;
 		margin-top: 24px;
 		padding-top: 24px;
-		border-top: 1px solid var(--border-color);
+		border-top: 1px solid var(--border);
 	}
 
 	/* Alerts */

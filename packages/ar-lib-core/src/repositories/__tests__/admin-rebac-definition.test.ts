@@ -109,14 +109,14 @@ describe('AdminRebacDefinitionRepository', () => {
       expect(definition.priority).toBe(50);
     });
 
-    it('should default tenant_id to "default"', async () => {
+    it('should reject missing tenant_id', async () => {
       const input: AdminRebacDefinitionCreateInput = {
         relation_name: 'test_relation',
       };
 
-      const definition = await repo.createDefinition(input);
-
-      expect(definition.tenant_id).toBe('default');
+      await expect(repo.createDefinition(input)).rejects.toThrow(
+        'Repository create requires tenantId'
+      );
     });
   });
 

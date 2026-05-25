@@ -26,6 +26,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import {
   BaseRepository,
   type BaseEntity,
@@ -150,7 +151,7 @@ export class PIIAuditLogRepository extends BaseRepository<PIIAuditLog> {
 
     const auditLog: PIIAuditLog = {
       id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
       user_id: input.user_id ?? null,
       action: input.action,
       target_user_id: input.target_user_id ?? null,

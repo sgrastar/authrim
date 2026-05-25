@@ -22,13 +22,22 @@
  * - GET    /api/admin/saml-providers/:id - Get SAML provider
  * - PUT    /api/admin/saml-providers/:id - Update SAML provider
  * - DELETE /api/admin/saml-providers/:id - Delete SAML provider
+ * - GET    /api/admin/saml-attribute-presets - List SAML attribute presets
+ * - POST   /api/admin/saml-attribute-presets - Create custom SAML attribute preset
+ * - DELETE /api/admin/saml-attribute-presets/:id - Delete custom SAML attribute preset
+ * - POST   /api/admin/saml-metadata/preview - Fetch and parse metadata before registration
  * - POST   /api/admin/saml-providers/:id/import-metadata - Import metadata
+ * - POST   /api/admin/saml-providers/:id/refresh-metadata - Refresh metadata URL
+ * - POST   /api/admin/saml-providers/:id/signing-rollover/publish-next - Publish next signing certificate
+ * - POST   /api/admin/saml-providers/:id/signing-rollover/promote-next - Promote next signing certificate
+ * - POST   /api/admin/saml-providers/:id/signing-rollover/retire-backup - Retire backup signing certificate
  */
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  adminAuthMiddleware,
   requestContextMiddleware,
   pluginContextMiddleware,
   diagnosticLoggingMiddleware,
@@ -52,8 +61,28 @@ import {
   handleGetProvider,
   handleUpdateProvider,
   handleDeleteProvider,
+  handleGetSAMLSettings,
+  handleUpdateSAMLSettings,
+  handleUpdateSAMLLocalSigning,
+  handleListAttributePresets,
+  handleCreateAttributePreset,
+  handleDeleteAttributePreset,
+  handlePreviewMetadata,
   handleImportMetadata,
+  handleRefreshMetadata,
+  handleListFederationTrustProfiles,
+  handleCreateFederationTrustProfile,
+  handleUpdateFederationTrustProfile,
+  handleDeleteFederationTrustProfile,
+  handlePreviewFederationTrustCertificate,
+  handleListAggregatePreviewEntities,
+  handleStartAggregateBatchCreate,
+  handleGetAggregateBatchStatus,
+  handlePublishSigningNext,
+  handlePromoteSigningNext,
+  handleRetireSigningBackup,
 } from './admin/providers';
+import { handleScheduled } from './scheduled';
 
 // Create Hono app with Cloudflare Workers bindings
 const app = new Hono<{ Bindings: Env }>();
@@ -66,7 +95,6 @@ app.use(
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     maxAge: 86400,
-    credentials: true,
   })
 );
 
@@ -164,6 +192,12 @@ app.get('/saml/sp/slo', handleSPSLO);
 // Admin Endpoints
 // ============================================================================
 
+app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
+
+app.get('/api/admin/saml-settings', handleGetSAMLSettings);
+app.put('/api/admin/saml-settings', handleUpdateSAMLSettings);
+app.post('/api/admin/saml-settings/local-signing', handleUpdateSAMLLocalSigning);
+
 /**
  * List SAML Providers
  */
@@ -190,9 +224,57 @@ app.put('/api/admin/saml-providers/:id', handleUpdateProvider);
 app.delete('/api/admin/saml-providers/:id', handleDeleteProvider);
 
 /**
+ * List SAML Attribute Presets
+ */
+app.get('/api/admin/saml-attribute-presets', handleListAttributePresets);
+
+/**
+ * Create custom SAML Attribute Preset
+ */
+app.post('/api/admin/saml-attribute-presets', handleCreateAttributePreset);
+
+/**
+ * Delete custom SAML Attribute Preset
+ */
+app.delete('/api/admin/saml-attribute-presets/:id', handleDeleteAttributePreset);
+
+/**
+ * Preview Metadata
+ */
+app.post('/api/admin/saml-metadata/preview', handlePreviewMetadata);
+
+app.get(
+  '/api/admin/saml-metadata/previews/:previewId/entities',
+  handleListAggregatePreviewEntities
+);
+app.post(
+  '/api/admin/saml-metadata/previews/:previewId/batch-create',
+  handleStartAggregateBatchCreate
+);
+app.get('/api/admin/saml-metadata/batches/:batchId', handleGetAggregateBatchStatus);
+app.post('/api/admin/saml-metadata/certificate-preview', handlePreviewFederationTrustCertificate);
+
+app.get('/api/admin/saml-federation-trust-profiles', handleListFederationTrustProfiles);
+app.post('/api/admin/saml-federation-trust-profiles', handleCreateFederationTrustProfile);
+app.put('/api/admin/saml-federation-trust-profiles/:id', handleUpdateFederationTrustProfile);
+app.delete('/api/admin/saml-federation-trust-profiles/:id', handleDeleteFederationTrustProfile);
+
+/**
  * Import Metadata
  */
 app.post('/api/admin/saml-providers/:id/import-metadata', handleImportMetadata);
+
+/**
+ * Refresh Metadata
+ */
+app.post('/api/admin/saml-providers/:id/refresh-metadata', handleRefreshMetadata);
+
+/**
+ * Signing Rollover Operations
+ */
+app.post('/api/admin/saml-providers/:id/signing-rollover/publish-next', handlePublishSigningNext);
+app.post('/api/admin/saml-providers/:id/signing-rollover/promote-next', handlePromoteSigningNext);
+app.post('/api/admin/saml-providers/:id/signing-rollover/retire-backup', handleRetireSigningBackup);
 
 // 404 handler
 app.notFound((c) => {
@@ -206,4 +288,11 @@ app.onError((err, c) => {
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
-export default app;
+export { app, handleScheduled };
+
+export default {
+  fetch(request: Request, env?: Env, ctx?: ExecutionContext): Promise<Response> {
+    return Promise.resolve(app.fetch(request, env, ctx));
+  },
+  scheduled: handleScheduled,
+};

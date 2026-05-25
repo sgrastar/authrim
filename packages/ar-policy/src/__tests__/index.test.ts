@@ -7,6 +7,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import app from '../index';
 
+function createMockD1(results: unknown[] = []) {
+  return {
+    prepare: vi.fn(() => ({
+      bind: vi.fn().mockReturnThis(),
+      all: vi.fn(() => Promise.resolve({ results })),
+      first: vi.fn(() => Promise.resolve(results[0] ?? null)),
+      run: vi.fn(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
+    })),
+    batch: vi.fn(() => Promise.resolve([])),
+  };
+}
+
 // Mock environment
 const mockEnv = {
   POLICY_API_SECRET: 'test-secret-key',
@@ -17,6 +29,7 @@ const mockEnv = {
     })),
   },
   CODE_VERSION_UUID: '',
+  DB: createMockD1(),
 };
 
 // Helper to create request with auth
@@ -59,30 +72,24 @@ describe('Policy Service API', () => {
   });
 
   describe('GET /api/rebac/health', () => {
-    it('should return ReBAC health status (limited when DB/ReBAC not configured)', async () => {
+    it('should return ReBAC health status (limited when ReBAC is not enabled)', async () => {
       const req = createRequest('/api/rebac/health', { withAuth: false });
       const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      // Status is 'limited' when ENABLE_REBAC is not set and DB is not configured
+      // Status is 'limited' when ENABLE_REBAC is not set.
       expect(body.status).toBe('limited');
       expect(body.service).toBe('ar-policy-rebac');
       expect(body.enabled).toBe(false);
-      expect(body.database).toBe(false);
+      expect(body.database).toBe(true);
     });
 
     it('should return ok status when ReBAC is enabled and DB is configured', async () => {
       const mockEnvWithRebac = {
         ...mockEnv,
         ENABLE_REBAC: 'true',
-        DB: {
-          prepare: vi.fn(() => ({
-            bind: vi.fn().mockReturnThis(),
-            all: vi.fn(() => Promise.resolve({ results: [] })),
-            run: vi.fn(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-          })),
-        },
+        DB: createMockD1(),
       };
       const req = createRequest('/api/rebac/health', { withAuth: false });
       const res = await app.fetch(req, mockEnvWithRebac);
@@ -489,13 +496,7 @@ describe('Policy Service API', () => {
       const mockEnvWithRebac = {
         ...mockEnv,
         ENABLE_REBAC: 'true',
-        DB: {
-          prepare: vi.fn(() => ({
-            bind: vi.fn().mockReturnThis(),
-            all: vi.fn(() => Promise.resolve({ results: [] })),
-            run: vi.fn(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-          })),
-        },
+        DB: createMockD1(),
       };
       const req = createRequest('/api/rebac/check', {
         method: 'POST',
@@ -508,17 +509,11 @@ describe('Policy Service API', () => {
       expect(body.error).toBe('invalid_request');
     });
 
-    it('should perform ReBAC check when enabled with DB', async () => {
+    it('should reject legacy ReBAC checks without an explicit tenant_id', async () => {
       const mockEnvWithRebac = {
         ...mockEnv,
         ENABLE_REBAC: 'true',
-        DB: {
-          prepare: vi.fn(() => ({
-            bind: vi.fn().mockReturnThis(),
-            all: vi.fn(() => Promise.resolve({ results: [] })), // No relationships found
-            run: vi.fn(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-          })),
-        },
+        DB: createMockD1(),
       };
       const req = createRequest('/api/rebac/check', {
         method: 'POST',
@@ -526,6 +521,28 @@ describe('Policy Service API', () => {
           user_id: 'user:user_123',
           relation: 'viewer',
           object: 'document:doc_456',
+        },
+      });
+      const res = await app.fetch(req, mockEnvWithRebac);
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid_request');
+    });
+
+    it('should perform ReBAC check when enabled with DB', async () => {
+      const mockEnvWithRebac = {
+        ...mockEnv,
+        ENABLE_REBAC: 'true',
+        DB: createMockD1(), // No relationships found
+      };
+      const req = createRequest('/api/rebac/check', {
+        method: 'POST',
+        body: {
+          user_id: 'user:user_123',
+          relation: 'viewer',
+          object: 'document:doc_456',
+          tenant_id: 'default',
         },
       });
       const res = await app.fetch(req, mockEnvWithRebac);

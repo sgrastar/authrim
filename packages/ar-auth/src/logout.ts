@@ -30,6 +30,7 @@ import {
   isShardedSessionId,
   createAuthContextFromHono,
   getTenantIdFromContext,
+  resolveLogoutTargetsFromSessionClientStore,
   createBackchannelLogoutOrchestrator,
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
@@ -38,9 +39,11 @@ import {
   getFrontchannelLogoutConfig,
   BROWSER_STATE_COOKIE_NAME,
   // Native SSO device_secret revocation
-  D1Adapter,
-  DeviceSecretRepository,
   isNativeSSOEnabled,
+  DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
+  normalizeDeviceSecretLogoutScope,
+  revokeDeviceSecretsForLogoutScope,
+  type RevokeDeviceSecretsForLogoutScopeResult,
   // Simple Logout Webhook (Authrim Extension)
   createLogoutWebhookOrchestrator,
   getLogoutWebhookConfig,
@@ -162,6 +165,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     const idTokenHint = c.req.query('id_token_hint');
     const postLogoutRedirectUri = c.req.query('post_logout_redirect_uri');
     const state = c.req.query('state');
+    const logoutScope = normalizeDeviceSecretLogoutScope(c.req.query('logout_scope'));
 
     let userId: string | undefined;
     let clientId: string | undefined;
@@ -170,7 +174,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Helper function to get public key from KeyManager via RPC
     // Matches the key by 'kid' from the JWT header
     const getPublicKey = async (): Promise<CryptoKey> => {
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+      const tenantId = getTenantIdFromContext(c);
+      const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
       const keys = await keyManager.getAllPublicKeysRpc();
@@ -246,6 +251,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Get context for repository access
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    let deviceSecretLogoutResult: RevokeDeviceSecretsForLogoutScopeResult | undefined;
 
     // Collect all data needed for logout **before** deleting the session.
     // Session deletion cascades to session_clients via FK, so we need the client
@@ -282,35 +288,58 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('Session not in D1, using fallback userId', { sessionId: sessId });
         }
 
-        // Get clients from session_clients table (this works regardless of D1 session)
-        const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
-          authCtx.repositories.sessionClient.findBackchannelLogoutClients(sessId).catch((error) => {
-            log.warn('Failed to load backchannel clients', {
-              sessionId: sessId,
-              error: (error as Error).message,
-              action: 'BackchannelLogout',
-            });
-            return [];
-          }),
+        const storeTargets = await resolveLogoutTargetsFromSessionClientStore(
+          c.env,
+          tenantId,
+          sessId,
           authCtx.repositories.sessionClient
-            .findFrontchannelLogoutClients(sessId)
-            .catch((error) => {
-              log.warn('Failed to load frontchannel clients', {
+        ).catch((error) => {
+          log.warn('Failed to load logout clients from SessionClientStore', {
+            sessionId: sessId,
+            error: (error as Error).message,
+            action: 'Logout',
+          });
+          return null;
+        });
+        let targetClients = storeTargets;
+        if (!targetClients) {
+          const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
+            authCtx.repositories.sessionClient
+              .findBackchannelLogoutClients(sessId)
+              .catch((error) => {
+                log.warn('Failed to load backchannel clients', {
+                  sessionId: sessId,
+                  error: (error as Error).message,
+                  action: 'BackchannelLogout',
+                });
+                return [];
+              }),
+            authCtx.repositories.sessionClient
+              .findFrontchannelLogoutClients(sessId)
+              .catch((error) => {
+                log.warn('Failed to load frontchannel clients', {
+                  sessionId: sessId,
+                  error: (error as Error).message,
+                  action: 'FrontchannelLogout',
+                });
+                return [];
+              }),
+            authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
+              log.warn('Failed to load webhook clients', {
                 sessionId: sessId,
                 error: (error as Error).message,
-                action: 'FrontchannelLogout',
+                action: 'LogoutWebhook',
               });
               return [];
             }),
-          authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
-            log.warn('Failed to load webhook clients', {
-              sessionId: sessId,
-              error: (error as Error).message,
-              action: 'LogoutWebhook',
-            });
-            return [];
-          }),
-        ]);
+          ]);
+          targetClients = {
+            backchannelClients,
+            frontchannelClients,
+            webhookClients,
+          };
+        }
+        const { backchannelClients, frontchannelClients, webhookClients } = targetClients;
 
         // Only add if we have clients to notify
         if (
@@ -354,7 +383,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         // Collect session info before deletion (pass userId from id_token_hint as fallback)
         await collectSessionData(sessionId, userId);
 
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -388,7 +417,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           await collectSessionData(sid, userId);
         }
 
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid, tenantId);
         const deleted = await sessionStore.invalidateSessionRpc(sid);
 
         if (deleted) {
@@ -416,22 +445,31 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // When a session is invalidated, all associated device_secrets should also be revoked
     // to prevent continued Native SSO token exchange from other apps
-    if (deletedSessions.length > 0 && c.env.DB) {
+    if (deletedSessions.length > 0) {
       const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
       if (nativeSSOEnabled) {
         try {
-          const adapter = new D1Adapter({ db: c.env.DB });
-          const deviceSecretRepo = new DeviceSecretRepository(adapter);
+          deviceSecretLogoutResult = await revokeDeviceSecretsForLogoutScope({
+            adapter: authCtx.coreAdapter,
+            tenantId,
+            sessionIds: deletedSessions,
+            userId,
+            clientId,
+            scope: logoutScope,
+            reason: 'logout',
+            callerAuthMode: 'session',
+          });
 
-          let totalRevoked = 0;
-          for (const sessId of deletedSessions) {
-            const revokedCount = await deviceSecretRepo.revokeBySessionId(sessId, 'session_logout');
-            totalRevoked += revokedCount;
-          }
-
-          if (totalRevoked > 0) {
+          if (
+            deviceSecretLogoutResult.revokedDeviceSecrets > 0 ||
+            deviceSecretLogoutResult.revokedInstallations > 0
+          ) {
             log.info('Revoked device secrets', {
-              revokedCount: totalRevoked,
+              revokedCount: deviceSecretLogoutResult.revokedDeviceSecrets,
+              revokedInstallations: deviceSecretLogoutResult.revokedInstallations,
+              logoutScope: deviceSecretLogoutResult.scope,
+              trustGroupId: deviceSecretLogoutResult.trustGroupId,
+              targetClientId: deviceSecretLogoutResult.clientId,
               sessionCount: deletedSessions.length,
               action: 'NativeSSO',
             });
@@ -498,7 +536,22 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         resourceId: deletedSessionId,
         ipAddress,
         userAgent,
-        metadata: JSON.stringify({ client_id: clientId, reason: 'frontchannel_logout' }),
+        metadata: JSON.stringify({
+          client_id: clientId,
+          reason: 'frontchannel_logout',
+          logout_scope: logoutScope,
+          device_secret_revocation: deviceSecretLogoutResult
+            ? {
+                scope: deviceSecretLogoutResult.scope,
+                revoked_device_secrets: deviceSecretLogoutResult.revokedDeviceSecrets,
+                revoked_installations: deviceSecretLogoutResult.revokedInstallations,
+                matched_installations: deviceSecretLogoutResult.matchedInstallations,
+                caller_auth_mode: deviceSecretLogoutResult.callerAuthMode,
+                target_client_id: deviceSecretLogoutResult.clientId,
+                trust_group_id: deviceSecretLogoutResult.trustGroupId,
+              }
+            : undefined,
+        }),
         severity: 'info',
       }).catch((err) => {
         log.error('Failed to create audit log for logout', { action: 'audit_log' }, err as Error);
@@ -523,7 +576,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             }
 
             // Get signing key for logout tokens
-            const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+            const tenantId = getTenantIdFromContext(c);
+            const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
             const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
             const keys = await keyManager.getAllPublicKeysRpc();
 
@@ -883,6 +937,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         const responseHeaders = new Headers({
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
+          'Content-Security-Policy':
+            "default-src 'none'; frame-src https:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+          'X-Content-Type-Options': 'nosniff',
         });
         // Clear both cookies - need append() for multiple Set-Cookie headers
         responseHeaders.append(
@@ -987,12 +1044,32 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Validate client authentication (using HTTP Basic Auth or client assertion)
+    // Validate client authentication (currently HTTP Basic only)
     // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
     const authHeader = c.req.header('Authorization');
     let clientId: string | undefined;
 
-    if (authHeader?.startsWith('Basic ')) {
+    if (!authHeader) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Client authentication is required',
+        },
+        401
+      );
+    }
+
+    if (!authHeader.startsWith('Basic ')) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Unsupported client authentication method',
+        },
+        401
+      );
+    }
+
+    if (authHeader.startsWith('Basic ')) {
       // HTTP Basic Authentication
       let id: string;
       let secret: string;
@@ -1045,17 +1122,14 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
 
       clientId = id;
-    } else {
-      // For now, allow unauthenticated back-channel logout for testing
-      // In production, this should require proper client authentication
-      log.warn('Back-channel logout called without client authentication');
     }
 
     // Verify logout token
     let logoutClaims: LogoutTokenPayload;
     try {
       // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+      const tenantId = getTenantIdFromContext(c);
+      const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
       const keys = await keyManager.getAllPublicKeysRpc();
@@ -1147,6 +1221,9 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     const userId = logoutClaims.sub as string;
     const sessionId = logoutClaims.sid as string | undefined;
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    let deviceSecretLogoutResult: RevokeDeviceSecretsForLogoutScopeResult | undefined;
 
     // Invalidate sessions
     // With sharded SessionStore, we can only delete sessions by specific sessionId
@@ -1154,7 +1231,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (sessionId && isShardedSessionId(sessionId)) {
       // Invalidate specific session using sharded routing via RPC
       try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -1182,19 +1259,31 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Revoke Native SSO device_secrets for the deleted session
-    if (sessionDeleted && sessionId && c.env.DB) {
+    if (sessionDeleted && sessionId) {
       const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
       if (nativeSSOEnabled) {
         try {
-          const adapter = new D1Adapter({ db: c.env.DB });
-          const deviceSecretRepo = new DeviceSecretRepository(adapter);
-          const revokedCount = await deviceSecretRepo.revokeBySessionId(
-            sessionId,
-            'backchannel_logout'
-          );
-          if (revokedCount > 0) {
+          deviceSecretLogoutResult = await revokeDeviceSecretsForLogoutScope({
+            adapter: authCtx.coreAdapter,
+            tenantId,
+            sessionIds: [sessionId],
+            userId,
+            clientId,
+            scope: DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
+            reason: 'logout',
+            callerAuthMode: 'backchannel',
+          });
+
+          if (
+            deviceSecretLogoutResult.revokedDeviceSecrets > 0 ||
+            deviceSecretLogoutResult.revokedInstallations > 0
+          ) {
             log.info('Revoked device secrets', {
-              revokedCount,
+              revokedCount: deviceSecretLogoutResult.revokedDeviceSecrets,
+              revokedInstallations: deviceSecretLogoutResult.revokedInstallations,
+              logoutScope: deviceSecretLogoutResult.scope,
+              trustGroupId: deviceSecretLogoutResult.trustGroupId,
+              targetClientId: deviceSecretLogoutResult.clientId,
               sessionId,
               action: 'BackchannelLogout',
             });
@@ -1264,7 +1353,22 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         resourceId: sessionId,
         ipAddress,
         userAgent,
-        metadata: JSON.stringify({ client_id: clientId, reason: 'backchannel_logout' }),
+        metadata: JSON.stringify({
+          client_id: clientId,
+          reason: 'backchannel_logout',
+          logout_scope: DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
+          device_secret_revocation: deviceSecretLogoutResult
+            ? {
+                scope: deviceSecretLogoutResult.scope,
+                revoked_device_secrets: deviceSecretLogoutResult.revokedDeviceSecrets,
+                revoked_installations: deviceSecretLogoutResult.revokedInstallations,
+                matched_installations: deviceSecretLogoutResult.matchedInstallations,
+                caller_auth_mode: deviceSecretLogoutResult.callerAuthMode,
+                target_client_id: deviceSecretLogoutResult.clientId,
+                trust_group_id: deviceSecretLogoutResult.trustGroupId,
+              }
+            : undefined,
+        }),
         severity: 'info',
       }).catch((err) => {
         log.error(

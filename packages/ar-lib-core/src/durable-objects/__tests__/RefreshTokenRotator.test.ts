@@ -91,7 +91,19 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 }
 
 // Mock Env
-const createMockEnv = (): Env => ({}) as Env;
+const createMockEnv = (): Env =>
+  ({
+    DB: {
+      prepare: () => ({
+        bind: () => ({
+          run: async () => ({ success: true }),
+          first: async () => null,
+          all: async () => ({ results: [] }),
+        }),
+      }),
+      batch: async () => [],
+    },
+  }) as unknown as Env;
 
 describe('RefreshTokenRotator V2', () => {
   let rotator: RefreshTokenRotator;
@@ -113,6 +125,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'initial-jti-12345',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid profile',
           ttl: 2592000, // 30 days
         }),
@@ -154,6 +167,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'initial-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -163,6 +177,51 @@ describe('RefreshTokenRotator V2', () => {
       const body = (await response.json()) as any;
 
       expect(body.version).toBe(1);
+    });
+
+    it('should persist original resource audience in token family metadata', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'resource-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        resourceAudience: ['svc://api', 'svc://admin'],
+      });
+
+      const validation = await rotator.validateRpc('user_123', 1, 'client_1');
+      const rotation = await rotator.rotateRpc({
+        incomingVersion: 1,
+        incomingJti: 'resource-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+      });
+
+      expect(validation.family?.resource_aud).toEqual(['svc://api', 'svc://admin']);
+      expect(rotation.resourceAudience).toEqual(['svc://api', 'svc://admin']);
+    });
+
+    it('should reject tenant mismatch on the same rotator instance', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'tenant-bound-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'tenant_a',
+        scope: 'openid',
+        ttl: 2592000,
+      });
+
+      await expect(
+        rotator.rotateRpc({
+          incomingVersion: 1,
+          incomingJti: 'tenant-bound-jti',
+          userId: 'user_123',
+          clientId: 'client_1',
+          tenantId: 'tenant_b',
+        })
+      ).rejects.toThrow('Tenant mismatch');
     });
   });
 
@@ -176,6 +235,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'original-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid profile',
           ttl: 2592000,
         }),
@@ -192,6 +252,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'original-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
 
@@ -215,6 +276,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'jti-v1',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -235,6 +297,7 @@ describe('RefreshTokenRotator V2', () => {
             incomingJti: currentJti,
             userId: 'user_123',
             clientId: 'client_1',
+            tenantId: 'default',
           }),
         });
 
@@ -260,6 +323,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'theft-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -276,6 +340,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'theft-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const response1 = await rotator.fetch(rotate1);
@@ -291,6 +356,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: body1.newJti,
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const response2 = await rotator.fetch(rotate2);
@@ -305,6 +371,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'theft-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const replayResponse = await rotator.fetch(replayAttempt);
@@ -325,6 +392,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'revoke-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -341,6 +409,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'revoke-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const rotateResponse = await rotator.fetch(rotate);
@@ -355,6 +424,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'revoke-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       await rotator.fetch(replayAttempt);
@@ -368,6 +438,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: rotateBody.newJti,
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
       const legitResponse = await rotator.fetch(legitimateAttempt);
@@ -389,6 +460,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'user-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -406,6 +478,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'user-test-jti',
           userId: 'user_456', // Wrong user! Will result in "not found"
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
 
@@ -427,6 +500,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'client-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -443,6 +517,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'client-test-jti',
           userId: 'user_123',
           clientId: 'client_2', // Wrong client!
+          tenantId: 'default',
         }),
       });
 
@@ -465,6 +540,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'scope-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid profile', // Limited scope
           ttl: 2592000,
         }),
@@ -481,6 +557,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'scope-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           requestedScope: 'openid profile email admin', // Trying to amplify scope!
         }),
       });
@@ -502,6 +579,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'scope-subset-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid profile email',
           ttl: 2592000,
         }),
@@ -518,6 +596,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'scope-subset-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           requestedScope: 'openid profile', // Subset of allowed scope
         }),
       });
@@ -541,6 +620,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'nonexistent-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
 
@@ -563,6 +643,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'manual-revoke-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -607,6 +688,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'validate-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -667,6 +749,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'status-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -733,6 +816,7 @@ describe('RefreshTokenRotator V2', () => {
           jti: 'jti-mismatch-test',
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
           scope: 'openid',
           ttl: 2592000,
         }),
@@ -749,6 +833,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'wrong-jti', // Wrong JTI!
           userId: 'user_123',
           clientId: 'client_1',
+          tenantId: 'default',
         }),
       });
 

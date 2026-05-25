@@ -1,3 +1,5 @@
+import { adminFetch } from '$lib/api/admin-request';
+import { settingsContext } from '$lib/stores/settings-context.svelte';
 /**
  * Admin Info / Metadata API Client
  *
@@ -5,6 +7,17 @@
  */
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+
+function resolveTenantId(tenantId?: string): string {
+	const resolved =
+		tenantId?.trim() ||
+		settingsContext.current.tenantId?.trim() ||
+		settingsContext.availableTenants[0]?.id?.trim();
+	if (!resolved) {
+		throw new Error('Tenant context is required to load admin info');
+	}
+	return resolved;
+}
 
 export interface TenantEndpoints {
 	well_known: {
@@ -28,6 +41,9 @@ export interface TenantEndpoints {
 	};
 	saml: {
 		sso: string;
+		idp_metadata: string;
+		sp_metadata: string;
+		/** @deprecated Use sp_metadata for the SP metadata URL. */
 		metadata: string;
 		acs: string;
 		slo: string;
@@ -75,14 +91,20 @@ export interface TenantInfo extends TenantEndpoints {
 		vc: boolean;
 	};
 	login_ui_url: string | null;
+	global_login_ui_url: string | null;
+	discover_url: string | null;
 	admin_ui_url: string | null;
 	api_url: string;
 }
 
-export async function getTenantInfo(tenantId: string): Promise<TenantInfo> {
-	const response = await fetch(`${API_BASE_URL}/api/admin/tenants/${tenantId}/info`, {
-		credentials: 'include'
-	});
+export async function getTenantInfo(tenantId?: string): Promise<TenantInfo> {
+	const response = await adminFetch(
+		`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(resolveTenantId(tenantId))}/info`,
+		{
+			credentials: 'include',
+			skipTenantHeader: true
+		}
+	);
 
 	if (!response.ok) {
 		const err = await response.json().catch(() => ({ error: 'unknown_error' }));

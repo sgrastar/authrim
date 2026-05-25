@@ -1,0 +1,130 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const {
+  mockQueryOne,
+  mockQuery,
+  mockExecute,
+  mockEnsureDatabaseAdapter,
+  mockResolveUserStoreRuntimeSourcesFromEnv,
+  sqlTracker,
+} = vi.hoisted(() => {
+  const tracker = {
+    calls: [] as { method: string; sql: string; params: unknown[] }[],
+    reset() {
+      this.calls.length = 0;
+    },
+  };
+
+  const queryOne = vi.fn().mockResolvedValue(null);
+  const query = vi.fn().mockResolvedValue([]);
+  const execute = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+
+  const adapter = {
+    queryOne: (sql: string, params?: unknown[]) => {
+      tracker.calls.push({ method: 'queryOne', sql, params: params || [] });
+      return queryOne(sql, params);
+    },
+    query: (sql: string, params?: unknown[]) => {
+      tracker.calls.push({ method: 'query', sql, params: params || [] });
+      return query(sql, params);
+    },
+    execute: (sql: string, params?: unknown[]) => {
+      tracker.calls.push({ method: 'execute', sql, params: params || [] });
+      return execute(sql, params);
+    },
+  };
+  const ensureDatabaseAdapter = vi.fn(() => adapter);
+  const resolveUserStoreRuntimeSourcesFromEnv = vi.fn(async () => ({ coreDb: {}, piiDb: {} }));
+
+  return {
+    mockQueryOne: queryOne,
+    mockQuery: query,
+    mockExecute: execute,
+    mockEnsureDatabaseAdapter: ensureDatabaseAdapter,
+    mockResolveUserStoreRuntimeSourcesFromEnv: resolveUserStoreRuntimeSourcesFromEnv,
+    sqlTracker: tracker,
+  };
+});
+
+vi.mock('@authrim/ar-lib-core', () => ({
+  ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
+  resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+  getDefaultTenantId: vi.fn(() => 'default'),
+}));
+
+import {
+  createLinkedIdentity,
+  findLinkedIdentity,
+  findLinkedIdentitiesAcrossTenantsByProviderSub,
+  findLinkedIdentitiesByProviderSub,
+  getLinkedIdentityForUserAndProvider,
+} from '../services/linked-identity-store';
+
+describe('linked-identity-store', () => {
+  const env = {
+    DB: {},
+    RP_TOKEN_ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sqlTracker.reset();
+    mockEnsureDatabaseAdapter.mockClear();
+    mockQueryOne.mockReset().mockResolvedValue(null);
+    mockQuery.mockReset().mockResolvedValue([]);
+    mockExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
+    mockResolveUserStoreRuntimeSourcesFromEnv.mockClear();
+  });
+
+  it('uses tenant-scoped lookup for provider user resolution', async () => {
+    await findLinkedIdentity(env, 'tenant-a', 'google', 'sub-123');
+
+    expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(env, 'tenant-a');
+    expect(sqlTracker.calls[0]?.sql).toContain('tenant_id = ?');
+    expect(sqlTracker.calls[0]?.params).toEqual(['tenant-a', 'google', 'sub-123']);
+  });
+
+  it('uses tenant-scoped lookup for user and provider resolution', async () => {
+    await getLinkedIdentityForUserAndProvider(env, 'tenant-a', 'user-1', 'google');
+
+    expect(sqlTracker.calls[0]?.sql).toContain('tenant_id = ?');
+    expect(sqlTracker.calls[0]?.params).toEqual(['tenant-a', 'user-1', 'google']);
+  });
+
+  it('keeps explicit cross-tenant provider-sub lookup separate', async () => {
+    await findLinkedIdentitiesAcrossTenantsByProviderSub(
+      env,
+      ['tenant-a', 'tenant-b'],
+      'google',
+      'sub-123'
+    );
+
+    expect(sqlTracker.calls).toHaveLength(2);
+    expect(sqlTracker.calls[0]?.sql).toContain('tenant_id = ?');
+    expect(sqlTracker.calls[0]?.params).toEqual(['tenant-a', 'google', 'sub-123']);
+    expect(sqlTracker.calls[1]?.params).toEqual(['tenant-b', 'google', 'sub-123']);
+  });
+
+  it('uses tenant-scoped provider-sub lookup for backchannel logout paths', async () => {
+    await findLinkedIdentitiesByProviderSub(env, 'tenant-a', 'google', 'sub-123');
+
+    expect(sqlTracker.calls[0]?.sql).toContain('tenant_id = ?');
+    expect(sqlTracker.calls[0]?.params).toEqual(['tenant-a', 'google', 'sub-123']);
+  });
+
+  it('persists tenant_id when creating a linked identity', async () => {
+    await createLinkedIdentity(env, {
+      tenantId: 'tenant-a',
+      userId: 'user-1',
+      providerId: 'google',
+      providerUserId: 'sub-123',
+      tokens: {
+        access_token: 'access-token',
+        token_type: 'Bearer',
+      },
+    });
+
+    expect(sqlTracker.calls[0]?.sql).toContain('tenant_id');
+    expect(sqlTracker.calls[0]?.params?.[1]).toBe('tenant-a');
+  });
+});

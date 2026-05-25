@@ -78,6 +78,38 @@ const CLIENT_SECRET = __ENV.CLIENT_SECRET || '';
 const ADMIN_API_SECRET = __ENV.ADMIN_API_SECRET || '';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://localhost:3000/callback';
 const PRESET = __ENV.PRESET || 'rps100';
+
+function summarizeTokenResponseForLog(body) {
+  try {
+    return JSON.stringify(redactSensitiveFields(JSON.parse(body))).slice(0, 500);
+  } catch {
+    return `[non-json body length=${String(body || '').length}]`;
+  }
+}
+
+function redactSensitiveFields(value) {
+  if (Array.isArray(value)) {
+    return value.map(redactSensitiveFields);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const redacted = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    const normalizedKey = key.toLowerCase();
+    if (
+      normalizedKey.includes('token') ||
+      normalizedKey.includes('secret') ||
+      normalizedKey === 'authorization'
+    ) {
+      redacted[key] = '[redacted]';
+    } else {
+      redacted[key] = redactSensitiveFields(nestedValue);
+    }
+  }
+  return redacted;
+}
 const USER_LIST_PATH = __ENV.USER_LIST_PATH || '../seeds/otp_user_list.txt';
 // K6 Cloud: URL to fetch user list from R2
 const USER_LIST_URL = __ENV.USER_LIST_URL || '';
@@ -707,7 +739,7 @@ export default function (data) {
       if (step5Response.status === 429) rateLimitErrors.add(1);
       if (exec.vu.iterationInInstance < 3) {
         console.error(
-          `❌ Token failed: status=${step5Response.status}, body=${step5Response.body}`
+          `❌ Token failed: status=${step5Response.status}, body=${summarizeTokenResponseForLog(step5Response.body)}`
         );
       }
     } else {
@@ -716,7 +748,9 @@ export default function (data) {
         if (!tokenData.access_token) {
           success = false;
           if (exec.vu.iterationInInstance < 3) {
-            console.error(`❌ Token response missing access_token: ${step5Response.body}`);
+            console.error(
+              `❌ Token response missing expected bearer credential: ${summarizeTokenResponseForLog(step5Response.body)}`
+            );
           }
         }
       } catch (e) {

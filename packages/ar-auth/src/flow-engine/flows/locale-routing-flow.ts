@@ -1,12 +1,12 @@
 /**
  * Locale-Based Routing Flow with Switch Node
  *
- * このフローは、ユーザーのlocale設定に基づいて異なる登録フローにルーティングします：
- * - ja, ja-JP → 日本語登録フロー（追加の日本特有項目収集）
- * - en, en-US, en-GB → 英語登録フロー（標準）
- * - de, de-DE → ドイツ語登録フロー（GDPR同意追加）
- * - zh, zh-CN, zh-TW → 中国語登録フロー
- * - その他 → デフォルト（英語）フロー
+ * This flow routes to different registration flows based on the user locale setting:
+ * - ja, ja-JP → Japanese registration flow (collect additional Japan-specific fields)
+ * - en, en-US, en-GB → English registration flow (standard)
+ * - de, de-DE → German registration flow (adds GDPR consent)
+ * - zh, zh-CN, zh-TW → Chinese registration flow
+ * - other → default English flow
  *
  * @see /private/docs/flow-engine-decision-guide.md
  */

@@ -45,11 +45,6 @@ import {
 type DPoPJTIStoreStub = DurableObjectStub;
 
 /**
- * Default tenant ID
- */
-const DEFAULT_TENANT_ID = 'default';
-
-/**
  * DPoP JTI TTL constants
  */
 export const DPOP_JTI_SKEW_SECONDS = 5 * 60; // 5 minutes
@@ -177,19 +172,24 @@ export function parseDPoPJTIId(jtiId: string): (ParsedRegionId & { jti: string }
  * @throws Error if jtiId format is invalid
  *
  * @example
- * const { stub, resolution } = getDPoPJTIStoreById(env, "g1:apac:3:dpp_abc...");
+ * const { stub, resolution } = getDPoPJTIStoreById(env, "g1:apac:3:dpp_abc...", tenantId);
  * const response = await stub.fetch(new Request('https://internal/check'));
  */
 export function getDPoPJTIStoreById(
   env: Env,
   jtiId: string,
-  tenantId: string = DEFAULT_TENANT_ID
+  tenantId: string
 ): {
   stub: DPoPJTIStoreStub;
   resolution: ShardResolution;
   instanceName: string;
   jti: string;
 } {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('getDPoPJTIStoreById requires tenantId');
+  }
+
   const parsed = parseDPoPJTIId(jtiId);
   if (!parsed) {
     throw new Error(`Invalid region-sharded DPoP JTI ID format: ${jtiId}`);
@@ -202,7 +202,7 @@ export function getDPoPJTIStoreById(
   };
 
   const instanceName = buildRegionInstanceName(
-    tenantId,
+    normalizedTenantId,
     resolution.regionKey,
     'dpop',
     resolution.shardIndex

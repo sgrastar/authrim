@@ -1,12 +1,12 @@
 /**
- * FlowExecutor - Flow Engineの中核
+ * FlowExecutor - Flow Engine core
  *
- * 責務:
- * - Flow初期化（/init）
- * - Capability応答処理（/submit）
- * - 状態取得（/state）
- * - Flowキャンセル（/cancel）
- * - FlowStateStore DO連携
+ * Responsibilities:
+ * - Flow initialization (/init)
+ * - capability responseprocessing (/submit)
+ * - stateget (/state)
+ * - Flow cancellation (/cancel)
+ * - FlowStateStore DO integration
  *
  * @see /private/docs/track-c-flow-engine-design.md
  */
@@ -20,7 +20,6 @@ import type {
   FlowStateResponse,
   CompiledPlan,
   CompiledNode,
-  RuntimeState,
   OAuthFlowParams,
   DecisionNodeConfig,
   SwitchNodeConfig,
@@ -37,15 +36,15 @@ import { evaluate } from './condition-evaluator';
 // =============================================================================
 
 /**
- * FlowExecutorオプション
+ * FlowExecutoroptions
  */
 export interface FlowExecutorOptions {
-  /** セッションTTL（ミリ秒） */
+  /** sessionTTL (milliseconds) */
   ttlMs?: number;
 }
 
 /**
- * DO初期化レスポンス
+ * DOInitializeresponse
  */
 interface DOInitResponse {
   success: boolean;
@@ -62,7 +61,7 @@ interface DOInitResponse {
 }
 
 /**
- * DOが返すOAuthパラメータ（snake_caseでOAuth標準に準拠）
+ * OAuth parameters returned by the DO (OAuth-standard snake_case)
  */
 interface DOOAuthParams {
   state?: string;
@@ -82,7 +81,7 @@ interface DOOAuthParams {
 }
 
 /**
- * DO状態レスポンス
+ * DOstateresponse
  */
 interface DOStateResponse {
   state?: {
@@ -94,7 +93,9 @@ interface DOStateResponse {
     currentNodeId: string;
     visitedNodeIds: string[];
     completedCapabilities: string[];
+    startedAt: number;
     expiresAt: number;
+    requestTimestamps?: number[];
     collectedData?: Record<string, unknown>;
     oauthParams?: DOOAuthParams;
   };
@@ -103,7 +104,7 @@ interface DOStateResponse {
 }
 
 /**
- * DO冪等性チェックレスポンス
+ * DOIdempotency checkresponse
  */
 interface DOCheckRequestResponse {
   found: boolean;
@@ -117,7 +118,9 @@ interface DOCheckRequestResponse {
     currentNodeId: string;
     visitedNodeIds: string[];
     completedCapabilities: string[];
+    startedAt: number;
     expiresAt: number;
+    requestTimestamps?: number[];
     collectedData?: Record<string, unknown>;
     oauthParams?: DOOAuthParams;
   };
@@ -130,7 +133,7 @@ interface DOCheckRequestResponse {
 // =============================================================================
 
 /**
- * FlowExecutor - Flow Engineの中核
+ * FlowExecutor - Flow Engine core
  */
 export class FlowExecutor {
   private registry: FlowRegistry;
@@ -150,7 +153,7 @@ export class FlowExecutor {
   }
 
   /**
-   * Flowを初期化しUIContractを返却
+   * Initialize the flow and return UIContract
    */
   async initFlow(params: {
     flowType: FlowType;
@@ -160,28 +163,28 @@ export class FlowExecutor {
   }): Promise<FlowInitResponse> {
     const { flowType, clientId, tenantId, oauthParams } = params;
 
-    // セキュリティ対策（Medium 10）: Tenant/Client 基本バリデーション
+    // Security mitigation (Medium 10): basic Tenant/Client validation
     this.validateBasicTenantClient(tenantId, clientId);
 
-    // 1. Flow定義を取得
+    // 1. retrieve flow definitions
     const graphDef = await this.registry.getFlow(flowType, tenantId);
     if (!graphDef) {
       throw new Error(`Flow not found: ${flowType}`);
     }
 
-    // 2. CompiledPlanを取得またはコンパイル
-    const compiledPlan = this.getOrCompilePlan(graphDef);
+    // 2. Get or compile the CompiledPlan
+    const compiledPlan = this.getOrCompilePlan(graphDef, tenantId);
 
-    // 3. セッションIDを生成
+    // 3. Generate Session ID
     const sessionId = `flow_${crypto.randomUUID()}`;
 
-    // 4. エントリーノードを決定（startノードはスキップ）
+    // 4. Determine the entry node (skip the start node)
     const entryNode = compiledPlan.nodes.get(compiledPlan.entryNodeId);
     if (!entryNode) {
       throw new Error(`Entry node not found: ${compiledPlan.entryNodeId}`);
     }
 
-    // startノードの場合、次のノードを実際のエントリーとして扱う
+    // If this is the start node, use the next node as the actual entry
     let actualEntryNodeId = compiledPlan.entryNodeId;
     let currentNode = entryNode;
     if (entryNode.type === 'start' && entryNode.nextOnSuccess) {
@@ -192,12 +195,12 @@ export class FlowExecutor {
       }
     }
 
-    // 5. FlowStateStore DOを呼び出して初期化
-    // DOには実際に表示するノードIDを保存（startノードはスキップ済み）
-    const doResponse = await this.callDO<DOInitResponse>(sessionId, '/init', 'POST', {
+    // 5. Call FlowStateStore DO and initialize it
+    // Save the actual displayed Node ID in the DO (start node already skipped)
+    const doResponse = await this.callDO<DOInitResponse>(tenantId, sessionId, '/init', 'POST', {
       sessionId,
       flowId: graphDef.id,
-      flowType, // flowTypeを保存（再コンパイル時に必要）
+      flowType, // Save flowType (needed for recompilation)
       tenantId,
       clientId,
       entryNodeId: actualEntryNodeId,
@@ -223,21 +226,32 @@ export class FlowExecutor {
   }
 
   /**
-   * Capability応答を処理し次のUIContractを返却
+   * Process the capability response and return the next UIContract
    */
   async submitCapability(params: FlowSubmitRequest): Promise<FlowSubmitResponse> {
     const { sessionId, requestId, capabilityId, response, tenantId, clientId } = params;
 
-    // 1. 冪等性チェック（/check-request）
-    // これにより同一requestIdのリクエストは処理をスキップしてキャッシュ結果を返す
+    if (!tenantId?.trim()) {
+      return {
+        type: 'error',
+        error: {
+          code: 'tenant_required',
+          message: 'Tenant context is required',
+        },
+      };
+    }
+
+    // 1. Idempotency check (/check-request)
+    // This lets requests with the same requestId skip processing and return the cached result
     const checkResponse = await this.callDO<DOCheckRequestResponse>(
+      tenantId,
       sessionId,
       '/check-request',
       'POST',
       { requestId }
     );
 
-    // エラーチェック
+    // Error check
     if (checkResponse.error) {
       return {
         type: 'error',
@@ -248,12 +262,12 @@ export class FlowExecutor {
       };
     }
 
-    // 冪等性ヒット: キャッシュされた結果を返す
+    // Idempotency hit: return the cached result
     if (checkResponse.found && checkResponse.result) {
       return checkResponse.result;
     }
 
-    // 未処理: check-requestが返した状態を使用
+    // unprocessed: use the state returned by check-request
     if (!checkResponse.state) {
       return {
         type: 'error',
@@ -272,10 +286,10 @@ export class FlowExecutor {
       oauthParams,
     } = checkResponse.state;
 
-    // セキュリティ対策: セッション検証（Critical 4）
-    // リクエストコンテキストのtenantId/clientIdがセッションのものと一致するか検証
-    // これによりセッションハイジャック攻撃を防止
-    if (tenantId && checkResponse.state.tenantId !== tenantId) {
+    // Security mitigation: session validation (Critical 4)
+    // Verify that request context tenantId/clientId match the session values
+    // This prevents session hijacking attacks
+    if (checkResponse.state.tenantId !== tenantId) {
       console.error(
         `[Security] Session tenant mismatch: expected=${tenantId}, got=${checkResponse.state.tenantId}`
       );
@@ -300,27 +314,26 @@ export class FlowExecutor {
       };
     }
 
-    // セキュリティ対策: レート制限（Critical 3）
-    // セッション状態からリクエストタイムスタンプを取得（DO側で実装されていない場合は空配列）
-    let requestTimestamps =
-      (checkResponse.state as { requestTimestamps?: number[] }).requestTimestamps || [];
+    // Security mitigation: rate limit (Critical 3)
+    // Get request timestamps from session state (use an empty array when not implemented on the DO side)
+    let requestTimestamps = checkResponse.state.requestTimestamps || [];
     const now = Date.now();
-    const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1分間のウィンドウ
-    const MAX_REQUESTS_PER_WINDOW = 30; // 1分間に最大30リクエスト
-    const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // セッション最大30分
-    const MAX_TIMESTAMP_HISTORY = 100; // タイムスタンプ履歴の最大サイズ（メモリDoS対策）
+    const RATE_LIMIT_WINDOW_MS = 60 * 1000; // One-minute window
+    const MAX_REQUESTS_PER_WINDOW = 30; // Maximum 30 requests per minute
+    const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // Maximum session duration is 30 minutes
+    const MAX_TIMESTAMP_HISTORY = 100; // Maximum timestamp history size (memory DoS mitigation)
 
-    // 配列サイズ制限（メモリ枯渇攻撃対策）
+    // Array size limit (memory exhaustion attack mitigation)
     if (requestTimestamps.length > MAX_TIMESTAMP_HISTORY) {
       requestTimestamps = requestTimestamps.slice(-MAX_TIMESTAMP_HISTORY);
     }
 
-    // 1. 古いタイムスタンプを削除（ウィンドウ外）
+    // 1. Delete old timestamps (outside the window)
     const recentTimestamps = requestTimestamps.filter(
       (timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS
     );
 
-    // 2. レート制限チェック
+    // 2. Rate-limit check
     if (recentTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
       console.error(
         `[Security] Rate limit exceeded: ${recentTimestamps.length} requests in ${RATE_LIMIT_WINDOW_MS}ms (max: ${MAX_REQUESTS_PER_WINDOW})`
@@ -334,12 +347,11 @@ export class FlowExecutor {
       };
     }
 
-    // 3. セッションタイムアウトチェック
-    // セキュリティ: createdAt が存在しない場合は 0 とし、即座に期限切れとする（安全側に倒す）
-    const sessionCreatedAt = (checkResponse.state as { createdAt?: number }).createdAt || 0;
-    if (now - sessionCreatedAt > SESSION_TIMEOUT_MS) {
+    // 3. Session timeout check
+    const sessionStartedAt = checkResponse.state.startedAt;
+    if (now - sessionStartedAt > SESSION_TIMEOUT_MS) {
       console.error(
-        `[Security] Session timeout: ${Math.floor((now - sessionCreatedAt) / 1000 / 60)} minutes elapsed (max: ${SESSION_TIMEOUT_MS / 1000 / 60})`
+        `[Security] Session timeout: ${Math.floor((now - sessionStartedAt) / 1000 / 60)} minutes elapsed (max: ${SESSION_TIMEOUT_MS / 1000 / 60})`
       );
       return {
         type: 'error',
@@ -350,16 +362,16 @@ export class FlowExecutor {
       };
     }
 
-    // セキュリティ対策: 循環参照検出（High 6）
-    // セッション状態から訪問履歴を取得（DO側で実装されていない場合は空配列）
-    const rawVisitedNodes = (checkResponse.state as { visitedNodes?: unknown }).visitedNodes;
-    // セキュリティ対策（Medium 8）: 型安全性を保証（配列でない場合は空配列にフォールバック）
+    // Security mitigation: circular reference detection (High 6)
+    // Get visit history from session state (use an empty array when not implemented on the DO side)
+    const rawVisitedNodes = checkResponse.state.visitedNodeIds;
+    // Security mitigation (Medium 8): ensure type safety (fall back to an empty array when it is not an array)
     let visitedNodes: string[] = Array.isArray(rawVisitedNodes) ? rawVisitedNodes : [];
-    const MAX_VISITS_PER_NODE = 3; // 同じノードへの最大訪問回数
-    const MAX_TOTAL_NODES = 50; // フロー全体での最大ノード訪問数（無限ループ対策）
-    const MAX_VISITED_HISTORY = 200; // 訪問履歴配列の最大サイズ（メモリDoS対策）
+    const MAX_VISITS_PER_NODE = 3; // Maximum visits to the same node
+    const MAX_TOTAL_NODES = 50; // Maximum node visits across the flow (infinite loop mitigation)
+    const MAX_VISITED_HISTORY = 200; // Maximum visit history array size (memory DoS mitigation)
 
-    // 配列サイズの事前チェック（メモリ枯渇攻撃対策）
+    // Pre-check array size (memory exhaustion attack mitigation)
     if (visitedNodes.length > MAX_VISITED_HISTORY) {
       console.warn(
         `[Security] Visited nodes history too large (${visitedNodes.length}), truncating to last ${MAX_VISITED_HISTORY} entries`
@@ -367,7 +379,7 @@ export class FlowExecutor {
       visitedNodes = visitedNodes.slice(-MAX_VISITED_HISTORY);
     }
 
-    // 1. 同じノードへの過度な訪問をチェック
+    // 1. Check excessive visits to the same node
     const currentNodeVisitCount = visitedNodes.filter((id) => id === currentNodeId).length;
     if (currentNodeVisitCount >= MAX_VISITS_PER_NODE) {
       console.error(
@@ -382,7 +394,7 @@ export class FlowExecutor {
       };
     }
 
-    // 2. フロー全体のノード訪問数をチェック（無限ループ対策）
+    // 2. Check total node visits across the flow (infinite loop mitigation)
     if (visitedNodes.length >= MAX_TOTAL_NODES) {
       console.error(
         `[Security] Maximum flow length exceeded: ${visitedNodes.length} nodes visited (max: ${MAX_TOTAL_NODES})`
@@ -396,11 +408,13 @@ export class FlowExecutor {
       };
     }
 
-    // 2. CompiledPlanを取得
-    const compiledPlan = this.compiledPlans.get(`compiled-${flowId}`);
+    // 2. Get CompiledPlan
+    const compiledPlan = this.compiledPlans.get(
+      this.getCompiledPlanCacheKey(checkResponse.state.tenantId, flowId)
+    );
     if (!compiledPlan) {
-      // キャッシュにない場合、再コンパイル
-      // flowTypeはDOに保存されているため、セッションから取得
+      // Recompile when not in the cache
+      // flowType is stored in the DO and retrieved from the session
       const graphDef = await this.registry.getFlow(
         flowType as FlowType,
         checkResponse.state.tenantId
@@ -414,10 +428,12 @@ export class FlowExecutor {
           },
         };
       }
-      this.getOrCompilePlan(graphDef);
+      this.getOrCompilePlan(graphDef, checkResponse.state.tenantId);
     }
 
-    const plan = this.compiledPlans.get(`compiled-${flowId}`);
+    const plan = this.compiledPlans.get(
+      this.getCompiledPlanCacheKey(checkResponse.state.tenantId, flowId)
+    );
     if (!plan) {
       return {
         type: 'error',
@@ -428,7 +444,7 @@ export class FlowExecutor {
       };
     }
 
-    // 3. 現在のノードを取得
+    // 3. Get current node
     const currentNode = plan.nodes.get(currentNodeId);
     if (!currentNode) {
       return {
@@ -440,18 +456,18 @@ export class FlowExecutor {
       };
     }
 
-    // 4. 次のノードを決定（Decision/Switch対応）
-    // tenantId/clientIdはDOから取得した検証済みの値を使用（セキュリティ強化）
+    // 4. Determine the next node (Decision/Switch support)
+    // Use tenantId/clientId values verified from the DO (security hardening)
     const runtimeContext = this.buildRuntimeContext(collectedData, {
       tenantId: checkResponse.state.tenantId,
       clientId: checkResponse.state.clientId,
     });
     const nextNodeId = await this.determineNextNode(currentNode, plan, runtimeContext);
 
-    // 完了チェック
+    // Completion check
     if (!nextNodeId) {
-      // フロー完了 → リダイレクト
-      // redirect_uri はOAuthパラメータから取得、なければフォールバック
+      // flow completion → redirect
+      // Get redirect_uri from OAuth parameters; otherwise fall back
       const redirectUrl = oauthParams?.redirect_uri || '/callback';
       return {
         type: 'redirect',
@@ -473,9 +489,9 @@ export class FlowExecutor {
       };
     }
 
-    // endノードの場合、リダイレクト
+    // Redirect for end nodes
     if (nextNode.type === 'end') {
-      // redirect_uri はOAuthパラメータから取得、なければフォールバック
+      // Get redirect_uri from OAuth parameters; otherwise fall back
       const redirectUrl = oauthParams?.redirect_uri || '/callback';
       return {
         type: 'redirect',
@@ -486,7 +502,7 @@ export class FlowExecutor {
       };
     }
 
-    // 5. 次のUIContractを生成
+    // 5. Generate the next UIContract
     const updatedCollectedData = {
       ...collectedData,
       [capabilityId]: response,
@@ -501,37 +517,37 @@ export class FlowExecutor {
       profileId: plan.profileId,
     });
 
-    // 6. DOに状態を保存
+    // 6. Save state to the DO
     const submitResult: FlowSubmitResponse = {
       type: 'continue',
       uiContract,
     };
 
-    // 訪問履歴を更新（現在のノードを追加）
+    // Update visit history (add the current node)
     const updatedVisitedNodes = [...visitedNodes, currentNodeId];
 
-    // リクエストタイムスタンプを更新（現在時刻を追加）
+    // Update request timestamps (add the current time)
     const updatedRequestTimestamps = [...recentTimestamps, now];
 
-    await this.callDO(sessionId, '/submit', 'POST', {
+    await this.callDO(tenantId, sessionId, '/submit', 'POST', {
       requestId,
       capabilityId,
       response,
       result: submitResult,
       nextNodeId,
-      visitedNodes: updatedVisitedNodes, // 訪問履歴を保存
-      requestTimestamps: updatedRequestTimestamps, // リクエストタイムスタンプを保存
+      visitedNodes: updatedVisitedNodes, // Save visit history
+      requestTimestamps: updatedRequestTimestamps, // Save request timestamps
     });
 
     return submitResult;
   }
 
   /**
-   * 現在の状態を取得
+   * Get the current state
    */
-  async getFlowState(sessionId: string): Promise<FlowStateResponse> {
-    // 1. DOから状態を取得
-    const stateResponse = await this.callDO<DOStateResponse>(sessionId, '/state', 'GET');
+  async getFlowState(sessionId: string, tenantId: string): Promise<FlowStateResponse> {
+    // 1. Get state from the DO
+    const stateResponse = await this.callDO<DOStateResponse>(tenantId, sessionId, '/state', 'GET');
 
     if (stateResponse.error || !stateResponse.state) {
       throw new Error(stateResponse.error || 'Session not found');
@@ -540,21 +556,21 @@ export class FlowExecutor {
     const {
       flowId,
       flowType,
-      tenantId,
+      tenantId: stateTenantId,
       currentNodeId,
       visitedNodeIds,
       completedCapabilities,
       collectedData,
     } = stateResponse.state;
 
-    // 2. CompiledPlanを取得
-    let plan = this.compiledPlans.get(`compiled-${flowId}`);
+    // 2. Get CompiledPlan
+    let plan = this.compiledPlans.get(this.getCompiledPlanCacheKey(stateTenantId, flowId));
     if (!plan) {
-      // キャッシュにない場合、再コンパイル
-      // flowTypeはDOに保存されているため、セッションから取得
-      const graphDef = await this.registry.getFlow(flowType as FlowType, tenantId);
+      // Recompile when not in the cache
+      // flowType is stored in the DO and retrieved from the session
+      const graphDef = await this.registry.getFlow(flowType as FlowType, stateTenantId);
       if (graphDef) {
-        plan = this.getOrCompilePlan(graphDef);
+        plan = this.getOrCompilePlan(graphDef, stateTenantId);
       }
     }
 
@@ -562,13 +578,13 @@ export class FlowExecutor {
       throw new Error('Compiled plan not found');
     }
 
-    // 3. 現在のノードを取得
+    // 3. Get current node
     const currentNode = plan.nodes.get(currentNodeId);
     if (!currentNode) {
       throw new Error(`Node not found: ${currentNodeId}`);
     }
 
-    // 4. UIContractを生成
+    // 4. Generate a UIContract
     const uiContract = this.uiGenerator.generate({
       compiledNode: currentNode,
       flowId,
@@ -589,10 +605,10 @@ export class FlowExecutor {
   }
 
   /**
-   * Flowをキャンセル
+   * Cancel the flow
    */
-  async cancelFlow(sessionId: string): Promise<void> {
-    await this.callDO(sessionId, '/cancel', 'DELETE');
+  async cancelFlow(sessionId: string, tenantId: string): Promise<void> {
+    await this.callDO(tenantId, sessionId, '/cancel', 'DELETE');
   }
 
   // =============================================================================
@@ -600,55 +616,64 @@ export class FlowExecutor {
   // =============================================================================
 
   /**
-   * CompiledPlanを取得またはコンパイル
+   * Get or compile the CompiledPlan
    */
-  private getOrCompilePlan(graphDef: {
-    id: string;
-    flowVersion: string;
-    profileId: string;
-    nodes: unknown[];
-    edges: unknown[];
-    name: string;
-    description: string;
-    metadata: unknown;
-  }): CompiledPlan {
-    const cacheKey = `compiled-${graphDef.id}`;
+  private getOrCompilePlan(
+    graphDef: {
+      id: string;
+      flowVersion: string;
+      profileId: string;
+      nodes: unknown[];
+      edges: unknown[];
+      name: string;
+      description: string;
+      metadata: unknown;
+    },
+    tenantId: string
+  ): CompiledPlan {
+    const cacheKey = this.getCompiledPlanCacheKey(tenantId, graphDef.id);
 
-    // キャッシュにあればそれを返す
+    // Return the cached value when available
     const cached = this.compiledPlans.get(cacheKey);
     if (cached && cached.sourceVersion === graphDef.flowVersion) {
       return cached;
     }
 
-    // コンパイル
+    // Compile
     const compiled = this.compiler.compile(graphDef as Parameters<typeof this.compiler.compile>[0]);
     this.compiledPlans.set(cacheKey, compiled);
 
     return compiled;
   }
 
+  private getCompiledPlanCacheKey(tenantId: string, flowId: string): string {
+    return `compiled:${tenantId}:${flowId}`;
+  }
+
   /**
-   * FlowStateStore DOを呼び出す
+   * Call the FlowStateStore DO
    *
-   * シャーディング戦略:
-   * - sessionIdをFNV-1aハッシュでシャードインデックスに変換
-   * - シャード数はKV/環境変数/デフォルト(32)の優先順で取得
-   * - DOインスタンス名: flow-{shardIndex}
+   * Routing strategy:
+   * - one Durable Object per tenant + flow session
+   * - the DO stores exactly one RuntimeState and serializes that session only
    */
   private async callDO<T>(
+    tenantId: string,
     sessionId: string,
     path: string,
     method: 'GET' | 'POST' | 'DELETE',
     body?: unknown
   ): Promise<T> {
-    // シャーディングユーティリティを使用してDO stubを取得
-    const { stub } = await getFlowStateStoreStub(this.env, sessionId);
+    // Use the sharding utility to get the DO stub
+    const { stub } = await getFlowStateStoreStub(this.env, sessionId, tenantId);
 
-    // リクエストを作成
+    // Create the request
     const requestInit: RequestInit = {
       method,
       headers: {
         'Content-Type': 'application/json',
+        'X-Tenant-Id': tenantId,
+        'X-Flow-Session-Id': sessionId,
       },
     };
 
@@ -656,42 +681,42 @@ export class FlowExecutor {
       requestInit.body = JSON.stringify(body);
     }
 
-    // DOを呼び出す
+    // Call the DO
     const response = await stub.fetch(new Request(`http://localhost${path}`, requestInit));
 
-    // レスポンスをパース
+    // Parse the response
     return (await response.json()) as T;
   }
 
   /**
-   * 次のノードIDを決定（Decision/Switch対応）
+   * Determine the next node ID (Decision/Switch support)
    *
-   * @param currentNode - 現在のノード
-   * @param plan - コンパイル済みプラン
-   * @param context - ランタイムコンテキスト
-   * @returns 次のノードID（nullはフロー終了）
+   * @param currentNode - current node
+   * @param plan - compiled plan
+   * @param context - runtime context
+   * @returns next node ID (null means flow end)
    */
   private async determineNextNode(
     currentNode: CompiledNode,
     plan: CompiledPlan,
     context: FlowRuntimeContext
   ): Promise<string | null> {
-    // Decision/Switchノードの場合
+    // For Decision/Switch nodes
     if (currentNode.type === 'decision' || currentNode.type === 'switch') {
       return this.evaluateDecisionNode(currentNode, plan, context);
     }
 
-    // 通常のノード: nextOnSuccess を返す
+    // Normal node: return nextOnSuccess
     return currentNode.nextOnSuccess;
   }
 
   /**
-   * Decision/Switchノードの評価
+   * Evaluate Decision/Switch nodes
    *
-   * @param node - Decision/Switchノード
-   * @param plan - コンパイル済みプラン
-   * @param context - ランタイムコンテキスト
-   * @returns 遷移先ノードID
+   * @param node - Decision/Switch node
+   * @param plan - compiled plan
+   * @param context - runtime context
+   * @returns Target node ID
    */
   private evaluateDecisionNode(
     node: CompiledNode,
@@ -710,12 +735,12 @@ export class FlowExecutor {
   }
 
   /**
-   * Decisionブランチを評価
+   * Evaluate Decision branches
    *
-   * @param node - Decisionノード
-   * @param plan - コンパイル済みプラン
-   * @param context - ランタイムコンテキスト
-   * @returns 遷移先ノードID
+   * @param node - Decision node
+   * @param plan - compiled plan
+   * @param context - runtime context
+   * @returns Target node ID
    */
   private evaluateDecisionBranches(
     node: CompiledNode,
@@ -727,19 +752,19 @@ export class FlowExecutor {
       return null;
     }
 
-    // 遷移リストを取得（priority順にソート済み）
+    // Get the transition list (already sorted by priority order)
     const transitions = plan.transitions.get(node.id) || [];
 
-    // priority順に条件を評価
+    // Evaluate conditions in priority order
     for (const branch of config.branches) {
-      // 条件評価
+      // Condition evaluation
       const matches = evaluate(branch.condition, context);
 
       if (matches) {
-        // マッチした分岐の遷移先を返す
+        // Return the target for the matched branch
         const transition = transitions.find((t) => t.sourceHandle === branch.id);
         if (transition) {
-          // セキュリティ対策（Medium 12）: 遷移先ノードの存在確認
+          // Security mitigation (Medium 12): Verify that the target node exists
           if (!plan.nodes.has(transition.targetNodeId)) {
             console.error(
               `[Security] Invalid transition: target node "${transition.targetNodeId}" does not exist in plan`
@@ -751,11 +776,11 @@ export class FlowExecutor {
       }
     }
 
-    // どの条件にもマッチしない場合、デフォルト分岐
+    // If no condition matches, use the default branch
     if (config.defaultBranch) {
       const defaultTransition = transitions.find((t) => t.sourceHandle === config.defaultBranch);
       if (defaultTransition) {
-        // セキュリティ対策（Medium 12）: 遷移先ノードの存在確認
+        // Security mitigation (Medium 12): Verify that the target node exists
         if (!plan.nodes.has(defaultTransition.targetNodeId)) {
           console.error(
             `[Security] Invalid default transition: target node "${defaultTransition.targetNodeId}" does not exist in plan`
@@ -766,17 +791,17 @@ export class FlowExecutor {
       }
     }
 
-    // デフォルト分岐もない場合はnull（フロー終了）
+    // Return null when there is no default branch (flow ends)
     return null;
   }
 
   /**
-   * Switchケースを評価
+   * Evaluate Switch case
    *
-   * @param node - Switchノード
-   * @param plan - コンパイル済みプラン
-   * @param context - ランタイムコンテキスト
-   * @returns 遷移先ノードID
+   * @param node - Switch node
+   * @param plan - compiled plan
+   * @param context - runtime context
+   * @returns Target node ID
    */
   private evaluateSwitchCases(
     node: CompiledNode,
@@ -788,14 +813,14 @@ export class FlowExecutor {
       return null;
     }
 
-    // Prototype Pollution対策用の危険なキー
+    // Dangerous keys for prototype pollution mitigation
     const DANGEROUS_KEYS = ['__proto__', 'constructor', 'prototype'];
 
-    // switchKeyの値を取得
+    // Get the switchKey value
     const keyParts = config.switchKey.split('.');
     let value: unknown = context;
     for (const part of keyParts) {
-      // Prototype Pollution対策: 危険なキーを拒否
+      // Prototype pollution mitigation: Reject dangerous keys
       if (DANGEROUS_KEYS.includes(part)) {
         console.error(
           `[Security] Dangerous key detected in switchKey: "${part}" (full key: "${config.switchKey}")`
@@ -809,7 +834,7 @@ export class FlowExecutor {
         break;
       }
 
-      // Prototype Pollution対策: hasOwnPropertyでプロトタイプチェーンを遡らない
+      // Prototype pollution mitigation: Use hasOwnProperty to avoid walking the prototype chain
       if (!Object.prototype.hasOwnProperty.call(value, part)) {
         value = undefined;
         break;
@@ -818,15 +843,15 @@ export class FlowExecutor {
       value = (value as Record<string, unknown>)[part];
     }
 
-    // 遷移リストを取得
+    // Get the transition list
     const transitions = plan.transitions.get(node.id) || [];
 
-    // 各caseと値を比較
+    // Compare each case with the value
     for (const caseItem of config.cases) {
       if (caseItem.values.includes(value as string | number | boolean)) {
         const transition = transitions.find((t) => t.sourceHandle === caseItem.id);
         if (transition) {
-          // セキュリティ対策（Medium 12）: 遷移先ノードの存在確認
+          // Security mitigation (Medium 12): Verify that the target node exists
           if (!plan.nodes.has(transition.targetNodeId)) {
             console.error(
               `[Security] Invalid switch transition: target node "${transition.targetNodeId}" does not exist in plan`
@@ -838,11 +863,11 @@ export class FlowExecutor {
       }
     }
 
-    // どのcaseにもマッチしない場合、デフォルトcase
+    // If no case matches, use the default case
     if (config.defaultCase) {
       const defaultTransition = transitions.find((t) => t.sourceHandle === config.defaultCase);
       if (defaultTransition) {
-        // セキュリティ対策（Medium 12）: 遷移先ノードの存在確認
+        // Security mitigation (Medium 12): Verify that the target node exists
         if (!plan.nodes.has(defaultTransition.targetNodeId)) {
           console.error(
             `[Security] Invalid switch default transition: target node "${defaultTransition.targetNodeId}" does not exist in plan`
@@ -853,51 +878,51 @@ export class FlowExecutor {
       }
     }
 
-    // デフォルトcaseもない場合はnull（フロー終了）
+    // Return null when there is no default case (flow ends)
     return null;
   }
 
   /**
-   * ログ出力時に機密情報をサニタイズ（Medium 9）
+   * Sanitize sensitive information before logging (Medium 9)
    *
-   * セキュリティ対策:
-   * - 循環参照検出（無限ループ防止）
-   * - 深さ制限（スタックオーバーフロー防止）
-   * - 配列/オブジェクトサイズ制限（メモリDoS防止）
-   * - 機密キー（password, secret等）のマスキング
+   * Security mitigation:
+   * - circular reference detection (prevents infinite loops)
+   * - depth limit (prevents stack overflow)
+   * - array/object size limit (prevents memory DoS)
+   * - masking sensitive keys (password, secret, etc.)
    *
-   * 使用例（デバッグ時）:
+   * Usage example (debugging):
    * ```
    * console.error('[Debug] Context:', this.sanitizeForLogging(context));
    * console.warn('[Debug] State:', this.sanitizeForLogging(collectedData));
    * ```
    *
-   * @param obj - ログ出力するオブジェクト
-   * @param seen - 循環参照検出用（内部使用）
-   * @param depth - 現在の深さ（内部使用）
-   * @returns サニタイズされたオブジェクト
+   * @param obj - object to log
+   * @param seen - for circular reference detection (internal use)
+   * @param depth - current depth (internal use)
+   * @returns sanitized object
    */
   private sanitizeForLogging(obj: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
-    const MAX_DEPTH = 10; // 最大深さ
-    const MAX_ITEMS = 100; // 配列/オブジェクトの最大アイテム数
+    const MAX_DEPTH = 10; // Maximum depth
+    const MAX_ITEMS = 100; // Maximum array/object items
 
-    // 深さ制限チェック
+    // Depth limit check
     if (depth > MAX_DEPTH) {
       return '[MAX_DEPTH_EXCEEDED]';
     }
 
-    // プリミティブ値はそのまま返す
+    // Return primitive values as-is
     if (typeof obj !== 'object' || obj === null) {
       return obj;
     }
 
-    // 循環参照チェック
+    // Circular reference check
     if (seen.has(obj)) {
       return '[CIRCULAR_REFERENCE]';
     }
     seen.add(obj);
 
-    // 機密情報のキーパターン
+    // Sensitive key patterns
     const SENSITIVE_KEYS = [
       'password',
       'secret',
@@ -917,19 +942,19 @@ export class FlowExecutor {
       'private_key',
     ];
 
-    // 配列の場合
+    // For arrays
     if (Array.isArray(obj)) {
-      // サイズ制限チェック
+      // Size limit check
       if (obj.length > MAX_ITEMS) {
         return `[Array(${obj.length}) - truncated to first ${MAX_ITEMS} items]`;
       }
       return obj.slice(0, MAX_ITEMS).map((item) => this.sanitizeForLogging(item, seen, depth + 1));
     }
 
-    // オブジェクトの場合
+    // For objects
     const keys = Object.keys(obj);
 
-    // プロパティ数制限チェック
+    // Property count limit check
     if (keys.length > MAX_ITEMS) {
       return `[Object with ${keys.length} properties - truncated]`;
     }
@@ -957,36 +982,36 @@ export class FlowExecutor {
   }
 
   /**
-   * collectedDataからFlowRuntimeContextを構築
+   * Build FlowRuntimeContext from collectedData
    *
-   * セキュリティ対策:
-   * - collectedDataは信頼できないデータとして扱う
-   * - ホワイトリスト方式で許可されたフィールドのみ抽出
-   * - 将来的には、user情報などは認証済みソースから再取得すべき
+   * Security mitigation:
+   * - Treat collectedData as untrusted data
+   * - Use an allowlist and extract only permitted fields
+   * - In the future, user information and similar values should be reloaded from authenticated sources
    *
-   * @param collectedData - 収集済みデータ
+   * @param collectedData - Collected data
    * @returns FlowRuntimeContext
    */
   /**
-   * 基本的なTenant/Client IDバリデーション（Medium 10）
+   * Basic Tenant/Client ID validation (Medium 10)
    *
-   * セキュリティ対策:
-   * - null/undefined/空文字のチェック
-   * - 最小限の型チェック
+   * Security mitigation:
+   * - null/undefined/empty-string check
+   * - minimal type checks
    *
-   * 注意: これは基本的なバリデーションのみです。
-   * 実際の運用では、以下の追加検証が必要:
-   * - Tenant/Clientの存在確認（DB検索）
-   * - Tenant/Clientのアクティブ状態確認
-   * - ClientがTenantに属していることの確認
-   * - 権限チェック
+   * Note: this is basic validation only.
+   * Production use needs the following additional validation:
+   * - Tenant/Client existence check (DB lookup)
+   * - Tenant/Client active-state check
+   * - verify that Client belongs to Tenant
+   * - permission check
    *
-   * @param tenantId - テナントID
-   * @param clientId - クライアントID
-   * @throws Error バリデーション失敗時
+   * @param tenantId - Tenant ID
+   * @param clientId - Client ID
+   * @throws Error on validation failure
    */
   private validateBasicTenantClient(tenantId: string, clientId: string): void {
-    // 基本的なnull/undefinedチェック
+    // Basic null/undefined checks
     if (!tenantId || typeof tenantId !== 'string' || tenantId.trim() === '') {
       throw new Error('Invalid tenantId');
     }
@@ -994,23 +1019,23 @@ export class FlowExecutor {
       throw new Error('Invalid clientId');
     }
 
-    // セキュリティ警告: 実際の権限チェックは未実装
+    // Security warning: Real authorization checks are not implemented
     console.warn(
       `[Security] Basic validation passed for tenantId="${tenantId}", clientId="${clientId}", but full authorization check is not implemented`
     );
   }
 
   /**
-   * 型安全なランタイムコンテキスト構築
+   * Type-safe runtime context construction
    *
-   * セキュリティ強化（High 5）:
-   * - 危険な`as`型キャストを排除
-   * - Type guardによる安全な型チェック
-   * - デフォルト値によるフォールバック
-   * - tenant/clientはDOから取得した検証済みの値を使用
+   * security hardening (High 5):
+   * - Remove dangerous `as` casts
+   * - Safe type checks with type guards
+   * - Fallback with default values
+   * - use tenant/client values verified from the DO
    *
-   * @param collectedData - 収集済みデータ（信頼できないデータとして扱う）
-   * @param verifiedContext - DOから取得した検証済みコンテキスト
+   * @param collectedData - Collected data (Treat as untrusted data)
+   * @param verifiedContext - verified context retrieved from the DO
    */
   private buildRuntimeContext(
     collectedData: Record<string, unknown>,
@@ -1019,34 +1044,34 @@ export class FlowExecutor {
       clientId?: string;
     }
   ): FlowRuntimeContext {
-    // Type guard: objectかどうかチェック
+    // Type guard: check whether it is an object
     const isObject = (value: unknown): value is Record<string, unknown> => {
       return typeof value === 'object' && value !== null && !Array.isArray(value);
     };
 
-    // Type guard: NodeOutputかどうかチェック
+    // Type guard: check whether it is NodeOutput
     const isNodeOutput = (value: unknown): value is import('./types.js').NodeOutput => {
       return isObject(value) && typeof value.success === 'boolean';
     };
 
-    // tenant/clientはDOから取得した検証済みの値を優先使用
-    // collectedDataからの値は信頼できないため無視
+    // Prefer tenant/client values verified from the DO
+    // Ignore values from collectedData because they are untrusted
     const tenant = verifiedContext?.tenantId ? { id: verifiedContext.tenantId } : undefined;
     const client = verifiedContext?.clientId ? { id: verifiedContext.clientId } : undefined;
 
     return {
-      // tenant/clientはDOから取得した検証済みの値を使用（セキュリティ強化）
+      // Use tenant/client values verified from the DO (security hardening)
       tenant,
       client,
 
-      // user/device/request/riskはcollectedDataから取得（将来的には認証済みソースから取得すべき）
-      // 注意: これらの値はフロー内でのみ使用され、認証判定には直接使用されない
+      // Get user/device/request/risk from collectedData (should be retrieved from authenticated sources in the future)
+      // Note: these values are used only within the flow and not directly for authentication decisions
       user: isObject(collectedData.user) ? collectedData.user : undefined,
       device: isObject(collectedData.device) ? collectedData.device : undefined,
       request: isObject(collectedData.request) ? collectedData.request : undefined,
       risk: isObject(collectedData.risk) ? collectedData.risk : undefined,
 
-      // 以下はフロー内で収集されたデータ
+      // The following data is collected within the flow
       form: isObject(collectedData.form) ? collectedData.form : undefined,
       prevNode: isNodeOutput(collectedData.prevNode) ? collectedData.prevNode : undefined,
       variables: isObject(collectedData.variables) ? collectedData.variables : undefined,
@@ -1059,11 +1084,11 @@ export class FlowExecutor {
 // =============================================================================
 
 /**
- * FlowExecutorを作成
+ * Create a FlowExecutor
  *
- * @param env - Cloudflare Worker環境
- * @param options - オプション
- * @returns FlowExecutor インスタンス
+ * @param env - Cloudflare Worker environment
+ * @param options - options
+ * @returns FlowExecutor instance
  *
  * @example
  * const executor = createFlowExecutor(c.env);

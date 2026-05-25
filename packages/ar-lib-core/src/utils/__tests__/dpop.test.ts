@@ -5,8 +5,15 @@
 
 import { describe, it, expect } from 'vitest';
 import { calculateAccessTokenHash, isDPoPBoundToken, extractDPoPToken } from '../dpop';
+import { ALLOWED_DPOP_ALGS } from '../../constants';
 
 describe('DPoP Utilities', () => {
+  describe('Phase 1 algorithm policy', () => {
+    it('should allow only the Phase 1 DPoP signing algorithms', () => {
+      expect(ALLOWED_DPOP_ALGS).toEqual(['ES256', 'PS256', 'EdDSA']);
+    });
+  });
+
   describe('calculateAccessTokenHash', () => {
     it('should calculate SHA-256 hash of access token', async () => {
       const token = 'test_access_token_123';

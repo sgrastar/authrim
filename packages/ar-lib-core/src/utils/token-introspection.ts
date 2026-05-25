@@ -21,7 +21,7 @@ import { isTokenRevoked } from './kv';
 import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken } from './dpop';
 import { buildIssuerUrl } from './issuer';
 import { createLogger } from './logger';
-import { getTenantIdFromHost } from './tenant-context';
+import { getTenantIdFromContext } from '../middleware/request-context';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
 
@@ -61,6 +61,8 @@ export interface TokenValidationRequest {
   env: Env;
   /** Request body (for form-encoded POST requests) */
   body?: URLSearchParams;
+  /** Tenant ID for multi-tenant key isolation */
+  tenantId: string;
 }
 
 // ===== Key Caching for Performance Optimization =====
@@ -71,23 +73,33 @@ export interface TokenValidationRequest {
 /** Cache TTL for public keys from KeyManager DO (30 minutes) */
 const KEY_MANAGER_CACHE_TTL = 30 * 60 * 1000;
 
-/** Cached public keys from KeyManager DO */
-let cachedKeyManagerKeys: Array<JWK & { kid?: string }> | null = null;
-let cachedKeyManagerTimestamp = 0;
+type CachedKeyManagerEntry = {
+  keys: Array<JWK & { kid?: string }>;
+  timestamp: number;
+  version: string;
+};
+
+/** Cached public keys from KeyManager DO — per-tenant to ensure isolation */
+const cachedKeyManagerKeysMap = new Map<string, CachedKeyManagerEntry>();
 
 /**
  * Cached public key for token verification (from PUBLIC_JWK_JSON fallback)
- * Module-level cache for performance optimization
+ * Per-tenant cache for multi-tenant isolation
  */
-let cachedPublicKey: CryptoKey | null = null;
-let cachedKeyId: string | null = null;
+const cachedPublicKeyMap = new Map<string, CryptoKey>();
+const cachedKeyIdMap = new Map<string, string>();
 
 /**
  * Get or create cached public key for token verification (from PUBLIC_JWK_JSON)
  */
-async function getPublicKey(publicJWKJson: string, keyId: string): Promise<CryptoKey> {
-  if (cachedPublicKey && cachedKeyId === keyId) {
-    return cachedPublicKey;
+async function getPublicKey(
+  publicJWKJson: string,
+  keyId: string,
+  tenantId: string
+): Promise<CryptoKey> {
+  const cached = cachedPublicKeyMap.get(tenantId);
+  if (cached && cachedKeyIdMap.get(tenantId) === keyId) {
+    return cached;
   }
 
   const publicJWK = JSON.parse(publicJWKJson) as JWK;
@@ -97,8 +109,8 @@ async function getPublicKey(publicJWKJson: string, keyId: string): Promise<Crypt
     throw new Error('Unexpected key type: expected CryptoKey, got Uint8Array');
   }
 
-  cachedPublicKey = importedKey;
-  cachedKeyId = keyId;
+  cachedPublicKeyMap.set(tenantId, importedKey);
+  cachedKeyIdMap.set(tenantId, keyId);
 
   return importedKey;
 }
@@ -107,9 +119,12 @@ async function getPublicKey(publicJWKJson: string, keyId: string): Promise<Crypt
  * Invalidate the KeyManager key cache
  * Called when a key is not found in the cache to force a refresh
  */
-function invalidateKeyManagerCache(): void {
-  cachedKeyManagerKeys = null;
-  cachedKeyManagerTimestamp = 0;
+function invalidateKeyManagerCache(tenantId: string): void {
+  cachedKeyManagerKeysMap.delete(tenantId);
+}
+
+async function getKeyVersion(env: Env, tenantId: string): Promise<string> {
+  return (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 }
 
 /**
@@ -125,17 +140,21 @@ function invalidateKeyManagerCache(): void {
  */
 async function getKeysFromKeyManager(
   env: Env,
+  tenantId: string,
   forceRefresh = false
 ): Promise<Array<JWK & { kid?: string }> | null> {
   const now = Date.now();
+  const currentVersion = await getKeyVersion(env, tenantId);
 
   // Check cache first (unless force refresh)
+  const cached = cachedKeyManagerKeysMap.get(tenantId);
   if (
     !forceRefresh &&
-    cachedKeyManagerKeys &&
-    now - cachedKeyManagerTimestamp < KEY_MANAGER_CACHE_TTL
+    cached &&
+    now - cached.timestamp < KEY_MANAGER_CACHE_TTL &&
+    cached.version === currentVersion
   ) {
-    return cachedKeyManagerKeys;
+    return cached.keys;
   }
 
   // Cache miss or force refresh: fetch from KeyManager DO
@@ -144,15 +163,18 @@ async function getKeysFromKeyManager(
   }
 
   try {
-    const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+    const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = env.KEY_MANAGER.get(keyManagerId);
     const keys = await keyManager.getAllPublicKeysRpc();
 
     if (keys && keys.length > 0) {
-      // Update cache
-      cachedKeyManagerKeys = keys as Array<JWK & { kid?: string }>;
-      cachedKeyManagerTimestamp = now;
-      return cachedKeyManagerKeys;
+      // Update per-tenant cache
+      cachedKeyManagerKeysMap.set(tenantId, {
+        keys: keys as Array<JWK & { kid?: string }>,
+        timestamp: now,
+        version: currentVersion,
+      });
+      return cachedKeyManagerKeysMap.get(tenantId)!.keys;
     }
 
     return null;
@@ -189,13 +211,7 @@ function extractAccessToken(authHeader: string): {
 }
 
 function getValidationIssuerUrl(request: TokenValidationRequest): string {
-  const requestHost = request.headers.get('Host') || new URL(request.url).host;
-  const tenantResolution = getTenantIdFromHost(requestHost || undefined, request.env);
-  const tenantId = tenantResolution.success
-    ? tenantResolution.tenantId
-    : request.env.DEFAULT_TENANT_ID || 'default';
-
-  return buildIssuerUrl(request.env, tenantId);
+  return buildIssuerUrl(request.env, request.tenantId);
 }
 
 /**
@@ -317,6 +333,20 @@ export async function introspectToken(
     };
   }
 
+  // Resolve tenantId for per-tenant key isolation.
+  const tenantId = request.tenantId.trim();
+  if (!tenantId) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_request',
+        error_description: 'Missing tenant context',
+        wwwAuthenticate: 'Bearer',
+        statusCode: 401,
+      },
+    };
+  }
+
   // Load public key for verification
   // First, try to extract kid from JWT header
   let kid: string | undefined;
@@ -337,7 +367,7 @@ export async function introspectToken(
 
   // Try to fetch JWKS from KeyManager DO with caching (30-minute TTL)
   // This dramatically reduces DO calls under high load while maintaining security
-  let keys = await getKeysFromKeyManager(request.env);
+  let keys = await getKeysFromKeyManager(request.env, tenantId);
   if (keys && keys.length > 0) {
     // Find key by kid (key ID from JWT header)
     let jwk = kid ? keys.find((k) => k.kid === kid) : keys[0];
@@ -345,8 +375,8 @@ export async function introspectToken(
     // Key rotation handling: If kid not found in cache, refresh and retry once
     // This handles the case where a new key was added after the cache was populated
     if (!jwk && kid) {
-      invalidateKeyManagerCache();
-      keys = await getKeysFromKeyManager(request.env, true);
+      invalidateKeyManagerCache(tenantId);
+      keys = await getKeysFromKeyManager(request.env, tenantId, true);
       if (keys && keys.length > 0) {
         jwk = keys.find((k) => k.kid === kid);
       }
@@ -380,7 +410,7 @@ export async function introspectToken(
     }
 
     try {
-      publicKey = await getPublicKey(publicJWKJson, keyId);
+      publicKey = await getPublicKey(publicJWKJson, keyId, tenantId);
     } catch (error) {
       // PII Protection: Don't log full error object
       log.error('Failed to load verification key');
@@ -472,7 +502,8 @@ export async function introspectToken(
       request.url,
       accessToken, // Include access token for ath validation
       request.env, // Pass full Env for region-aware DPoP JTI sharding
-      client_id // Bind JTI to client_id for additional security
+      client_id, // Bind JTI to client_id for additional security
+      tenantId
     );
 
     if (!dpopValidation.valid) {
@@ -532,7 +563,7 @@ export async function introspectToken(
   // Check if token has been revoked
   const jti = tokenClaims.jti;
   if (jti && typeof jti === 'string') {
-    const revoked = await isTokenRevoked(request.env, jti);
+    const revoked = await isTokenRevoked(request.env, jti, tenantId);
     if (revoked) {
       const wwwAuth = isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"';
       return {
@@ -600,5 +631,6 @@ export async function introspectTokenFromContext(
     headers: c.req.raw.headers,
     env: c.env,
     body,
+    tenantId: getTenantIdFromContext(c),
   });
 }

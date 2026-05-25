@@ -522,46 +522,7 @@ export class ReBACService implements IReBACService {
     );
 
     if (results.length === 0) {
-      // Try default tenant
-      const defaultResults = await this.adapter.query<{
-        id: string;
-        tenant_id: string;
-        object_type: string;
-        relation_name: string;
-        definition_json: string;
-        description: string | null;
-        priority: number;
-        is_active: number;
-        created_at: number;
-        updated_at: number;
-      }>(
-        `SELECT * FROM relation_definitions
-         WHERE tenant_id = 'default'
-           AND object_type = ?
-           AND relation_name = ?
-           AND is_active = 1
-         ORDER BY priority DESC
-         LIMIT 1`,
-        [objectType, relationName]
-      );
-
-      if (defaultResults.length === 0) {
-        return null;
-      }
-
-      const row = defaultResults[0];
-      return {
-        id: row.id,
-        tenant_id: row.tenant_id,
-        object_type: row.object_type,
-        relation_name: row.relation_name,
-        definition: this.relationParser.parse(row.definition_json),
-        description: row.description ?? undefined,
-        priority: row.priority,
-        is_active: row.is_active === 1,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-      };
+      return null;
     }
 
     const row = results[0];

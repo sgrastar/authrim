@@ -1,3 +1,4 @@
+import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Signing Keys API Client
  *
@@ -55,7 +56,7 @@ export const adminSigningKeysAPI = {
 	 * GET /api/admin/signing-keys/status
 	 */
 	async getStatus(): Promise<SigningKeysStatus> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/signing-keys/status`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/signing-keys/status`, {
 			credentials: 'include'
 		});
 
@@ -76,7 +77,7 @@ export const adminSigningKeysAPI = {
 	 * signed with the old key to remain valid during the transition.
 	 */
 	async rotate(): Promise<RotationResult> {
-		const response = await fetch(`${API_BASE_URL}/api/admin/signing-keys/rotate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/signing-keys/rotate`, {
 			method: 'POST',
 			credentials: 'include'
 		});
@@ -106,7 +107,7 @@ export const adminSigningKeysAPI = {
 			throw new Error('Emergency rotation requires a reason of at least 10 characters');
 		}
 
-		const response = await fetch(`${API_BASE_URL}/api/admin/signing-keys/emergency-rotate`, {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/signing-keys/emergency-rotate`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'

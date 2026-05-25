@@ -15,6 +15,7 @@
  *   CLIENT_ID            Client ID (required)
  *   CLIENT_SECRET        Client secret (required)
  *   ADMIN_API_SECRET     Admin API secret (required)
+ *   TENANT_ID            Tenant ID for admin API requests (optional)
  *   COUNT                Number of tokens to generate (default: 120)
  *   CONCURRENCY          Parallel requests (default: 20)
  *   USER_ID_PREFIX       User ID prefix (default: user-loadtest)
@@ -41,6 +42,7 @@ const BASE_URL = process.env.BASE_URL || '';
 const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
 const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const TENANT_ID = process.env.TENANT_ID || '';
 const COUNT = Number.parseInt(process.env.COUNT || '120', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '20', 10);
 const USER_ID_PREFIX = process.env.USER_ID_PREFIX || 'user-loadtest';
@@ -57,7 +59,10 @@ if (!ADMIN_API_SECRET) {
   process.exit(1);
 }
 
-const adminAuthHeader = { Authorization: `Bearer ${ADMIN_API_SECRET}` };
+const adminAuthHeader = {
+  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
+};
 
 /**
  * Generate secure random string (base64url)

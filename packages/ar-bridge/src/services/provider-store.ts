@@ -4,17 +4,32 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  type DatabaseAdapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
+} from '@authrim/ar-lib-core';
 import type { UpstreamProvider, TokenEndpointAuthMethod } from '../types';
+
+async function getCoreAdapter(
+  env: Env,
+  partition: string,
+  tenantId: string
+): Promise<DatabaseAdapter> {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, partition, { tenantId });
+}
 
 /**
  * Get provider by ID
  */
-export async function getProvider(env: Env, id: string): Promise<UpstreamProvider | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+export async function getProvider(
+  env: Env,
+  tenantId: string,
+  id: string
+): Promise<UpstreamProvider | null> {
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get', tenantId);
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
-    'SELECT * FROM upstream_providers WHERE id = ?',
-    [id]
+    'SELECT * FROM upstream_providers WHERE id = ? AND tenant_id = ?',
+    [id, tenantId]
   );
 
   if (!result) return null;
@@ -28,9 +43,13 @@ export async function getProvider(env: Env, id: string): Promise<UpstreamProvide
 export async function getProviderByIdOrSlug(
   env: Env,
   idOrSlug: string,
-  tenantId = 'default'
+  tenantId: string
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(
+    env,
+    'bridge-provider-store:get-by-id-or-slug',
+    tenantId
+  );
 
   // First try by slug (case-insensitive)
   let result = await coreAdapter.queryOne<DbUpstreamProvider>(
@@ -41,8 +60,8 @@ export async function getProviderByIdOrSlug(
   // If not found by slug, try by ID
   if (!result) {
     result = await coreAdapter.queryOne<DbUpstreamProvider>(
-      'SELECT * FROM upstream_providers WHERE id = ?',
-      [idOrSlug]
+      'SELECT * FROM upstream_providers WHERE id = ? AND tenant_id = ?',
+      [idOrSlug, tenantId]
     );
   }
 
@@ -56,9 +75,9 @@ export async function getProviderByIdOrSlug(
 export async function getProviderByName(
   env: Env,
   name: string,
-  tenantId = 'default'
+  tenantId: string
 ): Promise<UpstreamProvider | null> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:get-by-name', tenantId);
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE name = ? AND tenant_id = ? AND enabled = 1',
     [name, tenantId]
@@ -73,9 +92,9 @@ export async function getProviderByName(
  */
 export async function listEnabledProviders(
   env: Env,
-  tenantId = 'default'
+  tenantId: string
 ): Promise<UpstreamProvider[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-enabled', tenantId);
   const result = await coreAdapter.query<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC',
     [tenantId]
@@ -87,11 +106,8 @@ export async function listEnabledProviders(
 /**
  * List all providers (for admin)
  */
-export async function listAllProviders(
-  env: Env,
-  tenantId = 'default'
-): Promise<UpstreamProvider[]> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+export async function listAllProviders(env: Env, tenantId: string): Promise<UpstreamProvider[]> {
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:list-all', tenantId);
   const result = await coreAdapter.query<DbUpstreamProvider>(
     'SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC',
     [tenantId]
@@ -110,20 +126,20 @@ export async function createProvider(
   const id = crypto.randomUUID();
   const now = Date.now();
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:create', provider.tenantId);
   await coreAdapter.execute(
     `INSERT INTO upstream_providers (
       id, tenant_id, slug, name, provider_type, enabled, priority,
       issuer, client_id, client_secret_encrypted,
       authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri,
       scopes, token_endpoint_auth_method, attribute_mapping, auto_link_email, jit_provisioning, require_email_verified, always_fetch_userinfo, enable_sso,
-      provider_quirks, icon_url, button_color, button_color_dark, button_text,
+      provider_quirks, icon_url, icon_name, button_color, button_color_dark, button_text,
       use_request_object, request_object_signing_alg, private_key_jwk_encrypted, public_key_jwk,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      provider.tenantId || 'default',
+      provider.tenantId,
       provider.slug || null,
       provider.name,
       provider.providerType,
@@ -146,6 +162,7 @@ export async function createProvider(
       provider.enableSso !== false ? 1 : 0,
       JSON.stringify(provider.providerQuirks || {}),
       provider.iconUrl || null,
+      provider.iconName || null,
       provider.buttonColor || null,
       provider.buttonColorDark || null,
       provider.buttonText || null,
@@ -161,7 +178,6 @@ export async function createProvider(
   return {
     ...provider,
     id,
-    tenantId: provider.tenantId || 'default',
     createdAt: now,
     updatedAt: now,
   };
@@ -172,26 +188,27 @@ export async function createProvider(
  */
 export async function updateProvider(
   env: Env,
+  tenantId: string,
   id: string,
   updates: Partial<Omit<UpstreamProvider, 'id' | 'createdAt' | 'updatedAt'>>
 ): Promise<UpstreamProvider | null> {
-  const existing = await getProvider(env, id);
+  const existing = await getProvider(env, tenantId, id);
   if (!existing) return null;
 
   const now = Date.now();
   const updated = { ...existing, ...updates, updatedAt: now };
 
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:update', tenantId);
   await coreAdapter.execute(
     `UPDATE upstream_providers SET
       slug = ?, name = ?, provider_type = ?, enabled = ?, priority = ?,
       issuer = ?, client_id = ?, client_secret_encrypted = ?,
       authorization_endpoint = ?, token_endpoint = ?, userinfo_endpoint = ?, jwks_uri = ?,
       scopes = ?, token_endpoint_auth_method = ?, attribute_mapping = ?, auto_link_email = ?, jit_provisioning = ?, require_email_verified = ?, always_fetch_userinfo = ?, enable_sso = ?,
-      provider_quirks = ?, icon_url = ?, button_color = ?, button_color_dark = ?, button_text = ?,
+      provider_quirks = ?, icon_url = ?, icon_name = ?, button_color = ?, button_color_dark = ?, button_text = ?,
       use_request_object = ?, request_object_signing_alg = ?, private_key_jwk_encrypted = ?, public_key_jwk = ?,
       updated_at = ?
-    WHERE id = ?`,
+    WHERE id = ? AND tenant_id = ?`,
     [
       updated.slug || null,
       updated.name,
@@ -215,6 +232,7 @@ export async function updateProvider(
       updated.enableSso !== false ? 1 : 0,
       JSON.stringify(updated.providerQuirks || {}),
       updated.iconUrl || null,
+      updated.iconName || null,
       updated.buttonColor || null,
       updated.buttonColorDark || null,
       updated.buttonText || null,
@@ -224,6 +242,7 @@ export async function updateProvider(
       updated.publicKeyJwk ? JSON.stringify(updated.publicKeyJwk) : null,
       now,
       id,
+      tenantId,
     ]
   );
 
@@ -233,9 +252,12 @@ export async function updateProvider(
 /**
  * Delete provider
  */
-export async function deleteProvider(env: Env, id: string): Promise<boolean> {
-  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.execute('DELETE FROM upstream_providers WHERE id = ?', [id]);
+export async function deleteProvider(env: Env, tenantId: string, id: string): Promise<boolean> {
+  const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:delete', tenantId);
+  const result = await coreAdapter.execute(
+    'DELETE FROM upstream_providers WHERE id = ? AND tenant_id = ?',
+    [id, tenantId]
+  );
   return result.rowsAffected > 0;
 }
 
@@ -268,6 +290,7 @@ interface DbUpstreamProvider {
   enable_sso: number;
   provider_quirks: string;
   icon_url: string | null;
+  icon_name: string | null;
   button_color: string | null;
   button_color_dark: string | null;
   button_text: string | null;
@@ -307,6 +330,7 @@ function mapDbToProvider(db: DbUpstreamProvider): UpstreamProvider {
     enableSso: db.enable_sso === 1,
     providerQuirks: JSON.parse(db.provider_quirks || '{}'),
     iconUrl: db.icon_url || undefined,
+    iconName: db.icon_name || undefined,
     buttonColor: db.button_color || undefined,
     buttonColorDark: db.button_color_dark || undefined,
     buttonText: db.button_text || undefined,

@@ -222,11 +222,12 @@ export { DEFAULT_TENANT_ID } from './tenant-context';
 /** Default total shard count */
 export const DEFAULT_TOTAL_SHARDS = 4;
 
-/** Default region distribution (US East 50%, West Europe 25%, APAC 25%) */
+/** Default region distribution (APAC, ENAM, WEUR, WNAM evenly balanced) */
 export const DEFAULT_REGION_DISTRIBUTION: Record<string, number> = {
-  enam: 50,
-  weur: 25,
   apac: 25,
+  enam: 25,
+  weur: 25,
+  wnam: 25,
 };
 
 /** Cache TTL for shard configuration (10 seconds) */
@@ -496,11 +497,12 @@ export function createNewRegionGeneration(
  * @returns Region ranges
  *
  * @example
- * calculateRegionRanges(4, { enam: 50, weur: 25, apac: 25 })
+ * calculateRegionRanges(4, { apac: 25, enam: 25, weur: 25, wnam: 25 })
  * // => {
- * //   enam: { startShard: 0, endShard: 1, shardCount: 2 },
+ * //   apac: { startShard: 0, endShard: 0, shardCount: 1 },
+ * //   enam: { startShard: 1, endShard: 1, shardCount: 1 },
  * //   weur: { startShard: 2, endShard: 2, shardCount: 1 },
- * //   apac: { startShard: 3, endShard: 3, shardCount: 1 }
+ * //   wnam: { startShard: 3, endShard: 3, shardCount: 1 }
  * // }
  */
 export function calculateRegionRanges(
@@ -652,13 +654,16 @@ export function buildRegionShardConfigKvKey(tenantId: string): string {
  * Get region shard configuration from KV with caching.
  *
  * @param env - Environment with KV binding
- * @param tenantId - Tenant ID (default: 'default')
+ * @param tenantId - Tenant ID
  * @returns Region shard configuration
  */
-export async function getRegionShardConfig(
-  env: Env,
-  tenantId: string = DEFAULT_TENANT_ID
-): Promise<RegionShardConfig> {
+export async function getRegionShardConfig(env: Env, tenantId: string): Promise<RegionShardConfig> {
+  const normalizedTenantId = tenantId.trim();
+  if (!normalizedTenantId) {
+    throw new Error('getRegionShardConfig requires tenantId');
+  }
+
+  tenantId = normalizedTenantId;
   const cacheKey = `region-shard-config:${tenantId}`;
   const now = Date.now();
 
@@ -720,6 +725,7 @@ function buildConfigFromEnv(env: Env, now: number): RegionShardConfigV2 | null {
     env.REGION_SHARD_APAC_PERCENT ||
     env.REGION_SHARD_ENAM_PERCENT ||
     env.REGION_SHARD_WEUR_PERCENT ||
+    env.REGION_SHARD_WNAM_PERCENT ||
     env.REGION_SHARD_GROUPS_JSON;
 
   if (!hasEnvConfig) {
@@ -743,15 +749,28 @@ function buildConfigFromEnv(env: Env, now: number): RegionShardConfigV2 | null {
   const weurPercent = env.REGION_SHARD_WEUR_PERCENT
     ? parseInt(env.REGION_SHARD_WEUR_PERCENT, 10)
     : DEFAULT_REGION_DISTRIBUTION.weur;
+  const hasExplicitRegionPercent =
+    env.REGION_SHARD_APAC_PERCENT ||
+    env.REGION_SHARD_ENAM_PERCENT ||
+    env.REGION_SHARD_WEUR_PERCENT ||
+    env.REGION_SHARD_WNAM_PERCENT;
+  const wnamPercent = env.REGION_SHARD_WNAM_PERCENT
+    ? parseInt(env.REGION_SHARD_WNAM_PERCENT, 10)
+    : hasExplicitRegionPercent
+      ? 0
+      : DEFAULT_REGION_DISTRIBUTION.wnam;
 
   const distribution: Record<string, number> = {
     apac: apacPercent,
     enam: enamPercent,
     weur: weurPercent,
   };
+  if (wnamPercent > 0) {
+    distribution.wnam = wnamPercent;
+  }
 
   // Validate percentages sum to 100
-  const sum = apacPercent + enamPercent + weurPercent;
+  const sum = apacPercent + enamPercent + weurPercent + wnamPercent;
   if (sum !== 100) {
     log.warn(`Region distribution percentages sum to ${sum}, not 100. Using defaults.`);
     return null;

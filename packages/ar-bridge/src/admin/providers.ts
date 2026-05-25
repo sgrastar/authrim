@@ -4,12 +4,15 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
-  timingSafeEqual,
+  ADMIN_PERMISSIONS,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getTenantIdFromContext,
+  hasAdminPermission,
+  validateWebhookUrl,
 } from '@authrim/ar-lib-core';
 import {
   listAllProviders,
@@ -50,32 +53,119 @@ import {
 } from '../providers/apple';
 import { encrypt, getEncryptionKey } from '../utils/crypto';
 
-/**
- * Verify admin authentication
- */
-function verifyAdmin(c: Context<{ Bindings: Env }>): boolean {
-  const authHeader = c.req.header('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return false;
+const OUTBOUND_PROVIDER_URL_FIELDS = [
+  ['issuer', 'issuer'],
+  ['authorization_endpoint', 'authorizationEndpoint'],
+  ['token_endpoint', 'tokenEndpoint'],
+  ['userinfo_endpoint', 'userinfoEndpoint'],
+  ['jwks_uri', 'jwksUri'],
+] as const;
+
+const LOGIN_PROVIDER_ICON_NAMES = new Set([
+  'buildings',
+  'house',
+  'house-simple',
+  'bank',
+  'building',
+  'city',
+  'graduation-cap',
+  'student',
+  'books',
+  'chalkboard-teacher',
+  'globe',
+  'globe-hemisphere-east',
+  'shield-check',
+  'seal-check',
+  'certificate',
+  'identification-card',
+  'fingerprint',
+  'key',
+  'briefcase',
+  'users-three',
+  'network',
+  'share-network',
+  'tree-structure',
+  'handshake',
+  'cloud',
+  'cloud-check',
+  'database',
+  'hard-drives',
+  'devices',
+  'terminal-window',
+  'book-open',
+  'presentation-chart',
+  'rocket-launch',
+  'compass',
+  'none',
+]);
+
+type AdminProviderContext = Context<{ Bindings: Env }>;
+type AdminProviderAuthContext = Context<{
+  Bindings: Env;
+  Variables: { adminAuth?: AdminAuthContext };
+}>;
+
+async function requireAdminProviderPermission(
+  c: AdminProviderContext,
+  permission: string
+): Promise<Response | null> {
+  const auth = (c as unknown as AdminProviderAuthContext).get('adminAuth');
+  if (!auth) {
+    return await createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  }
+  if (!hasAdminPermission(auth.permissions || [], permission)) {
+    return await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  return null;
+}
+
+function validateProviderOutboundUrl(
+  c: Context<{ Bindings: Env }>,
+  value: unknown,
+  field: string
+): Response | Promise<Response> | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field, reason: 'must be a string' },
+    });
   }
 
-  const token = authHeader.slice(7);
-  // Use timing-safe comparison to prevent timing attacks
-  return !!c.env.ADMIN_API_SECRET && timingSafeEqual(token, c.env.ADMIN_API_SECRET);
+  const result = validateWebhookUrl(value, c.env.ENVIRONMENT === 'development');
+  if (result.valid) {
+    return null;
+  }
+
+  return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+    variables: { field, reason: 'must be an external HTTPS URL' },
+  });
+}
+
+function normalizeLoginProviderIconName(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  return LOGIN_PROVIDER_ICON_NAMES.has(normalized) ? normalized : undefined;
 }
 
 /**
  * List all providers (admin)
  * GET /external-idp/admin/providers
  */
-export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminListProviders(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   try {
-    const tenantId = c.req.query('tenant_id') || 'default';
+    const tenantId = getTenantIdFromContext(c);
     const providers = await listAllProviders(c.env, tenantId);
 
     // Remove encrypted secrets from response
@@ -96,10 +186,14 @@ export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): P
  * Create new provider
  * POST /external-idp/admin/providers
  */
-export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminCreateProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   try {
@@ -118,7 +212,8 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
       require_email_verified?: boolean;
       always_fetch_userinfo?: boolean;
       enable_sso?: boolean;
-      icon_url?: string;
+      icon_url?: string | null;
+      icon_name?: string | null;
       button_color?: string;
       button_color_dark?: string;
       button_text?: string;
@@ -129,7 +224,6 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
       token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post';
       attribute_mapping?: Record<string, string>;
       provider_quirks?: Record<string, unknown>;
-      tenant_id?: string;
       template?: 'google' | 'github' | 'microsoft' | 'linkedin' | 'facebook' | 'twitter' | 'apple';
       // Request Object (JAR - RFC 9101) settings
       use_request_object?: boolean;
@@ -299,20 +393,35 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
     const defaultButtonColorDark = (defaults.buttonColorDark as string | undefined) || undefined;
     const defaultButtonText = (defaults.buttonText as string | undefined) || undefined;
 
+    const effectiveProviderUrls = {
+      issuer: body.issuer || defaultIssuer,
+      authorizationEndpoint:
+        body.authorization_endpoint || (defaults.authorizationEndpoint as string | undefined),
+      tokenEndpoint: body.token_endpoint || (defaults.tokenEndpoint as string | undefined),
+      userinfoEndpoint: body.userinfo_endpoint || (defaults.userinfoEndpoint as string | undefined),
+      jwksUri: body.jwks_uri || (defaults.jwksUri as string | undefined),
+    };
+    for (const [field, key] of OUTBOUND_PROVIDER_URL_FIELDS) {
+      const validationResponse = validateProviderOutboundUrl(c, effectiveProviderUrls[key], field);
+      if (validationResponse) {
+        return validationResponse;
+      }
+    }
+
     const provider = await createProvider(c.env, {
-      tenantId: body.tenant_id || 'default',
+      tenantId: getTenantIdFromContext(c),
       slug: body.slug,
       name: body.name,
       providerType: body.provider_type || 'oidc',
       enabled: body.enabled !== false,
       priority: body.priority || 0,
-      issuer: body.issuer || defaultIssuer,
+      issuer: effectiveProviderUrls.issuer,
       clientId: body.client_id,
       clientSecretEncrypted,
-      authorizationEndpoint: body.authorization_endpoint,
-      tokenEndpoint: body.token_endpoint,
-      userinfoEndpoint: body.userinfo_endpoint,
-      jwksUri: body.jwks_uri,
+      authorizationEndpoint: effectiveProviderUrls.authorizationEndpoint,
+      tokenEndpoint: effectiveProviderUrls.tokenEndpoint,
+      userinfoEndpoint: effectiveProviderUrls.userinfoEndpoint,
+      jwksUri: effectiveProviderUrls.jwksUri,
       scopes: body.scopes || defaultScopes,
       tokenEndpointAuthMethod: body.token_endpoint_auth_method,
       attributeMapping: body.attribute_mapping || defaultAttributeMapping,
@@ -323,6 +432,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
       enableSso: body.enable_sso !== false,
       providerQuirks: body.provider_quirks || defaultProviderQuirks,
       iconUrl: body.icon_url || defaultIconUrl,
+      iconName: normalizeLoginProviderIconName(body.icon_name),
       buttonColor: body.button_color || defaultButtonColor,
       buttonColorDark: body.button_color_dark || defaultButtonColorDark,
       buttonText: body.button_text || defaultButtonText,
@@ -351,17 +461,22 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
  * Get provider details
  * GET /external-idp/admin/providers/:id
  */
-export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminGetProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   const id = c.req.param('id');
   if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
-    const provider = await getProvider(c.env, id);
+    const tenantId = getTenantIdFromContext(c);
+    const provider = await getProvider(c.env, tenantId, id);
     if (!provider) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -384,10 +499,14 @@ export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Pro
  * Update provider
  * PUT /external-idp/admin/providers/:id
  */
-export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminUpdateProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   const id = c.req.param('id');
@@ -409,7 +528,8 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
       require_email_verified?: boolean;
       always_fetch_userinfo?: boolean;
       enable_sso?: boolean;
-      icon_url?: string;
+      icon_url?: string | null;
+      icon_name?: string | null;
       button_color?: string;
       button_color_dark?: string;
       button_text?: string;
@@ -429,6 +549,19 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
 
     // Build updates object
     const updates: Record<string, unknown> = {};
+    const updateUrlFields = [
+      ['issuer', body.issuer],
+      ['authorization_endpoint', body.authorization_endpoint],
+      ['token_endpoint', body.token_endpoint],
+      ['userinfo_endpoint', body.userinfo_endpoint],
+      ['jwks_uri', body.jwks_uri],
+    ] as const;
+    for (const [field, value] of updateUrlFields) {
+      const validationResponse = validateProviderOutboundUrl(c, value, field);
+      if (validationResponse) {
+        return validationResponse;
+      }
+    }
 
     if (body.slug !== undefined) updates.slug = body.slug;
     if (body.name !== undefined) updates.name = body.name;
@@ -451,6 +584,8 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
       updates.alwaysFetchUserinfo = body.always_fetch_userinfo;
     if (body.enable_sso !== undefined) updates.enableSso = body.enable_sso;
     if (body.icon_url !== undefined) updates.iconUrl = body.icon_url;
+    if (body.icon_name !== undefined)
+      updates.iconName = normalizeLoginProviderIconName(body.icon_name);
     if (body.button_color !== undefined) updates.buttonColor = body.button_color;
     if (body.button_color_dark !== undefined) updates.buttonColorDark = body.button_color_dark;
     if (body.button_text !== undefined) updates.buttonText = body.button_text;
@@ -493,7 +628,8 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
     }
     if (body.public_key_jwk !== undefined) updates.publicKeyJwk = body.public_key_jwk;
 
-    const provider = await updateProvider(c.env, id, updates);
+    const tenantId = getTenantIdFromContext(c);
+    const provider = await updateProvider(c.env, tenantId, id, updates);
     if (!provider) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -516,17 +652,22 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
  * Delete provider
  * DELETE /external-idp/admin/providers/:id
  */
-export async function handleAdminDeleteProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleAdminDeleteProvider(c: AdminProviderContext): Promise<Response> {
   const log = getLogger(c).module('ADMIN-PROVIDERS');
-  if (!verifyAdmin(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_DELETE
+  );
+  if (forbidden) {
+    return forbidden;
   }
 
   const id = c.req.param('id');
   if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
   try {
-    const deleted = await deleteProvider(c.env, id);
+    const tenantId = getTenantIdFromContext(c);
+    const deleted = await deleteProvider(c.env, tenantId, id);
     if (!deleted) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }

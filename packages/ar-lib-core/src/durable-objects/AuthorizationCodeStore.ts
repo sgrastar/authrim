@@ -26,12 +26,14 @@ import { createOAuthConfigManager, type OAuthConfigManager } from '../utils/oaut
 import type { ActorContext } from '../actor';
 import { CloudflareActorContext } from '../actor';
 import { createLogger, type Logger } from '../utils/logger';
+import { isValidTenantIdentifier } from '../utils/tenant-request-policy';
 
 /**
  * Authorization code metadata
  */
 export interface AuthorizationCode {
   code: string;
+  tenantId: string;
   clientId: string;
   redirectUri: string;
   userId: string;
@@ -41,8 +43,10 @@ export interface AuthorizationCode {
   nonce?: string;
   state?: string;
   claims?: string; // OIDC claims parameter (JSON string)
+  claimsRequestProtected?: boolean; // Whether the claims parameter came from PAR/signed JAR
   authTime?: number; // OIDC auth_time (authentication timestamp)
   acr?: string; // OIDC acr (Authentication Context Class Reference)
+  amr?: string[]; // OIDC amr (Authentication Methods References)
   cHash?: string; // OIDC c_hash for hybrid flows (RFC 3.3.2.11)
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449) - binds code to DPoP key
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -60,6 +64,7 @@ export interface AuthorizationCode {
  */
 export interface StoreCodeRequest {
   code: string;
+  tenantId: string;
   clientId: string;
   redirectUri: string;
   userId: string;
@@ -69,12 +74,20 @@ export interface StoreCodeRequest {
   nonce?: string;
   state?: string;
   claims?: string;
+  claimsRequestProtected?: boolean;
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
   authorizationDetails?: string; // RFC 9396 authorization_details (JSON string)
+}
+
+function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
+  if (typeof tenantId !== 'string' || !isValidTenantIdentifier(tenantId)) {
+    throw new Error('invalid_request: Invalid tenant ID');
+  }
 }
 
 /**
@@ -82,6 +95,7 @@ export interface StoreCodeRequest {
  */
 export interface ConsumeCodeRequest {
   code: string;
+  tenantId: string;
   clientId: string;
   codeVerifier?: string;
   // Optional: Register issued token JTIs in the same atomic operation (DO hop optimization)
@@ -99,8 +113,10 @@ export interface ConsumeCodeResponse {
   nonce?: string;
   state?: string;
   claims?: string;
+  claimsRequestProtected?: boolean;
   authTime?: number;
   acr?: string;
+  amr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -487,6 +503,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
    */
   async storeCode(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
     await this.initializeState();
+    assertValidTenantId(request.tenantId);
 
     // DDoS protection: Limit codes per user
     const userCodeCount = this.countUserCodes(request.userId);
@@ -497,6 +514,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     const now = Date.now();
     const authCode: AuthorizationCode = {
       code: request.code,
+      tenantId: request.tenantId,
       clientId: request.clientId,
       redirectUri: request.redirectUri,
       userId: request.userId,
@@ -506,8 +524,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       nonce: request.nonce,
       state: request.state,
       claims: request.claims,
+      claimsRequestProtected: request.claimsRequestProtected,
       authTime: request.authTime,
       acr: request.acr,
+      amr: request.amr,
       cHash: request.cHash,
       dpopJkt: request.dpopJkt,
       sid: request.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -544,6 +564,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
    */
   async consumeCode(request: ConsumeCodeRequest): Promise<ConsumeCodeResponse> {
     await this.initializeState();
+    assertValidTenantId(request.tenantId);
 
     // Lazy-load + fallback get: Check memory first, then storage
     let stored = this.codes.get(request.code);
@@ -602,8 +623,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         nonce: stored.nonce,
         state: stored.state,
         claims: stored.claims,
+        claimsRequestProtected: stored.claimsRequestProtected,
         authTime: stored.authTime,
         acr: stored.acr,
+        amr: stored.amr,
         cHash: stored.cHash,
         dpopJkt: stored.dpopJkt,
         sid: stored.sid,
@@ -618,6 +641,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Validate client ID
     if (stored.clientId !== request.clientId) {
       throw new Error('invalid_grant: Client ID mismatch');
+    }
+
+    if (stored.tenantId !== request.tenantId) {
+      throw new Error('invalid_grant: Tenant mismatch');
     }
 
     // Validate PKCE (if code_challenge was provided)
@@ -662,8 +689,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       nonce: stored.nonce,
       state: stored.state,
       claims: stored.claims,
+      claimsRequestProtected: stored.claimsRequestProtected,
       authTime: stored.authTime,
       acr: stored.acr,
+      amr: stored.amr,
       cHash: stored.cHash,
       dpopJkt: stored.dpopJkt,
       sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout

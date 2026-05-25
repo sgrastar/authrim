@@ -5,7 +5,8 @@
  * Used to dynamically render authentication options on the login page.
  */
 
-import { buildDiagnosticHeaders, API_BASE_URL } from '$lib/api/client';
+import { buildDiagnosticHeaders } from '$lib/api/client';
+import { authrimFetch } from '$lib/authrim/fetch';
 
 // =============================================================================
 // Types
@@ -21,25 +22,32 @@ export interface EmailCodeMethod {
 	steps: string[];
 }
 
-export interface SocialProvider {
+export type ExternalProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
+export type ExternalProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
+
+export interface ExternalProvider {
 	id: string;
 	name: string;
+	type: ExternalProviderType;
+	startMode: ExternalProviderStartMode;
 	slug?: string;
 	iconUrl?: string;
+	iconName?: string;
 	buttonColor?: string;
 	buttonColorDark?: string;
 	buttonText?: string;
+	startUrl?: string;
 }
 
-export interface SocialMethod {
+export interface ExternalMethod {
 	enabled: boolean;
-	providers: SocialProvider[];
+	providers: ExternalProvider[];
 }
 
 export interface LoginMethods {
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
-	social: SocialMethod;
+	external: ExternalMethod;
 }
 
 export interface LoginUIConfig {
@@ -94,8 +102,7 @@ export async function fetchLoginMethods(): Promise<{
 	const timeoutId = setTimeout(() => controller.abort(), 15000);
 
 	try {
-		const url = `${API_BASE_URL}/api/auth/login-methods`;
-		const response = await fetch(url, {
+		const response = await authrimFetch('/api/auth/login-methods', {
 			method: 'GET',
 			headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
 			signal: controller.signal

@@ -42,6 +42,19 @@ vi.mock('@authrim/ar-lib-core', async () => {
     validateIdTokenHint: vi.fn(),
     validatePostLogoutRedirectUri: vi.fn(),
     validateLogoutParameters: vi.fn(),
+    DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE: 'group',
+    normalizeDeviceSecretLogoutScope: vi.fn((scope: string | undefined) =>
+      scope === 'local' || scope === 'group' || scope === 'global' ? scope : 'group'
+    ),
+    revokeDeviceSecretsForLogoutScope: vi.fn().mockResolvedValue({
+      scope: 'group',
+      tenantId: 'default',
+      sessionIds: [],
+      revokedDeviceSecrets: 0,
+      revokedInstallations: 0,
+      matchedInstallations: 0,
+    }),
+    resolveLogoutTargetsFromSessionClientStore: vi.fn().mockResolvedValue(null),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
@@ -57,6 +70,7 @@ import {
   validateIdTokenHint,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
+  resolveLogoutTargetsFromSessionClientStore,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -89,7 +103,9 @@ function createMockContext(options: {
     DB: {
       prepare: vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
-          first: vi.fn(),
+          first: vi.fn().mockResolvedValue(null),
+          all: vi.fn().mockResolvedValue({ results: [] }),
+          run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
         }),
       }),
     } as unknown as D1Database,
@@ -125,6 +141,27 @@ function createMockContext(options: {
   } as any;
 
   return { c, mockSessionStore, mockKeyManager };
+}
+
+const VALID_BACKCHANNEL_AUTH_HEADER = {
+  Authorization: 'Basic ' + btoa('client-123:client-secret'),
+};
+
+function mockValidBackchannelClient(
+  c: { env: Env },
+  clientId = 'client-123',
+  secret = 'client-secret'
+) {
+  c.env.DB.prepare = vi.fn().mockReturnValue({
+    bind: vi.fn().mockReturnValue({
+      first: vi.fn().mockResolvedValue({
+        client_id: clientId,
+        client_secret_hash: `hash_${secret}`,
+      }),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
+    }),
+  }) as unknown as D1Database['prepare'];
 }
 
 describe('Front-channel Logout', () => {
@@ -192,6 +229,38 @@ describe('Front-channel Logout', () => {
       await frontChannelLogoutHandler(c);
 
       // Should call sharded session store's invalidateSessionRpc
+      expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
+    });
+
+    it('should render front-channel logout iframes for clients linked to the session', async () => {
+      const { c } = createMockContext({
+        query: {},
+      });
+
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+        backchannelClients: [],
+        frontchannelClients: [
+          {
+            client_id: 'rp-client',
+            frontchannel_logout_uri: 'https://rp.example.com/logout',
+            frontchannel_logout_session_required: true,
+          },
+        ],
+        webhookClients: [],
+      } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+
+      const response = await frontChannelLogoutHandler(c);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toContain('text/html');
+      expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
+      expect(html).toContain('https://rp.example.com/logout');
+      expect(html).toContain('iss=https%3A%2F%2Fop.example.com');
+      expect(html).toContain('sid=0_session_123');
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
     });
 
@@ -582,7 +651,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'invalid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockRejectedValue(new Error('Invalid signature'));
@@ -606,7 +677,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -637,7 +710,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -666,7 +741,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -694,6 +771,47 @@ describe('Back-channel Logout', () => {
   });
 
   describe('Client Authentication', () => {
+    it('should require client authentication', async () => {
+      const { c } = createMockContext({
+        method: 'POST',
+        body: {
+          logout_token: 'valid.logout.token',
+        },
+      });
+
+      await backChannelLogoutHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_client',
+          error_description: 'Client authentication is required',
+        }),
+        401
+      );
+    });
+
+    it('should reject unsupported client authentication methods', async () => {
+      const { c } = createMockContext({
+        method: 'POST',
+        body: {
+          logout_token: 'valid.logout.token',
+        },
+        headers: {
+          Authorization: 'Bearer test-token',
+        },
+      });
+
+      await backChannelLogoutHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_client',
+          error_description: 'Unsupported client authentication method',
+        }),
+        401
+      );
+    });
+
     it('should authenticate client with HTTP Basic', async () => {
       const { c, mockSessionStore } = createMockContext({
         method: 'POST',
@@ -845,7 +963,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -871,7 +991,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -903,7 +1025,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -958,7 +1082,9 @@ describe('Back-channel Logout', () => {
         body: {
           logout_token: 'valid.logout.token',
         },
+        headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
+      mockValidBackchannelClient(c);
 
       // Mock RPC call to reject (simulating JWKS fetch failure)
       mockKeyManager.getAllPublicKeysRpc.mockRejectedValue(new Error('Failed to fetch JWKS'));

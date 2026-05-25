@@ -141,6 +141,13 @@ const DEFAULT_RETRY_POLICY: WebhookRetryPolicy = {
   maxDelayMs: 60000,
 };
 
+function normalizePaginationValue(value: unknown, max: number): number | null {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    return null;
+  }
+  return Math.min(value, max);
+}
+
 // =============================================================================
 // Event Pattern Validation
 // =============================================================================
@@ -467,10 +474,15 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
 
     let sql = `SELECT * FROM webhook_configs WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`;
 
-    if (options?.limit) {
-      sql += ` LIMIT ${options.limit}`;
-      if (options.offset) {
-        sql += ` OFFSET ${options.offset}`;
+    const limit = normalizePaginationValue(options?.limit, 1000);
+    if (limit && limit > 0) {
+      sql += ' LIMIT ?';
+      params.push(limit);
+
+      const offset = normalizePaginationValue(options?.offset, Number.MAX_SAFE_INTEGER);
+      if (offset && offset > 0) {
+        sql += ' OFFSET ?';
+        params.push(offset);
       }
     }
 

@@ -475,6 +475,7 @@ describe('DID Link Management', () => {
 
         expect(mockLinkedIdentityRepo.createLinkedIdentity).toHaveBeenCalledWith(
           expect.objectContaining({
+            tenant_id: 'default',
             user_id: 'user-123',
             provider_id: 'did',
             provider_user_id: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
@@ -769,6 +770,7 @@ describe('DID Link Management', () => {
         expect(response.status).toBe(200);
         // Verify the DID was decoded correctly
         expect(mockLinkedIdentityRepo.findByProviderUser).toHaveBeenCalledWith(
+          'default',
           'did',
           'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH'
         );

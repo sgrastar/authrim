@@ -22,6 +22,7 @@
  */
 
 import type { DatabaseAdapter, PIIClass } from '../../db/adapter';
+import { requireTenantId } from '../tenant';
 import {
   BaseRepository,
   type BaseEntity,
@@ -69,7 +70,7 @@ export interface UserPII extends BaseEntity {
  */
 export interface CreateUserPIIInput {
   id: string; // Must match users_core.id
-  tenant_id?: string;
+  tenant_id: string;
   pii_class?: PIIClass;
   email: string;
   email_blind_index?: string | null;
@@ -189,7 +190,9 @@ const USER_PII_UPDATABLE_FIELDS = new Set([
  * to support partition-specific queries. If not provided, uses the default adapter.
  */
 export class UserPIIRepository extends BaseRepository<UserPII> {
-  constructor(adapter: DatabaseAdapter) {
+  private readonly tenantId: string;
+
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     super(adapter, {
       tableName: 'users_pii',
       primaryKey: 'id',
@@ -220,6 +223,7 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
         'declared_residence',
       ],
     });
+    this.tenantId = requireTenantId(tenantId, 'UserPIIRepository');
   }
 
   /**
@@ -242,10 +246,14 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
   async createPII(input: CreateUserPIIInput, adapter?: DatabaseAdapter): Promise<UserPII> {
     const db = adapter ?? this.adapter;
     const now = getCurrentTimestamp();
+    const tenantId = requireTenantId(input.tenant_id, 'UserPIIRepository.createPII');
+    if (tenantId !== this.tenantId) {
+      throw new Error('UserPIIRepository tenant mismatch');
+    }
 
     const pii: UserPII = {
       id: input.id,
-      tenant_id: input.tenant_id ?? 'default',
+      tenant_id: tenantId,
       pii_class: input.pii_class ?? 'PROFILE',
       email: input.email,
       email_blind_index: input.email_blind_index ?? null,
@@ -324,7 +332,10 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
    */
   async findByUserId(userId: string, adapter?: DatabaseAdapter): Promise<UserPII | null> {
     const db = adapter ?? this.adapter;
-    return db.queryOne<UserPII>('SELECT * FROM users_pii WHERE id = ?', [userId]);
+    return db.queryOne<UserPII>('SELECT * FROM users_pii WHERE id = ? AND tenant_id = ?', [
+      userId,
+      this.tenantId,
+    ]);
   }
 
   /**
@@ -400,7 +411,11 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
     const setClause = fields.map((f) => `${f} = ?`).join(', ');
     const values = fields.map((f) => updateData[f as keyof typeof updateData]);
 
-    await db.execute(`UPDATE users_pii SET ${setClause} WHERE id = ?`, [...values, userId]);
+    await db.execute(`UPDATE users_pii SET ${setClause} WHERE id = ? AND tenant_id = ?`, [
+      ...values,
+      userId,
+      this.tenantId,
+    ]);
 
     return this.findByUserId(userId, db);
   }
@@ -414,7 +429,10 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
    */
   async deletePII(userId: string, adapter?: DatabaseAdapter): Promise<boolean> {
     const db = adapter ?? this.adapter;
-    const result = await db.execute('DELETE FROM users_pii WHERE id = ?', [userId]);
+    const result = await db.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+      userId,
+      this.tenantId,
+    ]);
     return result.rowsAffected > 0;
   }
 

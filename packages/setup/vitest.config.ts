@@ -5,6 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    fileParallelism: false,
     coverage: {
       reporter: ['text', 'html'],
       exclude: ['node_modules', 'dist', '**/*.test.ts'],

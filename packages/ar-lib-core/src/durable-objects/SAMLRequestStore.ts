@@ -6,8 +6,8 @@
  * - InResponseTo validation
  * - RelayState preservation
  *
- * Sharding Strategy: By issuer Entity ID
- * Instance name format: `issuer:{entityId}`
+ * Routing Strategy: By tenant, Authrim SAML role, and counterparty Entity ID.
+ * Instance name format is built by buildSAMLRequestStoreInstanceName().
  */
 
 import type { Env } from '../types/env';

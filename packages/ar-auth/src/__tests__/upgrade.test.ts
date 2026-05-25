@@ -6,24 +6,57 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { upgradeCompleteHandler, upgradeHandler, upgradeStatusHandler } from '../upgrade';
 
-// Mock dependencies
-const mockSessionStore = {
-  getSessionRpc: vi.fn(),
-  updateSessionDataRpc: vi.fn(),
-  updateSessionUserIdRpc: vi.fn(),
-};
+const hoistedMocks = vi.hoisted(() => {
+  const mockLog = {
+    error: vi.fn(),
+    warn: vi.fn(),
+  };
 
-const mockDatabaseAdapter = {
-  queryOne: vi.fn(),
-  query: vi.fn(),
-  execute: vi.fn(),
-};
+  return {
+    mockSessionStore: {
+      getSessionRpc: vi.fn(),
+      updateSessionDataRpc: vi.fn(),
+      updateSessionUserIdRpc: vi.fn(),
+    },
+    mockDatabaseAdapter: {
+      queryOne: vi.fn(),
+      query: vi.fn(),
+      execute: vi.fn(),
+    },
+    mockUserCoreRepository: {
+      findById: vi.fn(),
+      createUser: vi.fn(),
+      updateUser: vi.fn(),
+      updatePIIStatus: vi.fn(),
+    },
+    mockUserPIIRepository: {
+      createPII: vi.fn(),
+    },
+    mockSyncUserLifecycleState: vi.fn(),
+    mockLoadClientContractCached: vi.fn(),
+    mockGetCookie: vi.fn(),
+    mockLog,
+    mockLogger: {
+      module: vi.fn().mockReturnValue(mockLog),
+    },
+  };
+});
 
-const mockUserCoreRepository = {
-  findById: vi.fn(),
-  updateUser: vi.fn(),
-};
+const mockSessionStore = hoistedMocks.mockSessionStore;
+const mockDatabaseAdapter = hoistedMocks.mockDatabaseAdapter;
+const mockUserCoreRepository = hoistedMocks.mockUserCoreRepository;
+const mockUserPIIRepository = hoistedMocks.mockUserPIIRepository;
+const mockSyncUserLifecycleState = hoistedMocks.mockSyncUserLifecycleState;
+const mockLoadClientContractCached = hoistedMocks.mockLoadClientContractCached;
+const mockGetCookie = hoistedMocks.mockGetCookie;
+const mockLog = hoistedMocks.mockLog;
+const mockLogger = hoistedMocks.mockLogger;
+
+vi.mock('hono/cookie', () => ({
+  getCookie: hoistedMocks.mockGetCookie,
+}));
 
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
@@ -31,7 +64,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     getTenantIdFromContext: vi.fn().mockReturnValue('default'),
     getSessionStoreBySessionId: vi.fn().mockReturnValue({
-      stub: mockSessionStore,
+      stub: hoistedMocks.mockSessionStore,
     }),
     isAnonymousAuthEnabled: vi.fn().mockResolvedValue(true),
     loadClientContract: vi.fn().mockResolvedValue({
@@ -40,20 +73,78 @@ vi.mock('@authrim/ar-lib-core', async () => {
         preserveSubOnUpgrade: true,
       },
     }),
+    loadClientContractCached: hoistedMocks.mockLoadClientContractCached,
     createAuthContextFromHono: vi.fn().mockReturnValue({
-      coreAdapter: mockDatabaseAdapter,
+      coreAdapter: hoistedMocks.mockDatabaseAdapter,
       repositories: {
-        userCore: mockUserCoreRepository,
+        userCore: hoistedMocks.mockUserCoreRepository,
+      },
+    }),
+    createPIIContextFromHono: vi.fn().mockReturnValue({
+      piiRepositories: {
+        userPII: hoistedMocks.mockUserPIIRepository,
       },
     }),
     generateId: vi.fn().mockReturnValue('generated-id'),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    getLogger: vi.fn().mockReturnValue(hoistedMocks.mockLogger),
+    syncUserLifecycleState: hoistedMocks.mockSyncUserLifecycleState,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
   };
 });
+
+function createMockContext(options: {
+  method?: 'GET' | 'POST';
+  body?: Record<string, unknown>;
+  dbPii?: unknown;
+}) {
+  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+
+  return {
+    req: {
+      method: options.method ?? 'POST',
+      url: 'https://example.com/api/auth/upgrade',
+      json: vi.fn().mockResolvedValue(options.body ?? {}),
+      header: vi.fn(),
+    },
+    env: {
+      DB: {} as any,
+      DB_PII: options.dbPii ?? null,
+      AUTHRIM_CONFIG: {} as any,
+    },
+    json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    get: vi.fn((key: string) => contextStore.get(key)),
+    set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
+  } as any;
+}
 
 describe('Upgrade Handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetCookie.mockReturnValue('session-123');
+    mockLoadClientContractCached.mockResolvedValue({
+      anonymousAuth: {
+        enabled: true,
+        preserveSubOnUpgrade: true,
+      },
+    });
+    mockSyncUserLifecycleState.mockResolvedValue({
+      lifecycleState: 'active',
+      missingRequiredFields: [],
+    });
+    mockDatabaseAdapter.query.mockResolvedValue([]);
+    mockDatabaseAdapter.execute.mockResolvedValue({ success: true });
+    mockLogger.module.mockReturnValue(mockLog);
 
     // Default mock for valid anonymous session
     mockSessionStore.getSessionRpc.mockResolvedValue({
@@ -61,6 +152,7 @@ describe('Upgrade Handlers', () => {
       data: {
         is_anonymous: true,
         upgrade_eligible: true,
+        client_id: 'client-123',
       },
     });
 
@@ -69,6 +161,9 @@ describe('Upgrade Handlers', () => {
       user_type: 'anonymous',
       tenant_id: 'default',
     });
+    mockUserCoreRepository.createUser.mockResolvedValue(undefined);
+    mockUserCoreRepository.updatePIIStatus.mockResolvedValue(undefined);
+    mockUserPIIRepository.createPII.mockResolvedValue(undefined);
   });
 
   describe('upgradeHandler (POST /api/auth/upgrade)', () => {
@@ -134,6 +229,73 @@ describe('Upgrade Handlers', () => {
     });
 
     describe('Response Format', () => {
+      it('returns email upgrade instructions for an eligible anonymous session', async () => {
+        mockLoadClientContractCached.mockResolvedValueOnce({
+          anonymousAuth: {
+            enabled: true,
+            preserveSubOnUpgrade: true,
+            allowedUpgradeMethods: ['email', 'passkey'],
+          },
+        });
+
+        const c = createMockContext({
+          method: 'POST',
+          body: { method: 'email' },
+        });
+
+        const response = await upgradeHandler(c);
+        const body = (await response.json()) as {
+          success: boolean;
+          user_id: string;
+          upgrade_token: string;
+          instructions: {
+            method: string;
+            endpoint: string;
+            next_step: string;
+          };
+        };
+
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+          success: true,
+          user_id: 'anon-user-123',
+          upgrade_token: 'generated-id',
+          instructions: {
+            method: 'email',
+            endpoint: '/api/auth/email-codes/send',
+          },
+        });
+        expect(body.instructions.next_step).toContain('/api/auth/upgrade/complete');
+        expect(mockLoadClientContractCached).toHaveBeenCalledWith(
+          c,
+          c.env.AUTHRIM_CONFIG,
+          c.env,
+          'default',
+          'client-123'
+        );
+      });
+
+      it('rejects upgrade methods that are not allowed by the client contract', async () => {
+        mockLoadClientContractCached.mockResolvedValueOnce({
+          anonymousAuth: {
+            enabled: true,
+            preserveSubOnUpgrade: true,
+            allowedUpgradeMethods: ['email'],
+          },
+        });
+
+        const c = createMockContext({
+          method: 'POST',
+          body: { method: 'passkey' },
+        });
+
+        const response = await upgradeHandler(c);
+        const body = (await response.json()) as { error: string };
+
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(body.error).toBeDefined();
+      });
+
       it('should return upgrade_token for tracking', () => {
         const response = {
           success: true,
@@ -403,6 +565,187 @@ describe('Upgrade Handlers', () => {
         expect(publishEvent).toHaveBeenCalled();
       });
     });
+
+    describe('Handler execution', () => {
+      it('uses verified email session data when completing an email upgrade with preserved sub', async () => {
+        mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+          userId: 'anon-user-123',
+          data: {
+            is_anonymous: true,
+            upgrade_eligible: true,
+            client_id: 'client-123',
+            verified_email: 'Verified@Example.com',
+            verified_email_at: Date.now(),
+            verified_email_user_id: 'otp-user-456',
+            upgrade_nonce: 'nonce-123',
+          },
+        });
+        const c = createMockContext({
+          method: 'POST',
+          dbPii: {},
+          body: {
+            method: 'email',
+            name: 'Verified User',
+            email: 'attacker@example.com',
+          },
+        });
+
+        const response = await upgradeCompleteHandler(c);
+        const body = (await response.json()) as {
+          success: boolean;
+          user_id: string;
+          preserve_sub: boolean;
+          method: string;
+        };
+
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+          success: true,
+          user_id: 'anon-user-123',
+          preserve_sub: true,
+          method: 'email',
+        });
+        expect(mockSessionStore.updateSessionDataRpc).toHaveBeenNthCalledWith(1, 'session-123', {
+          upgrade_nonce: undefined,
+        });
+        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
+          expect.stringContaining('UPDATE users_core SET'),
+          expect.arrayContaining(['email', 'Verified@Example.com', 'anon-user-123', 'default'])
+        );
+        expect(mockUserPIIRepository.createPII).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 'anon-user-123',
+            email: 'verified@example.com',
+            name: 'Verified User',
+            preferred_username: 'Verified',
+          })
+        );
+        expect(mockUserCoreRepository.updatePIIStatus).toHaveBeenCalledWith(
+          'anon-user-123',
+          'active'
+        );
+        expect(mockSessionStore.updateSessionDataRpc).toHaveBeenLastCalledWith(
+          'session-123',
+          expect.objectContaining({
+            verified_email: undefined,
+            verified_email_at: undefined,
+            verified_email_user_id: undefined,
+            upgrade_nonce: undefined,
+          })
+        );
+      });
+
+      it('creates a new subject and updates the session user when preserve_sub=false', async () => {
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            method: 'social',
+            preserve_sub: false,
+            provider_id: 'google',
+          },
+        });
+
+        const response = await upgradeCompleteHandler(c);
+        const body = (await response.json()) as {
+          success: boolean;
+          user_id: string;
+          previous_user_id: string;
+          preserve_sub: boolean;
+          method: string;
+        };
+
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+          success: true,
+          user_id: 'generated-id',
+          previous_user_id: 'anon-user-123',
+          preserve_sub: false,
+          method: 'social',
+        });
+        expect(mockUserCoreRepository.createUser).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 'generated-id',
+            tenant_id: 'default',
+            user_type: 'end_user',
+            pii_status: 'none',
+          })
+        );
+        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
+          'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
+          expect.arrayContaining(['anon-user-123', 'default'])
+        );
+        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
+          expect.stringContaining('INSERT INTO user_upgrades'),
+          expect.arrayContaining([
+            'generated-id',
+            'default',
+            'anon-user-123',
+            'generated-id',
+            'social',
+            'google',
+            0,
+          ])
+        );
+        expect(mockSessionStore.updateSessionUserIdRpc).toHaveBeenCalledWith(
+          'session-123',
+          'generated-id'
+        );
+      });
+
+      it('should expose profile completion hints when required claims remain missing', async () => {
+        mockSyncUserLifecycleState.mockResolvedValueOnce({
+          lifecycleState: 'incomplete',
+          missingRequiredFields: [
+            {
+              fieldKey: 'department',
+              label: 'Department',
+              fieldType: 'string',
+            },
+          ],
+        });
+
+        const c = createMockContext({
+          method: 'POST',
+          body: { method: 'passkey' },
+        });
+
+        const response = await upgradeCompleteHandler(c);
+        const body = (await response.json()) as {
+          profile_completion_required: boolean;
+          account_lifecycle_state: string;
+          missing_required_custom_claims: Array<{
+            field_key: string;
+            label: string;
+            field_type: string;
+          }>;
+        };
+
+        expect(response.status).toBe(200);
+        expect(body.profile_completion_required).toBe(true);
+        expect(body.account_lifecycle_state).toBe('incomplete');
+        expect(body.missing_required_custom_claims).toEqual([
+          {
+            field_key: 'department',
+            label: 'Department',
+            field_type: 'string',
+          },
+        ]);
+        expect(mockSessionStore.updateSessionDataRpc).toHaveBeenCalledWith(
+          'session-123',
+          expect.objectContaining({
+            profile_completion_required: true,
+            account_lifecycle_state: 'incomplete',
+            missing_required_custom_claims: [
+              {
+                field_key: 'department',
+                label: 'Department',
+                field_type: 'string',
+              },
+            ],
+          })
+        );
+      });
+    });
   });
 
   describe('upgradeStatusHandler (GET /api/auth/upgrade/status)', () => {
@@ -447,9 +790,9 @@ describe('Upgrade Handlers', () => {
         const history = await mockDatabaseAdapter.query(
           `SELECT id, upgrade_method, upgraded_at, preserve_sub
            FROM user_upgrades
-           WHERE anonymous_user_id = ? OR upgraded_user_id = ?
+           WHERE tenant_id = ? AND (anonymous_user_id = ? OR upgraded_user_id = ?)
            ORDER BY upgraded_at DESC`,
-          ['anon-user-123', 'anon-user-123']
+          ['default', 'anon-user-123', 'anon-user-123']
         );
 
         expect(Array.isArray(history)).toBe(true);
@@ -475,6 +818,59 @@ describe('Upgrade Handlers', () => {
 
         expect(formattedEntry.method).toBe('email');
         expect(formattedEntry.preserve_sub).toBe(true);
+      });
+    });
+
+    describe('Handler execution', () => {
+      it('should report incomplete lifecycle hints for upgraded users with missing required claims', async () => {
+        mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+          userId: 'user-123',
+          data: {
+            is_anonymous: false,
+            upgrade_eligible: false,
+          },
+        });
+        mockUserCoreRepository.findById.mockResolvedValueOnce({
+          id: 'user-123',
+          user_type: 'end_user',
+          tenant_id: 'default',
+        });
+        mockSyncUserLifecycleState.mockResolvedValueOnce({
+          lifecycleState: 'incomplete',
+          missingRequiredFields: [
+            {
+              fieldKey: 'employeeNumber',
+              label: 'Employee Number',
+              fieldType: 'string',
+            },
+          ],
+        });
+        mockDatabaseAdapter.query.mockResolvedValueOnce([]);
+
+        const c = createMockContext({ method: 'GET' });
+        const response = await upgradeStatusHandler(c);
+        const body = (await response.json()) as {
+          is_anonymous: boolean;
+          profile_completion_required: boolean;
+          account_lifecycle_state: string;
+          missing_required_custom_claims: Array<{
+            field_key: string;
+            label: string;
+            field_type: string;
+          }>;
+        };
+
+        expect(response.status).toBe(200);
+        expect(body.is_anonymous).toBe(false);
+        expect(body.profile_completion_required).toBe(true);
+        expect(body.account_lifecycle_state).toBe('incomplete');
+        expect(body.missing_required_custom_claims).toEqual([
+          {
+            field_key: 'employeeNumber',
+            label: 'Employee Number',
+            field_type: 'string',
+          },
+        ]);
       });
     });
   });

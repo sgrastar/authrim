@@ -18,6 +18,33 @@ import {
   ERROR_MESSAGE_MAX_LENGTH,
 } from '../utils';
 import type { TenantPIIConfig } from '../types';
+import type { DatabaseAdapter } from '../../../db';
+
+const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+function createChunkIndexAdapter(): DatabaseAdapter & {
+  execute: ReturnType<typeof vi.fn>;
+  queryOne: ReturnType<typeof vi.fn>;
+} {
+  const adapter = {
+    execute: vi.fn().mockResolvedValue({ success: true }),
+    queryOne: vi.fn().mockImplementation((sql: string) => {
+      if (sql.includes('SELECT catalog_id FROM sensitive_detail_chunk_index')) {
+        return Promise.resolve(null);
+      }
+      if (sql.includes('FROM object_catalog_objects')) {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    }),
+    query: vi.fn().mockResolvedValue([]),
+    batch: vi.fn().mockResolvedValue([]),
+  };
+  return adapter as unknown as DatabaseAdapter & {
+    execute: ReturnType<typeof vi.fn>;
+    queryOne: ReturnType<typeof vi.fn>;
+  };
+}
 
 /**
  * Audit Utility Tests
@@ -307,23 +334,55 @@ describe('Audit Utils', () => {
       expect(mockR2Bucket.put).not.toHaveBeenCalled();
     });
 
-    it('should evacuate to R2 if > 2KB', async () => {
+    it('should reject large details if sensitive detail chunk context is missing', async () => {
       // Create large details (> 2KB)
       const largeValue = 'x'.repeat(3000);
       const details = { data: largeValue };
+
+      await expect(
+        writeEventDetails(details, mockR2Bucket as unknown as R2Bucket, 'tenant-1', 'entry-123')
+      ).rejects.toThrow('sensitive_detail_chunk_context_required:event_log_detail');
+      expect(mockR2Bucket.put).not.toHaveBeenCalled();
+    });
+
+    it('should store large details as a sensitive detail chunk when chunk context is provided', async () => {
+      const largeValue = 'x'.repeat(3000);
+      const details = { data: largeValue };
+      const adapter = createChunkIndexAdapter();
+      const chunkBucket = {
+        put: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn(),
+      };
 
       const result = await writeEventDetails(
         details,
         mockR2Bucket as unknown as R2Bucket,
         'tenant-1',
-        'entry-123'
+        'entry-123',
+        undefined,
+        async () => 't_registry_detail',
+        {
+          adapter,
+          bucket: chunkBucket as unknown as R2Bucket,
+          rootKeyHex: OBJECT_ROOT_KEY,
+          keyVersion: 3,
+          createdAt: Date.UTC(2026, 4, 19, 10, 0, 0),
+          tenantKeyResolver: async () => 't_registry_detail',
+        }
       );
 
       expect(result.detailsJson).toBeNull();
-      expect(result.detailsR2Key).toMatch(
-        /^event-details\/tenant-1\/\d{4}-\d{2}-\d{2}\/entry-123\.json$/
+      expect(result.detailsR2Key).toMatch(/^sensitive-detail-catalog:/);
+      expect(mockR2Bucket.put).not.toHaveBeenCalled();
+      expect(chunkBucket.put).toHaveBeenCalledTimes(1);
+      expect(chunkBucket.put.mock.calls[0][0]).toContain(
+        'sensitive-details/v1/t_registry_detail/sensitive_detail/event/audit/'
       );
-      expect(mockR2Bucket.put).toHaveBeenCalledTimes(1);
+      expect(
+        adapter.execute.mock.calls.some(([sql]) =>
+          String(sql).includes('INSERT INTO sensitive_detail_chunk_index')
+        )
+      ).toBe(true);
     });
 
     it('should use byte length, not character length (Unicode)', async () => {
@@ -331,15 +390,14 @@ describe('Audit Utils', () => {
       // Create string that appears < 2KB by char count but > 2KB by byte count
       const japaneseText = 'あ'.repeat(700); // 700 chars * 3 bytes = 2100 bytes
 
-      const result = await writeEventDetails(
-        { text: japaneseText },
-        mockR2Bucket as unknown as R2Bucket,
-        'tenant-1',
-        'entry-123'
-      );
-
-      // Should evacuate to R2 because byte count > 2KB
-      expect(result.detailsR2Key).not.toBeNull();
+      await expect(
+        writeEventDetails(
+          { text: japaneseText },
+          mockR2Bucket as unknown as R2Bucket,
+          'tenant-1',
+          'entry-123'
+        )
+      ).rejects.toThrow('sensitive_detail_chunk_context_required:event_log_detail');
     });
   });
 
@@ -446,7 +504,7 @@ describe('Audit Utils', () => {
       expect(mockR2Bucket.put).not.toHaveBeenCalled();
     });
 
-    it('should evacuate to R2 if > 4KB', async () => {
+    it('should reject large encrypted PII values if sensitive detail chunk context is missing', async () => {
       // Create large encrypted data (> 4KB)
       const largeCiphertext = 'x'.repeat(5000);
       const encryptedJson = JSON.stringify({
@@ -455,18 +513,54 @@ describe('Audit Utils', () => {
         keyId: 'key-1',
       });
 
+      await expect(
+        writePIIValues(encryptedJson, mockR2Bucket as unknown as R2Bucket, 'tenant-1', 'entry-123')
+      ).rejects.toThrow('sensitive_detail_chunk_context_required:pii_log_values');
+      expect(mockR2Bucket.put).not.toHaveBeenCalled();
+    });
+
+    it('should store large encrypted PII values as a sensitive detail chunk when configured', async () => {
+      const largeCiphertext = 'x'.repeat(5000);
+      const encryptedJson = JSON.stringify({
+        ciphertext: largeCiphertext,
+        iv: 'abc',
+        keyId: 'key-1',
+      });
+      const adapter = createChunkIndexAdapter();
+      const chunkBucket = {
+        put: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn(),
+      };
+
       const result = await writePIIValues(
         encryptedJson,
         mockR2Bucket as unknown as R2Bucket,
         'tenant-1',
-        'entry-123'
+        'entry-123',
+        undefined,
+        async () => 't_registry_pii',
+        {
+          adapter,
+          bucket: chunkBucket as unknown as R2Bucket,
+          rootKeyHex: OBJECT_ROOT_KEY,
+          keyVersion: 3,
+          createdAt: Date.UTC(2026, 4, 19, 10, 0, 0),
+          tenantKeyResolver: async () => 't_registry_pii',
+        }
       );
 
       expect(result.valuesEncrypted).toBeNull();
-      expect(result.valuesR2Key).toMatch(
-        /^pii-values\/tenant-1\/\d{4}-\d{2}-\d{2}\/entry-123\.json$/
+      expect(result.valuesR2Key).toMatch(/^sensitive-detail-catalog:/);
+      expect(mockR2Bucket.put).not.toHaveBeenCalled();
+      expect(chunkBucket.put).toHaveBeenCalledTimes(1);
+      expect(chunkBucket.put.mock.calls[0][0]).toContain(
+        'sensitive-details/v1/t_registry_pii/sensitive_detail/pii/pii/'
       );
-      expect(mockR2Bucket.put).toHaveBeenCalledTimes(1);
+      expect(
+        adapter.execute.mock.calls.some(([sql]) =>
+          String(sql).includes('INSERT INTO sensitive_detail_chunk_index')
+        )
+      ).toBe(true);
     });
   });
 

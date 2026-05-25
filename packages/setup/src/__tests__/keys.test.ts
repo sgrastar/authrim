@@ -3,11 +3,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   generateKeyId,
   generateRsaKeyPair,
+  generateEs256KeyPair,
   generateHexSecret,
   generateBase64Secret,
   generateAllSecrets,
@@ -15,7 +16,9 @@ import {
   keysExistForEnvironment,
   validatePrivateKey,
   validatePublicKeyJwk,
+  validateSetupMachinePublicKeyJwk,
   generateWranglerSecretCommands,
+  ensureSupplementalKeyFiles,
 } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR, AUTHRIM_DIR, LEGACY_KEYS_DIR } from '../core/paths.js';
 
@@ -60,6 +63,21 @@ describe('generateRsaKeyPair', () => {
   });
 });
 
+describe('generateEs256KeyPair', () => {
+  it('should generate a valid ES256 key pair', () => {
+    const keyPair = generateEs256KeyPair('setup-test-key');
+
+    expect(keyPair.keyId).toBe('setup-test-key');
+    expect(keyPair.privateKeyPem).toContain('-----BEGIN PRIVATE KEY-----');
+    expect(keyPair.publicKeyJwk.kty).toBe('EC');
+    expect(keyPair.publicKeyJwk.crv).toBe('P-256');
+    expect(keyPair.publicKeyJwk.kid).toBe('setup-test-key');
+    expect(keyPair.publicKeyJwk.use).toBe('sig');
+    expect(keyPair.publicKeyJwk.alg).toBe('ES256');
+    expect(validateSetupMachinePublicKeyJwk(keyPair.publicKeyJwk)).toBe(true);
+  });
+});
+
 describe('generateHexSecret', () => {
   it('should generate 32-byte hex secret by default', () => {
     const secret = generateHexSecret();
@@ -89,7 +107,21 @@ describe('generateAllSecrets', () => {
 
     expect(secrets.keyPair).toBeDefined();
     expect(secrets.keyPair.keyId).toBe('test-key');
+    expect(secrets.setupMachineKeyPair).toBeDefined();
+    expect(secrets.setupMachineKeyPair.keyId).toBe('test-key-setup');
+    expect(secrets.setupMachineKeyPair.publicKeyJwk.alg).toBe('ES256');
+    expect(secrets.adminUiBffMachineKeyPair).toBeDefined();
+    expect(secrets.adminUiBffMachineKeyPair.keyId).toBe('test-key-admin-ui-bff');
+    expect(secrets.adminUiBffMachineKeyPair.publicKeyJwk.alg).toBe('ES256');
+    expect(secrets.tenantRuntimeRegistryKeyPair).toBeDefined();
+    expect(secrets.tenantRuntimeRegistryKeyPair.keyId).toBe('test-key-tenant-runtime-registry');
+    expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.kty).toBe('OKP');
+    expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.crv).toBe('Ed25519');
+    expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.alg).toBe('EdDSA');
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.versionManagerSecret).toBeDefined();
+    expect(secrets.loggingCursorHmacSecret).toBeDefined();
     expect(secrets.adminApiSecret).toBeDefined();
     expect(secrets.keyManagerSecret).toBeDefined();
     expect(secrets.setupToken).toBeDefined();
@@ -157,9 +189,21 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'metadata.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'rp_token_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_token.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
+    expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
+    expect(existsSync(join(keysDir, 'admin_ui_bff_public.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'))).toBe(
+      true
+    );
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'))).toBe(true);
   });
 
   it('should save keys to internal directory when keysBaseDir is not provided', async () => {
@@ -219,6 +263,101 @@ describe('keysExistForEnvironment with external keys', () => {
   });
 });
 
+describe('ensureSupplementalKeyFiles', () => {
+  let testDir: string;
+
+  beforeEach(() => {
+    testDir = join(
+      process.cwd(),
+      `.test-supplemental-keys-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(testDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('backfills keys required by deploy-time Admin Machine Access', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const keyPair = generateRsaKeyPair('legacy-key');
+    writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+    writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify({ kid: 'legacy-key', files: {} }));
+    writeFileSync(join(keysDir, 'admin_api_secret.txt'), 'legacy-admin-secret');
+    writeFileSync(join(keysDir, 'key_manager_secret.txt'), 'legacy-key-manager-secret');
+
+    const result = await ensureSupplementalKeyFiles(keysDir);
+
+    expect(result.createdFiles).toHaveLength(10);
+    expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
+    expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
+    expect(existsSync(join(keysDir, 'admin_ui_bff_public.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'))).toBe(
+      true
+    );
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'))).toBe(true);
+
+    const setupJwk = JSON.parse(
+      readFileSync(join(keysDir, 'setup_machine_public.jwk.json'), 'utf-8')
+    );
+    const adminUiBffJwk = JSON.parse(
+      readFileSync(join(keysDir, 'admin_ui_bff_public.jwk.json'), 'utf-8')
+    );
+    const tenantRuntimeRegistryJwks = JSON.parse(
+      readFileSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'), 'utf-8')
+    );
+    const tenantRuntimeRegistryKeyId = readFileSync(
+      join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
+      'utf-8'
+    );
+    expect(setupJwk.kid).toBe('legacy-key-setup');
+    expect(setupJwk.alg).toBe('ES256');
+    expect(adminUiBffJwk.kid).toBe('legacy-key-admin-ui-bff');
+    expect(adminUiBffJwk.alg).toBe('ES256');
+    expect(tenantRuntimeRegistryKeyId).toBe('legacy-key-tenant-runtime-registry');
+    expect(tenantRuntimeRegistryJwks.keys[0]).toEqual(
+      expect.objectContaining({
+        kid: 'legacy-key-tenant-runtime-registry',
+        kty: 'OKP',
+        crv: 'Ed25519',
+        alg: 'EdDSA',
+      })
+    );
+
+    const secondResult = await ensureSupplementalKeyFiles(keysDir);
+    expect(secondResult.createdFiles).toHaveLength(0);
+  });
+
+  it('rejects partial supplemental machine key pairs', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    writeFileSync(join(keysDir, 'setup_machine_private.pem'), 'partial');
+
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      /Incomplete machine key pair/
+    );
+  });
+
+  it('rejects partial tenant runtime registry key sets', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    writeFileSync(join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'), '{}');
+
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      /Incomplete tenant runtime registry key set/
+    );
+  });
+});
+
 describe('generateWranglerSecretCommands', () => {
   it('includes PUBLIC_JWK_JSON upload command', () => {
     const secrets = generateAllSecrets('test-key');
@@ -226,6 +365,15 @@ describe('generateWranglerSecretCommands', () => {
 
     expect(commands).toContain(
       'cat /tmp/keys/public.jwk.json | wrangler secret put PUBLIC_JWK_JSON --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/object_encryption_root_key.txt)" | wrangler secret put OBJECT_ENCRYPTION_ROOT_KEY --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/version_manager_secret.txt)" | wrangler secret put VERSION_MANAGER_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/logging_cursor_hmac_secret.txt)" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET --env dev'
     );
   });
 });

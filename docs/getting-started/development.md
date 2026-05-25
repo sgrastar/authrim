@@ -1,3 +1,13 @@
+---
+project: Authrim
+lang: en
+date: 2025-12-27
+description: "This guide will help you set up your development environment for Authrim."
+type: guide
+tags:
+  - authrim
+  - development
+---
 # Development Guide
 
 This guide will help you set up your development environment for Authrim.
@@ -189,7 +199,7 @@ pnpm run format:check     # Check code formatting
 
 ```bash
 pnpm run deploy           # Deploy workers with retry logic
-pnpm run deploy:ui        # Deploy UI to Cloudflare Pages
+pnpm run deploy:ui        # Deploy UI Workers with static assets
 pnpm run deploy:all       # Deploy everything
 ```
 

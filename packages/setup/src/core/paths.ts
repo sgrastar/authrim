@@ -29,7 +29,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 // =============================================================================
 // Types
@@ -67,8 +67,14 @@ export interface KeyFilePaths {
   privateKey: string;
   publicKey: string;
   rpTokenEncryptionKey: string;
+  objectEncryptionRootKey: string;
+  versionManagerSecret: string;
+  loggingCursorHmacSecret: string;
   adminApiSecret: string;
   keyManagerSecret: string;
+  tenantRuntimeRegistrySigningPrivateJwk: string;
+  tenantRuntimeRegistryVerifyingPublicJwks: string;
+  tenantRuntimeRegistrySigningKeyId: string;
   setupToken: string;
   metadata: string;
   emailFrom: string;
@@ -109,6 +115,9 @@ export const LEGACY_CONFIG_FILE = 'authrim-config.json';
 /** Legacy lock file name */
 export const LEGACY_LOCK_FILE = 'authrim-lock.json';
 
+const LEGACY_CONFIG_PATTERN = /^authrim(?:-([a-z][a-z0-9-]*))?-config\.json$/;
+const LEGACY_LOCK_PATTERN = /^authrim(?:-([a-z][a-z0-9-]*))?-lock\.json$/;
+
 /** Legacy keys directory */
 export const LEGACY_KEYS_DIR = '.keys';
 
@@ -133,6 +142,65 @@ export const WRANGLER_DIR = 'wrangler';
 /** UI environment file name */
 export const UI_ENV_FILE = 'ui.env';
 
+export function getLegacyConfigFileName(env?: string): string {
+  return env ? `authrim-${env}-config.json` : LEGACY_CONFIG_FILE;
+}
+
+export function getLegacyLockFileName(env?: string): string {
+  return env ? `authrim-${env}-lock.json` : LEGACY_LOCK_FILE;
+}
+
+function getExistingLegacyFilePath(baseDir: string, candidates: string[]): string | undefined {
+  const existingCandidate = candidates.find((candidate) => existsSync(join(baseDir, candidate)));
+  return existingCandidate ? join(baseDir, existingCandidate) : undefined;
+}
+
+export function getLegacyConfigCandidates(baseDir: string, env?: string): string[] {
+  const candidates = env
+    ? [getLegacyConfigFileName(env), LEGACY_CONFIG_FILE]
+    : [LEGACY_CONFIG_FILE];
+  return candidates.map((candidate) => join(baseDir, candidate));
+}
+
+export function getLegacyLockCandidates(baseDir: string, env?: string): string[] {
+  const candidates = env ? [getLegacyLockFileName(env), LEGACY_LOCK_FILE] : [LEGACY_LOCK_FILE];
+  return candidates.map((candidate) => join(baseDir, candidate));
+}
+
+export function findLegacyConfigPath(baseDir: string, env?: string): string {
+  const candidates = env
+    ? [getLegacyConfigFileName(env), LEGACY_CONFIG_FILE]
+    : [LEGACY_CONFIG_FILE];
+  return getExistingLegacyFilePath(baseDir, candidates) || join(baseDir, candidates[0]);
+}
+
+export function findLegacyLockPath(baseDir: string, env?: string): string {
+  const candidates = env ? [getLegacyLockFileName(env), LEGACY_LOCK_FILE] : [LEGACY_LOCK_FILE];
+  return getExistingLegacyFilePath(baseDir, candidates) || join(baseDir, candidates[0]);
+}
+
+function listLegacyConfigPaths(baseDir: string): string[] {
+  try {
+    return readdirSync(baseDir)
+      .filter((entry) => LEGACY_CONFIG_PATTERN.test(entry))
+      .map((entry) => join(baseDir, entry))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function listLegacyLockPaths(baseDir: string): string[] {
+  try {
+    return readdirSync(baseDir)
+      .filter((entry) => LEGACY_LOCK_PATTERN.test(entry))
+      .map((entry) => join(baseDir, entry))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 // =============================================================================
 // Path Resolution Functions
 // =============================================================================
@@ -145,8 +213,20 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
     privateKey: join(keysDir, 'private.pem'),
     publicKey: join(keysDir, 'public.jwk.json'),
     rpTokenEncryptionKey: join(keysDir, 'rp_token_encryption_key.txt'),
+    objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
+    versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
+    loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     adminApiSecret: join(keysDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(keysDir, 'key_manager_secret.txt'),
+    tenantRuntimeRegistrySigningPrivateJwk: join(
+      keysDir,
+      'tenant_runtime_registry_signing_private.jwk.json'
+    ),
+    tenantRuntimeRegistryVerifyingPublicJwks: join(
+      keysDir,
+      'tenant_runtime_registry_verify.jwks.json'
+    ),
+    tenantRuntimeRegistrySigningKeyId: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
     setupToken: join(keysDir, 'setup_token.txt'),
     metadata: join(keysDir, 'metadata.json'),
     emailFrom: join(keysDir, 'email_from.txt'),
@@ -185,8 +265,8 @@ export function getLegacyPaths(baseDir: string, env: string): LegacyPaths {
   const keysDir = join(baseDir, LEGACY_KEYS_DIR, env);
 
   return {
-    config: join(baseDir, LEGACY_CONFIG_FILE),
-    lock: join(baseDir, LEGACY_LOCK_FILE),
+    config: findLegacyConfigPath(baseDir, env),
+    lock: findLegacyLockPath(baseDir, env),
     keys: keysDir,
     keyFiles: getKeyFilePaths(keysDir),
   };
@@ -230,10 +310,7 @@ export function findAuthrimBaseDir(startDir: string): string {
   }
 
   // Check for legacy structure in startDir
-  if (
-    existsSync(join(startDir, LEGACY_CONFIG_FILE)) ||
-    existsSync(join(startDir, LEGACY_LOCK_FILE))
-  ) {
+  if (listLegacyConfigPaths(startDir).length > 0 || listLegacyLockPaths(startDir).length > 0) {
     return startDir;
   }
 
@@ -241,8 +318,8 @@ export function findAuthrimBaseDir(startDir: string): string {
   for (const subdir of COMMON_SUBDIRS) {
     const subdirPath = join(startDir, subdir);
     if (
-      existsSync(join(subdirPath, LEGACY_CONFIG_FILE)) ||
-      existsSync(join(subdirPath, LEGACY_LOCK_FILE))
+      listLegacyConfigPaths(subdirPath).length > 0 ||
+      listLegacyLockPaths(subdirPath).length > 0
     ) {
       return subdirPath;
     }
@@ -262,8 +339,8 @@ export function findAuthrimBaseDir(startDir: string): string {
  */
 export function detectStructure(baseDir: string): StructureInfo {
   const authrimDir = join(baseDir, AUTHRIM_DIR);
-  const legacyConfig = join(baseDir, LEGACY_CONFIG_FILE);
-  const legacyLock = join(baseDir, LEGACY_LOCK_FILE);
+  const legacyConfigs = listLegacyConfigPaths(baseDir);
+  const legacyLocks = listLegacyLockPaths(baseDir);
   const legacyKeys = join(baseDir, LEGACY_KEYS_DIR);
 
   // Check for new structure first
@@ -288,27 +365,37 @@ export function detectStructure(baseDir: string): StructureInfo {
   }
 
   // Check for legacy structure
-  if (existsSync(legacyConfig) || existsSync(legacyLock)) {
+  if (legacyConfigs.length > 0 || legacyLocks.length > 0) {
     let legacyEnv: string | undefined;
 
     // Try to determine env from config file
-    if (existsSync(legacyConfig)) {
+    if (legacyConfigs.length > 0) {
       try {
-        const config = JSON.parse(readFileSync(legacyConfig, 'utf-8'));
+        const config = JSON.parse(readFileSync(legacyConfigs[0], 'utf-8'));
         legacyEnv = config.environment?.prefix;
       } catch {
         // Ignore parse errors
       }
     }
 
+    if (!legacyEnv && legacyConfigs.length > 0) {
+      const match = legacyConfigs[0].match(LEGACY_CONFIG_PATTERN);
+      legacyEnv = match?.[1];
+    }
+
     // Try to determine env from lock file if not found in config
-    if (!legacyEnv && existsSync(legacyLock)) {
+    if (!legacyEnv && legacyLocks.length > 0) {
       try {
-        const lock = JSON.parse(readFileSync(legacyLock, 'utf-8'));
+        const lock = JSON.parse(readFileSync(legacyLocks[0], 'utf-8'));
         legacyEnv = lock.env;
       } catch {
         // Ignore parse errors
       }
+    }
+
+    if (!legacyEnv && legacyLocks.length > 0) {
+      const match = legacyLocks[0].match(LEGACY_LOCK_PATTERN);
+      legacyEnv = match?.[1];
     }
 
     // Try to find env from .keys directory
@@ -403,6 +490,25 @@ export function listEnvironments(baseDir: string, keysBaseDir?: string): string[
       entries.filter((d) => d.isDirectory()).forEach((d) => envs.add(d.name));
     } catch {
       // Ignore errors
+    }
+  }
+
+  for (const configPath of listLegacyConfigPaths(baseDir)) {
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const env = config.environment?.prefix;
+      if (env) {
+        envs.add(env);
+        continue;
+      }
+    } catch {
+      // Ignore parse errors and fall back to filename parsing below.
+    }
+
+    const fileName = basename(configPath);
+    const match = fileName.match(LEGACY_CONFIG_PATTERN);
+    if (match?.[1]) {
+      envs.add(match[1]);
     }
   }
 
