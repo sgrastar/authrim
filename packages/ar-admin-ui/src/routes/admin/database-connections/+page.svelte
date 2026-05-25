@@ -41,6 +41,10 @@
 		const role = typeof item.config.role === 'string' ? item.config.role : null;
 		return [bindingRef, logicalSource, role].filter(Boolean).join(' / ') || '-';
 	}
+
+	function tenantAssignments(item: DatabaseConnection) {
+		return item.tenant_assignments ?? [];
+	}
 </script>
 
 <svelte:head>
@@ -79,6 +83,20 @@
 							<small>{item.name}</small>
 						</div>
 						<span class="text-muted text-sm">{formatConfigSummary(item)}</span>
+						<div class="tenant-badges" aria-label="Tenant assignments">
+							{#if tenantAssignments(item).length === 0}
+								<span class="text-muted text-sm">-</span>
+							{:else}
+								{#each tenantAssignments(item) as tenant (`${tenant.kind}:${tenant.id}`)}
+									<span
+										class="badge {tenant.kind === 'platform' ? 'badge-info' : 'badge-neutral'}"
+										title={tenant.id}
+									>
+										{tenant.name}
+									</span>
+								{/each}
+							{/if}
+						</div>
 						<span class="badge badge-neutral">{item.provider}</span>
 						{#if item.read_only}
 							<span class="badge badge-muted">setup</span>
@@ -165,7 +183,7 @@
 
 	.item-row {
 		display: grid;
-		grid-template-columns: minmax(220px, 1fr) minmax(220px, 1.2fr) auto auto 1rem;
+		grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.9fr) minmax(180px, 1fr) auto auto 1rem;
 		align-items: center;
 		gap: 0.75rem;
 		padding: 0.8rem 1rem;
@@ -207,6 +225,13 @@
 		line-height: 1;
 	}
 
+	.tenant-badges {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+		min-width: 0;
+	}
+
 	.badge {
 		display: inline-flex;
 		align-items: center;
@@ -222,6 +247,11 @@
 	.badge-muted {
 		background: var(--bg-subtle);
 		color: var(--text-secondary);
+	}
+
+	.badge-info {
+		background: rgba(59, 130, 246, 0.1);
+		color: #1d4ed8;
 	}
 
 	.badge-success {

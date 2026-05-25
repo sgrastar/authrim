@@ -5,6 +5,12 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 export type DatabaseConnectionProvider = 'd1' | 'hyperdrive' | 'postgres' | 'mysql' | 'custom';
 export type ResourceStatus = 'active' | 'disabled';
 
+export interface ResourceTenantAssignment {
+	id: string;
+	name: string;
+	kind: 'tenant' | 'platform';
+}
+
 export interface DatabaseConnection {
 	id: string;
 	name: string;
@@ -23,6 +29,7 @@ export interface DatabaseConnection {
 	updated_by: string | null;
 	created_at: number;
 	updated_at: number;
+	tenant_assignments?: ResourceTenantAssignment[];
 }
 
 export interface DatabaseConnectionInput {

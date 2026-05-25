@@ -10,10 +10,13 @@ import {
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
   AdminDatabaseConnectionRepository,
+  createAuthContextFromHono,
   createErrorResponse,
   encryptValue,
+  getTenantIdFromContext,
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
+  TenantDatabaseRegistryRepository,
 } from '@authrim/ar-lib-core';
 import { requireAdminPermissionOrElevationGrant } from '../../admin-elevation-access';
 import { writeAdminAuditLog } from '../../admin-shared';
@@ -53,6 +56,25 @@ interface ManagedDatabaseConnection {
   updated_by: string;
   created_at: number;
   updated_at: number;
+  tenant_assignments?: DatabaseConnectionTenantAssignment[];
+}
+
+interface DatabaseConnectionTenantAssignment {
+  id: string;
+  name: string;
+  kind: 'tenant' | 'platform';
+}
+
+interface TenantLabelRow {
+  id: string;
+  name: string;
+  is_active?: boolean | number;
+}
+
+interface AssignableDatabaseConnection {
+  id: string;
+  name: string;
+  config: Record<string, unknown>;
 }
 
 const SETUP_D1_CONNECTIONS: Array<{
@@ -98,6 +120,13 @@ function getAdminAdapter(c: AdminContext) {
   return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-database-connections');
 }
 
+function getCoreAdapter(c: AdminContext) {
+  return createAuthContextFromHono(
+    c as unknown as Context<{ Bindings: Env }>,
+    getTenantIdFromContext(c)
+  ).coreAdapter;
+}
+
 function getAuth(c: AdminContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
 }
@@ -137,6 +166,110 @@ function buildSetupD1Connections(env: Env): ManagedDatabaseConnection[] {
 
 function getSetupD1Connection(env: Env, id: string): ManagedDatabaseConnection | null {
   return buildSetupD1Connections(env).find((connection) => connection.id === id) ?? null;
+}
+
+async function listTenantLabels(c: AdminContext): Promise<DatabaseConnectionTenantAssignment[]> {
+  try {
+    const coreBinding = (c.env as unknown as { DB?: { prepare?: unknown } }).DB;
+    if (!coreBinding || typeof coreBinding.prepare !== 'function') {
+      return [];
+    }
+    const rows = await getCoreAdapter(c).query<TenantLabelRow>(
+      `SELECT id, name, is_active FROM tenants WHERE is_active = 1 ORDER BY name ASC`
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name || row.id,
+      kind: 'tenant' as const,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function buildDatabaseTenantAssignments(
+  c: AdminContext,
+  connections: AssignableDatabaseConnection[]
+): Promise<Map<string, DatabaseConnectionTenantAssignment[]>> {
+  const tenants = await listTenantLabels(c);
+  const tenantById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
+  const assignments = new Map<string, DatabaseConnectionTenantAssignment[]>();
+  const connectionById = new Map(connections.map((connection) => [connection.id, connection]));
+  const connectionByName = new Map(connections.map((connection) => [connection.name, connection]));
+  const connectionByBinding = new Map(
+    connections
+      .map(
+        (connection) =>
+          [String(connection.config.bindingRef ?? '').toUpperCase(), connection] as const
+      )
+      .filter(([binding]) => binding.length > 0)
+  );
+
+  function add(connectionId: string, assignment: DatabaseConnectionTenantAssignment) {
+    const existing = assignments.get(connectionId) ?? [];
+    if (!existing.some((item) => item.kind === assignment.kind && item.id === assignment.id)) {
+      existing.push(assignment);
+      assignments.set(connectionId, existing);
+    }
+  }
+
+  try {
+    const registry = new TenantDatabaseRegistryRepository(getAdminAdapter(c));
+    const rows = [
+      ...(await registry.listActiveRegistryRowsForRole('tenant_core', 1000, 0)),
+      ...(await registry.listActiveRegistryRowsForRole('tenant_pii', 1000, 0)),
+      ...(await registry.listActiveRegistryRowsForRole('tenant_audit', 1000, 0)),
+      ...(await registry.listActiveRegistryRowsForRole('tenant_custom', 1000, 0)),
+    ];
+    for (const row of rows) {
+      const connection =
+        (row.connection_ref
+          ? (connectionById.get(row.connection_ref) ?? connectionByName.get(row.connection_ref))
+          : undefined) ??
+        (row.binding_ref ? connectionByBinding.get(row.binding_ref.toUpperCase()) : undefined);
+      const tenant = tenantById.get(row.tenant_id) ?? {
+        id: row.tenant_id,
+        name: row.tenant_id,
+        kind: 'tenant' as const,
+      };
+      if (connection) {
+        add(connection.id, tenant);
+      }
+    }
+  } catch {
+    // Registry rows may not exist in older or shared-D1 deployments.
+  }
+
+  if (c.env.DEFAULT_STORAGE_PROFILE_ID !== 'builtin:storage:tenant-d1') {
+    for (const connection of connections) {
+      const binding = String(connection.config.bindingRef ?? '').toUpperCase();
+      if ((binding === 'DB' || binding === 'DB_PII') && !assignments.has(connection.id)) {
+        for (const tenant of tenants) {
+          add(connection.id, tenant);
+        }
+      }
+    }
+  }
+
+  for (const connection of connections) {
+    const binding = String(connection.config.bindingRef ?? '').toUpperCase();
+    if (binding === 'DB_ADMIN') {
+      add(connection.id, { id: 'platform', name: 'Platform', kind: 'platform' });
+    }
+  }
+
+  return assignments;
+}
+
+async function attachTenantAssignments<T extends AssignableDatabaseConnection>(
+  c: AdminContext,
+  connections: T[]
+): Promise<Array<T & { tenant_assignments: DatabaseConnectionTenantAssignment[] }>> {
+  const assignments = await buildDatabaseTenantAssignments(c, connections);
+  return connections.map((connection) => ({
+    ...connection,
+    tenant_assignments: assignments.get(connection.id) ?? [],
+  }));
 }
 
 function hasPermission(authContext: AdminAuthContext, permission: string): boolean {
@@ -247,7 +380,8 @@ databaseConnectionsRouter.get('/', async (c) => {
         return !bindingRef || !setupBindingRefs.has(bindingRef);
       }),
     ];
-    return c.json({ items, total: items.length });
+    const itemsWithAssignments = await attachTenantAssignments(c, items);
+    return c.json({ items: itemsWithAssignments, total: itemsWithAssignments.length });
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -337,7 +471,8 @@ databaseConnectionsRouter.get('/:id', async (c) => {
   try {
     const setupConnection = getSetupD1Connection(c.env, c.req.param('id')!);
     if (setupConnection) {
-      return c.json(setupConnection);
+      const [connection] = await attachTenantAssignments(c, [setupConnection]);
+      return c.json(connection);
     }
 
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
@@ -345,7 +480,8 @@ databaseConnectionsRouter.get('/:id', async (c) => {
     if (!connection) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-    return c.json(connection);
+    const [connectionWithAssignments] = await attachTenantAssignments(c, [connection]);
+    return c.json(connectionWithAssignments);
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }

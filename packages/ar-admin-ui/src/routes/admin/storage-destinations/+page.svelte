@@ -104,7 +104,9 @@
 				? controlPlaneScope
 				: availableControlPlaneScopes[0];
 			const [response, controlPlaneResponse] = await Promise.all([
-				adminStorageDestinationsAPI.list(storageScope),
+				storageScope === 'tenant'
+					? adminStorageDestinationsAPI.listUsable()
+					: adminStorageDestinationsAPI.list(storageScope),
 				adminLoggingControlAPI.listDestinations(destinationScope)
 			]);
 			items = response.items;
@@ -618,7 +620,7 @@
 			<label class="scope-label">
 				<span>Registry</span>
 				<select bind:value={scopeType} onchange={load}>
-					<option value="tenant">Tenant</option>
+					<option value="tenant">Tenant usable</option>
 					{#if canManagePlatformStorage}
 						<option value="platform">Platform</option>
 					{/if}
@@ -667,9 +669,13 @@
 							<span class="badge {item.status === 'active' ? 'badge-success' : 'badge-neutral'}"
 								>{item.status}</span
 							>
-							<span class="text-muted text-sm"
-								>{item.has_credential ? 'credential set' : 'no credential'}</span
-							>
+							{#if item.read_only}
+								<span class="badge badge-muted">setup</span>
+							{:else}
+								<span class="text-muted text-sm"
+									>{item.has_credential ? 'credential set' : 'no credential'}</span
+								>
+							{/if}
 						</button>
 					{/each}
 				</div>
@@ -846,7 +852,7 @@
 					<h2 class="panel-title">{selected.display_name}</h2>
 					<p class="text-muted text-sm">{selected.scope_type}:{selected.scope_id}</p>
 				</div>
-				{#if canManagePlatformStorage}
+				{#if canManagePlatformStorage && !selected.read_only}
 					<button class="btn btn-danger btn-sm" onclick={deleteSelected} disabled={saving}
 						>Delete</button
 					>
@@ -865,7 +871,7 @@
 				</div>
 			</div>
 			<pre class="code-block">{jsonDisplayText(selected.config)}</pre>
-			{#if canManagePlatformStorage}
+			{#if canManagePlatformStorage && !selected.read_only}
 				<div class="credential-section">
 					<h3 class="subsection-title">Update Credential</h3>
 					<div class="form-grid">

@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-05-12
+date: 2026-05-25
 description: "Authrim roadmap organized by product maturity workstreams."
 type: roadmap
 tags:
@@ -17,7 +17,7 @@ Core protocol capabilities are implemented, but production hardening is still in
 
 **Target release window:** Summer/Fall 2026
 
-The exact release date depends on UI consolidation, SAML production hardening, storage portability hardening, and security validation.
+The exact release date depends on UI consolidation, SAML interoperability validation, storage/logging hardening, deployment documentation, and security validation.
 
 ---
 
@@ -28,17 +28,17 @@ The exact release date depends on UI consolidation, SAML production hardening, s
 | Core OIDC/OAuth implementation | Implemented | Authorization, token, UserInfo, discovery, logout, PAR, DPoP, JAR, JARM, JWE, token exchange, client credentials |
 | FAPI profiles | Implemented / certification target | FAPI 2.0 policy controls, PAR enforcement, PKCE S256, private_key_jwt, DPoP strict mode, and certification profiles exist; formal certification is still planned |
 | CIBA | Implemented / certification target | Backchannel authentication, approval, polling, and request storage paths exist; formal certification and broader interoperability validation are still planned |
-| SAML 2.0 IdP/SP | Active / implementation substantially complete | Core protocol support is implemented; production hardening, interoperability, and DR assumptions are tracked below |
+| SAML 2.0 IdP/SP | Active / implementation substantially complete | Core protocol support, local entity metadata, entityID style, interactive login redirect policy, signing subject/rollover, and metadata import/export are implemented; interoperability and DR assumptions are tracked below |
 | SCIM 2.0 | Implemented | Provisioning support is available; production deployment guidance still needs refinement |
 | Policy engine | Implemented | RBAC, ABAC, ReBAC, token embedding, real-time check API |
 | Identity Hub | Implemented | External OIDC/OAuth providers, account linking, identity stitching |
 | Passkey / email auth / local auth | Implemented | Login UI and production flow hardening remain active work |
 | VC/DID capabilities | Implemented | OpenID4VP, OpenID4VCI, did:web, did:key |
 | JavaScript SDKs | Implemented | Core, web, server, and SvelteKit packages |
-| Setup tooling | Implemented | Production setup path and documentation need continued hardening |
-| UI consolidation | Active | Broad Admin UI and Login UI surfaces exist; consolidation and polish continue |
+| Setup tooling | Implemented | Source-download setup, fresh root migrations, standard SAML/CIBA/VC installation, optional Admin/Login UI, DNS guidance, and deletion cleanup exist; documentation needs continued hardening |
+| UI consolidation | Active | Broad Admin UI and Login UI surfaces exist; SAML, database, storage, logging, tenant discovery, and provider icon surfaces have been updated; consolidation and polish continue |
 | Security, QA, and validation | Active | Formal external audit and penetration test have not yet been completed |
-| Storage portability | Implementation baseline complete / validation active | Runtime profiles, Hyperdrive-backed user/custom/audit paths, setup validation, and schema portability checks are in place; control-plane limits remain documented |
+| Storage/logging portability | Implementation baseline complete / validation active | Runtime profiles, Hyperdrive-backed user/custom/audit paths, setup-managed D1/R2 inventory, storage destinations, logging policy snapshots, delivery/DLQ surfaces, setup validation, and schema portability checks are in place; control-plane limits remain documented |
 | Multi-tenant isolation | Implementation baseline complete / validation active | Tenant-scoped storage, routing, admin boundaries, job isolation, and regression coverage are in place; production hardening continues |
 
 ---
@@ -60,6 +60,8 @@ The following foundations are implemented and have unit/integration test coverag
 - [x] Verifiable Credentials and DID support
 - [x] JavaScript SDK packages
 - [x] Setup CLI and generated environment validation
+- [x] Fresh root migration set for new deployments
+- [x] Setup-managed D1/R2 resource inventory in Admin UI
 - [x] Load testing and OpenID conformance test automation
 
 ---
@@ -77,7 +79,7 @@ Before a stable release, these surfaces need to be made more consistent and prod
 
 - [ ] Review Admin UI information architecture and remove or mark incomplete surfaces.
 - [ ] Align Admin UI, Login UI, and setup UI navigation and terminology.
-- [ ] Verify critical flows: tenant setup, admin login, user management, client management, SAML provider management, runtime profiles, signing keys, and login UI settings.
+- [ ] Verify critical flows: tenant setup, admin login, user management, client management, SAML provider management, runtime profiles, signing keys, storage/logging destinations, and login UI settings.
 - [ ] Reduce "looks available but is not complete" behavior in management screens.
 - [ ] Confirm responsive layout and form behavior for core pages.
 - [ ] Document known UI limitations before release.
@@ -100,7 +102,7 @@ Authrim supports multiple authentication methods, but the production login path 
 
 **Status:** Active / implementation substantially complete
 
-The core SAML IdP/SP implementation now includes tenant-scoped provider lookup, metadata import/export hardening, signing policy controls, attribute presets, encryption hooks, SLO correlation, and operational observer surfaces. Remaining work is mainly validation depth, deployment-specific policy, and administrator UX polish.
+The core SAML IdP/SP implementation now includes tenant-scoped provider lookup, local entity metadata pages, metadata import/export hardening, configurable published entityIDs, interactive login redirect policy, signing subject and rollover controls, attribute presets, encryption hooks, SLO correlation, and operational observer surfaces. Remaining work is mainly validation depth, deployment-specific policy, and administrator UX polish.
 
 **Checkpoints:**
 
@@ -108,9 +110,9 @@ The core SAML IdP/SP implementation now includes tenant-scoped provider lookup, 
 - [x] Response/assertion signing policy, AuthnRequest signature policy, SLO signature policy, and algorithm allow-lists are implemented.
 - [x] Metadata import/export covers stable descriptors, ETag, cache duration, optional XML Signature, certificates, endpoints, RequestedAttribute suggestions, and encryption keys.
 - [x] Metadata refresh stores diff and expiry status and emits audit events.
-- [x] Signing rollover supports active, next, and backup certificate slots with admin APIs.
+- [x] Signing rollover supports active, next, and backup certificate slots with Admin APIs and UI controls.
 - [x] IdP-initiated multi-SP SLO has tenant-scoped fanout state and scheduled timeout observation.
-- [x] Admin UI exposes SAML provider metadata status, RequestedAttribute counts, attribute presets, and key rollover actions.
+- [x] Admin UI exposes SAML provider metadata status, RequestedAttribute counts, aggregate metadata import, mdui logo/keyword intake, attribute presets, local entity info, certificates, fingerprints, entityID style, login redirect policy, and key rollover actions.
 - [x] Interoperability fixtures exist, with real publisher metadata intake tracked privately where redistribution is restricted.
 
 **DR assumptions:**
@@ -118,7 +120,7 @@ The core SAML IdP/SP implementation now includes tenant-scoped provider lookup, 
 - [x] Stable SAML entityID, SSO URL, and SLO URL configuration are supported.
 - [x] Backup signing certificates can be published in metadata during rollover.
 - [x] Static metadata export is suitable for SPs that do not automatically refresh metadata.
-- [ ] DNS, TLS certificate, metadata, and resolver-cache assumptions still need deployment guidance.
+- [x] DNS and TLS wildcard guidance is surfaced in setup; deployment-specific metadata and resolver-cache guidance still needs release-level documentation.
 - [x] Active session migration is not included; failover assumes re-authentication.
 - [x] A separate AWS/Azure SAML runtime is not part of this workstream.
 
@@ -139,12 +141,11 @@ The remaining work is operational hardening, documentation polish, and broader e
 - [ ] Improve audit logs for tenant-scoped administrative actions.
 - [x] Document the current model: tenant-scoped records in a shared relational data model, not one database per tenant.
 
-### Storage Portability
+### Storage and Logging Portability
 
 **Status:** Active
 
-Authrim has storage portability work through runtime profiles and Hyperdrive-backed PostgreSQL/MySQL adapters.
-The original motivation is D1 maturity, customer-controlled data placement, data residency, audit export, and database portability.
+Authrim has storage portability work through runtime profiles and Hyperdrive-backed PostgreSQL/MySQL adapters. Managed logging adds policy snapshots, storage destinations, object archive, sensitive-detail chunks, delivery events, exports, and DLQ replay. The original motivation is D1 maturity, customer-controlled data placement, data residency, audit export, operational evidence, and database portability.
 
 **Checkpoints:**
 
@@ -153,7 +154,11 @@ The original motivation is D1 maturity, customer-controlled data placement, data
 - [x] Document which storage planes can be moved off D1 and which control-plane paths remain D1/KV-biased.
 - [x] Improve schema portability checks across D1, PostgreSQL, and MySQL.
 - [x] Ensure runtime profile resolution is reliable and covered by automated tests.
+- [x] Surface setup-managed D1 database connections with tenant assignment badges.
+- [x] Surface setup-managed R2 buckets and tenant/platform storage destinations.
+- [x] Implement managed logging destination, policy, delivery event, sensitive detail, export, and DLQ control surfaces.
 - [ ] Provide setup and deployment guidance for external database configurations.
+- [ ] Provide production guidance for logging retention, archive destinations, credential rotation, and DLQ operations.
 
 ### Security, QA, and Validation
 
@@ -181,10 +186,11 @@ Authrim needs a reproducible production deployment path and documentation that m
 
 - [x] Update README and documentation to remove stale release language.
 - [x] Keep the public specification aligned with runtime-profile and storage-portability behavior.
-- [ ] Improve setup wizard coverage for production domains, Cloudflare resources, UI deployment, and runtime profiles.
+- [x] Consolidate setup migrations for fresh deployments.
+- [x] Improve setup wizard coverage for production domains, Cloudflare resources, optional UI deployment, tenant discovery, and DNS guidance.
 - [ ] Document deployment modes and limitations clearly.
 - [x] Add SAML production hardening guide.
-- [ ] Add storage portability guide.
+- [ ] Add storage/logging portability guide.
 - [ ] Add release notes and migration guidance for pre-1.0 users.
 
 ---
@@ -200,6 +206,7 @@ Authrim should not be recommended for production migration until these baseline 
 - [x] SAML production hardening baseline is complete.
 - [x] Tenant boundary behavior is tested across critical management and protocol paths.
 - [x] Storage portability behavior and limitations are documented.
+- [x] Logging/storage destination control-plane baseline is implemented.
 - [ ] Security-critical tests pass consistently.
 - [ ] OpenID conformance status is current and documented.
 - [ ] Current operational constraints and unsupported deployment modes are clearly documented.
@@ -215,6 +222,7 @@ Authrim should not be recommended for production migration until these baseline 
 | Multi-cloud active-active deployment | Requires a separate architecture for state, storage, keys, DNS, metadata, and operations. |
 | Direct LDAP/AD integration | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML. |
 | Direct MTLS termination | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate. |
+| SFTP storage or delivery | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead. |
 
 ---
 
@@ -237,9 +245,10 @@ This section is a compressed history of major completed work. It replaces the ol
 | 2026-01 | Client Credentials flow |
 | 2026-01 | JavaScript SDK ecosystem: core, web, server, SvelteKit |
 | 2026-04/05 | Runtime profiles, storage portability, audit export, Hyperdrive-backed PostgreSQL/MySQL work |
+| 2026-05 | SAML local entity info, signing subject/rollover UI, tenant discovery WAYF, setup migration consolidation, database/storage inventory, and managed logging control work |
 
 ---
 
-> **Last Update:** 2026-05-12
+> **Last Update:** 2026-05-25
 >
-> **Current Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Active workstreams: UI, SAML hardening, storage portability, multi-tenant administration, security/QA
+> **Current Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Active workstreams: UI, SAML interoperability, storage/logging portability, multi-tenant administration, security/QA

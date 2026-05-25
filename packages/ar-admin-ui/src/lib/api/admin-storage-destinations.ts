@@ -15,6 +15,8 @@ export interface StorageDestination {
 	description: string | null;
 	provider: StorageDestinationProvider;
 	config: Record<string, unknown>;
+	managed_by?: 'setup' | 'admin';
+	read_only?: boolean;
 	has_credential: boolean;
 	credential_key_version: number | null;
 	credential_updated_at: number | null;

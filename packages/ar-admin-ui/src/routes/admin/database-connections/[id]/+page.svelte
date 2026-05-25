@@ -232,7 +232,7 @@
 	<header class="page-header">
 		<div class="page-title-group">
 			<button class="link-button" onclick={() => goto('/admin/database-connections')}
-				>Connections</button
+				><i class="i-ph-arrow-left"></i>Connections</button
 			>
 			<h1 class="page-title">
 				{isNew ? 'Create Connection' : connection?.display_name || 'Database Connection'}
@@ -474,6 +474,9 @@
 	}
 
 	.link-button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 		margin: 0 0 0.35rem;
 		padding: 0;
 		border: none;

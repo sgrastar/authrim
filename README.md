@@ -63,8 +63,11 @@ The setup package can download the Authrim source into a local project directory
 
 The setup wizard will guide you through:
 - Cloudflare authentication
-- Resource provisioning (D1, KV, Queues)
+- Resource provisioning (D1, KV, Queues, R2)
 - Key generation
+- Standard API capability deployment, including SAML IdP, Device Flow / CIBA, and VC SD-JWT
+- Optional Admin UI and Login UI deployment
+- Tenant discovery, including domain, email-domain, and WAYF-style tenant selection modes
 - Worker deployment
 - Initial admin creation
 
@@ -84,7 +87,7 @@ pnpm run setup
 
 The local setup command runs the same setup package from the workspace source.
 
-### Option 3: Manual Setup (Development)
+### Option 3: Scripted Setup (Development)
 
 ```bash
 # 1. Clone and install
@@ -92,16 +95,22 @@ git clone https://github.com/sgrastar/authrim.git
 cd authrim
 pnpm install
 
-# 2. Setup (generates keys, configures local environment)
-./scripts/setup-keys.sh
-./scripts/setup-local-wrangler.sh
-./scripts/setup-kv.sh --env=dev
-./scripts/setup-d1.sh
+# 2. Initialize a dev environment from the current setup implementation
+pnpm run setup:init --env=dev --cli
+
+# Optional: deploy or inspect the generated environment from source
+pnpm run setup:deploy --env=dev
+pnpm run setup:info --env=dev
 
 # 3. Run locally
 pnpm run dev
 # → http://localhost:8787/.well-known/openid-configuration
 ```
+
+The setup command creates `.authrim/dev`, generates keys, provisions current Cloudflare resources
+including D1, KV, Queues, and R2, writes generated Wrangler configuration, applies the current root
+migration set, and keeps optional Admin UI / Login UI deployment settings aligned with the setup
+configuration.
 
 📚 **Full guides:** [Development](./docs/getting-started/development.md) | [Deployment](./docs/getting-started/deployment.md) | [Testing](./docs/getting-started/testing.md) | [Setup CLI](./packages/setup/README.md)
 
@@ -176,17 +185,18 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | Core OIDC/OAuth implementation | Implemented |
 | FAPI profiles | Implemented; certification target |
 | CIBA | Implemented; certification target |
-| SAML 2.0 IdP/SP | Active; implementation substantially complete |
+| SAML 2.0 IdP/SP | Active; implementation substantially complete with local entity metadata, signing rollover, and Admin UI operations |
 | SCIM 2.0 | Implemented |
 | RBAC / ABAC / ReBAC policy engine | Implemented |
 | Identity Hub and external IdP integration | Implemented |
 | Passkey / email auth / local auth | Implemented; production flow hardening in progress |
 | JavaScript SDKs | Implemented |
 | Setup tooling | Implemented; production deployment docs in progress |
-| UI consolidation | Active |
+| UI consolidation | Active; Admin/Login/setup flows are being polished against the current Workers deployment model |
 | Security, QA, and validation | Active |
 | Storage portability | Implementation baseline complete; validation active |
 | Multi-tenant isolation | Implementation baseline complete; validation active |
+| Operational logging and evidence | Implementation baseline complete; validation active |
 
 [View detailed roadmap](./docs/ROADMAP.md)
 
@@ -201,14 +211,15 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | **Runtime**   | Cloudflare Workers        | -        | Global edge deployment             |
 | **Framework** | Hono                      | 4.12.x   | Fast, lightweight web framework    |
 | **Language**  | TypeScript                | 5.9.x    | Type-safe development              |
-| **Build**     | Turbo + pnpm              | 2.6.x / 9.x | Monorepo, parallel builds, caching |
+| **Build**     | Turbo + pnpm              | 2.7.x / 9.x | Monorepo, parallel builds, caching |
 | **Deployment** | Wrangler                 | 4.59.x   | Workers deployment and local runtime |
 | **Storage**   | KV / D1 / Durable Objects / Hyperdrive | - | Cloudflare-native persistence with external database paths where supported |
 | **Crypto**    | JOSE                      | 6.1.x    | JWT/JWS/JWE/JWK (RS256, ES256)     |
 | **WebAuthn**  | SimpleWebAuthn            | 13.2.x   | Passkey authentication             |
-| **SAML**      | xmldom + xml-crypto + pako | -       | SAML 2.0 XML processing, signatures, and bindings |
-| **Email**     | Resend                    | 6.5.x    | Magic Link, OTP delivery           |
-| **Testing**   | Vitest + Playwright       | 4.0.x / 1.56.x | Unit, integration, and E2E tests |
+| **SAML**      | xmldom + xml-crypto + pako | 0.8.x / 6.1.x / 2.1.x | SAML 2.0 XML processing, signatures, and bindings |
+| **Email**     | Cloudflare Email Sending  | -        | Workers `send_email` binding for transactional email |
+| **Email**     | Resend                    | 6.8.x    | Magic Link, OTP delivery           |
+| **Testing**   | Vitest + Playwright       | 4.0.x / 1.57.x | Unit, integration, and E2E tests |
 
 ### Frontend (UI)
 
@@ -216,12 +227,13 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | -------------- | ------------------------ | --------- | ------------------------------ |
 | **Framework**  | SvelteKit + Svelte       | 2.53.x / 5.53.x | Modern reactive framework |
 | **Deployment** | Cloudflare Workers static assets | - | UI Workers and global edge delivery |
-| **Build**      | Vite                     | 7.2.x     | UI build and dev server        |
-| **CSS**        | UnoCSS                   | 66.5.x    | Utility-first CSS              |
+| **Build**      | Vite                     | 7.3.x     | UI build and dev server        |
+| **CSS**        | UnoCSS                   | 66.6.x    | Utility-first CSS              |
 | **Components** | Melt UI                  | 0.86.x    | Headless, accessible components |
+| **Icons**      | UnoCSS preset-icons + Iconify Heroicons / Phosphor | 66.6.x / 1.2.x | Utility icon classes and selectable Login UI provider icons |
 | **i18n**       | typesafe-i18n            | 5.26.x    | Type-safe internationalization |
 | **WebAuthn**   | SimpleWebAuthn Browser   | 13.2.x    | Client-side passkey support    |
-| **Testing**    | Vitest + Testing Library | 4.0.x     | Component tests                |
+| **Testing**    | Vitest + Testing Library | 4.0.x / 5.2.x-next | Component tests                |
 
 ## Features
 
@@ -230,7 +242,7 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | OpenID Provider | Complete | Ready | Certified OpenID Provider and Logout profiles |
 | OAuth/OIDC advanced profiles | Complete | In progress | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange |
 | FAPI profiles | Complete | In progress | FAPI 2.0 policy controls and certification profiles; formal certification is planned |
-| SAML 2.0 IdP/SP | Hardening active | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, signing rollover, encryption options, SSO/SLO correlation, and DR planning |
+| SAML 2.0 IdP/SP | Hardening active | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable entityIDs, interactive login redirect policy, signing certificate subject/rollover, encryption options, SSO/SLO correlation, and DR planning |
 | SCIM 2.0 | Complete | In progress | User provisioning |
 | Authentication | Complete | In progress | Passkey, email code, social login, Direct Auth, device flow, CIBA |
 | CIBA | Complete | In progress | Backchannel authentication, approval, polling, and request storage paths |
@@ -239,9 +251,10 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | Identity Hub | Complete | In progress | External IdP integration, account linking, identity stitching |
 | VC/DID | Complete | Experimental | OpenID4VP, OpenID4VCI, did:web, did:key |
 | SDKs | Complete | In progress | Core, web, server, and SvelteKit packages |
-| Admin/Login UI | Basic complete | In progress | Consolidation and production flow hardening remain active |
-| Runtime storage profiles | Basic complete | In progress | Runtime profiles and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased |
+| Admin/Login UI | Basic complete | In progress | Admin UI includes SAML entity info, database connections, storage destinations, logging controls, and tenant discovery settings; Login UI supports configured provider logos/icons |
+| Runtime storage profiles | Basic complete | In progress | Runtime profiles, setup-managed D1/R2 inventory, tenant D1 assignment visibility, and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased |
 | Multi-tenancy isolation | Baseline complete | In progress | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression coverage are in place |
+| Logging and operational evidence | Basic complete | In progress | Structured runtime logs, admin/user audit logs, diagnostic detail, sensitive detail chunks, delivery events, DLQ replay, and storage-destination controls are implemented |
 
 See [Feature Matrix](./docs/FEATURES.md) for a more detailed capability and SDK overview.
 

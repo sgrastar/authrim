@@ -50,6 +50,62 @@ export const storageDestinationsRouter = new Hono<{
   Variables: { adminAuth?: AdminAuthContext };
 }>();
 
+type ManagedStorageDestination = AdminStorageDestination & {
+  managed_by: 'setup';
+  read_only: true;
+};
+
+const SETUP_R2_DESTINATIONS: Array<{
+  id: string;
+  bindingRef: string;
+  name: string;
+  displayName: string;
+  description: string;
+}> = [
+  {
+    id: 'setup-r2-avatars',
+    bindingRef: 'AVATARS',
+    name: 'setup-r2-avatars',
+    displayName: 'Avatars R2',
+    description: 'Setup-managed R2 bucket for user avatar objects.',
+  },
+  {
+    id: 'setup-r2-diagnostic-logs',
+    bindingRef: 'DIAGNOSTIC_LOGS',
+    name: 'setup-r2-diagnostic-logs',
+    displayName: 'Diagnostic Logs R2',
+    description: 'Setup-managed R2 bucket for diagnostic log detail objects.',
+  },
+  {
+    id: 'setup-r2-audit-archive',
+    bindingRef: 'AUDIT_ARCHIVE',
+    name: 'setup-r2-audit-archive',
+    displayName: 'Audit Archive R2',
+    description: 'Setup-managed R2 bucket for audit archive objects.',
+  },
+  {
+    id: 'setup-r2-import-artifacts',
+    bindingRef: 'IMPORT_ARTIFACTS',
+    name: 'setup-r2-import-artifacts',
+    displayName: 'Import Artifacts R2',
+    description: 'Setup-managed R2 bucket for import artifacts.',
+  },
+  {
+    id: 'setup-r2-export-artifacts',
+    bindingRef: 'EXPORT_ARTIFACTS',
+    name: 'setup-r2-export-artifacts',
+    displayName: 'Export Artifacts R2',
+    description: 'Setup-managed R2 bucket for export artifacts.',
+  },
+  {
+    id: 'setup-r2-sensitive-details',
+    bindingRef: 'SENSITIVE_DETAILS',
+    name: 'setup-r2-sensitive-details',
+    displayName: 'Sensitive Details R2',
+    description: 'Setup-managed R2 bucket for sensitive detail chunks.',
+  },
+];
+
 function getAdminAdapter(c: AdminContext) {
   return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-storage-destinations');
 }
@@ -70,10 +126,58 @@ function hasPlatformAuthority(authContext: AdminAuthContext): boolean {
   );
 }
 
+function hasRuntimeBinding(env: Env, bindingRef: string): boolean {
+  return Boolean((env as unknown as Record<string, unknown>)[bindingRef]);
+}
+
+function buildSetupR2Destinations(env: Env): ManagedStorageDestination[] {
+  return SETUP_R2_DESTINATIONS.filter((destination) =>
+    hasRuntimeBinding(env, destination.bindingRef)
+  ).map((destination) => ({
+    id: destination.id,
+    scope_type: 'platform',
+    scope_id: 'platform',
+    name: destination.name,
+    display_name: destination.displayName,
+    description: destination.description,
+    provider: 'r2',
+    config: {
+      bindingRef: destination.bindingRef,
+      managedBy: 'setup',
+    },
+    managed_by: 'setup',
+    read_only: true,
+    has_credential: false,
+    credential_key_version: null,
+    credential_updated_at: null,
+    credential_updated_by: null,
+    status: 'active',
+    created_by: 'setup',
+    updated_by: 'setup',
+    created_at: 0,
+    updated_at: 0,
+  }));
+}
+
+function mergeSetupR2Destinations(
+  env: Env,
+  destinations: AdminStorageDestination[]
+): AdminStorageDestination[] {
+  const storedBindings = new Set(
+    destinations
+      .map((destination) => String(destination.config.bindingRef ?? '').toUpperCase())
+      .filter(Boolean)
+  );
+  const setupDestinations = buildSetupR2Destinations(env).filter(
+    (destination) => !storedBindings.has(String(destination.config.bindingRef ?? '').toUpperCase())
+  );
+  return [...setupDestinations, ...destinations];
+}
+
 function sanitizeStorageDestinationForAuth(
   authContext: AdminAuthContext,
-  destination: AdminStorageDestination
-): AdminStorageDestination {
+  destination: AdminStorageDestination | ManagedStorageDestination
+): AdminStorageDestination | ManagedStorageDestination {
   if (hasPlatformAuthority(authContext)) {
     return destination;
   }
@@ -88,8 +192,8 @@ function sanitizeStorageDestinationForAuth(
 
 function sanitizeStorageDestinationsForAuth(
   authContext: AdminAuthContext,
-  destinations: AdminStorageDestination[]
-): AdminStorageDestination[] {
+  destinations: Array<AdminStorageDestination | ManagedStorageDestination>
+): Array<AdminStorageDestination | ManagedStorageDestination> {
   return destinations.map((destination) =>
     sanitizeStorageDestinationForAuth(authContext, destination)
   );
@@ -256,7 +360,9 @@ storageDestinationsRouter.get('/', async (c) => {
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
     const items = await repo.listByScope(scope.scopeType, scope.scopeId);
-    return c.json(adminListEnvelope(sanitizeStorageDestinationsForAuth(authContext, items)));
+    const visibleItems =
+      scope.scopeType === 'platform' ? mergeSetupR2Destinations(c.env, items) : items;
+    return c.json(adminListEnvelope(sanitizeStorageDestinationsForAuth(authContext, visibleItems)));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -271,7 +377,8 @@ storageDestinationsRouter.get('/usable', async (c) => {
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
     const items = await repo.listUsableForTenant(getTenantIdFromContext(c));
-    return c.json(adminListEnvelope(sanitizeStorageDestinationsForAuth(authContext, items)));
+    const visibleItems = mergeSetupR2Destinations(c.env, items);
+    return c.json(adminListEnvelope(sanitizeStorageDestinationsForAuth(authContext, visibleItems)));
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
