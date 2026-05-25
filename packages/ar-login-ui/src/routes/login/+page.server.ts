@@ -72,10 +72,6 @@ export const load: PageServerLoad = async (event) => {
 		return {};
 	}
 
-	if (!config.single_tenant_mode && config.is_common_entry_host) {
-		throw redirect(303, '/discover');
-	}
-
 	const currentUrlWithoutGrant = buildCurrentUrlWithoutGrant(event.url, event.request);
 	const discoveryGrant = event.url.searchParams.get('discovery_grant');
 	if (discoveryGrant) {
@@ -127,6 +123,10 @@ export const load: PageServerLoad = async (event) => {
 				)
 			);
 		}
+	}
+
+	if (!config.single_tenant_mode && config.is_common_entry_host) {
+		throw redirect(303, '/discover');
 	}
 
 	if (

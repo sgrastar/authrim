@@ -339,6 +339,56 @@ describe('common-entry routing', () => {
 		);
 	});
 
+	it('accepts a discovery grant before redirecting common-entry /login back to discovery', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					config: {
+						tenant_id: 'default',
+						mode: 'discovery_optional',
+						discovery_methods: ['wayf'],
+						selection_policy: 'select_if_multiple',
+						allow_manual_tenant_entry: false,
+						remember_last_tenant: true,
+						redirect_default_login_to_discovery: true,
+						require_common_discovery_before_login: true,
+						redirect_tenant_discover_to_common_entry: true
+					},
+					single_tenant_mode: false,
+					is_common_entry_host: true,
+					common_discover_url: 'https://conformance.authrim.com/discover'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					valid: true,
+					tenant_id: 'default',
+					target_url: 'https://conformance.authrim.com/login'
+				})
+			);
+
+		const cookies = createCookies();
+		await expect(
+			loginLoad({
+				cookies,
+				fetch,
+				request: new Request('https://conformance.authrim.com/login?discovery_grant=test-grant'),
+				url: new URL('https://conformance.authrim.com/login?discovery_grant=test-grant')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: 'https://conformance.authrim.com/login'
+		});
+
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(cookies.set).toHaveBeenCalledWith(
+			'authrim_discovery_grant_verified',
+			'https://conformance.authrim.com/login',
+			expect.objectContaining({ path: '/login', httpOnly: true, maxAge: 300 })
+		);
+	});
+
 	it('restores SAML login context from a verified discovery grant target URL', async () => {
 		const fetch = vi
 			.fn()
@@ -617,6 +667,43 @@ describe('common-entry routing', () => {
 				config: {
 					mode: 'tenant_only'
 				}
+			}
+		});
+	});
+
+	it('keeps /discover reachable when the naked tenant issuer is also the common discovery URL', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				config: {
+					tenant_id: 'default',
+					mode: 'discovery_optional',
+					discovery_methods: ['wayf'],
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: false,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: false,
+				common_discover_url: 'https://conformance.authrim.com/discover',
+				wayf_candidates: []
+			})
+		);
+
+		const result = await discoverLoad({
+			fetch,
+			cookies: createCookies(),
+			request: new Request('https://conformance-ar-login-ui.sgrastar.workers.dev/discover'),
+			url: new URL('https://conformance-ar-login-ui.sgrastar.workers.dev/discover')
+		} as never);
+
+		expect(result).toMatchObject({
+			inviteErrorCode: null,
+			config: {
+				is_common_entry_host: true,
+				common_discover_url: 'https://conformance.authrim.com/discover'
 			}
 		});
 	});

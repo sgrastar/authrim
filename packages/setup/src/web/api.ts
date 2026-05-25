@@ -794,6 +794,8 @@ export function createApiRoutes(): Hono {
           config.components = {
             ...config.components,
             ...components,
+            loginUi: true,
+            adminUi: true,
             saml: true,
             async: true,
             vc: true,

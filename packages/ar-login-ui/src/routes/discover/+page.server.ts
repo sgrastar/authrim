@@ -130,6 +130,34 @@ function buildCommonDiscoverUrlWithParams(sourceUrl: URL, commonDiscoverUrl: str
 	return target.toString();
 }
 
+function buildPublicUrl(url: URL, request: Request): URL {
+	const publicUrl = new URL(url);
+	const originalHost = request.headers.get('x-authrim-original-host')?.trim();
+	if (originalHost) {
+		publicUrl.protocol = 'https:';
+		publicUrl.host = originalHost;
+	}
+	return publicUrl;
+}
+
+function isSamePublicUrl(sourceUrl: URL, request: Request, targetUrl: string): boolean {
+	const publicUrl = buildPublicUrl(sourceUrl, request);
+	const target = new URL(targetUrl);
+	publicUrl.hash = '';
+	target.hash = '';
+	if (publicUrl.toString() === target.toString()) {
+		return true;
+	}
+
+	const sourceLooksLikeUiWorker =
+		publicUrl.hostname.endsWith('.workers.dev') || publicUrl.hostname.endsWith('.pages.dev');
+	return (
+		sourceLooksLikeUiWorker &&
+		publicUrl.pathname === target.pathname &&
+		publicUrl.search === target.search
+	);
+}
+
 function defaultManualMode(
 	config: DiscoveryConfigResponse['config']
 ): 'tenant_code' | 'tenant_slug' | 'wayf' {
@@ -177,23 +205,30 @@ export const load: PageServerLoad = async (event) => {
 	const inviteToken = event.url.searchParams.get('invite_token');
 	const appHint = event.url.searchParams.get('app_hint');
 	const discoveryGrantContext = readDiscoveryGrantContext(event.url.searchParams);
+	const commonDiscoverTarget = config.common_discover_url
+		? buildCommonDiscoverUrlWithParams(event.url, config.common_discover_url)
+		: null;
+	const currentIsCommonDiscover = commonDiscoverTarget
+		? isSamePublicUrl(event.url, event.request, commonDiscoverTarget)
+		: false;
+	const effectiveConfig = currentIsCommonDiscover ? { ...config, is_common_entry_host: true } : config;
 
 	if (
-		!config.single_tenant_mode &&
-		!config.is_common_entry_host &&
-		config.config.redirect_tenant_discover_to_common_entry &&
-		config.common_discover_url
+		!effectiveConfig.single_tenant_mode &&
+		!effectiveConfig.is_common_entry_host &&
+		effectiveConfig.config.redirect_tenant_discover_to_common_entry &&
+		commonDiscoverTarget
 	) {
-		throw redirect(303, buildCommonDiscoverUrlWithParams(event.url, config.common_discover_url));
+		throw redirect(303, commonDiscoverTarget);
 	}
 
-	if (config.single_tenant_mode && config.default_candidate && !inviteToken) {
-		throw redirect(303, config.default_candidate.login_url);
+	if (effectiveConfig.single_tenant_mode && effectiveConfig.default_candidate && !inviteToken) {
+		throw redirect(303, effectiveConfig.default_candidate.login_url);
 	}
 
 	if (
-		config.is_common_entry_host &&
-		config.config.mode === 'tenant_only' &&
+		effectiveConfig.is_common_entry_host &&
+		effectiveConfig.config.mode === 'tenant_only' &&
 		discoveryGrantContext.expectedTenantId &&
 		discoveryGrantContext.returnTo &&
 		!inviteToken &&
@@ -213,30 +248,35 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (
-		config.is_common_entry_host &&
-		config.config.skip_discovery_if_only_one_tenant &&
-		config.single_active_tenant_candidate &&
+		effectiveConfig.is_common_entry_host &&
+		effectiveConfig.config.skip_discovery_if_only_one_tenant &&
+		effectiveConfig.single_active_tenant_candidate &&
 		!inviteToken &&
 		!appHint
 	) {
 		await redirectResolvedCandidate(
 			event as never,
-			config,
-			config.single_active_tenant_candidate,
+			effectiveConfig,
+			effectiveConfig.single_active_tenant_candidate,
 			discoveryGrantContext
 		);
 	}
 
 	if (
-		config.config.mode === 'tenant_only' &&
-		!config.is_common_entry_host &&
+		effectiveConfig.config.mode === 'tenant_only' &&
+		!effectiveConfig.is_common_entry_host &&
 		!inviteToken &&
 		!appHint
 	) {
 		throw redirect(303, '/login');
 	}
 
-	if (!config.single_tenant_mode && !config.is_common_entry_host && !inviteToken && !appHint) {
+	if (
+		!effectiveConfig.single_tenant_mode &&
+		!effectiveConfig.is_common_entry_host &&
+		!inviteToken &&
+		!appHint
+	) {
 		throw redirect(303, '/login');
 	}
 
@@ -248,7 +288,7 @@ export const load: PageServerLoad = async (event) => {
 			discoveryHeaders
 		);
 		if (result.result === 'resolved') {
-			if (config.config.remember_last_tenant) {
+			if (effectiveConfig.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
 			}
 			throw redirect(
@@ -258,7 +298,7 @@ export const load: PageServerLoad = async (event) => {
 		}
 
 		return {
-			config,
+			config: effectiveConfig,
 			rememberedCandidate,
 			inviteToken,
 			...discoveryGrantContext,
@@ -272,7 +312,7 @@ export const load: PageServerLoad = async (event) => {
 	if (appHint) {
 		const result = await resolveDiscovery(event.fetch, 'app_hint', appHint, discoveryHeaders);
 		if (result.result === 'resolved') {
-			if (config.config.remember_last_tenant) {
+			if (effectiveConfig.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
 			}
 			throw redirect(303, result.candidate.login_url);
@@ -280,7 +320,7 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	return {
-		config,
+		config: effectiveConfig,
 		rememberedCandidate,
 		inviteToken,
 		...discoveryGrantContext,
@@ -297,8 +337,18 @@ export const actions: Actions = {
 		const value = String(formData.get('value') || '').trim();
 		const inviteToken = String(formData.get('invite_token') || '').trim();
 		const { expectedTenantId, returnTo, loginHint } = readDiscoveryGrantContext(formData);
+		const currentIsCommonDiscover = config.common_discover_url
+			? isSamePublicUrl(
+					event.url,
+					event.request,
+					buildCommonDiscoverUrlWithParams(event.url, config.common_discover_url)
+				)
+			: false;
+		const effectiveConfig = currentIsCommonDiscover
+			? { ...config, is_common_entry_host: true }
+			: config;
 
-		if (!config.single_tenant_mode && !config.is_common_entry_host && !inviteToken) {
+		if (!effectiveConfig.single_tenant_mode && !effectiveConfig.is_common_entry_host && !inviteToken) {
 			throw redirect(303, '/login');
 		}
 
@@ -314,7 +364,7 @@ export const actions: Actions = {
 			const result = await resolveDiscovery(event.fetch, mode, value, discoveryHeaders);
 
 			if (result.result === 'resolved') {
-				if (config.config.remember_last_tenant) {
+				if (effectiveConfig.config.remember_last_tenant) {
 					setRememberedTenantCookie(event.cookies, result.candidate);
 				} else {
 					clearRememberedTenantCookie(event.cookies);
@@ -331,13 +381,13 @@ export const actions: Actions = {
 					);
 				}
 
-				await redirectResolvedCandidate(event, config, result.candidate, {
+				await redirectResolvedCandidate(event, effectiveConfig, result.candidate, {
 					expectedTenantId,
 					returnTo,
 					loginHint: loginHint || (mode === 'email' && value ? value : null)
 				});
 
-				if (config.config.selection_policy === 'always_select') {
+				if (effectiveConfig.config.selection_policy === 'always_select') {
 					return {
 						mode,
 						value,
@@ -364,7 +414,7 @@ export const actions: Actions = {
 
 			if (result.result === 'manual_required') {
 				return {
-					mode: defaultManualMode(config.config),
+					mode: defaultManualMode(effectiveConfig.config),
 					value,
 					errorCode: 'manual_required' as const,
 					candidates: [],

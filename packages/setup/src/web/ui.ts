@@ -933,32 +933,12 @@ export function getHtmlTemplate(
       color: var(--text-muted);
     }
 
-    .standard-component-list {
+    .standard-component-title {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      margin: 0.625rem 0 0 1.5rem;
-    }
-
-    .standard-component-badge {
-      display: inline-flex;
       align-items: center;
-      gap: 0.35rem;
-      min-height: 1.75rem;
-      padding: 0.25rem 0.65rem;
-      border: 1px solid rgba(59, 130, 246, 0.35);
-      border-radius: 999px;
-      background: rgba(59, 130, 246, 0.08);
-      color: var(--text);
-      font-size: 0.85rem;
+      gap: 0.5rem;
       font-weight: 600;
-      line-height: 1.15;
-    }
-
-    .standard-component-badge::before {
-      content: '✓';
-      color: var(--primary);
-      font-weight: 700;
+      margin-bottom: 0.25rem;
     }
 
     /* ========================================
@@ -3412,38 +3392,30 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         <!-- API Component (required) -->
         <div class="component-card">
-          <label class="checkbox-item" style="font-weight: 600; margin-bottom: 0.25rem;">
-            <input type="checkbox" id="comp-api" checked disabled>
+          <div class="standard-component-title">
             🔐 <span data-i18n="web.config.apiRequired">API (required)</span>
-          </label>
-          <p style="margin: 0.25rem 0 0.5rem 1.5rem; font-size: 0.85rem;" data-i18n="web.config.apiDesc">
+          </div>
+          <p style="margin: 0.25rem 0 0.5rem 0; font-size: 0.85rem;" data-i18n="web.config.apiDesc">
             OIDC Provider endpoints: authorize, token, userinfo, discovery, management APIs.
           </p>
-          <div class="standard-component-list" aria-label="Standard API components">
-            <span class="standard-component-badge" data-i18n="web.config.saml">SAML IdP</span>
-            <span class="standard-component-badge" data-i18n="web.config.deviceFlow">Device Flow / CIBA</span>
-            <span class="standard-component-badge" data-i18n="web.config.vcSdJwt">VC SD-JWT</span>
-          </div>
         </div>
 
         <!-- Login UI Component -->
         <div class="component-card">
-          <label class="checkbox-item" style="font-weight: 600; margin-bottom: 0.25rem;">
-            <input type="checkbox" id="comp-login-ui" checked>
+          <div class="standard-component-title">
             🖥️ <span data-i18n="web.comp.loginUi">Login UI</span>
-          </label>
-          <p style="margin: 0.25rem 0 0 1.5rem; font-size: 0.85rem;" data-i18n="web.comp.loginUiDesc">
+          </div>
+          <p style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="web.comp.loginUiDesc">
             User-facing login, registration, consent, and account management pages.
           </p>
         </div>
 
         <!-- Admin UI Component -->
         <div class="component-card">
-          <label class="checkbox-item" style="font-weight: 600; margin-bottom: 0.25rem;">
-            <input type="checkbox" id="comp-admin-ui" checked>
+          <div class="standard-component-title">
             ⚙️ <span data-i18n="web.comp.adminUi">Admin UI</span>
-          </label>
-          <p style="margin: 0.25rem 0 0 1.5rem; font-size: 0.85rem;" data-i18n="web.comp.adminUiDesc">
+          </div>
+          <p style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="web.comp.adminUiDesc">
             Admin dashboard for managing tenants, clients, users, and system settings.
           </p>
         </div>
@@ -3592,9 +3564,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <span class="preview-component-badge">API</span>
             <span class="preview-component-badge">Login UI</span>
             <span class="preview-component-badge">Admin UI</span>
-            <span class="preview-component-badge">SAML IdP</span>
-            <span class="preview-component-badge">Device Flow/CIBA</span>
-            <span class="preview-component-badge">VC SD-JWT</span>
           </span>
         </div>
 
@@ -5428,8 +5397,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('naked-domain').checked = false;
       document.getElementById('user-id-format').value = 'nanoid';
 
-      document.getElementById('comp-login-ui').checked = true;
-      document.getElementById('comp-admin-ui').checked = true;
       document.getElementById('domain-check-row').style.display = 'none';
       document.getElementById('domain-check-status').replaceChildren();
       document.getElementById('login-domain-zone-status').replaceChildren();
@@ -5785,9 +5752,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const components = {
         api: true,
+        ...(loadedConfig.components || {}),
         loginUi: true,
         adminUi: true,
-        ...(loadedConfig.components || {}),
         saml: true,
         async: true,
         vc: true,
@@ -5826,13 +5793,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       setSelectedStorageProfileId(config.profiles?.defaults?.storage);
       setTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots || 3);
 
-      // Set component checkboxes
-      if (document.getElementById('comp-login-ui')) {
-        document.getElementById('comp-login-ui').checked = components.loginUi !== false;
-      }
-      if (document.getElementById('comp-admin-ui')) {
-        document.getElementById('comp-admin-ui').checked = components.adminUi !== false;
-      }
       // Restore domain check UI if custom domain is set
       const loadedBaseDomain = document.getElementById('base-domain').value.trim();
       if (loadedBaseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(loadedBaseDomain)) {
@@ -6109,10 +6069,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       refreshDomainDepthValidation();
 
       // Components - build list based on selections
-      const components = ['API'];
-      if (document.getElementById('comp-login-ui').checked) components.push('Login UI');
-      if (document.getElementById('comp-admin-ui').checked) components.push('Admin UI');
-      components.push('SAML IdP', 'Device Flow/CIBA', 'VC SD-JWT');
+      const components = ['API', 'Login UI', 'Admin UI'];
       const previewComponents = document.getElementById('preview-components');
       previewComponents.textContent = '';
       components.forEach((component) => {
@@ -6168,13 +6125,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         domainUiState.showExamples ? 'block' : 'none';
       refreshApiDomainUi();
 
-      // Login UI - check if component is enabled (in custom mode)
-      const loginUiEnabled = document.getElementById('comp-login-ui').checked;
       const previewLogin = document.getElementById('preview-login');
-      if (!loginUiEnabled) {
-        previewLogin.textContent = '(Not deployed)';
-        previewLogin.style.color = 'var(--text-muted)';
-      } else if (loginDomain) {
+      if (loginDomain) {
         previewLogin.textContent = 'https://' + loginDomain;
         previewLogin.style.color = '';
       } else {
@@ -6183,13 +6135,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
       document.getElementById('login-default').textContent = loginUiWorkerDomain;
 
-      // Admin UI - check if component is enabled (in custom mode)
-      const adminUiEnabled = document.getElementById('comp-admin-ui').checked;
       const previewAdmin = document.getElementById('preview-admin');
-      if (!adminUiEnabled) {
-        previewAdmin.textContent = '(Not deployed)';
-        previewAdmin.style.color = 'var(--text-muted)';
-      } else if (adminDomain) {
+      if (adminDomain) {
         previewAdmin.textContent = 'https://' + adminDomain;
         previewAdmin.style.color = '';
       } else {
@@ -6202,7 +6149,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const adminPreviewUrl = previewAdmin.textContent.trim();
       const adminApiModeRow = document.getElementById('preview-admin-api-mode-row');
       const adminApiModeEl = document.getElementById('preview-admin-api-mode');
-      if (adminUiEnabled && adminPreviewUrl.startsWith('https://')) {
+      if (adminPreviewUrl.startsWith('https://')) {
         adminApiModeRow.style.display = '';
         adminApiModeEl.textContent = describeAdminPreviewMode(
           resolveAdminPreviewMode(apiPreviewUrl, adminPreviewUrl, baseDomain)
@@ -6256,9 +6203,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           name.textContent = tenantLabel;
           block.appendChild(name);
           block.appendChild(makeUrlRow('Issuer:', baseUrl));
-          if (loginUiEnabled) {
-            block.appendChild(makeUrlRow('Login URL:', baseUrl + '/login'));
-          }
+          block.appendChild(makeUrlRow('Login URL:', baseUrl + '/login'));
           block.appendChild(makeUrlRow('OIDC Discovery:', baseUrl + '/.well-known/openid-configuration'));
           return block;
         };
@@ -6269,39 +6214,30 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         // Login UI deployment origin. Tenant login remains canonical on each issuer host.
         const loginPagesRow = document.getElementById('preview-login-pages-row');
         const tenantDiscoverRow = document.getElementById('preview-tenant-discover-row');
-        if (loginUiEnabled) {
-          const loginUiBase = loginDomain ? loginDomain : loginUiWorkerDomain;
-          loginPagesRow.style.display = '';
-          setPreviewValue(
-            document.getElementById('preview-login-pages'),
-            'https://' + loginUiBase,
-            t('web.preview.loginUiOriginNote')
-          );
-          // Tenant discovery uses the shared Login UI custom domain when one is configured.
-          // Without a Login UI custom domain, the router-owned base domain remains the fallback.
-          tenantDiscoverRow.style.display = '';
-          document.getElementById('preview-tenant-discover').textContent =
-            'https://' + (loginDomain || baseDomain) + '/discover';
-        } else {
-          loginPagesRow.style.display = 'none';
-          tenantDiscoverRow.style.display = 'none';
-        }
+        const loginUiBase = loginDomain ? loginDomain : loginUiWorkerDomain;
+        loginPagesRow.style.display = '';
+        setPreviewValue(
+          document.getElementById('preview-login-pages'),
+          'https://' + loginUiBase,
+          t('web.preview.loginUiOriginNote')
+        );
+        // Tenant discovery uses the shared Login UI custom domain when one is configured.
+        // Without a Login UI custom domain, the router-owned base domain remains the fallback.
+        tenantDiscoverRow.style.display = '';
+        document.getElementById('preview-tenant-discover').textContent =
+          'https://' + (loginDomain || baseDomain) + '/discover';
 
         // Admin UI access target
         const adminAccessRow = document.getElementById('preview-admin-access-row');
         const adminAccessEl  = document.getElementById('preview-admin-access');
-        if (adminUiEnabled) {
-          adminAccessRow.style.display = '';
-          const adminSameAsApi = adminDomain !== '' && adminDomain === baseDomain;
-          if (adminSameAsApi) {
-            setPreviewValue(adminAccessEl, firstBase + '/admin/info', t('web.preview.viaApiProxy'));
-          } else if (adminDomain) {
-            adminAccessEl.textContent = 'https://' + adminDomain + '/admin/info';
-          } else {
-            adminAccessEl.textContent = 'https://' + adminUiWorkerDomain + '/admin/info';
-          }
+        adminAccessRow.style.display = '';
+        const adminSameAsApi = adminDomain !== '' && adminDomain === baseDomain;
+        if (adminSameAsApi) {
+          setPreviewValue(adminAccessEl, firstBase + '/admin/info', t('web.preview.viaApiProxy'));
+        } else if (adminDomain) {
+          adminAccessEl.textContent = 'https://' + adminDomain + '/admin/info';
         } else {
-          adminAccessRow.style.display = 'none';
+          adminAccessEl.textContent = 'https://' + adminUiWorkerDomain + '/admin/info';
         }
 
         // Detect invalid settings and show a warning
@@ -6332,7 +6268,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Attach event listeners to all inputs
-    ['env', 'base-domain', 'enable-multi-tenant', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain', 'comp-login-ui', 'comp-admin-ui'].forEach(id => {
+    ['env', 'base-domain', 'enable-multi-tenant', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener('input', updatePreview);
@@ -6653,36 +6589,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       updatePreview();
     });
 
-    // Login UI component toggle - grey out domain settings when unchecked
-    document.getElementById('comp-login-ui').addEventListener('change', (e) => {
-      const loginDomainRow = document.getElementById('login-domain-row');
-      const loginDomainInput = document.getElementById('login-domain');
-      if (e.target.checked) {
-        loginDomainRow.style.opacity = '1';
-        loginDomainInput.disabled = false;
-      } else {
-        loginDomainRow.style.opacity = '0.4';
-        loginDomainInput.disabled = true;
-        loginDomainInput.value = '';
-      }
-      updatePreview();
-    });
-
-    // Admin UI component toggle - grey out domain settings when unchecked
-    document.getElementById('comp-admin-ui').addEventListener('change', (e) => {
-      const adminDomainRow = document.getElementById('admin-domain-row');
-      const adminDomainInput = document.getElementById('admin-domain');
-      if (e.target.checked) {
-        adminDomainRow.style.opacity = '1';
-        adminDomainInput.disabled = false;
-      } else {
-        adminDomainRow.style.opacity = '0.4';
-        adminDomainInput.disabled = true;
-        adminDomainInput.value = '';
-      }
-      updatePreview();
-    });
-
     document.getElementById('btn-back-mode').addEventListener('click', () => {
       setStep(1);
       showSection('topMenu');
@@ -6750,13 +6656,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         : undefined;
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
-      const loginUiEnabled = document.getElementById('comp-login-ui').checked;
-      const adminUiEnabled = document.getElementById('comp-admin-ui').checked;
 
-      const loginZoneOk =
-        !loginUiEnabled || (await checkUiCustomDomainZone('login', { blockOnFailure: true }));
-      const adminZoneOk =
-        !adminUiEnabled || (await checkUiCustomDomainZone('admin', { blockOnFailure: true }));
+      const loginZoneOk = await checkUiCustomDomainZone('login', { blockOnFailure: true });
+      const adminZoneOk = await checkUiCustomDomainZone('admin', { blockOnFailure: true });
       if (!loginZoneOk || !adminZoneOk) {
         document.getElementById(!loginZoneOk ? 'login-domain' : 'admin-domain').focus();
         return;
@@ -6778,8 +6680,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         },
         components: {
           api: true,
-          loginUi: loginUiEnabled,
-          adminUi: adminUiEnabled,
+          loginUi: true,
+          adminUi: true,
           saml: true,
           async: true,
           vc: true,
@@ -7309,18 +7211,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             apiUrl = 'https://' + workersDomain;
           }
           // Login UI URL for setup page (setup page is in Login UI, not API)
-          const loginUiEnabled = config.components?.loginUi !== false;
           const loginUiWorkerDomain = workersSubdomain
             ? config.env + '-ar-login-ui.' + workersSubdomain + '.workers.dev'
             : config.env + '-ar-login-ui.workers.dev';
-          const loginUiUrl = loginUiEnabled
-            ? (config.loginUiDomain
-              ? ensureHttpsUrl(config.loginUiDomain)
-              : 'https://' + loginUiWorkerDomain)
-            : null;
+          const loginUiUrl = config.loginUiDomain
+            ? ensureHttpsUrl(config.loginUiDomain)
+            : 'https://' + loginUiWorkerDomain;
 
           output.textContent += '  API URL: ' + apiUrl + '\\n';
-          output.textContent += '  Login UI URL: ' + (loginUiUrl || 'Not deployed') + '\\n';
+          output.textContent += '  Login UI URL: ' + loginUiUrl + '\\n';
           output.textContent += '  Keys Dir: .authrim-keys/' + config.env + '/\\n';
           scrollToBottom(log);
 
@@ -7763,9 +7662,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         },
         components: {
           api: true,
+          ...(config.components || {}),
           loginUi: true,
           adminUi: true,
-          ...(config.components || {}),
           saml: true,
           async: true,
           vc: true,

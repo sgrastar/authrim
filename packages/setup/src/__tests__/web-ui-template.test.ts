@@ -146,6 +146,31 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('id="mode-quick"');
   });
 
+  it('renders core components as standard items without setup checkboxes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('standard-component-title');
+    expect(html).toContain('data-i18n="web.config.apiRequired"');
+    expect(html).toContain('data-i18n="web.comp.loginUi"');
+    expect(html).toContain('data-i18n="web.comp.adminUi"');
+    expect(html).not.toContain('id="comp-api"');
+    expect(html).not.toContain('id="comp-login-ui"');
+    expect(html).not.toContain('id="comp-admin-ui"');
+    expect(html).not.toContain("document.getElementById('comp-login-ui')");
+    expect(html).not.toContain("document.getElementById('comp-admin-ui')");
+    expect(html).not.toContain('standard-component-badge');
+    expect(html).not.toContain('<span class="preview-component-badge">SAML IdP</span>');
+    expect(html).not.toContain('<span class="preview-component-badge">Device Flow/CIBA</span>');
+    expect(html).not.toContain('<span class="preview-component-badge">VC SD-JWT</span>');
+    expect(html).not.toContain("'SAML IdP', 'Device Flow/CIBA', 'VC SD-JWT'");
+  });
+
   it('renders the keys saved panel with dark-mode styles and a copy button', () => {
     const html = getHtmlTemplate(
       'session-token',

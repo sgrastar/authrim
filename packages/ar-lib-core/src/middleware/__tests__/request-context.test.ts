@@ -55,6 +55,10 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.get('/admin-init-setup', (c) => {
+    const tenantId = getTenantIdFromContext(c);
+    return c.json({ tenantId });
+  });
   app.get('/api/auth/discovery', (c) => {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
@@ -359,6 +363,31 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(tenantsRes.status).toBe(200);
       await expect(tenantsRes.json()).resolves.toEqual({ tenantId: 'first' });
       expect(db.prepare).not.toHaveBeenCalled();
+    });
+
+    it('keeps the naked issuer domain tenant-scoped when it is also the configured UI host', async () => {
+      const db = createMockDB({ tenantRow: { id: 'first' } });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        PRIMARY_TENANT_ID: 'first',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        UI_URL: `https://${BASE_DOMAIN}`,
+        ADMIN_UI_URL: `https://${BASE_DOMAIN}`,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(BASE_DOMAIN, '/admin-init-setup'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
     });
 
     it('keeps tenant inventory admin requests on the control-plane database', async () => {
