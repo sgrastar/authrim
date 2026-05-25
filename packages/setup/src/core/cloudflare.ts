@@ -7,8 +7,7 @@
 
 import { execa, type ExecaError } from 'execa';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
-import { fileURLToPath } from 'node:url';
-import { basename, dirname, join as pathJoin } from 'node:path';
+import { basename, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readdirSync, statSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
@@ -31,10 +30,6 @@ import {
   loadSetupMachinePublicJwk,
 } from './admin-machine-access.js';
 
-// Package directory (for bundled migrations)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PACKAGE_MIGRATIONS_DIR = pathJoin(__dirname, '..', '..', 'migrations');
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
 const QUEUE_PROVISIONING_DEFINITIONS = [
@@ -2678,7 +2673,7 @@ export async function seedRuntimeProfiles(
 /**
  * Locate the migrations root used by setup commands.
  *
- * Priority: local project > authrim subdir > cwd > bundled package migrations.
+ * Priority: local project > authrim subdir > cwd.
  */
 export async function findMigrationsRoot(
   rootDir: string,
@@ -2691,7 +2686,6 @@ export async function findMigrationsRoot(
     resolve(rootDir, 'authrim', 'migrations'),
     resolve(process.cwd(), 'migrations'),
     resolve(process.cwd(), 'authrim', 'migrations'),
-    PACKAGE_MIGRATIONS_DIR,
   ];
 
   for (const searchPath of searchPaths) {
@@ -2708,10 +2702,11 @@ export async function findMigrationsRoot(
 /**
  * Run migrations for an Authrim environment
  *
- * Searches for migrations directory in multiple locations:
+ * Searches for migrations directory in source-code locations:
  * 1. {rootDir}/migrations
  * 2. {rootDir}/authrim/migrations
- * 3. Relative to current working directory
+ * 3. process.cwd()/migrations
+ * 4. process.cwd()/authrim/migrations
  *
  * @param env - Environment name
  * @param rootDir - Root directory to search for migrations

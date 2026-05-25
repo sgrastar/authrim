@@ -159,17 +159,13 @@ describe('listD1MigrationSqlFiles', () => {
 });
 
 describe('migration seed SQL portability', () => {
-  it('keeps current and setup mirror seed migrations free of INSERT OR IGNORE', () => {
+  it('keeps seed migrations free of INSERT OR IGNORE', () => {
     const migrationFiles = [
       new URL('../../../../migrations/057_add_tenants_table.sql', import.meta.url),
       new URL('../../../../migrations/pii/001_pii_initial.sql', import.meta.url),
       new URL('../../../../migrations/admin/002_admin_rbac.sql', import.meta.url),
       new URL('../../../../migrations/admin/005_admin_abac_rebac.sql', import.meta.url),
       new URL('../../../../migrations/admin/008_admin_rebac_definitions.sql', import.meta.url),
-      new URL('../../migrations/pii/001_pii_initial.sql', import.meta.url),
-      new URL('../../migrations/admin/002_admin_rbac.sql', import.meta.url),
-      new URL('../../migrations/admin/005_admin_abac_rebac.sql', import.meta.url),
-      new URL('../../migrations/admin/008_admin_rebac_definitions.sql', import.meta.url),
     ];
 
     for (const fileUrl of migrationFiles) {
@@ -180,10 +176,7 @@ describe('migration seed SQL portability', () => {
   });
 
   it('keeps oauth_clients device secret policy columns in fresh schemas', () => {
-    const migrationFiles = [
-      new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
-      new URL('../../migrations/000_fresh_schema.sql', import.meta.url),
-    ];
+    const migrationFiles = [new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url)];
 
     for (const fileUrl of migrationFiles) {
       const sql = readFileSync(fileUrl, 'utf-8');
@@ -200,10 +193,6 @@ describe('migration seed SQL portability', () => {
         '../../../../migrations/admin/016_admin_role_assignment_scope_normalization.sql',
         import.meta.url
       ),
-      new URL(
-        '../../migrations/admin/016_admin_role_assignment_scope_normalization.sql',
-        import.meta.url
-      ),
     ];
 
     for (const fileUrl of migrationFiles) {
@@ -215,7 +204,7 @@ describe('migration seed SQL portability', () => {
     }
   });
 
-  it('replaces backend-specific epoch helpers in current and setup migration assets', () => {
+  it('replaces backend-specific epoch helpers in migration assets', () => {
     const migrationFiles = [
       new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
       new URL('../../../../migrations/052_consent_management.sql', import.meta.url),
@@ -224,10 +213,6 @@ describe('migration seed SQL portability', () => {
       new URL('../../../../migrations/admin/002_admin_rbac.sql', import.meta.url),
       new URL('../../../../migrations/admin/005_admin_abac_rebac.sql', import.meta.url),
       new URL('../../../../migrations/admin/008_admin_rebac_definitions.sql', import.meta.url),
-      new URL('../../migrations/000_fresh_schema.sql', import.meta.url),
-      new URL('../../migrations/admin/002_admin_rbac.sql', import.meta.url),
-      new URL('../../migrations/admin/005_admin_abac_rebac.sql', import.meta.url),
-      new URL('../../migrations/admin/008_admin_rebac_definitions.sql', import.meta.url),
     ];
 
     for (const fileUrl of migrationFiles) {
@@ -249,7 +234,7 @@ describe('migration seed SQL portability', () => {
     expect(sql).toContain("'system_claim_' || t.id || '_address_country'");
   });
 
-  it('removes partial indexes from current and setup migration assets in the current gate', () => {
+  it('removes partial indexes from migration assets in the current gate', () => {
     const migrationFiles = [
       new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
       new URL('../../../../migrations/052_consent_management.sql', import.meta.url),
@@ -257,7 +242,6 @@ describe('migration seed SQL portability', () => {
       new URL('../../../../migrations/057_add_tenants_table.sql', import.meta.url),
       new URL('../../../../migrations/058_add_tenant_domain_mappings.sql', import.meta.url),
       new URL('../../../../migrations/064_add_tenant_vanity_domains.sql', import.meta.url),
-      new URL('../../migrations/000_fresh_schema.sql', import.meta.url),
     ];
 
     const partialIndexPattern = /CREATE(?: UNIQUE)? INDEX[\s\S]{0,120}?WHERE\b/;
@@ -269,10 +253,7 @@ describe('migration seed SQL portability', () => {
   });
 
   it('scopes OAuth client identifiers by tenant in fresh schema assets', () => {
-    const migrationFiles = [
-      new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url),
-      new URL('../../migrations/000_fresh_schema.sql', import.meta.url),
-    ];
+    const migrationFiles = [new URL('../../../../migrations/000_fresh_schema.sql', import.meta.url)];
 
     for (const fileUrl of migrationFiles) {
       const sql = readFileSync(fileUrl, 'utf-8');
