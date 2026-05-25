@@ -256,11 +256,7 @@ async function processLogoutResponse(
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
   // Get IdP configuration
-  const idpConfig = await getIdPConfigByEntityId(
-    env,
-    tenantId,
-    logoutResponse.issuer
-  );
+  const idpConfig = await getIdPConfigByEntityId(env, tenantId, logoutResponse.issuer);
   if (!idpConfig) {
     log.warn('Unknown IdP LogoutResponse issuer', { issuer: logoutResponse.issuer });
     return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
@@ -286,9 +282,12 @@ async function processLogoutResponse(
 
   try {
     if (!env.STATE_STORE) {
-      throw new SAMLLogoutResponseCorrelationError('STATE_STORE is required for SP LogoutResponse correlation', {
-        idp_entity_id: idpConfig.entityId,
-      });
+      throw new SAMLLogoutResponseCorrelationError(
+        'STATE_STORE is required for SP LogoutResponse correlation',
+        {
+          idp_entity_id: idpConfig.entityId,
+        }
+      );
     }
     const outboundLogoutRequest = await consumeSAMLOutboundLogoutRequest(env.STATE_STORE, {
       tenantId,

@@ -106,7 +106,9 @@ describe('IdP metadata', () => {
 
     const doc = parseXml(xml);
     const descriptor = findElement(doc, SAML_NAMESPACES.MD, 'IDPSSODescriptor')!;
-    const childNames = Array.from(descriptor.childNodes as ArrayLike<{ nodeType: number; localName: string }>)
+    const childNames = Array.from(
+      descriptor.childNodes as ArrayLike<{ nodeType: number; localName: string }>
+    )
       .filter((node) => node.nodeType === 1)
       .map((node) => node.localName);
 

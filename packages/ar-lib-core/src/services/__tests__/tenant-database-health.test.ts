@@ -105,7 +105,11 @@ describe('tenant database health', () => {
       adapterWithHealth(
         { healthy: true, latencyMs: 1, type: 'd1' },
         {
-          migrations: ['001_core_foundation.sql', '006_core_extended_operations.sql', 'invalid.sql'],
+          migrations: [
+            '001_core_foundation.sql',
+            '006_core_extended_operations.sql',
+            'invalid.sql',
+          ],
         }
       )
     );

@@ -211,7 +211,9 @@ export const load: PageServerLoad = async (event) => {
 	const currentIsCommonDiscover = commonDiscoverTarget
 		? isSamePublicUrl(event.url, event.request, commonDiscoverTarget)
 		: false;
-	const effectiveConfig = currentIsCommonDiscover ? { ...config, is_common_entry_host: true } : config;
+	const effectiveConfig = currentIsCommonDiscover
+		? { ...config, is_common_entry_host: true }
+		: config;
 
 	if (
 		!effectiveConfig.single_tenant_mode &&
@@ -348,7 +350,11 @@ export const actions: Actions = {
 			? { ...config, is_common_entry_host: true }
 			: config;
 
-		if (!effectiveConfig.single_tenant_mode && !effectiveConfig.is_common_entry_host && !inviteToken) {
+		if (
+			!effectiveConfig.single_tenant_mode &&
+			!effectiveConfig.is_common_entry_host &&
+			!inviteToken
+		) {
 			throw redirect(303, '/login');
 		}
 

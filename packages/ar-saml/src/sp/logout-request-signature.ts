@@ -1,7 +1,4 @@
-import type {
-  SAMLBinding,
-  SAMLIdPConfig,
-} from '@authrim/ar-lib-core';
+import type { SAMLBinding, SAMLIdPConfig } from '@authrim/ar-lib-core';
 import type { ParsedLogoutRequest } from '../common/slo-messages';
 import {
   hasSignature,
@@ -139,10 +136,7 @@ function validateRedirectSignatureAlgorithm(
   }
 }
 
-function validateXmlSignatureAlgorithms(
-  xml: string,
-  idpConfig: SAMLIdPConfig
-): void {
+function validateXmlSignatureAlgorithms(xml: string, idpConfig: SAMLIdPConfig): void {
   const doc = parseXml(xml);
   const allowedSignatureAlgorithms = getAcceptedSignatureAlgorithms(idpConfig);
   const allowedDigestAlgorithms = getAcceptedDigestAlgorithms(idpConfig);

@@ -142,31 +142,33 @@ export const TenantConfigSchema = z.object({
 // Components Configuration
 // =============================================================================
 
-export const ComponentsConfigSchema = z.object({
-  /** Core API components (always enabled) */
-  api: z.boolean().default(true),
-  /** Login UI component */
-  loginUi: z.boolean().default(true),
-  /** Admin UI component */
-  adminUi: z.boolean().default(true),
-  /** SAML IdP/SP support */
-  saml: z.boolean().default(true),
-  /** Async queue processing */
-  async: z.boolean().default(true),
-  /** Verifiable Credentials */
-  vc: z.boolean().default(true),
-  /** External IdP Bridge (Social Login) - standard component */
-  bridge: z.boolean().default(true),
-  /** ReBAC Policy service - standard component */
-  policy: z.boolean().default(true),
-}).transform((components) => ({
-  ...components,
-  saml: true,
-  async: true,
-  vc: true,
-  bridge: true,
-  policy: true,
-}));
+export const ComponentsConfigSchema = z
+  .object({
+    /** Core API components (always enabled) */
+    api: z.boolean().default(true),
+    /** Login UI component */
+    loginUi: z.boolean().default(true),
+    /** Admin UI component */
+    adminUi: z.boolean().default(true),
+    /** SAML IdP/SP support */
+    saml: z.boolean().default(true),
+    /** Async queue processing */
+    async: z.boolean().default(true),
+    /** Verifiable Credentials */
+    vc: z.boolean().default(true),
+    /** External IdP Bridge (Social Login) - standard component */
+    bridge: z.boolean().default(true),
+    /** ReBAC Policy service - standard component */
+    policy: z.boolean().default(true),
+  })
+  .transform((components) => ({
+    ...components,
+    saml: true,
+    async: true,
+    vc: true,
+    bridge: true,
+    policy: true,
+  }));
 
 // =============================================================================
 // OIDC Configuration

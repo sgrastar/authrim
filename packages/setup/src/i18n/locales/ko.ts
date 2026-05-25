@@ -455,8 +455,7 @@ const ko: Translations = {
 
   // Standard components
   'components.title': '표준 컴포넌트',
-  'components.note':
-    'SAML, Device Flow/CIBA, VC, 소셜 로그인, 정책 엔진은 기본으로 설치됩니다',
+  'components.note': 'SAML, Device Flow/CIBA, VC, 소셜 로그인, 정책 엔진은 기본으로 설치됩니다',
   'components.samlPrompt': 'SAML 지원을 활성화하시겠습니까?',
   'components.vcPrompt': '검증 가능한 자격 증명(VC)을 활성화하시겠습니까?',
   'components.saml': 'SAML:',

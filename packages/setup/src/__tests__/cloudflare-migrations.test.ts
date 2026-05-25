@@ -52,7 +52,11 @@ function activePiiMigrationFiles(): string[] {
 }
 
 function activeD1MigrationFiles(): string[] {
-  return [...activeCoreMigrationFiles(), ...activeAdminMigrationFiles(), ...activePiiMigrationFiles()];
+  return [
+    ...activeCoreMigrationFiles(),
+    ...activeAdminMigrationFiles(),
+    ...activePiiMigrationFiles(),
+  ];
 }
 
 function readMigration(relativePath: string): string {
@@ -65,7 +69,11 @@ function readMigrations(relativePaths: string[]): string {
 
 function runMigrationFiles(sqlite3Path: string, dbPath: string, relativePaths: string[]): void {
   for (const relativePath of relativePaths) {
-    runSqlite(sqlite3Path, dbPath, renderPortableMigrationSql(readMigration(relativePath), 'sqlite'));
+    runSqlite(
+      sqlite3Path,
+      dbPath,
+      renderPortableMigrationSql(readMigration(relativePath), 'sqlite')
+    );
   }
 }
 
