@@ -1,6 +1,22 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { KeyManager } from '../KeyManager.ts';
 import type { Env } from '../../types/env';
+
+vi.mock('../../utils/keys', () => ({
+  generateKeySet: async (kid: string) => ({
+    publicJWK: {
+      kty: 'RSA',
+      kid,
+      n: `mock-modulus-${kid}`,
+      e: 'AQAB',
+    },
+    privatePEM: [
+      '-----BEGIN PRIVATE KEY-----',
+      `mock-private-key-${kid}`,
+      '-----END PRIVATE KEY-----',
+    ].join('\n'),
+  }),
+}));
 
 /**
  * Mock implementation of DurableObjectState for testing

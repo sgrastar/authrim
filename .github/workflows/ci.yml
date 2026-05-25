@@ -9,6 +9,8 @@ on:
 # Restrict GITHUB_TOKEN permissions (OpenSSF Scorecard)
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   lint-and-test:
@@ -54,6 +56,20 @@ jobs:
 
       - name: Check code formatting
         run: pnpm run format:check
+
+      - name: Collect coverage metrics
+        if: ${{ github.event_name == 'pull_request' && success() }}
+        continue-on-error: true
+        run: pnpm run test:coverage:api
+
+      - name: Comment coverage summary
+        if: ${{ github.event_name == 'pull_request' && success() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/ci-pr-coverage-comment.mjs
 
   e2e-and-accessibility:
     name: E2E and Accessibility Tests
