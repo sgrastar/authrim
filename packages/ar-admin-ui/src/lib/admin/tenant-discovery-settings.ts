@@ -5,6 +5,7 @@ export interface DiscoveryMethodFormState {
 	emailResolutionPolicy: EmailResolutionPolicy;
 	tenantCodeEnabled: boolean;
 	tenantSlugEnabled: boolean;
+	wayfEnabled: boolean;
 }
 
 const VALID_POLICIES: EmailResolutionPolicy[] = [
@@ -59,6 +60,10 @@ export function buildDiscoveryMethodsValue(state: DiscoveryMethodFormState): str
 		methods.push('tenant_slug');
 	}
 
+	if (state.wayfEnabled) {
+		methods.push('wayf');
+	}
+
 	return JSON.stringify(methods);
 }
 
@@ -66,11 +71,13 @@ export function getMethodToggles(discoveryMethodsValue: unknown): {
 	emailEnabled: boolean;
 	tenantCodeEnabled: boolean;
 	tenantSlugEnabled: boolean;
+	wayfEnabled: boolean;
 } {
 	const methods = parseDiscoveryMethods(discoveryMethodsValue);
 	return {
 		emailEnabled: methods.includes('email_domain'),
 		tenantCodeEnabled: methods.includes('tenant_code'),
-		tenantSlugEnabled: methods.includes('tenant_slug')
+		tenantSlugEnabled: methods.includes('tenant_slug'),
+		wayfEnabled: methods.includes('wayf')
 	};
 }

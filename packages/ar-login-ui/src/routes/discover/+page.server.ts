@@ -11,7 +11,7 @@ import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discov
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const MAX_DISCOVERY_RESPONSE_BYTES = 256 * 1024;
 
-type DiscoveryMode = 'email' | 'tenant_code' | 'tenant_slug' | 'invite_token' | 'app_hint';
+type DiscoveryMode = 'email' | 'tenant_code' | 'tenant_slug' | 'wayf' | 'invite_token' | 'app_hint';
 
 type DiscoveryResponse =
 	| { result: 'resolved'; candidate: DiscoveryCandidate; invited_email?: string | null }
@@ -132,9 +132,12 @@ function buildCommonDiscoverUrlWithParams(sourceUrl: URL, commonDiscoverUrl: str
 
 function defaultManualMode(
 	config: DiscoveryConfigResponse['config']
-): 'tenant_code' | 'tenant_slug' {
+): 'tenant_code' | 'tenant_slug' | 'wayf' {
 	if (config.discovery_methods.includes('tenant_code')) {
 		return 'tenant_code';
+	}
+	if (config.discovery_methods.includes('wayf')) {
+		return 'wayf';
 	}
 
 	return 'tenant_slug';

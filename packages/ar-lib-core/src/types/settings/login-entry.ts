@@ -60,7 +60,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     default: '["email_domain","tenant_code","tenant_slug"]',
     label: 'Discovery Methods',
     description:
-      'JSON array of enabled discovery methods. Example: ["email_domain","tenant_code","tenant_slug"]',
+      'JSON array of enabled discovery methods. Example: ["email_domain","tenant_code","tenant_slug","wayf"]',
     visibility: 'admin',
   },
   'login-entry.email_resolution_policy': {

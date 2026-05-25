@@ -43,6 +43,11 @@ const mocked = vi.hoisted(() => {
           .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
       }
       if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
+        if (!query.includes('LIMIT 2')) {
+          return state.tenants
+            .filter((tenant) => tenant.is_active === 1)
+            .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)) as T[];
+        }
         return state.tenants.filter((tenant) => tenant.is_active === 1).slice(0, 2) as T[];
       }
       if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
@@ -329,6 +334,43 @@ describe('discovery API', () => {
     expect(body.config.discovery_methods).toEqual(['tenant_code']);
     expect(body.config.email_resolution_policy).toBe('disabled');
     expect(body.config.selection_policy).toBe('manual_only');
+  });
+
+  it('returns active tenant candidates when WAYF is enabled', async () => {
+    const kv = createMockKV({
+      'settings:platform:login-entry': JSON.stringify({
+        'login-entry.discovery_methods': '["wayf"]',
+        'login-entry.email_resolution_policy': 'disabled',
+        'login-entry.selection_policy': 'manual_only',
+      }),
+    });
+    const { app, env } = createDiscoveryApp({ SETTINGS: kv });
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'login.example.com' },
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      config: { discovery_methods: string[] };
+      wayf_candidates: Array<{ tenant_id: string; display_name: string; source: string }>;
+    };
+    expect(body.config.discovery_methods).toEqual(['wayf']);
+    expect(body.wayf_candidates.map((candidate) => candidate.tenant_id)).toEqual([
+      'acme',
+      'beta',
+      'default',
+    ]);
+    expect(body.wayf_candidates[0]).toMatchObject({
+      tenant_id: 'acme',
+      display_name: 'Acme Tenant',
+      source: 'wayf',
+    });
   });
 
   it('uses common login-entry settings on tenant hosts when tenant override is disabled', async () => {
@@ -643,6 +685,39 @@ describe('discovery API', () => {
     expect(body.result).toBe('resolved');
     expect(body.candidate.tenant_id).toBe('acme');
     expect(body.candidate.source).toBe('app_hint');
+  });
+
+  it('resolves a WAYF tenant selection by tenant id', async () => {
+    const { app, env } = createDiscoveryApp({
+      SETTINGS: createMockKV({
+        'settings:platform:login-entry': JSON.stringify({
+          'login-entry.discovery_methods': '["wayf"]',
+          'login-entry.email_resolution_policy': 'disabled',
+        }),
+      }),
+    });
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'wayf', value: 'acme' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      result: 'resolved';
+      candidate: { tenant_id: string; display_name: string; source: string };
+    };
+    expect(body.result).toBe('resolved');
+    expect(body.candidate).toMatchObject({
+      tenant_id: 'acme',
+      display_name: 'Acme Tenant',
+      source: 'wayf',
+    });
   });
 
   it('returns multiple app_hint candidates when client_id exists in multiple tenants', async () => {

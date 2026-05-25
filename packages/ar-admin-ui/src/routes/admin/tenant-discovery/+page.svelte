@@ -24,6 +24,7 @@
 		emailEnabled: boolean;
 		tenantCodeEnabled: boolean;
 		tenantSlugEnabled: boolean;
+		wayfEnabled: boolean;
 		selectionPolicy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
 		allowManualTenantEntry: boolean;
 		rememberLastTenant: boolean;
@@ -139,16 +140,22 @@
 		if (!form) return '';
 		if (!singleTenantMode && !form.overrideEnabled) return '';
 
-		if (!form.emailEnabled && !form.tenantCodeEnabled && !form.tenantSlugEnabled) {
+		if (
+			!form.emailEnabled &&
+			!form.tenantCodeEnabled &&
+			!form.tenantSlugEnabled &&
+			!form.wayfEnabled
+		) {
 			return 'Enable at least one discovery method.';
 		}
 
 		if (
 			form.selectionPolicy === 'manual_only' &&
 			!form.tenantCodeEnabled &&
-			!form.tenantSlugEnabled
+			!form.tenantSlugEnabled &&
+			!form.wayfEnabled
 		) {
-			return 'manual_only requires tenant code or tenant slug to remain enabled.';
+			return 'manual_only requires tenant code, tenant slug, or WAYF to remain enabled.';
 		}
 
 		return '';
@@ -234,7 +241,7 @@
 				return {
 					description:
 						'Do not auto-select from email resolution. Users must enter or choose a tenant manually.',
-					sample: 'Requires tenant code or tenant slug discovery to stay enabled.'
+					sample: 'Requires tenant code, tenant slug, or WAYF discovery to stay enabled.'
 				};
 		}
 	}
@@ -295,6 +302,7 @@
 			emailEnabled: toggles.emailEnabled,
 			tenantCodeEnabled: toggles.tenantCodeEnabled,
 			tenantSlugEnabled: toggles.tenantSlugEnabled,
+			wayfEnabled: toggles.wayfEnabled,
 			selectionPolicy:
 				(settings.values['login-entry.selection_policy'] as LoginEntryForm['selectionPolicy']) ??
 				'select_if_multiple',
@@ -427,7 +435,8 @@
 				emailEnabled: form.emailEnabled,
 				emailResolutionPolicy,
 				tenantCodeEnabled: form.tenantCodeEnabled,
-				tenantSlugEnabled: form.tenantSlugEnabled
+				tenantSlugEnabled: form.tenantSlugEnabled,
+				wayfEnabled: form.wayfEnabled
 			}),
 			'login-entry.email_resolution_policy': emailResolutionPolicy,
 			'login-entry.selection_policy': form.selectionPolicy,
@@ -921,6 +930,20 @@
 								}}
 							/>
 						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>WAYF tenant chooser</strong>
+								<p>Show a tenant-name dropdown populated from active tenants.</p>
+							</div>
+							<ToggleSwitch
+								id="common-wayf-enabled"
+								checked={commonEntryBehaviorForm.wayfEnabled}
+								disabled={!canEditPlatform || commonEntryBehaviorSaving}
+								onchange={(value) => {
+									if (commonEntryBehaviorForm) commonEntryBehaviorForm.wayfEnabled = value;
+								}}
+							/>
+						</div>
 					</div>
 
 					<div class="toggle-list">
@@ -1175,6 +1198,20 @@
 							disabled={!canEditTenant || behaviorSaving}
 							onchange={(value) => {
 								if (behaviorForm) behaviorForm.tenantSlugEnabled = value;
+							}}
+						/>
+					</div>
+					<div class="toggle-row">
+						<div>
+							<strong>WAYF tenant chooser</strong>
+							<p>Show a tenant-name dropdown populated from active tenants.</p>
+						</div>
+						<ToggleSwitch
+							id="wayf-enabled"
+							checked={behaviorForm.wayfEnabled}
+							disabled={!canEditTenant || behaviorSaving}
+							onchange={(value) => {
+								if (behaviorForm) behaviorForm.wayfEnabled = value;
 							}}
 						/>
 					</div>

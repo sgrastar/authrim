@@ -34,6 +34,7 @@ export interface DiscoveryConfigResponse {
 	single_tenant_mode: boolean;
 	is_common_entry_host: boolean;
 	common_discover_url: string | null;
+	wayf_candidates?: DiscoveryCandidate[];
 	single_active_tenant_candidate?: DiscoveryCandidate;
 	default_candidate?: DiscoveryCandidate;
 }

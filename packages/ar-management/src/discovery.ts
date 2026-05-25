@@ -19,9 +19,16 @@ import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
 
-const DISCOVERY_METHODS = ['email_domain', 'tenant_code', 'tenant_slug', 'invitation', 'app_hint'];
+const DISCOVERY_METHODS = [
+  'email_domain',
+  'tenant_code',
+  'tenant_slug',
+  'wayf',
+  'invitation',
+  'app_hint',
+];
 const DISCOVERY_REQUEST_SCHEMA = z.object({
-  mode: z.enum(['email', 'tenant_code', 'tenant_slug', 'invite_token', 'app_hint']),
+  mode: z.enum(['email', 'tenant_code', 'tenant_slug', 'wayf', 'invite_token', 'app_hint']),
   value: z.string().min(1).max(2048),
 });
 const DISCOVERY_GRANT_CREATE_SCHEMA = z.object({
@@ -38,7 +45,13 @@ const DISCOVERY_GRANT_ISSUER = 'authrim:discovery-grant';
 const DISCOVERY_GRANT_AUDIENCE = 'authrim:tenant-login';
 const DISCOVERY_GRANT_TTL_SECONDS = 300;
 
-type DiscoverySource = 'email_domain' | 'tenant_code' | 'tenant_slug' | 'invitation' | 'app_hint';
+type DiscoverySource =
+  | 'email_domain'
+  | 'tenant_code'
+  | 'tenant_slug'
+  | 'wayf'
+  | 'invitation'
+  | 'app_hint';
 
 interface TenantLookupRow {
   id: string;
@@ -99,6 +112,7 @@ interface DiscoveryConfigResponse {
   single_tenant_mode: boolean;
   is_common_entry_host: boolean;
   common_discover_url: string | null;
+  wayf_candidates?: DiscoveryCandidate[];
   single_active_tenant_candidate?: DiscoveryCandidate;
   default_candidate?: DiscoveryCandidate;
 }
@@ -372,6 +386,19 @@ async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandid
   }
 
   return await buildCandidate(env, tenants[0], 'tenant_slug');
+}
+
+async function getActiveTenantWayfCandidates(env: Env): Promise<DiscoveryCandidate[]> {
+  const adapter = await getDiscoveryCoreAdapter(env);
+  const tenants = await adapter.query<TenantLookupRow>(
+    `SELECT id, tenant_code, name, is_active
+     FROM tenants
+     WHERE is_active = 1
+     ORDER BY name ASC, id ASC`,
+    []
+  );
+
+  return Promise.all(tenants.map((tenant) => buildCandidate(env, tenant, 'wayf')));
 }
 
 function readSettingString(record: Record<string, unknown> | null, key: string): string | null {
@@ -852,6 +879,22 @@ async function resolveDiscoveryRequest(
       };
     }
 
+    case 'wayf': {
+      if (!settings.discovery_methods.includes('wayf')) {
+        return buildManualRequiredResponse(settings);
+      }
+
+      const tenant = await getTenantRowById(env, value);
+      if (!tenant) {
+        return buildNotFoundResponse('tenant_slug_not_found');
+      }
+
+      return {
+        result: 'resolved',
+        candidate: await buildCandidate(env, tenant, 'wayf'),
+      };
+    }
+
     case 'invite_token': {
       const resolved = await resolveInvitationDiscovery(env, value);
       return resolved ?? buildNotFoundResponse('invitation_not_found');
@@ -949,6 +992,10 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
       !singleTenantMode && commonEntryHost && config.skip_discovery_if_only_one_tenant
         ? await getSingleActiveTenantCandidate(c.env)
         : undefined;
+    const wayfCandidates =
+      !singleTenantMode && config.discovery_methods.includes('wayf')
+        ? await getActiveTenantWayfCandidates(c.env)
+        : undefined;
     const commonDiscoverUrl = await getCommonDiscoverUrl(c.env);
     const tenantId = settingsScope.type === 'tenant' ? settingsScope.id : getDefaultTenantId(c.env);
     const ui = await getDiscoveryUiConfig(
@@ -963,6 +1010,7 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
       single_tenant_mode: singleTenantMode,
       is_common_entry_host: commonEntryHost,
       common_discover_url: commonDiscoverUrl,
+      wayf_candidates: wayfCandidates,
       single_active_tenant_candidate: singleActiveTenantCandidate ?? undefined,
       default_candidate: defaultCandidate ?? undefined,
     } satisfies DiscoveryConfigResponse);

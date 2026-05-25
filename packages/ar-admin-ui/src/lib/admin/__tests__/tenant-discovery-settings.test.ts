@@ -24,9 +24,10 @@ describe('tenant discovery settings helpers', () => {
 				emailEnabled: true,
 				emailResolutionPolicy: 'exact_email_then_domain',
 				tenantCodeEnabled: true,
-				tenantSlugEnabled: true
+				tenantSlugEnabled: true,
+				wayfEnabled: true
 			})
-		).toBe('["email_domain","tenant_code","tenant_slug"]');
+		).toBe('["email_domain","tenant_code","tenant_slug","wayf"]');
 	});
 
 	it('omits email discovery when policy is disabled', () => {
@@ -35,7 +36,8 @@ describe('tenant discovery settings helpers', () => {
 				emailEnabled: false,
 				emailResolutionPolicy: 'disabled',
 				tenantCodeEnabled: true,
-				tenantSlugEnabled: false
+				tenantSlugEnabled: false,
+				wayfEnabled: false
 			})
 		).toBe('["tenant_code"]');
 	});
@@ -46,16 +48,18 @@ describe('tenant discovery settings helpers', () => {
 				emailEnabled: false,
 				emailResolutionPolicy: 'exact_email_only',
 				tenantCodeEnabled: false,
-				tenantSlugEnabled: true
+				tenantSlugEnabled: true,
+				wayfEnabled: false
 			})
 		).toBe('["tenant_slug"]');
 	});
 
-	it('reads tenant code and slug toggles from stored methods', () => {
-		expect(getMethodToggles('["email_domain","tenant_slug"]')).toEqual({
+	it('reads tenant code, slug, and WAYF toggles from stored methods', () => {
+		expect(getMethodToggles('["email_domain","tenant_slug","wayf"]')).toEqual({
 			emailEnabled: true,
 			tenantCodeEnabled: false,
-			tenantSlugEnabled: true
+			tenantSlugEnabled: true,
+			wayfEnabled: true
 		});
 	});
 });
