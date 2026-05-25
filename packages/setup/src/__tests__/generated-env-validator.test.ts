@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
-import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
+import { saveKeysToDirectory, type GeneratedSecrets, type KeyPair } from '../core/keys.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import { WORKER_COMPONENTS } from '../core/naming.js';
@@ -29,6 +29,56 @@ async function createFixtureRoot() {
   const root = await mkdtemp(join(process.cwd(), '.test-generated-env-'));
   tempDirs.push(root);
   return root;
+}
+
+function createFixtureKeyPair(keyId: string, alg: string = 'RS256'): KeyPair {
+  return {
+    privateKeyPem: `-----BEGIN PRIVATE KEY-----\n${keyId}\n-----END PRIVATE KEY-----\n`,
+    publicKeyJwk: {
+      kty: alg === 'ES256' ? 'EC' : 'RSA',
+      kid: keyId,
+      use: 'sig',
+      alg,
+    },
+    keyId,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function createFixtureSecrets(keyId: string): GeneratedSecrets {
+  return {
+    keyPair: createFixtureKeyPair(keyId),
+    setupMachineKeyPair: createFixtureKeyPair(`${keyId}-setup`, 'ES256'),
+    adminUiBffMachineKeyPair: createFixtureKeyPair(`${keyId}-admin-ui-bff`, 'ES256'),
+    tenantRuntimeRegistryKeyPair: {
+      privateJwk: {
+        kty: 'OKP',
+        crv: 'Ed25519',
+        kid: `${keyId}-tenant-runtime-registry`,
+        d: 'fixture-private',
+        x: 'fixture-public',
+        use: 'sig',
+        alg: 'EdDSA',
+      },
+      publicJwk: {
+        kty: 'OKP',
+        crv: 'Ed25519',
+        kid: `${keyId}-tenant-runtime-registry`,
+        x: 'fixture-public',
+        use: 'sig',
+        alg: 'EdDSA',
+      },
+      keyId: `${keyId}-tenant-runtime-registry`,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+    rpTokenEncryptionKey: 'a'.repeat(64),
+    objectEncryptionRootKey: 'b'.repeat(64),
+    versionManagerSecret: 'fixture_version_manager_secret_123',
+    loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
+    adminApiSecret: 'fixture_admin_api_secret_123456',
+    keyManagerSecret: 'fixture_key_manager_secret_1234',
+    setupToken: 'fixture_setup_token_1234567890',
+  };
 }
 
 async function writeGeneratedEnvironment(
@@ -155,7 +205,7 @@ async function writeGeneratedEnvironment(
     ],
   });
 
-  await saveKeysToDirectory(generateAllSecrets(`${env}-test-key`), {
+  await saveKeysToDirectory(createFixtureSecrets(`${env}-test-key`), {
     baseDir: root,
     env,
     keysBaseDir: options?.externalKeys ? root : undefined,
