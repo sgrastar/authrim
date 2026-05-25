@@ -105,6 +105,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (orange cloud)',
       'TTL: Auto',
       `この設定で ${recordName} が ${target} を向きます。保存後、Cloudflare 側で反映を確認します。`,
+      `証明書の注意: ${recordName} をカバーする Cloudflare Edge 証明書も必要です。Advanced 証明書または Total TLS で有効化されるまで TLS 警告が出ることがあります。`,
     ],
     retryHint: '設定後に Deploy を実行してください。',
     continueHint:
@@ -126,6 +127,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (orange cloud)',
       'TTL: Auto',
       `This record makes ${recordName} resolve to ${target}. Save the record and wait for Cloudflare to accept it.`,
+      `Certificate note: a Cloudflare Edge certificate must also cover ${recordName}. TLS warnings can appear until an Advanced certificate or Total TLS covers it.`,
     ],
     retryHint: 'After that, run deploy.',
     continueHint:
@@ -146,6 +148,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied（橙色云）',
       'TTL: Auto',
       `该记录会让 ${recordName} 指向 ${target}。保存后，确认 Cloudflare 已接受并生效。`,
+      `证书提示：Cloudflare Edge 证书也必须覆盖 ${recordName}。在 Advanced 证书或 Total TLS 覆盖之前，可能会出现 TLS 警告。`,
     ],
     retryHint: '完成后请执行部署。',
     continueHint: '如果你已经手动创建了该记录，可以继续。否则请先停止并完成 DNS 设置。',
@@ -165,6 +168,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied（橘色雲）',
       'TTL: Auto',
       `這筆記錄會讓 ${recordName} 指向 ${target}。儲存後，確認 Cloudflare 已接受並套用。`,
+      `憑證提醒：Cloudflare Edge 憑證也必須涵蓋 ${recordName}。在 Advanced 憑證或 Total TLS 涵蓋之前，可能會出現 TLS 警告。`,
     ],
     retryHint: '完成後請執行部署。',
     continueHint: '如果你已手動建立該記錄，可以繼續。否則請先停止並完成 DNS 設定。',
@@ -185,6 +189,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (nube naranja)',
       'TTL: Auto',
       `Este registro hace que ${recordName} apunte a ${target}. Guarde el registro y confirme que Cloudflare lo haya aceptado.`,
+      `Nota sobre certificados: el certificado Edge de Cloudflare también debe cubrir ${recordName}. Pueden aparecer advertencias TLS hasta que un certificado Advanced o Total TLS lo cubra.`,
     ],
     retryHint: 'Después de eso, ejecute el despliegue.',
     continueHint:
@@ -207,6 +212,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (nuvem laranja)',
       'TTL: Auto',
       `Esse registro fará ${recordName} apontar para ${target}. Salve o registro e confirme que o Cloudflare o aceitou.`,
+      `Nota de certificado: o certificado Edge da Cloudflare também precisa cobrir ${recordName}. Avisos de TLS podem aparecer até que um certificado Advanced ou Total TLS cubra esse host.`,
     ],
     retryHint: 'Depois disso, execute o deploy.',
     continueHint:
@@ -229,6 +235,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (nuage orange)',
       'TTL: Auto',
       `Cet enregistrement fera pointer ${recordName} vers ${target}. Enregistrez puis vérifiez que Cloudflare a bien accepté la modification.`,
+      `Note sur le certificat : le certificat Edge Cloudflare doit aussi couvrir ${recordName}. Des alertes TLS peuvent apparaître tant qu'un certificat Advanced ou Total TLS ne le couvre pas.`,
     ],
     retryHint: 'Ensuite, lancez le déploiement.',
     continueHint:
@@ -251,6 +258,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (orange cloud)',
       'TTL: Auto',
       `Dieser Eintrag sorgt dafür, dass ${recordName} auf ${target} zeigt. Speichern Sie ihn und prüfen Sie, dass Cloudflare ihn übernommen hat.`,
+      `Zertifikatshinweis: Das Cloudflare Edge-Zertifikat muss auch ${recordName} abdecken. Bis ein Advanced-Zertifikat oder Total TLS dies abdeckt, können TLS-Warnungen erscheinen.`,
     ],
     retryHint: 'Starten Sie danach den Deploy.',
     continueHint:
@@ -273,6 +281,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (orange cloud)',
       'TTL: Auto',
       `이 레코드를 저장하면 ${recordName} 이 ${target} 를 가리키게 됩니다. 저장 후 반영 여부를 확인합니다.`,
+      `인증서 참고: Cloudflare Edge 인증서도 ${recordName} 을 포함해야 합니다. Advanced 인증서 또는 Total TLS가 적용되기 전에는 TLS 경고가 표시될 수 있습니다.`,
     ],
     retryHint: '설정 후 deploy 를 실행하세요.',
     continueHint:
@@ -294,6 +303,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (orange cloud)',
       'TTL: Auto',
       `Эта запись направит ${recordName} на ${target}. Сохраните запись и убедитесь, что Cloudflare её принял.`,
+      `Примечание о сертификате: Cloudflare Edge-сертификат также должен покрывать ${recordName}. Пока это не покрыто Advanced-сертификатом или Total TLS, могут появляться TLS-предупреждения.`,
     ],
     retryHint: 'После этого запустите деплой.',
     continueHint:
@@ -316,6 +326,7 @@ export const WILDCARD_DNS_MANUAL_COPY: Record<string, WildcardDnsManualCopy> = {
       'Proxy status: Proxied (orange cloud)',
       'TTL: Auto',
       `Record ini akan membuat ${recordName} mengarah ke ${target}. Simpan record dan pastikan Cloudflare sudah menerimanya.`,
+      `Catatan sertifikat: sertifikat Cloudflare Edge juga harus mencakup ${recordName}. Peringatan TLS dapat muncul sampai sertifikat Advanced atau Total TLS mencakup host ini.`,
     ],
     retryHint: 'Setelah itu, jalankan deploy.',
     continueHint:
