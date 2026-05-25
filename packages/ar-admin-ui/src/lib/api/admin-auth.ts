@@ -49,6 +49,7 @@ export interface SessionStatus {
 	email?: string;
 	name?: string;
 	roles: string[];
+	permissions?: string[];
 	admin_scope: 'platform' | 'tenant';
 	is_platform_admin: boolean;
 	expires_at: number;

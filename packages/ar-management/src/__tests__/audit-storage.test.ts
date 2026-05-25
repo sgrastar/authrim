@@ -610,8 +610,32 @@ describe('Audit Storage Configuration API', () => {
     });
 
     it('rejects archiveBeforeDelete when no archive target is configured', async () => {
+      const primaryOnlyAuditProfileId = 'custom:audit:primary-only';
       const { app, mockEnv } = createTestApp({
-        defaultAuditProfileId: 'builtin:audit:minimal',
+        kv: createMockKV({
+          [`profile-registry:audit:${primaryOnlyAuditProfileId}`]: JSON.stringify({
+            id: primaryOnlyAuditProfileId,
+            kind: 'audit',
+            label: 'Primary Only Audit',
+            description: 'Test-only primary audit profile with no archive target.',
+            builtin: false,
+            version: 1,
+            primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+            archive: null,
+            sinks: [],
+            retention: {
+              eventLogRetentionDays: 90,
+              piiLogRetentionDays: 365,
+              archiveBeforeDelete: false,
+              primaryDays: 90,
+              archiveDays: null,
+            },
+            archiveFailureMode: 'best_effort',
+            sinkFailureMode: 'best_effort',
+            backpressure: { mode: 'event_class', allowTenantOverride: true },
+          }),
+        }),
+        defaultAuditProfileId: primaryOnlyAuditProfileId,
       });
 
       const res = await app.request(

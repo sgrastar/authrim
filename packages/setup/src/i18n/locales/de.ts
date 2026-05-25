@@ -462,9 +462,10 @@ const de: Translations = {
     'Hinweis: Diese Einstellung kann nach der Benutzererstellung nicht geändert werden.',
   'userId.selected': 'Benutzer-ID-Format: {{format}}',
 
-  // Optional components
-  'components.title': 'Optionale Komponenten',
-  'components.note': 'Hinweis: Social Login und Policy Engine sind Standardkomponenten',
+  // Standard components
+  'components.title': 'Standardkomponenten',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Social Login und Policy Engine werden standardmäßig installiert.',
   'components.samlPrompt': 'SAML-Unterstützung aktivieren?',
   'components.vcPrompt': 'Verifizierbare Credentials aktivieren?',
   'components.saml': 'SAML:',
@@ -785,6 +786,19 @@ const de: Translations = {
   'web.db.name': 'Name',
   'web.db.region': 'Region',
   'web.db.regionAuto': 'Automatisch (nächstgelegene)',
+  'web.db.storageProfileTitle': 'Speicher-Bereitstellungsprofil',
+  'web.db.storageProfileDesc':
+    'Wählen Sie aus, wie Benutzer-Core- und PII-Daten für diese Bereitstellung platziert werden.',
+  'web.db.sharedD1Title': 'Geteiltes D1',
+  'web.db.sharedD1Desc':
+    'Eine bereitstellungsweite Core-D1- und PII-D1-Datenbank. Geringster Einrichtungsaufwand und Standardpfad.',
+  'web.db.tenantD1Title': 'Tenant D1',
+  'web.db.tenantD1Desc':
+    'Ein Core/PII-D1-Paar pro Tenant. Erfordert Tenant-Datenbank-Provisionierung vor der Aktivierung.',
+  'web.db.preallocatedSlotsTitle': 'Vorab zugewiesene Tenant-Slots',
+  'web.db.preallocatedSlotsDesc': 'Jeder Tenant-Slot erstellt zwei D1-Datenbanken: Core und PII.',
+  'web.db.slotsLabel': 'Slots',
+  'web.db.slotsHelp': 'Standard ist 3. Maximum sind 500 Slots.',
 
   // Web UI Email
   'web.email.title': 'E-Mail-Anbieter',

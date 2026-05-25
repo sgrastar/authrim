@@ -63,11 +63,20 @@ vi.mock('../admin/providers', () => ({
 
 vi.mock('../common/signature', () => ({
   verifyXmlSignature: vi.fn(),
+  verifyRedirectBindingSignature: vi.fn().mockResolvedValue(true),
   hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
   signXml: vi.fn((xml: string) => xml), // Pass through
 }));
 
 vi.mock('../common/key-utils', () => ({
+  DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT: {
+    countryName: '',
+    stateOrProvinceName: '',
+    localityName: '',
+    organizationName: 'Authrim',
+    organizationalUnitName: '',
+    commonName: 'Authrim SAML Signing',
+  },
   getSigningKey: (...args: any[]) => mockGetSigningKey(...args),
   getSigningCertificate: (...args: any[]) => mockGetSigningCertificate(...args),
 }));
@@ -138,6 +147,7 @@ function createMockSAMLResponse(
     statusCode?: string;
     destination?: string;
     nameId?: string;
+    nameIdFormat?: string;
     notBefore?: string;
     notOnOrAfter?: string;
     audience?: string;
@@ -146,6 +156,7 @@ function createMockSAMLResponse(
     attributes?: Array<{ name: string; value: string; friendlyName?: string }>;
     signatureReferenceUri?: string;
     includeUnsignedReferenceToResponse?: boolean;
+    assertionIssuer?: string;
   } = {}
 ): string {
   const {
@@ -153,14 +164,16 @@ function createMockSAMLResponse(
     statusCode = 'urn:oasis:names:tc:SAML:2.0:status:Success',
     destination = 'https://auth.example.com/saml/sp/acs',
     nameId = 'user@example.com',
+    nameIdFormat = 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
     notBefore = new Date(Date.now() - 60000).toISOString(),
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
-    audience = 'https://auth.example.com/saml/sp',
+    audience = 'https://auth.example.com/saml/sp/metadata',
     inResponseTo = undefined,
     authnContextClassRef = 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
     attributes = [],
     signatureReferenceUri = undefined,
     includeUnsignedReferenceToResponse = false,
+    assertionIssuer = issuer,
   } = options;
   const uniqueId = `${Date.now()}_${crypto.randomUUID().replace(/-/g, '')}`;
   const responseId = `_${uniqueId}`;
@@ -190,9 +203,9 @@ function createMockSAMLResponse(
     <samlp:StatusCode Value="${statusCode}"/>
   </samlp:Status>
   <saml:Assertion ID="${assertionId}" Version="2.0" IssueInstant="${new Date().toISOString()}">
-    <saml:Issuer>${issuer}</saml:Issuer>
+    <saml:Issuer>${assertionIssuer}</saml:Issuer>
     <saml:Subject>
-      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${nameId}</saml:NameID>
+      <saml:NameID Format="${nameIdFormat}">${nameId}</saml:NameID>
       <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
         <saml:SubjectConfirmationData
           Recipient="${destination}"
@@ -226,6 +239,44 @@ ${attributes
         : ''
     }
   </saml:Assertion>
+</samlp:Response>`;
+
+  return btoa(xml);
+}
+
+function createMockEncryptedAssertionSAMLResponse(
+  options: {
+    issuer?: string;
+    destination?: string;
+  } = {}
+): string {
+  const {
+    issuer = 'https://idp.example.com',
+    destination = 'https://auth.example.com/saml/sp/acs',
+  } = options;
+  const uniqueId = `${Date.now()}_${crypto.randomUUID().replace(/-/g, '')}`;
+  const responseId = `_${uniqueId}`;
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  xmlns:xenc="http://www.w3.org/2001/04/xmlenc#"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+  ID="${responseId}"
+  Version="2.0"
+  IssueInstant="${new Date().toISOString()}"
+  Destination="${destination}">
+  <saml:Issuer>${issuer}</saml:Issuer>
+  <samlp:Status>
+    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </samlp:Status>
+  <saml:EncryptedAssertion>
+    <xenc:EncryptedData Type="http://www.w3.org/2001/04/xmlenc#Element">
+      <xenc:CipherData>
+        <xenc:CipherValue>ciphertext</xenc:CipherValue>
+      </xenc:CipherData>
+    </xenc:EncryptedData>
+  </saml:EncryptedAssertion>
 </samlp:Response>`;
 
   return btoa(xml);
@@ -297,6 +348,7 @@ describe('SAML Integration', () => {
   let mockUsers: Map<string, any>;
   let mockChallengeStore: Map<string, any>;
   let mockNonceStore: Map<string, string>;
+  let mockStateStore: Map<string, string>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -332,6 +384,19 @@ describe('SAML Integration', () => {
     mockUsers = new Map();
     mockChallengeStore = new Map();
     mockNonceStore = new Map();
+    mockStateStore = new Map();
+    mockStateStore.set(
+      'saml:logout-request:tenant:default:id:_request_123',
+      JSON.stringify({
+        version: 1,
+        tenantId: 'default',
+        spEntityId: 'https://idp.example.com',
+        requestId: '_request_123',
+        relayState: 'https://app.example.com/logged-out',
+        issuedAt: Date.now() - 1000,
+        expiresAt: Date.now() + 120000,
+      })
+    );
 
     // Seed test user
     mockUsers.set('user-001', {
@@ -349,6 +414,7 @@ describe('SAML Integration', () => {
             ssoUrl: 'https://idp.example.com/sso',
             sloUrl: 'https://idp.example.com/slo',
             certificate: 'mock-certificate',
+            logoutRequestSignaturePolicy: 'optional',
             attributeMapping: {
               email: 'email',
               name: 'displayName',
@@ -431,6 +497,17 @@ describe('SAML Integration', () => {
         get: vi.fn((key: string) => Promise.resolve(mockNonceStore.get(key) ?? null)),
         put: vi.fn((key: string, value: string) => {
           mockNonceStore.set(key, value);
+          return Promise.resolve();
+        }),
+      } as any,
+      STATE_STORE: {
+        get: vi.fn((key: string) => Promise.resolve(mockStateStore.get(key) ?? null)),
+        put: vi.fn((key: string, value: string) => {
+          mockStateStore.set(key, value);
+          return Promise.resolve();
+        }),
+        delete: vi.fn((key: string) => {
+          mockStateStore.delete(key);
           return Promise.resolve();
         }),
       } as any,
@@ -625,6 +702,40 @@ describe('SAML Integration', () => {
           destination: 'https://wrong-destination.com/acs',
         })
       );
+
+      const req = new Request('http://localhost/saml/sp/acs', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    });
+
+    it('should reject when Assertion Issuer differs from Response Issuer', async () => {
+      const formData = new FormData();
+      formData.append(
+        'SAMLResponse',
+        createMockSAMLResponse({
+          issuer: 'https://idp.example.com',
+          assertionIssuer: 'https://attacker.example.com',
+        })
+      );
+
+      const req = new Request('http://localhost/saml/sp/acs', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    });
+
+    it('should fail closed for EncryptedAssertion until SP decryption is implemented', async () => {
+      const formData = new FormData();
+      formData.append('SAMLResponse', createMockEncryptedAssertionSAMLResponse());
 
       const req = new Request('http://localhost/saml/sp/acs', {
         method: 'POST',
@@ -958,6 +1069,70 @@ describe('SAML Integration', () => {
       expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
       expect(mockSyncUserLifecycleState).toHaveBeenCalled();
     });
+
+    it('should reject JIT provisioning without email unless synthetic email fallback is enabled', async () => {
+      mockEnv.DB_PII = {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('SELECT id FROM users_pii WHERE')) {
+              return null;
+            }
+            return null;
+          }),
+          run: vi.fn().mockResolvedValue({ success: true }),
+        })),
+      } as any;
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-123',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+        })
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_request',
+      });
+    });
+
+    it('should allow synthetic email fallback only when explicitly enabled', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        allowSyntheticEmailFallback: true,
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+        },
+      });
+      mockEnv.DB_PII = {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('SELECT id FROM users_pii WHERE')) {
+              return null;
+            }
+            return null;
+          }),
+          run: vi.fn().mockResolvedValue({ success: true }),
+        })),
+      } as any;
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-123',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+        })
+      );
+
+      expect(res.status).toBe(302);
+      expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
+      expect(mockSyncUserLifecycleState).toHaveBeenCalled();
+    });
   });
 
   describe('Metadata endpoints', () => {
@@ -1190,6 +1365,32 @@ describe('SAML Integration', () => {
       expect(res.status).toBeGreaterThanOrEqual(400);
     });
 
+    it('should reject unsigned LogoutRequest when IdP signature policy is omitted', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+        },
+      });
+
+      const formData = new FormData();
+      formData.append('SAMLRequest', createMockLogoutRequest());
+
+      const req = new Request('http://localhost/saml/sp/slo', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(mockSessionStoreFetch).not.toHaveBeenCalled();
+    });
+
     it('should process valid LogoutRequest and send LogoutResponse', async () => {
       const formData = new FormData();
       formData.append('SAMLRequest', createMockLogoutRequest());
@@ -1252,7 +1453,7 @@ describe('SAML Integration', () => {
     it('should process LogoutResponse and redirect', async () => {
       const formData = new FormData();
       formData.append('SAMLResponse', createMockLogoutResponse());
-      formData.append('RelayState', 'https://app.example.com/logged-out');
+      formData.append('RelayState', '_request_123');
 
       const req = new Request('http://localhost/saml/sp/slo', {
         method: 'POST',
@@ -1264,6 +1465,25 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(302);
       expect(res.headers.get('Location')).toBe('https://app.example.com/logged-out');
       expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0'); // Cookie cleared
+    });
+
+    it('should reject LogoutResponse when InResponseTo does not match stored SP LogoutRequest', async () => {
+      const formData = new FormData();
+      formData.append(
+        'SAMLResponse',
+        createMockLogoutResponse({
+          inResponseTo: '_unknown_request',
+        })
+      );
+
+      const req = new Request('http://localhost/saml/sp/slo', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const res = await app.fetch(req);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
     });
   });
 
@@ -1369,6 +1589,15 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(302);
       expect(res.headers.get('Location')).toBe(relayState);
+    });
+
+    it('should reject ACS RelayState that exceeds the SAML binding limit', async () => {
+      const res = await callACSDirectly(createMockSAMLResponse(), 'x'.repeat(81));
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_request',
+      });
     });
 
     it('should preserve RelayState in SLO response', async () => {

@@ -61,6 +61,9 @@ import {
   handleGetProvider,
   handleUpdateProvider,
   handleDeleteProvider,
+  handleGetSAMLSettings,
+  handleUpdateSAMLSettings,
+  handleUpdateSAMLLocalSigning,
   handleListAttributePresets,
   handleCreateAttributePreset,
   handleDeleteAttributePreset,
@@ -71,6 +74,7 @@ import {
   handleCreateFederationTrustProfile,
   handleUpdateFederationTrustProfile,
   handleDeleteFederationTrustProfile,
+  handlePreviewFederationTrustCertificate,
   handleListAggregatePreviewEntities,
   handleStartAggregateBatchCreate,
   handleGetAggregateBatchStatus,
@@ -190,6 +194,10 @@ app.get('/saml/sp/slo', handleSPSLO);
 
 app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
 
+app.get('/api/admin/saml-settings', handleGetSAMLSettings);
+app.put('/api/admin/saml-settings', handleUpdateSAMLSettings);
+app.post('/api/admin/saml-settings/local-signing', handleUpdateSAMLLocalSigning);
+
 /**
  * List SAML Providers
  */
@@ -244,6 +252,7 @@ app.post(
   handleStartAggregateBatchCreate
 );
 app.get('/api/admin/saml-metadata/batches/:batchId', handleGetAggregateBatchStatus);
+app.post('/api/admin/saml-metadata/certificate-preview', handlePreviewFederationTrustCertificate);
 
 app.get('/api/admin/saml-federation-trust-profiles', handleListFederationTrustProfiles);
 app.post('/api/admin/saml-federation-trust-profiles', handleCreateFederationTrustProfile);

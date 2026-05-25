@@ -7,8 +7,7 @@
 
 import { execa, type ExecaError } from 'execa';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
-import { fileURLToPath } from 'node:url';
-import { basename, dirname, join as pathJoin } from 'node:path';
+import { basename, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readdirSync, statSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
@@ -31,10 +30,6 @@ import {
   loadSetupMachinePublicJwk,
 } from './admin-machine-access.js';
 
-// Package directory (for bundled migrations)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PACKAGE_MIGRATIONS_DIR = pathJoin(__dirname, '..', '..', 'migrations');
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
 const QUEUE_PROVISIONING_DEFINITIONS = [
@@ -135,6 +130,7 @@ export interface MigrationProfileConfig {
 export const R2_BUCKETS = [
   { binding: 'AVATARS', suffix: 'authrim-avatars' },
   { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
+  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive' },
   { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts' },
   { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts' },
   { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details' },
@@ -1346,6 +1342,24 @@ interface CloudflareDnsMutationResponse {
   messages?: CloudflareApiMessage[];
 }
 
+interface CloudflareR2ObjectListResponse {
+  success?: boolean;
+  result?: Array<{ key?: string }>;
+  result_info?: {
+    cursor?: string;
+    is_truncated?: boolean;
+  };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareAccountsResponse {
+  success?: boolean;
+  result?: Array<{ id?: string }>;
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
 function hasCloudflareAlreadyExistsError(payload: {
   errors?: CloudflareApiMessage[];
   messages?: CloudflareApiMessage[];
@@ -1992,7 +2006,6 @@ WHERE NOT EXISTS (
 );`;
 }
 
-const FRESH_SCHEMA_MIGRATION_FILE = '000_fresh_schema.sql';
 const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
 
 interface ListD1MigrationOptions {
@@ -2054,21 +2067,6 @@ async function recordMigration(dbName: string, filename: string): Promise<void> 
   }
 }
 
-async function recordMigrations(dbName: string, filenames: string[]): Promise<void> {
-  if (filenames.length === 0) {
-    return;
-  }
-
-  const sql = filenames.map((filename) => buildRecordMigrationSql(filename)).join('\n');
-  try {
-    await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
-  } catch {
-    for (const filename of filenames) {
-      await recordMigration(dbName, filename);
-    }
-  }
-}
-
 /**
  * Run all D1 migrations for a database.
  *
@@ -2109,21 +2107,12 @@ export async function runD1Migrations(
 
   let appliedCount = 0;
   let skippedCount = 0;
-  const hasFreshSchema = sqlFiles.includes(FRESH_SCHEMA_MIGRATION_FILE);
-  let freshSchemaApplied = hasFreshSchema && applied.has(FRESH_SCHEMA_MIGRATION_FILE);
   const alreadyAppliedFiles: string[] = [];
-  const freshCoveredFiles: string[] = [];
   const summaryLimit = options.logSummaryLimit ?? 8;
 
   for (const sqlFile of sqlFiles) {
     if (applied.has(sqlFile)) {
       alreadyAppliedFiles.push(sqlFile);
-      skippedCount++;
-      continue;
-    }
-
-    if (hasFreshSchema && freshSchemaApplied && sqlFile !== FRESH_SCHEMA_MIGRATION_FILE) {
-      freshCoveredFiles.push(sqlFile);
       skippedCount++;
       continue;
     }
@@ -2140,19 +2129,6 @@ export async function runD1Migrations(
 
     await recordMigration(dbName, sqlFile);
     appliedCount++;
-    if (sqlFile === FRESH_SCHEMA_MIGRATION_FILE) {
-      freshSchemaApplied = true;
-    }
-  }
-
-  if (freshCoveredFiles.length > 0) {
-    await recordMigrations(dbName, freshCoveredFiles);
-    onProgress?.(
-      `  ⏭  Skipping ${freshCoveredFiles.length} migration(s) covered by fresh schema: ${formatMigrationFileSummary(
-        freshCoveredFiles,
-        summaryLimit
-      )}`
-    );
   }
 
   if (alreadyAppliedFiles.length > 0) {
@@ -2226,54 +2202,78 @@ WHERE id = ${tenantIdSql};
 }
 
 /**
- * Build idempotent SQL that guarantees built-in admin roles exist for the
- * configured initial tenant in DB_ADMIN.
+ * Build idempotent SQL that canonicalizes built-in admin roles in DB_ADMIN.
  *
- * Admin migrations currently seed system roles only for tenant `default`.
- * Multi-tenant deployments need tenant-scoped copies so initial admin setup can
- * assign `super_admin` without failing.
+ * System roles are global templates and must exist only under tenant `default`.
+ * Older setup versions copied them into the initial tenant; this rewrites any
+ * assignments to the canonical default roles and deletes those stale copies.
  */
 export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
-  const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantIdSql = sqlString(tenantId);
 
   return `
-INSERT INTO admin_roles (
-  id,
-  tenant_id,
-  name,
-  display_name,
-  description,
-  permissions_json,
-  hierarchy_level,
-  role_type,
-  is_system,
-  created_at,
-  updated_at,
-  inherits_from
+DELETE FROM admin_role_assignments
+WHERE admin_role_id IN (
+  SELECT copy.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.tenant_id = ${tenantIdSql}
+    AND copy.tenant_id <> 'default'
+    AND copy.is_system = 1
 )
-SELECT
-  id || '__' || ${tenantIdSql},
-  ${tenantIdSql},
-  name,
-  display_name,
-  description,
-  permissions_json,
-  hierarchy_level,
-  role_type,
-  is_system,
-  ${sqlExpr.nowEpochMilliseconds},
-  ${sqlExpr.nowEpochMilliseconds},
-  inherits_from
-FROM admin_roles
-WHERE tenant_id = 'default'
+AND EXISTS (
+  SELECT 1
+  FROM admin_role_assignments existing
+  JOIN admin_roles copy
+    ON copy.id = admin_role_assignments.admin_role_id
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE existing.tenant_id = admin_role_assignments.tenant_id
+    AND existing.admin_user_id = admin_role_assignments.admin_user_id
+    AND existing.admin_role_id = canonical.id
+    AND existing.scope_type = admin_role_assignments.scope_type
+    AND COALESCE(existing.scope_id, '') = COALESCE(admin_role_assignments.scope_id, '')
+);
+
+UPDATE admin_role_assignments
+SET admin_role_id = (
+  SELECT canonical.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.id = admin_role_assignments.admin_role_id
+  LIMIT 1
+)
+WHERE admin_role_id IN (
+  SELECT copy.id
+  FROM admin_roles copy
+  JOIN admin_roles canonical
+    ON canonical.tenant_id = 'default'
+   AND canonical.is_system = 1
+   AND canonical.name = copy.name
+  WHERE copy.tenant_id = ${tenantIdSql}
+    AND copy.tenant_id <> 'default'
+    AND copy.is_system = 1
+);
+
+DELETE FROM admin_roles
+WHERE tenant_id = ${tenantIdSql}
   AND ${tenantIdSql} <> 'default'
-  AND NOT EXISTS (
+  AND is_system = 1
+  AND EXISTS (
     SELECT 1
-    FROM admin_roles existing
-    WHERE existing.tenant_id = ${tenantIdSql}
-      AND existing.name = admin_roles.name
+    FROM admin_roles canonical
+    WHERE canonical.tenant_id = 'default'
+      AND canonical.is_system = 1
+      AND canonical.name = admin_roles.name
   );
 `.trim();
 }
@@ -2653,7 +2653,7 @@ export async function seedRuntimeProfiles(
 /**
  * Locate the migrations root used by setup commands.
  *
- * Priority: local project > authrim subdir > cwd > bundled package migrations.
+ * Priority: local project > authrim subdir > cwd.
  */
 export async function findMigrationsRoot(
   rootDir: string,
@@ -2666,7 +2666,6 @@ export async function findMigrationsRoot(
     resolve(rootDir, 'authrim', 'migrations'),
     resolve(process.cwd(), 'migrations'),
     resolve(process.cwd(), 'authrim', 'migrations'),
-    PACKAGE_MIGRATIONS_DIR,
   ];
 
   for (const searchPath of searchPaths) {
@@ -2683,10 +2682,11 @@ export async function findMigrationsRoot(
 /**
  * Run migrations for an Authrim environment
  *
- * Searches for migrations directory in multiple locations:
+ * Searches for migrations directory in source-code locations:
  * 1. {rootDir}/migrations
  * 2. {rootDir}/authrim/migrations
- * 3. Relative to current working directory
+ * 3. process.cwd()/migrations
+ * 4. process.cwd()/authrim/migrations
  *
  * @param env - Environment name
  * @param rootDir - Root directory to search for migrations
@@ -3445,7 +3445,7 @@ const AUTHRIM_PATTERNS = {
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|import-artifacts|export-artifacts|sensitive-details)$/,
+  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
@@ -3934,6 +3934,17 @@ export function parseObjectCatalogR2RowsFromWranglerJson(
   });
 }
 
+function formatCloudflareApiMessages(payload: {
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}): string {
+  const entries = [...(payload.errors ?? []), ...(payload.messages ?? [])];
+  return entries
+    .map((entry) => [entry.code, entry.message].filter(Boolean).join(': '))
+    .filter(Boolean)
+    .join('; ');
+}
+
 async function queryObjectCatalogR2Objects(
   dbName: string
 ): Promise<Array<{ bucketBinding: string; objectKey: string }>> {
@@ -4021,6 +4032,200 @@ async function removeKnownR2Objects(
   onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
 }
 
+async function getR2ApiCredentials(): Promise<{ accountId: string; token: string } | null> {
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo?.token) {
+    return null;
+  }
+
+  const accountId =
+    process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ||
+    (await getAccountId()) ||
+    (await getSingleAccountIdViaApi(tokenInfo.token));
+  if (!accountId) {
+    return null;
+  }
+
+  return { accountId, token: tokenInfo.token };
+}
+
+async function getSingleAccountIdViaApi(token: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=2', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = (await response.json().catch(() => ({}))) as CloudflareAccountsResponse;
+    if (!response.ok || data.success === false) {
+      return null;
+    }
+
+    const accounts = (data.result ?? []).flatMap((account) =>
+      typeof account.id === 'string' ? [account.id] : []
+    );
+    return accounts.length === 1 ? accounts[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listAllR2ObjectKeysViaApi(
+  bucketName: string,
+  credentials: { accountId: string; token: string }
+): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const params = new URLSearchParams({ per_page: '1000' });
+    if (cursor) {
+      params.set('cursor', cursor);
+    }
+
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+        },
+      }
+    );
+
+    const data = (await response.json().catch(() => ({}))) as CloudflareR2ObjectListResponse;
+    if (!response.ok || data.success === false) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare R2 object list failed (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+
+    for (const object of data.result ?? []) {
+      if (typeof object.key === 'string') {
+        keys.push(object.key);
+      }
+    }
+
+    cursor = data.result_info?.is_truncated ? data.result_info.cursor : undefined;
+  } while (cursor);
+
+  return keys;
+}
+
+async function deleteR2ObjectViaApi(
+  bucketName: string,
+  objectKey: string,
+  credentials: { accountId: string; token: string }
+): Promise<void> {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects/${encodeURIComponent(objectKey)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    }
+  );
+
+  if (response.status === 404) {
+    return;
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  };
+  if (!response.ok || data.success === false) {
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(
+      `Cloudflare R2 object delete failed (${response.status})${detail ? `: ${detail}` : ''}`
+    );
+  }
+}
+
+async function deleteR2BucketViaApi(
+  bucketName: string,
+  credentials: { accountId: string; token: string }
+): Promise<void> {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    }
+  );
+
+  if (response.status === 404) {
+    return;
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  };
+  if (!response.ok || data.success === false) {
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(
+      `Cloudflare R2 bucket delete failed (${response.status})${detail ? `: ${detail}` : ''}`
+    );
+  }
+}
+
+async function removeAllR2ObjectsViaApi(
+  bucketName: string,
+  onProgress?: (message: string) => void
+): Promise<void> {
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) {
+    onProgress?.(
+      `  ⚠️ R2 full object cleanup skipped for ${bucketName}: API token/account unavailable`
+    );
+    return;
+  }
+
+  const objectKeys = await listAllR2ObjectKeysViaApi(bucketName, credentials);
+  if (objectKeys.length === 0) {
+    return;
+  }
+
+  onProgress?.(`  🧹 Emptying all R2 objects: ${bucketName} (${objectKeys.length})...`);
+  const concurrency = 5;
+  let removed = 0;
+  let completed = 0;
+  let nextIndex = 0;
+
+  const workerCount = Math.min(concurrency, objectKeys.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < objectKeys.length) {
+        const objectKey = objectKeys[nextIndex];
+        nextIndex += 1;
+        try {
+          await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
+          removed += 1;
+        } catch (error) {
+          onProgress?.(`  ⚠️ R2 object cleanup failed for ${bucketName}: ${sanitizeError(error)}`);
+        } finally {
+          completed += 1;
+          if (completed % 50 === 0 || completed === objectKeys.length) {
+            onProgress?.(
+              `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+            );
+          }
+        }
+      }
+    })
+  );
+  onProgress?.(
+    `  R2 full object cleanup removed for ${bucketName}: ${removed}/${objectKeys.length}`
+  );
+}
+
 /**
  * Delete an R2 bucket
  */
@@ -4030,9 +4235,16 @@ export async function deleteR2Bucket(
 ): Promise<boolean> {
   try {
     await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
-    await wrangler(['r2', 'bucket', 'delete', name]);
+    await removeAllR2ObjectsViaApi(name, options.onProgress);
+    const credentials = await getR2ApiCredentials();
+    if (credentials) {
+      await deleteR2BucketViaApi(name, credentials);
+    } else {
+      await wrangler(['r2', 'bucket', 'delete', name]);
+    }
     return true;
-  } catch {
+  } catch (error) {
+    options.onProgress?.(`  ⚠️ R2 bucket delete failed for ${name}: ${sanitizeError(error)}`);
     return false;
   }
 }

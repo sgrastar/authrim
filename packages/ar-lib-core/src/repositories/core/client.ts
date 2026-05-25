@@ -52,7 +52,7 @@ export type CIBADeliveryMode = 'poll' | 'ping' | 'push';
 
 export type ClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 export type ClientChannel = 'browser' | 'native' | 'server';
-export type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
+export type BrowserPublicClientMode = 'strict' | 'cookie_fallback';
 export type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 
 /**

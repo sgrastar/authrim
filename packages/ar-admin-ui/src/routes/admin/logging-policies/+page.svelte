@@ -17,6 +17,7 @@
 		type LoggingRuntimeVerification,
 		type LoggingUsageSummary,
 		type LoggingDlqBulkReplayPreview,
+		type LoggingExportFormat,
 		type TenantDatabaseRuntimeHealth,
 		type TenantDatabaseProbeResult,
 		type LoggingUsageAggregate,
@@ -63,11 +64,12 @@
 	let deliveryWindowPreset = $state('24h');
 	let activeDeliveryWindowStart = $state(Date.now() - 24 * 60 * 60 * 1000);
 	let activeDeliveryStatusFilter = $state('');
+	let activeTenantIdFilter = $state('');
 	let dlqPayloadPreview = $state<{ id: string; text: string; truncated: boolean } | null>(null);
 	let exportTenantKey = $state('');
 	let exportLogType = $state('');
 	let exportPlane = $state('');
-	let exportFormat = $state<'jsonl' | 'csv'>('jsonl');
+	let exportFormat = $state<LoggingExportFormat>('jsonl');
 	let exportJob = $state<LoggingExportJob | null>(null);
 	let exportArtifactPreview = $state('');
 	let exportLoading = $state(false);
@@ -97,9 +99,48 @@
 	let bulkDlqLimit = $state(10);
 	let bulkDlqLoading = $state(false);
 	let dangerConfirmation = $state<DangerConfirmationRequest | null>(null);
+	const PERM_LOGGING_PLATFORM_DEFAULTS_UPDATE = 'admin:logging:platform_defaults:update';
+	const PERM_LOGGING_DELIVERY_EVENTS_READ = 'admin:logging:delivery_events:read';
+	const PERM_LOGGING_DELIVERY_RETRY = 'admin:logging:delivery:retry';
+	const PERM_LOGGING_EXPORT_CREATE = 'admin:logging:exports:create';
+	const PERM_LOGGING_SENSITIVE_DETAIL_EXPORT = 'admin:logging:sensitive_detail:export';
+	const PERM_LOGGING_DLQ_DELETE = 'admin:logging:dlq:delete';
+	const PERM_LOGGING_DLQ_PURGE = 'admin:logging:dlq:purge';
+	const PERM_LOGGING_SNAPSHOTS_PUBLISH = 'admin:logging:snapshots:publish';
+	const PERM_ADMIN_LOGGING_REPAIR_READ = 'admin:admin_logging:repair:read';
+	const PERM_ADMIN_LOGGING_REPAIR_RUN = 'admin:admin_logging:repair:run';
+	const PERM_DATABASE_ROUTING_READ = 'admin:database_routing:read';
+	const PERM_DATABASE_ROUTING_WRITE = 'admin:database_routing:write';
 	const isPlatformAdmin = $derived(Boolean(adminAuth.user?.isPlatformAdmin));
 	const canFilterByTenant = $derived(isPlatformAdmin);
-	const canPurgeDlq = $derived(isPlatformAdmin);
+	const canManagePlatformLogging = $derived(
+		isPlatformAdmin && hasAdminPermission(PERM_LOGGING_PLATFORM_DEFAULTS_UPDATE)
+	);
+	const canReadDeliveryEvents = $derived(hasAdminPermission(PERM_LOGGING_DELIVERY_EVENTS_READ));
+	const canRetryDelivery = $derived(hasAdminPermission(PERM_LOGGING_DELIVERY_RETRY));
+	const canCreateExport = $derived(hasAdminPermission(PERM_LOGGING_EXPORT_CREATE));
+	const canExportSensitiveDetail = $derived(
+		hasAdminPermission(PERM_LOGGING_SENSITIVE_DETAIL_EXPORT)
+	);
+	const canDeleteDlq = $derived(hasAdminPermission(PERM_LOGGING_DLQ_DELETE));
+	const canPurgeDlq = $derived(isPlatformAdmin && hasAdminPermission(PERM_LOGGING_DLQ_PURGE));
+	const canPublishSnapshots = $derived(hasAdminPermission(PERM_LOGGING_SNAPSHOTS_PUBLISH));
+	const canReadMessageRepair = $derived(hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_READ));
+	const canRunMessageRepair = $derived(hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_RUN));
+	const canReadDatabaseRouting = $derived(hasAdminPermission(PERM_DATABASE_ROUTING_READ));
+	const canWriteDatabaseRouting = $derived(hasAdminPermission(PERM_DATABASE_ROUTING_WRITE));
+
+	function hasAdminPermission(permission: string): boolean {
+		const permissions = adminAuth.user?.permissions ?? [];
+		if (permissions.includes('*') || permissions.includes(permission)) return true;
+		const parts = permission.split(':');
+		for (let i = parts.length - 1; i >= 0; i -= 1) {
+			if (permissions.includes([...parts.slice(0, i), '*'].join(':'))) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	function requestDangerConfirmation(input: Omit<DangerConfirmationRequest, 'resolve'>) {
 		return new Promise<string | null>((resolve) => {
@@ -130,6 +171,7 @@
 		dlqCursor = undefined;
 		activeDeliveryWindowStart = getDeliveryWindowStart();
 		activeDeliveryStatusFilter = statusFilter;
+		activeTenantIdFilter = canFilterByTenant ? tenantId.trim() : '';
 		try {
 			deliveryEventsLoaded = false;
 			dlqItemsLoaded = false;
@@ -144,6 +186,7 @@
 					canFilterByTenant ? tenantId.trim() || undefined : undefined
 				),
 				adminLoggingControlAPI.getDeliverySummary({
+					tenantId: activeTenantIdFilter || undefined,
 					status: activeDeliveryStatusFilter || undefined,
 					timeStart: activeDeliveryWindowStart,
 					limit: 100
@@ -179,11 +222,12 @@
 	}
 
 	async function loadMoreDeliveryEvents() {
-		if (!deliveryCursor || deliveryLoading) return;
+		if (!deliveryCursor || deliveryLoading || !canReadDeliveryEvents) return;
 		deliveryLoading = true;
 		error = '';
 		try {
 			const response = await adminLoggingControlAPI.listDeliveryEvents({
+				tenantId: activeTenantIdFilter || undefined,
 				status: activeDeliveryStatusFilter || undefined,
 				timeStart: activeDeliveryWindowStart,
 				cursor: deliveryCursor,
@@ -199,11 +243,12 @@
 	}
 
 	async function loadDeliveryEvents() {
-		if (deliveryLoading) return;
+		if (deliveryLoading || !canReadDeliveryEvents) return;
 		deliveryLoading = true;
 		error = '';
 		try {
 			const response = await adminLoggingControlAPI.listDeliveryEvents({
+				tenantId: activeTenantIdFilter || undefined,
 				status: activeDeliveryStatusFilter || undefined,
 				timeStart: activeDeliveryWindowStart,
 				limit: 50
@@ -219,11 +264,12 @@
 	}
 
 	async function loadMoreDlqItems() {
-		if (!dlqCursor || dlqLoading) return;
+		if (!dlqCursor || dlqLoading || !canReadDeliveryEvents) return;
 		dlqLoading = true;
 		error = '';
 		try {
 			const response = await adminLoggingControlAPI.listDlqItems({
+				tenantId: activeTenantIdFilter || undefined,
 				status: 'open',
 				timeStart: activeDeliveryWindowStart,
 				cursor: dlqCursor,
@@ -239,12 +285,13 @@
 	}
 
 	async function loadDlqItems() {
-		if (dlqLoading) return;
+		if (dlqLoading || !canReadDeliveryEvents) return;
 		dlqLoading = true;
 		error = '';
 		dlqPayloadPreview = null;
 		try {
 			const response = await adminLoggingControlAPI.listDlqItems({
+				tenantId: activeTenantIdFilter || undefined,
 				status: 'open',
 				timeStart: activeDeliveryWindowStart,
 				limit: 25
@@ -261,6 +308,9 @@
 
 	async function runDlqAction(item: LoggingDlqItem, action: 'replay' | 'delete' | 'purge') {
 		if (dlqActionId) return;
+		if (action === 'replay' && !canRetryDelivery) return;
+		if (action === 'delete' && !canDeleteDlq) return;
+		if (action === 'purge' && !canPurgeDlq) return;
 		const confirmation =
 			action === 'purge'
 				? await requestDangerConfirmation({
@@ -298,7 +348,7 @@
 	}
 
 	async function previewDlqPayload(item: LoggingDlqItem) {
-		if (dlqActionId) return;
+		if (dlqActionId || !canReadDeliveryEvents) return;
 		dlqActionId = item.id;
 		error = '';
 		try {
@@ -330,7 +380,12 @@
 	}
 
 	async function createExport() {
-		if (exportLoading) return;
+		if (
+			exportLoading ||
+			!canCreateExport ||
+			(exportPlane === 'sensitive_detail' && !canExportSensitiveDetail)
+		)
+			return;
 		exportLoading = true;
 		error = '';
 		exportArtifactPreview = '';
@@ -338,6 +393,7 @@
 			const response = await adminLoggingControlAPI.createLoggingExport({
 				format: exportFormat,
 				tenant_key: canFilterByTenant ? exportTenantKey.trim() || undefined : undefined,
+				tenant_id: canFilterByTenant ? tenantId.trim() || undefined : undefined,
 				log_type: exportLogType || undefined,
 				plane: exportPlane || undefined,
 				time_start: activeDeliveryWindowStart,
@@ -366,11 +422,12 @@
 	}
 
 	async function loadMessageJobs(sourceId?: string) {
-		if (messageJobsLoading) return;
+		if (messageJobsLoading || !canReadDeliveryEvents) return;
 		messageJobsLoading = true;
 		error = '';
 		try {
 			const response = await adminLoggingControlAPI.listMessageJobs({
+				tenantId: canFilterByTenant ? tenantId.trim() || undefined : undefined,
 				tenantKey: canFilterByTenant ? exportTenantKey.trim() || undefined : undefined,
 				kind: (messageJobKindFilter || undefined) as LoggingMessageJob['kind'] | undefined,
 				status: messageJobStatusFilter || undefined,
@@ -394,7 +451,7 @@
 	}
 
 	async function cancelMessageJob(item: LoggingMessageJob) {
-		if (messageJobActionId) return;
+		if (messageJobActionId || !canCancelMessageJob(item)) return;
 		const confirmation = await requestDangerConfirmation({
 			title: 'Cancel Message Job',
 			resourceName: item.id,
@@ -424,7 +481,14 @@
 	}
 
 	async function previewExportArtifact() {
-		if (!exportJob || exportLoading || exportJob.status !== 'completed') return;
+		if (
+			!exportJob ||
+			exportLoading ||
+			exportJob.status !== 'completed' ||
+			exportJob.format === 'zip'
+		) {
+			return;
+		}
 		exportLoading = true;
 		error = '';
 		try {
@@ -437,12 +501,36 @@
 		}
 	}
 
+	async function downloadExportArtifact() {
+		if (!exportJob || exportLoading || exportJob.status !== 'completed') return;
+		exportLoading = true;
+		error = '';
+		try {
+			const { blob, filename } = await adminLoggingControlAPI.downloadLoggingExportArtifact(
+				exportJob.id
+			);
+			const url = URL.createObjectURL(blob);
+			const anchor = document.createElement('a');
+			anchor.href = url;
+			anchor.download = filename;
+			document.body.appendChild(anchor);
+			anchor.click();
+			anchor.remove();
+			URL.revokeObjectURL(url);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to download export artifact';
+		} finally {
+			exportLoading = false;
+		}
+	}
+
 	async function loadMessageRepairFindings() {
-		if (messageRepairActionId) return;
+		if (messageRepairActionId || !canReadDeliveryEvents) return;
 		messageRepairActionId = 'load';
 		error = '';
 		try {
 			const response = await adminLoggingControlAPI.listMessageRepairFindings({
+				tenantId: canFilterByTenant ? tenantId.trim() || undefined : undefined,
 				tenantKey: canFilterByTenant ? exportTenantKey.trim() || undefined : undefined,
 				status: 'open',
 				limit: 25
@@ -456,7 +544,7 @@
 	}
 
 	async function applySafeMessageRepair(item: LoggingMessageRepairFinding) {
-		if (messageRepairActionId) return;
+		if (messageRepairActionId || !canRunMessageRepair) return;
 		messageRepairActionId = item.id;
 		error = '';
 		try {
@@ -470,7 +558,7 @@
 	}
 
 	async function applyDangerousMessageRepair(item: LoggingMessageRepairFinding) {
-		if (messageRepairActionId) return;
+		if (messageRepairActionId || !canReadMessageRepair || !canRunMessageRepair) return;
 		messageRepairActionId = item.id;
 		error = '';
 		try {
@@ -492,7 +580,7 @@
 	}
 
 	async function createSnapshotDraft() {
-		if (snapshotActionLoading) return;
+		if (snapshotActionLoading || !canPublishSnapshots) return;
 		snapshotActionLoading = true;
 		error = '';
 		snapshotDraft = null;
@@ -511,7 +599,7 @@
 	}
 
 	async function publishSnapshotDraft() {
-		if (!snapshotDraft || snapshotActionLoading) return;
+		if (!snapshotDraft || snapshotActionLoading || !canPublishSnapshots) return;
 		const confirmation = await requestDangerConfirmation({
 			title: 'Publish Logging Policy',
 			resourceName: snapshotDraft.id,
@@ -562,7 +650,7 @@
 	}
 
 	async function verifyRuntimeSnapshot() {
-		if (runtimeVerifyLoading) return;
+		if (runtimeVerifyLoading || !canPublishSnapshots) return;
 		runtimeVerifyLoading = true;
 		error = '';
 		try {
@@ -584,7 +672,7 @@
 	}
 
 	async function loadTenantDbHealth() {
-		if (tenantDbHealthLoading) return;
+		if (tenantDbHealthLoading || !canReadDatabaseRouting) return;
 		tenantDbHealthLoading = true;
 		error = '';
 		try {
@@ -601,7 +689,7 @@
 	}
 
 	async function runTenantDbProbe() {
-		if (tenantDbProbeLoading) return;
+		if (tenantDbProbeLoading || !canWriteDatabaseRouting) return;
 		tenantDbProbeLoading = true;
 		error = '';
 		try {
@@ -630,6 +718,7 @@
 					limit: 100
 				}),
 				adminLoggingControlAPI.listUsageAggregates({
+					tenantId: canFilterByTenant ? tenantId.trim() || undefined : undefined,
 					tenantKey: canFilterByTenant ? exportTenantKey.trim() || undefined : undefined,
 					timeStart: activeDeliveryWindowStart,
 					windowKind: 'hour',
@@ -646,7 +735,7 @@
 	}
 
 	async function refreshUsageAggregates() {
-		if (usageLoading) return;
+		if (usageLoading || !canManagePlatformLogging) return;
 		usageLoading = true;
 		error = '';
 		try {
@@ -686,7 +775,7 @@
 	}
 
 	async function evaluateQuota() {
-		if (quotaLoading) return;
+		if (quotaLoading || !canManagePlatformLogging) return;
 		quotaLoading = true;
 		error = '';
 		try {
@@ -707,6 +796,7 @@
 		error = '';
 		try {
 			const response = await adminLoggingControlAPI.previewBulkDlqReplay({
+				tenantId: canFilterByTenant ? tenantId.trim() || undefined : undefined,
 				tenantKey: canFilterByTenant ? exportTenantKey.trim() || undefined : undefined,
 				limit: bulkDlqLimit
 			});
@@ -719,7 +809,8 @@
 	}
 
 	async function applyBulkDlqReplay() {
-		if (bulkDlqLoading || !bulkDlqPreview || bulkDlqPreview.item_count === 0) return;
+		if (bulkDlqLoading || !bulkDlqPreview || bulkDlqPreview.item_count === 0 || !canRetryDelivery)
+			return;
 		const confirmation = await requestDangerConfirmation({
 			title: 'Bulk Replay DLQ',
 			resourceName: `${bulkDlqPreview.item_count} DLQ items`,
@@ -732,6 +823,7 @@
 		error = '';
 		try {
 			await adminLoggingControlAPI.applyBulkDlqReplay({
+				tenantId: canFilterByTenant ? tenantId.trim() || undefined : undefined,
 				tenantKey: canFilterByTenant ? exportTenantKey.trim() || undefined : undefined,
 				limit: bulkDlqLimit,
 				reason: confirmation
@@ -772,6 +864,12 @@
 
 	function messageJobIsCancellable(item: LoggingMessageJob): boolean {
 		return ['queued', 'retrying', 'claimed', 'running'].includes(item.status);
+	}
+
+	function canCancelMessageJob(item: LoggingMessageJob): boolean {
+		if (item.kind === 'retry_delivery') return canRetryDelivery;
+		if (item.kind === 'export_build') return canCreateExport;
+		return canRetryDelivery || canCreateExport;
 	}
 
 	function formatJsonPreview(value: Record<string, unknown> | null | undefined): string {
@@ -896,7 +994,7 @@
 				<button
 					class="btn btn-secondary"
 					onclick={createSnapshotDraft}
-					disabled={snapshotActionLoading || loading}
+					disabled={snapshotActionLoading || loading || !canPublishSnapshots}
 				>
 					{snapshotActionLoading ? 'Working...' : 'Create draft'}
 				</button>
@@ -923,7 +1021,7 @@
 				<button
 					class="btn btn-danger"
 					onclick={publishSnapshotDraft}
-					disabled={snapshotActionLoading}
+					disabled={snapshotActionLoading || !canPublishSnapshots}
 				>
 					Publish
 				</button>
@@ -975,7 +1073,9 @@
 				<option value="primary">primary</option>
 				<option value="archive">archive</option>
 				<option value="external_sink">external_sink</option>
-				<option value="sensitive_detail">sensitive_detail</option>
+				<option value="sensitive_detail" disabled={!canExportSensitiveDetail}
+					>sensitive_detail</option
+				>
 				<option value="diagnostic_detail">diagnostic_detail</option>
 				<option value="delivery_event">delivery_event</option>
 			</select>
@@ -990,7 +1090,7 @@
 			<button
 				class="btn btn-secondary"
 				onclick={verifyRuntimeSnapshot}
-				disabled={runtimeVerifyLoading}
+				disabled={runtimeVerifyLoading || !canPublishSnapshots}
 			>
 				{runtimeVerifyLoading ? 'Verifying...' : 'Verify snapshot'}
 			</button>
@@ -1004,11 +1104,15 @@
 			<button
 				class="btn btn-secondary"
 				onclick={loadTenantDbHealth}
-				disabled={tenantDbHealthLoading}
+				disabled={tenantDbHealthLoading || !canReadDatabaseRouting}
 			>
 				{tenantDbHealthLoading ? 'Checking...' : 'Check tenant DB'}
 			</button>
-			<button class="btn btn-secondary" onclick={runTenantDbProbe} disabled={tenantDbProbeLoading}>
+			<button
+				class="btn btn-secondary"
+				onclick={runTenantDbProbe}
+				disabled={tenantDbProbeLoading || !canWriteDatabaseRouting}
+			>
 				{tenantDbProbeLoading ? 'Probing...' : 'Write-read probe'}
 			</button>
 		</div>
@@ -1080,7 +1184,11 @@
 								<td>{item.pointer_status}</td>
 								<td>{item.registry_status}</td>
 								<td>{item.provider ?? '-'}</td>
-								<td>{item.binding_ref ?? item.connection_ref ?? '-'} / {item.binding_configured ? 'yes' : 'no'}</td>
+								<td
+									>{item.binding_ref ?? item.connection_ref ?? '-'} / {item.binding_configured
+										? 'yes'
+										: 'no'}</td
+								>
 								<td>{item.schema_version ?? '-'}</td>
 							</tr>
 						{/each}
@@ -1108,7 +1216,7 @@
 			<button class="btn btn-secondary" onclick={loadUsageSummary} disabled={usageLoading}>
 				{usageLoading ? 'Loading...' : 'Load usage'}
 			</button>
-			{#if isPlatformAdmin}
+			{#if canManagePlatformLogging}
 				<button class="btn btn-secondary" onclick={refreshUsageAggregates} disabled={usageLoading}>
 					Refresh aggregates
 				</button>
@@ -1154,7 +1262,7 @@
 			<button class="btn btn-secondary" onclick={loadQuotaState} disabled={quotaLoading}>
 				{quotaLoading ? 'Loading...' : 'Load quota'}
 			</button>
-			{#if isPlatformAdmin}
+			{#if canManagePlatformLogging}
 				<button class="btn btn-secondary" onclick={evaluateQuota} disabled={quotaLoading}>
 					Evaluate quota
 				</button>
@@ -1282,8 +1390,15 @@
 			<select bind:value={exportFormat}>
 				<option value="jsonl">JSONL</option>
 				<option value="csv">CSV</option>
+				<option value="zip">B-format ZIP</option>
 			</select>
-			<button class="btn btn-secondary" onclick={createExport} disabled={exportLoading}>
+			<button
+				class="btn btn-secondary"
+				onclick={createExport}
+				disabled={exportLoading ||
+					!canCreateExport ||
+					(exportPlane === 'sensitive_detail' && !canExportSensitiveDetail)}
+			>
 				{exportLoading ? 'Working...' : 'Create export'}
 			</button>
 		</div>
@@ -1307,9 +1422,16 @@
 				<button
 					class="btn btn-secondary"
 					onclick={previewExportArtifact}
-					disabled={exportLoading || exportJob.status !== 'completed'}
+					disabled={exportLoading || exportJob.status !== 'completed' || exportJob.format === 'zip'}
 				>
 					Preview artifact
+				</button>
+				<button
+					class="btn btn-secondary"
+					onclick={downloadExportArtifact}
+					disabled={exportLoading || exportJob.status !== 'completed'}
+				>
+					Download artifact
 				</button>
 			</div>
 			{#if exportArtifactPreview}
@@ -1344,7 +1466,7 @@
 			<button
 				class="btn btn-secondary"
 				onclick={() => loadMessageJobs()}
-				disabled={messageJobsLoading}
+				disabled={messageJobsLoading || !canReadDeliveryEvents}
 			>
 				{messageJobsLoading ? 'Loading...' : 'Load jobs'}
 			</button>
@@ -1352,7 +1474,7 @@
 				<button
 					class="btn btn-secondary"
 					onclick={loadCurrentExportMessageJobs}
-					disabled={messageJobsLoading}
+					disabled={messageJobsLoading || !canReadDeliveryEvents}
 				>
 					Load export jobs
 				</button>
@@ -1394,7 +1516,7 @@
 											<button
 												class="btn btn-danger"
 												onclick={() => cancelMessageJob(item)}
-												disabled={messageJobActionId === item.id}
+												disabled={messageJobActionId === item.id || !canCancelMessageJob(item)}
 											>
 												Cancel
 											</button>
@@ -1446,7 +1568,7 @@
 			<button
 				class="btn btn-secondary"
 				onclick={loadMessageRepairFindings}
-				disabled={messageRepairActionId === 'load'}
+				disabled={messageRepairActionId === 'load' || !canReadDeliveryEvents}
 			>
 				{messageRepairActionId === 'load' ? 'Loading...' : 'Load findings'}
 			</button>
@@ -1480,7 +1602,7 @@
 											<button
 												class="btn btn-secondary"
 												onclick={() => applySafeMessageRepair(item)}
-												disabled={messageRepairActionId === item.id}
+												disabled={messageRepairActionId === item.id || !canRunMessageRepair}
 											>
 												Safe repair
 											</button>
@@ -1489,7 +1611,9 @@
 											<button
 												class="btn btn-danger"
 												onclick={() => applyDangerousMessageRepair(item)}
-												disabled={messageRepairActionId === item.id}
+												disabled={messageRepairActionId === item.id ||
+													!canReadMessageRepair ||
+													!canRunMessageRepair}
 											>
 												Dangerous
 											</button>
@@ -1510,7 +1634,11 @@
 			<span>{deliveryEvents.length}</span>
 		</div>
 		{#if !deliveryEventsLoaded}
-			<button class="btn btn-secondary" onclick={loadDeliveryEvents} disabled={deliveryLoading}>
+			<button
+				class="btn btn-secondary"
+				onclick={loadDeliveryEvents}
+				disabled={deliveryLoading || !canReadDeliveryEvents}
+			>
 				{deliveryLoading ? 'Loading...' : 'Load delivery events'}
 			</button>
 		{:else if deliveryEvents.length === 0}
@@ -1606,13 +1734,20 @@
 		</div>
 		<div class="message-job-controls">
 			<input type="number" min="1" max="50" bind:value={bulkDlqLimit} />
-			<button class="btn btn-secondary" onclick={previewBulkDlqReplay} disabled={bulkDlqLoading}>
+			<button
+				class="btn btn-secondary"
+				onclick={previewBulkDlqReplay}
+				disabled={bulkDlqLoading || !canReadDeliveryEvents}
+			>
 				{bulkDlqLoading ? 'Working...' : 'Preview bulk replay'}
 			</button>
 			<button
 				class="btn btn-danger"
 				onclick={applyBulkDlqReplay}
-				disabled={bulkDlqLoading || !bulkDlqPreview || bulkDlqPreview.item_count === 0}
+				disabled={bulkDlqLoading ||
+					!bulkDlqPreview ||
+					bulkDlqPreview.item_count === 0 ||
+					!canRetryDelivery}
 			>
 				Apply bulk replay
 			</button>
@@ -1621,7 +1756,11 @@
 			{/if}
 		</div>
 		{#if !dlqItemsLoaded}
-			<button class="btn btn-secondary" onclick={loadDlqItems} disabled={dlqLoading}>
+			<button
+				class="btn btn-secondary"
+				onclick={loadDlqItems}
+				disabled={dlqLoading || !canReadDeliveryEvents}
+			>
 				{dlqLoading ? 'Loading...' : 'Load DLQ items'}
 			</button>
 		{:else if dlqItems.length === 0}
@@ -1652,21 +1791,23 @@
 										<button
 											class="btn btn-secondary"
 											onclick={() => previewDlqPayload(item)}
-											disabled={dlqActionId === item.id}
+											disabled={dlqActionId === item.id || !canReadDeliveryEvents}
 										>
 											Preview
 										</button>
 										<button
 											class="btn btn-secondary"
 											onclick={() => runDlqAction(item, 'replay')}
-											disabled={dlqActionId === item.id || item.status !== 'open'}
+											disabled={dlqActionId === item.id ||
+												item.status !== 'open' ||
+												!canRetryDelivery}
 										>
 											Replay
 										</button>
 										<button
 											class="btn btn-secondary"
 											onclick={() => runDlqAction(item, 'delete')}
-											disabled={dlqActionId === item.id || item.status !== 'open'}
+											disabled={dlqActionId === item.id || item.status !== 'open' || !canDeleteDlq}
 										>
 											Delete
 										</button>
@@ -1674,7 +1815,7 @@
 											<button
 												class="btn btn-danger"
 												onclick={() => runDlqAction(item, 'purge')}
-												disabled={dlqActionId === item.id || item.status !== 'open'}
+												disabled={dlqActionId === item.id || item.status !== 'open' || !canPurgeDlq}
 											>
 												Purge
 											</button>

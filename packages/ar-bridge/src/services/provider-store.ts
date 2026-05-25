@@ -133,10 +133,10 @@ export async function createProvider(
       issuer, client_id, client_secret_encrypted,
       authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri,
       scopes, token_endpoint_auth_method, attribute_mapping, auto_link_email, jit_provisioning, require_email_verified, always_fetch_userinfo, enable_sso,
-      provider_quirks, icon_url, button_color, button_color_dark, button_text,
+      provider_quirks, icon_url, icon_name, button_color, button_color_dark, button_text,
       use_request_object, request_object_signing_alg, private_key_jwk_encrypted, public_key_jwk,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       provider.tenantId,
@@ -162,6 +162,7 @@ export async function createProvider(
       provider.enableSso !== false ? 1 : 0,
       JSON.stringify(provider.providerQuirks || {}),
       provider.iconUrl || null,
+      provider.iconName || null,
       provider.buttonColor || null,
       provider.buttonColorDark || null,
       provider.buttonText || null,
@@ -204,7 +205,7 @@ export async function updateProvider(
       issuer = ?, client_id = ?, client_secret_encrypted = ?,
       authorization_endpoint = ?, token_endpoint = ?, userinfo_endpoint = ?, jwks_uri = ?,
       scopes = ?, token_endpoint_auth_method = ?, attribute_mapping = ?, auto_link_email = ?, jit_provisioning = ?, require_email_verified = ?, always_fetch_userinfo = ?, enable_sso = ?,
-      provider_quirks = ?, icon_url = ?, button_color = ?, button_color_dark = ?, button_text = ?,
+      provider_quirks = ?, icon_url = ?, icon_name = ?, button_color = ?, button_color_dark = ?, button_text = ?,
       use_request_object = ?, request_object_signing_alg = ?, private_key_jwk_encrypted = ?, public_key_jwk = ?,
       updated_at = ?
     WHERE id = ? AND tenant_id = ?`,
@@ -231,6 +232,7 @@ export async function updateProvider(
       updated.enableSso !== false ? 1 : 0,
       JSON.stringify(updated.providerQuirks || {}),
       updated.iconUrl || null,
+      updated.iconName || null,
       updated.buttonColor || null,
       updated.buttonColorDark || null,
       updated.buttonText || null,
@@ -288,6 +290,7 @@ interface DbUpstreamProvider {
   enable_sso: number;
   provider_quirks: string;
   icon_url: string | null;
+  icon_name: string | null;
   button_color: string | null;
   button_color_dark: string | null;
   button_text: string | null;
@@ -327,6 +330,7 @@ function mapDbToProvider(db: DbUpstreamProvider): UpstreamProvider {
     enableSso: db.enable_sso === 1,
     providerQuirks: JSON.parse(db.provider_quirks || '{}'),
     iconUrl: db.icon_url || undefined,
+    iconName: db.icon_name || undefined,
     buttonColor: db.button_color || undefined,
     buttonColorDark: db.button_color_dark || undefined,
     buttonText: db.button_text || undefined,

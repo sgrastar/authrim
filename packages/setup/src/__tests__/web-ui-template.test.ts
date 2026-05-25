@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import vm from 'node:vm';
+import { WILDCARD_DNS_MANUAL_COPY } from '../core/wildcard-dns-manual-action.js';
 import en from '../i18n/locales/en.js';
 import { SUPPORTED_LOCALES } from '../i18n/types.js';
 import { getHtmlTemplate } from '../web/ui.js';
@@ -145,6 +146,33 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('id="mode-quick"');
   });
 
+  it('renders Login UI and Admin UI as selectable components while advanced API components stay hidden', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('standard-component-title');
+    expect(html).toContain('data-i18n="web.config.apiRequired"');
+    expect(html).toContain('data-i18n="web.comp.loginUi"');
+    expect(html).toContain('data-i18n="web.comp.adminUi"');
+    expect(html).not.toContain('id="comp-api"');
+    expect(html).toContain('id="comp-login-ui"');
+    expect(html).toContain('id="comp-admin-ui"');
+    expect(html).toContain("document.getElementById('comp-login-ui')");
+    expect(html).toContain("document.getElementById('comp-admin-ui')");
+    expect(html).not.toContain('standard-component-badge');
+    expect(html).not.toContain('<span class="preview-component-badge">SAML IdP</span>');
+    expect(html).not.toContain('<span class="preview-component-badge">Device Flow/CIBA</span>');
+    expect(html).not.toContain('<span class="preview-component-badge">VC SD-JWT</span>');
+    expect(html).not.toContain("'SAML IdP', 'Device Flow/CIBA', 'VC SD-JWT'");
+    expect(html).toContain('loginUi: loginUiEnabled');
+    expect(html).toContain('adminUi: adminUiEnabled');
+  });
+
   it('renders the keys saved panel with dark-mode styles and a copy button', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -259,6 +287,21 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('data:image/png;base64,');
     expect(html).toContain('ワイルドカード DNS の手動設定が必要です');
     expect(html).toContain('Manual wildcard DNS setup is required');
+    expect(html).toContain('Cloudflare Edge 証明書も必要です');
+    expect(html).toContain('Certificate note: a Cloudflare Edge certificate must also cover');
+    expect(Object.keys(WILDCARD_DNS_MANUAL_COPY).sort()).toEqual(
+      SUPPORTED_LOCALES.map((locale) => locale.code).sort()
+    );
+    for (const locale of SUPPORTED_LOCALES) {
+      const copy = WILDCARD_DNS_MANUAL_COPY[locale.code];
+      const steps = copy.steps(
+        '{zoneName}',
+        '*.{baseDomain}',
+        '{baseDomain}',
+        '{dashboardRecordName}'
+      );
+      expect(html).toContain(steps.at(-1));
+    }
     expect(html).toContain('WILDCARD_DNS_MANUAL_COPY_DATA');
     expect(html).toContain('CLOUDFLARE_DNS_RECORDS_DOCS');
   });

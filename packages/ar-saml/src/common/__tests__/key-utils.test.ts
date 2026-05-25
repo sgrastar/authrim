@@ -30,6 +30,45 @@ describe('SAML key utilities', () => {
     expect(certificate.publicKey.asymmetricKeyType).toBe('rsa');
   });
 
+  it('generates a self-signed certificate with a custom subject', async () => {
+    const keyPair = await crypto.subtle.generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['sign', 'verify']
+    );
+    const [publicJwk, privateKeyPkcs8] = await Promise.all([
+      crypto.subtle.exportKey('jwk', keyPair.publicKey),
+      crypto.subtle.exportKey('pkcs8', keyPair.privateKey),
+    ]);
+
+    const certificatePem = await generateSelfSignedCertificate(
+      publicJwk,
+      formatPem('PRIVATE KEY', arrayBufferToBase64(new Uint8Array(privateKeyPkcs8))),
+      {
+        countryName: 'JP',
+        stateOrProvinceName: 'Tokyo',
+        localityName: 'Chiyoda',
+        organizationName: 'Example Org',
+        organizationalUnitName: 'Identity',
+        commonName: 'Example SAML Signing',
+      }
+    );
+    const certificate = new X509Certificate(certificatePem);
+
+    expect(certificate.subject).toContain('C=JP');
+    expect(certificate.subject).toContain('ST=Tokyo');
+    expect(certificate.subject).toContain('L=Chiyoda');
+    expect(certificate.subject).toContain('O=Example Org');
+    expect(certificate.subject).toContain('OU=Identity');
+    expect(certificate.subject).toContain('CN=Example SAML Signing');
+    expect(certificate.issuer).toBe(certificate.subject);
+  });
+
   it('stores a generated certificate in KeyManager when a key has no certificate yet', async () => {
     const keyPair = await crypto.subtle.generateKey(
       {

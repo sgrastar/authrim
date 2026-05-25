@@ -9,6 +9,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { needsBuiltinRegistration, registerBuiltinPlugins } from '@authrim/ar-lib-plugin';
 import { getResolvedPluginConfigState } from './settings/plugins';
+import { requireTenantResourceAccess } from '../admin-tenant-access';
 
 interface PluginRegistryEntry {
   id: string;
@@ -143,6 +144,11 @@ async function listEmailProviders(env: Env, tenantId: string) {
 
 export async function getTenantEmailSettingsHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = c.req.param('tenantId')!;
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
+
   const providers = await listEmailProviders(c.env, tenantId);
   const settings = await getTenantEmailSettings(
     c.env,
@@ -168,6 +174,11 @@ export async function getTenantEmailSettingsHandler(c: Context<{ Bindings: Env }
 
 export async function updateTenantEmailSettingsHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = c.req.param('tenantId')!;
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
+
   const body = await c.req.json().catch(() => null);
   const parsed = UpdateTenantEmailSettingsSchema.safeParse(body);
 

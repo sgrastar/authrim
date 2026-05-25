@@ -62,16 +62,41 @@ function isBlockedHttpSinkHostname(hostname: string): boolean {
     );
   }
 
-  if (normalized === '::1' || normalized === '[::1]') {
+  const ipv6 = normalized.replace(/^\[|\]$/g, '');
+  const dottedMappedIpv4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/u.exec(ipv6);
+  if (dottedMappedIpv4) {
+    return isBlockedHttpSinkHostname(dottedMappedIpv4[1]);
+  }
+  const hexMappedIpv4 = /^::ffff:([0-9a-f]+):([0-9a-f]+)$/u.exec(ipv6);
+  if (hexMappedIpv4) {
+    const highWord = Number.parseInt(hexMappedIpv4[1], 16);
+    const lowWord = Number.parseInt(hexMappedIpv4[2], 16);
+    if (
+      Number.isFinite(highWord) &&
+      Number.isFinite(lowWord) &&
+      highWord >= 0 &&
+      highWord <= 0xffff &&
+      lowWord >= 0 &&
+      lowWord <= 0xffff
+    ) {
+      return isBlockedHttpSinkHostname(
+        `${(highWord >> 8) & 0xff}.${highWord & 0xff}.${(lowWord >> 8) & 0xff}.${lowWord & 0xff}`
+      );
+    }
     return true;
   }
-  const ipv6 = normalized.replace(/^\[|\]$/g, '');
+
   return (
     ipv6 === '::' ||
-    ipv6.includes(':ffff:') ||
+    ipv6 === '::1' ||
+    ipv6 === '0:0:0:0:0:0:0:0' ||
+    ipv6 === '0:0:0:0:0:0:0:1' ||
     ipv6.startsWith('fc') ||
     ipv6.startsWith('fd') ||
-    ipv6.startsWith('fe80:') ||
+    ipv6.startsWith('fe8') ||
+    ipv6.startsWith('fe9') ||
+    ipv6.startsWith('fea') ||
+    ipv6.startsWith('feb') ||
     ipv6.startsWith('ff')
   );
 }

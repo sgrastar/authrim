@@ -159,7 +159,8 @@ describe('DiagnosticLogger', () => {
     expect(bodySummary.client_secret).toBeUndefined();
     expect(bodySummary.client_id).toBe('rp-client');
     expect(bodySummary.grant_type).toBe('authorization_code');
-    expect(bodySummary.code_hash).toBe('sha256:code-123...');
+    expect(bodySummary.code_hash).toBeUndefined();
+    expect(bodySummary.code_present).toBe(true);
     expect(entry.remoteAddress).toBe('203.0.113.0/24');
   });
 
@@ -187,7 +188,15 @@ describe('DiagnosticLogger', () => {
 
     expect(bucket.store.size).toBe(2);
     const keys = Array.from(bucket.store.keys());
-    expect(keys.every((key) => key.includes('/v1/'))).toBe(true);
+    const diagnosticKeyPattern = new RegExp(
+      [
+        String.raw`^diagnostic-logs/v1/t_[A-Za-z0-9_-]{32}/diagnostic_detail/diagnostic/`,
+        String.raw`auth-decision/rp-client/\d{4}/\d{2}/\d{2}/\d{2}/`,
+        String.raw`chk_[A-Za-z0-9_-]+\.jsonl$`,
+      ].join(''),
+      'u'
+    );
+    expect(keys).toEqual(expect.arrayContaining([expect.stringMatching(diagnosticKeyPattern)]));
     expect(keys.every((key) => !key.includes('/tenant-1/'))).toBe(true);
 
     const entries = getStoredEntries(bucket);

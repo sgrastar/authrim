@@ -38,6 +38,7 @@
 			};
 			is_common_entry_host: boolean;
 			single_tenant_mode: boolean;
+			wayf_candidates?: DiscoveryCandidate[];
 		};
 		rememberedCandidate: DiscoveryCandidate | null;
 		inviteToken?: string | null;
@@ -62,6 +63,8 @@
 	const interactiveMethods = $derived(
 		getInteractiveDiscoveryMethods(methods, data.config.config.selection_policy)
 	);
+	const wayfCandidates = $derived(data.config.wayf_candidates || []);
+	const wayfOnly = $derived(interactiveMethods.length === 1 && interactiveMethods[0] === 'wayf');
 	const ui = $derived(data.config.ui);
 	const rememberedCandidate = $derived(data.rememberedCandidate);
 	const submittedMode = $derived(form?.mode);
@@ -97,6 +100,8 @@
 				return $LL.discover_method_tenantCode();
 			case 'tenant_slug':
 				return $LL.discover_method_tenantSlug();
+			case 'wayf':
+				return $LL.discover_selectTenant();
 			default:
 				return $LL.discover_method_tenantCode();
 		}
@@ -200,7 +205,7 @@
 			<div class="alert alert-error">{errorMessage}</div>
 		{/if}
 
-		{#if showTenantChooser && rememberedCandidate}
+		{#if showTenantChooser && rememberedCandidate && !wayfOnly}
 			<div class="recent-tenant">
 				<p class="recent-label">{$LL.discover_recentTenant()}</p>
 				{#if shouldPostRememberedCandidate()}
@@ -291,25 +296,44 @@
 							{#if interactiveMethods.includes('tenant_slug')}
 								<option value="tenant_slug">{$LL.discover_method_tenantSlug()}</option>
 							{/if}
+							{#if interactiveMethods.includes('wayf')}
+								<option value="wayf">WAYF</option>
+							{/if}
 						</select>
 					</div>
 				{:else}
 					<input type="hidden" name="mode" value={getDefaultDiscoveryMode(interactiveMethods)} />
 				{/if}
 
-				<div class="form-group">
-					<label for="value">{modeLabel(selectedMode)}</label>
-					<input
-						id="value"
-						name="value"
-						type={selectedMode === 'email' ? 'email' : 'text'}
-						bind:value
-						placeholder={placeholderFor(selectedMode)}
-						required
-					/>
-				</div>
+				{#if selectedMode === 'wayf'}
+					<div class="form-group">
+						<label for="value">{wayfOnly ? $LL.discover_selectTenant() : modeLabel(selectedMode)}</label>
+						<select id="value" name="value" bind:value required>
+							<option value="" disabled>{$LL.discover_selectTenant()}</option>
+							{#each wayfCandidates as candidate (candidate.tenant_id)}
+								<option value={candidate.tenant_id}>{candidate.display_name}</option>
+							{/each}
+						</select>
+					</div>
+				{:else}
+					<div class="form-group">
+						<label for="value">{modeLabel(selectedMode)}</label>
+						<input
+							id="value"
+							name="value"
+							type={selectedMode === 'email' ? 'email' : 'text'}
+							bind:value
+							placeholder={placeholderFor(selectedMode)}
+							required
+						/>
+					</div>
+				{/if}
 
-				<button type="submit" class="primary-button" disabled={discoverySubmitting}>
+				<button
+					type="submit"
+					class="primary-button"
+					disabled={discoverySubmitting || (selectedMode === 'wayf' && wayfCandidates.length === 0)}
+				>
 					{#if discoverySubmitting}
 						<span class="button-spinner" aria-hidden="true"></span>
 					{/if}

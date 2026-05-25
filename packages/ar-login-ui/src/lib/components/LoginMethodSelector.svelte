@@ -2,6 +2,7 @@
 	import { Button, Input, Alert } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import type { ExternalProvider } from '$lib/api/login-methods';
+	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { sanitizeColor } from '$lib/utils/url-validation';
 
 	interface Props {
@@ -46,16 +47,7 @@
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
 
 	function getProviderIcon(provider: ExternalProvider): string {
-		if (provider.iconUrl) return provider.iconUrl;
-		if (provider.type === 'saml') return 'i-heroicons-building-office-2';
-		if (provider.type === 'vc') return 'i-heroicons-identification';
-		const name = (provider.name || '').toLowerCase();
-		if (name.includes('google')) return 'i-logos-google-icon';
-		if (name.includes('github')) return 'i-logos-github-icon';
-		if (name.includes('microsoft') || name.includes('azure')) return 'i-logos-microsoft-icon';
-		if (name.includes('apple')) return 'i-logos-apple';
-		if (name.includes('facebook')) return 'i-logos-facebook';
-		return 'i-heroicons-arrow-right-end-on-rectangle';
+		return getExternalProviderIconClass(provider);
 	}
 
 	function getProviderButtonText(provider: ExternalProvider): string {
@@ -164,7 +156,7 @@
 						loading="lazy"
 						style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
 					/>
-				{:else}
+				{:else if getProviderIcon(provider)}
 					<div class="{getProviderIcon(provider)} h-5 w-5"></div>
 				{/if}
 				{getProviderButtonText(provider)}

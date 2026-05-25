@@ -87,6 +87,7 @@ export interface UpstreamProvider {
 
   // UI customization
   iconUrl?: string;
+  iconName?: string;
   buttonColor?: string;
   buttonColorDark?: string;
   buttonText?: string;
@@ -256,6 +257,7 @@ export interface ProviderListResponse {
     name: string;
     providerType: ProviderType;
     iconUrl?: string;
+    iconName?: string;
     buttonColor?: string;
     buttonColorDark?: string;
     buttonText?: string;

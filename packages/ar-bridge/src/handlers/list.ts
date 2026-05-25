@@ -31,6 +31,7 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
         name: p.name,
         providerType: p.providerType,
         iconUrl: p.iconUrl,
+        iconName: p.iconName,
         buttonColor: p.buttonColor,
         buttonColorDark: p.buttonColorDark,
         buttonText: p.buttonText,

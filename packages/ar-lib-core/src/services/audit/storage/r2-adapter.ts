@@ -27,6 +27,10 @@ import type {
 
 const AUDIT_R2_QUERY_OBJECT_MAX_BYTES = 10 * 1024 * 1024;
 
+interface AuditArchiveSerializerContext {
+  tenantKey: string;
+}
+
 /**
  * R2 adapter configuration.
  */
@@ -50,10 +54,10 @@ export interface R2AuditAdapterConfig {
   tenantKeyResolver?: TenantKeyResolver;
 
   /** Optional serializer for archive event records */
-  eventSerializer?: (entry: EventLogEntry) => unknown;
+  eventSerializer?: (entry: EventLogEntry, context: AuditArchiveSerializerContext) => unknown;
 
   /** Optional serializer for archive PII records */
-  piiSerializer?: (entry: PIILogEntry) => unknown;
+  piiSerializer?: (entry: PIILogEntry, context: AuditArchiveSerializerContext) => unknown;
 }
 
 /**
@@ -71,8 +75,14 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
   private readonly format: 'json' | 'jsonl';
   private readonly tenantKeySalt?: string;
   private readonly tenantKeyResolver?: TenantKeyResolver;
-  private readonly eventSerializer?: (entry: EventLogEntry) => unknown;
-  private readonly piiSerializer?: (entry: PIILogEntry) => unknown;
+  private readonly eventSerializer?: (
+    entry: EventLogEntry,
+    context: AuditArchiveSerializerContext
+  ) => unknown;
+  private readonly piiSerializer?: (
+    entry: PIILogEntry,
+    context: AuditArchiveSerializerContext
+  ) => unknown;
 
   constructor(config: R2AuditAdapterConfig) {
     this.id = config.id;
@@ -102,8 +112,10 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
     try {
       const key = await this.buildEntryKey('event', entry.tenantId, entry.id, entry.createdAt);
-      const body = JSON.stringify(this.eventSerializer ? this.eventSerializer(entry) : entry);
       const tenantKey = await this.tenantKeyFor(entry.tenantId);
+      const body = JSON.stringify(
+        this.eventSerializer ? this.eventSerializer(entry, { tenantKey }) : entry
+      );
 
       await this.bucket.put(key, body, {
         httpMetadata: { contentType: 'application/json' },
@@ -188,7 +200,9 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
         const batchId = createLoggingId('chk');
         const r2Key = `${this.pathPrefix}/event/${tenantKey}/${dateHour}/${batchId}.jsonl`;
         const newLines = groupEntries
-          .map((e) => JSON.stringify(this.eventSerializer ? this.eventSerializer(e) : e))
+          .map((e) =>
+            JSON.stringify(this.eventSerializer ? this.eventSerializer(e, { tenantKey }) : e)
+          )
           .join('\n');
 
         await this.bucket.put(r2Key, newLines, {
@@ -220,8 +234,10 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
 
     try {
       const key = await this.buildEntryKey('pii', entry.tenantId, entry.id, entry.createdAt);
-      const body = JSON.stringify(this.piiSerializer ? this.piiSerializer(entry) : entry);
       const tenantKey = await this.tenantKeyFor(entry.tenantId);
+      const body = JSON.stringify(
+        this.piiSerializer ? this.piiSerializer(entry, { tenantKey }) : entry
+      );
 
       await this.bucket.put(key, body, {
         httpMetadata: { contentType: 'application/json' },
@@ -305,7 +321,7 @@ export class R2AuditAdapter implements IAuditStorageAdapter {
         const batchId = createLoggingId('chk');
         const r2Key = `${this.pathPrefix}/pii/${tenantKey}/${dateHour}/${batchId}.jsonl`;
         const newLines = groupEntries
-          .map((e) => JSON.stringify(this.piiSerializer ? this.piiSerializer(e) : e))
+          .map((e) => JSON.stringify(this.piiSerializer ? this.piiSerializer(e, { tenantKey }) : e))
           .join('\n');
 
         await this.bucket.put(r2Key, newLines, {
@@ -711,8 +727,8 @@ export function createR2AuditAdapter(
     format?: 'json' | 'jsonl';
     tenantKeySalt?: string;
     tenantKeyResolver?: TenantKeyResolver;
-    eventSerializer?: (entry: EventLogEntry) => unknown;
-    piiSerializer?: (entry: PIILogEntry) => unknown;
+    eventSerializer?: (entry: EventLogEntry, context: AuditArchiveSerializerContext) => unknown;
+    piiSerializer?: (entry: PIILogEntry, context: AuditArchiveSerializerContext) => unknown;
   }
 ): R2AuditAdapter {
   return new R2AuditAdapter({

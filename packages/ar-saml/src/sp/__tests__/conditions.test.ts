@@ -71,7 +71,7 @@ function createSAMLResponseWithConditions(options: {
     nameId = 'user@example.com',
     notBefore = new Date(Date.now() - 60000).toISOString(),
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
-    audiences = ['https://auth.example.com/saml/sp'],
+    audiences = ['https://auth.example.com/saml/sp/metadata'],
     includeConditions = true,
     includeOneTimeUse = false,
     includeProxyRestriction = false,
@@ -324,7 +324,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
   describe('AudienceRestriction Validation', () => {
     it('should accept assertion with matching Audience', async () => {
       const samlResponse = createSAMLResponseWithConditions({
-        audiences: ['https://auth.example.com/saml/sp'],
+        audiences: ['https://auth.example.com/saml/sp/metadata'],
       });
 
       const res = await callACS(samlResponse);
@@ -346,7 +346,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
       const samlResponse = createSAMLResponseWithConditions({
         audiences: [
           'https://other-sp.example.com/sp',
-          'https://auth.example.com/saml/sp',
+          'https://auth.example.com/saml/sp/metadata',
           'https://another-sp.example.com/sp',
         ],
       });
@@ -368,7 +368,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
 
     it('should reject Audience nested outside a direct AudienceRestriction child', async () => {
       const samlResponse = createSAMLResponseWithConditions({
-        audiences: ['https://auth.example.com/saml/sp'],
+        audiences: ['https://auth.example.com/saml/sp/metadata'],
       });
       const xml = atob(samlResponse)
         .replace('<saml:AudienceRestriction>', '<wrapper><saml:AudienceRestriction>')

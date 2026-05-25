@@ -607,6 +607,8 @@ export async function deployUiWorkerComponent(
     workersDev,
     routes,
     adminUiBffSecrets,
+    maxRetries = 3,
+    retryDelayMs = 5000,
   } = options;
 
   // Security: Validate environment name
@@ -740,24 +742,39 @@ export async function deployUiWorkerComponent(
 
     const uiWorkerName = projectName || `${env}-${component}`;
 
-    const result = await execa(
-      'pnpm',
-      ['exec', 'wrangler', 'deploy', '--config', 'wrangler.toml'],
-      {
+    let result: Awaited<ReturnType<typeof execa>> | undefined;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      onProgress?.(`[${attempt}/${maxRetries}] Deploying UI Worker ${uiWorkerName}...`);
+      result = await execa('pnpm', ['exec', 'wrangler', 'deploy', '--config', 'wrangler.toml'], {
         cwd: uiDir,
         reject: false, // Don't throw on non-zero exit
-      }
-    );
+      });
 
-    if (result.exitCode !== 0) {
+      if (result.exitCode === 0 || attempt === maxRetries) {
+        break;
+      }
+
+      const errorOutput = String(result.stderr || result.stdout || 'Unknown error');
+      onProgress?.(`  ✗ UI Worker deploy attempt ${attempt} failed: ${errorOutput}`);
+      const delay = retryDelayMs * attempt;
+      onProgress?.(`  ⏳ Retrying in ${delay / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    if (!result || result.exitCode !== 0) {
       // Get meaningful error from stderr or stdout
-      const errorOutput = result.stderr || result.stdout || 'Unknown error';
-      onProgress?.(`UI Worker deploy error: ${errorOutput}`);
+      const errorOutput = result
+        ? String(result.stderr || result.stdout || 'Unknown error')
+        : 'Unknown error';
+      const hint = errorOutput.includes('assets-upload-session')
+        ? '\nCloudflare rejected the Workers Static Assets upload session. This is usually an account/API entitlement issue or a transient Cloudflare API failure, not a Svelte build error. Try updating Wrangler and retrying; if it persists, check Workers Static Assets availability for the Cloudflare account.'
+        : '';
+      onProgress?.(`UI Worker deploy error: ${errorOutput}${hint}`);
       return {
         component,
         projectName: uiWorkerName,
         success: false,
-        error: errorOutput,
+        error: `${errorOutput}${hint}`,
         duration: Date.now() - startTime,
       };
     }

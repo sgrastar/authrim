@@ -453,9 +453,10 @@ const ja: Translations = {
   'userId.note': '注意: この設定はユーザー作成後に変更できません。',
   'userId.selected': 'ユーザーID形式: {{format}}',
 
-  // Optional components
-  'components.title': 'オプションコンポーネント',
-  'components.note': '注: ソーシャルログインとポリシーエンジンは標準コンポーネントです',
+  // Standard components
+  'components.title': '標準コンポーネント',
+  'components.note':
+    'SAML、Device Flow/CIBA、VC、ソーシャルログイン、ポリシーエンジンは標準でインストールされます',
   'components.samlPrompt': 'SAMLサポートを有効にしますか？',
   'components.vcPrompt': 'Verifiable Credentialsを有効にしますか？',
   'components.saml': 'SAML:',
@@ -772,6 +773,20 @@ const ja: Translations = {
   'web.db.name': '名前',
   'web.db.region': 'リージョン',
   'web.db.regionAuto': '自動（最寄り）',
+  'web.db.storageProfileTitle': 'ストレージデプロイメントプロファイル',
+  'web.db.storageProfileDesc':
+    'このデプロイでユーザー core/PII データをどのように配置するかを選択します。',
+  'web.db.sharedD1Title': '共有 D1',
+  'web.db.sharedD1Desc':
+    'デプロイ全体で core D1 と PII D1 を共有します。セットアップコストが最も低いデフォルト構成です。',
+  'web.db.tenantD1Title': 'テナント D1',
+  'web.db.tenantD1Desc':
+    'テナントごとに core/PII D1 のペアを用意します。テナント有効化前にテナントDBのプロビジョニングが必要です。',
+  'web.db.preallocatedSlotsTitle': '事前確保するテナントスロット',
+  'web.db.preallocatedSlotsDesc':
+    '各テナントスロットは core と PII の 2 つの D1 データベースを作成します。',
+  'web.db.slotsLabel': 'スロット',
+  'web.db.slotsHelp': 'デフォルトは 3、最大 500 スロットです。',
 
   // Web UI Email
   'web.email.title': 'メールプロバイダー',

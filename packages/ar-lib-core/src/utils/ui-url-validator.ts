@@ -237,6 +237,6 @@ export function logUIConfigValidationFailure(
     action: 'REJECTED',
     adminId: adminId ?? 'unknown',
     url,
-    error,
+    validationError: error,
   });
 }

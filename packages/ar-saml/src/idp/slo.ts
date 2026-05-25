@@ -75,6 +75,8 @@ import {
   type SAMLIdPLogoutFanoutTransactionRecord,
   type SAMLOutboundLogoutRequestRecord,
 } from './slo-state';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { assertSAMLRelayStateSize } from '../common/relay-state';
 
 interface ParsedLogoutRequestInput {
   logoutRequest: ParsedLogoutRequest;
@@ -117,7 +119,7 @@ export async function handleIdPSLO(c: Context<{ Bindings: Env }>): Promise<Respo
   const env = c.env;
   const method = c.req.method;
   const log = getLogger(c).module('SAML-IDP');
-  const issuerUrl = buildIssuerUrl(env, resolveSAMLTenantIdFromContext(c));
+  const { issuerUrl } = await getSAMLLocalEntityIds(env, resolveSAMLTenantIdFromContext(c));
 
   try {
     if (method === 'GET') {
@@ -143,6 +145,7 @@ async function handlePostBinding(
   const samlRequest = formData.get('SAMLRequest') as string | null;
   const samlResponse = formData.get('SAMLResponse') as string | null;
   const relayState = formData.get('RelayState') as string | null;
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
     const xml = decodePostBindingMessage(samlRequest, 'SAML LogoutRequest');
@@ -179,6 +182,7 @@ async function handleRedirectBinding(
   const samlRequest = url.searchParams.get('SAMLRequest');
   const samlResponse = url.searchParams.get('SAMLResponse');
   const relayState = url.searchParams.get('RelayState');
+  assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
     const xml = inflateRedirectBindingMessage(samlRequest, 'SAML LogoutRequest');
@@ -227,12 +231,14 @@ async function processLogoutRequest(
 ): Promise<Response> {
   const log = getLogger(c).module('SAML-IDP');
   const { logoutRequest, relayState, binding } = input;
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const { idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
   // Validate LogoutRequest
   validateLogoutRequest(logoutRequest, issuerUrl);
 
   // Get SP configuration
-  const spConfig = await getSPConfig(env, resolveSAMLTenantIdFromContext(c), logoutRequest.issuer);
+  const spConfig = await getSPConfig(env, tenantId, logoutRequest.issuer);
   if (!spConfig) {
     return sendLogoutResponse(c, env, issuerUrl, {
       inResponseTo: logoutRequest.id,
@@ -286,7 +292,7 @@ async function processLogoutRequest(
   const nameIdQualifierPolicyFailure = validateLogoutRequestNameIDQualifiers(
     logoutRequest,
     spConfig,
-    `${issuerUrl}/saml/idp`
+    idpEntityId
   );
   if (nameIdQualifierPolicyFailure) {
     log.warn('SAML LogoutRequest NameID qualifier policy failed', {
@@ -809,7 +815,8 @@ async function sendLogoutResponse(
 
   // Build LogoutResponse
   const responseId = generateSAMLId();
-  const issuer = `${issuerUrl}/saml/idp`;
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const issuer = (await getSAMLLocalEntityIds(env, tenantId)).idpEntityId;
 
   let responseXml = buildLogoutResponse({
     id: responseId,
@@ -822,7 +829,6 @@ async function sendLogoutResponse(
   });
 
   const log = getLogger(c).module('SAML-IDP');
-  const tenantId = resolveSAMLTenantIdFromContext(c);
   const spConfig = options.counterpartyEntityId
     ? await getSPConfig(env, tenantId, options.counterpartyEntityId)
     : null;
@@ -890,6 +896,7 @@ function sendPostBindingResponse(
   const encodedResponse = encodeForPostBinding(responseXml);
   const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
   if (relayState) {
+    assertSAMLRelayStateSize(relayState);
     fields.push({ name: 'RelayState', value: relayState });
   }
 
@@ -918,6 +925,7 @@ function sendPostBindingRequest(
   const encodedRequest = encodeForPostBinding(requestXml);
   const fields = [{ name: 'SAMLRequest', value: encodedRequest }];
   if (relayState) {
+    assertSAMLRelayStateSize(relayState);
     fields.push({ name: 'RelayState', value: relayState });
   }
 
@@ -939,6 +947,7 @@ async function sendRedirectBindingResponse(
   privateKeyPem: string,
   cookieHeader?: string
 ): Promise<Response> {
+  assertSAMLRelayStateSize(relayState);
   const encodedResponse = encodeForRedirectBindingQueryValue(responseXml);
   const signed = await signRedirectBinding(
     'SAMLResponse',
@@ -968,6 +977,7 @@ async function sendRedirectBindingRequest(
   relayState: string | null,
   privateKeyPem: string
 ): Promise<Response> {
+  assertSAMLRelayStateSize(relayState);
   const encodedRequest = encodeForRedirectBindingQueryValue(requestXml);
   const signed = await signRedirectBinding(
     'SAMLRequest',
@@ -1192,7 +1202,7 @@ async function buildIdPLogoutRequest(
   if (!nameId) {
     throw new Error('Logout request could not be processed');
   }
-  const issuer = `${buildIssuerUrl(env, tenantId)}/saml/idp`;
+  const issuer = (await getSAMLLocalEntityIds(env, tenantId)).idpEntityId;
   const destination = spConfig.sloUrl || spConfig.acsUrl;
 
   const logoutRequestId = generateSAMLId();

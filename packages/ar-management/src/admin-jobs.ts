@@ -1374,7 +1374,7 @@ const TenantDatabaseProvisionOptionsSchema = z.object({
   tenant_slug: z.string().trim().min(1).max(128).optional(),
   generation: z.number().int().min(1).optional(),
   activate: z.boolean().default(false),
-  execution_mode: z.enum(['plan_only', 'operator_cli', 'cloudflare_api']).default('plan_only'),
+  execution_mode: z.enum(['plan_only', 'operator_cli']).default('plan_only'),
   reason: z.string().trim().min(1).max(500).optional(),
 });
 
@@ -1892,15 +1892,6 @@ export async function adminJobsTenantDatabaseProvisionHandler(c: Context<{ Bindi
     }
 
     const options = parseResult.data;
-    if (options.execution_mode === 'cloudflare_api' && options.activate) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'activate',
-          reason:
-            'cloudflare_api provisioning creates databases and deploys bindings only; activation requires migrations, registry writes, and runtime snapshot publishing first.',
-        },
-      });
-    }
     const adapter = createAdapter(c);
     const createdBy = adminAuth?.userId ?? adminAuth?.actorId ?? 'unknown';
     const jobId = crypto.randomUUID();

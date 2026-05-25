@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./archive": {
+      "import": "./dist/archive.js",
+      "types": "./dist/archive.d.ts",
+      "default": "./src/archive.ts"
+    },
     "./chunks": {
       "import": "./dist/chunks/index.js",
       "types": "./dist/chunks/index.d.ts",

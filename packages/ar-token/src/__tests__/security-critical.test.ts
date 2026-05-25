@@ -1523,6 +1523,167 @@ describe('Security-Critical Tests', () => {
         expect(response.status).toBe(200);
         expect(body.refresh_token).toBe(refreshTokenJWT);
       });
+
+      it('should require DPoP proof for DPoP-bound refresh tokens', async () => {
+        const client = createPublicClient({
+          browser_public_client_mode: 'strict',
+          browser_refresh_token_policy: 'dpop_bound',
+        });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+          cnf: { jkt: 'browser-jkt' },
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          cnf: { jkt: 'browser-jkt' },
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            headers: {
+              Origin: 'https://spa.example.com',
+            },
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: refreshTokenJWT,
+              client_id: client.client_id,
+            },
+            env: mockEnv,
+          })
+        );
+        const body = await parseJsonResponse<{ error: string; error_description: string }>(
+          response
+        );
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_request');
+        expect(body.error_description).toContain('DPoP proof');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
+      });
+
+      it('should preserve DPoP binding when rotating DPoP-bound refresh tokens', async () => {
+        const client = createPublicClient({
+          browser_public_client_mode: 'strict',
+          browser_refresh_token_policy: 'dpop_bound',
+        });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+          cnf: { jkt: 'browser-jkt' },
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          cnf: { jkt: 'browser-jkt' },
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+        });
+        mocks.mockParseRefreshTokenJti.mockReturnValue({
+          generation: 1,
+          shardIndex: 0,
+          randomPart: 'abc',
+        });
+
+        const rotateRpcMock = vi.fn().mockResolvedValue({
+          newJti: 'rt-new-jti-002',
+          newVersion: 2,
+        });
+        mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+          rotateRpc: rotateRpcMock,
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            headers: {
+              Origin: 'https://spa.example.com',
+              DPoP: 'dpop-proof',
+            },
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: refreshTokenJWT,
+              client_id: client.client_id,
+            },
+            env: mockEnv,
+          })
+        );
+        const refreshTokenClaims = mocks.mockCreateRefreshToken.mock.calls[0]?.[0] as
+          | Record<string, unknown>
+          | undefined;
+
+        expect(response.status).toBe(200);
+        expect(refreshTokenClaims).toEqual(
+          expect.objectContaining({
+            cnf: { jkt: 'browser-jkt' },
+          })
+        );
+      });
+
+      it('should reject mismatched DPoP proof for DPoP-bound refresh tokens', async () => {
+        const client = createPublicClient({
+          browser_public_client_mode: 'strict',
+          browser_refresh_token_policy: 'dpop_bound',
+        });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+          cnf: { jkt: 'browser-jkt' },
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          cnf: { jkt: 'browser-jkt' },
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'other-jkt' });
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            headers: {
+              Origin: 'https://spa.example.com',
+              DPoP: 'dpop-proof',
+            },
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: refreshTokenJWT,
+              client_id: client.client_id,
+            },
+            env: mockEnv,
+          })
+        );
+        const body = await parseJsonResponse<{ error: string; error_description: string }>(
+          response
+        );
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_dpop_proof');
+        expect(body.error_description).toContain('does not match');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
+      });
     });
 
     describe('Refresh Token Theft Detection', () => {

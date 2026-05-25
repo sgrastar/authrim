@@ -87,6 +87,9 @@ describe('createDefaultConfig', () => {
     expect(config.components.api).toBe(true);
     expect(config.components.loginUi).toBe(true);
     expect(config.components.adminUi).toBe(true);
+    expect(config.components.saml).toBe(true);
+    expect(config.components.async).toBe(true);
+    expect(config.components.vc).toBe(true);
     expect(config.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
     expect(config.profiles.registry.backend).toBe('kv');
   });
@@ -128,6 +131,9 @@ describe('parseConfig', () => {
     expect(config.environment.prefix).toBe('dev');
     expect(config.tenant.name).toBe('test-tenant');
     expect(config.profile).toBe('fapi-rw');
+    expect(config.components.saml).toBe(true);
+    expect(config.components.async).toBe(true);
+    expect(config.components.vc).toBe(true);
     expect(config.oidc.accessTokenTtl).toBe(7200);
     expect(config.profiles.defaults.storage).toBe('builtin:storage:external-postgres');
     expect(config.profiles.registry.backend).toBe('database');
@@ -146,7 +152,7 @@ describe('parseConfig', () => {
       profiles: {
         defaults: {
           storage: 'builtin:storage:single-db',
-          audit: 'builtin:audit:minimal',
+          audit: 'builtin:audit:standard',
           residency: 'builtin:residency:eu',
         },
         registry: {
@@ -171,6 +177,31 @@ describe('parseConfig', () => {
     rawConfig.profiles.defaults.storage = 'builtin:storage:eu-pii-split';
     const euConfig = parseConfig(rawConfig);
     expect(euConfig.profiles.defaults.storage).toBe('builtin:storage:eu-pii-split');
+  });
+
+  it('should reject the removed built-in minimal audit profile', () => {
+    const rawConfig = {
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      environment: { prefix: 'dev' },
+      tenant: { name: 'test-tenant' },
+      components: { api: true, loginUi: true },
+      profile: 'basic-op',
+      oidc: {},
+      sharding: {},
+      profiles: {
+        defaults: {
+          storage: 'builtin:storage:shared-d1',
+          audit: 'builtin:audit:minimal',
+          residency: 'builtin:residency:default',
+        },
+      },
+      features: {},
+      keys: {},
+    };
+
+    const result = AuthrimConfigSchema.safeParse(rawConfig);
+    expect(result.success).toBe(false);
   });
 
   it('should default tenant D1 preallocated slots to 3', () => {

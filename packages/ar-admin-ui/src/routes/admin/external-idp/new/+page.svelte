@@ -6,6 +6,7 @@
 		type ProviderTemplate,
 		PROVIDER_TEMPLATES
 	} from '$lib/api/admin-external-providers';
+	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { ToggleSwitch } from '$lib/components';
 
 	let saving = $state(false);
@@ -33,6 +34,7 @@
 	let requireEmailVerified = $state(true);
 	let alwaysFetchUserinfo = $state(false);
 	let iconUrl = $state('');
+	let iconName = $state('');
 	let buttonColor = $state('');
 	let buttonColorDark = $state('');
 	let buttonText = $state('');
@@ -234,6 +236,7 @@
 				require_email_verified: requireEmailVerified,
 				always_fetch_userinfo: alwaysFetchUserinfo,
 				icon_url: iconUrl || undefined,
+				icon_name: iconName || undefined,
 				button_color: buttonColor || undefined,
 				button_color_dark: buttonColorDark || undefined,
 				button_text: buttonText || undefined
@@ -627,6 +630,15 @@
 						bind:value={iconUrl}
 						placeholder="ex. https://example.com/icon.png"
 						class="form-input"
+					/>
+				</div>
+
+				<div class="form-group form-group-full">
+					<LoginProviderIconPicker
+						bind:value={iconName}
+						defaultIcon="sign-in"
+						defaultLabel="Automatic"
+						description="Used when Icon URL is empty. Choose Automatic to keep the built-in provider fallback."
 					/>
 				</div>
 

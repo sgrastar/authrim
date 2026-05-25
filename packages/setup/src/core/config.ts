@@ -142,24 +142,33 @@ export const TenantConfigSchema = z.object({
 // Components Configuration
 // =============================================================================
 
-export const ComponentsConfigSchema = z.object({
-  /** Core API components (always enabled) */
-  api: z.boolean().default(true),
-  /** Login UI component */
-  loginUi: z.boolean().default(true),
-  /** Admin UI component */
-  adminUi: z.boolean().default(true),
-  /** SAML IdP/SP support */
-  saml: z.boolean().default(false),
-  /** Async queue processing */
-  async: z.boolean().default(false),
-  /** Verifiable Credentials */
-  vc: z.boolean().default(false),
-  /** External IdP Bridge (Social Login) - standard component */
-  bridge: z.boolean().default(true),
-  /** ReBAC Policy service - standard component */
-  policy: z.boolean().default(true),
-});
+export const ComponentsConfigSchema = z
+  .object({
+    /** Core API components (always enabled) */
+    api: z.boolean().default(true),
+    /** Login UI component */
+    loginUi: z.boolean().default(true),
+    /** Admin UI component */
+    adminUi: z.boolean().default(true),
+    /** SAML IdP/SP support */
+    saml: z.boolean().default(true),
+    /** Async queue processing */
+    async: z.boolean().default(true),
+    /** Verifiable Credentials */
+    vc: z.boolean().default(true),
+    /** External IdP Bridge (Social Login) - standard component */
+    bridge: z.boolean().default(true),
+    /** ReBAC Policy service - standard component */
+    policy: z.boolean().default(true),
+  })
+  .transform((components) => ({
+    ...components,
+    saml: true,
+    async: true,
+    vc: true,
+    bridge: true,
+    policy: true,
+  }));
 
 // =============================================================================
 // OIDC Configuration
@@ -312,6 +321,12 @@ export const TenantD1ConfigSchema = z.object({
 export const ProfileIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9:_-]+$/, { message: 'Profile ID may only contain letters, numbers, :, _, -' });
+const REMOVED_MINIMAL_AUDIT_PROFILE_MESSAGE =
+  'builtin:audit:minimal is not supported. Use builtin:audit:standard or a setup-defined custom audit profile.';
+export const AuditProfileIdSchema = ProfileIdSchema.refine(
+  (value) => value !== 'builtin:audit:minimal',
+  { message: REMOVED_MINIMAL_AUDIT_PROFILE_MESSAGE }
+);
 
 export const ProfileRegistryBackendSchema = z.enum(['kv', 'database']);
 
@@ -330,7 +345,7 @@ export const ProfileDefaultsConfigSchema = z.object({
    */
   storage: ProfileIdSchema.default('builtin:storage:shared-d1'),
   /** Environment default audit profile ID */
-  audit: ProfileIdSchema.default('builtin:audit:standard'),
+  audit: AuditProfileIdSchema.default('builtin:audit:standard'),
   /** Environment default residency profile ID */
   residency: ProfileIdSchema.default('builtin:residency:default'),
 });

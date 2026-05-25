@@ -61,7 +61,6 @@ app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'op-discovery',
-    version: '0.1.0',
     timestamp: new Date().toISOString(),
   });
 });

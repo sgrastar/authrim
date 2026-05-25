@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-05-12
+date: 2026-05-25
 description: "Authrim feature and SDK matrix."
 type: reference
 tags:
@@ -64,7 +64,7 @@ Authrim is pre-1.0. This matrix separates implementation coverage, validation le
 | JWT Signing and Key Rotation | Complete | Unit/integration tested | In progress | Durable Object backed key management |
 | Refresh Token Rotation | Complete | Unit/integration tested | In progress | Refresh token family tracking and theft detection support |
 | NIST Assurance Levels | Complete | Unit/integration tested | In progress | AAL/FAL/IAL claims and policy hooks |
-| SAML 2.0 IdP/SP | Hardening active | Unit/integration tested | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, RequestedAttribute suggestions, signing rollover, encryption options, SSO/SLO correlation, fanout timeout observation, and admin operations |
+| SAML 2.0 IdP/SP | Hardening active | Unit/integration tested | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable published entityIDs, interactive login redirect policy, RequestedAttribute suggestions, provider logos/icons, signing subject/rollover, encryption options, SSO/SLO correlation, fanout timeout observation, and admin operations |
 | SCIM 2.0 | Complete | Unit/integration tested | In progress | User provisioning |
 | Device Flow | Complete | Unit/integration tested | In progress | RFC 8628 |
 | CIBA | Complete | Unit/integration tested | In progress | OpenID Connect CIBA |
@@ -88,10 +88,11 @@ Authrim is pre-1.0. This matrix separates implementation coverage, validation le
 | DID support | Complete | Unit/integration tested | Experimental | did:web and did:key |
 | PII/non-PII separation | Complete | Unit/integration tested | In progress | Separate storage and access boundaries |
 | Runtime storage profiles | Basic complete | Unit/integration tested | In progress | Runtime profiles and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased in the public contract |
-| Admin UI | Basic complete | Partial | In progress | Broad surface exists; consolidation remains active |
-| Login UI | Basic complete | Partial | In progress | Production flow hardening is an active workstream |
-| UI localization | Basic complete | Partial | In progress | Admin/Login UI currently focus on English and Japanese; setup tooling has broader locale files |
-| Setup tooling | Complete | Unit/integration tested | In progress | Production deployment documentation is still being refined |
+| Admin UI | Basic complete | Partial | In progress | Broad surface exists, including SAML entity info, certificate rollover, database connections, storage destinations, logging controls, and tenant discovery settings; consolidation remains active |
+| Login UI | Basic complete | Partial | In progress | Production flow hardening is active; provider logos and curated login-button icons are supported for SAML/OIDC methods |
+| UI localization | Basic complete | Partial | In progress | Admin/Login UI currently focus on English and Japanese; setup tooling has broader locale files and localized setup warnings |
+| Tenant discovery / WAYF | Basic complete | Partial | In progress | Common discovery supports configured methods plus WAYF-style tenant selection; WAYF-only mode shows only the tenant chooser |
+| Setup tooling | Complete | Unit/integration tested | In progress | Source-download setup, fresh root migrations, optional Admin/Login UI, standard SAML/CIBA/VC deployment, setup-managed D1/R2 inventory, DNS guidance, and environment deletion are implemented; production documentation is still being refined |
 
 ## SDK Packages
 
@@ -154,10 +155,10 @@ Values: `Yes` means public/high-level support, `Helper` means exported lower-lev
 | Area | Status | Notes |
 | --- | --- | --- |
 | Multi-tenancy isolation | Baseline complete / validation active | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression tests are in place; production hardening continues |
-| Audit logging | In progress | Audit capture exists; export and storage portability are active work |
-| Storage portability | Baseline complete / validation active | User core, PII, custom/extension, and audit storage targets have runtime-profile and Hyperdrive paths; control-plane storage remains D1/KV-biased in the public contract |
+| Audit and managed logging | Baseline complete / validation active | Runtime structured logs, user/admin audit, diagnostic detail, sensitive detail chunks, delivery events, DLQ replay, exports, runtime policy snapshots, and storage-destination controls exist |
+| Storage portability | Baseline complete / validation active | User core, PII, custom/extension, and audit storage targets have runtime-profile and Hyperdrive paths; setup-managed D1/R2 resources are visible in Admin UI; control-plane storage remains D1/KV-biased in the public contract |
 | Backup and restore | Planned | Documented procedures and repeatable test scenarios are still needed |
-| SAML DR planning | Planned / Active | Metadata stability, signing key rollover, issuer continuity, and failover assumptions |
+| SAML DR planning | Active | Metadata stability, configurable entityID style, signing key rollover, issuer continuity, and failover assumptions are documented; deployment-specific DNS/TLS guidance remains important |
 | Security testing | In progress | Automated tests exist; external audit and penetration testing are not yet completed |
 | Performance testing | Partial | K6 benchmarks exist for representative OIDC workloads |
 | Deployment documentation | In progress | Setup tooling exists; production deployment guidance is being refined |
@@ -168,6 +169,7 @@ Values: `Yes` means public/high-level support, `Helper` means exported lower-lev
 | --- | --- |
 | Direct MTLS termination | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate. |
 | Direct LDAP/AD integration | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML. |
+| SFTP storage or delivery | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead. |
 
 ## Related Documents
 

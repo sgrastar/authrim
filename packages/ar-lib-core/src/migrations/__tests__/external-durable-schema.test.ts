@@ -59,19 +59,6 @@ const piiTables = [
 ] as const;
 
 describe('external durable postgres schema', () => {
-  it('keeps setup migrations byte-for-byte aligned with root migrations', () => {
-    const migrationFiles = [
-      'external/postgres/001_external_durable_core.sql',
-      'external/postgres/002_external_durable_pii.sql',
-    ];
-
-    for (const migrationFile of migrationFiles) {
-      expect(readMigration(`packages/setup/migrations/${migrationFile}`)).toBe(
-        readMigration(`migrations/${migrationFile}`)
-      );
-    }
-  });
-
   it('keeps every shared durable core table explicitly tenant-scoped', () => {
     const coreSql = readMigration('migrations/external/postgres/001_external_durable_core.sql');
 

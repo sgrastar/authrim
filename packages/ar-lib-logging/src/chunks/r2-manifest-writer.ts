@@ -1,6 +1,6 @@
 import { createLoggingId } from '../ids';
 import { assertLogPlane, assertLogType } from '../registry';
-import { buildLogChunkManifestObjectKey } from './r2-keys';
+import { buildLogChunkManifestObjectKey, defaultLogStorageShard } from './r2-keys';
 import type {
   LogChunkManifestRow,
   WriteLogChunkManifestInput,
@@ -27,15 +27,7 @@ export function floorLogManifestBucket(timestamp: number, bucketSizeMs: number):
 }
 
 export function defaultLogManifestShard(input: { tenantKey: string; shardCount?: number }): string {
-  const shardCount = input.shardCount ?? 16;
-  if (!Number.isInteger(shardCount) || shardCount <= 0 || shardCount > 256) {
-    throw new Error('manifest_shard_count_invalid');
-  }
-  let hash = 0;
-  for (const char of input.tenantKey) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  }
-  return `shard-${String(hash % shardCount).padStart(2, '0')}`;
+  return defaultLogStorageShard(input);
 }
 
 export async function writeLogChunkManifestToR2(

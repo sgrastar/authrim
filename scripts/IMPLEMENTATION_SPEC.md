@@ -1246,8 +1246,10 @@ setup_d1_databases() {
 
     echo "  $DB_NAME: Created (ID: $db_id)"
 
-    # Execute migration
-    wrangler d1 execute "$DB_NAME" --file=./migrations/0001_initial.sql
+    # Execute consolidated baseline migrations
+    for migration_file in migrations/[0-9][0-9][0-9]_*.sql; do
+      wrangler d1 execute "$DB_NAME" --file="./$migration_file"
+    done
 
     # Add to configuration file
     jq --arg name "$DB_NAME" --arg id "$db_id" \

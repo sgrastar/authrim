@@ -370,6 +370,9 @@
 			arraysEqual(a.grant_types, b.grant_types) &&
 			arraysEqual(a.response_types, b.response_types) &&
 			(a.token_endpoint_auth_method ?? '') === (b.token_endpoint_auth_method ?? '') &&
+			(a.browser_public_client_mode ?? '') === (b.browser_public_client_mode ?? '') &&
+			(a.browser_refresh_token_policy ?? 'disabled') ===
+				(b.browser_refresh_token_policy ?? 'disabled') &&
 			(a.scope ?? '') === (b.scope ?? '') &&
 			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
 			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
@@ -649,10 +652,8 @@
 	}
 
 	function buildWebOriginRegistry(uris: string[], existing = client?.web_origin_registry) {
-		const byOrigin: Record<
-			string,
-			NonNullable<Client['web_origin_registry']>['origins'][number]
-		> = {};
+		const byOrigin: Record<string, NonNullable<Client['web_origin_registry']>['origins'][number]> =
+			{};
 		for (const entry of existing?.origins ?? []) {
 			byOrigin[entry.origin] = entry;
 		}
@@ -810,6 +811,8 @@
 			grant_types: toStringArray(client.grant_types),
 			response_types: toStringArray(client.response_types),
 			token_endpoint_auth_method: client.token_endpoint_auth_method,
+			browser_public_client_mode: client.browser_public_client_mode ?? null,
+			browser_refresh_token_policy: client.browser_refresh_token_policy ?? 'disabled',
 			scope: client.scope,
 			require_pkce: client.require_pkce ?? false,
 			allow_claims_without_scope: client.allow_claims_without_scope ?? false,
@@ -1413,6 +1416,49 @@
 							{:else}
 								<p class="display-text">{client.token_endpoint_auth_method || 'none'}</p>
 							{/if}
+						</div>
+
+						<!-- Browser Public Client Mode -->
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Browser Public Client Mode</label>
+							{#if isEditing}
+								<select
+									class="form-select"
+									value={editForm.browser_public_client_mode ?? ''}
+									onchange={(e) => {
+										const value = e.currentTarget.value as '' | 'strict' | 'cookie_fallback';
+										editForm.browser_public_client_mode = value || null;
+									}}
+								>
+									<option value="">Server default</option>
+									<option value="strict">Strict DPoP token profile</option>
+									<option value="cookie_fallback">Hosted cookie finalize only</option>
+								</select>
+							{:else}
+								<p class="display-text">{client.browser_public_client_mode || 'server default'}</p>
+							{/if}
+							<p class="form-hint">
+								Public browser token clients require DPoP. Cookie fallback uses the hosted
+								cookie-session finalize path instead of browser token exchange.
+							</p>
+						</div>
+
+						<!-- Browser Refresh Token Policy -->
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">Browser Refresh Token Policy</label>
+							{#if isEditing}
+								<select class="form-select" bind:value={editForm.browser_refresh_token_policy}>
+									<option value="disabled">Disabled</option>
+									<option value="dpop_bound">DPoP-bound refresh tokens</option>
+								</select>
+							{:else}
+								<p class="display-text">{client.browser_refresh_token_policy || 'disabled'}</p>
+							{/if}
+							<p class="form-hint">
+								Public browser clients only receive refresh tokens when this is DPoP-bound.
+							</p>
 						</div>
 
 						<!-- PKCE Required -->

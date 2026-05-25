@@ -34,6 +34,7 @@ export interface ExternalIdPProvider {
 	alwaysFetchUserinfo?: boolean;
 	enableSso?: boolean;
 	iconUrl?: string;
+	iconName?: string;
 	buttonColor?: string;
 	buttonColorDark?: string;
 	buttonText?: string;
@@ -143,7 +144,8 @@ export interface CreateProviderRequest {
 	jit_provisioning?: boolean;
 	require_email_verified?: boolean;
 	always_fetch_userinfo?: boolean;
-	icon_url?: string;
+	icon_url?: string | null;
+	icon_name?: string | null;
 	button_color?: string;
 	button_color_dark?: string;
 	button_text?: string;
@@ -190,7 +192,8 @@ export interface UpdateProviderRequest {
 	require_email_verified?: boolean;
 	always_fetch_userinfo?: boolean;
 	enable_sso?: boolean;
-	icon_url?: string;
+	icon_url?: string | null;
+	icon_name?: string | null;
 	button_color?: string;
 	button_color_dark?: string;
 	button_text?: string;

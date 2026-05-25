@@ -410,7 +410,9 @@ describe('AuditService routing', () => {
 
     expect(r2Bucket.put).toHaveBeenCalledOnce();
     const objectKey = (r2Bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(objectKey).toContain('sensitive-detail/v1/t_registry_direct/sensitive_detail/audit/');
+    expect(objectKey).toContain(
+      'sensitive-details/v1/t_registry_direct/sensitive_detail/event/audit/'
+    );
     expect(objectKey).not.toContain('tenant-a');
   });
 
@@ -448,7 +450,7 @@ describe('AuditService routing', () => {
 
     expect(r2Bucket.put).toHaveBeenCalledOnce();
     const objectKey = (r2Bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(objectKey).toContain('sensitive-detail/v1/t_registry_pii/sensitive_detail/pii/');
+    expect(objectKey).toContain('sensitive-details/v1/t_registry_pii/sensitive_detail/pii/pii/');
     expect(objectKey).not.toContain('tenant-a');
   });
 });

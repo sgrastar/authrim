@@ -8,6 +8,7 @@
 	}
 
 	let { mobileOpen = false, onMobileClose, children }: Props = $props();
+	let isExpanded = $state(false);
 </script>
 
 <!-- Mobile overlay -->
@@ -16,8 +17,11 @@
 {/if}
 
 <nav
-	class="nav-floating expanded"
+	class="nav-floating"
+	class:expanded={isExpanded || mobileOpen}
 	class:open={mobileOpen}
+	onmouseenter={() => (isExpanded = true)}
+	onmouseleave={() => (isExpanded = false)}
 	aria-label="Main navigation"
 >
 	<!-- Header with logo -->
@@ -48,7 +52,7 @@
 		top: 24px;
 		left: 24px;
 		bottom: 24px;
-		width: var(--nav-width-expanded);
+		width: var(--nav-width-collapsed);
 		background: var(--bg-nav);
 		border-radius: var(--radius-xl);
 		display: flex;
@@ -56,6 +60,11 @@
 		z-index: var(--z-nav);
 		overflow: hidden;
 		box-shadow: var(--shadow-lg);
+		transition: width var(--transition-base);
+	}
+
+	.nav-floating.expanded {
+		width: var(--nav-width-expanded);
 	}
 
 	/* === Nav Header === */

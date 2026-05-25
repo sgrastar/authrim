@@ -77,10 +77,21 @@ function createTestApp() {
         userId: string;
         actorId: string;
         roles: string[];
+        tenantScope?: string[];
         authMethod: 'session';
       };
     };
   }>();
+  app.use('*', async (c, next) => {
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      actorId: 'admin-1',
+      roles: ['system_admin'],
+      tenantScope: ['*'],
+      authMethod: 'session',
+    });
+    await next();
+  });
   app.get('/api/admin/runtime-profiles', adminRuntimeProfileListHandler);
   app.get('/api/admin/runtime-profiles/defaults', adminRuntimeProfileDefaultsHandler);
   app.put('/api/admin/runtime-profiles/defaults', adminRuntimeProfileDefaultsUpdateHandler);
@@ -113,6 +124,7 @@ function createEnv(kvData: Record<string, string> = {}): Env {
       send: vi.fn(),
       sendBatch: vi.fn(),
     },
+    AUDIT_ARCHIVE: {} as R2Bucket,
     DIAGNOSTIC_LOGS: {} as R2Bucket,
     PROFILE_REGISTRY_BACKEND: 'kv',
     DEFAULT_STORAGE_PROFILE_ID,
@@ -270,7 +282,7 @@ describe('runtime profile admin handlers', () => {
     );
     expect(allBody.reference_catalog.bindingRefs.d1).toEqual(expect.arrayContaining(['DB']));
     expect(allBody.reference_catalog.bindingRefs.r2).toEqual(
-      expect.arrayContaining(['DIAGNOSTIC_LOGS'])
+      expect.arrayContaining(['AUDIT_ARCHIVE'])
     );
     expect(allBody.reference_catalog.bindingRefs.hyperdrive).toEqual(
       expect.arrayContaining(['HYPERDRIVE_CORE_PRIMARY'])
@@ -741,7 +753,7 @@ describe('runtime profile admin handlers', () => {
     expect(beforeBody.reference_management.mode).toBe('setup_only');
     expect(beforeBody.reference_catalog.bindingRefs.d1).toEqual(expect.arrayContaining(['DB']));
     expect(beforeBody.reference_catalog.bindingRefs.r2).toEqual(
-      expect.arrayContaining(['DIAGNOSTIC_LOGS'])
+      expect.arrayContaining(['AUDIT_ARCHIVE'])
     );
     expect(beforeBody.reference_status.audit).toEqual(
       expect.arrayContaining([

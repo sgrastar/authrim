@@ -456,10 +456,10 @@ const ru: Translations = {
   'userId.note': 'Примечание: Этот параметр нельзя изменить после создания пользователей.',
   'userId.selected': 'Формат ID пользователя: {{format}}',
 
-  // Optional components
-  'components.title': 'Дополнительные компоненты',
+  // Standard components
+  'components.title': 'Стандартные компоненты',
   'components.note':
-    'Примечание: Социальный вход и Policy Engine являются стандартными компонентами',
+    'SAML, Device Flow/CIBA, VC, социальный вход и Policy Engine устанавливаются по умолчанию.',
   'components.samlPrompt': 'Включить поддержку SAML?',
   'components.vcPrompt': 'Включить верифицируемые учётные данные (VC)?',
   'components.saml': 'SAML:',
@@ -780,6 +780,19 @@ const ru: Translations = {
   'web.db.name': 'Имя',
   'web.db.region': 'Регион',
   'web.db.regionAuto': 'Автоматически (ближайший)',
+  'web.db.storageProfileTitle': 'Профиль развертывания хранилища',
+  'web.db.storageProfileDesc':
+    'Выберите, как размещать пользовательские core/PII данные для этого развертывания.',
+  'web.db.sharedD1Title': 'Общий D1',
+  'web.db.sharedD1Desc':
+    'Один core D1 и один PII D1 на все развертывание. Минимальная стоимость настройки и путь по умолчанию.',
+  'web.db.tenantD1Title': 'D1 для tenant',
+  'web.db.tenantD1Desc':
+    'Одна пара core/PII D1 на tenant. Требуется подготовить базу данных tenant перед активацией.',
+  'web.db.preallocatedSlotsTitle': 'Предварительно выделенные слоты tenant',
+  'web.db.preallocatedSlotsDesc': 'Каждый слот tenant создает две базы данных D1: core и PII.',
+  'web.db.slotsLabel': 'Слоты',
+  'web.db.slotsHelp': 'По умолчанию 3. Максимум 500 слотов.',
 
   // Web UI Email
   'web.email.title': 'Провайдер email',

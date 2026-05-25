@@ -444,7 +444,7 @@ export async function storeImmediateChunkedSensitiveDetailJson(
     existingCatalog?.public_artifact_id ?? options.publicArtifactId ?? generatePublicArtifactId();
   const objectPartitionAt = existingCatalog?.created_at ?? createdAt;
   const objectKey = buildLogChunkObjectKey({
-    prefix: 'sensitive-detail/v1',
+    prefix: 'sensitive-details/v1',
     tenantKey,
     logType,
     plane: 'sensitive_detail',

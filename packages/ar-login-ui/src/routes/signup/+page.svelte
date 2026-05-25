@@ -8,6 +8,7 @@
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
 	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
+	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
 	import {
@@ -357,19 +358,7 @@
 	}
 
 	function getProviderIcon(provider: ExternalProvider): string {
-		if (provider.iconUrl) return provider.iconUrl;
-		if (provider.type === 'saml') return 'i-ph-buildings';
-		if (provider.type === 'vc') return 'i-ph-identification-badge';
-		const providerName = (provider.name || '').toLowerCase();
-		if (providerName.includes('google')) return 'i-ph-google-logo';
-		if (providerName.includes('github')) return 'i-ph-github-logo';
-		if (providerName.includes('microsoft') || providerName.includes('azure'))
-			return 'i-ph-windows-logo';
-		if (providerName.includes('apple')) return 'i-ph-apple-logo';
-		if (providerName.includes('facebook') || providerName.includes('meta')) return 'i-ph-meta-logo';
-		if (providerName.includes('twitter') || providerName.includes('x.com')) return 'i-ph-x-logo';
-		if (providerName.includes('linkedin')) return 'i-ph-linkedin-logo';
-		return 'i-ph-sign-in';
+		return getExternalProviderIconClass(provider);
 	}
 
 	function getProviderButtonText(provider: ExternalProvider): string {
@@ -631,7 +620,7 @@
 										loading="lazy"
 										style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
 									/>
-								{:else}
+								{:else if getProviderIcon(provider)}
 									<div class="{getProviderIcon(provider)} h-5 w-5"></div>
 								{/if}
 								{getProviderButtonText(provider)}

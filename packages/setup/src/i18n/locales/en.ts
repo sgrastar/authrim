@@ -455,9 +455,10 @@ const en: Translations = {
   'userId.note': 'Note: This setting cannot be changed after users are created.',
   'userId.selected': 'User ID format: {{format}}',
 
-  // Optional components
-  'components.title': 'Optional Components',
-  'components.note': 'Note: Social Login and Policy Engine are standard components',
+  // Standard components
+  'components.title': 'Standard Components',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Social Login, and Policy Engine are installed by default.',
   'components.samlPrompt': 'Enable SAML support?',
   'components.vcPrompt': 'Enable Verifiable Credentials?',
   'components.saml': 'SAML:',
@@ -776,6 +777,18 @@ const en: Translations = {
   'web.db.name': 'Name',
   'web.db.region': 'Region',
   'web.db.regionAuto': 'Automatic (nearest)',
+  'web.db.storageProfileTitle': 'Storage Deployment Profile',
+  'web.db.storageProfileDesc': 'Select how user core/PII data is placed for this deployment.',
+  'web.db.sharedD1Title': 'Shared D1',
+  'web.db.sharedD1Desc':
+    'One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.',
+  'web.db.tenantD1Title': 'Tenant D1',
+  'web.db.tenantD1Desc':
+    'One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.',
+  'web.db.preallocatedSlotsTitle': 'Preallocated tenant slots',
+  'web.db.preallocatedSlotsDesc': 'Each tenant slot creates two D1 databases: core and PII.',
+  'web.db.slotsLabel': 'Slots',
+  'web.db.slotsHelp': 'Default is 3. Maximum is 500 slots.',
 
   // Web UI Email
   'web.email.title': 'Email Provider',

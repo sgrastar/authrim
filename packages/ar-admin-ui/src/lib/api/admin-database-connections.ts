@@ -5,6 +5,12 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 export type DatabaseConnectionProvider = 'd1' | 'hyperdrive' | 'postgres' | 'mysql' | 'custom';
 export type ResourceStatus = 'active' | 'disabled';
 
+export interface ResourceTenantAssignment {
+	id: string;
+	name: string;
+	kind: 'tenant' | 'platform';
+}
+
 export interface DatabaseConnection {
 	id: string;
 	name: string;
@@ -12,6 +18,8 @@ export interface DatabaseConnection {
 	description: string | null;
 	provider: DatabaseConnectionProvider;
 	config: Record<string, unknown>;
+	managed_by?: 'setup' | 'admin';
+	read_only?: boolean;
 	has_credential: boolean;
 	credential_key_version: number | null;
 	credential_updated_at: number | null;
@@ -21,6 +29,7 @@ export interface DatabaseConnection {
 	updated_by: string | null;
 	created_at: number;
 	updated_at: number;
+	tenant_assignments?: ResourceTenantAssignment[];
 }
 
 export interface DatabaseConnectionInput {
@@ -55,6 +64,13 @@ export const adminDatabaseConnectionsAPI = {
 			response,
 			'Failed to load database connections'
 		);
+	},
+
+	async get(id: string) {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/database-connections/${encodeURIComponent(id)}`
+		);
+		return parseResponse<DatabaseConnection>(response, 'Failed to load database connection');
 	},
 
 	async create(input: DatabaseConnectionInput) {

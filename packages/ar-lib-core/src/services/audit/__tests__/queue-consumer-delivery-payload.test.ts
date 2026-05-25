@@ -194,6 +194,7 @@ describe('logging delivery queue consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
@@ -201,7 +202,9 @@ describe('logging delivery queue consumer', () => {
       expect.stringContaining('logs/v1/tk_chunk/archive/operational/'),
       expect.any(Uint8Array),
       expect.objectContaining({
-        httpMetadata: expect.objectContaining({ contentType: 'application/x-ndjson' }),
+        httpMetadata: expect.objectContaining({
+          contentType: 'application/authrim.log-chunk+encrypted',
+        }),
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
@@ -268,6 +271,7 @@ describe('logging delivery queue consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
@@ -369,7 +373,7 @@ describe('logging delivery queue consumer', () => {
 
     expect(bucket.put).toHaveBeenCalledTimes(1);
     expect(bucket.put).toHaveBeenCalledWith(
-      expect.stringContaining('sensitive-details/t_sensitive/sensitive_detail/webhook/'),
+      expect.stringContaining('sensitive-details/v1/t_sensitive/sensitive_detail/webhook/webhook/'),
       expect.any(Uint8Array),
       expect.objectContaining({
         customMetadata: expect.objectContaining({
@@ -445,7 +449,7 @@ describe('logging delivery queue consumer', () => {
 
     const objectKey = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(objectKey).toContain(
-      'sensitive-details/tenant_.._.._raw/sensitive_detail/.._webhook_raw/'
+      'sensitive-details/v1/tenant_.._.._raw/sensitive_detail/.._webhook_raw/webhook/'
     );
     expect(objectKey).not.toContain('../');
     expect(objectKey).not.toContain('/raw/sensitive_detail/../');
@@ -588,7 +592,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        DIAGNOSTIC_LOGS: bucket,
+        AUDIT_ARCHIVE: bucket,
       }
     );
 
@@ -654,7 +658,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        DIAGNOSTIC_LOGS: bucket,
+        AUDIT_ARCHIVE: bucket,
       }
     );
 
@@ -1376,7 +1380,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        DIAGNOSTIC_LOGS: bucket,
+        AUDIT_ARCHIVE: bucket,
       }
     );
 

@@ -19,6 +19,7 @@ export interface LoginMethodExternalProvider {
 	enabled: boolean;
 	slug?: string;
 	iconUrl?: string;
+	iconName?: string;
 	buttonColor?: string;
 	buttonText?: string;
 }
@@ -59,6 +60,7 @@ function normalizeProvider(
 		enabled: provider.enabled !== false,
 		slug: provider.slug ? String(provider.slug) : undefined,
 		iconUrl: provider.iconUrl ? String(provider.iconUrl) : undefined,
+		iconName: provider.iconName ? String(provider.iconName) : undefined,
 		buttonColor: provider.buttonColor ? String(provider.buttonColor) : undefined,
 		buttonText: provider.buttonText ? String(provider.buttonText) : undefined
 	};
@@ -90,6 +92,7 @@ function serializeProviders(providers: LoginMethodExternalProvider[]): string {
 			enabled: provider.enabled,
 			...(provider.slug?.trim() ? { slug: provider.slug.trim() } : {}),
 			...(provider.iconUrl?.trim() ? { iconUrl: provider.iconUrl.trim() } : {}),
+			...(provider.iconName?.trim() ? { iconName: provider.iconName.trim() } : {}),
 			...(provider.buttonColor?.trim() ? { buttonColor: provider.buttonColor.trim() } : {}),
 			...(provider.buttonText?.trim() ? { buttonText: provider.buttonText.trim() } : {})
 		}))

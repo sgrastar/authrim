@@ -210,6 +210,7 @@ describe('Settings API v2', () => {
         const body = (await res.json()) as SettingsGetResult;
 
         expect(body.category).toBe('login-entry');
+        expect(body.values['login-entry.override_enabled']).toBe(false);
         expect(body.values['login-entry.mode']).toBe('discovery_optional');
         expect(body.values['login-entry.discovery_methods']).toBe(
           '["email_domain","tenant_code","tenant_slug"]'
@@ -237,6 +238,7 @@ describe('Settings API v2', () => {
         const body = (await res.json()) as SettingsGetResult;
 
         expect(body.category).toBe('tenant-discovery-ui');
+        expect(body.values['tenant-discovery-ui.override_enabled']).toBe(false);
         expect(body.values['tenant-discovery-ui.inherit_from_login_ui']).toBe(true);
         expect(body.values['tenant-discovery-ui.theme']).toBe('');
       });
@@ -930,7 +932,7 @@ describe('Settings API v2', () => {
         expect(typeof body.settings).toBe('object');
       });
 
-      it('should return login-entry metadata with ten settings', async () => {
+      it('should return login-entry metadata with eleven settings', async () => {
         const { app, mockEnv } = createTestApp();
 
         const res = await app.request(
@@ -945,7 +947,7 @@ describe('Settings API v2', () => {
         };
 
         expect(body.category).toBe('login-entry');
-        expect(Object.keys(body.settings)).toHaveLength(10);
+        expect(Object.keys(body.settings)).toHaveLength(11);
       });
 
       it('should return 404 for unknown category', async () => {

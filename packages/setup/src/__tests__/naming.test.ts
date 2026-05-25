@@ -44,6 +44,9 @@ describe('Component Lists', () => {
     expect(CORE_WORKER_COMPONENTS).toContain('ar-lib-core');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-auth');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-token');
+    expect(CORE_WORKER_COMPONENTS).toContain('ar-saml');
+    expect(CORE_WORKER_COMPONENTS).toContain('ar-async');
+    expect(CORE_WORKER_COMPONENTS).toContain('ar-vc');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-router');
   });
 
@@ -62,7 +65,7 @@ describe('getEnabledComponents', () => {
     expect(components.has('ar-router')).toBe(true);
   });
 
-  it('should add optional components when enabled', () => {
+  it('should include standard components when enabled', () => {
     const components = getEnabledComponents({
       saml: true,
       vc: true,
@@ -72,14 +75,14 @@ describe('getEnabledComponents', () => {
     expect(components.has('ar-vc')).toBe(true);
   });
 
-  it('should not include optional components when disabled', () => {
+  it('should keep standard components even when old configs disable them', () => {
     const components = getEnabledComponents({
       saml: false,
       vc: false,
     });
 
-    expect(components.has('ar-saml')).toBe(false);
-    expect(components.has('ar-vc')).toBe(false);
+    expect(components.has('ar-saml')).toBe(true);
+    expect(components.has('ar-vc')).toBe(true);
   });
 });
 

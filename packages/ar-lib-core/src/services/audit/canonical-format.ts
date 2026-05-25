@@ -1,3 +1,4 @@
+import { buildArchiveLogRecordV1, type ArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
 import type { AuditTarget } from '../../types/runtime-profile';
 import type { AuditQueueMessage, AuditQueueMessageType, EventLogEntry, PIILogEntry } from './types';
 
@@ -80,6 +81,67 @@ function buildCanonicalPayloadBase<TChannel extends CanonicalAuditDeliveryChanne
   };
 }
 
+function parseAffectedFields(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildEventArchiveSummary(
+  entry: EventLogEntry,
+  options?: {
+    auditProfileId?: string;
+    matchedRuleNames?: string[];
+  }
+): Record<string, unknown> {
+  return {
+    audit_record_schema: AUDIT_CANONICAL_LOG_FORMAT_V1,
+    audit_log_type: 'event_log',
+    event_category: entry.eventCategory,
+    event_type: entry.eventType,
+    result: entry.result,
+    severity: entry.severity,
+    ...(entry.errorCode ? { error_code: entry.errorCode } : {}),
+    ...(entry.errorMessage ? { error_message: entry.errorMessage } : {}),
+    ...(entry.durationMs !== undefined ? { duration_ms: entry.durationMs } : {}),
+    ...(entry.clientId ? { client_id: entry.clientId } : {}),
+    ...(entry.anonymizedUserId ? { anonymized_user_id: entry.anonymizedUserId } : {}),
+    has_inline_detail: Boolean(entry.detailsJson),
+    has_sensitive_detail: Boolean(entry.detailsR2Key),
+    ...(options?.auditProfileId ? { audit_profile_id: options.auditProfileId } : {}),
+    ...(options?.matchedRuleNames ? { matched_rule_names: options.matchedRuleNames } : {}),
+  };
+}
+
+function buildPiiArchiveSummary(
+  entry: PIILogEntry,
+  options?: {
+    auditProfileId?: string;
+    matchedRuleNames?: string[];
+  }
+): Record<string, unknown> {
+  return {
+    audit_record_schema: AUDIT_CANONICAL_LOG_FORMAT_V1,
+    audit_log_type: 'pii_log',
+    anonymized_user_id: entry.anonymizedUserId,
+    change_type: entry.changeType,
+    affected_fields: parseAffectedFields(entry.affectedFields),
+    actor_type: entry.actorType,
+    ...(entry.actorUserId ? { actor_user_id: entry.actorUserId } : {}),
+    ...(entry.legalBasis ? { legal_basis: entry.legalBasis } : {}),
+    ...(entry.consentReference ? { consent_reference: entry.consentReference } : {}),
+    has_inline_encrypted_values: Boolean(entry.valuesEncrypted),
+    has_sensitive_detail: Boolean(entry.valuesR2Key),
+    ...(options?.auditProfileId ? { audit_profile_id: options.auditProfileId } : {}),
+    ...(options?.matchedRuleNames ? { matched_rule_names: options.matchedRuleNames } : {}),
+  };
+}
+
 export function buildCanonicalAuditRecord(
   target: AuditTarget,
   body: AuditQueueMessage,
@@ -97,29 +159,41 @@ export function buildCanonicalAuditArchiveRecordFromEntry(
   target: AuditTarget,
   logType: AuditQueueMessageType,
   entry: EventLogEntry | PIILogEntry,
+  tenantKey: string,
   options?: {
     emittedAt?: number;
     auditProfileId?: string;
     matchedRuleNames?: string[];
   }
-): CanonicalAuditRecordV1 {
-  return {
-    schema: AUDIT_CANONICAL_LOG_FORMAT_V1,
-    recordType: 'audit_record',
-    emittedAt: new Date(options?.emittedAt ?? Date.now()).toISOString(),
-    tenantId: entry.tenantId,
-    logType,
-    ...(options?.auditProfileId ? { auditProfileId: options.auditProfileId } : {}),
-    ...(options?.matchedRuleNames ? { matchedRuleNames: options.matchedRuleNames } : {}),
+): ArchiveLogRecordV1 {
+  const isEvent = logType === 'event_log';
+  return buildArchiveLogRecordV1({
+    id: entry.id,
+    tenantKey,
+    logType: isEvent ? 'audit' : 'pii',
+    plane: 'archive',
+    eventAt: entry.createdAt,
+    severity: isEvent ? (entry as EventLogEntry).severity : 'info',
+    type: isEvent ? (entry as EventLogEntry).eventType : `pii.${(entry as PIILogEntry).changeType}`,
+    source: 'authrim/audit',
+    subject: isEvent
+      ? ((entry as EventLogEntry).clientId ?? (entry as EventLogEntry).anonymizedUserId ?? null)
+      : (entry as PIILogEntry).anonymizedUserId,
+    correlationId: isEvent
+      ? ((entry as EventLogEntry).requestId ?? (entry as EventLogEntry).sessionId ?? null)
+      : ((entry as PIILogEntry).requestId ?? null),
+    result: isEvent ? (entry as EventLogEntry).result : (entry as PIILogEntry).changeType,
+    summary: isEvent
+      ? buildEventArchiveSummary(entry as EventLogEntry, options)
+      : buildPiiArchiveSummary(entry as PIILogEntry, options),
+    detailRef: isEvent
+      ? catalogDetailRef((entry as EventLogEntry).detailsR2Key, 'event_log_detail')
+      : catalogDetailRef((entry as PIILogEntry).valuesR2Key, 'pii_log_values'),
     delivery: {
-      channel: 'archive',
       targetType: target.type,
-      ...(targetReferenceForCanonicalPayload(target)
-        ? { targetRef: targetReferenceForCanonicalPayload(target) }
-        : {}),
+      targetRef: targetReferenceForCanonicalPayload(target) ?? null,
     },
-    entry,
-  };
+  });
 }
 
 export function buildCanonicalAuditBatch(
@@ -166,5 +240,34 @@ export function extractAuditEntryFromCanonicalPayload(
     }
   }
 
+  if (
+    candidate.schema_version === 'authrim.log.archive.v1' &&
+    candidate.record_type === 'log_record'
+  ) {
+    const summary = candidate.summary;
+    if (summary && typeof summary === 'object' && !Array.isArray(summary)) {
+      const entry = (summary as Record<string, unknown>).entry;
+      if (entry && typeof entry === 'object') {
+        return entry as EventLogEntry | PIILogEntry;
+      }
+    }
+  }
+
   return null;
+}
+
+function catalogDetailRef(
+  ref: string | null | undefined,
+  objectClass: string
+): ArchiveLogRecordV1['detail_ref'] {
+  if (!ref?.startsWith('sensitive-detail-catalog:')) {
+    return null;
+  }
+  const objectCatalogId = ref.slice('sensitive-detail-catalog:'.length);
+  return objectCatalogId
+    ? {
+        object_catalog_id: objectCatalogId,
+        class: objectClass,
+      }
+    : null;
 }

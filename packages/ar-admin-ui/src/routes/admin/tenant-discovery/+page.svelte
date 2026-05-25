@@ -18,11 +18,13 @@
 	} from '$lib/admin/tenant-discovery-settings';
 
 	interface LoginEntryForm {
+		overrideEnabled: boolean;
 		mode: 'tenant_only' | 'discovery_optional' | 'discovery_required';
 		emailResolutionPolicy: EmailResolutionPolicy;
 		emailEnabled: boolean;
 		tenantCodeEnabled: boolean;
 		tenantSlugEnabled: boolean;
+		wayfEnabled: boolean;
 		selectionPolicy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
 		allowManualTenantEntry: boolean;
 		rememberLastTenant: boolean;
@@ -33,6 +35,7 @@
 	}
 
 	interface DiscoveryUiForm {
+		overrideEnabled: boolean;
 		inheritFromLoginUi: boolean;
 		theme: '' | 'light' | 'dark';
 		variant: '' | 'beige' | 'blue-gray' | 'green' | 'brown' | 'navy' | 'slate';
@@ -111,7 +114,10 @@
 	const commonDiscoverDisplay = $derived(commonDiscoverUrl || 'the shared /discover URL');
 
 	const hasBehaviorChanges = $derived(
-		initialBehaviorValues ? JSON.stringify(buildBehaviorValues(behaviorForm)) !== JSON.stringify(initialBehaviorValues) : false
+		initialBehaviorValues
+			? JSON.stringify(buildTenantBehaviorValues(behaviorForm, singleTenantMode)) !==
+				JSON.stringify(initialBehaviorValues)
+			: false
 	);
 	const hasCommonEntryBehaviorChanges = $derived(
 		initialCommonEntryBehaviorValues
@@ -126,22 +132,30 @@
 	);
 	const hasTenantUiChanges = $derived(
 		initialTenantUiValues
-			? JSON.stringify(buildDiscoveryUiValues(tenantUiForm)) !== JSON.stringify(initialTenantUiValues)
+			? JSON.stringify(buildTenantDiscoveryUiValues(tenantUiForm, singleTenantMode)) !==
+				JSON.stringify(initialTenantUiValues)
 			: false
 	);
 	function getBehaviorValidationError(form: LoginEntryForm | null): string {
 		if (!form) return '';
+		if (!singleTenantMode && !form.overrideEnabled) return '';
 
-		if (!form.emailEnabled && !form.tenantCodeEnabled && !form.tenantSlugEnabled) {
+		if (
+			!form.emailEnabled &&
+			!form.tenantCodeEnabled &&
+			!form.tenantSlugEnabled &&
+			!form.wayfEnabled
+		) {
 			return 'Enable at least one discovery method.';
 		}
 
 		if (
 			form.selectionPolicy === 'manual_only' &&
 			!form.tenantCodeEnabled &&
-			!form.tenantSlugEnabled
+			!form.tenantSlugEnabled &&
+			!form.wayfEnabled
 		) {
-			return 'manual_only requires tenant code or tenant slug to remain enabled.';
+			return 'manual_only requires tenant code, tenant slug, or WAYF to remain enabled.';
 		}
 
 		return '';
@@ -151,6 +165,86 @@
 	const commonEntryBehaviorValidationError = $derived.by(() =>
 		getBehaviorValidationError(commonEntryBehaviorForm)
 	);
+
+	function entryModeInfo(mode: LoginEntryForm['mode']) {
+		switch (mode) {
+			case 'tenant_only':
+				return {
+					description:
+						'Users sign in through a tenant-specific entry point. The shared discovery page is bypassed unless another flow sends users there.',
+					sample: 'Use when every app or invitation already knows the tenant.'
+				};
+			case 'discovery_optional':
+				return {
+					description:
+						'Users can use tenant discovery, but tenant-specific login URLs remain valid.',
+					sample: 'Good default for gradual multi-tenant rollout.'
+				};
+			case 'discovery_required':
+				return {
+					description:
+						'Users must resolve a tenant before login methods are shown.',
+					sample: 'Use when the shared login entry should always choose a tenant first.'
+				};
+		}
+	}
+
+	function emailResolutionInfo(policy: EmailResolutionPolicy, enabled: boolean) {
+		if (!enabled) {
+			return {
+				description: 'Email-based discovery is currently disabled.',
+				sample: 'Enable Email address below to use this policy.'
+			};
+		}
+		switch (policy) {
+			case 'exact_email_only':
+				return {
+					description:
+						'Resolve the tenant only when the full email address is explicitly mapped.',
+					sample: 'alice@example.edu must have its own mapping.'
+				};
+			case 'exact_email_then_domain':
+				return {
+					description:
+						'Try an exact email mapping first, then fall back to the email domain if no exact match exists.',
+					sample: 'alice@example.edu falls back to example.edu.'
+				};
+			case 'disabled':
+				return {
+					description: 'Do not resolve tenants from email addresses.',
+					sample: 'Users must use another enabled discovery method.'
+				};
+		}
+	}
+
+	function selectionPolicyInfo(policy: LoginEntryForm['selectionPolicy']) {
+		switch (policy) {
+			case 'auto_if_single':
+				return {
+					description:
+						'Automatically continue when discovery returns exactly one tenant. Show a selection screen for multiple matches.',
+					sample: 'Best when mappings are reliable and one clear match is common.'
+				};
+			case 'always_select':
+				return {
+					description:
+						'Always show the tenant selection step after discovery, even if only one tenant matched.',
+					sample: 'Use when users should explicitly confirm the tenant.'
+				};
+			case 'select_if_multiple':
+				return {
+					description:
+						'Skip the selection step for one match, but ask users to choose when multiple tenants match.',
+					sample: 'Balanced default for shared email domains.'
+				};
+			case 'manual_only':
+				return {
+					description:
+						'Do not auto-select from email resolution. Users must enter or choose a tenant manually.',
+					sample: 'Requires tenant code, tenant slug, or WAYF discovery to stay enabled.'
+				};
+		}
+	}
 
 	let previousTenantId = $state('');
 
@@ -184,7 +278,10 @@
 		return values[key] === true;
 	}
 
-	function createBehaviorForm(settings: CategorySettings): LoginEntryForm {
+	function createBehaviorForm(
+		settings: CategorySettings,
+		options?: { overrideEnabledDefault?: boolean }
+	): LoginEntryForm {
 		const toggles = getMethodToggles(settings.values['login-entry.discovery_methods']);
 		const resolvedEmailResolutionPolicy = resolveEmailResolutionPolicy(
 			settings.values['login-entry.discovery_methods'],
@@ -192,6 +289,10 @@
 		);
 
 		return {
+			overrideEnabled:
+				typeof settings.values['login-entry.override_enabled'] === 'boolean'
+					? settings.values['login-entry.override_enabled']
+					: (options?.overrideEnabledDefault ?? false),
 			mode:
 				(settings.values['login-entry.mode'] as LoginEntryForm['mode']) ?? 'discovery_optional',
 			emailResolutionPolicy:
@@ -201,6 +302,7 @@
 			emailEnabled: toggles.emailEnabled,
 			tenantCodeEnabled: toggles.tenantCodeEnabled,
 			tenantSlugEnabled: toggles.tenantSlugEnabled,
+			wayfEnabled: toggles.wayfEnabled,
 			selectionPolicy:
 				(settings.values['login-entry.selection_policy'] as LoginEntryForm['selectionPolicy']) ??
 				'select_if_multiple',
@@ -233,6 +335,7 @@
 		options?: {
 			platformSettings?: CategorySettings | null;
 			loginUiSettings?: CategorySettings | null;
+			overrideEnabledDefault?: boolean;
 		}
 	): DiscoveryUiForm {
 		const inheritFromLoginUi = readBoolean(settings.values, 'tenant-discovery-ui.inherit_from_login_ui');
@@ -266,6 +369,10 @@
 		}
 
 		return {
+			overrideEnabled:
+				typeof settings.values['tenant-discovery-ui.override_enabled'] === 'boolean'
+					? settings.values['tenant-discovery-ui.override_enabled']
+					: (options?.overrideEnabledDefault ?? false),
 			inheritFromLoginUi,
 			theme:
 				((readString(settings.values, 'tenant-discovery-ui.theme') ||
@@ -301,8 +408,20 @@
 		};
 	}
 
-	function buildBehaviorValues(form: LoginEntryForm | null): Record<string, unknown> {
+	function buildBehaviorValues(
+		form: LoginEntryForm | null,
+		options?: { includeOverrideEnabled?: boolean; includeOperationalValues?: boolean }
+	): Record<string, unknown> {
 		if (!form) return {};
+		const includeOverrideEnabled = options?.includeOverrideEnabled ?? false;
+		const includeOperationalValues = options?.includeOperationalValues ?? true;
+		const values: Record<string, unknown> = {};
+		if (includeOverrideEnabled) {
+			values['login-entry.override_enabled'] = form.overrideEnabled;
+		}
+		if (!includeOperationalValues) {
+			return values;
+		}
 		const emailResolutionPolicy = form.emailEnabled
 			? form.emailResolutionPolicy === 'disabled'
 				? 'exact_email_then_domain'
@@ -310,12 +429,14 @@
 			: 'disabled';
 
 		return {
+			...values,
 			'login-entry.mode': form.mode,
 			'login-entry.discovery_methods': buildDiscoveryMethodsValue({
 				emailEnabled: form.emailEnabled,
 				emailResolutionPolicy,
 				tenantCodeEnabled: form.tenantCodeEnabled,
-				tenantSlugEnabled: form.tenantSlugEnabled
+				tenantSlugEnabled: form.tenantSlugEnabled,
+				wayfEnabled: form.wayfEnabled
 			}),
 			'login-entry.email_resolution_policy': emailResolutionPolicy,
 			'login-entry.selection_policy': form.selectionPolicy,
@@ -330,9 +451,32 @@
 		};
 	}
 
-	function buildDiscoveryUiValues(form: DiscoveryUiForm | null): Record<string, unknown> {
+	function buildTenantBehaviorValues(
+		form: LoginEntryForm | null,
+		isSingleTenant: boolean
+	): Record<string, unknown> {
+		return buildBehaviorValues(form, {
+			includeOverrideEnabled: !isSingleTenant,
+			includeOperationalValues: isSingleTenant || !!form?.overrideEnabled
+		});
+	}
+
+	function buildDiscoveryUiValues(
+		form: DiscoveryUiForm | null,
+		options?: { includeOverrideEnabled?: boolean; includeOperationalValues?: boolean }
+	): Record<string, unknown> {
 		if (!form) return {};
+		const includeOverrideEnabled = options?.includeOverrideEnabled ?? false;
+		const includeOperationalValues = options?.includeOperationalValues ?? true;
+		const values: Record<string, unknown> = {};
+		if (includeOverrideEnabled) {
+			values['tenant-discovery-ui.override_enabled'] = form.overrideEnabled;
+		}
+		if (!includeOperationalValues) {
+			return values;
+		}
 		return {
+			...values,
 			'tenant-discovery-ui.inherit_from_login_ui': form.inheritFromLoginUi,
 			'tenant-discovery-ui.theme': form.theme,
 			'tenant-discovery-ui.variant': form.variant,
@@ -343,6 +487,16 @@
 			'tenant-discovery-ui.title_text': form.titleText.trim(),
 			'tenant-discovery-ui.subtitle_text': form.subtitleText.trim()
 		};
+	}
+
+	function buildTenantDiscoveryUiValues(
+		form: DiscoveryUiForm | null,
+		isSingleTenant: boolean
+	): Record<string, unknown> {
+		return buildDiscoveryUiValues(form, {
+			includeOverrideEnabled: !isSingleTenant,
+			includeOperationalValues: isSingleTenant || !!form?.overrideEnabled
+		});
 	}
 
 	function diffValues(
@@ -384,7 +538,7 @@
 			loginEntrySettings = loginEntryResult;
 			tenantUiSettings = tenantUiResult;
 			behaviorForm = createBehaviorForm(loginEntryResult);
-			initialBehaviorValues = buildBehaviorValues(behaviorForm);
+			initialBehaviorValues = buildTenantBehaviorValues(behaviorForm, singleTenantMode);
 
 			if (!singleTenantMode) {
 				try {
@@ -406,7 +560,7 @@
 						loginUiSettings: tenantLoginUiResult
 					});
 					initialCommonEntryValues = buildDiscoveryUiValues(commonEntryForm);
-					initialTenantUiValues = buildDiscoveryUiValues(tenantUiForm);
+					initialTenantUiValues = buildTenantDiscoveryUiValues(tenantUiForm, singleTenantMode);
 					commonEntryBehaviorError = '';
 					commonEntryError = '';
 				} catch (err) {
@@ -425,7 +579,7 @@
 				tenantUiForm = createDiscoveryUiForm(tenantUiResult, {
 					loginUiSettings: tenantLoginUiResult
 				});
-				initialTenantUiValues = buildDiscoveryUiValues(tenantUiForm);
+				initialTenantUiValues = buildTenantDiscoveryUiValues(tenantUiForm, singleTenantMode);
 				commonEntryBehaviorSettings = null;
 				commonEntryBehaviorForm = null;
 				initialCommonEntryBehaviorValues = null;
@@ -462,7 +616,10 @@
 			behaviorError = behaviorValidationError;
 			return;
 		}
-		const set = diffValues(buildBehaviorValues(behaviorForm), initialBehaviorValues ?? {});
+		const set = diffValues(
+			buildTenantBehaviorValues(behaviorForm, singleTenantMode),
+			initialBehaviorValues ?? {}
+		);
 		if (Object.keys(set).length === 0) return;
 
 		behaviorSaving = true;
@@ -556,7 +713,10 @@
 
 	async function saveTenantUi() {
 		if (!tenantUiSettings || !tenantUiForm) return;
-		const set = diffValues(buildDiscoveryUiValues(tenantUiForm), initialTenantUiValues ?? {});
+		const set = diffValues(
+			buildTenantDiscoveryUiValues(tenantUiForm, singleTenantMode),
+			initialTenantUiValues ?? {}
+		);
 		if (Object.keys(set).length === 0) return;
 
 		tenantUiSaving = true;
@@ -651,6 +811,11 @@
 				{#if commonEntryBehaviorSuccess}
 					<div class="alert alert-success">{commonEntryBehaviorSuccess}</div>
 				{/if}
+				{#if !canEditPlatform}
+					<div class="alert alert-info">
+						Common entry behavior is a platform setting. Tenant admins can review it, but cannot edit it.
+					</div>
+				{/if}
 
 				{#if commonEntryBehaviorForm}
 					<div class="form-grid">
@@ -661,10 +826,14 @@
 								bind:value={commonEntryBehaviorForm.mode}
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 							>
-								<option value="tenant_only">tenant_only</option>
-								<option value="discovery_optional">discovery_optional</option>
-								<option value="discovery_required">discovery_required</option>
+								<option value="tenant_only">Tenant-specific entry only</option>
+								<option value="discovery_optional">Discovery optional</option>
+								<option value="discovery_required">Discovery required</option>
 							</select>
+							<div class="inline-help">
+								<p>{entryModeInfo(commonEntryBehaviorForm.mode).description}</p>
+								<code>Example: {entryModeInfo(commonEntryBehaviorForm.mode).sample}</code>
+							</div>
 						</div>
 
 						<div class="form-group">
@@ -677,15 +846,20 @@
 								<option value="exact_email_then_domain">Exact email, then email-domain fallback</option>
 								<option value="exact_email_only">Exact email only</option>
 							</select>
-							<p class="field-hint">
-								{#if commonEntryBehaviorForm.emailEnabled}
-									Choose whether email discovery checks the full email address only, or falls back
-									to the email domain.
-								{:else}
-									Enable <strong>Email address</strong> below to configure email-based tenant
-									discovery.
-								{/if}
-							</p>
+							<div class="inline-help">
+								<p>
+									{emailResolutionInfo(
+										commonEntryBehaviorForm.emailResolutionPolicy,
+										commonEntryBehaviorForm.emailEnabled
+									).description}
+								</p>
+								<code>
+									Example: {emailResolutionInfo(
+										commonEntryBehaviorForm.emailResolutionPolicy,
+										commonEntryBehaviorForm.emailEnabled
+									).sample}
+								</code>
+							</div>
 						</div>
 
 						<div class="form-group">
@@ -695,11 +869,17 @@
 								bind:value={commonEntryBehaviorForm.selectionPolicy}
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 							>
-								<option value="auto_if_single">auto_if_single</option>
-								<option value="always_select">always_select</option>
-								<option value="select_if_multiple">select_if_multiple</option>
-								<option value="manual_only">manual_only</option>
+								<option value="auto_if_single">Auto if single</option>
+								<option value="always_select">Always select</option>
+								<option value="select_if_multiple">Select if multiple</option>
+								<option value="manual_only">Manual only</option>
 							</select>
+							<div class="inline-help">
+								<p>{selectionPolicyInfo(commonEntryBehaviorForm.selectionPolicy).description}</p>
+								<code>
+									Example: {selectionPolicyInfo(commonEntryBehaviorForm.selectionPolicy).sample}
+								</code>
+							</div>
 						</div>
 					</div>
 
@@ -747,6 +927,20 @@
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 								onchange={(value) => {
 									if (commonEntryBehaviorForm) commonEntryBehaviorForm.tenantSlugEnabled = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>WAYF tenant chooser</strong>
+								<p>Show a tenant-name dropdown populated from active tenants.</p>
+							</div>
+							<ToggleSwitch
+								id="common-wayf-enabled"
+								checked={commonEntryBehaviorForm.wayfEnabled}
+								disabled={!canEditPlatform || commonEntryBehaviorSaving}
+								onchange={(value) => {
+									if (commonEntryBehaviorForm) commonEntryBehaviorForm.wayfEnabled = value;
 								}}
 							/>
 						</div>
@@ -882,14 +1076,39 @@
 			{/if}
 
 			{#if behaviorForm}
+				{#if !singleTenantMode}
+					<div class="override-toggle">
+						<div>
+							<strong>Enable tenant entry override</strong>
+							<p>
+								When disabled, this tenant uses the common entry behavior. Existing tenant values are
+								kept but ignored until this override is enabled.
+							</p>
+						</div>
+						<ToggleSwitch
+							id="tenant-entry-override-enabled"
+							checked={behaviorForm.overrideEnabled}
+							disabled={!canEditTenant || behaviorSaving}
+							onchange={(value) => {
+								if (behaviorForm) behaviorForm.overrideEnabled = value;
+							}}
+						/>
+					</div>
+				{/if}
+
+				{#if singleTenantMode || behaviorForm.overrideEnabled}
 				<div class="form-grid">
 					<div class="form-group">
 						<label for="mode">Entry Mode</label>
 						<select id="mode" bind:value={behaviorForm.mode} disabled={!canEditTenant || behaviorSaving}>
-							<option value="tenant_only">tenant_only</option>
-							<option value="discovery_optional">discovery_optional</option>
-							<option value="discovery_required">discovery_required</option>
+							<option value="tenant_only">Tenant-specific entry only</option>
+							<option value="discovery_optional">Discovery optional</option>
+							<option value="discovery_required">Discovery required</option>
 						</select>
+						<div class="inline-help">
+							<p>{entryModeInfo(behaviorForm.mode).description}</p>
+							<code>Example: {entryModeInfo(behaviorForm.mode).sample}</code>
+						</div>
 					</div>
 
 					<div class="form-group">
@@ -902,15 +1121,18 @@
 							<option value="exact_email_then_domain">Exact email, then email-domain fallback</option>
 							<option value="exact_email_only">Exact email only</option>
 						</select>
-						<p class="field-hint">
-							{#if behaviorForm.emailEnabled}
-								Choose whether email discovery checks the full email address only, or falls back
-								to the email domain.
-							{:else}
-								Enable <strong>Email address</strong> below to configure email-based tenant
-								discovery.
-							{/if}
-						</p>
+						<div class="inline-help">
+							<p>
+								{emailResolutionInfo(behaviorForm.emailResolutionPolicy, behaviorForm.emailEnabled)
+									.description}
+							</p>
+							<code>
+								Example: {emailResolutionInfo(
+									behaviorForm.emailResolutionPolicy,
+									behaviorForm.emailEnabled
+								).sample}
+							</code>
+						</div>
 					</div>
 
 					<div class="form-group">
@@ -920,11 +1142,15 @@
 							bind:value={behaviorForm.selectionPolicy}
 							disabled={!canEditTenant || behaviorSaving}
 						>
-							<option value="auto_if_single">auto_if_single</option>
-							<option value="always_select">always_select</option>
-							<option value="select_if_multiple">select_if_multiple</option>
-							<option value="manual_only">manual_only</option>
+							<option value="auto_if_single">Auto if single</option>
+							<option value="always_select">Always select</option>
+							<option value="select_if_multiple">Select if multiple</option>
+							<option value="manual_only">Manual only</option>
 						</select>
+						<div class="inline-help">
+							<p>{selectionPolicyInfo(behaviorForm.selectionPolicy).description}</p>
+							<code>Example: {selectionPolicyInfo(behaviorForm.selectionPolicy).sample}</code>
+						</div>
 					</div>
 				</div>
 
@@ -972,6 +1198,20 @@
 							disabled={!canEditTenant || behaviorSaving}
 							onchange={(value) => {
 								if (behaviorForm) behaviorForm.tenantSlugEnabled = value;
+							}}
+						/>
+					</div>
+					<div class="toggle-row">
+						<div>
+							<strong>WAYF tenant chooser</strong>
+							<p>Show a tenant-name dropdown populated from active tenants.</p>
+						</div>
+						<ToggleSwitch
+							id="wayf-enabled"
+							checked={behaviorForm.wayfEnabled}
+							disabled={!canEditTenant || behaviorSaving}
+							onchange={(value) => {
+								if (behaviorForm) behaviorForm.wayfEnabled = value;
 							}}
 						/>
 					</div>
@@ -1062,6 +1302,20 @@
 						{#if behaviorSaving}Saving...{:else}Save Discovery Behavior{/if}
 					</button>
 				</div>
+				{:else}
+					<div class="collapsed-override">
+						Common entry behavior is active for this tenant. Enable the override to configure tenant-specific entry behavior.
+					</div>
+					<div class="actions">
+						<button
+							class="btn btn-primary"
+							onclick={saveBehavior}
+							disabled={!canEditTenant || !hasBehaviorChanges || behaviorSaving}
+						>
+							{#if behaviorSaving}Saving...{:else}Save Tenant Entry Override{/if}
+						</button>
+					</div>
+				{/if}
 			{/if}
 		</section>
 
@@ -1079,6 +1333,11 @@
 				{/if}
 				{#if commonEntrySuccess}
 					<div class="alert alert-success">{commonEntrySuccess}</div>
+				{/if}
+				{#if !canEditPlatform}
+					<div class="alert alert-info">
+						Common entry screen content is a platform setting. Tenant admins can review it, but cannot edit it.
+					</div>
 				{/if}
 
 				{#if commonEntryForm}
@@ -1161,6 +1420,27 @@
 			{/if}
 
 			{#if tenantUiForm}
+				{#if !singleTenantMode}
+					<div class="override-toggle">
+						<div>
+							<strong>Enable tenant screen content override</strong>
+							<p>
+								When disabled, common discovery screen content applies. Existing tenant screen values
+								are kept but ignored until this override is enabled.
+							</p>
+						</div>
+						<ToggleSwitch
+							id="tenant-ui-override-enabled"
+							checked={tenantUiForm.overrideEnabled}
+							disabled={!canEditTenant || tenantUiSaving}
+							onchange={(value) => {
+								if (tenantUiForm) tenantUiForm.overrideEnabled = value;
+							}}
+						/>
+					</div>
+				{/if}
+
+				{#if singleTenantMode || tenantUiForm.overrideEnabled}
 				<p class="field-hint section-hint">
 					Fields are prefilled with the effective values currently used for this tenant. Saving writes them as explicit tenant overrides.
 				</p>
@@ -1226,6 +1506,16 @@
 						{#if tenantUiSaving}Saving...{:else}Save Tenant Override{/if}
 					</button>
 				</div>
+				{:else}
+					<div class="collapsed-override">
+						Common discovery screen content is active for this tenant. Enable the override to customize tenant-specific discovery screens.
+					</div>
+					<div class="actions">
+						<button class="btn btn-primary" onclick={saveTenantUi} disabled={!canEditTenant || !hasTenantUiChanges || tenantUiSaving}>
+							{#if tenantUiSaving}Saving...{:else}Save Tenant Screen Override{/if}
+						</button>
+					</div>
+				{/if}
 			{/if}
 		</section>
 	{/if}
@@ -1307,6 +1597,30 @@
 		margin: 0;
 	}
 
+	.inline-help {
+		display: grid;
+		gap: 0.35rem;
+		margin-top: 0.25rem;
+		padding: 0.75rem 0.85rem;
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		background: var(--bg-subtle);
+	}
+
+	.inline-help p {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+		line-height: 1.45;
+	}
+
+	.inline-help code {
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
 	.section-hint {
 		margin: 0 0 1rem;
 	}
@@ -1383,9 +1697,42 @@
 		color: #047857;
 	}
 
+	.alert-info {
+		background: rgba(59, 130, 246, 0.1);
+		color: #1d4ed8;
+	}
+
+	.override-toggle {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1rem;
+		padding: 0.95rem 1rem;
+		border: 1px solid var(--border);
+		border-radius: 12px;
+		background: var(--bg-glass);
+	}
+
+	.override-toggle p {
+		margin: 0.3rem 0 0;
+		color: var(--text-secondary);
+		font-size: 0.9rem;
+	}
+
+	.collapsed-override {
+		padding: 1rem;
+		border: 1px dashed var(--border);
+		border-radius: 12px;
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
+		font-size: 0.9rem;
+	}
+
 	@media (max-width: 700px) {
 		.section-header,
-		.toggle-row {
+		.toggle-row,
+		.override-toggle {
 			flex-direction: column;
 			align-items: flex-start;
 		}

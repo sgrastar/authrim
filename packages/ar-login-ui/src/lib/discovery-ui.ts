@@ -2,6 +2,7 @@ export type DiscoveryMethod =
 	| 'email_domain'
 	| 'tenant_code'
 	| 'tenant_slug'
+	| 'wayf'
 	| 'invitation'
 	| 'app_hint';
 export type SelectionPolicy =
@@ -15,15 +16,17 @@ export function getInteractiveDiscoveryMethods(
 	selectionPolicy: SelectionPolicy
 ): DiscoveryMethod[] {
 	const interactiveMethods = discoveryMethods.filter((method): method is DiscoveryMethod =>
-		['email_domain', 'tenant_code', 'tenant_slug'].includes(method)
+		['email_domain', 'tenant_code', 'tenant_slug', 'wayf'].includes(method)
 	);
 
 	if (
 		selectionPolicy === 'manual_only' &&
-		interactiveMethods.some((method) => method === 'tenant_code' || method === 'tenant_slug')
+		interactiveMethods.some(
+			(method) => method === 'tenant_code' || method === 'tenant_slug' || method === 'wayf'
+		)
 	) {
 		return interactiveMethods.filter(
-			(method) => method === 'tenant_code' || method === 'tenant_slug'
+			(method) => method === 'tenant_code' || method === 'tenant_slug' || method === 'wayf'
 		);
 	}
 
@@ -32,8 +35,9 @@ export function getInteractiveDiscoveryMethods(
 
 export function getDefaultDiscoveryMode(
 	methods: string[]
-): 'email' | 'tenant_code' | 'tenant_slug' {
+): 'email' | 'tenant_code' | 'tenant_slug' | 'wayf' {
 	if (methods.includes('email_domain')) return 'email';
 	if (methods.includes('tenant_code')) return 'tenant_code';
+	if (methods.includes('wayf')) return 'wayf';
 	return 'tenant_slug';
 }

@@ -11,11 +11,9 @@ import {
   ensureDatabaseAdapter,
   emitRuntimeLogRecords,
   evaluateTenantDatabaseBindingCapacity,
-  readResponseTextWithLimit,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
   readR2ObjectTextWithLimit,
-  safeFetch,
   tombstoneObjectCatalogEntryForTenant,
 } from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
@@ -23,7 +21,7 @@ import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
 type AdminJobResultDelivery = 'auto' | 'inline' | 'artifact';
-type TenantDatabaseProvisionExecutionMode = 'plan_only' | 'operator_cli' | 'cloudflare_api';
+type TenantDatabaseProvisionExecutionMode = 'plan_only' | 'operator_cli';
 type TenantBackupKmsProvider = 'deployment_master_secret_hkdf' | 'external_kms_customer_managed';
 type TenantDatabaseExportFormat = 'jsonl_per_table' | 'sqlite_d1_dump' | 'parquet';
 type TenantDatabaseRestoreDryRunValidationMode =
@@ -38,7 +36,6 @@ const RETRY_BACKOFF_SECONDS = [60, 300, 900] as const;
 const TENANT_D1_BINDING_WARNING_THRESHOLD = 3000;
 const TENANT_D1_BINDING_HARD_LIMIT = 5000;
 const TENANT_D1_ROLES: TenantDatabaseRole[] = ['tenant_core', 'tenant_pii'];
-const TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_TENANT_BACKUP_RETENTION_DAYS = 30;
 const MAX_TENANT_BACKUP_RETENTION_DAYS = 3650;
 const TENANT_DATABASE_RESTORE_DRY_RUN_CONFIRMATION = 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN';
@@ -330,58 +327,9 @@ interface TenantDatabaseProvisionResourcePlan {
   database_id: string | null;
 }
 
-interface CloudflareApiResponse<T> {
-  success?: boolean;
-  result?: T;
-  errors?: Array<{ message?: string }>;
-}
-
-interface CloudflareD1CreateResult {
-  uuid?: string | null;
-  id?: string | null;
-  name?: string | null;
-}
-
-interface CloudflareD1ListResult {
-  uuid?: string | null;
-  id?: string | null;
-  name?: string | null;
-}
-
-interface CloudflarePaginatedResponse<T> extends CloudflareApiResponse<T[]> {
-  result_info?: {
-    page?: number;
-    total_pages?: number;
-  };
-}
-
-interface CloudflareWorkerBinding {
-  name?: string;
-  type?: string;
-  database_id?: string;
-  id?: string;
-  [key: string]: unknown;
-}
-
-interface CloudflareWorkerSettings {
-  bindings?: CloudflareWorkerBinding[];
-  [key: string]: unknown;
-}
-
 interface TenantDatabaseProvisionProgress {
   stage?: string;
   resources?: TenantDatabaseProvisionResourcePlan[];
-  cloudflare_api?: {
-    d1_databases_created?: number;
-    worker_scripts_validated?: Array<{
-      script_name: string;
-      binding_conflicts: string[];
-      existing_binding_count: number;
-      projected_binding_count: number;
-      capacity_state: string;
-    }>;
-    worker_scripts_patched?: Array<{ script_name: string; patched_binding_count: number }>;
-  };
 }
 
 interface TenantBackupManifestTableArtifact {
@@ -568,7 +516,7 @@ function normalizeTenantDatabaseProvisionExecutionMode(
   value: unknown
 ): TenantDatabaseProvisionExecutionMode {
   if (value === undefined || value === null) return 'plan_only';
-  if (value === 'plan_only' || value === 'operator_cli' || value === 'cloudflare_api') {
+  if (value === 'plan_only' || value === 'operator_cli') {
     return value;
   }
   throw new Error('Invalid tenant database provisioning execution_mode');
@@ -587,25 +535,6 @@ function countCurrentTenantD1Bindings(env: Env): number {
   return Object.keys(env as unknown as Record<string, unknown>).filter((key) =>
     /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/u.test(key)
   ).length;
-}
-
-function parseWorkerScriptNames(env: Env): string[] {
-  return (env.TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS ?? '')
-    .split(',')
-    .map((script) => script.trim())
-    .filter(Boolean);
-}
-
-function getCloudflareAccountId(env: Env): string | null {
-  return env.CLOUDFLARE_ACCOUNT_ID || env.CF_ACCOUNT_ID || null;
-}
-
-function getCloudflareApiToken(env: Env): string | null {
-  return env.CLOUDFLARE_D1_API_TOKEN || env.CLOUDFLARE_API_TOKEN || null;
-}
-
-function getCloudflareWorkersApiToken(env: Env): string | null {
-  return env.CLOUDFLARE_WORKERS_API_TOKEN || env.CLOUDFLARE_API_TOKEN || null;
 }
 
 function buildTenantDatabaseProvisionResources(
@@ -720,244 +649,6 @@ function mergeProvisionResourcesWithProgress(
   }));
 }
 
-async function persistTenantDatabaseProvisionProgress(
-  adapter: DatabaseAdapter,
-  job: AdminJobRow,
-  progress: TenantDatabaseProvisionProgress
-): Promise<void> {
-  await adapter.execute(
-    'UPDATE admin_jobs SET progress = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-    [JSON.stringify(progress), Math.floor(Date.now() / 1000), job.id, job.tenant_id]
-  );
-}
-
-async function readCloudflareJson<T>(response: Response): Promise<CloudflareApiResponse<T>> {
-  const text = await readResponseTextWithLimit(response, TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES);
-  return JSON.parse(text || '{}') as CloudflareApiResponse<T>;
-}
-
-function getCloudflareApiError<T>(body: CloudflareApiResponse<T>, fallback: string): string {
-  const message = body.errors
-    ?.map((error) => error.message)
-    .filter(Boolean)
-    .join('; ');
-  return message || fallback;
-}
-
-async function findCloudflareD1DatabaseByName(
-  env: Env,
-  databaseName: string
-): Promise<string | null> {
-  const accountId = getCloudflareAccountId(env);
-  const token = getCloudflareApiToken(env);
-  if (!accountId || !token) {
-    throw new Error('Cloudflare account ID and D1 API token are required for cloudflare_api mode');
-  }
-
-  for (let page = 1; page <= 20; page += 1) {
-    const response = await safeFetch(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100&page=${page}`,
-      {
-        method: 'GET',
-        maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-    const body = (await readCloudflareJson<CloudflareD1ListResult[]>(
-      response
-    )) as CloudflarePaginatedResponse<CloudflareD1ListResult>;
-    if (!response.ok || !body.success || !Array.isArray(body.result)) {
-      throw new Error(getCloudflareApiError(body, `cloudflare_d1_list_failed:${response.status}`));
-    }
-    const existing = body.result.find((database) => database.name === databaseName);
-    const databaseId = existing?.uuid ?? existing?.id;
-    if (databaseId) {
-      return databaseId;
-    }
-    if (page >= (body.result_info?.total_pages ?? page)) {
-      break;
-    }
-  }
-  return null;
-}
-
-async function createCloudflareD1Database(
-  env: Env,
-  resource: TenantDatabaseProvisionResourcePlan
-): Promise<string> {
-  const existingDatabaseId = await findCloudflareD1DatabaseByName(env, resource.database_name);
-  if (existingDatabaseId) {
-    return existingDatabaseId;
-  }
-  const accountId = getCloudflareAccountId(env);
-  const token = getCloudflareApiToken(env);
-  if (!accountId || !token) {
-    throw new Error('Cloudflare account ID and D1 API token are required for cloudflare_api mode');
-  }
-  const response = await safeFetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`,
-    {
-      method: 'POST',
-      maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name: resource.database_name }),
-    }
-  );
-  const body = await readCloudflareJson<CloudflareD1CreateResult>(response);
-  if (!response.ok || !body.success || !body.result) {
-    throw new Error(getCloudflareApiError(body, `cloudflare_d1_create_failed:${response.status}`));
-  }
-  const databaseId = body.result.uuid ?? body.result.id;
-  if (!databaseId) {
-    throw new Error('cloudflare_d1_create_missing_database_id');
-  }
-  return databaseId;
-}
-
-async function getCloudflareWorkerSettings(
-  env: Env,
-  scriptName: string
-): Promise<CloudflareWorkerSettings> {
-  const accountId = getCloudflareAccountId(env);
-  const token = getCloudflareWorkersApiToken(env);
-  if (!accountId || !token) {
-    throw new Error(
-      'Cloudflare account ID and Workers API token are required for cloudflare_api mode'
-    );
-  }
-  const response = await safeFetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${encodeURIComponent(
-      scriptName
-    )}/settings`,
-    {
-      method: 'GET',
-      maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-  const body = await readCloudflareJson<CloudflareWorkerSettings>(response);
-  if (!response.ok || !body.success || !body.result) {
-    throw new Error(
-      getCloudflareApiError(body, `cloudflare_worker_settings_get_failed:${response.status}`)
-    );
-  }
-  return body.result;
-}
-
-async function patchCloudflareWorkerD1Bindings(
-  env: Env,
-  scriptName: string,
-  resources: TenantDatabaseProvisionResourcePlan[]
-): Promise<number> {
-  const settings = await getCloudflareWorkerSettings(env, scriptName);
-  const existingBindings = settings.bindings ?? [];
-  const resourceBindings = resources.map((resource) => ({
-    type: 'd1',
-    name: resource.binding_ref,
-    database_id: resource.database_id ?? '',
-  }));
-  if (resourceBindings.some((binding) => !binding.database_id)) {
-    throw new Error('tenant_d1_worker_binding_missing_database_id');
-  }
-  const resourceBindingNames = new Set(resourceBindings.map((binding) => binding.name));
-  for (const binding of resourceBindings) {
-    const existing = existingBindings.find((candidate) => candidate.name === binding.name);
-    if (existing && (existing.type !== 'd1' || existing.database_id !== binding.database_id)) {
-      throw new Error(`tenant_d1_worker_binding_conflict:${scriptName}:${binding.name}`);
-    }
-  }
-  const nextBindings = [
-    ...existingBindings.filter((binding) => !resourceBindingNames.has(binding.name ?? '')),
-    ...resourceBindings,
-  ];
-  const accountId = getCloudflareAccountId(env);
-  const token = getCloudflareWorkersApiToken(env);
-  if (!accountId || !token) {
-    throw new Error(
-      'Cloudflare account ID and Workers API token are required for cloudflare_api mode'
-    );
-  }
-  const response = await safeFetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${encodeURIComponent(
-      scriptName
-    )}/settings`,
-    {
-      method: 'PATCH',
-      maxResponseSize: TENANT_D1_PROVISION_RESPONSE_LIMIT_BYTES,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ bindings: nextBindings }),
-    }
-  );
-  const body = await readCloudflareJson<CloudflareWorkerSettings>(response);
-  if (!response.ok || !body.success) {
-    throw new Error(
-      getCloudflareApiError(body, `cloudflare_worker_settings_patch_failed:${response.status}`)
-    );
-  }
-  return resourceBindings.length;
-}
-
-async function validateCloudflareWorkerBindingImpact(
-  env: Env,
-  scriptNames: string[],
-  resources: TenantDatabaseProvisionResourcePlan[]
-): Promise<
-  Array<{
-    script_name: string;
-    binding_conflicts: string[];
-    existing_binding_count: number;
-    projected_binding_count: number;
-    capacity_state: string;
-  }>
-> {
-  const validations = [];
-  for (const scriptName of scriptNames) {
-    const settings = await getCloudflareWorkerSettings(env, scriptName);
-    const bindings = settings.bindings ?? [];
-    const existingNames = new Set(bindings.map((binding) => binding.name).filter(Boolean));
-    const addedBindingCount = resources.filter(
-      (resource) => !existingNames.has(resource.binding_ref)
-    ).length;
-    const projectedBindingCount = bindings.length + addedBindingCount;
-    const conflicts = resources
-      .filter((resource) =>
-        bindings.some(
-          (binding) =>
-            binding.name === resource.binding_ref &&
-            (binding.type !== 'd1' ||
-              !resource.database_id ||
-              binding.database_id !== resource.database_id)
-        )
-      )
-      .map((resource) => resource.binding_ref);
-    validations.push({
-      script_name: scriptName,
-      binding_conflicts: conflicts,
-      existing_binding_count: bindings.length,
-      projected_binding_count: projectedBindingCount,
-      capacity_state:
-        projectedBindingCount >= TENANT_D1_BINDING_HARD_LIMIT
-          ? 'exceeds_limit'
-          : projectedBindingCount >= TENANT_D1_BINDING_WARNING_THRESHOLD
-            ? 'warning'
-            : 'ok',
-    });
-  }
-  return validations;
-}
-
 function buildUserFilterWhere(
   tenantId: string,
   filter: Record<string, unknown> | undefined
@@ -1026,7 +717,6 @@ async function processTenantDatabaseProvisionJob(
     previousProgress
   );
   const impact = buildBindingImpact(env, resources);
-  const workerScripts = parseWorkerScriptNames(env);
 
   if (impact.binding_conflicts.length > 0) {
     throw new Error(`tenant_d1_binding_conflict:${impact.binding_conflicts.join(',')}`);
@@ -1057,122 +747,10 @@ async function processTenantDatabaseProvisionJob(
       operator_cli: {
         command: buildTenantDatabaseProvisionCommand(env, job, config),
       },
-      required_cloudflare_permissions: [
-        'D1 Write',
-        'Workers Scripts Read',
-        'Workers Scripts Write',
-      ],
+      setup_tool_execution:
+        'Run the generated setup command from an operator workstation with wrangler access.',
     },
   };
-
-  if (executionMode === 'cloudflare_api') {
-    const preflightValidations =
-      workerScripts.length > 0
-        ? await validateCloudflareWorkerBindingImpact(env, workerScripts, resources)
-        : [];
-    const preflightConflictingScripts = preflightValidations.filter(
-      (validation) => validation.binding_conflicts.length > 0
-    );
-    if (preflightConflictingScripts.length > 0) {
-      throw new Error(
-        `tenant_d1_worker_binding_conflict:${preflightConflictingScripts
-          .map(
-            (validation) => `${validation.script_name}:${validation.binding_conflicts.join(',')}`
-          )
-          .join(';')}`
-      );
-    }
-    const overCapacityScripts = preflightValidations.filter(
-      (validation) => validation.capacity_state === 'exceeds_limit'
-    );
-    if (overCapacityScripts.length > 0) {
-      throw new Error(
-        `tenant_d1_worker_binding_capacity_exceeded:${overCapacityScripts
-          .map((validation) => `${validation.script_name}:${validation.projected_binding_count}`)
-          .join(';')}`
-      );
-    }
-
-    for (const resource of resources) {
-      if (!resource.database_id) {
-        resource.database_id = await createCloudflareD1Database(env, resource);
-        await persistTenantDatabaseProvisionProgress(adapter, job, {
-          stage: 'cloudflare_api_d1_created',
-          resources,
-          cloudflare_api: {
-            worker_scripts_validated: preflightValidations,
-          },
-        });
-      }
-    }
-
-    const previousPatchedScripts =
-      previousProgress?.cloudflare_api?.worker_scripts_patched?.map(
-        (script) => script.script_name
-      ) ?? [];
-    const patchedScriptSet = new Set(previousPatchedScripts);
-    const patchedScripts = [...(previousProgress?.cloudflare_api?.worker_scripts_patched ?? [])];
-    for (const scriptName of workerScripts) {
-      if (patchedScriptSet.has(scriptName)) {
-        continue;
-      }
-      const patchedBindingCount = await patchCloudflareWorkerD1Bindings(env, scriptName, resources);
-      patchedScripts.push({ script_name: scriptName, patched_binding_count: patchedBindingCount });
-      await persistTenantDatabaseProvisionProgress(adapter, job, {
-        stage: 'cloudflare_api_worker_bindings_patched',
-        resources,
-        cloudflare_api: {
-          d1_databases_created: resources.filter((resource) => resource.database_id).length,
-          worker_scripts_validated: preflightValidations,
-          worker_scripts_patched: patchedScripts,
-        },
-      });
-    }
-    result.tenant_database_provisioning = {
-      ...(result.tenant_database_provisioning as Record<string, unknown>),
-      resources,
-      generated_config: {
-        wrangler_toml: buildWranglerD1BindingSnippet(resources),
-      },
-      cloudflare_api: {
-        d1_databases_created: resources.length,
-        worker_scripts_validated: preflightValidations,
-        worker_scripts_patched: patchedScripts,
-        worker_deployment_skipped_reason:
-          workerScripts.length === 0
-            ? 'TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS is not configured'
-            : null,
-      },
-    };
-
-    return {
-      status: 'processing',
-      progress: {
-        total: resources.length,
-        processed: resources.length,
-        succeeded: resources.length,
-        failed: 0,
-        skipped: 0,
-        stage: 'cloudflare_api_deployed_pending_migrations_registry_and_snapshots',
-        resources,
-        cloudflare_api: {
-          d1_databases_created: resources.filter((resource) => resource.database_id).length,
-          worker_scripts_validated: preflightValidations,
-          worker_scripts_patched: patchedScripts,
-          worker_deployment_skipped_reason:
-            workerScripts.length === 0
-              ? 'TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS is not configured'
-              : null,
-        },
-        next_required_steps: [
-          'Run tenant D1 migrations for the created databases.',
-          'Write signed tenant_database_registry rows and active pointers when activation is requested.',
-          'Publish signed tenant runtime registry snapshots before runtime cutover.',
-        ],
-      },
-      nextRunAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
-    };
-  }
 
   return {
     status: 'completed',

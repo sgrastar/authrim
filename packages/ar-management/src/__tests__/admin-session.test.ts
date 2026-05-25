@@ -128,12 +128,22 @@ describe('Admin Session Handlers', () => {
       expires_at: 200,
     });
     mockAdminAdapter.query.mockResolvedValue([
-      { name: 'viewer', scope_type: 'tenant', scope_id: null },
+      {
+        id: 'role-viewer',
+        name: 'viewer',
+        permissions_json: '["admin:logging:overview:read"]',
+        hierarchy_level: 10,
+        inherits_from: null,
+        scope_type: 'tenant',
+        scope_id: null,
+      },
     ]);
     mockAdminAdapter.queryOne.mockResolvedValue({
       email: 'admin@example.com',
       name: 'Admin User',
       last_login_at: 1700000000,
+      is_active: 1,
+      status: 'active',
     });
 
     const response = await adminSessionStatusHandler(createMockContext({}));
@@ -147,12 +157,15 @@ describe('Admin Session Handlers', () => {
       email: 'admin@example.com',
       name: 'Admin User',
       roles: ['viewer'],
+      permissions: ['admin:logging:overview:read'],
       admin_scope: 'tenant',
       is_platform_admin: false,
       last_login_at: 1700000000,
     });
     expect(mockAdminAdapter.query).toHaveBeenCalledWith(expect.any(String), [
       'admin-user-1',
+      'tenant-a',
+      'tenant-a',
       'tenant-a',
       expect.any(Number),
     ]);
@@ -168,12 +181,22 @@ describe('Admin Session Handlers', () => {
       expires_at: 200,
     });
     mockAdminAdapter.query.mockResolvedValue([
-      { name: 'super_admin', scope_type: 'global', scope_id: null },
+      {
+        id: 'role-super-admin',
+        name: 'super_admin',
+        permissions_json: '["*"]',
+        hierarchy_level: 1000,
+        inherits_from: null,
+        scope_type: 'global',
+        scope_id: null,
+      },
     ]);
     mockAdminAdapter.queryOne.mockResolvedValue({
       email: 'admin@example.com',
       name: 'Admin User',
       last_login_at: 1700000000,
+      is_active: 1,
+      status: 'active',
     });
 
     const response = await adminSessionStatusHandler(createMockContext({}));
@@ -181,8 +204,65 @@ describe('Admin Session Handlers', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       roles: ['super_admin'],
+      permissions: ['*'],
       admin_scope: 'platform',
       is_platform_admin: true,
+    });
+  });
+
+  it('returns effective permissions inherited from parent admin roles', async () => {
+    mockGetCookie.mockReturnValue('admin-session-123');
+    mockAdminSessionRepo.getSession.mockResolvedValue({
+      id: 'admin-session-123',
+      tenant_id: 'tenant-a',
+      admin_user_id: 'admin-user-1',
+      created_at: 100,
+      expires_at: 200,
+    });
+    mockAdminAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'role-child',
+          name: 'admin',
+          permissions_json: '["admin:logging:exports:create"]',
+          hierarchy_level: 100,
+          inherits_from: 'role-parent',
+          scope_type: 'tenant',
+          scope_id: 'tenant-a',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'role-child',
+          name: 'admin',
+          permissions_json: '["admin:logging:exports:create"]',
+          hierarchy_level: 100,
+          inherits_from: 'role-parent',
+        },
+        {
+          id: 'role-parent',
+          name: 'viewer',
+          permissions_json: '["admin:logging:overview:read"]',
+          hierarchy_level: 10,
+          inherits_from: null,
+        },
+      ]);
+    mockAdminAdapter.queryOne.mockResolvedValue({
+      email: 'admin@example.com',
+      name: 'Admin User',
+      last_login_at: 1700000000,
+      is_active: 1,
+      status: 'active',
+    });
+
+    const response = await adminSessionStatusHandler(createMockContext({}));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      roles: ['admin'],
+      permissions: ['admin:logging:exports:create', 'admin:logging:overview:read'],
+      admin_scope: 'tenant',
+      is_platform_admin: false,
     });
   });
 
@@ -196,12 +276,22 @@ describe('Admin Session Handlers', () => {
       expires_at: 200,
     });
     mockAdminAdapter.query.mockResolvedValue([
-      { name: 'super_admin', scope_type: 'tenant', scope_id: 'tenant-a' },
+      {
+        id: 'role-super-admin',
+        name: 'super_admin',
+        permissions_json: '["*"]',
+        hierarchy_level: 1000,
+        inherits_from: null,
+        scope_type: 'tenant',
+        scope_id: 'tenant-a',
+      },
     ]);
     mockAdminAdapter.queryOne.mockResolvedValue({
       email: 'admin@example.com',
       name: 'Admin User',
       last_login_at: 1700000000,
+      is_active: 1,
+      status: 'active',
     });
 
     const response = await adminSessionStatusHandler(createMockContext({}));
@@ -209,8 +299,46 @@ describe('Admin Session Handlers', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       roles: ['super_admin'],
+      permissions: ['*'],
       admin_scope: 'tenant',
       is_platform_admin: false,
+    });
+  });
+
+  it('rejects session status requests when the admin account is suspended', async () => {
+    mockGetCookie.mockReturnValue('admin-session-123');
+    mockAdminSessionRepo.getSession.mockResolvedValue({
+      id: 'admin-session-123',
+      tenant_id: 'tenant-a',
+      admin_user_id: 'admin-user-1',
+      created_at: 100,
+      expires_at: 200,
+    });
+    mockAdminAdapter.query.mockResolvedValue([
+      {
+        id: 'role-viewer',
+        name: 'viewer',
+        permissions_json: '["admin:logging:overview:read"]',
+        hierarchy_level: 10,
+        inherits_from: null,
+        scope_type: 'tenant',
+        scope_id: null,
+      },
+    ]);
+    mockAdminAdapter.queryOne.mockResolvedValue({
+      email: 'admin@example.com',
+      name: 'Admin User',
+      last_login_at: 1700000000,
+      is_active: 1,
+      status: 'suspended',
+    });
+
+    const response = await adminSessionStatusHandler(createMockContext({}));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'session_expired',
+      error_description: 'Session has expired or is invalid',
     });
   });
 
@@ -224,7 +352,15 @@ describe('Admin Session Handlers', () => {
       expires_at: 200,
     });
     mockAdminAdapter.query.mockResolvedValue([
-      { name: 'auditor', scope_type: 'tenant', scope_id: null },
+      {
+        id: 'role-auditor',
+        name: 'auditor',
+        permissions_json: '["admin:audit:read"]',
+        hierarchy_level: 10,
+        inherits_from: null,
+        scope_type: 'tenant',
+        scope_id: null,
+      },
     ]);
 
     const response = await adminSessionStatusHandler(createMockContext({}));

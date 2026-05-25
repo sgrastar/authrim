@@ -346,9 +346,10 @@ function isProxyEnabled(platformEnv?: Record<string, unknown>): boolean {
 }
 
 function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
+	const telemetrySources = 'https://cloudflareinsights.com https://*.cloudflareinsights.com';
 	// When proxy is enabled, browser only requests to same-origin /api/*; 'self' is sufficient.
 	if (isProxyEnabled(platformEnv)) {
-		return "connect-src 'self'";
+		return `connect-src 'self' ${telemetrySources}`;
 	}
 	// When proxy is disabled, add the API origin only if PUBLIC_API_BASE_URL is set to a full URL
 	const apiBaseUrl =
@@ -357,12 +358,12 @@ function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 		import.meta.env.PUBLIC_API_BASE_URL?.trim();
 	if (apiBaseUrl) {
 		try {
-			return `connect-src 'self' ${new URL(apiBaseUrl).origin}`;
+			return `connect-src 'self' ${new URL(apiBaseUrl).origin} ${telemetrySources}`;
 		} catch {
 			// Invalid URL, fall back to self only
 		}
 	}
-	return "connect-src 'self'";
+	return `connect-src 'self' ${telemetrySources}`;
 }
 
 function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefined {
@@ -859,7 +860,7 @@ const securityHeaders: Handle = async ({ event, resolve }) => {
 		'Content-Security-Policy',
 		[
 			"default-src 'self'",
-			"script-src 'self' 'unsafe-inline'",
+			"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
 			"style-src 'self' 'unsafe-inline'",
 			"img-src 'self' https: data:",
 			buildConnectSrc(platformEnv),

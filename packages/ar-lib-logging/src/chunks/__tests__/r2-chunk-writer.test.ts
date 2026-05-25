@@ -4,10 +4,35 @@ import { writeLogChunkToR2 } from '../r2-chunk-writer';
 import { normalizeR2Prefix } from '../r2-keys';
 import type { LogChunkCatalogStore } from '../types';
 
+function testEncryption(tenantKey = 't_safeopaque', logType = 'audit', plane = 'archive') {
+  return {
+    keyBytes: new Uint8Array(32).fill(7),
+    encryptionScope: `tenant:${tenantKey}:${logType}:${plane}`,
+    keyVersion: 1,
+  };
+}
+
 describe('writeLogChunkToR2', () => {
   it('sanitizes unsafe R2 prefix segments', () => {
     expect(normalizeR2Prefix('/../logs v1//tenant/../../evil\u0000/')).toBe('logs_v1/tenant/evil_');
     expect(normalizeR2Prefix('///')).toBe('logs');
+  });
+
+  it('requires encryption by default to avoid plaintext R2 log chunks', async () => {
+    const bucket = {
+      put: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+
+    await expect(
+      writeLogChunkToR2({
+        bucket,
+        tenantKey: 't_safeopaque',
+        logType: 'audit',
+        plane: 'archive',
+        records: [{ id: 'evt-1', eventAt: 1, payload: { id: 'evt-1' } }],
+      })
+    ).rejects.toThrow('log_chunk_encryption_required');
+    expect(bucket.put).not.toHaveBeenCalled();
   });
 
   it('writes a single immutable gzip JSONL chunk without raw tenant id in the key', async () => {
@@ -22,6 +47,7 @@ describe('writeLogChunkToR2', () => {
       plane: 'archive',
       prefix: 'audit',
       now: 1_700_000_000_000,
+      encryption: testEncryption(),
       records: [
         {
           id: 'evt-1',
@@ -50,7 +76,7 @@ describe('writeLogChunkToR2', () => {
     );
   });
 
-  it('includes surface in the object key when provided', async () => {
+  it('keeps archive surface in metadata while using the canonical shard key layout', async () => {
     const bucket = {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
@@ -63,12 +89,14 @@ describe('writeLogChunkToR2', () => {
       surface: 'storage_destinations',
       prefix: 'logs/v1',
       now: Date.UTC(2026, 4, 20, 10, 0, 0),
+      encryption: testEncryption('t_safeopaque', 'admin_audit'),
       records: [{ id: 'evt-1', eventAt: 1, payload: { id: 'evt-1' } }],
     });
 
-    expect(result.objectKey).toContain(
-      '/t_safeopaque/archive/admin_audit/storage_destinations/2026/05/20/10/'
+    expect(result.objectKey).toMatch(
+      /^logs\/v1\/t_safeopaque\/archive\/admin_audit\/2026\/05\/20\/10\/shard-\d\d\/chk_[^/]+\.jsonl\.gz$/u
     );
+    expect(result.objectKey).not.toContain('/storage_destinations/');
   });
 
   it('uses the catalog pending/commit protocol around R2 writes', async () => {
@@ -101,6 +129,7 @@ describe('writeLogChunkToR2', () => {
       plane: 'archive',
       records: [{ id: 'evt-1', eventAt: 1, payload: { id: 'evt-1' } }],
       catalogStore,
+      encryption: testEncryption(),
     });
 
     expect(calls).toEqual([
@@ -137,6 +166,7 @@ describe('writeLogChunkToR2', () => {
         { id: 'evt-2', eventAt: 2, payload: { id: 'evt-2' } },
       ],
       catalogStore,
+      encryption: testEncryption(),
     });
 
     expect(indexRows).toHaveLength(2);

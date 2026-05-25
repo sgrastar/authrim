@@ -1,7 +1,7 @@
 # Authrim Public Specification
 
-Status: Draft  
-Last updated: 2026-05-09  
+Status: Draft
+Last updated: 2026-05-25
 Audience: application developers, SDK authors, operators, auditors, and contributors
 
 ## 1. Purpose
@@ -20,8 +20,9 @@ It covers:
 - logout and device/session management
 - step-up and delegated write contracts
 - privacy-preserving support operations
+- SAML 2.0 IdP/SP behavior
 - storage portability boundaries
-- audit routing
+- audit and managed logging routing
 - Workers-native UI deployment
 - public configuration names and defaults
 
@@ -49,6 +50,10 @@ The keywords **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 | Web origin registry | Public/Admin/API name for the registry of RP/browser origins, CORS policy, CSP policy, handoff permission, iframe permission, and environment membership. Internally this may map to `rp_origin_registry`. |
 | Storage profile | Runtime policy describing where auth core, PII, custom/extension, and related data are stored. |
 | Audit profile | Runtime policy describing audit primary store, archive store, forwarding sinks, routing, and failure behavior. |
+| Storage destination | Admin-managed or setup-managed storage/sink target used for archive, diagnostic detail, sensitive detail, import/export artifacts, DLQ payloads, or external logging delivery. |
+| Logging policy snapshot | Published runtime logging policy used by Workers to resolve log type, plane, destination, fallback, and delivery behavior. |
+| SAML entityID style | Tenant-wide choice that determines whether Authrim publishes metadata URL entityIDs or shorter role URL entityIDs for local IdP/SP metadata. |
+| SAML interactive login redirect policy | Tenant-wide choice that determines whether SAML interactive login starts at the tenant login host or the shared Login UI base URL with a tenant hint. |
 | Handoff | A short-lived, single-use browser continuation mechanism used when Authrim must move an authenticated result from one browser context or origin to another without relying on third-party cookies or exposing OAuth/OIDC token material to browser JavaScript. |
 | Step-up | A fresh authentication or verification action required before a sensitive operation can proceed. Step-up proves recent user presence or a stronger factor and returns a short-lived receipt bound to the specific operation. |
 | Support Ops | Privacy-preserving administrative support surface for aggregate investigation, cohort selection, and approved action execution without exposing individual end-user records through the standard support workflow. |
@@ -135,6 +140,8 @@ Public APIs expose policy outcomes and stable configuration names. Internal poli
 | Support Ops aggregate counts | Bucketed and suppressible | Aggregate responses are not exact by default and apply low-count plus complementary suppression. |
 | Support Ops cohort TTL | 24 hours | Expired cohorts cannot be used for action execution. |
 | Support Ops action approval | Required | Action execution is bound to a matching approved approval request. |
+| SAML entityID style | `metadata_url` | Published IdP/SP entityIDs default to metadata URLs for compatibility. |
+| SAML interactive login redirect | `tenant_host` | SAML interactive login defaults to the tenant `/login` URL. |
 | Bearer token transport | Authorization header only | Query/form bearer tokens are rejected on Authrim canonical endpoints. |
 | Logout scope | Current client/session by default | Prevents accidental global logout. |
 | UI deployment | Cloudflare Workers static assets / SSR | Cloudflare Pages is not the supported default UI deployment path. |
@@ -1451,11 +1458,106 @@ Support Ops audit rules:
 - Raw storage/adapter exception messages must not be returned to API callers.
 - User-facing Support Ops API errors use stable codes such as `invalid_selector`, `invalid_cohort`, `cohort_expired`, `cohort_snapshot_not_ready`, `approval_scope_mismatch`, and `execution_failed`.
 
-## 13. Storage Portability
+## 13. SAML 2.0
+
+Authrim exposes tenant-scoped SAML 2.0 IdP and SP behavior. SAML support is part of the standard
+runtime capability set in setup-generated deployments, while individual SAML providers and
+federation partners are configured in Admin UI.
+
+### 13.1 Local Authrim Entity Metadata
+
+Each tenant can expose local Authrim IdP and SP registration metadata.
+
+Default endpoint references:
+
+| Role | Endpoint | Default URL pattern |
+| --- | --- | --- |
+| IdP | SSO | `{tenantIssuer}/saml/idp/sso` |
+| IdP | Metadata | `{tenantIssuer}/saml/idp/metadata` |
+| IdP | SLO | `{tenantIssuer}/saml/idp/slo` |
+| SP | ACS | `{tenantIssuer}/saml/sp/acs` |
+| SP | Metadata | `{tenantIssuer}/saml/sp/metadata` |
+| SP | SLO | `{tenantIssuer}/saml/sp/slo` |
+
+Published entityID style is tenant-wide:
+
+| Style | IdP entityID | SP entityID |
+| --- | --- | --- |
+| `metadata_url` | `{tenantIssuer}/saml/idp/metadata` | `{tenantIssuer}/saml/sp/metadata` |
+| `role_url` | `{tenantIssuer}/saml/idp` | `{tenantIssuer}/saml/sp` |
+
+Changing published entityIDs affects SAML trust. Existing SP/IdP configurations may need updated
+metadata, audience settings, issuer settings, and certificate validation review before production
+use.
+
+### 13.2 Signing Certificates
+
+Authrim local SAML signing keys are modeled per role and slot:
+
+| Slot | Meaning |
+| --- | --- |
+| `active` | Current signing key and primary metadata certificate. |
+| `next` | Published future certificate used during rollover preparation. |
+| `backup` | Previous certificate kept in metadata while partner caches age out. |
+
+Operators can recreate local signing material, publish next, promote next, and retire backup through
+Admin UI/API. The default certificate subject is configurable for newly generated certificates and
+supports common subject attributes such as country, state/province, locality, organization,
+organizational unit, and common name.
+
+Admin surfaces display certificate subject, issuer, validity, public key algorithm, signature
+algorithm, SHA-1 fingerprint, SHA-256 fingerprint, PEM copy, and PEM download.
+
+### 13.3 Metadata Import and Provider Login Presentation
+
+SAML provider import supports direct provider metadata and aggregate metadata selection. Aggregate
+imports can expose candidate entity display names, entity IDs, SSO endpoints, `mdui:Keywords`, and
+`mdui:Logo` values.
+
+When imported providers are used as Login UI methods:
+
+- `mdui:Logo` can be stored as the provider logo URL.
+- Login UI displays the logo in a square long-edge-fit container.
+- If no logo URL is configured, the provider can use a curated login-button icon.
+- Provider icon selection supports an explicit no-icon option.
+
+### 13.4 Interactive Login Redirect Policy
+
+SAML flows sometimes need interactive login before the IdP can produce a response. Authrim supports
+two tenant-wide redirect policies:
+
+| Policy | Behavior |
+| --- | --- |
+| `tenant_host` | Sends users to the tenant `/login` URL. This is the default for SAML. |
+| `ui_base_url` | Sends users to the shared Login UI `/login` with a tenant hint. |
+
+Admin UI previews the selected login URL and first visible page. The preview uses tenant discovery
+settings, including tenant override behavior. If the common entry is configured as WAYF-only, the
+first visible page is the tenant chooser and the email/discovery method UI is hidden.
+
+### 13.5 Tenant Discovery and WAYF
+
+Tenant discovery supports configured discovery methods plus WAYF-style tenant selection. WAYF lists
+registered tenants and lets the user choose the tenant explicitly. If WAYF is the only enabled
+common-entry method, Authrim shows only the tenant dropdown.
+
+### 13.6 SAML Operational Rules
+
+- Tenant-scoped request correlation is used for AuthnRequest, LogoutRequest, ACS, SLO, artifact
+  state, and IdP-initiated multi-SP SLO fanout.
+- Metadata refresh stores diff and expiry state rather than silently ignoring expired metadata.
+- Response/assertion signing policy, AuthnRequest signature policy, SLO signature policy, and
+  algorithm allow-lists are configurable.
+- Optional encrypted assertion and encrypted NameID support are available with modern defaults and
+  legacy algorithm opt-in.
+- Transient SAML state is short-lived and not considered DR state.
+- Active SAML sessions are not migrated during failover; failover assumes re-authentication.
+
+## 14. Storage Portability
 
 Authrim separates storage concerns into boundary classes. This section is public because operators need to know what can be moved to external storage and what remains part of Authrim's core runtime.
 
-### 13.1 Profile Model
+### 14.1 Profile Model
 
 Authrim recognizes three profile categories:
 
@@ -1472,7 +1574,7 @@ Profile rules:
 - Tenant overrides are allowed only for supported boundary classes.
 - Registry backend may vary by deployment profile.
 
-### 13.2 Built-In Storage Profiles
+### 14.2 Built-In Storage Profiles
 
 | Profile | Default behavior |
 | --- | --- |
@@ -1481,7 +1583,7 @@ Profile rules:
 | `builtin:storage:eu-pii-split` | PII plane is separated for EU/data-residency use cases. |
 | `builtin:storage:external-postgres` | External Postgres-capable profile for supported planes. |
 
-### 13.3 Boundary Classes
+### 14.3 Boundary Classes
 
 | Boundary class | Tenant override | D1 default | Non-D1 option required | Typical data |
 | --- | --- | --- | --- | --- |
@@ -1499,8 +1601,15 @@ Important rules:
 - PII, custom/extension, and audit are the first-class tenant override targets.
 - Control plane and health/adapter implementation paths may still use D1/KV-specific bindings.
 - Business paths for auth core, PII, custom, and audit SHOULD use runtime source resolvers or adapter helpers rather than ad hoc raw database binding access.
+- Admin UI database connection inventory includes setup-managed D1 bindings such as core, PII,
+  and Admin databases. These rows are read-oriented operational inventory and may show tenant
+  assignment badges when a tenant database registry row points at the binding/connection.
+- Shared D1 deployments may show multiple tenant badges on one setup-managed database connection.
+- Storage destination inventory includes setup-managed R2 bindings and registry-backed R2/S3/sink
+  destinations. Setup-managed destinations are read-only from the destination editor and are used
+  to make actual deployment resources visible to operators.
 
-### 13.4 Custom Schema Validation
+### 14.4 Custom Schema Validation
 
 | Field | Meaning | Default |
 | --- | --- | --- |
@@ -1531,7 +1640,7 @@ Missing required fields return:
 }
 ```
 
-### 13.5 Lifecycle Fields
+### 14.5 Lifecycle Fields
 
 | Field | Meaning |
 | --- | --- |
@@ -1541,18 +1650,19 @@ Missing required fields return:
 
 Default materialized lifecycle states include `active` and `incomplete`.
 
-### 13.6 Migration and SQL Portability
+### 14.6 Migration and SQL Portability
 
 Current public migration contract:
 
-- Fresh schema creation is supported.
-- Current migration set and setup mirrored migrations avoid major SQLite-only write/time/id idioms in portability-gated paths.
-- Pre-2026-04-26 in-place harmonization of existing D1 schemas is not part of the current public contract.
+- Fresh schema creation is the supported public path for this pre-1.0 version.
+- The root `migrations/` directory is the canonical migration source used by setup.
+- Setup no longer relies on a separate mirrored setup migration tree.
+- Existing pre-consolidation environments are not guaranteed to be upgrade-compatible.
 - Follow-up in-place migrations require a separate specification before implementation.
 
-## 14. Audit
+## 15. Audit and Managed Logging
 
-### 14.1 Audit Profile
+### 15.1 Audit Profile
 
 Audit is a separate profile, not a storage slice.
 
@@ -1576,7 +1686,56 @@ Defaults:
 | Legacy `audit_log` write | Transitional compatibility behavior. |
 | Queue consumer package | `ar-management`. |
 
-### 14.2 Audit Routing
+### 15.2 Managed Logging Model
+
+Managed logging separates the event type from the storage/delivery plane.
+
+Log types:
+
+| Type | Typical data |
+| --- | --- |
+| `normal` | General operational logs. |
+| `audit` | End-user, protocol, and tenant audit evidence. |
+| `admin_audit` | Admin UI/API operations. |
+| `security` | Security-relevant runtime events. |
+| `pii` | PII-related evidence and access records. |
+| `diagnostic` | Troubleshooting records. |
+| `job` | Background job activity. |
+| `webhook` | Webhook delivery and callbacks. |
+| `operational` | Platform operational state. |
+
+Planes:
+
+| Plane | Purpose |
+| --- | --- |
+| `primary` | Hot/queryable primary storage. |
+| `archive` | Object archive such as R2/S3 JSONL chunks. |
+| `external_sink` | External forwarding destination. |
+| `sensitive_detail` | Separately protected sensitive detail chunks. |
+| `diagnostic_detail` | Short-retention diagnostic detail. |
+| `delivery_event` | Delivery/DLQ/retry telemetry. |
+
+### 15.3 Storage Destinations
+
+Storage destinations define where managed logs, artifacts, and sensitive detail are written.
+
+Supported provider names include `r2`, `aws_s3`, `http`, `logpush`, `analytics_engine`,
+`firehose`, `external`, and `custom`.
+
+Destination capabilities include `archive_write`, `sensitive_detail_write`, `log_sink_write`,
+`dlq_replay_payload_write`, and `export_artifact_write`.
+
+Setup-managed R2 bindings may be surfaced as read-only destinations for avatars, diagnostic logs,
+audit archive, import artifacts, export artifacts, and sensitive detail.
+
+### 15.4 Runtime Policy Snapshots
+
+Runtime logging policy is published as snapshots. A snapshot contains destination assignments,
+fallback behavior, destination metadata, critical/fallback eligibility, and tenant/platform scope.
+Workers resolve logging plans from the published snapshot pointer rather than from mutable draft
+rows.
+
+### 15.5 Audit Routing
 
 Routing rule shape:
 
@@ -1597,7 +1756,7 @@ Defaults:
 - `archiveStores` and `forwardingSinks` are unioned across matched rules.
 - Matched retention override is applied to the delivery plan.
 
-### 14.3 Canonical Audit Format
+### 15.6 Canonical Audit Format
 
 Canonical payload format: `authrim.audit.v1`
 
@@ -1607,7 +1766,7 @@ Applied to:
 - Logpush structured logs
 - generic HTTPS sink payload
 
-## 15. Workers-Native UI Deployment
+## 16. Workers-Native UI Deployment
 
 Supported public deployment path:
 
@@ -1631,7 +1790,7 @@ LoginUI Worker route policy:
 - Core OAuth/OIDC endpoints such as `/authorize`, `/token`, `/userinfo`, `/introspect`, `/revoke`, `/register`, and `/.well-known/*` remain core Authrim endpoints.
 - LoginUI keeps UI-owned routes such as callback/handoff finalize, login methods proxy, Direct Auth session support, logout UI behavior, and local UI language route where applicable.
 
-## 16. Compatibility and Legacy Behavior
+## 17. Compatibility and Legacy Behavior
 
 | Legacy surface | Public behavior |
 | --- | --- |
@@ -1680,7 +1839,7 @@ Legacy app-suite config hard-fail policy:
 - Config containing both `application_group`/internal trust-group data and `app_suite` fails even if values match.
 - Admin/config write APIs receiving `app_suite` return `400 invalid_request` with `error_details.code=legacy_app_suite_not_supported`.
 
-## 17. Error Shape
+## 18. Error Shape
 
 Authrim errors are machine-readable. OAuth/OIDC endpoints use OAuth/OIDC-compatible fields where applicable.
 
@@ -1725,9 +1884,9 @@ Examples:
 }
 ```
 
-## 18. Public Configuration Reference
+## 19. Public Configuration Reference
 
-### 18.1 Client Metadata
+### 19.1 Client Metadata
 
 | Field | Default | Notes |
 | --- | --- | --- |
@@ -1757,7 +1916,7 @@ Native SSO client metadata:
 | Cross-client Native SSO | disabled | Requires explicit `application_group` policy. |
 | Device secret rotation policy | disabled | Explicit tenant policy may enable rotation. |
 
-### 18.2 Web Origin Registry
+### 19.2 Web Origin Registry
 
 | Field | Default |
 | --- | --- |
@@ -1767,14 +1926,14 @@ Native SSO client metadata:
 | `csp.frame_ancestors` | empty |
 | `environment` | deployment default |
 
-### 18.3 Deployment Flags
+### 19.3 Deployment Flags
 
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `ENABLE_IFRAME_OIDC_AUTH` | `false` | Enables optional iframe OIDC metadata only when origin/client policy also allows it. |
 | UI runtime | `workers` | setup-generated UI deployment uses Workers. |
 
-### 18.4 Support Ops Settings
+### 19.4 Support Ops Settings
 
 | Setting | Default | Notes |
 | --- | --- | --- |
@@ -1792,7 +1951,15 @@ Support Ops registry defaults are part of the runtime contract:
 | `User.actions.revoke_sessions.implemented` | `false` |
 | `User.actions.resync_profile.implemented` | `false` |
 
-## 19. Security Requirements Checklist
+### 19.5 SAML Tenant Settings
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| SAML entityID style | `metadata_url` | May be changed to `role_url`; changing this affects partner trust. |
+| SAML interactive login redirect | `tenant_host` | May be changed to `ui_base_url` when shared Login UI entry is desired. |
+| SAML signing certificate subject | `O=Authrim, CN=Authrim SAML Signing` plus deployment defaults | Applies to newly generated local SAML certificates. |
+
+## 20. Security Requirements Checklist
 
 Implementations and integrations SHOULD verify:
 

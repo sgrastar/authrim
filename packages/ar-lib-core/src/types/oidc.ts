@@ -527,7 +527,7 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   /** Internal normalized trust group identifier, when stored separately from public config. */
   trust_group_id?: string;
   /** Optional browser public client mode override. Empty/undefined inherits the tenant default. */
-  browser_public_client_mode?: 'strict' | 'cookie_fallback' | 'legacy';
+  browser_public_client_mode?: 'strict' | 'cookie_fallback';
   /** Refresh token issuance policy for browser public clients. */
   browser_refresh_token_policy?: 'disabled' | 'dpop_bound';
   /** Allow this confidential/service client to revoke its own device_secret records. */

@@ -31,6 +31,14 @@ describe('buildAdminHeaders', () => {
 		expect(headers.get('X-Tenant-Id')).toBe('fresh');
 	});
 
+	it('uses an explicit tenant override for tenant path admin API calls', async () => {
+		await settingsContext.setTenantId('first');
+
+		const headers = buildAdminHeaders(undefined, { tenantId: 'second' });
+
+		expect(headers.get('X-Tenant-Id')).toBe('second');
+	});
+
 	it('omits X-Tenant-Id before any tenant context is available', () => {
 		const headers = buildAdminHeaders();
 

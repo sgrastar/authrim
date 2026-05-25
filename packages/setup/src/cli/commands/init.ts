@@ -2114,21 +2114,11 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     }
   }
 
-  // Step 5: Optional components
+  // Step 5: Standard components
   console.log('');
   console.log(chalk.blue('━━━ ' + t('components.title') + ' ━━━'));
   console.log(chalk.gray('  ' + t('components.note')));
   console.log('');
-
-  const enableSaml = await confirm({
-    message: t('components.samlPrompt'),
-    default: false,
-  });
-
-  const enableVc = await confirm({
-    message: t('components.vcPrompt'),
-    default: false,
-  });
 
   // Step 6: Feature flags
   console.log('');
@@ -2449,9 +2439,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   };
   config.components = {
     ...config.components,
-    saml: enableSaml,
-    async: enableQueue, // async is tied to queue
-    vc: enableVc,
+    saml: true,
+    async: true,
+    vc: true,
     bridge: true, // Standard component
     policy: true, // Standard component
   };
@@ -2550,8 +2540,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   );
   console.log('');
   console.log(chalk.bold('Components:'));
-  console.log(`  SAML:          ${enableSaml ? chalk.green('Enabled') : chalk.gray('Disabled')}`);
-  console.log(`  VC:            ${enableVc ? chalk.green('Enabled') : chalk.gray('Disabled')}`);
+  console.log(`  SAML:          ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
+  console.log(`  Async/CIBA:    ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
+  console.log(`  VC:            ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
   console.log(`  Social Login:  ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
   console.log(`  Policy Engine: ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
   console.log('');
@@ -3122,16 +3113,20 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
   }
 
   // Determine components to deploy
-  const enabledComponents: string[] = ['ar-lib-core', 'ar-discovery'];
-  enabledComponents.push('ar-auth', 'ar-token', 'ar-userinfo', 'ar-management');
-
-  if (config.components.saml) enabledComponents.push('ar-saml');
-  if (config.components.async) enabledComponents.push('ar-async');
-  if (config.components.vc) enabledComponents.push('ar-vc');
-  if (config.components.bridge) enabledComponents.push('ar-bridge');
-  if (config.components.policy) enabledComponents.push('ar-policy');
-
-  enabledComponents.push('ar-router');
+  const enabledComponents: string[] = [
+    'ar-lib-core',
+    'ar-discovery',
+    'ar-auth',
+    'ar-token',
+    'ar-userinfo',
+    'ar-management',
+    'ar-async',
+    'ar-policy',
+    'ar-saml',
+    'ar-bridge',
+    'ar-vc',
+    'ar-router',
+  ];
 
   console.log(chalk.bold('\n📋 Components to Deploy:'));
   for (const comp of enabledComponents) {
@@ -3354,38 +3349,19 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
 // =============================================================================
 
 async function editComponents(config: AuthrimConfig): Promise<boolean> {
+  config.components.saml = true;
+  config.components.async = true;
+  config.components.vc = true;
+  config.components.bridge = true;
+  config.components.policy = true;
+
   console.log(chalk.bold('\nCurrent Component Settings:'));
-  console.log(
-    `  SAML:          ${config.components.saml ? chalk.green('Enabled') : chalk.gray('Disabled')}`
-  );
-  console.log(
-    `  Async:         ${config.components.async ? chalk.green('Enabled') : chalk.gray('Disabled')}`
-  );
-  console.log(
-    `  VC:            ${config.components.vc ? chalk.green('Enabled') : chalk.gray('Disabled')}`
-  );
+  console.log(`  SAML:          ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
+  console.log(`  Async/CIBA:    ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
+  console.log(`  VC:            ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
   console.log(`  Social Login:  ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
   console.log(`  Policy Engine: ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
   console.log('');
-
-  config.components.saml = await confirm({
-    message: 'Enable SAML support?',
-    default: config.components.saml,
-  });
-
-  config.components.async = await confirm({
-    message: 'Enable async processing (Queue)?',
-    default: config.components.async,
-  });
-
-  config.components.vc = await confirm({
-    message: 'Enable Verifiable Credentials?',
-    default: config.components.vc,
-  });
-
-  // Standard components are always enabled
-  config.components.bridge = true;
-  config.components.policy = true;
 
   return true;
 }
@@ -3697,6 +3673,12 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     default: config.profiles.defaults.audit || 'builtin:audit:standard',
     validate: (value) => {
       if (!value.trim()) return 'Profile ID is required';
+      if (value.trim() === 'builtin:audit:minimal') {
+        return [
+          'builtin:audit:minimal is not supported.',
+          'Use builtin:audit:standard or a setup-defined custom audit profile.',
+        ].join(' ');
+      }
       return true;
     },
   });

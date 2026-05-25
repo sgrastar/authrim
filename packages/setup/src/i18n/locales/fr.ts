@@ -467,10 +467,10 @@ const fr: Translations = {
   'userId.note': 'Note : Ce paramètre ne peut pas être modifié après la création des utilisateurs.',
   'userId.selected': "Format d'ID utilisateur : {{format}}",
 
-  // Optional components
-  'components.title': 'Composants Optionnels',
+  // Standard components
+  'components.title': 'Composants standard',
   'components.note':
-    'Note : La connexion sociale et le moteur de politiques sont des composants standard',
+    'SAML, Device Flow/CIBA, VC, Connexion Sociale et Moteur de Politiques sont installés par défaut.',
   'components.samlPrompt': 'Activer le support SAML ?',
   'components.vcPrompt': 'Activer les Credentials Vérifiables ?',
   'components.saml': 'SAML :',
@@ -795,6 +795,20 @@ const fr: Translations = {
   'web.db.name': 'Nom',
   'web.db.region': 'Région',
   'web.db.regionAuto': 'Automatique (la plus proche)',
+  'web.db.storageProfileTitle': 'Profil de déploiement du stockage',
+  'web.db.storageProfileDesc':
+    'Sélectionnez comment les données core/PII des utilisateurs sont placées pour ce déploiement.',
+  'web.db.sharedD1Title': 'D1 partagé',
+  'web.db.sharedD1Desc':
+    'Un D1 core et un D1 PII pour tout le déploiement. Coût de configuration minimal et chemin par défaut.',
+  'web.db.tenantD1Title': 'D1 par tenant',
+  'web.db.tenantD1Desc':
+    "Une paire D1 core/PII par tenant. Nécessite le provisionnement de la base de données du tenant avant l'activation.",
+  'web.db.preallocatedSlotsTitle': 'Slots de tenant préalloués',
+  'web.db.preallocatedSlotsDesc':
+    'Chaque slot de tenant crée deux bases de données D1 : core et PII.',
+  'web.db.slotsLabel': 'Slots',
+  'web.db.slotsHelp': 'La valeur par défaut est 3. Le maximum est de 500 slots.',
 
   // Web UI Email
   'web.email.title': "Fournisseur d'Email",

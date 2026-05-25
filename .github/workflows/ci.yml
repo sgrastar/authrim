@@ -1,11 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-      - 'claude/**'
   pull_request:
     branches:
       - main
@@ -14,6 +9,8 @@ on:
 # Restrict GITHUB_TOKEN permissions (OpenSSF Scorecard)
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   lint-and-test:
@@ -49,8 +46,11 @@ jobs:
       - name: Run type checking
         run: pnpm run typecheck
 
-      - name: Run tests
-        run: pnpm run test
+      - name: Run API tests with coverage
+        run: pnpm run test:coverage:api
+
+      - name: Run UI tests
+        run: pnpm run test:ui
 
       - name: Build project
         run: pnpm run build
@@ -59,6 +59,15 @@ jobs:
 
       - name: Check code formatting
         run: pnpm run format:check
+
+      - name: Comment coverage summary
+        if: ${{ github.event_name == 'pull_request' && success() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/ci-pr-coverage-comment.mjs
 
   e2e-and-accessibility:
     name: E2E and Accessibility Tests

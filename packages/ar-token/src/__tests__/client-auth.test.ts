@@ -656,12 +656,17 @@ describe('Client Authentication Tests', () => {
       mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
         consumeChallengeRpc: consumeArtifactRpcMock,
       });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
         registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
+        headers: {
+          DPoP: 'dpop-proof',
+        },
         body: {
           grant_type: DIRECT_AUTH_GRANT_TYPE,
           direct_auth_artifact: 'direct-artifact-001',
@@ -678,6 +683,13 @@ describe('Client Authentication Tests', () => {
       expect(response.status).toBe(200);
       expect(body.access_token).toBe('mock-access-token');
       expect(body.session).toBeUndefined();
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({ cnf: { jkt: 'browser-jkt' } }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        expect.any(String)
+      );
       expect(consumeArtifactRpcMock).toHaveBeenCalledWith({
         id: 'direct_auth:direct-artifact-001',
         tenantId: 'default',
@@ -713,6 +725,8 @@ describe('Client Authentication Tests', () => {
       mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
         consumeChallengeRpc: consumeArtifactRpcMock,
       });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
         registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
@@ -720,6 +734,9 @@ describe('Client Authentication Tests', () => {
 
       const response = await tokenHandler(
         createMockContext({
+          headers: {
+            DPoP: 'dpop-proof',
+          },
           body: {
             grant_type: DIRECT_AUTH_GRANT_TYPE,
             direct_auth_artifact: 'direct-artifact-001',
@@ -733,7 +750,7 @@ describe('Client Authentication Tests', () => {
 
       expect(response.status).toBe(200);
       expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
-        expect.objectContaining({ aud: 'svc://browser-api' }),
+        expect.objectContaining({ aud: 'svc://browser-api', cnf: { jkt: 'browser-jkt' } }),
         expect.anything(),
         expect.any(String),
         expect.any(Number),
@@ -2889,7 +2906,86 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockVerifyClientSecretHash).not.toHaveBeenCalled();
     });
 
-    it('should not issue a refresh token to a browser public client by default', async () => {
+    it('should reject explicit cookie-fallback browser public token requests without DPoP', async () => {
+      const client = createPublicClient({
+        token_endpoint_auth_method: 'none',
+        client_secret_hash: undefined,
+        browser_public_client_mode: 'cookie_fallback',
+      });
+      const authCodeData = createAuthCodeData();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          headers: {
+            Origin: 'https://spa.example.com',
+          },
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            code_verifier: 'valid-pkce-verifier-12345678901234567890123456789012345',
+          },
+          env: mockEnv,
+        })
+      );
+      const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toEqual(
+        expect.stringContaining('hosted cookie-session finalize path')
+      );
+      expect(body.refresh_token).toBeUndefined();
+      expect(body.refresh_token_expires_in).toBeUndefined();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('should reject browser public token requests without DPoP even without Origin', async () => {
+      const client = createPublicClient({
+        token_endpoint_auth_method: 'none',
+        client_secret_hash: undefined,
+        browser_public_client_mode: 'strict',
+      });
+      const authCodeData = createAuthCodeData();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            code_verifier: 'valid-pkce-verifier-12345678901234567890123456789012345',
+          },
+          env: mockEnv,
+        })
+      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('DPoP proof');
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('should reject browser public token requests without DPoP by default', async () => {
       const client = createPublicClient({
         token_endpoint_auth_method: 'none',
         client_secret_hash: undefined,
@@ -2918,12 +3014,52 @@ describe('Client Authentication Tests', () => {
           env: mockEnv,
         })
       );
-      const body = await parseJsonResponse<Record<string, unknown>>(response);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
 
-      expect(response.status).toBe(200);
-      expect(body.access_token).toBe('mock-access-token');
-      expect(body.refresh_token).toBeUndefined();
-      expect(body.refresh_token_expires_in).toBeUndefined();
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('DPoP proof');
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('should reject legacy browser public token mode', async () => {
+      const client = createPublicClient({
+        token_endpoint_auth_method: 'none',
+        client_secret_hash: undefined,
+      });
+      (client as unknown as Record<string, unknown>).browser_public_client_mode = 'legacy';
+      const authCodeData = createAuthCodeData();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          headers: {
+            Origin: 'https://spa.example.com',
+          },
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            code_verifier: 'valid-pkce-verifier-12345678901234567890123456789012345',
+          },
+          env: mockEnv,
+        })
+      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('Legacy browser public token mode');
+      expect(mockEnv.AUTH_CODE_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
     });
 
@@ -2966,6 +3102,11 @@ describe('Client Authentication Tests', () => {
       expect(body.token_type).toBe('DPoP');
       expect(body.refresh_token).toBe('mock-refresh-token');
       expectRefreshTokenExpiryMetadata(body);
+      expect(mocks.mockCreateRefreshToken.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          cnf: { jkt: 'browser-jkt' },
+        })
+      );
       expect(mocks.mockCreateRefreshToken).toHaveBeenCalledWith(
         expect.any(Object),
         expect.anything(),
@@ -3012,6 +3153,43 @@ describe('Client Authentication Tests', () => {
       expect(body.error).toBe('invalid_request');
       expect(body.error_description).toContain('DPoP proof');
       expect(mockEnv.AUTH_CODE_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('should reject native public authorization code token requests without DPoP', async () => {
+      const client = createPublicClient({
+        token_endpoint_auth_method: 'none',
+        client_secret_hash: undefined,
+        application_type: 'native',
+      });
+      const authCodeData = createAuthCodeData();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            code_verifier: 'valid-pkce-verifier-12345678901234567890123456789012345',
+            channel: 'native',
+          },
+          env: mockEnv,
+        })
+      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('native public clients');
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
     });

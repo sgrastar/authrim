@@ -10,7 +10,6 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "migrations",
     "templates",
     "README.md"
   ],

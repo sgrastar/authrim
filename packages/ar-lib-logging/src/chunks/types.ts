@@ -123,15 +123,22 @@ export interface WriteLogChunkInput {
   surface?: string;
   indexProfile?: string;
   compression?: LogChunkCompression;
+  shard?: string;
   now?: number;
   catalogStore?: LogChunkCatalogStore;
   encryption?: LogChunkEncryptionOptions;
+  /**
+   * Emergency/test-only escape hatch for non-sensitive chunks.
+   * Production log chunks should always provide encryption.
+   */
+  allowPlaintext?: boolean;
 }
 
 export interface WriteLogChunkResult {
   chunkId: string;
   objectCatalogId: string;
   objectKey: string;
+  shard: string;
   recordCount: number;
   byteCount: number;
   checksumSha256: string;

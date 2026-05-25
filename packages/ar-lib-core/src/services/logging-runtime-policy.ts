@@ -3,6 +3,7 @@ import type { LoggingDestination } from '@authrim/ar-lib-logging/destinations';
 import {
   RuntimeLoggingPolicySnapshotMemoryCache,
   loadPublishedRuntimeLoggingPolicySnapshot,
+  laneForLogPolicy,
   resolveLoggingPolicy,
   type LoggingFallbackMode,
   type LoggingFallbackPolicy,
@@ -286,7 +287,11 @@ export function targetFromRuntimeLoggingDestination(
       bucketRef:
         snapshotString(config.bindingRef) ??
         snapshotString(config.bucketRef) ??
-        (plane === 'sensitive_detail' ? 'SENSITIVE_DETAILS' : 'DIAGNOSTIC_LOGS'),
+        (plane === 'sensitive_detail'
+          ? 'SENSITIVE_DETAILS'
+          : plane === 'archive'
+            ? 'AUDIT_ARCHIVE'
+            : 'DIAGNOSTIC_LOGS'),
       prefix: snapshotString(config.prefix) ?? undefined,
     };
   }
@@ -437,7 +442,7 @@ export async function loadRuntimeLoggingPolicySnapshotFromEnv(
 }
 
 export async function resolveRuntimeLoggingPolicyTargetFromEnv(
-  env: Pick<Env, 'AUTHRIM_CONFIG' | 'DIAGNOSTIC_LOGS'>,
+  env: Pick<Env, 'AUTHRIM_CONFIG' | 'DIAGNOSTIC_LOGS' | 'AUDIT_ARCHIVE' | 'SENSITIVE_DETAILS'>,
   input: {
     tenantId: string;
     logType: LogType;
@@ -447,6 +452,28 @@ export async function resolveRuntimeLoggingPolicyTargetFromEnv(
 ): Promise<RuntimeLoggingPolicyResolution | null> {
   const policies = await loadRuntimeLoggingPolicySnapshotFromEnv(env, input.tenantId);
   if (!policies) {
+    if (input.plane === 'archive' && env.AUDIT_ARCHIVE) {
+      const destinationId = 'platform_default_r2_archive';
+      return {
+        tenantId: input.tenantId,
+        logType: input.logType,
+        plane: input.plane,
+        lane: laneForLogPolicy(input.logType, input.plane),
+        selectedDestinationId: null,
+        destinationId,
+        fallbackDestinationId: destinationId,
+        failureMode: 'platform_default',
+        source: 'none',
+        warnings: ['runtime_logging_policy_snapshot_missing_using_platform_default'],
+        destination: null,
+        target: {
+          type: 'r2',
+          destinationId,
+          bucketRef: 'AUDIT_ARCHIVE',
+          prefix: 'logs/v1',
+        },
+      };
+    }
     return null;
   }
 

@@ -1,6 +1,6 @@
-	<script lang="ts">
-		import { onMount } from 'svelte';
-		import { SvelteDate } from 'svelte/reactivity';
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { SvelteDate } from 'svelte/reactivity';
 	import {
 		adminJobsAPI,
 		getJobStatusColor,
@@ -33,6 +33,7 @@
 	let jobs = $state<Job[]>([]);
 	let jobTypes = $state<JobTypeDefinition[]>([]);
 	let jobTypeError = $state('');
+	let selectedJobType = $state<JobTypeDefinition | null>(null);
 
 	// Filters
 	let statusFilter = $state<JobStatus | ''>('');
@@ -50,6 +51,15 @@
 	let reportStorageDestinationId = $state('');
 	let storageDestinations = $state<StorageDestination[]>([]);
 
+	const jobSummary = $derived({
+		total: jobs.length,
+		active: jobs.filter((job) => job.status === 'pending' || job.status === 'running').length,
+		failed: jobs.filter((job) => job.status === 'failed' || job.status === 'partial_failure')
+			.length,
+		completed: jobs.filter((job) => job.status === 'completed').length
+	});
+	const activeFilterCount = $derived([statusFilter, typeFilter].filter(Boolean).length);
+
 	// Create Import Dialog
 	let showCreateImportDialog = $state(false);
 	let creatingImport = $state(false);
@@ -66,7 +76,7 @@
 	let tenantDbSlug = $state('');
 	let tenantDbGeneration = $state('1');
 	let tenantDbActivate = $state(false);
-	let tenantDbExecutionMode = $state<'plan_only' | 'operator_cli' | 'cloudflare_api'>('plan_only');
+	let tenantDbExecutionMode = $state<'plan_only' | 'operator_cli'>('plan_only');
 	let tenantDbReason = $state('');
 
 	// Job Detail Dialog
@@ -408,6 +418,14 @@
 		loadingJobDetail = false; // Clear loading state
 	}
 
+	function viewJobTypeDetail(jobType: JobTypeDefinition) {
+		selectedJobType = jobType;
+	}
+
+	function closeJobTypeDetail() {
+		selectedJobType = null;
+	}
+
 	function getProgressPercent(job: Job): number {
 		if (job.progress) {
 			const percentage = job.progress.percentage;
@@ -451,6 +469,30 @@
 		return labels[value];
 	}
 
+	function getDeliveryDescription(value: 'auto' | 'inline' | 'artifact'): string {
+		const descriptions = {
+			auto: 'Runtime chooses inline or artifact based on result size and policy.',
+			inline: 'Result is stored directly on the job record when it is small enough.',
+			artifact: 'Result is written to a storage destination and referenced from the job record.'
+		};
+		return descriptions[value];
+	}
+
+	function getProcessorDescription(value: JobTypeDefinition['processor_status']): string {
+		if (value === 'scheduled') {
+			return 'Handled by the scheduled/background processor. This is a processor mode, not a guarantee that each job is pre-scheduled for a future time.';
+		}
+		if (value === 'inline') {
+			return 'Handled directly during the create request or by an immediate worker path.';
+		}
+		return 'Registered in the catalog but not currently runnable from the Admin API.';
+	}
+
+	function clearFilters() {
+		statusFilter = '';
+		typeFilter = '';
+	}
+
 	// Track if initial data load has completed
 	let initialLoadComplete = false;
 	// Track previous filter values to detect actual changes
@@ -488,7 +530,9 @@
 	// Priority: JobDetail > CreateReport (JobDetail appears on top if both were somehow open)
 	function handleGlobalKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') {
-			if (showJobDetailDialog) {
+			if (selectedJobType) {
+				closeJobTypeDetail();
+			} else if (showJobDetailDialog) {
 				closeJobDetailDialog();
 			} else if (showTenantDbDialog) {
 				closeTenantDbDialog();
@@ -513,8 +557,8 @@
 		<div>
 			<h1 class="page-title">Jobs</h1>
 			<p class="page-description">
-				Monitor background jobs including user imports, bulk updates, and report generation. Jobs
-				automatically refresh while running.
+				Monitor queued operational work including user imports, tenant database requests, bulk
+				updates, and report jobs. Running jobs refresh automatically.
 			</p>
 		</div>
 		<div class="page-actions">
@@ -528,7 +572,7 @@
 			</button>
 			<button class="btn btn-primary" onclick={openCreateReportDialog}>
 				<i class="i-ph-file-text"></i>
-				Generate Report
+				Create Report Job
 			</button>
 		</div>
 	</div>
@@ -540,14 +584,39 @@
 		<div class="alert alert-warning">{jobTypeError}</div>
 	{/if}
 
+	<div class="job-summary-grid">
+		<div class="summary-card">
+			<span class="summary-label">Total jobs</span>
+			<strong>{jobSummary.total}</strong>
+		</div>
+		<div class="summary-card">
+			<span class="summary-label">Active</span>
+			<strong>{jobSummary.active}</strong>
+		</div>
+		<div class="summary-card">
+			<span class="summary-label">Completed</span>
+			<strong>{jobSummary.completed}</strong>
+		</div>
+		<div class="summary-card warning">
+			<span class="summary-label">Needs attention</span>
+			<strong>{jobSummary.failed}</strong>
+		</div>
+	</div>
+
 	{#if jobTypes.length > 0}
 		<div class="panel">
 			<div class="panel-header">
-				<h2 class="panel-title">Enabled Job Types</h2>
+				<div>
+					<h2 class="panel-title">Creatable Job Types</h2>
+					<p class="panel-description">
+						Job types exposed through Admin API creation endpoints. Select a type to inspect
+						processor mode and result handling.
+					</p>
+				</div>
 			</div>
 			<div class="job-type-grid">
 				{#each jobTypes as jobType (jobType.job_type)}
-					<div class="job-type-item">
+					<button class="job-type-item" onclick={() => viewJobTypeDetail(jobType)}>
 						<div>
 							<div class="cell-primary">{getJobTypeDisplayName(jobType.type)}</div>
 							<div class="cell-secondary mono">{jobType.job_type}</div>
@@ -558,7 +627,7 @@
 								<span class="badge badge-neutral">{getDeliveryLabel(delivery)}</span>
 							{/each}
 						</div>
-					</div>
+					</button>
 				{/each}
 			</div>
 		</div>
@@ -566,6 +635,15 @@
 
 	<!-- Filters -->
 	<div class="panel">
+		<div class="panel-header">
+			<div>
+				<h2 class="panel-title">Job Queue</h2>
+				<p class="panel-description">Filter by lifecycle state and workload type.</p>
+			</div>
+			{#if activeFilterCount > 0}
+				<button class="btn btn-secondary btn-sm" onclick={clearFilters}>Clear filters</button>
+			{/if}
+		</div>
 		<div class="filter-row">
 			<div class="form-group">
 				<label for="status-filter" class="form-label">Status</label>
@@ -623,22 +701,16 @@
 								>{getJobTypeDisplayName(typeFilter)}</span
 							>{/if}
 					</p>
-					<button
-						class="btn btn-secondary"
-						onclick={() => {
-							statusFilter = '';
-							typeFilter = '';
-						}}
-					>
-						Clear filters
-					</button>
+					<button class="btn btn-secondary" onclick={clearFilters}> Clear filters </button>
 				{:else}
-					<p class="empty-state-hint">Generate a report or import users to create a job.</p>
+					<p class="empty-state-hint">
+						Create an import, tenant database request, or report job to start tracking work.
+					</p>
 				{/if}
 			</div>
 		</div>
 	{:else}
-		<div class="data-table-container">
+		<div class="data-table-container jobs-table-container">
 			<table class="data-table">
 				<thead>
 					<tr>
@@ -652,7 +724,7 @@
 				</thead>
 				<tbody>
 					{#each jobs as job (job.id)}
-						<tr>
+						<tr class:row-active={job.status === 'pending' || job.status === 'running'}>
 							<td>
 								<div class="cell-primary">{getJobTypeDisplayName(job.type)}</div>
 								<div class="cell-secondary mono">{job.id.substring(0, 8)}...</div>
@@ -682,7 +754,8 @@
 							<td class="muted nowrap">{formatDate(job.created_at)}</td>
 							<td class="text-right">
 								<button class="btn btn-secondary btn-sm" onclick={() => viewJobDetail(job)}>
-									View Details
+									<i class="i-ph-sidebar-simple"></i>
+									Details
 								</button>
 							</td>
 						</tr>
@@ -706,13 +779,8 @@
 
 	<div class="form-group">
 		<label for="tenant-db-slug" class="form-label">Tenant Slug</label>
-		<input
-			id="tenant-db-slug"
-			type="text"
-			class="form-input"
-			placeholder="example-library"
-			bind:value={tenantDbSlug}
-		/>
+		<input id="tenant-db-slug" type="text" class="form-input" bind:value={tenantDbSlug} />
+		<p class="form-hint">Leave blank to use the current tenant context when supported.</p>
 	</div>
 
 	<div class="filter-row">
@@ -731,7 +799,6 @@
 			<select id="tenant-db-execution" class="form-select" bind:value={tenantDbExecutionMode}>
 				<option value="plan_only">Plan only</option>
 				<option value="operator_cli">Operator CLI</option>
-				<option value="cloudflare_api">Cloudflare API</option>
 			</select>
 		</div>
 	</div>
@@ -743,19 +810,22 @@
 
 	<div class="form-group">
 		<label for="tenant-db-reason" class="form-label">Reason</label>
-		<textarea
-			id="tenant-db-reason"
-			class="form-textarea"
-			rows="3"
-			bind:value={tenantDbReason}
+		<textarea id="tenant-db-reason" class="form-textarea" rows="3" bind:value={tenantDbReason}
 		></textarea>
+		<p class="form-hint">Recorded with the job request and operational audit trail.</p>
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeTenantDbDialog} disabled={creatingTenantDbRequest}
-			>Cancel</button
+		<button
+			class="btn btn-secondary"
+			onclick={closeTenantDbDialog}
+			disabled={creatingTenantDbRequest}>Cancel</button
 		>
-		<button class="btn btn-primary" onclick={handleCreateTenantDbRequest} disabled={creatingTenantDbRequest}>
+		<button
+			class="btn btn-primary"
+			onclick={handleCreateTenantDbRequest}
+			disabled={creatingTenantDbRequest}
+		>
 			{creatingTenantDbRequest ? 'Creating...' : 'Create Request'}
 		</button>
 	{/snippet}
@@ -827,7 +897,7 @@
 <Modal
 	open={showCreateReportDialog}
 	onClose={closeCreateReportDialog}
-	title="Generate Report"
+	title="Create Report Job"
 	size="md"
 >
 	{#if createReportError}
@@ -887,6 +957,9 @@
 					>
 				{/each}
 			</select>
+			<p class="form-hint">
+				Use runtime default unless the report must be written to a specific destination.
+			</p>
 		</div>
 	</div>
 
@@ -895,8 +968,69 @@
 			>Cancel</button
 		>
 		<button class="btn btn-primary" onclick={handleCreateReport} disabled={creatingReport}>
-			{creatingReport ? 'Creating...' : 'Generate Report'}
+			{creatingReport ? 'Creating...' : 'Create Report Job'}
 		</button>
+	{/snippet}
+</Modal>
+
+<!-- Job Type Detail Dialog -->
+<Modal
+	open={!!selectedJobType}
+	onClose={closeJobTypeDetail}
+	title={selectedJobType ? getJobTypeDisplayName(selectedJobType.type) : 'Job Type'}
+	size="md"
+>
+	{#if selectedJobType}
+		<div class="job-type-detail">
+			<div class="info-grid">
+				<div class="info-card">
+					<span class="info-label">Catalog key</span>
+					<span class="info-value mono">{selectedJobType.job_type}</span>
+				</div>
+				<div class="info-card">
+					<span class="info-label">Processor</span>
+					<span class="badge badge-info">{selectedJobType.processor_status}</span>
+				</div>
+				<div class="info-card">
+					<span class="info-label">Create endpoint</span>
+					<span class="info-value mono">{selectedJobType.create_endpoint ?? 'Not exposed'}</span>
+				</div>
+				<div class="info-card">
+					<span class="info-label">Result object</span>
+					<span class="info-value mono">{selectedJobType.result_object_class ?? 'None'}</span>
+				</div>
+			</div>
+
+			<div class="detail-section">
+				<h3 class="detail-section-title">Processor mode</h3>
+				<p class="detail-copy">
+					{getProcessorDescription(selectedJobType.processor_status)}
+				</p>
+			</div>
+
+			<div class="detail-section">
+				<h3 class="detail-section-title">Result delivery</h3>
+				<div class="delivery-list">
+					{#each selectedJobType.supported_result_delivery as delivery (delivery)}
+						<div class="delivery-item">
+							<span class="badge badge-neutral">{getDeliveryLabel(delivery)}</span>
+							<span>{getDeliveryDescription(delivery)}</span>
+						</div>
+					{/each}
+				</div>
+			</div>
+
+			{#if selectedJobType.notes}
+				<div class="detail-section">
+					<h3 class="detail-section-title">Notes</h3>
+					<p class="detail-copy">{selectedJobType.notes}</p>
+				</div>
+			{/if}
+		</div>
+	{/if}
+
+	{#snippet footer()}
+		<button class="btn btn-secondary" onclick={closeJobTypeDetail}>Close</button>
 	{/snippet}
 </Modal>
 
@@ -1074,27 +1208,224 @@
 </Modal>
 
 <style>
+	.job-summary-grid {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 1rem;
+	}
+
+	.summary-card {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+		padding: 1rem;
+	}
+
+	.summary-card.warning {
+		border-color: color-mix(in srgb, var(--warning, #f59e0b) 30%, var(--border));
+	}
+
+	.summary-label {
+		display: block;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		margin-bottom: 0.35rem;
+	}
+
+	.summary-card strong {
+		color: var(--text-primary);
+		font-size: 1.35rem;
+		line-height: 1;
+	}
+
+	.panel-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1rem;
+	}
+
+	.panel-description {
+		margin: 0.25rem 0 0;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+		line-height: 1.45;
+	}
+
 	.job-type-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-		gap: 12px;
+		gap: 0.75rem;
 	}
 
 	.job-type-item {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 12px;
-		padding: 12px;
+		gap: 0.75rem;
+		padding: 0.875rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
 		background: var(--bg-subtle);
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background var(--transition-fast),
+			border-color var(--transition-fast),
+			transform var(--transition-fast);
+	}
+
+	.job-type-item:hover {
+		border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
+		background: color-mix(in srgb, var(--primary) 5%, var(--bg-subtle));
+		transform: translateY(-1px);
+	}
+
+	.job-type-item:focus-visible {
+		outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent);
+		outline-offset: 2px;
 	}
 
 	.job-type-badges {
 		display: flex;
 		flex-wrap: wrap;
 		justify-content: flex-end;
-		gap: 6px;
+		gap: 0.375rem;
+	}
+
+	.jobs-table-container {
+		border-radius: var(--radius-lg);
+	}
+
+	.data-table tbody tr.row-active {
+		background: color-mix(in srgb, var(--primary, #2563eb) 4%, var(--bg-card));
+	}
+
+	.progress-cell {
+		min-width: 160px;
+	}
+
+	.progress-bar,
+	.progress-bar-lg {
+		overflow: hidden;
+		border-radius: var(--radius-full);
+		background: var(--bg-subtle);
+		border: 1px solid var(--border);
+	}
+
+	.progress-bar {
+		width: 100%;
+		height: 0.55rem;
+		margin-bottom: 0.35rem;
+	}
+
+	.progress-bar-lg {
+		height: 0.75rem;
+		flex: 1;
+	}
+
+	.progress-fill {
+		height: 100%;
+		border-radius: inherit;
+		transition: width var(--transition-fast);
+	}
+
+	.progress-text {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.pulse-dot {
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: var(--radius-full);
+		background: currentColor;
+		box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent);
+	}
+
+	.form-hint {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.4;
+		margin: 0.4rem 0 0;
+	}
+
+	.progress-detail {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.info-card {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+		padding: 0.75rem;
+		min-width: 0;
+	}
+
+	.info-card .info-value {
+		display: block;
+		overflow-wrap: anywhere;
+	}
+
+	.detail-section {
+		padding-top: 1rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.detail-section-title {
+		margin: 0 0 0.625rem;
+		color: var(--text-primary);
+		font-size: 0.9375rem;
+		font-weight: 600;
+	}
+
+	.job-type-detail {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.detail-copy {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+		line-height: 1.55;
+	}
+
+	.delivery-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.625rem;
+	}
+
+	.delivery-item {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.625rem;
+		padding: 0.625rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
+		font-size: 0.875rem;
+		line-height: 1.45;
+	}
+
+	@media (max-width: 900px) {
+		.job-summary-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	@media (max-width: 640px) {
+		.job-summary-grid {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

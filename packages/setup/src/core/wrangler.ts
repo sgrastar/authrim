@@ -538,6 +538,10 @@ export function generateWranglerConfig(
         binding: 'DIAGNOSTIC_LOGS',
         bucket_name: resourceIds.r2['DIAGNOSTIC_LOGS']?.name || `${env}-diagnostic-logs`,
       });
+      r2Buckets.push({
+        binding: 'AUDIT_ARCHIVE',
+        bucket_name: resourceIds.r2['AUDIT_ARCHIVE']?.name || `${env}-audit-archive`,
+      });
     }
 
     if (component === 'ar-management') {
@@ -630,22 +634,12 @@ export function generateWranglerConfig(
       { binding: 'OP_MANAGEMENT', service: `${env}-ar-management` },
     ];
 
-    // Optional services (only if enabled in config)
-    if (config.components.bridge) {
-      services.push({ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` });
-    }
-    if (config.components.policy) {
-      services.push({ binding: 'POLICY_SERVICE', service: `${env}-ar-policy` });
-    }
-    if (config.components.async) {
-      services.push({ binding: 'OP_ASYNC', service: `${env}-ar-async` });
-    }
-    if (config.components.saml) {
-      services.push({ binding: 'OP_SAML', service: `${env}-ar-saml` });
-    }
-    if (config.components.vc) {
-      services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
-    }
+    // Standard services are installed by default. Some features still require runtime setup.
+    services.push({ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` });
+    services.push({ binding: 'POLICY_SERVICE', service: `${env}-ar-policy` });
+    services.push({ binding: 'OP_ASYNC', service: `${env}-ar-async` });
+    services.push({ binding: 'OP_SAML', service: `${env}-ar-saml` });
+    services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
     if (config.components.loginUi) {
       services.push({ binding: 'LOGIN_UI_WORKER', service: `${env}-ar-login-ui` });
     }
@@ -854,13 +848,13 @@ export function generateEnvVars(
     vars['ADMIN_UI_URL'] = adminUiUrl;
     vars['ADMIN_UI_API_MODE'] = adminUiApiMode;
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
-    vars['SAML_ENABLED'] = config.components.saml ? 'true' : 'false';
-    vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
-    vars['VC_ENABLED'] = config.components.vc ? 'true' : 'false';
+    vars['SAML_ENABLED'] = 'true';
+    vars['ASYNC_ENABLED'] = 'true';
+    vars['VC_ENABLED'] = 'true';
   }
 
   if (component === 'ar-discovery') {
-    vars['ASYNC_ENABLED'] = config.components.async ? 'true' : 'false';
+    vars['ASYNC_ENABLED'] = 'true';
   }
 
   if (profileAwareComponents.includes(component)) {

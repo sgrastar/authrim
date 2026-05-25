@@ -51,6 +51,7 @@ interface ExternalLoginProvider {
   startMode: ExternalLoginStartMode;
   slug?: string;
   iconUrl?: string;
+  iconName?: string;
   buttonColor?: string;
   buttonText?: string;
   startUrl?: string;
@@ -118,6 +119,44 @@ const DEFAULT_CACHE_TTL = 300; // 5 minutes (seconds)
 const MAX_EXTERNAL_LOGIN_PROVIDERS = 20;
 const MAX_STRING_LENGTH = 256;
 const MAX_URL_LENGTH = 2048;
+
+const LOGIN_PROVIDER_ICON_NAMES = new Set([
+  'buildings',
+  'house',
+  'house-simple',
+  'bank',
+  'building',
+  'city',
+  'graduation-cap',
+  'student',
+  'books',
+  'chalkboard-teacher',
+  'globe',
+  'globe-hemisphere-east',
+  'shield-check',
+  'seal-check',
+  'certificate',
+  'identification-card',
+  'fingerprint',
+  'key',
+  'briefcase',
+  'users-three',
+  'network',
+  'share-network',
+  'tree-structure',
+  'handshake',
+  'cloud',
+  'cloud-check',
+  'database',
+  'hard-drives',
+  'devices',
+  'terminal-window',
+  'book-open',
+  'presentation-chart',
+  'rocket-launch',
+  'compass',
+  'none',
+]);
 
 const DEFAULT_UI_CONFIG: UIConfig = {
   theme: 'light',
@@ -210,6 +249,7 @@ interface ExternalLoginProviderConfig {
   startMode?: string;
   slug?: string;
   iconUrl?: string;
+  iconName?: string;
   buttonColor?: string;
   buttonText?: string;
   startUrl?: string;
@@ -364,6 +404,11 @@ function truncateString(value: string | undefined, maxLen: number = MAX_STRING_L
   return value.slice(0, maxLen);
 }
 
+function normalizeLoginProviderIconName(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && LOGIN_PROVIDER_ICON_NAMES.has(normalized) ? normalized : undefined;
+}
+
 /**
  * Normalize provider types for the Login UI. Unknown future protocols remain displayable.
  */
@@ -454,6 +499,7 @@ async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvi
         name: string;
         providerType?: string;
         iconUrl?: string;
+        iconName?: string;
         buttonColor?: string;
         buttonText?: string;
         enabled?: boolean;
@@ -478,6 +524,7 @@ async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvi
           startMode: 'oauth_redirect',
           slug: p.slug ? truncateString(p.slug) : undefined,
           iconUrl: isValidHttpsUrl(p.iconUrl) ? p.iconUrl : undefined,
+          iconName: normalizeLoginProviderIconName(p.iconName),
           buttonColor: p.buttonColor ? truncateString(p.buttonColor, 50) : undefined,
           buttonText: p.buttonText ? truncateString(p.buttonText, 100) : undefined,
           startUrl: `/api/external/${encodeURIComponent(id)}/start`,
@@ -513,6 +560,7 @@ async function fetchSAMLLoginProviders(
         type: 'saml',
         startMode: 'saml_sp',
         iconUrl: getSAMLProviderLogoUrl(row.config_json),
+        iconName: getSAMLProviderIconName(row.config_json),
         startUrl: buildSAMLSPLoginStartUrl(row.id),
       }));
   } catch {
@@ -524,6 +572,15 @@ function getSAMLProviderLogoUrl(configJson: string): string | undefined {
   try {
     const config = JSON.parse(configJson) as { logoUrl?: string };
     return isValidHttpsUrl(config.logoUrl) ? config.logoUrl : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getSAMLProviderIconName(configJson: string): string | undefined {
+  try {
+    const config = JSON.parse(configJson) as { iconName?: string };
+    return normalizeLoginProviderIconName(config.iconName);
   } catch {
     return undefined;
   }
@@ -564,6 +621,7 @@ async function fetchConfiguredExternalLoginProviders(
           startMode: normalizeExternalStartMode(provider.startMode, type),
           slug: provider.slug ? truncateString(provider.slug) : undefined,
           iconUrl: isValidHttpsUrl(provider.iconUrl) ? provider.iconUrl : undefined,
+          iconName: normalizeLoginProviderIconName(provider.iconName),
           buttonColor: provider.buttonColor ? truncateString(provider.buttonColor, 50) : undefined,
           buttonText: provider.buttonText ? truncateString(provider.buttonText, 100) : undefined,
           startUrl: provider.startUrl,

@@ -15,6 +15,7 @@ import { SIGNATURE_ALGORITHMS, DIGEST_ALGORITHMS, CANONICALIZATION_ALGORITHMS } 
 import { parseXml, serializeXml } from './xml-utils';
 import type { XMLNode, XMLElement, SignedXmlWithErrors } from './types';
 import { NodeType, isElementNode } from './types';
+import { extractSubjectPublicKeyInfo } from './x509';
 
 // =============================================================================
 // Helper Functions
@@ -65,8 +66,10 @@ export interface SignOptions {
   certificate: string;
   /** XPath to the element to be signed (reference URI) */
   referenceUri: string;
-  /** Signature location - 'prepend' or 'append' relative to signed element */
-  signatureLocation?: 'prepend' | 'append';
+  /** Signature location relative to the insertion XPath */
+  signatureLocation?: 'prepend' | 'append' | 'before' | 'after';
+  /** Optional XPath used only for placing the Signature element. */
+  signatureInsertionXPath?: string;
   /** Include KeyInfo with certificate */
   includeKeyInfo?: boolean;
 }
@@ -129,6 +132,7 @@ export function signXml(xml: string, options: SignOptions): string {
     certificate,
     referenceUri,
     signatureLocation = 'prepend',
+    signatureInsertionXPath,
     includeKeyInfo = true,
   } = options;
   const referenceXPath = resolveSignatureReferenceXPath(referenceUri);
@@ -158,8 +162,8 @@ export function signXml(xml: string, options: SignOptions): string {
   // Compute signature
   sig.computeSignature(xml, {
     location: {
-      reference: referenceXPath,
-      action: signatureLocation === 'prepend' ? 'prepend' : 'append',
+      reference: signatureInsertionXPath ?? referenceXPath,
+      action: signatureLocation,
     },
   });
 
@@ -527,88 +531,6 @@ async function importPrivateKeyPem(pem: string): Promise<CryptoKey> {
     false,
     ['sign']
   );
-}
-
-/**
- * Simple ASN.1 DER parser for extracting SubjectPublicKeyInfo from X.509 certificates
- */
-interface Asn1Element {
-  tag: number;
-  length: number;
-  data: Uint8Array;
-  offset: number;
-  headerLength: number;
-}
-
-function parseAsn1Element(data: Uint8Array, offset: number): Asn1Element {
-  const tag = data[offset];
-  let length = data[offset + 1];
-  let headerLength = 2;
-
-  if (length > 127) {
-    // Long form length
-    const numLengthBytes = length & 0x7f;
-    length = 0;
-    for (let i = 0; i < numLengthBytes; i++) {
-      length = (length << 8) | data[offset + 2 + i];
-    }
-    headerLength = 2 + numLengthBytes;
-  }
-
-  return {
-    tag,
-    length,
-    data: data.subarray(offset + headerLength, offset + headerLength + length),
-    offset,
-    headerLength,
-  };
-}
-
-function extractSubjectPublicKeyInfo(certDer: Uint8Array): Uint8Array {
-  // X.509 Certificate structure:
-  // SEQUENCE {
-  //   tbsCertificate SEQUENCE { ... subjectPublicKeyInfo SEQUENCE ... }
-  //   signatureAlgorithm SEQUENCE
-  //   signatureValue BIT STRING
-  // }
-
-  // Parse outer SEQUENCE (certificate)
-  const certSeq = parseAsn1Element(certDer, 0);
-  if (certSeq.tag !== 0x30) throw new Error('Invalid certificate: expected SEQUENCE');
-
-  // Parse TBSCertificate SEQUENCE
-  const tbsSeq = parseAsn1Element(certSeq.data, 0);
-  if (tbsSeq.tag !== 0x30) throw new Error('Invalid TBSCertificate: expected SEQUENCE');
-
-  // Navigate through TBSCertificate to find SubjectPublicKeyInfo
-  // Fields: version?, serialNumber, signature, issuer, validity, subject, subjectPublicKeyInfo
-  let pos = 0;
-  let fieldIndex = 0;
-
-  while (pos < tbsSeq.data.length && fieldIndex < 7) {
-    const element = parseAsn1Element(tbsSeq.data, pos);
-
-    // Handle optional version field [0] EXPLICIT
-    if (fieldIndex === 0 && element.tag === 0xa0) {
-      // Version is explicit tag [0], skip it but count it as field 0
-      pos += element.headerLength + element.length;
-      fieldIndex++;
-      continue;
-    }
-
-    if (fieldIndex === 6) {
-      // This is SubjectPublicKeyInfo
-      // Return the raw DER bytes for this SEQUENCE
-      const start = pos;
-      const end = pos + element.headerLength + element.length;
-      return tbsSeq.data.subarray(start, end);
-    }
-
-    pos += element.headerLength + element.length;
-    fieldIndex++;
-  }
-
-  throw new Error('SubjectPublicKeyInfo not found in certificate');
 }
 
 /**

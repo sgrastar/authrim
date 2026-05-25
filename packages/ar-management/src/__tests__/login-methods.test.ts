@@ -75,6 +75,7 @@ interface MockExternalIdpOptions {
     providerType?: string;
     enabled?: boolean;
     iconUrl?: string;
+    iconName?: string;
     buttonColor?: string;
     buttonText?: string;
   }>;
@@ -249,7 +250,14 @@ describe('Login Methods API', () => {
     it('should return external login providers when EXTERNAL_IDP is available', async () => {
       const externalIdp = createMockExternalIdp({
         providers: [
-          { id: 'ggl-123', name: 'Google', slug: 'google', providerType: 'oidc', enabled: true },
+          {
+            id: 'ggl-123',
+            name: 'Google',
+            slug: 'google',
+            providerType: 'oidc',
+            enabled: true,
+            iconName: 'globe',
+          },
           { id: 'ghb-456', name: 'GitHub', slug: 'github', providerType: 'oauth2', enabled: true },
         ],
       });
@@ -266,6 +274,7 @@ describe('Login Methods API', () => {
         type: 'oidc',
         startMode: 'oauth_redirect',
         startUrl: '/api/external/google/start',
+        iconName: 'globe',
       });
       expect(body.methods.external.providers[1]).toMatchObject({
         id: 'github',
@@ -280,7 +289,10 @@ describe('Login Methods API', () => {
           {
             id: 'saml-idp-1',
             name: 'Campus SAML',
-            config_json: JSON.stringify({ logoUrl: 'https://campus.example/logo.png' }),
+            config_json: JSON.stringify({
+              logoUrl: 'https://campus.example/logo.png',
+              iconName: 'graduation-cap',
+            }),
           },
         ]),
       });
@@ -297,6 +309,7 @@ describe('Login Methods API', () => {
           type: 'saml',
           startMode: 'saml_sp',
           iconUrl: 'https://campus.example/logo.png',
+          iconName: 'graduation-cap',
           startUrl: '/saml/sp/login?idp=saml-idp-1',
         })
       );
@@ -312,6 +325,7 @@ describe('Login Methods API', () => {
               type: 'vc',
               startMode: 'direct',
               startUrl: '/vp/login',
+              iconName: 'none',
               enabled: true,
             },
           ],
@@ -330,6 +344,7 @@ describe('Login Methods API', () => {
           type: 'vc',
           startMode: 'direct',
           startUrl: '/vp/login',
+          iconName: 'none',
         })
       );
     });

@@ -145,6 +145,11 @@ function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): b
     return false;
   }
 
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (env.NAKED_DOMAIN_AS_ISSUER === 'true' && baseDomain && requestHost === baseDomain) {
+    return false;
+  }
+
   return [getConfiguredUrlHostname(env.ADMIN_UI_URL), getConfiguredUrlHostname(env.UI_URL)].some(
     (hostname) => hostname === requestHost
   );

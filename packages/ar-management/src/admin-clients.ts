@@ -38,7 +38,7 @@ import {
 } from './admin-shared';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
-type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
+type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
 type AdminBrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 type AdminClientChannel = 'browser' | 'native' | 'server';
 
@@ -52,7 +52,6 @@ const VALID_APPLICATION_TYPES = new Set<AdminClientApplicationType>([
 const VALID_BROWSER_PUBLIC_CLIENT_MODES = new Set<AdminBrowserPublicClientMode>([
   'strict',
   'cookie_fallback',
-  'legacy',
 ]);
 const VALID_BROWSER_REFRESH_TOKEN_POLICIES = new Set<AdminBrowserRefreshTokenPolicy>([
   'disabled',

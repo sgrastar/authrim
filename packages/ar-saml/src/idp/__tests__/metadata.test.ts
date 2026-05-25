@@ -25,7 +25,7 @@ describe('IdP metadata', () => {
     expect(firstXml).toBe(secondXml);
     expect(getAttribute(entityDescriptor!, 'ID')).toMatch(/^_authrim_saml_idp_[a-z0-9]+$/);
     expect(getAttribute(entityDescriptor!, 'cacheDuration')).toBe('PT24H');
-    expect(getAttribute(entityDescriptor!, 'validUntil')).toBe('');
+    expect(getAttribute(entityDescriptor!, 'validUntil')).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00Z$/);
   });
 
   it('publishes active, next, and backup signing certificates when provided', () => {
@@ -88,6 +88,40 @@ describe('IdP metadata', () => {
     expect(locations).toEqual([
       'https://idp.example.com/saml/idp/slo',
       'https://idp.example.com/saml/idp/slo',
+    ]);
+  });
+
+  it('orders IDPSSODescriptor children according to SAML metadata schema', () => {
+    const xml = buildIdPMetadata({
+      entityId: 'https://idp.example.com/saml/idp',
+      issuerUrl: 'https://idp.example.com',
+      signingCertificates: [
+        {
+          slot: 'active',
+          keyRef: 'tenant:tenant-a:saml:idp:signing',
+          certificate: '-----BEGIN CERTIFICATE-----\nACTIVECERT\n-----END CERTIFICATE-----',
+        },
+      ],
+    });
+
+    const doc = parseXml(xml);
+    const descriptor = findElement(doc, SAML_NAMESPACES.MD, 'IDPSSODescriptor')!;
+    const childNames = Array.from(
+      descriptor.childNodes as ArrayLike<{ nodeType: number; localName: string }>
+    )
+      .filter((node) => node.nodeType === 1)
+      .map((node) => node.localName);
+
+    expect(childNames).toEqual([
+      'KeyDescriptor',
+      'SingleLogoutService',
+      'SingleLogoutService',
+      'NameIDFormat',
+      'NameIDFormat',
+      'NameIDFormat',
+      'NameIDFormat',
+      'SingleSignOnService',
+      'SingleSignOnService',
     ]);
   });
 });

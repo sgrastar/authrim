@@ -6,7 +6,9 @@ import {
   type LogPlane,
   type LogType,
 } from '@authrim/ar-lib-logging';
+import { buildArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
 import type { WriteLogChunkResult } from '@authrim/ar-lib-logging/chunks';
+import type { LogChunkEncryptionOptions } from '@authrim/ar-lib-logging/chunks';
 import {
   SqlLoggingDeliveryEventStore,
   type LoggingDeliveryLane,
@@ -34,6 +36,8 @@ export interface RuntimeLogEmitterEnv {
   LOGGING_DELIVERY_QUEUE?: Queue<unknown>;
   LOGGING_DELIVERY_BULK_QUEUE?: Queue<unknown>;
   LOGGING_TENANT_KEY_SALT?: string;
+  OBJECT_ENCRYPTION_ROOT_KEY?: string;
+  OBJECT_ENCRYPTION_KEY_VERSION?: string;
 }
 
 export interface RuntimeLogRecord {
@@ -50,6 +54,71 @@ export interface RuntimeLogRecord {
 }
 
 type RuntimeLogSeverity = NonNullable<RuntimeLogRecord['severity']>;
+
+function hexToBytes(hex: string): Uint8Array {
+  const normalized = hex.trim();
+  if (!/^[0-9a-fA-F]{64}$/u.test(normalized)) {
+    throw new Error('object_encryption_root_key_must_be_32_bytes_hex');
+  }
+  const bytes = new Uint8Array(normalized.length / 2);
+  for (let index = 0; index < normalized.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(normalized.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+async function deriveRuntimeLogChunkEncryptionKey(input: {
+  rootKeyHex: string;
+  tenantKey: string;
+  logType: LogType;
+  plane: LogPlane;
+  keyVersion: number;
+}): Promise<Uint8Array> {
+  const material = await crypto.subtle.importKey(
+    'raw',
+    hexToBytes(input.rootKeyHex),
+    'HKDF',
+    false,
+    ['deriveBits']
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
+      info: new TextEncoder().encode(
+        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
+      ),
+    },
+    material,
+    256
+  );
+  return new Uint8Array(bits);
+}
+
+async function resolveRuntimeLogChunkEncryption(input: {
+  env: RuntimeLogEmitterEnv;
+  tenantKey: string;
+  logType: LogType;
+  plane: LogPlane;
+}): Promise<LogChunkEncryptionOptions> {
+  if (!input.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    throw new Error('runtime_log_chunk_encryption_root_key_unavailable');
+  }
+  const keyVersion = Number.parseInt(input.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
+  const normalizedKeyVersion = Number.isFinite(keyVersion) && keyVersion > 0 ? keyVersion : 1;
+  return {
+    keyBytes: await deriveRuntimeLogChunkEncryptionKey({
+      rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
+      tenantKey: input.tenantKey,
+      logType: input.logType,
+      plane: input.plane,
+      keyVersion: normalizedKeyVersion,
+    }),
+    encryptionScope: `tenant:${input.tenantKey}:${input.logType}:${input.plane}`,
+    keyVersion: normalizedKeyVersion,
+  };
+}
 
 export interface RuntimeLogEmitInput {
   env: RuntimeLogEmitterEnv;
@@ -137,7 +206,7 @@ function getBucketBinding(env: RuntimeLogEmitterEnv, bindingRef: string): R2Buck
 }
 
 function getDefaultDeliveryPayloadBucket(env: RuntimeLogEmitterEnv): R2Bucket | null {
-  return env.AUDIT_ARCHIVE ?? env.DIAGNOSTIC_LOGS ?? null;
+  return env.AUDIT_ARCHIVE ?? null;
 }
 
 function cleanR2ObjectKeySegment(value: string): string {
@@ -199,28 +268,29 @@ function canonicalRecord(input: {
       stringField(input.record.indexedFields, 'severity') ??
       input.record.payload.severity
   );
-  return {
+  return buildArchiveLogRecordV1({
     id: input.record.id,
     type: input.record.type ?? inferRuntimeLogType(input.logType, input.surface, input.record),
     source: input.record.source ?? `authrim/${input.surface}`,
-    tenantId: input.tenantId,
-    time: new Date(input.record.eventAt).toISOString(),
+    tenantKey: input.tenantKey,
+    logType: input.logType,
+    plane: input.plane === 'external_sink' || input.plane === 'archive' ? input.plane : 'archive',
+    surface: input.surface,
+    eventAt: input.record.eventAt,
     severity,
-    schemaVersion: input.record.schemaVersion ?? '2026-05-19',
     subject: input.record.subject ?? inferRuntimeLogSubject(input.record),
     correlationId: input.record.correlationId ?? inferRuntimeLogCorrelationId(input.record),
-    data: input.record.payload,
-    authrim: {
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-      surface: input.surface,
-      delivery: {
-        targetType: input.target.type,
-        destinationId: input.target.destinationId,
-      },
+    summary: {
+      ...input.record.payload,
+      ...(input.record.schemaVersion
+        ? { producer_schema_version: input.record.schemaVersion }
+        : {}),
     },
-  };
+    delivery: {
+      targetType: input.target.type,
+      destinationId: input.target.destinationId,
+    },
+  });
 }
 
 function canonicalBatch(input: {
@@ -449,6 +519,12 @@ async function emitArchiveChunk(input: {
       }),
       indexedFields: record.indexedFields,
     })),
+    encryption: await resolveRuntimeLogChunkEncryption({
+      env: input.env,
+      tenantKey: input.tenantKey,
+      logType: input.logType,
+      plane: input.plane,
+    }),
   });
   const enqueueResult = await enqueueDeliveryPayload(input.env, {
     payload_type: 'delivery_fanout',

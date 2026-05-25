@@ -1,6 +1,22 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { KeyManager } from '../KeyManager.ts';
 import type { Env } from '../../types/env';
+
+vi.mock('../../utils/keys', () => ({
+  generateKeySet: async (kid: string) => ({
+    publicJWK: {
+      kty: 'RSA',
+      kid,
+      n: `mock-modulus-${kid}`,
+      e: 'AQAB',
+    },
+    privatePEM: [
+      '-----BEGIN PRIVATE KEY-----',
+      `mock-private-key-${kid}`,
+      '-----END PRIVATE KEY-----',
+    ].join('\n'),
+  }),
+}));
 
 /**
  * Mock implementation of DurableObjectState for testing
@@ -354,19 +370,41 @@ describe('KeyManager Durable Object', () => {
     });
 
     it('should exclude revoked keys from JWKS', async () => {
-      // Create and rotate keys
-      const rotate1 = createRequest('/rotate', 'POST', 'test-secret-token');
-      await keyManager.fetch(rotate1);
-
-      // Emergency rotate to revoke the first key
-      const emergencyRequest = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {
-        reason: 'Test key compromise scenario',
+      const seededState = new MockDurableObjectState();
+      const now = Date.now();
+      await seededState.storage.put('state', {
+        keys: [
+          {
+            kid: 'revoked-kid',
+            publicJWK: { kty: 'RSA', kid: 'revoked-kid', n: 'revoked-modulus', e: 'AQAB' },
+            privatePEM: 'revoked-private-key',
+            createdAt: now - 1000,
+            status: 'revoked',
+            revokedAt: now,
+            revokedReason: 'Test key compromise scenario',
+          },
+          {
+            kid: 'active-kid',
+            publicJWK: { kty: 'RSA', kid: 'active-kid', n: 'active-modulus', e: 'AQAB' },
+            privatePEM: 'active-private-key',
+            createdAt: now,
+            status: 'active',
+          },
+        ],
+        activeKeyId: 'active-kid',
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: now,
+        secrets: {},
       });
-      await keyManager.fetch(emergencyRequest);
+      const seededKeyManager = new KeyManager(seededState as unknown as DurableObjectState, env);
+      await Promise.resolve();
 
       // Get JWKS
       const jwksRequest = createRequest('/jwks', 'GET');
-      const jwksResponse = await keyManager.fetch(jwksRequest);
+      const jwksResponse = await seededKeyManager.fetch(jwksRequest);
       const jwksData = (await jwksResponse.json()) as Record<string, unknown>;
 
       // Should only have the new active key, not the revoked one
@@ -374,7 +412,7 @@ describe('KeyManager Durable Object', () => {
 
       // Get status to verify revoked key exists but not in JWKS
       const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
-      const statusResponse = await keyManager.fetch(statusRequest);
+      const statusResponse = await seededKeyManager.fetch(statusRequest);
       const statusData = (await statusResponse.json()) as Record<string, unknown>;
 
       // Should have 2 keys in status (one revoked, one active)

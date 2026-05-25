@@ -8,7 +8,6 @@ export type DestinationKind =
 export type DestinationProvider =
   | 'r2'
   | 'aws_s3'
-  | 'sftp'
   | 'http'
   | 'logpush'
   | 'analytics_engine'
@@ -85,13 +84,6 @@ export const DESTINATION_PROVIDER_SCHEMAS: Record<DestinationProvider, Destinati
       requiredFields: ['bucket', 'region'],
       optionalFields: ['prefix', 'endpoint', 'forcePathStyle'],
       defaultCapabilities: ['archive_write', 'sensitive_detail_write', 'dlq_replay_payload_write'],
-    },
-    sftp: {
-      provider: 'sftp',
-      destinationKind: 'object_storage',
-      requiredFields: ['host', 'path'],
-      optionalFields: ['port', 'username', 'knownHostFingerprint'],
-      defaultCapabilities: ['archive_write', 'export_artifact_write'],
     },
     http: {
       provider: 'http',

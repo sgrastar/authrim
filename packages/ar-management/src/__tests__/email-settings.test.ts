@@ -47,6 +47,18 @@ function createMockContext(options: {
       SETTINGS: options.settingsKv,
       AUTHRIM_CONFIG: options.configKv,
     } as unknown as Env,
+    get: vi.fn((key: string) => {
+      if (key === 'adminAuth') {
+        return {
+          userId: 'admin-1',
+          authMethod: 'session',
+          roles: ['admin'],
+          tenantId: 'tenant-a',
+          tenantScope: ['tenant-a'],
+        };
+      }
+      return undefined;
+    }),
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
   } as never;
 }

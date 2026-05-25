@@ -13,7 +13,11 @@ export interface SAMLPostBindingResponseOptions {
 
 export function buildSAMLPostBindingResponse(options: SAMLPostBindingResponseOptions): Response {
   const nonce = crypto.randomUUID().replace(/-/g, '');
-  const formActionOrigin = new URL(options.actionUrl).origin;
+  const actionUrl = new URL(options.actionUrl);
+  const formActionSources = [
+    `${actionUrl.protocol}//${actionUrl.host}`,
+    `${actionUrl.protocol}//${actionUrl.host}/`,
+  ].join(' ');
   const fieldsHtml = options.fields
     .map(
       (field) =>
@@ -57,7 +61,7 @@ export function buildSAMLPostBindingResponse(options: SAMLPostBindingResponseOpt
         "style-src 'none'",
         "img-src 'none'",
         "connect-src 'none'",
-        `form-action ${formActionOrigin}`,
+        `form-action ${formActionSources}`,
         "base-uri 'none'",
         "frame-ancestors 'none'",
       ].join('; '),

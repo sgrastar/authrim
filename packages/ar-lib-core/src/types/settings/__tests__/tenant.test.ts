@@ -25,7 +25,6 @@ describe('TENANT_SETTINGS_META', () => {
     expect(TENANT_SETTINGS_META['tenant.browser_public_client_mode'].enum).toEqual([
       'strict',
       'cookie_fallback',
-      'legacy',
     ]);
     expect(TENANT_DEFAULTS['tenant.browser_public_client_mode']).toBe('cookie_fallback');
   });

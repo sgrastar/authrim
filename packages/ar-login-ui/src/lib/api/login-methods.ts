@@ -32,6 +32,7 @@ export interface ExternalProvider {
 	startMode: ExternalProviderStartMode;
 	slug?: string;
 	iconUrl?: string;
+	iconName?: string;
 	buttonColor?: string;
 	buttonColorDark?: string;
 	buttonText?: string;

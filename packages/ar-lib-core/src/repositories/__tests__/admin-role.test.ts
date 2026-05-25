@@ -281,7 +281,7 @@ describe('AdminRoleRepository', () => {
   });
 
   describe('getSystemRoles', () => {
-    it('should get only system roles', async () => {
+    it('should get only canonical default system roles', async () => {
       adapter.seed('admin_roles', [systemRole, builtinRole, customRole]);
 
       const roles = await repo.getSystemRoles();
@@ -289,6 +289,22 @@ describe('AdminRoleRepository', () => {
       expect(roles.length).toBe(1);
       expect(roles[0].is_system).toBe(true);
       expect(roles[0].name).toBe('super_admin');
+    });
+
+    it('should ignore legacy tenant-scoped system role copies', async () => {
+      adapter.seed('admin_roles', [
+        systemRole,
+        {
+          ...systemRole,
+          id: 'role-system-super-first',
+          tenant_id: 'first',
+        },
+      ]);
+
+      const roles = await repo.getSystemRoles();
+
+      expect(roles).toHaveLength(1);
+      expect(roles[0].id).toBe('role-system-super');
     });
 
     it('should return empty array if no system roles', async () => {

@@ -20,8 +20,24 @@ describe('buildSAMLPostBindingResponse', () => {
     expect(csp).not.toContain("'unsafe-inline'");
     expect(csp).toContain("img-src 'none'");
     expect(csp).toContain("connect-src 'none'");
-    expect(csp).toContain('form-action https://sp.example.com');
+    expect(csp).toContain('form-action https://sp.example.com https://sp.example.com/');
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
+  it('allows query-only ACS URLs with pathless and slash origin form-action sources', async () => {
+    const response = buildSAMLPostBindingResponse({
+      title: 'SAML SSO',
+      actionUrl: 'https://samlsp.com/?acs',
+      fields: [{ name: 'SAMLResponse', value: 'response' }],
+      buttonText: 'Continue',
+    });
+
+    const html = await response.text();
+    const csp = response.headers.get('content-security-policy') ?? '';
+
+    expect(html).toContain('action="https://samlsp.com/?acs"');
+    expect(csp).toContain('form-action https://samlsp.com https://samlsp.com/');
+    expect(csp).not.toContain('form-action https://samlsp.com?acs');
   });
 });

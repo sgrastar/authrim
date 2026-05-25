@@ -246,13 +246,13 @@ export class AdminRoleRepository extends BaseRepository<AdminRoleEntity> {
   }
 
   /**
-   * Get system roles (available for all tenants)
+   * Get canonical system roles (available for all tenants)
    *
    * @returns List of system roles
    */
   async getSystemRoles(): Promise<AdminRole[]> {
     const rows = await this.adapter.query<Record<string, unknown>>(
-      'SELECT * FROM admin_roles WHERE is_system = 1 ORDER BY hierarchy_level DESC',
+      "SELECT * FROM admin_roles WHERE tenant_id = 'default' AND is_system = 1 ORDER BY hierarchy_level DESC",
       []
     );
     return rows.map((row) => this.rowToRole(row));
@@ -595,6 +595,7 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
     let sql = `
       SELECT
         ra.*,
+        r.tenant_id as role_tenant_id,
         r.name as role_name,
         r.display_name as role_display_name,
         r.description as role_description,
@@ -640,7 +641,7 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
         created_at: row.created_at as number,
         role: {
           id: row.admin_role_id as string,
-          tenant_id: row.tenant_id as string,
+          tenant_id: row.role_tenant_id as string,
           name: row.role_name as string,
           display_name: row.role_display_name as string | null,
           description: row.role_description as string | null,

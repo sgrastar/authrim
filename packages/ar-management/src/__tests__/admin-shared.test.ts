@@ -357,7 +357,6 @@ describe('admin-shared audit detail externalization', () => {
       after: { email: 'new-admin@example.com' },
     });
 
-    expect(dbState.objectCatalog).toHaveLength(0);
     expect(dbState.objectCatalogObjects).toHaveLength(0);
     expect(dbState.sensitiveDetailChunkIndex).toHaveLength(0);
     expect(dbState.adminAuditLogs).toHaveLength(1);
@@ -372,6 +371,71 @@ describe('admin-shared audit detail externalization', () => {
       admin_actor_id: 'admin-1',
       admin_auth_method: 'session',
     });
+  });
+
+  it('keeps the admin audit row when sensitive-detail externalization fails', async () => {
+    const { c, objectStore } = createMockContext({
+      LOGGING_DELIVERY_CRITICAL_QUEUE: undefined,
+    });
+    vi.mocked(objectStore.bucket.put).mockRejectedValueOnce(new Error('r2_unavailable'));
+
+    await writeAdminAuditLog(c, {
+      action: 'admin.user.created',
+      resourceType: 'admin_user',
+      resourceId: 'admin-3',
+      result: 'success',
+      metadata: { ticket: 'CASE-999' },
+      after: { email: 'fallback-admin@example.com' },
+    });
+
+    expect(dbState.objectCatalogObjects).toHaveLength(0);
+    expect(dbState.sensitiveDetailChunkIndex).toHaveLength(0);
+    expect(dbState.adminAuditLogs).toHaveLength(1);
+
+    const logRow = dbState.adminAuditLogs[0];
+    expect(logRow.detail_object_catalog_id).toBeNull();
+    expect(logRow.before_json).toBeNull();
+    expect(logRow.after_json).toBe(JSON.stringify({ email: 'fallback-admin@example.com' }));
+    expect(JSON.parse(logRow.metadata_json as string)).toEqual({
+      ticket: 'CASE-999',
+      admin_actor_type: 'admin_user',
+      admin_actor_id: 'admin-1',
+      admin_auth_method: 'session',
+    });
+  });
+
+  it('emits admin audit D-format archive chunks to AUDIT_ARCHIVE when standard archive storage is configured', async () => {
+    const archiveStore = createMockBucket();
+    const { c, loggingQueue } = createMockContext({
+      AUDIT_ARCHIVE: archiveStore.bucket,
+      SENSITIVE_DETAILS: undefined,
+    });
+
+    const auditLogId = await writeAdminAuditLog(c, {
+      action: 'admin.user.disabled',
+      resourceType: 'admin_user',
+      resourceId: 'admin-4',
+      result: 'success',
+      metadata: { ticket: 'CASE-ARCHIVE' },
+    });
+
+    expect(auditLogId).toBeTruthy();
+    expect(archiveStore.store.size).toBe(1);
+    const [objectKey, object] = [...archiveStore.store.entries()][0];
+    expect(objectKey).toMatch(
+      /^logs\/v1\/[^/]+\/archive\/admin_audit\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/shard-\d{2}\/chk_[^/]+\.jsonl\.gz$/
+    );
+    expect(object.contentType).toBe('application/authrim.log-chunk+encrypted');
+    expect(object.body.byteLength).toBeGreaterThan(0);
+    expect(loggingQueue.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload_type: 'delivery_fanout',
+        destination_id: 'platform_default_r2_archive',
+        log_type: 'admin_audit',
+        plane: 'archive',
+        record_count: 1,
+      })
+    );
   });
 
   it('records request id and Admin UI BFF metadata on admin audit rows', async () => {

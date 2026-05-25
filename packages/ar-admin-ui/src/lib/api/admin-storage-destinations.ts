@@ -3,7 +3,7 @@ import { adminFetch } from '$lib/api/admin-request';
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 export type ResourceScopeType = 'tenant' | 'platform';
-export type StorageDestinationProvider = 'r2' | 'aws_s3' | 'sftp' | 'custom';
+export type StorageDestinationProvider = 'r2' | 'aws_s3' | 'custom';
 export type ResourceStatus = 'active' | 'disabled';
 
 export interface StorageDestination {
@@ -15,6 +15,8 @@ export interface StorageDestination {
 	description: string | null;
 	provider: StorageDestinationProvider;
 	config: Record<string, unknown>;
+	managed_by?: 'setup' | 'admin';
+	read_only?: boolean;
 	has_credential: boolean;
 	credential_key_version: number | null;
 	credential_updated_at: number | null;

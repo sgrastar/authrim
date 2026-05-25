@@ -1,6 +1,9 @@
 const TENANT_INVENTORY_PATH =
   /^\/api\/admin\/tenants(?:\/([^/]+)(?:\/(info|runtime-profiles|set-default|clone|invitations(?:\/[^/]+)?))?)?\/?$/;
-const TENANT_SCOPED_PATH_TENANT_ID = /^\/api\/admin\/tenants\/([^/]+)\/(settings|audit)(?:\/.*)?$/;
+const TENANT_SCOPED_PATH_TENANT_ID_PATTERNS = [
+  /^\/api\/admin\/tenants\/([^/]+)\/(settings|audit|email-settings|clients)(?:\/.*)?$/,
+  /^\/api\/admin\/settings\/logging\/tenant\/([^/]+)(?:\/.*)?$/,
+] as const;
 const SETTINGS_METADATA_PATH =
   /^\/api\/admin\/settings\/(?:schema|diff|validate|meta(?:\/.*)?)\/?$/;
 const SETTINGS_PLATFORM_PATH =
@@ -83,6 +86,12 @@ export function isValidTenantIdentifier(value: string): boolean {
 }
 
 export function extractTenantScopedPathTenantId(path?: string | null): string | null {
-  const match = (path || '').match(TENANT_SCOPED_PATH_TENANT_ID);
-  return match?.[1] ?? null;
+  const normalizedPath = path || '';
+  for (const pattern of TENANT_SCOPED_PATH_TENANT_ID_PATTERNS) {
+    const match = normalizedPath.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
 }

@@ -39,7 +39,7 @@ export const ADMIN_JOB_TYPE_REGISTRY = {
     supportedResultDelivery: ['inline'],
     createEndpoint: '/api/admin/jobs/tenant-databases/provision',
     notes:
-      'Generates tenant D1 binding/config changes and can execute Cloudflare API provisioning when explicitly requested.',
+      'Generates tenant D1 binding/config plans for setup-tool or operator execution. Cloudflare resource mutation is not executed from Admin UI jobs.',
   },
   'tenant-database/activate-batch': {
     jobType: 'tenant-database/activate-batch',

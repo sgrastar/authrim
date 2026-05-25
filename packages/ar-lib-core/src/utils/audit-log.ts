@@ -142,7 +142,7 @@ function getUnifiedAuditService(env: Env): IAuditService {
   const service = createAuditService({
     coreSource: sources.coreSource,
     piiSource: sources.piiSource,
-    r2Bucket: env.DIAGNOSTIC_LOGS ?? createNoopAuditBucket(),
+    r2Bucket: env.AUDIT_ARCHIVE ?? createNoopAuditBucket(),
     sensitiveDetailBucket: env.SENSITIVE_DETAILS,
     objectEncryptionRootKey: env.OBJECT_ENCRYPTION_ROOT_KEY,
     objectEncryptionKeyVersion: Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
@@ -618,7 +618,7 @@ function targetFromLoggingDestination(
       bucketRef:
         snapshotString(config.bindingRef) ??
         snapshotString(config.bucketRef) ??
-        (plane === 'archive' ? 'DIAGNOSTIC_LOGS' : 'SENSITIVE_DETAILS'),
+        (plane === 'archive' ? 'AUDIT_ARCHIVE' : 'SENSITIVE_DETAILS'),
       prefix: snapshotString(config.prefix) ?? undefined,
     };
   }

@@ -7,12 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  AR_ERROR_CODES,
-  buildIssuerUrl,
-  getLogger,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import {
   SAML_NAMESPACES,
   BINDING_URIS,
@@ -31,12 +26,12 @@ import {
 } from '../common/xml-utils';
 import {
   getSAMLMetadataSigningCertificates,
-  getSAMLSigningPolicy,
   type SAMLMetadataSigningCertificate,
 } from '../common/saml-signing-keys';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLMetadataResponse,
+  buildSAMLMetadataValidUntil,
   buildStableSAMLMetadataDescriptorId,
   SAML_METADATA_CACHE_DURATION,
 } from '../common/metadata-cache';
@@ -45,6 +40,7 @@ import {
   shouldSignSAMLMetadata,
   signSAMLMetadata,
 } from '../common/metadata-signing';
+import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../common/entity-id';
 
 /**
  * Handle IdP metadata request
@@ -54,8 +50,10 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  const issuerUrl = buildIssuerUrl(env, tenantId);
-  const entityId = `${issuerUrl}/saml/idp`;
+  const [{ issuerUrl, idpEntityId: entityId }, settings] = await Promise.all([
+    getSAMLLocalEntityIds(env, tenantId),
+    getSAMLPublicSettings(env, tenantId),
+  ]);
 
   // Get signing certificates from KeyManager / SAML rollover policy.
   let signingCertificates: SAMLMetadataSigningCertificate[];
@@ -63,6 +61,8 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
     signingCertificates = await getSAMLMetadataSigningCertificates(env, {
       tenantId,
       role: 'idp',
+      policy: settings.signingKeyPolicies.idp,
+      certificateSubject: settings.certificateSubject,
     });
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
@@ -81,7 +81,8 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
       const signingMaterial = await getSAMLMetadataSigningMaterial(env, {
         tenantId,
         role: 'idp',
-        policy: getSAMLSigningPolicy(),
+        policy: settings.signingKeyPolicies.idp,
+        certificateSubject: settings.certificateSubject,
       });
       metadataXml = signSAMLMetadata(metadataXml, signingMaterial);
     } catch (error) {
@@ -102,6 +103,7 @@ export interface IdPMetadataOptions {
   entityId: string;
   issuerUrl: string;
   signingCertificates: SAMLMetadataSigningCertificate[];
+  validUntil?: string;
 }
 
 /**
@@ -117,6 +119,7 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
   setAttribute(entityDescriptor, 'entityID', entityId);
   setAttribute(entityDescriptor, 'ID', buildStableSAMLMetadataDescriptorId('idp', entityId));
   setAttribute(entityDescriptor, 'cacheDuration', SAML_METADATA_CACHE_DURATION);
+  setAttribute(entityDescriptor, 'validUntil', options.validUntil ?? buildSAMLMetadataValidUntil());
 
   // Add namespace declarations
   addNamespaceDeclarations(entityDescriptor, {
@@ -137,6 +140,18 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
   for (const signingCertificate of signingCertificates) {
     appendChild(idpSsoDescriptor, buildSigningKeyDescriptor(doc, signingCertificate));
   }
+
+  // Add SingleLogoutService endpoints. In the SAML metadata schema this belongs to
+  // SSODescriptorType and must appear before NameIDFormat.
+  const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+  setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
+  setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
+  appendChild(idpSsoDescriptor, sloPost);
+
+  const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+  setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
+  setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
+  appendChild(idpSsoDescriptor, sloRedirect);
 
   // Add NameIDFormat elements
   const supportedFormats = [
@@ -165,20 +180,6 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
   setAttribute(ssoRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
   setAttribute(ssoRedirect, 'Location', `${issuerUrl}/saml/idp/sso`);
   appendChild(idpSsoDescriptor, ssoRedirect);
-
-  // Add SingleLogoutService endpoints
-
-  // HTTP-POST Binding for SLO
-  const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
-  setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloPost);
-
-  // HTTP-Redirect Binding for SLO
-  const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
-  setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloRedirect);
 
   appendChild(entityDescriptor, idpSsoDescriptor);
 

@@ -34,10 +34,43 @@ export interface SAMLSigningKeyReference {
 }
 
 export interface SAMLSigningKeyPolicy {
+	scope?: 'tenant_role' | 'provider';
 	metadataCertificatePublication?: 'active_only' | 'active_next' | 'active_next_backup';
 	active?: SAMLSigningKeyReference;
 	next?: SAMLSigningKeyReference;
 	backup?: SAMLSigningKeyReference;
+}
+
+export interface SAMLSigningCertificateSubject {
+	countryName: string;
+	stateOrProvinceName: string;
+	localityName: string;
+	organizationName: string;
+	organizationalUnitName: string;
+	commonName: string;
+}
+
+export interface SAMLCertificateValidationStatus {
+	validFrom?: string;
+	validTo?: string;
+	expired: boolean;
+	notYetValid: boolean;
+	signatureAlgorithm?: string;
+	publicKeyAlgorithm?: string;
+	publicKeySizeBits?: number;
+	fingerprintSha1?: string;
+	fingerprintSha256?: string;
+	warnings: string[];
+}
+
+export interface SAMLCertificateValidationSummary {
+	checkedAt: number;
+	certificates: SAMLCertificateValidationStatus[];
+	validUntil?: string;
+	allExpired: boolean;
+	hasExpired: boolean;
+	hasWeakSignature: boolean;
+	warnings: string[];
 }
 
 export interface SAMLRequestedAttribute {
@@ -53,9 +86,11 @@ export interface SAMLAttributeReleaseRule {
 	name: string;
 	friendlyName?: string;
 	nameFormat?: string;
+	valueType?: string;
 	source?: string;
 	claim?: string;
 	computed?: string;
+	value?: string | string[];
 	required?: boolean;
 }
 
@@ -63,6 +98,7 @@ export interface SAMLProviderConfig {
 	description?: string;
 	providerName?: string;
 	logoUrl?: string;
+	iconName?: string;
 	entityId?: string;
 	metadataUrl?: string;
 	metadataXml?: string;
@@ -74,6 +110,7 @@ export interface SAMLProviderConfig {
 	signingKeyPolicy?: SAMLSigningKeyPolicy;
 	samlProfile?: string;
 	authnRequestSignaturePolicy?: 'required' | 'optional' | 'disabled';
+	logoutRequestSignaturePolicy?: 'required' | 'optional' | 'disabled';
 	authnContextPolicy?: {
 		mode: 'observe' | 'require_any';
 		allowedClassRefs?: string[];
@@ -87,6 +124,7 @@ export interface SAMLProviderConfig {
 	sloUrl?: string;
 	certificate?: string;
 	certificates?: string[];
+	certificateValidation?: SAMLCertificateValidationSummary;
 	nameIdFormat?: string;
 	attributeMapping?: Record<string, string>;
 	attributeReleasePolicy?: {
@@ -114,6 +152,41 @@ export interface SAMLProvider {
 	enabled: boolean;
 	createdAt: string;
 	updatedAt: string;
+}
+
+export type SAMLEntityIdStyle = 'metadata_url' | 'role_url';
+export type SAMLInteractiveLoginUrlPolicy = 'tenant_host' | 'ui_base_url';
+
+export interface SAMLSettings {
+	tenantId: string;
+	entityIdStyle: SAMLEntityIdStyle;
+	interactiveLoginUrlPolicy: SAMLInteractiveLoginUrlPolicy;
+	certificateSubject?: SAMLSigningCertificateSubject;
+	signingKeyPolicies?: {
+		idp?: SAMLSigningKeyPolicy;
+		sp?: SAMLSigningKeyPolicy;
+	};
+	localSigning?: {
+		certificateSubject: SAMLSigningCertificateSubject;
+		idpSigningKeyPolicy: SAMLSigningKeyPolicy;
+		spSigningKeyPolicy: SAMLSigningKeyPolicy;
+	};
+	metadata: {
+		signingMode: 'disabled' | 'enabled';
+		signingEnabled: boolean;
+		validUntilEnabled: boolean;
+		idpValidUntil: string;
+		spValidUntil: string;
+		validityDays: number;
+		cacheDuration: string;
+	};
+	generated: {
+		issuerUrl: string;
+		idpEntityId: string;
+		spEntityId: string;
+		idpMetadataUrl: string;
+		spMetadataUrl: string;
+	};
 }
 
 export interface SAMLAttributePreset {
@@ -249,6 +322,23 @@ export interface SAMLFederationTrustProfileRequest {
 	enabled?: boolean;
 }
 
+export interface SAMLTrustCertificatePreview {
+	certificate: string;
+	source: 'url' | 'pem' | 'der';
+	subject: string;
+	issuer: string;
+	serialNumber: string;
+	version: string;
+	validFrom: string;
+	validTo: string;
+	signatureAlgorithm: string;
+	publicKeyAlgorithm: string;
+	publicKeySizeBits?: number;
+	fingerprintSha1: string;
+	fingerprintSha256: string;
+	warnings: string[];
+}
+
 export interface SAMLMetadataBatchStatus {
 	batchId: string;
 	tenantId: string;
@@ -280,6 +370,55 @@ async function handleAPIError(response: Response, fallbackMessage: string): Prom
 }
 
 export const adminSAMLAPI = {
+	async getSettings(): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to load SAML settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async updateSettings(request: {
+		entityIdStyle?: SAMLEntityIdStyle;
+		interactiveLoginUrlPolicy?: SAMLInteractiveLoginUrlPolicy;
+		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
+	}): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update SAML settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async updateLocalSigning(request: {
+		role: 'idp' | 'sp';
+		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup';
+		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
+		keepPreviousAsBackup?: boolean;
+	}): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings/local-signing`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update SAML local signing settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
 	async listProviders(): Promise<{ providers: SAMLProvider[] }> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers`, {
 			method: 'GET'
@@ -471,6 +610,26 @@ export const adminSAMLAPI = {
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to get aggregate import status');
+		}
+
+		return await response.json();
+	},
+
+	async previewTrustCertificate(request: {
+		certificateUrl?: string;
+		certificate?: string;
+	}): Promise<SAMLTrustCertificatePreview> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-metadata/certificate-preview`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to preview federation trust certificate');
 		}
 
 		return await response.json();

@@ -85,6 +85,8 @@ describe('generated api smoke helpers', () => {
         userinfo_endpoint: `${baseUrl}/userinfo`,
         jwks_uri: `${baseUrl}/.well-known/jwks.json`,
         registration_endpoint: `${baseUrl}/register`,
+        device_authorization_endpoint: `${baseUrl}/device_authorization`,
+        backchannel_authentication_endpoint: `${baseUrl}/bc-authorize`,
         response_types_supported: ['code'],
         grant_types_supported: ['authorization_code', 'refresh_token'],
       },

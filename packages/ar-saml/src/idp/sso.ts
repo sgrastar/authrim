@@ -65,6 +65,7 @@ import {
   UnsupportedSAMLResponseBindingError,
   validateSAMLResponseProtocolBinding,
 } from './response-destination';
+import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { applySAMLResponseSigningPolicy } from './signing';
 import { applySAMLAssertionEncryptionPolicy } from './encryption';
 import {
@@ -85,6 +86,8 @@ import {
 import { scheduleSAMLPolicyFailureAudit } from './audit';
 import { buildSAMLAssertionTiming } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
+import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { assertSAMLRelayStateSize } from '../common/relay-state';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -110,7 +113,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
   const method = c.req.method;
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
-  const issuerUrl = buildIssuerUrl(env, tenantId);
+  const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
   try {
     // Parse AuthnRequest based on binding
@@ -165,6 +168,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         const responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -220,6 +224,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         const responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -261,6 +266,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
       const responseXml = await generateSAMLProtocolErrorResponse(
         issuerUrl,
+        idpEntityId,
         env,
         authnRequest,
         spConfig,
@@ -303,14 +309,17 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
       if (uiConfig?.baseUrl) {
         const loginPath = uiConfig.paths?.login || '/login';
-        const loginUrl = new URL(loginPath, uiConfig.baseUrl);
+        const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
+        const loginBaseUrl =
+          loginUrlPolicy === 'tenant_host' ? buildIssuerUrl(env, tenantId) : uiConfig.baseUrl;
+        const loginUrl = new URL(loginPath, loginBaseUrl);
         loginUrl.searchParams.set('saml_request_id', authnRequest.id);
         loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
         loginUrl.searchParams.set('return_to', 'saml_sso');
         if (authnInteraction.forceReauthentication) {
           loginUrl.searchParams.set('force_authn', 'true');
         }
-        if (tenantId) {
+        if (loginUrlPolicy === 'ui_base_url' && tenantId) {
           loginUrl.searchParams.set('tenant_hint', tenantId);
         }
         return c.redirect(loginUrl.toString());
@@ -331,6 +340,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     try {
       responseXml = await generateSAMLResponse(
         issuerUrl,
+        idpEntityId,
         env,
         authnRequest,
         spConfig,
@@ -357,6 +367,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -391,6 +402,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -417,6 +429,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
         responseXml = await generateSAMLProtocolErrorResponse(
           issuerUrl,
+          idpEntityId,
           env,
           authnRequest,
           spConfig,
@@ -474,6 +487,7 @@ async function parseRedirectBinding(c: Context<{ Bindings: Env }>): Promise<{
   const url = new URL(c.req.url);
   const samlRequest = url.searchParams.get('SAMLRequest');
   const relayState = url.searchParams.get('RelayState') || undefined;
+  assertSAMLRelayStateSize(relayState);
 
   if (!samlRequest) {
     throw new Error('Missing SAMLRequest parameter');
@@ -555,6 +569,7 @@ async function parsePostBinding(c: Context<{ Bindings: Env }>): Promise<{
   const formData = await parsePostBindingFormDataWithLimit(c.req);
   const samlRequest = formData.get('SAMLRequest') as string;
   const relayState = (formData.get('RelayState') as string) || undefined;
+  assertSAMLRelayStateSize(relayState);
 
   if (!samlRequest) {
     throw new Error('Missing SAMLRequest parameter');
@@ -795,6 +810,7 @@ async function getUserInfo(
  */
 async function generateSAMLResponse(
   issuerUrl: string,
+  idpEntityId: string,
   env: Env,
   authnRequest: SAMLAuthnRequest,
   spConfig: SAMLSPConfig,
@@ -851,7 +867,7 @@ async function generateSAMLResponse(
     responseId: generateSAMLId(),
     assertionId: generateSAMLId(),
     issueInstant: timing.issueInstant,
-    issuer: `${issuerUrl}/saml/idp`,
+    issuer: idpEntityId,
     destination: acsUrl,
     inResponseTo: authnRequest.id,
     recipientUrl: acsUrl,
@@ -903,6 +919,7 @@ async function generateSAMLResponse(
 
 async function generateSAMLProtocolErrorResponse(
   issuerUrl: string,
+  idpEntityId: string,
   env: Env,
   authnRequest: SAMLAuthnRequest,
   spConfig: SAMLSPConfig,
@@ -930,7 +947,7 @@ async function generateSAMLProtocolErrorResponse(
   });
 
   return buildSAMLIdPErrorResponse({
-    issuer: `${issuerUrl}/saml/idp`,
+    issuer: idpEntityId,
     destination: resolveSAMLResponseDestination(authnRequest, spConfig),
     inResponseTo: authnRequest.id,
     statusCode: resolvedStatus.statusCode,
@@ -954,6 +971,7 @@ function sendSAMLResponse(
   const encodedResponse = base64Encode(responseXml);
   const fields = [{ name: 'SAMLResponse', value: encodedResponse }];
   if (relayState) {
+    assertSAMLRelayStateSize(relayState);
     fields.push({ name: 'RelayState', value: relayState });
   }
 

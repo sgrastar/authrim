@@ -23,6 +23,7 @@ import {
 import { z } from 'zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
+import { requireTenantResourceAccess } from './admin-tenant-access';
 
 // =============================================================================
 // Constants
@@ -114,6 +115,10 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
   const blocked = await ensureSupportedTenantId(c, tenantId);
   if (blocked) {
     return blocked;
+  }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
   }
 
   try {
@@ -237,6 +242,10 @@ export async function listTenantInvitationsHandler(c: Context<{ Bindings: Env }>
   if (blocked) {
     return blocked;
   }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
+  }
 
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
   const offset = parseInt(c.req.query('offset') || '0', 10);
@@ -290,6 +299,10 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
   const blocked = await ensureSupportedTenantId(c, tenantId);
   if (blocked) {
     return blocked;
+  }
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) {
+    return accessError;
   }
 
   try {

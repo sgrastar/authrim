@@ -49,6 +49,26 @@ const singleSPMetadata = `<?xml version="1.0" encoding="UTF-8"?>
   </md:SPSSODescriptor>
 </md:EntityDescriptor>`;
 
+const expiredCertificate = `-----BEGIN CERTIFICATE-----
+MIIDHzCCAgegAwIBAgIUF7MHaoSdF7RMgRQElv5lZZAWkZIwDQYJKoZIhvcNAQEL
+BQAwHzEdMBsGA1UEAwwUZXhwaXJlZC5leGFtcGxlLnRlc3QwHhcNMjYwNTIyMTY1
+MzMxWhcNMjYwNTIzMTY1MzMxWjAfMR0wGwYDVQQDDBRleHBpcmVkLmV4YW1wbGUu
+dGVzdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMG7NH941H6F3eIi
+GEGCmTykMs8CjWOhTDjlE9d70Md7bJGAfbiBotNEWYjIo8GLySggWoHJ8U/GnG0n
+g3HDDTjP0O6K6QuTMI0mQXqr75I9s2ZSxDDvyomL+02HwQK0iZ9gN4fxbA+T65gI
+7inzt8fLEGqqx1+yBmgtKYX9F5nptT4DjVRKL9ucMrxpoiB6DBR1brcGkDhCew8m
+1oyMf+jGo/m33+a1TqZP8TeQ6jqCwZl6dZOWNEAcqvDLTQFrZl8GWNqHQmCKspgN
+vuAua4of0EQwFprh8l36ALBI58N6WfE0wKaj1VAIJ93/sGiKP+FADcSSyDjFYfHM
+yOyK2y0CAwEAAaNTMFEwHQYDVR0OBBYEFORT4oGycoEMB9/K+gTPAM/KEYZ8MB8G
+A1UdIwQYMBaAFORT4oGycoEMB9/K+gTPAM/KEYZ8MA8GA1UdEwEB/wQFMAMBAf8w
+DQYJKoZIhvcNAQELBQADggEBAEmUSKRdP2IPclAe4NrgVXm5ikNqZlLIO7mtOVyV
+RyJ+le6OUcVZCwqNfqH+uPTovGj+CNrhhSpqlIXgnRPGwpKRASwvXgET2QDner5g
+Y+Ai2YMpaTEBjaJu2jwebGLsqq2b0mIgNbb/yrrZn3Uf/tm0Rg9AJPKPKiqrOfnG
+Fhu7ks1O+KVZTKyJbcORXbgHafugVqGxgQ6nNnOt0YD9BrBBEhUvCPeZ3+0vdJgH
+5dKk1P3VukPi0tYWYFn6tVOpGSQYK28poXqhs+SKaQzV3DJ5hlLc9tG+Haj+s5Rn
+umujb/SYqcIZQxAGJz7CNWlJgruDTwBXd0TE1f8LUr5mPzo=
+-----END CERTIFICATE-----`;
+
 const aggregateXml = `<?xml version="1.0" encoding="UTF-8"?>
 <md:EntitiesDescriptor
   xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
@@ -234,6 +254,7 @@ function json(body: unknown, status = 200): Response {
 describe('SAML aggregate provider API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it('uses the 10 MiB fetch limit for aggregate preview URLs', async () => {
@@ -292,6 +313,45 @@ describe('SAML aggregate provider API', () => {
     expect(mocks.safeFetchText).toHaveBeenCalledWith(
       'https://sp.example.test/metadata.xml',
       expect.objectContaining({ maxResponseSize: 1024 * 1024 })
+    );
+  });
+
+  it('disables newly created providers when every configured signing certificate is expired', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2027-01-01T00:00:00Z'));
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Expired IdP',
+          providerType: 'saml_idp',
+          enabled: true,
+          config: {
+            entityId: 'https://idp.example.test/idp',
+            ssoUrl: 'https://idp.example.test/sso',
+            certificate: expiredCertificate,
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+          },
+        },
+      })
+    );
+
+    const body = (await response.json()) as {
+      enabled: boolean;
+      config: { certificateValidation?: { allExpired: boolean; validUntil?: string } };
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.enabled).toBe(false);
+    expect(body.config.certificateValidation).toMatchObject({
+      allExpired: true,
+      validUntil: '2026-05-23T16:53:31.000Z',
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO identity_providers'),
+      expect.arrayContaining([0])
     );
   });
 

@@ -512,7 +512,7 @@ export class KeyManager extends DurableObject<Env> {
     await this.initializeState();
 
     const kid = this.generateKeyId();
-    const keySet = await generateKeySet(kid, 2048);
+    const keySet = await generateKeySet(kid);
 
     log.debug('generateNewKey - keySet', {
       kid,

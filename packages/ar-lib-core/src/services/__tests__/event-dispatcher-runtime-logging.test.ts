@@ -3,9 +3,51 @@ import {
   createRuntimeLoggingPolicySnapshot,
   publishRuntimeLoggingPolicySnapshot,
 } from '@authrim/ar-lib-logging/policies';
-import { decodeLogRecordFromBlock } from '@authrim/ar-lib-logging/chunks';
+import { decodeLogRecordFromBlock, decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
 import { createEventDispatcher } from '../event-dispatcher';
 import type { DatabaseAdapter, ExecuteResult, HealthStatus } from '../../db/adapter';
+
+const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < hex.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+async function deriveRuntimeChunkKey(input: {
+  tenantKey: string;
+  logType: string;
+  plane: string;
+  keyVersion: number;
+}): Promise<Uint8Array> {
+  const material = await crypto.subtle.importKey('raw', hexToBytes(ROOT_KEY), 'HKDF', false, [
+    'deriveBits',
+  ]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
+      info: new TextEncoder().encode(
+        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
+      ),
+    },
+    material,
+    256
+  );
+  return new Uint8Array(bits);
+}
+
+function chunkIdFromObjectKey(objectKey: string): string {
+  const match = /\/(chk_[^/]+)\.jsonl(?:\.gz)?$/u.exec(objectKey);
+  if (!match) {
+    throw new Error('test_chunk_id_not_found');
+  }
+  return match[1];
+}
 
 function createSnapshotStores() {
   const kvValues = new Map<string, string>();
@@ -156,6 +198,7 @@ describe('event dispatcher runtime logging', () => {
           DB_ADMIN: adapter,
           AUTHRIM_CONFIG: kv,
           DIAGNOSTIC_LOGS: bucket,
+          OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
           LOGGING_DELIVERY_QUEUE: deliveryQueue as never,
         },
         tenantKeyResolver: async () => 't_runtime_dispatch',
@@ -192,8 +235,24 @@ describe('event dispatcher runtime logging', () => {
       .find((statement) => statement.sql.includes('INSERT INTO log_chunk_record_index'));
     expect(indexStatement).toBeDefined();
     const params = indexStatement!.params;
+    const decodedChunk = await decryptLogChunkBody({
+      storedBody: objectValues.get(archiveKey!)!,
+      keyBytes: await deriveRuntimeChunkKey({
+        tenantKey: 't_runtime_dispatch',
+        logType: 'webhook',
+        plane: 'archive',
+        keyVersion: 1,
+      }),
+      tenantKey: 't_runtime_dispatch',
+      logType: 'webhook',
+      plane: 'archive',
+      objectKey: archiveKey!,
+      chunkId: chunkIdFromObjectKey(archiveKey!),
+      expectedEncryptionScope: 'tenant:t_runtime_dispatch:webhook:archive',
+      expectedKeyVersion: 1,
+    });
     const decodedRecord = await decodeLogRecordFromBlock(
-      objectValues.get(archiveKey!)!,
+      decodedChunk.body,
       {
         blockIndex: 0,
         compressedOffset: Number(params[8]),

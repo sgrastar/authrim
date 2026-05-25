@@ -454,7 +454,6 @@ app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'authrim-router',
-    version: '0.1.0',
     timestamp: new Date().toISOString(),
   });
 });
@@ -839,7 +838,9 @@ app.all('/api/admin/*', async (c) => {
   // Route SAML admin endpoints to OP_SAML.
   if (
     matchesPathGroup(path, '/api/admin/saml-providers') ||
+    matchesPathGroup(path, '/api/admin/saml-settings') ||
     matchesPathGroup(path, '/api/admin/saml-attribute-presets') ||
+    matchesPathGroup(path, '/api/admin/saml-federation-trust-profiles') ||
     matchesPathGroup(path, '/api/admin/saml-metadata')
   ) {
     if (!c.env.OP_SAML) {

@@ -80,7 +80,7 @@ function createSAMLResponseWithSubjectConfirmation(options: {
     includeSubjectConfirmationData = true,
     notBefore = new Date(Date.now() - 60000).toISOString(),
     conditionsNotOnOrAfter = new Date(Date.now() + 300000).toISOString(),
-    audience = 'https://auth.example.com/saml/sp',
+    audience = 'https://auth.example.com/saml/sp/metadata',
   } = options;
 
   const subjectConfirmationData = includeSubjectConfirmationData

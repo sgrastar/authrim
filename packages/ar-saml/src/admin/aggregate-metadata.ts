@@ -12,6 +12,7 @@ import {
   serializeXml,
   findElement,
   findElements,
+  findDirectChildElement,
   getAttribute,
   getTextContent,
 } from '../common/xml-utils';
@@ -346,27 +347,6 @@ function isHttpsUrl(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function findDirectChildElement(
-  parent: Element | null,
-  namespace: string,
-  localName: string
-): Element | null {
-  if (!parent) {
-    return null;
-  }
-  for (let i = 0; i < parent.childNodes.length; i++) {
-    const child = parent.childNodes[i];
-    if (
-      child.nodeType === 1 &&
-      (child as Element).namespaceURI === namespace &&
-      (child as Element).localName === localName
-    ) {
-      return child as Element;
-    }
-  }
-  return null;
 }
 
 function verifyRootAggregateSignature(xml: string, rootId: string, certificateOrKey: string): void {

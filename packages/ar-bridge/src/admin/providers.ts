@@ -61,6 +61,44 @@ const OUTBOUND_PROVIDER_URL_FIELDS = [
   ['jwks_uri', 'jwksUri'],
 ] as const;
 
+const LOGIN_PROVIDER_ICON_NAMES = new Set([
+  'buildings',
+  'house',
+  'house-simple',
+  'bank',
+  'building',
+  'city',
+  'graduation-cap',
+  'student',
+  'books',
+  'chalkboard-teacher',
+  'globe',
+  'globe-hemisphere-east',
+  'shield-check',
+  'seal-check',
+  'certificate',
+  'identification-card',
+  'fingerprint',
+  'key',
+  'briefcase',
+  'users-three',
+  'network',
+  'share-network',
+  'tree-structure',
+  'handshake',
+  'cloud',
+  'cloud-check',
+  'database',
+  'hard-drives',
+  'devices',
+  'terminal-window',
+  'book-open',
+  'presentation-chart',
+  'rocket-launch',
+  'compass',
+  'none',
+]);
+
 type AdminProviderContext = Context<{ Bindings: Env }>;
 type AdminProviderAuthContext = Context<{
   Bindings: Env;
@@ -103,6 +141,13 @@ function validateProviderOutboundUrl(
   return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
     variables: { field, reason: 'must be an external HTTPS URL' },
   });
+}
+
+function normalizeLoginProviderIconName(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  return LOGIN_PROVIDER_ICON_NAMES.has(normalized) ? normalized : undefined;
 }
 
 /**
@@ -167,7 +212,8 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       require_email_verified?: boolean;
       always_fetch_userinfo?: boolean;
       enable_sso?: boolean;
-      icon_url?: string;
+      icon_url?: string | null;
+      icon_name?: string | null;
       button_color?: string;
       button_color_dark?: string;
       button_text?: string;
@@ -386,6 +432,7 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       enableSso: body.enable_sso !== false,
       providerQuirks: body.provider_quirks || defaultProviderQuirks,
       iconUrl: body.icon_url || defaultIconUrl,
+      iconName: normalizeLoginProviderIconName(body.icon_name),
       buttonColor: body.button_color || defaultButtonColor,
       buttonColorDark: body.button_color_dark || defaultButtonColorDark,
       buttonText: body.button_text || defaultButtonText,
@@ -481,7 +528,8 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
       require_email_verified?: boolean;
       always_fetch_userinfo?: boolean;
       enable_sso?: boolean;
-      icon_url?: string;
+      icon_url?: string | null;
+      icon_name?: string | null;
       button_color?: string;
       button_color_dark?: string;
       button_text?: string;
@@ -536,6 +584,8 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
       updates.alwaysFetchUserinfo = body.always_fetch_userinfo;
     if (body.enable_sso !== undefined) updates.enableSso = body.enable_sso;
     if (body.icon_url !== undefined) updates.iconUrl = body.icon_url;
+    if (body.icon_name !== undefined)
+      updates.iconName = normalizeLoginProviderIconName(body.icon_name);
     if (body.button_color !== undefined) updates.buttonColor = body.button_color;
     if (body.button_color_dark !== undefined) updates.buttonColorDark = body.button_color_dark;
     if (body.button_text !== undefined) updates.buttonText = body.button_text;

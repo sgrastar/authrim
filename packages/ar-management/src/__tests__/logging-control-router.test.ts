@@ -7,9 +7,14 @@ const mockAdapter = vi.hoisted(() => {
     query: vi.fn(),
     queryOne: vi.fn(),
     execute: vi.fn(),
+    batch: vi.fn(),
     transaction: vi.fn(),
+    isHealthy: vi.fn().mockResolvedValue(true),
+    getType: vi.fn().mockReturnValue('d1'),
+    close: vi.fn().mockResolvedValue(undefined),
   };
   adapter.transaction.mockImplementation(async (callback) => callback(adapter));
+  adapter.batch.mockResolvedValue([]);
   return adapter;
 });
 
@@ -114,6 +119,7 @@ const env = {
     send: vi.fn().mockResolvedValue(undefined),
   },
   AUDIT_ARCHIVE: {
+    put: vi.fn().mockResolvedValue(undefined),
     get: vi.fn(),
     delete: vi.fn().mockResolvedValue(undefined),
   },
@@ -122,6 +128,11 @@ const env = {
     get: vi.fn().mockResolvedValue(null),
   },
   DIAGNOSTIC_LOGS: {
+    put: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn().mockResolvedValue(null),
+    delete: vi.fn().mockResolvedValue(undefined),
+  },
+  EXPORT_ARTIFACTS: {
     put: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(null),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -253,6 +264,9 @@ describe('logging control routers', () => {
     mockAdapter.query.mockResolvedValue([]);
     mockAdapter.queryOne.mockResolvedValue({ total: 0, failures: 0, critical: 0 });
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    vi.mocked(env.AUDIT_ARCHIVE!.put)
+      .mockReset()
+      .mockResolvedValue({} as R2Object);
     vi.mocked(env.AUDIT_ARCHIVE!.get).mockReset().mockResolvedValue(null);
     vi.mocked(env.AUDIT_ARCHIVE!.delete).mockReset().mockResolvedValue(undefined);
     vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockReset().mockResolvedValue(null);
@@ -260,6 +274,11 @@ describe('logging control routers', () => {
       .mockReset()
       .mockResolvedValue({} as R2Object);
     vi.mocked(env.DIAGNOSTIC_LOGS!.delete).mockReset().mockResolvedValue(undefined);
+    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockReset().mockResolvedValue(null);
+    vi.mocked(env.EXPORT_ARTIFACTS!.put)
+      .mockReset()
+      .mockResolvedValue({} as R2Object);
+    vi.mocked(env.EXPORT_ARTIFACTS!.delete).mockReset().mockResolvedValue(undefined);
     vi.mocked(env.SENSITIVE_DETAILS!.get).mockReset().mockResolvedValue(null);
     vi.mocked(env.SENSITIVE_DETAILS!.put)
       .mockReset()
@@ -917,6 +936,11 @@ describe('logging control routers', () => {
   });
 
   it('prepares, marks ready, and activates destination credential rotation', async () => {
+    const routeEnv = {
+      ...env,
+      AUDIT_ARCHIVE: undefined,
+      AUTHRIM_CONFIG: undefined,
+    } as unknown as Env;
     mockAdapter.queryOne
       .mockResolvedValueOnce({
         id: 'dest_1',
@@ -1021,7 +1045,7 @@ describe('logging control routers', () => {
         }),
         headers: { 'content-type': 'application/json' },
       },
-      env
+      routeEnv
     );
     const prepareBody = (await prepare.json()) as {
       item: { rotation_status: string; next_credential_ref: string };
@@ -1032,7 +1056,7 @@ describe('logging control routers', () => {
 
     const ready = await createPlatformApp([
       ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE,
-    ]).request('/api/admin/destinations/dest_1/credentials/ready', { method: 'POST' }, env);
+    ]).request('/api/admin/destinations/dest_1/credentials/ready', { method: 'POST' }, routeEnv);
     const readyBody = (await ready.json()) as { item: { rotation_status: string } };
     expect(ready.status).toBe(200);
     expect(readyBody.item.rotation_status).toBe('ready');
@@ -1046,7 +1070,7 @@ describe('logging control routers', () => {
         body: JSON.stringify({ confirmation: 'ACTIVATE CREDENTIAL collector' }),
         headers: { 'content-type': 'application/json' },
       },
-      env
+      routeEnv
     );
     const activateBody = (await activate.json()) as {
       item: { credential_version: number; rotation_status: string };
@@ -2108,32 +2132,44 @@ describe('logging control routers', () => {
   });
 
   it('scopes tenant delivery reads with registry tenant keys when available', async () => {
-    const tenantRegistryAdapter = {
-      query: vi.fn(),
-      queryOne: vi.fn().mockResolvedValueOnce({ tenant_key: 't_registry_scope' }),
-      execute: vi.fn(),
-      transaction: vi.fn(),
-      batch: vi.fn(),
-      isHealthy: vi.fn(),
-      getType: vi.fn().mockReturnValue('test'),
-      close: vi.fn(),
-    };
+    mockAdapter.queryOne.mockResolvedValueOnce({ tenant_key: 't_registry_scope' });
     mockAdapter.query.mockResolvedValueOnce([]);
 
     const response = await createApp([ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ]).request(
       '/api/admin/logging-policies/delivery-summary?time_start=100',
       {},
-      { ...env, DB: tenantRegistryAdapter } as unknown as Env
+      env
     );
 
     expect(response.status).toBe(200);
-    expect(tenantRegistryAdapter.queryOne).toHaveBeenCalledWith(
+    expect(mockAdapter.queryOne).toHaveBeenCalledWith(
       'SELECT tenant_key FROM tenants WHERE id = ?',
       ['tenant-a']
     );
     expect(mockAdapter.query).toHaveBeenLastCalledWith(
       expect.stringContaining('FROM logging_delivery_event_aggregates'),
       expect.arrayContaining([100, 't_registry_scope'])
+    );
+  });
+
+  it('lets platform admins filter delivery summaries by tenant id', async () => {
+    mockAdapter.queryOne.mockResolvedValueOnce({ tenant_key: 't_platform_scope' });
+    mockAdapter.query.mockResolvedValueOnce([]);
+
+    const response = await createPlatformApp([ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ]).request(
+      '/api/admin/logging-policies/delivery-summary?filter[tenant_id]=tenant-b&time_start=100',
+      {},
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockAdapter.queryOne).toHaveBeenCalledWith(
+      'SELECT tenant_key FROM tenants WHERE id = ?',
+      ['tenant-b']
+    );
+    expect(mockAdapter.query).toHaveBeenLastCalledWith(
+      expect.stringContaining('FROM logging_delivery_event_aggregates'),
+      expect.arrayContaining([100, 't_platform_scope'])
     );
   });
 
@@ -2434,6 +2470,7 @@ describe('logging control routers', () => {
     let storedChunkBody: Uint8Array | undefined;
     const objectRows: Array<Record<string, unknown>> = [];
     const indexRows: Array<Record<string, unknown>> = [];
+    const keyVersion = 1;
     const chunkResult = await writeLogChunkToR2({
       bucket: {
         put: vi.fn(async (_key: string, body: Uint8Array) => {
@@ -2446,6 +2483,17 @@ describe('logging control routers', () => {
       records: [{ id: 'evt_manual_smoke', eventAt: 1779148800000, payload }],
       compression: 'none',
       now: 1779148800000,
+      encryption: {
+        keyBytes: await deriveTestArchiveChunkEncryptionKey({
+          rootKeyHex: String(env.OBJECT_ENCRYPTION_ROOT_KEY),
+          tenantKey,
+          logType: 'audit',
+          plane: 'archive',
+          keyVersion,
+        }),
+        encryptionScope: `tenant:${tenantKey}:audit:archive`,
+        keyVersion,
+      },
       catalogStore: {
         createPendingObject: vi.fn(async (row) => {
           objectRows.push(row as unknown as Record<string, unknown>);
@@ -2475,8 +2523,8 @@ describe('logging control routers', () => {
         object_key: chunkResult.objectKey,
         object_kind: 'chunk',
         compression: chunkResult.compression,
-        encryption_scope: null,
-        key_version: null,
+        encryption_scope: `tenant:${tenantKey}:audit:archive`,
+        key_version: keyVersion,
         line_number: recordIndex.lineNumber,
         block_offset: recordIndex.blockOffset,
         block_length: recordIndex.blockLength,
@@ -2522,7 +2570,7 @@ describe('logging control routers', () => {
       status: 'queued',
       message_job_id: expect.stringMatching(/^lmj_/),
     });
-    expect(env.DIAGNOSTIC_LOGS?.put).toHaveBeenCalledWith(
+    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
       expect.stringContaining('message-jobs/export_build/'),
       expect.stringContaining('"payload_type":"export_build"'),
       expect.objectContaining({
@@ -2561,7 +2609,7 @@ describe('logging control routers', () => {
         method: 'POST',
         body: JSON.stringify({
           format: 'jsonl',
-          tenant_key: tenantKey,
+          tenant_id: 'tenant-a',
           log_type: 'audit',
           plane: 'archive',
           time_start: 100,
@@ -2589,7 +2637,7 @@ describe('logging control routers', () => {
     expect(result.id).toMatch(/^lexp_/);
     expect(result.status).toBe('queued');
     expect(result.message_job_id).toMatch(/^lmj_/);
-    expect(env.DIAGNOSTIC_LOGS?.put).toHaveBeenCalledWith(
+    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
       expect.stringContaining('message-jobs/export_build/'),
       expect.stringContaining('"payload_type":"export_build"'),
       expect.objectContaining({
@@ -2704,7 +2752,7 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.DIAGNOSTIC_LOGS?.put).toHaveBeenCalledWith(
+    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
       expect.stringContaining('message-jobs/export_build/'),
       expect.stringContaining('"source":"record_index"'),
       expect.objectContaining({
@@ -2788,7 +2836,7 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.DIAGNOSTIC_LOGS?.put).toHaveBeenCalledWith(
+    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
       expect.stringContaining('message-jobs/export_build/'),
       expect.stringContaining('"include_payload":true'),
       expect.objectContaining({
@@ -2901,7 +2949,7 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.DIAGNOSTIC_LOGS?.put).toHaveBeenCalledWith(
+    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
       expect.stringContaining('message-jobs/export_build/'),
       expect.stringContaining('"include_payload":true'),
       expect.objectContaining({
@@ -2912,7 +2960,7 @@ describe('logging control routers', () => {
 
   it('exports decrypted sensitive detail chunk payloads with explicit permission', async () => {
     const tenantKey = await deriveTenantKeyFromTenantId('tenant-a');
-    const objectKey = `sensitive-details/${tenantKey}/sensitive_detail/admin_audit/2026/05/20/chk_sensitive.jsonl`;
+    const objectKey = `sensitive-details/v1/${tenantKey}/sensitive_detail/control/admin_audit/2026/05/20/00/shard-01/chk_sensitive.jsonl`;
     const payload = {
       metadata: {
         action: 'admin.destination.update',
@@ -2990,7 +3038,7 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.DIAGNOSTIC_LOGS?.put).toHaveBeenCalledWith(
+    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
       expect.stringContaining('message-jobs/export_build/criticality=critical/'),
       expect.stringContaining('"plane":"sensitive_detail"'),
       expect.objectContaining({
@@ -3054,7 +3102,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockResolvedValueOnce({
+    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
       text: vi.fn().mockResolvedValue(`id,tenant_key\nchk_1,${tenantKey}\n`),
     } as unknown as R2ObjectBody);
 
@@ -3065,7 +3113,7 @@ describe('logging control routers', () => {
     expect(artifactResponse.status).toBe(200);
     expect(artifactResponse.headers.get('content-type')).toContain('text/csv');
     expect(await artifactResponse.text()).toBe(`id,tenant_key\nchk_1,${tenantKey}\n`);
-    expect(env.DIAGNOSTIC_LOGS?.get).toHaveBeenCalledWith('logging-exports/v1/lexp_1/records.csv');
+    expect(env.EXPORT_ARTIFACTS?.get).toHaveBeenCalledWith('logging-exports/v1/lexp_1/records.csv');
 
     mockAdapter.queryOne.mockResolvedValueOnce({
       id: 'lexp_2',
@@ -3087,7 +3135,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.DIAGNOSTIC_LOGS!.get)
+    vi.mocked(env.EXPORT_ARTIFACTS!.get)
       .mockResolvedValueOnce({
         text: vi.fn().mockResolvedValue(
           JSON.stringify({
@@ -3153,7 +3201,7 @@ describe('logging control routers', () => {
       },
     });
 
-    vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockClear();
+    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockClear();
     mockAdapter.queryOne.mockResolvedValueOnce(sensitiveExport);
     const artifactResponse = await createApp([
       ADMIN_PERMISSIONS.LOGGING_DELIVERY_EVENTS_READ,
@@ -3168,7 +3216,7 @@ describe('logging control routers', () => {
         },
       },
     });
-    expect(env.DIAGNOSTIC_LOGS?.get).not.toHaveBeenCalled();
+    expect(env.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
   });
 
   it('rejects unsafe or oversized logging export artifact downloads before reading R2 objects', async () => {
@@ -3199,7 +3247,7 @@ describe('logging control routers', () => {
     ]).request('/api/admin/logging-policies/exports/lexp_large/artifact', {}, env);
 
     expect(oversizedResponse.status).toBe(400);
-    expect(env.DIAGNOSTIC_LOGS?.get).not.toHaveBeenCalled();
+    expect(env.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
 
     mockAdapter.queryOne.mockResolvedValueOnce({
       id: 'lexp_unsafe',
@@ -3227,7 +3275,7 @@ describe('logging control routers', () => {
     ]).request('/api/admin/logging-policies/exports/lexp_unsafe/artifact', {}, env);
 
     expect(unsafeResponse.status).toBe(400);
-    expect(env.DIAGNOSTIC_LOGS?.get).not.toHaveBeenCalled();
+    expect(env.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
 
     const oversizedText = vi.fn().mockResolvedValue('should not be read');
     mockAdapter.queryOne.mockResolvedValueOnce({
@@ -3250,7 +3298,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockResolvedValueOnce({
+    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
       size: 65 * 1024 * 1024,
       text: oversizedText,
     } as unknown as R2ObjectBody);
@@ -3261,6 +3309,49 @@ describe('logging control routers', () => {
 
     expect(oversizedObjectResponse.status).toBe(400);
     expect(oversizedText).not.toHaveBeenCalled();
+
+    const streamChunks = [new Uint8Array(65 * 1024 * 1024), new Uint8Array(1)];
+    const arrayBuffer = vi.fn();
+    mockAdapter.queryOne.mockResolvedValueOnce({
+      id: 'lexp_zip_stream_large',
+      tenant_key: tenantKey,
+      log_type: 'audit',
+      plane: 'archive',
+      format: 'zip',
+      status: 'completed',
+      artifact_object_ref: 'logging-exports/v1/lexp_zip_stream_large/parts/part-00000.zip',
+      manifest_object_ref: null,
+      checksum_sha256: 'abc123',
+      record_count: 1,
+      byte_count: 42,
+      requested_by: 'admin-1',
+      error_class: null,
+      filter_json: '{}',
+      created_at: 1000,
+      updated_at: 1000,
+      completed_at: 1000,
+      expires_at: 2000,
+    });
+    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = streamChunks.shift();
+          if (chunk) {
+            controller.enqueue(chunk);
+          } else {
+            controller.close();
+          }
+        },
+      }),
+      arrayBuffer,
+    } as unknown as R2ObjectBody);
+
+    const oversizedStreamResponse = await createApp([
+      ADMIN_PERMISSIONS.LOGGING_DELIVERY_EVENTS_READ,
+    ]).request('/api/admin/logging-policies/exports/lexp_zip_stream_large/artifact', {}, env);
+
+    expect(oversizedStreamResponse.status).toBe(400);
+    expect(arrayBuffer).not.toHaveBeenCalled();
 
     const oversizedManifestText = vi.fn().mockResolvedValue('should not be read');
     mockAdapter.queryOne.mockResolvedValueOnce({
@@ -3283,7 +3374,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockResolvedValueOnce({
+    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
       size: 2 * 1024 * 1024,
       text: oversizedManifestText,
     } as unknown as R2ObjectBody);
@@ -3420,6 +3511,31 @@ describe('logging control routers', () => {
     expect(body.item.catalog).toHaveLength(1);
     expect(body.item.dlq).toHaveLength(1);
     expect(body.item.sensitive_detail).toHaveLength(1);
+  });
+
+  it('uses tenant id filters for platform usage summaries without requiring tenant key input', async () => {
+    mockAdapter.queryOne.mockResolvedValueOnce({ tenant_key: 't_usage_scope' });
+    mockAdapter.query
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const response = await createPlatformApp([ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ]).request(
+      '/api/admin/logging-policies/usage-summary?filter[tenant_id]=tenant-b&time_start=1000&limit=25',
+      {},
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM logging_delivery_event_aggregates'),
+      expect.arrayContaining([1000, 't_usage_scope'])
+    );
+    expect(mockAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM sensitive_detail_chunk_index'),
+      expect.arrayContaining([1000, 'tenant-b'])
+    );
   });
 
   it('verifies runtime snapshot pointer, object, and database metadata', async () => {
@@ -3799,8 +3915,8 @@ describe('logging control routers', () => {
       {
         ...env,
         LOGGING_MESSAGE_CRITICAL_QUEUE: { send: queueSend },
-        AUDIT_ARCHIVE: { get: bucketGet, delete: vi.fn() },
-        DIAGNOSTIC_LOGS: { get: vi.fn(), put: messagePut, delete: vi.fn() },
+        AUDIT_ARCHIVE: { get: bucketGet, put: messagePut, delete: vi.fn() },
+        DIAGNOSTIC_LOGS: { get: vi.fn(), put: vi.fn(), delete: vi.fn() },
       } as unknown as Env
     );
 
@@ -3960,7 +4076,11 @@ describe('logging control routers', () => {
       { method: 'POST' },
       {
         ...env,
-        AUDIT_ARCHIVE: { get: bucketGet, delete: vi.fn() },
+        AUDIT_ARCHIVE: {
+          get: bucketGet,
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn(),
+        },
         DIAGNOSTIC_LOGS: { get: vi.fn(), put: vi.fn(), delete: vi.fn() },
         LOGGING_MESSAGE_CRITICAL_QUEUE: undefined,
         LOGGING_MESSAGE_QUEUE: undefined,
@@ -4331,8 +4451,8 @@ describe('logging control routers', () => {
       },
       {
         ...env,
-        AUDIT_ARCHIVE: { get: bucketGet, delete: vi.fn() },
-        DIAGNOSTIC_LOGS: { get: vi.fn(), put: messagePut, delete: vi.fn() },
+        AUDIT_ARCHIVE: { get: bucketGet, put: messagePut, delete: vi.fn() },
+        DIAGNOSTIC_LOGS: { get: vi.fn(), put: vi.fn(), delete: vi.fn() },
         LOGGING_MESSAGE_QUEUE: { send: queueSend },
       } as unknown as Env
     );
@@ -4636,7 +4756,8 @@ describe('logging control routers', () => {
       },
       {
         ...env,
-        DIAGNOSTIC_LOGS: { get: vi.fn(), put: messagePut, delete: vi.fn() },
+        AUDIT_ARCHIVE: { get: vi.fn(), put: messagePut, delete: vi.fn() },
+        DIAGNOSTIC_LOGS: { get: vi.fn(), put: vi.fn(), delete: vi.fn() },
         LOGGING_MESSAGE_QUEUE: { send: queueSend },
       } as unknown as Env
     );

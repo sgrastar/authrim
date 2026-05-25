@@ -4,20 +4,19 @@
 	import { Modal } from '$lib/components';
 	import {
 		adminSAMLAPI,
-		type SAMLFederationTrustProfile,
 		type SAMLAttributeReleaseRule,
 		type SAMLAttributePreset,
-		type SAMLProvider,
-		type SAMLProviderConfig
+		type SAMLFederationTrustProfile,
+		type SAMLProvider
 	} from '$lib/api/admin-saml';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let providers = $state<SAMLProvider[]>([]);
 	let presets = $state<SAMLAttributePreset[]>([]);
-	let trustProfiles = $state<SAMLFederationTrustProfile[]>([]);
+	let federationTrustProfiles = $state<SAMLFederationTrustProfile[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	let actionMessage = $state('');
-	let busyProviderId = $state<string | null>(null);
 	let selectedPreset = $state<SAMLAttributePreset | null>(null);
 	let showCreatePreset = $state(false);
 	let creatingPreset = $state(false);
@@ -41,30 +40,28 @@
 			2
 		)
 	);
-	let trustProfileName = $state('');
-	let trustProfilePatterns = $state('https://metadata.gakunin.nii.ac.jp/*');
-	let trustProfileCertificate = $state('');
-	let creatingTrustProfile = $state(false);
 
 	onMount(() => {
-		void loadSAML();
+		void initializeAndLoadSAML();
 	});
+
+	async function initializeAndLoadSAML() {
+		await settingsContext.initialize();
+		await loadSAML();
+	}
 
 	async function loadSAML() {
 		loading = true;
 		error = '';
 		try {
-			const [providerResult, presetResult] = await Promise.all([
+			const [providerResult, presetResult, trustProfileResult] = await Promise.all([
 				adminSAMLAPI.listProviders(),
-				adminSAMLAPI.listAttributePresets()
+				adminSAMLAPI.listAttributePresets(),
+				adminSAMLAPI.listFederationTrustProfiles()
 			]);
 			providers = providerResult.providers;
 			presets = presetResult.presets;
-			try {
-				trustProfiles = (await adminSAMLAPI.listFederationTrustProfiles()).profiles;
-			} catch {
-				trustProfiles = [];
-			}
+			federationTrustProfiles = trustProfileResult.profiles;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load SAML data';
 		} finally {
@@ -72,68 +69,20 @@
 		}
 	}
 
-	async function refreshMetadata(provider: SAMLProvider, event?: Event) {
-		event?.stopPropagation();
-		busyProviderId = provider.id;
-		actionMessage = '';
-		error = '';
-		try {
-			const result = await adminSAMLAPI.refreshMetadata(provider.id);
-			updateProviderConfig(provider.id, result.config);
-			actionMessage = result.expired
-				? `${provider.name}: metadata is expired`
-				: `${provider.name}: metadata ${result.changed ? 'changed' : 'unchanged'}`;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to refresh metadata';
-		} finally {
-			busyProviderId = null;
-		}
-	}
-
-	async function promoteNext(provider: SAMLProvider, event?: Event) {
-		event?.stopPropagation();
-		busyProviderId = provider.id;
-		actionMessage = '';
-		error = '';
-		try {
-			const result = await adminSAMLAPI.promoteSigningNext(provider.id);
-			updateProviderConfig(provider.id, result.config);
-			actionMessage = `${provider.name}: next certificate promoted`;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to promote next certificate';
-		} finally {
-			busyProviderId = null;
-		}
-	}
-
-	async function retireBackup(provider: SAMLProvider, event?: Event) {
-		event?.stopPropagation();
-		busyProviderId = provider.id;
-		actionMessage = '';
-		error = '';
-		try {
-			const result = await adminSAMLAPI.retireSigningBackup(provider.id);
-			updateProviderConfig(provider.id, result.config);
-			actionMessage = `${provider.name}: backup certificate retired`;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to retire backup certificate';
-		} finally {
-			busyProviderId = null;
-		}
-	}
-
-	function updateProviderConfig(providerId: string, config: SAMLProviderConfig) {
-		providers = providers.map((provider) =>
-			provider.id === providerId ? { ...provider, config } : provider
-		);
-	}
-
 	function navigateToProvider(id: string) {
 		goto(`/admin/saml/${id}`);
 	}
 
+	function navigateToLocalMetadata() {
+		goto('/admin/saml/local');
+	}
+
 	function navigateToNew() {
 		goto('/admin/saml/new');
+	}
+
+	function navigateToTrustProfileEdit(id: string) {
+		goto(`/admin/saml/new?trustProfileId=${encodeURIComponent(id)}`);
 	}
 
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
@@ -146,6 +95,7 @@
 
 	function metadataStatus(provider: SAMLProvider) {
 		const diff = provider.config.metadataRefreshStatus?.diff;
+		if (provider.config.certificateValidation?.allExpired) return 'Expired';
 		if (!provider.config.metadataUrl) return provider.config.metadataXml ? 'Uploaded' : 'Manual';
 		if (!diff) return 'Not checked';
 		if (diff.expired) return 'Expired';
@@ -161,14 +111,72 @@
 		return 'badge badge-neutral';
 	}
 
-	function signingSummary(provider: SAMLProvider) {
-		const policy = provider.config.signingKeyPolicy;
-		if (!policy?.active && !policy?.next && !policy?.backup) return 'None';
-		const states = [];
-		if (policy.active) states.push('active');
-		if (policy.next) states.push('next');
-		if (policy.backup) states.push('backup');
-		return states.join(' / ');
+	function providerValidUntil(provider: SAMLProvider) {
+		return (
+			provider.config.metadataRefreshStatus?.diff.validUntil ||
+			provider.config.certificateValidation?.validUntil
+		);
+	}
+
+	function providerValidUntilBadge(provider: SAMLProvider) {
+		if (
+			provider.config.metadataRefreshStatus?.diff.expired ||
+			provider.config.certificateValidation?.allExpired
+		) {
+			return 'badge badge-danger';
+		}
+		return 'badge badge-neutral';
+	}
+
+	function attributeSourceLabel(source: string | undefined) {
+		switch (source) {
+			case 'claim':
+				return 'Authrim claim';
+			case 'attribute':
+				return 'Authrim attribute';
+			case 'custom_claim':
+				return 'Custom claim';
+			case 'custom_field':
+				return 'Custom field';
+			case 'constant':
+				return 'Constant';
+			case 'computed':
+				return 'Computed resolver';
+			default:
+				return source || 'Unspecified';
+		}
+	}
+
+	function attributeSourcePath(rule: SAMLAttributeReleaseRule) {
+		switch (rule.source) {
+			case 'claim':
+				return rule.claim ? `subject.${rule.claim}` : '-';
+			case 'attribute':
+				return rule.claim ? `subject.attributes.${rule.claim}` : '-';
+			case 'custom_claim':
+				return rule.claim ? `subject.customClaims.${rule.claim}` : '-';
+			case 'custom_field':
+				return rule.claim ? `subject.customFields.${rule.claim}` : '-';
+			case 'constant':
+				return Array.isArray(rule.value) ? rule.value.join(', ') : rule.value || '-';
+			case 'computed':
+				return rule.computed ? `computed.${rule.computed}` : '-';
+			default:
+				return rule.claim || rule.computed || '-';
+		}
+	}
+
+	function attributeSourceHint(rule: SAMLAttributeReleaseRule) {
+		if (rule.source === 'computed' && rule.computed === 'eduPersonScopedAffiliation') {
+			return 'Uses direct eduPersonScopedAffiliation when present; otherwise combines affiliation and scope claims.';
+		}
+		if (rule.source === 'claim' && (rule.claim === 'sub' || rule.claim === 'user_id')) {
+			return 'Alias of subject.id.';
+		}
+		if (rule.source === 'constant') {
+			return 'Static value released to the SP.';
+		}
+		return '';
 	}
 
 	function formatDate(value: string | number | undefined) {
@@ -176,6 +184,17 @@
 		const date = typeof value === 'number' ? new Date(value) : new Date(value);
 		if (Number.isNaN(date.getTime())) return '-';
 		return date.toLocaleDateString();
+	}
+
+	function formatDateTime(value: string | number | undefined) {
+		if (!value) return '-';
+		const date = typeof value === 'number' ? new Date(value) : new Date(value);
+		if (Number.isNaN(date.getTime())) return '-';
+		return date.toLocaleString();
+	}
+
+	function trustProfilePolicy(profile: SAMLFederationTrustProfile) {
+		return profile.policy ?? 'strict';
 	}
 
 	function viewPreset(preset: SAMLAttributePreset) {
@@ -259,45 +278,6 @@
 				err instanceof Error ? err.message : 'Failed to delete SAML attribute preset';
 		}
 	}
-
-	async function createTrustProfile() {
-		if (!trustProfileName.trim() || !trustProfileCertificate.trim()) {
-			error = 'Trust profile name and certificate are required';
-			return;
-		}
-		creatingTrustProfile = true;
-		error = '';
-		try {
-			const profile = await adminSAMLAPI.createFederationTrustProfile({
-				name: trustProfileName.trim(),
-				metadataUrlPatterns: trustProfilePatterns
-					.split('\n')
-					.map((item) => item.trim())
-					.filter(Boolean),
-				certificates: [{ certificate: trustProfileCertificate.trim() }],
-				enabled: true
-			});
-			trustProfiles = [...trustProfiles, profile];
-			trustProfileName = '';
-			trustProfileCertificate = '';
-			actionMessage = 'Federation trust profile created';
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create federation trust profile';
-		} finally {
-			creatingTrustProfile = false;
-		}
-	}
-
-	async function deleteTrustProfile(profile: SAMLFederationTrustProfile) {
-		if (!window.confirm(`Delete federation trust profile ${profile.name}?`)) return;
-		try {
-			await adminSAMLAPI.deleteFederationTrustProfile(profile.id);
-			trustProfiles = trustProfiles.filter((item) => item.id !== profile.id);
-			actionMessage = 'Federation trust profile deleted';
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete federation trust profile';
-		}
-	}
 </script>
 
 <svelte:head>
@@ -313,9 +293,13 @@
 			</p>
 		</div>
 		<div class="page-actions">
+			<button class="btn btn-secondary" onclick={navigateToLocalMetadata}>
+				<i class="i-ph-identification-card"></i>
+				SAML Entity Info
+			</button>
 			<button class="btn btn-primary" onclick={navigateToNew}>
 				<i class="i-ph-plus"></i>
-				Add Provider
+				Add Provider/Federation
 			</button>
 			<button class="btn btn-secondary" onclick={loadSAML} disabled={loading}>
 				<i class="i-ph-arrow-clockwise"></i>
@@ -337,103 +321,146 @@
 			<i class="i-ph-circle-notch loading-spinner"></i>
 			<p>Loading...</p>
 		</div>
-	{:else if providers.length === 0}
-		<div class="panel">
-			<div class="empty-state">
-				<p class="empty-state-description">No SAML providers configured.</p>
-				<p class="empty-state-hint">
-					Add an IdP for external SAML sign-in, or add an SP that trusts Authrim as its IdP.
-				</p>
-				<div class="empty-actions">
-					<button class="btn btn-primary" onclick={navigateToNew}>Add Provider</button>
+	{:else}
+		{#if providers.length === 0}
+			<div class="panel">
+				<div class="empty-state">
+					<p class="empty-state-description">No SAML providers configured.</p>
+					<p class="empty-state-hint">
+						Add an IdP for external SAML sign-in, or add an SP that trusts Authrim as its IdP.
+					</p>
+					<div class="empty-actions">
+						<button class="btn btn-primary" onclick={navigateToNew}>Add Provider/Federation</button>
+					</div>
 				</div>
 			</div>
-		</div>
-	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
-				<thead>
-					<tr>
-						<th>Name</th>
-						<th>Type</th>
-						<th>Status</th>
-						<th>Metadata</th>
-						<th>Entity ID</th>
-						<th>Valid Until</th>
-						<th>Signing</th>
-						<th class="text-right">Actions</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each providers as provider (provider.id)}
-						<tr
-							onclick={() => navigateToProvider(provider.id)}
-							onkeydown={(event) => event.key === 'Enter' && navigateToProvider(provider.id)}
-							tabindex="0"
-							role="button"
-						>
-							<td>
-								<div class="provider-cell">
-									<div class="provider-icon-fallback">
-										{providerTypeLabel(provider.providerType)}
-									</div>
-									<div>
-										<div class="cell-primary">{provider.name}</div>
-										{#if provider.config.description}
-											<div class="cell-secondary">{provider.config.description}</div>
-										{/if}
-									</div>
-								</div>
-							</td>
-							<td>
-								<span class={providerTypeBadge(provider.providerType)}>
-									{providerTypeLabel(provider.providerType)}
-								</span>
-							</td>
-							<td>
-								<span class={provider.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
-									{provider.enabled ? 'Enabled' : 'Disabled'}
-								</span>
-							</td>
-							<td>
-								<span class={metadataStatusBadge(provider)}>{metadataStatus(provider)}</span>
-							</td>
-							<td class="mono truncate" style="max-width: 280px;">
-								{provider.config.entityId || '-'}
-							</td>
-							<td>{formatDate(provider.config.metadataRefreshStatus?.diff.validUntil)}</td>
-							<td class="muted">{signingSummary(provider)}</td>
-							<td class="text-right" onclick={(event) => event.stopPropagation()}>
-								<div class="row-actions">
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={(event) => refreshMetadata(provider, event)}
-										disabled={!provider.config.metadataUrl || busyProviderId === provider.id}
-									>
-										Metadata
-									</button>
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={(event) => promoteNext(provider, event)}
-										disabled={!provider.config.signingKeyPolicy?.next ||
-											busyProviderId === provider.id}
-									>
-										Promote
-									</button>
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={(event) => retireBackup(provider, event)}
-										disabled={!provider.config.signingKeyPolicy?.backup ||
-											busyProviderId === provider.id}
-									>
-										Retire
-									</button>
-								</div>
-							</td>
+		{:else}
+			<div class="data-table-container">
+				<table class="data-table">
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Type</th>
+							<th>Status</th>
+							<th>Metadata</th>
+							<th>Entity ID</th>
+							<th>Valid Until</th>
 						</tr>
-					{/each}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						{#each providers as provider (provider.id)}
+							<tr
+								onclick={() => navigateToProvider(provider.id)}
+								onkeydown={(event) => event.key === 'Enter' && navigateToProvider(provider.id)}
+								tabindex="0"
+								role="button"
+							>
+								<td>
+									<div class="provider-cell">
+										<div class="provider-icon-fallback">
+											{providerTypeLabel(provider.providerType)}
+										</div>
+										<div>
+											<div class="cell-primary">{provider.name}</div>
+											{#if provider.config.description}
+												<div class="cell-secondary">{provider.config.description}</div>
+											{/if}
+										</div>
+									</div>
+								</td>
+								<td>
+									<span class={providerTypeBadge(provider.providerType)}>
+										{providerTypeLabel(provider.providerType)}
+									</span>
+								</td>
+								<td>
+									<span class={provider.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
+										{provider.enabled ? 'Enabled' : 'Disabled'}
+									</span>
+								</td>
+								<td>
+									<span class={metadataStatusBadge(provider)}>{metadataStatus(provider)}</span>
+								</td>
+								<td class="mono truncate" style="max-width: 280px;">
+									{provider.config.entityId || '-'}
+								</td>
+								<td>
+									{#if providerValidUntil(provider)}
+										<span class={providerValidUntilBadge(provider)}>
+											{formatDate(providerValidUntil(provider))}
+										</span>
+									{:else}
+										-
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+
+		<div class="panel federation-trust-panel">
+			<div class="panel-header compact-panel-header">
+				<div>
+					<h2 class="panel-title">Federation Trust Profiles</h2>
+					<p class="form-hint">
+						Trust anchors used to verify signed aggregate metadata before importing federation
+						entities.
+					</p>
+				</div>
+				<div class="preset-header-actions">
+					<span class="badge badge-neutral">{federationTrustProfiles.length}</span>
+				</div>
+			</div>
+
+			{#if federationTrustProfiles.length === 0}
+				<div class="empty-state compact-empty">No federation trust profiles configured.</div>
+			{:else}
+				<div class="data-table-container compact-table trust-profile-table">
+					<table class="data-table">
+						<thead>
+							<tr>
+								<th>Profile</th>
+								<th>Status</th>
+								<th>Policy</th>
+								<th>Metadata URL Pattern</th>
+								<th>Updated</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each federationTrustProfiles as profile (profile.id)}
+								<tr
+									onclick={() => navigateToTrustProfileEdit(profile.id)}
+									onkeydown={(event) =>
+										event.key === 'Enter' && navigateToTrustProfileEdit(profile.id)}
+									tabindex="0"
+									role="button"
+								>
+									<td>
+										<div class="cell-primary">{profile.name}</div>
+										{#if profile.description}
+											<div class="cell-secondary">{profile.description}</div>
+										{/if}
+									</td>
+									<td>
+										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
+											{profile.enabled ? 'Enabled' : 'Disabled'}
+										</span>
+									</td>
+									<td>
+										<span class="badge badge-info">{trustProfilePolicy(profile)}</span>
+									</td>
+									<td class="mono truncate" style="max-width: 300px;">
+										{profile.metadataUrlPatterns.join(', ')}
+									</td>
+									<td>{formatDateTime(profile.updatedAt)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
 		</div>
 
 		<div class="panel presets-panel">
@@ -509,90 +536,6 @@
 				</div>
 			{/if}
 		</div>
-
-		<div class="panel trust-profiles-panel">
-			<div class="panel-header">
-				<div>
-					<h2 class="panel-title">Federation Trust Profiles</h2>
-					<p class="form-hint">
-						Trust anchors for signed aggregate metadata imports, scoped by metadata URL pattern.
-					</p>
-				</div>
-				<span class="badge badge-neutral">{trustProfiles.length}</span>
-			</div>
-
-			<div class="trust-profile-layout">
-				<div class="trust-profile-form">
-					<div class="form-group">
-						<label for="trustProfileName" class="form-label">Name *</label>
-						<input
-							id="trustProfileName"
-							bind:value={trustProfileName}
-							class="form-input"
-							placeholder="GakuNin Test Federation"
-						/>
-					</div>
-					<div class="form-group">
-						<label for="trustProfilePatterns" class="form-label">Metadata URL Patterns *</label>
-						<textarea
-							id="trustProfilePatterns"
-							bind:value={trustProfilePatterns}
-							class="form-input form-textarea monospace"
-							rows="3"
-						></textarea>
-					</div>
-					<div class="form-group">
-						<label for="trustProfileCertificate" class="form-label">Signing Certificate PEM *</label>
-						<textarea
-							id="trustProfileCertificate"
-							bind:value={trustProfileCertificate}
-							class="form-input form-textarea monospace"
-							rows="6"
-							placeholder="-----BEGIN CERTIFICATE-----"
-						></textarea>
-					</div>
-					<div class="form-actions compact-actions">
-						<button
-							class="btn btn-primary btn-sm"
-							onclick={createTrustProfile}
-							disabled={creatingTrustProfile}
-						>
-							<i class="i-ph-shield-check"></i>
-							{creatingTrustProfile ? 'Creating...' : 'Add Trust Profile'}
-						</button>
-					</div>
-				</div>
-
-				{#if trustProfiles.length === 0}
-					<div class="empty-state compact-empty">No federation trust profiles configured.</div>
-				{:else}
-					<div class="trust-profile-list">
-						{#each trustProfiles as profile (profile.id)}
-							<div class="trust-profile-item">
-								<div class="trust-profile-main">
-									<div class="cell-primary">{profile.name}</div>
-									<div class="cell-secondary">{profile.metadataUrlPatterns.join(', ')}</div>
-									<div class="trust-profile-meta">
-										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
-											{profile.enabled ? 'Enabled' : 'Disabled'}
-										</span>
-										<span class="badge badge-info">{profile.policy || 'environment policy'}</span>
-										{#if profile.certificates[0]?.fingerprintSha256}
-											<span class="mono fingerprint">
-												{profile.certificates[0].fingerprintSha256}
-											</span>
-										{/if}
-									</div>
-								</div>
-								<button class="btn btn-danger btn-sm" onclick={() => deleteTrustProfile(profile)}>
-									Delete
-								</button>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		</div>
 	{/if}
 </div>
 
@@ -611,25 +554,44 @@
 			</span>
 		</div>
 		<p class="modal-description">{selectedPreset.description}</p>
+		<div class="mapping-context">
+			<div>
+				<span class="mapping-label">Direction</span>
+				<strong>Authrim user data -> SAML AttributeStatement</strong>
+			</div>
+			<p>
+				This preset controls outbound attribute release to SAML SPs. User import mapping for SAML,
+				SCIM, or CSV will be handled by a separate mapping workflow.
+			</p>
+		</div>
 
 		<div class="data-table-container preset-rules-table">
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Attribute Name</th>
-						<th>Friendly Name</th>
-						<th>Source</th>
-						<th>Claim / Resolver</th>
+						<th>SAML Attribute</th>
+						<th>Authrim Mapping</th>
+						<th>Name Format</th>
 						<th>Required</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each selectedPreset.attributeReleasePolicy.attributes as rule, index (`${rule.name}-${rule.source || ''}-${index}`)}
 						<tr>
-							<td class="mono truncate" style="max-width: 320px;">{rule.name}</td>
-							<td>{rule.friendlyName || '-'}</td>
-							<td><span class="badge badge-neutral">{rule.source}</span></td>
-							<td>{rule.claim || rule.computed || '-'}</td>
+							<td>
+								<div class="cell-primary">{rule.friendlyName || rule.name}</div>
+								<div class="cell-secondary mono">{rule.name}</div>
+							</td>
+							<td>
+								<div class="mapping-cell">
+									<span class="badge badge-neutral">{attributeSourceLabel(rule.source)}</span>
+									<span class="mono mapping-path">{attributeSourcePath(rule)}</span>
+								</div>
+								{#if attributeSourceHint(rule)}
+									<div class="cell-secondary">{attributeSourceHint(rule)}</div>
+								{/if}
+							</td>
+							<td class="mono truncate" style="max-width: 280px;">{rule.nameFormat || '-'}</td>
 							<td>{rule.required ? 'Yes' : 'No'}</td>
 						</tr>
 					{/each}
@@ -739,62 +701,13 @@
 		flex-wrap: wrap;
 	}
 
-	.trust-profiles-panel,
-	.presets-panel {
+	.presets-panel,
+	.federation-trust-panel {
 		margin-top: 16px;
 	}
 
-	.trust-profile-layout {
-		display: grid;
-		grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-		gap: 16px;
-		align-items: start;
-	}
-
-	.trust-profile-form {
-		display: grid;
-		gap: 12px;
-	}
-
-	.trust-profile-list {
-		display: grid;
-		gap: 10px;
-	}
-
-	.trust-profile-item {
-		display: flex;
+	.compact-panel-header {
 		align-items: flex-start;
-		justify-content: space-between;
-		gap: 12px;
-		padding: 12px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--surface);
-	}
-
-	.trust-profile-main {
-		min-width: 0;
-	}
-
-	.trust-profile-meta {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-wrap: wrap;
-		margin-top: 8px;
-	}
-
-	.fingerprint {
-		max-width: 280px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		color: var(--text-secondary);
-		font-size: 0.75rem;
-	}
-
-	.compact-actions {
-		justify-content: flex-start;
 	}
 
 	.compact-table {
@@ -809,6 +722,51 @@
 		margin-top: 16px;
 	}
 
+	.mapping-context {
+		display: grid;
+		gap: 6px;
+		margin-top: 12px;
+		padding: 12px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+	}
+
+	.mapping-context > div {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.mapping-context p {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+
+	.mapping-label {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.mapping-cell {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		flex-wrap: wrap;
+	}
+
+	.mapping-path {
+		color: var(--text-primary);
+		overflow-wrap: anywhere;
+	}
+
 	.form-textarea {
 		min-height: auto;
 		resize: vertical;
@@ -821,10 +779,6 @@
 	}
 
 	@media (max-width: 900px) {
-		.trust-profile-layout {
-			grid-template-columns: 1fr;
-		}
-
 		.data-table-container {
 			overflow-x: auto;
 		}

@@ -20,6 +20,7 @@ const repoMocks = vi.hoisted(() => ({
     listConnections: vi.fn(),
     getConnection: vi.fn(),
     getConnectionWithCredential: vi.fn(),
+    updateConnection: vi.fn(),
     updateCredential: vi.fn(),
     deleteConnection: vi.fn(),
     listUsage: vi.fn(),
@@ -59,6 +60,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listConnections = repoMocks.database.listConnections;
     getConnection = repoMocks.database.getConnection;
     getConnectionWithCredential = repoMocks.database.getConnectionWithCredential;
+    updateConnection = repoMocks.database.updateConnection;
     updateCredential = repoMocks.database.updateCredential;
     deleteConnection = repoMocks.database.deleteConnection;
     listUsage = repoMocks.database.listUsage;
@@ -224,6 +226,9 @@ describe('admin infrastructure resource routers', () => {
         has_credential: !!input.credential_encrypted,
         credential_key_version: input.credential_key_version ?? null,
       })
+    );
+    repoMocks.database.updateConnection.mockResolvedValue(
+      databaseConnection({ display_name: 'Primary v2' })
     );
     repoMocks.database.updateCredential.mockResolvedValue(
       databaseConnection({ has_credential: true, credential_key_version: 1 })
@@ -620,6 +625,72 @@ describe('admin infrastructure resource routers', () => {
 
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  });
+
+  it('lists setup-managed D1 databases before stored database connections', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/database-connections',
+      {
+        headers: {
+          'x-test-roles': 'system_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_LIST,
+        },
+      },
+      {
+        ...env,
+        DB: {},
+        DB_PII: {},
+        DB_ADMIN: {},
+      } as unknown as Env
+    );
+    const body = (await response.json()) as {
+      items: Array<{
+        id: string;
+        provider: string;
+        read_only?: boolean;
+        config: { bindingRef?: string };
+      }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.items.slice(0, 3).map((item) => item.id)).toEqual([
+      'setup-d1-core',
+      'setup-d1-pii',
+      'setup-d1-admin',
+    ]);
+    expect(body.items[0]).toMatchObject({
+      provider: 'd1',
+      read_only: true,
+      config: { bindingRef: 'DB' },
+    });
+  });
+
+  it('returns setup-managed D1 database details', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/database-connections/setup-d1-admin',
+      {
+        headers: {
+          'x-test-roles': 'system_admin',
+          'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ,
+        },
+      },
+      {
+        ...env,
+        DB_ADMIN: {},
+      } as unknown as Env
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      id: 'setup-d1-admin',
+      provider: 'd1',
+      read_only: true,
+      config: { bindingRef: 'DB_ADMIN' },
+    });
+    expect(repoMocks.database.getConnection).not.toHaveBeenCalled();
   });
 
   it('creates a database connection without exposing credential material', async () => {

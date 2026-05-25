@@ -445,9 +445,9 @@ const zhTW: Translations = {
   'userId.note': '注意：此設定在建立使用者後無法變更。',
   'userId.selected': '使用者 ID 格式：{{format}}',
 
-  // Optional components
-  'components.title': '選用元件',
-  'components.note': '注意：社交登入和政策引擎是標準元件',
+  // Standard components
+  'components.title': '標準元件',
+  'components.note': 'SAML、Device Flow/CIBA、VC、社交登入和政策引擎預設安裝。',
   'components.samlPrompt': '啟用 SAML 支援？',
   'components.vcPrompt': '啟用可驗證憑證（VC）？',
   'components.saml': 'SAML：',
@@ -761,6 +761,16 @@ const zhTW: Translations = {
   'web.db.name': '名稱',
   'web.db.region': '地區',
   'web.db.regionAuto': '自動（最近）',
+  'web.db.storageProfileTitle': '儲存部署設定檔',
+  'web.db.storageProfileDesc': '選擇此部署中使用者 core/PII 資料的放置方式。',
+  'web.db.sharedD1Title': '共用 D1',
+  'web.db.sharedD1Desc': '整個部署共用一個 core D1 與一個 PII D1。設定成本最低，也是預設路徑。',
+  'web.db.tenantD1Title': '租戶 D1',
+  'web.db.tenantD1Desc': '每個租戶使用一組 core/PII D1。租戶啟用前需要先完成租戶資料庫佈建。',
+  'web.db.preallocatedSlotsTitle': '預先配置的租戶槽位',
+  'web.db.preallocatedSlotsDesc': '每個租戶槽位會建立兩個 D1 資料庫：core 和 PII。',
+  'web.db.slotsLabel': '槽位',
+  'web.db.slotsHelp': '預設值為 3。最多 500 個槽位。',
 
   // Web UI Email
   'web.email.title': '電子郵件提供者',

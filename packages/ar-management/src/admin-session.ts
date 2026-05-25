@@ -31,6 +31,52 @@ import {
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 
+interface AdminSessionRoleRow {
+  id: string;
+  name: string;
+  permissions_json: string;
+  hierarchy_level: number;
+  inherits_from: string | null;
+  scope_type?: string;
+  scope_id?: string | null;
+  has_global_scope?: number | string;
+}
+
+function parsePermissionsJson(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((permission): permission is string => typeof permission === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function collectInheritedRolePermissions(
+  role: AdminSessionRoleRow,
+  rolesById: Map<string, AdminSessionRoleRow>,
+  permissions: Set<string>,
+  visitedIds: Set<string> = new Set()
+): void {
+  if (visitedIds.has(role.id)) {
+    return;
+  }
+  visitedIds.add(role.id);
+
+  for (const permission of parsePermissionsJson(role.permissions_json)) {
+    permissions.add(permission);
+  }
+
+  if (!role.inherits_from) {
+    return;
+  }
+  const parent = rolesById.get(role.inherits_from);
+  if (parent) {
+    collectInheritedRolePermissions(parent, rolesById, permissions, visitedIds);
+  }
+}
+
 /**
  * Check current admin session status
  * GET /api/admin/sessions/me
@@ -90,28 +136,61 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
     // Check admin role from admin_role_assignments (DB_ADMIN), scoped to the session tenant.
     const nowSeconds = Math.floor(Date.now() / 1000);
 
-    const rolesResult = await adminAdapter.query<{
-      name: string;
-      scope_type: string;
-      scope_id: string | null;
-    }>(
-      `SELECT DISTINCT r.name, ra.scope_type, ra.scope_id
+    const rolesResult = await adminAdapter.query<AdminSessionRoleRow>(
+      `SELECT
+         r.id,
+         r.name,
+         r.permissions_json,
+         r.hierarchy_level,
+         r.inherits_from,
+         MAX(CASE WHEN ra.scope_type = 'global' THEN 1 ELSE 0 END) as has_global_scope
        FROM admin_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.admin_user_id = ?
          AND ra.tenant_id = ?
-         AND r.tenant_id = ra.tenant_id
+         AND (
+           r.tenant_id = ra.tenant_id
+           OR (r.tenant_id = 'default' AND r.is_system = 1)
+         )
+         AND (
+           ra.scope_type = 'global'
+           OR (
+             ra.scope_type = 'tenant'
+             AND (
+               ra.scope_id = ?
+               OR (ra.scope_id IS NULL AND ? = ra.tenant_id)
+             )
+           )
+         )
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+       GROUP BY r.id, r.name, r.permissions_json, r.hierarchy_level, r.inherits_from
        ORDER BY r.name ASC`,
-      [session.admin_user_id, session.tenant_id, nowSeconds]
+      [session.admin_user_id, session.tenant_id, session.tenant_id, session.tenant_id, nowSeconds]
     );
+    const allTenantRoles = await adminAdapter.query<AdminSessionRoleRow>(
+      `SELECT id, name, permissions_json, hierarchy_level, inherits_from
+         FROM admin_roles
+        WHERE tenant_id = ?
+           OR (tenant_id = 'default' AND is_system = 1)`,
+      [session.tenant_id]
+    );
+    const rolesById = new Map<string, AdminSessionRoleRow>();
+    for (const role of allTenantRoles) {
+      rolesById.set(role.id, role);
+    }
 
     const roles = rolesResult.map((r) => r.name);
+    const permissions = new Set<string>();
+    for (const role of rolesResult) {
+      collectInheritedRolePermissions(role, rolesById, permissions);
+    }
 
     // Check if user has any admin role
     const adminRoles = ['super_admin', 'security_admin', 'admin', 'operator', 'support', 'viewer'];
     const hasAdminRole = roles.some((role) => adminRoles.includes(role));
-    const isPlatformAdmin = rolesResult.some((role) => role.scope_type === 'global');
+    const isPlatformAdmin = rolesResult.some(
+      (role) => role.scope_type === 'global' || Number(role.has_global_scope ?? 0) > 0
+    );
 
     if (!hasAdminRole) {
       return c.json(
@@ -133,16 +212,35 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
         email: string;
         name: string | null;
         last_login_at: number | null;
-      }>('SELECT email, name, last_login_at FROM admin_users WHERE id = ? AND is_active = 1', [
-        session.admin_user_id,
-      ]);
-      if (adminUser) {
-        userEmail = adminUser.email;
-        userName = adminUser.name ?? undefined;
-        lastLoginAt = adminUser.last_login_at;
+        is_active: number | string | boolean;
+        status: string;
+      }>(
+        `SELECT email, name, last_login_at, is_active, status
+           FROM admin_users
+          WHERE id = ? AND tenant_id = ?`,
+        [session.admin_user_id, session.tenant_id]
+      );
+      if (!adminUser || Number(adminUser.is_active) !== 1 || adminUser.status !== 'active') {
+        return c.json(
+          {
+            error: 'session_expired',
+            error_description: 'Session has expired or is invalid',
+          },
+          401
+        );
       }
+      userEmail = adminUser.email;
+      userName = adminUser.name ?? undefined;
+      lastLoginAt = adminUser.last_login_at;
     } catch (error) {
       log.warn('Failed to fetch admin user info', { action: 'fetch_admin_user' });
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to check session status',
+        },
+        500
+      );
     }
 
     return c.json({
@@ -153,6 +251,7 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       email: userEmail,
       name: userName,
       roles,
+      permissions: Array.from(permissions).sort(),
       admin_scope: isPlatformAdmin ? 'platform' : 'tenant',
       is_platform_admin: isPlatformAdmin,
       expires_at: session.expires_at,

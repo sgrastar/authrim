@@ -412,7 +412,7 @@ describe('Custom Claims Admin API', () => {
     });
 
     it('should limit page size to 100', async () => {
-      mockDbQuery.mockResolvedValueOnce([{ count: 0 }]).mockResolvedValueOnce([]);
+      mockDbQuery.mockResolvedValueOnce([{ count: 1 }]).mockResolvedValueOnce([]);
 
       const c = createMockContext({ query: { limit: '500' } });
       const res = await adminCustomClaimsListHandler(c);

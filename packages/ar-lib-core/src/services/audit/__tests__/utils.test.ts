@@ -376,7 +376,7 @@ describe('Audit Utils', () => {
       expect(mockR2Bucket.put).not.toHaveBeenCalled();
       expect(chunkBucket.put).toHaveBeenCalledTimes(1);
       expect(chunkBucket.put.mock.calls[0][0]).toContain(
-        'sensitive-detail/v1/t_registry_detail/sensitive_detail/audit/event/'
+        'sensitive-details/v1/t_registry_detail/sensitive_detail/event/audit/'
       );
       expect(
         adapter.execute.mock.calls.some(([sql]) =>
@@ -554,7 +554,7 @@ describe('Audit Utils', () => {
       expect(mockR2Bucket.put).not.toHaveBeenCalled();
       expect(chunkBucket.put).toHaveBeenCalledTimes(1);
       expect(chunkBucket.put.mock.calls[0][0]).toContain(
-        'sensitive-detail/v1/t_registry_pii/sensitive_detail/pii/pii/'
+        'sensitive-details/v1/t_registry_pii/sensitive_detail/pii/pii/'
       );
       expect(
         adapter.execute.mock.calls.some(([sql]) =>

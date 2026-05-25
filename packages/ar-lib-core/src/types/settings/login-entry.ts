@@ -12,6 +12,7 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
  * Login Entry Settings Interface
  */
 export interface LoginEntrySettings {
+  'login-entry.override_enabled': boolean;
   'login-entry.mode': 'tenant_only' | 'discovery_optional' | 'discovery_required';
   'login-entry.discovery_methods': string;
   'login-entry.email_resolution_policy':
@@ -35,6 +36,15 @@ export interface LoginEntrySettings {
  * Login Entry Settings Metadata
  */
 export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, SettingMeta> = {
+  'login-entry.override_enabled': {
+    key: 'login-entry.override_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Tenant Override Enabled',
+    description:
+      'Enables tenant-scoped login entry behavior overrides. When disabled, tenant hosts use common entry behavior.',
+    visibility: 'admin',
+  },
   'login-entry.mode': {
     key: 'login-entry.mode',
     type: 'enum',
@@ -50,7 +60,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     default: '["email_domain","tenant_code","tenant_slug"]',
     label: 'Discovery Methods',
     description:
-      'JSON array of enabled discovery methods. Example: ["email_domain","tenant_code","tenant_slug"]',
+      'JSON array of enabled discovery methods. Example: ["email_domain","tenant_code","tenant_slug","wayf"]',
     visibility: 'admin',
   },
   'login-entry.email_resolution_policy': {
@@ -140,6 +150,7 @@ export const LOGIN_ENTRY_CATEGORY_META: CategoryMeta = {
  * Default Login Entry settings values
  */
 export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
+  'login-entry.override_enabled': false,
   'login-entry.mode': 'discovery_optional',
   'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
   'login-entry.email_resolution_policy': 'exact_email_then_domain',

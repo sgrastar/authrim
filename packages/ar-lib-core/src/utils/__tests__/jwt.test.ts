@@ -15,6 +15,7 @@ import type { KeyLike, JWK } from 'jose';
 describe('JWT Utilities', () => {
   let privateKey: KeyLike;
   let publicKey: KeyLike;
+  let differentPublicKey: KeyLike;
   let publicJWK: JWK;
   let privatePEM: string;
   const kid = 'test-key-1';
@@ -23,8 +24,10 @@ describe('JWT Utilities', () => {
 
   beforeAll(async () => {
     const keySet = await generateKeySet(kid);
+    const differentKeySet = await generateKeySet('different-key');
     privateKey = keySet.privateKey;
     publicKey = keySet.publicKey;
+    differentPublicKey = differentKeySet.publicKey;
     publicJWK = keySet.publicJWK;
     privatePEM = keySet.privatePEM;
   });
@@ -157,11 +160,8 @@ describe('JWT Utilities', () => {
       const token = await createIDToken(claims, privateKey, kid);
       const tamperedToken = token.slice(0, -10) + 'tampered12';
 
-      // Generate a different key pair
-      const differentKeySet = await generateKeySet('different-key');
-
       await expect(
-        verifyToken(tamperedToken, differentKeySet.publicKey, issuer, { audience: clientId })
+        verifyToken(tamperedToken, differentPublicKey, issuer, { audience: clientId })
       ).rejects.toThrow();
     });
 

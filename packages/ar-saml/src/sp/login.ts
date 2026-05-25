@@ -36,10 +36,8 @@ import { signRedirectBinding } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
-
-type SAMLIdPConfigWithSPInitiationPolicy = SAMLIdPConfig & {
-  providerName?: string;
-};
+import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { assertSAMLRelayStateSize } from '../common/relay-state';
 
 /**
  * Handle SP login initiation
@@ -52,7 +50,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // Get IdP ID from query parameter
     const idpId = c.req.query('idp');
     const tenantId = resolveSAMLTenantIdFromContext(c);
-    const issuerUrl = buildIssuerUrl(env, tenantId);
+    const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
     // Determine return URL with UI config fallback. Only local Authrim/Login UI origins are accepted.
     const requestedReturnUrl = c.req.query('return_url');
@@ -75,7 +73,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     const outboundIdpConfig = withSPInitiatedSsoEndpoint(idpConfig);
 
     // Generate AuthnRequest
-    const authnRequestXml = buildAuthnRequest(issuerUrl, outboundIdpConfig);
+    const authnRequestXml = buildAuthnRequest(issuerUrl, spEntityId, outboundIdpConfig);
 
     // Store request in SAMLRequestStore for later validation
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
@@ -86,13 +84,14 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       env,
       tenantId,
       requestId,
-      issuerUrl,
+      spEntityId,
       outboundIdpConfig.entityId,
       returnUrl
     );
 
     // RelayState is limited by the SAML bindings; use the opaque request ID, not the return URL.
     const relayState = requestId;
+    assertSAMLRelayStateSize(relayState);
 
     // Redirect to IdP based on preferred binding
     if (outboundIdpConfig.allowedBindings.includes('redirect')) {
@@ -138,11 +137,13 @@ function withSPInitiatedSsoEndpoint(idpConfig: SAMLIdPConfig): SAMLIdPConfig {
 /**
  * Build SAML AuthnRequest
  */
-function buildAuthnRequest(issuerUrl: string, idpConfig: SAMLIdPConfig): string {
-  const spEntityId = `${issuerUrl}/saml/sp`;
+function buildAuthnRequest(
+  issuerUrl: string,
+  spEntityId: string,
+  idpConfig: SAMLIdPConfig
+): string {
   const acsUrl = `${issuerUrl}/saml/sp/acs`;
-  const providerName =
-    (idpConfig as SAMLIdPConfigWithSPInitiationPolicy).providerName?.trim() || 'Authrim';
+  const providerName = idpConfig.providerName?.trim() || 'Authrim';
 
   const doc = createDocument();
 
@@ -187,7 +188,7 @@ async function storeAuthnRequest(
   env: Env,
   tenantId: string,
   requestId: string,
-  issuerUrl: string,
+  spEntityId: string,
   idpEntityId: string,
   returnUrl: string
 ): Promise<void> {
@@ -201,8 +202,8 @@ async function storeAuthnRequest(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       requestId,
-      issuer: `${issuerUrl}/saml/sp`,
-      destination: issuerUrl,
+      issuer: spEntityId,
+      destination: idpEntityId,
       binding: 'post',
       type: 'authn_request',
       relayState: returnUrl,
@@ -219,7 +220,7 @@ async function redirectToIdP(
   env: Env,
   idpConfig: SAMLIdPConfig,
   authnRequestXml: string,
-  returnUrl: string
+  relayState: string
 ): Promise<Response> {
   // Deflate and Base64 encode the request
   const deflated = pako.deflateRaw(authnRequestXml);
@@ -235,7 +236,7 @@ async function redirectToIdP(
   const { signedUrl } = await signRedirectBinding(
     'SAMLRequest',
     base64Encoded,
-    returnUrl,
+    relayState,
     privateKeyPem
   );
   return c.redirect(`${idpConfig.ssoUrl}?${signedUrl}`);
@@ -244,7 +245,12 @@ async function redirectToIdP(
 /**
  * POST to IdP using HTTP-POST binding
  */
-function postToIdP(idpConfig: SAMLIdPConfig, authnRequestXml: string, returnUrl: string): Response {
+function postToIdP(
+  idpConfig: SAMLIdPConfig,
+  authnRequestXml: string,
+  relayState: string
+): Response {
+  assertSAMLRelayStateSize(relayState);
   // Base64 encode the request (no deflate for POST binding)
   const base64Encoded = base64Encode(authnRequestXml);
 
@@ -253,7 +259,7 @@ function postToIdP(idpConfig: SAMLIdPConfig, authnRequestXml: string, returnUrl:
     actionUrl: idpConfig.ssoUrl,
     fields: [
       { name: 'SAMLRequest', value: base64Encoded },
-      { name: 'RelayState', value: returnUrl },
+      { name: 'RelayState', value: relayState },
     ],
     buttonText: 'Continue to Identity Provider',
   });

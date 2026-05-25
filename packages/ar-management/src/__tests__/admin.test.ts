@@ -143,6 +143,7 @@ import {
   adminClientUpdateHandler,
   adminClientDeleteHandler,
   adminClientRegenerateSecretHandler,
+  adminSessionGetHandler,
 } from '../admin';
 
 // Helper to create mock D1Database
@@ -223,6 +224,7 @@ function createMockContext(options: {
   headers?: Record<string, string>;
   jsonError?: Error;
   envOverrides?: Partial<Env>;
+  tenantId?: string;
 }) {
   const mockDB =
     options.db ??
@@ -241,7 +243,7 @@ function createMockContext(options: {
 
   // Store context values (simulating Hono's context store)
   const contextStore = new Map<string, unknown>([
-    ['tenantId', 'default'],
+    ['tenantId', options.tenantId ?? 'default'],
     [
       'adminAuth',
       {
@@ -372,6 +374,87 @@ describe('Admin API Handlers', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('tenant isolation for UID-scoped endpoints', () => {
+    it('returns 404 for a user ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('FROM users_core WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['user-from-tenant-a', 'tenant-b']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'user-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminUserGetHandler(c);
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 404 for a client ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('FROM oauth_clients WHERE tenant_id = ? AND client_id = ?')) {
+          expect(params).toEqual(['tenant-b', 'client-from-tenant-a']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'client-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminClientGetHandler(c);
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 404 for a session ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('FROM sessions WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['session-from-tenant-a', 'tenant-b']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'session-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminSessionGetHandler(c);
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 404 for an audit log ID that is not in the selected tenant', async () => {
+      const mockDB = createSqlAwareMockDB((sql, params) => {
+        if (sql.includes('sqlite_master')) {
+          return { name: 'event_log' };
+        }
+        if (sql.includes('FROM event_log') && sql.includes('WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['audit-from-tenant-a', 'tenant-b']);
+          return null;
+        }
+        return null;
+      });
+
+      const c = createMockContext({
+        tenantId: 'tenant-b',
+        params: { id: 'audit-from-tenant-a' },
+        db: mockDB,
+      });
+
+      const response = await adminAuditLogGetHandler(c);
+      expect(response.status).toBe(404);
+    });
   });
 
   describe('adminStatsHandler', () => {
@@ -574,6 +657,26 @@ describe('Admin API Handlers', () => {
           userAgent: 'Vitest',
         })
       );
+    });
+
+    it('returns an empty audit log list when the hot audit table is not initialized', async () => {
+      const mockDB = createSqlAwareMockDB((sql) => {
+        if (sql.includes('FROM event_log')) {
+          throw new Error('no such table: event_log');
+        }
+        return null;
+      });
+      const c = createMockContext({ db: mockDB });
+
+      const response = await adminAuditLogListHandler(c);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        entries: unknown[];
+        pagination: { total: number; totalPages: number };
+      };
+      expect(body.entries).toEqual([]);
+      expect(body.pagination.total).toBe(0);
+      expect(body.pagination.totalPages).toBe(0);
     });
 
     it('returns pending_runtime_support for non-D1 primary audit profiles', async () => {
@@ -2219,6 +2322,33 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should reject legacy browser public client mode on create', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Legacy Browser Client',
+          redirect_uris: ['https://example.com/callback'],
+          browser_public_client_mode: 'legacy',
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('browser_public_client_mode'),
+        }),
+        400
+      );
+    });
+
     it('should generate client_id and client_secret', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -2610,6 +2740,39 @@ describe('Admin API Handlers', () => {
             default_resource: 'svc://wallet-api',
           }),
         })
+      );
+    });
+
+    it('should reject legacy browser public client mode on update', async () => {
+      const clientId = 'legacy-browser-client-update';
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        },
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          browser_public_client_mode: 'legacy',
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('browser_public_client_mode'),
+        }),
+        400
       );
     });
 

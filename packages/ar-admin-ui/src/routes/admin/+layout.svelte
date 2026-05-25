@@ -83,8 +83,7 @@
 			},
 			{ path: '/admin/saml', label: 'SAML', icon: 'i-ph-arrows-left-right' },
 			{ path: '/admin/consents', label: 'Consents', icon: 'i-ph-handshake' },
-			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' },
-			{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' }
+			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' }
 		],
 		identitySchema: [
 			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
@@ -560,7 +559,7 @@
 	/* Main Content */
 	.main-content {
 		flex: 1;
-		margin-left: calc(var(--nav-width-expanded) + 48px);
+		margin-left: calc(var(--nav-width-collapsed) + 48px);
 		min-height: 100vh;
 		display: flex;
 		flex-direction: column;
@@ -589,7 +588,7 @@
 	/* Responsive */
 	@media (max-width: 1024px) {
 		.main-content {
-			margin-left: calc(var(--nav-width-expanded) + 32px);
+			margin-left: calc(var(--nav-width-collapsed) + 32px);
 			padding: 20px;
 		}
 	}
