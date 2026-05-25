@@ -1988,7 +1988,6 @@ WHERE NOT EXISTS (
 );`;
 }
 
-const FRESH_SCHEMA_MIGRATION_FILE = '000_fresh_schema.sql';
 const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
 
 interface ListD1MigrationOptions {
@@ -2050,21 +2049,6 @@ async function recordMigration(dbName: string, filename: string): Promise<void> 
   }
 }
 
-async function recordMigrations(dbName: string, filenames: string[]): Promise<void> {
-  if (filenames.length === 0) {
-    return;
-  }
-
-  const sql = filenames.map((filename) => buildRecordMigrationSql(filename)).join('\n');
-  try {
-    await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
-  } catch {
-    for (const filename of filenames) {
-      await recordMigration(dbName, filename);
-    }
-  }
-}
-
 /**
  * Run all D1 migrations for a database.
  *
@@ -2105,21 +2089,12 @@ export async function runD1Migrations(
 
   let appliedCount = 0;
   let skippedCount = 0;
-  const hasFreshSchema = sqlFiles.includes(FRESH_SCHEMA_MIGRATION_FILE);
-  let freshSchemaApplied = hasFreshSchema && applied.has(FRESH_SCHEMA_MIGRATION_FILE);
   const alreadyAppliedFiles: string[] = [];
-  const freshCoveredFiles: string[] = [];
   const summaryLimit = options.logSummaryLimit ?? 8;
 
   for (const sqlFile of sqlFiles) {
     if (applied.has(sqlFile)) {
       alreadyAppliedFiles.push(sqlFile);
-      skippedCount++;
-      continue;
-    }
-
-    if (hasFreshSchema && freshSchemaApplied && sqlFile !== FRESH_SCHEMA_MIGRATION_FILE) {
-      freshCoveredFiles.push(sqlFile);
       skippedCount++;
       continue;
     }
@@ -2136,19 +2111,6 @@ export async function runD1Migrations(
 
     await recordMigration(dbName, sqlFile);
     appliedCount++;
-    if (sqlFile === FRESH_SCHEMA_MIGRATION_FILE) {
-      freshSchemaApplied = true;
-    }
-  }
-
-  if (freshCoveredFiles.length > 0) {
-    await recordMigrations(dbName, freshCoveredFiles);
-    onProgress?.(
-      `  ⏭  Skipping ${freshCoveredFiles.length} migration(s) covered by fresh schema: ${formatMigrationFileSummary(
-        freshCoveredFiles,
-        summaryLimit
-      )}`
-    );
   }
 
   if (alreadyAppliedFiles.length > 0) {

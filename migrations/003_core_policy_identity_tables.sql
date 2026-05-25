@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Authrim Core Baseline: Policy and Identity Tables
--- Consolidated for fresh Authrim installs from migrations/000_fresh_schema.sql.
+-- Consolidated baseline for fresh Authrim core database installs.
 -- =============================================================================
 CREATE TABLE operational_logs (
     id TEXT PRIMARY KEY,

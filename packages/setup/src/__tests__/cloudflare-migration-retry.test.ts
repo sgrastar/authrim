@@ -22,7 +22,7 @@ describe('executeD1Migration retry handling', () => {
   });
 
   it('retries transient D1 upload failures before succeeding', async () => {
-    const migrationPath = join(root, '000_fresh_schema.sql');
+    const migrationPath = join(root, '001_core_foundation.sql');
     writeFileSync(migrationPath, 'CREATE TABLE example (id TEXT PRIMARY KEY);');
     vi.mocked(execa)
       .mockResolvedValueOnce({

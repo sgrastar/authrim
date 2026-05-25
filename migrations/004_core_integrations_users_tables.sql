@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Authrim Core Baseline: Integrations and User Tables
--- Consolidated for fresh Authrim installs from migrations/000_fresh_schema.sql.
+-- Consolidated baseline for fresh Authrim core database installs.
 -- =============================================================================
 CREATE TABLE upstream_providers (
   id TEXT PRIMARY KEY,

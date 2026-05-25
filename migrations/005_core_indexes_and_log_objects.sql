@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Authrim Core Baseline: Indexes and Log Objects
--- Consolidated for fresh Authrim installs from migrations/000_fresh_schema.sql.
+-- Consolidated baseline for fresh Authrim core database installs.
 -- =============================================================================
 -- =============================================================================
 -- Indexes

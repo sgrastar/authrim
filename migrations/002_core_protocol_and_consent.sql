@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Authrim Core Baseline: Protocol and Consent Tables
--- Consolidated for fresh Authrim installs from migrations/000_fresh_schema.sql.
+-- Consolidated baseline for fresh Authrim core database installs.
 -- =============================================================================
 CREATE TABLE access_review_items (
   id TEXT PRIMARY KEY,

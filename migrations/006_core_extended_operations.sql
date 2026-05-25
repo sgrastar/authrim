@@ -1,9 +1,6 @@
 -- =============================================================================
 -- Authrim Core Baseline: Extended Operations
--- Consolidated for fresh Authrim installs from migrations/000_fresh_schema.sql.
--- =============================================================================
--- =============================================================================
--- From 053: Custom Claim Schemas
+-- Consolidated baseline for fresh Authrim core database installs.
 -- =============================================================================
 
 CREATE TABLE custom_claim_schemas (
@@ -453,12 +450,11 @@ CREATE INDEX IF NOT EXISTS idx_logging_catalog_repair_jobs_queue
   ON logging_catalog_repair_jobs(status, created_at);
 
 -- -----------------------------------------------------------------------------
--- Source: migrations/061_seed_default_claim_schemas.sql
+-- Seed default OIDC claim schemas
 -- -----------------------------------------------------------------------------
 
--- Migration 061: Seed default OIDC claim schemas for all existing tenants
---
 -- Inserts standard OIDC claims as system schemas (is_system=1) for every tenant.
+--
 -- Uses WHERE NOT EXISTS to ensure idempotency without relying on partial unique indexes.
 -- All claims default to include_in_id_token=0 (OIDC compliant: claims via UserInfo,
 -- controlled by scope). System claims cannot be deleted or renamed via the admin API.

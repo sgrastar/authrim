@@ -1,10 +1,6 @@
 -- =============================================================================
 -- Authrim Core Baseline: Foundation
--- Consolidated for fresh Authrim installs from migrations/000_fresh_schema.sql.
--- =============================================================================
--- =============================================================================
--- Fresh Schema for Authrim Core DB
--- Generated from conformance environment
+-- Consolidated baseline for fresh Authrim core database installs.
 -- =============================================================================
 
 -- tenants table must be created first as other tables reference it via FK

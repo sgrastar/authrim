@@ -155,15 +155,15 @@ describe('listD1MigrationSqlFiles', () => {
     try {
       mkdirSync(join(dir, 'logging-storage', 'phase2'), { recursive: true });
       mkdirSync(join(dir, 'logging-storage', 'phase1'), { recursive: true });
-      writeFileSync(join(dir, '000_fresh_schema.sql'), '-- fresh');
-      writeFileSync(join(dir, '010_flat.sql'), '-- flat');
+      writeFileSync(join(dir, '001_core_foundation.sql'), '-- foundation');
+      writeFileSync(join(dir, '002_core_protocol.sql'), '-- protocol');
       writeFileSync(join(dir, 'logging-storage', 'phase2', '002_policy.sql'), '-- phase2');
       writeFileSync(join(dir, 'logging-storage', 'phase1', '001_destination.sql'), '-- phase1');
       writeFileSync(join(dir, '.ignored.sql'), '-- ignored');
 
       expect(listD1MigrationSqlFiles(dir)).toEqual([
-        '000_fresh_schema.sql',
-        '010_flat.sql',
+        '001_core_foundation.sql',
+        '002_core_protocol.sql',
         'logging-storage/phase1/001_destination.sql',
         'logging-storage/phase2/002_policy.sql',
       ]);
@@ -178,7 +178,7 @@ describe('listD1MigrationSqlFiles', () => {
       mkdirSync(join(dir, 'admin'), { recursive: true });
       mkdirSync(join(dir, 'pii'), { recursive: true });
       mkdirSync(join(dir, 'logging-storage', 'phase1'), { recursive: true });
-      writeFileSync(join(dir, '000_fresh_schema.sql'), '-- fresh');
+      writeFileSync(join(dir, '001_core_foundation.sql'), '-- foundation');
       writeFileSync(join(dir, 'admin', '001_admin.sql'), '-- admin');
       writeFileSync(join(dir, 'pii', '001_pii.sql'), '-- pii');
       writeFileSync(join(dir, 'logging-storage', 'phase1', '001_destination.sql'), '-- phase1');
@@ -187,7 +187,7 @@ describe('listD1MigrationSqlFiles', () => {
         listD1MigrationSqlFiles(dir, {
           excludeTopLevelDirectories: new Set(['admin', 'pii']),
         })
-      ).toEqual(['000_fresh_schema.sql', 'logging-storage/phase1/001_destination.sql']);
+      ).toEqual(['001_core_foundation.sql', 'logging-storage/phase1/001_destination.sql']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -245,7 +245,7 @@ describe('migration seed SQL portability', () => {
   it('uses deterministic claim schema IDs instead of sqlite randomblob seeds', () => {
     const sql = readMigration('006_core_extended_operations.sql');
 
-    const claimSeedSql = sql.slice(sql.indexOf('Migration 061: Seed default OIDC claim schemas'));
+    const claimSeedSql = sql.slice(sql.indexOf('Seed default OIDC claim schemas'));
     expect(claimSeedSql).not.toContain('randomblob(');
     expect(sql).toContain("'system_claim_' || t.id || '_name'");
     expect(sql).toContain("'system_claim_' || t.id || '_address_country'");
