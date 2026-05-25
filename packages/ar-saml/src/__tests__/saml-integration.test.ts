@@ -69,6 +69,14 @@ vi.mock('../common/signature', () => ({
 }));
 
 vi.mock('../common/key-utils', () => ({
+  DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT: {
+    countryName: '',
+    stateOrProvinceName: '',
+    localityName: '',
+    organizationName: 'Authrim',
+    organizationalUnitName: '',
+    commonName: 'Authrim SAML Signing',
+  },
   getSigningKey: (...args: any[]) => mockGetSigningKey(...args),
   getSigningCertificate: (...args: any[]) => mockGetSigningCertificate(...args),
 }));

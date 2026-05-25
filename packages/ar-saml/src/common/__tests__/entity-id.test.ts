@@ -64,6 +64,15 @@ describe('SAML local entityID helpers', () => {
     expect(settings).toEqual({
       entityIdStyle: 'metadata_url',
       interactiveLoginUrlPolicy: 'ui_base_url',
+      certificateSubject: {
+        countryName: '',
+        stateOrProvinceName: '',
+        localityName: '',
+        organizationName: 'Authrim',
+        organizationalUnitName: '',
+        commonName: 'Authrim SAML Signing',
+      },
+      signingKeyPolicies: {},
     });
   });
 });
