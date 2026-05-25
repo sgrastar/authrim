@@ -490,21 +490,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     componentsToDeply = [options.component as WorkerComponent];
     console.log(chalk.cyan(`\nDeploying single component: ${options.component}`));
   } else {
-    // Deploy all enabled components
-    const enabledComponents: WorkerComponent[] = ['ar-lib-core', 'ar-discovery'];
-
-    // Always include core components
-    enabledComponents.push('ar-auth', 'ar-token', 'ar-userinfo', 'ar-management');
-
-    // Add optional components based on config
-    if (config.components.saml) enabledComponents.push('ar-saml');
-    if (config.components.async) enabledComponents.push('ar-async');
-    if (config.components.vc) enabledComponents.push('ar-vc');
-    if (config.components.bridge) enabledComponents.push('ar-bridge');
-    if (config.components.policy) enabledComponents.push('ar-policy');
-
-    // Router is always last
-    enabledComponents.push('ar-router');
+    const enabledComponents = [...CORE_WORKER_COMPONENTS];
 
     componentsToDeply = enabledComponents;
 

@@ -453,9 +453,10 @@ const ko: Translations = {
   'userId.note': '참고: 이 설정은 사용자 생성 후 변경할 수 없습니다.',
   'userId.selected': '사용자 ID 형식: {{format}}',
 
-  // Optional components
-  'components.title': '선택적 컴포넌트',
-  'components.note': '참고: 소셜 로그인과 정책 엔진은 표준 컴포넌트입니다',
+  // Standard components
+  'components.title': '표준 컴포넌트',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, 소셜 로그인, 정책 엔진은 기본으로 설치됩니다',
   'components.samlPrompt': 'SAML 지원을 활성화하시겠습니까?',
   'components.vcPrompt': '검증 가능한 자격 증명(VC)을 활성화하시겠습니까?',
   'components.saml': 'SAML:',

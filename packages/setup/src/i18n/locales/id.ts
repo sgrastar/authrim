@@ -456,9 +456,10 @@ const id: Translations = {
   'userId.note': 'Catatan: Pengaturan ini tidak dapat diubah setelah pengguna dibuat.',
   'userId.selected': 'Format ID pengguna: {{format}}',
 
-  // Optional components
-  'components.title': 'Komponen Opsional',
-  'components.note': 'Catatan: Login Sosial dan Policy Engine adalah komponen standar',
+  // Standard components
+  'components.title': 'Komponen Standar',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Login Sosial, dan Policy Engine dipasang secara default.',
   'components.samlPrompt': 'Aktifkan dukungan SAML?',
   'components.vcPrompt': 'Aktifkan Verifiable Credentials?',
   'components.saml': 'SAML:',

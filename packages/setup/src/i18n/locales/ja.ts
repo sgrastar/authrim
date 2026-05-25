@@ -453,9 +453,10 @@ const ja: Translations = {
   'userId.note': '注意: この設定はユーザー作成後に変更できません。',
   'userId.selected': 'ユーザーID形式: {{format}}',
 
-  // Optional components
-  'components.title': 'オプションコンポーネント',
-  'components.note': '注: ソーシャルログインとポリシーエンジンは標準コンポーネントです',
+  // Standard components
+  'components.title': '標準コンポーネント',
+  'components.note':
+    'SAML、Device Flow/CIBA、VC、ソーシャルログイン、ポリシーエンジンは標準でインストールされます',
   'components.samlPrompt': 'SAMLサポートを有効にしますか？',
   'components.vcPrompt': 'Verifiable Credentialsを有効にしますか？',
   'components.saml': 'SAML:',

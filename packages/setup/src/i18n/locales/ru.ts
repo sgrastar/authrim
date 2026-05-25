@@ -456,10 +456,10 @@ const ru: Translations = {
   'userId.note': 'Примечание: Этот параметр нельзя изменить после создания пользователей.',
   'userId.selected': 'Формат ID пользователя: {{format}}',
 
-  // Optional components
-  'components.title': 'Дополнительные компоненты',
+  // Standard components
+  'components.title': 'Стандартные компоненты',
   'components.note':
-    'Примечание: Социальный вход и Policy Engine являются стандартными компонентами',
+    'SAML, Device Flow/CIBA, VC, социальный вход и Policy Engine устанавливаются по умолчанию.',
   'components.samlPrompt': 'Включить поддержку SAML?',
   'components.vcPrompt': 'Включить верифицируемые учётные данные (VC)?',
   'components.saml': 'SAML:',

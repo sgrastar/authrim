@@ -933,6 +933,34 @@ export function getHtmlTemplate(
       color: var(--text-muted);
     }
 
+    .standard-component-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 0.625rem 0 0 1.5rem;
+    }
+
+    .standard-component-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-height: 1.75rem;
+      padding: 0.25rem 0.65rem;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.08);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 600;
+      line-height: 1.15;
+    }
+
+    .standard-component-badge::before {
+      content: '✓';
+      color: var(--primary);
+      font-weight: 700;
+    }
+
     /* ========================================
        HINT / TIP BOXES
        ======================================== */
@@ -3391,19 +3419,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <p style="margin: 0.25rem 0 0.5rem 1.5rem; font-size: 0.85rem;" data-i18n="web.config.apiDesc">
             OIDC Provider endpoints: authorize, token, userinfo, discovery, management APIs.
           </p>
-          <div style="margin-left: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem;">
-            <label class="checkbox-item" style="font-size: 0.9rem;">
-              <input type="checkbox" id="comp-saml">
-              <span data-i18n="web.config.saml">SAML IdP</span>
-            </label>
-            <label class="checkbox-item" style="font-size: 0.9rem;">
-              <input type="checkbox" id="comp-async">
-              Device Flow / CIBA
-            </label>
-            <label class="checkbox-item" style="font-size: 0.9rem;">
-              <input type="checkbox" id="comp-vc">
-              Verifiable Credentials
-            </label>
+          <div class="standard-component-list" aria-label="Standard API components">
+            <span class="standard-component-badge" data-i18n="web.config.saml">SAML IdP</span>
+            <span class="standard-component-badge" data-i18n="web.config.deviceFlow">Device Flow / CIBA</span>
+            <span class="standard-component-badge" data-i18n="web.config.vcSdJwt">VC SD-JWT</span>
           </div>
         </div>
 
@@ -3573,6 +3592,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <span class="preview-component-badge">API</span>
             <span class="preview-component-badge">Login UI</span>
             <span class="preview-component-badge">Admin UI</span>
+            <span class="preview-component-badge">SAML IdP</span>
+            <span class="preview-component-badge">Device Flow/CIBA</span>
+            <span class="preview-component-badge">VC SD-JWT</span>
           </span>
         </div>
 
@@ -5151,15 +5173,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function getExpectedDeployWorkerCount() {
-      const components = (config && config.components) || {};
-      let count = 6; // ar-lib-core, discovery, auth, token, userinfo, management
-      if (components.saml) count++;
-      if (components.async) count++;
-      if (components.vc) count++;
-      if (components.bridge) count++;
-      if (components.policy) count++;
-      count++; // ar-router
-      return count;
+      return 12;
     }
 
     function createDeployProgressTracker() {
@@ -5416,10 +5430,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       document.getElementById('comp-login-ui').checked = true;
       document.getElementById('comp-admin-ui').checked = true;
-      document.getElementById('comp-saml').checked = false;
-      document.getElementById('comp-async').checked = false;
-      document.getElementById('comp-vc').checked = false;
-
       document.getElementById('domain-check-row').style.display = 'none';
       document.getElementById('domain-check-status').replaceChildren();
       document.getElementById('login-domain-zone-status').replaceChildren();
@@ -5773,13 +5783,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         multiTenant: false,
       };
 
-      const components = loadedConfig.components || {
+      const components = {
         api: true,
         loginUi: true,
         adminUi: true,
-        saml: false,
-        async: false,
-        vc: false,
+        ...(loadedConfig.components || {}),
+        saml: true,
+        async: true,
+        vc: true,
         bridge: true,
         policy: true,
       };
@@ -5822,16 +5833,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (document.getElementById('comp-admin-ui')) {
         document.getElementById('comp-admin-ui').checked = components.adminUi !== false;
       }
-      if (document.getElementById('comp-saml')) {
-        document.getElementById('comp-saml').checked = components.saml === true;
-      }
-      if (document.getElementById('comp-async')) {
-        document.getElementById('comp-async').checked = components.async === true;
-      }
-      if (document.getElementById('comp-vc')) {
-        document.getElementById('comp-vc').checked = components.vc === true;
-      }
-
       // Restore domain check UI if custom domain is set
       const loadedBaseDomain = document.getElementById('base-domain').value.trim();
       if (loadedBaseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(loadedBaseDomain)) {
@@ -6111,9 +6112,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const components = ['API'];
       if (document.getElementById('comp-login-ui').checked) components.push('Login UI');
       if (document.getElementById('comp-admin-ui').checked) components.push('Admin UI');
-      if (document.getElementById('comp-saml').checked) components.push('SAML IdP');
-      if (document.getElementById('comp-async').checked) components.push('Device Flow/CIBA');
-      if (document.getElementById('comp-vc').checked) components.push('Verifiable Credentials');
+      components.push('SAML IdP', 'Device Flow/CIBA', 'VC SD-JWT');
       const previewComponents = document.getElementById('preview-components');
       previewComponents.textContent = '';
       components.forEach((component) => {
@@ -6333,7 +6332,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Attach event listeners to all inputs
-    ['env', 'base-domain', 'enable-multi-tenant', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain', 'comp-login-ui', 'comp-admin-ui', 'comp-saml', 'comp-async', 'comp-vc'].forEach(id => {
+    ['env', 'base-domain', 'enable-multi-tenant', 'naked-domain', 'tenant-name', 'login-domain', 'admin-domain', 'comp-login-ui', 'comp-admin-ui'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener('input', updatePreview);
@@ -6781,9 +6780,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           api: true,
           loginUi: loginUiEnabled,
           adminUi: adminUiEnabled,
-          saml: document.getElementById('comp-saml').checked,
-          async: document.getElementById('comp-async').checked,
-          vc: document.getElementById('comp-vc').checked,
+          saml: true,
+          async: true,
+          vc: true,
           bridge: true, // Standard component
           policy: true, // Standard component
         },
@@ -7762,13 +7761,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           userIdFormat: config.tenant?.userIdFormat || 'nanoid',
           primaryTenant: config.tenant?.primaryTenant || undefined,
         },
-        components: config.components || {
+        components: {
           api: true,
           loginUi: true,
           adminUi: true,
-          saml: false,
-          async: false,
-          vc: false,
+          ...(config.components || {}),
+          saml: true,
+          async: true,
+          vc: true,
           bridge: true,
           policy: true,
         },

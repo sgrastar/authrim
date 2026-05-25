@@ -28,7 +28,7 @@ export const WORKER_COMPONENTS = [
 
 export type WorkerComponent = (typeof WORKER_COMPONENTS)[number];
 
-// Core components that are always deployed
+// Standard components that are always deployed
 export const CORE_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-lib-core',
   'ar-discovery',
@@ -36,17 +36,16 @@ export const CORE_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-token',
   'ar-userinfo',
   'ar-management',
-  'ar-router',
-];
-
-// Optional components
-export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-async',
   'ar-policy',
   'ar-saml',
   'ar-bridge',
   'ar-vc',
+  'ar-router',
 ];
+
+// Reserved for future install-time optional workers.
+export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [];
 
 // =============================================================================
 // Durable Objects

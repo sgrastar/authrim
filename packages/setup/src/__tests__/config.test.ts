@@ -87,6 +87,9 @@ describe('createDefaultConfig', () => {
     expect(config.components.api).toBe(true);
     expect(config.components.loginUi).toBe(true);
     expect(config.components.adminUi).toBe(true);
+    expect(config.components.saml).toBe(true);
+    expect(config.components.async).toBe(true);
+    expect(config.components.vc).toBe(true);
     expect(config.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
     expect(config.profiles.registry.backend).toBe('kv');
   });
@@ -128,6 +131,9 @@ describe('parseConfig', () => {
     expect(config.environment.prefix).toBe('dev');
     expect(config.tenant.name).toBe('test-tenant');
     expect(config.profile).toBe('fapi-rw');
+    expect(config.components.saml).toBe(true);
+    expect(config.components.async).toBe(true);
+    expect(config.components.vc).toBe(true);
     expect(config.oidc.accessTokenTtl).toBe(7200);
     expect(config.profiles.defaults.storage).toBe('builtin:storage:external-postgres');
     expect(config.profiles.registry.backend).toBe('database');

@@ -445,9 +445,9 @@ const zhTW: Translations = {
   'userId.note': '注意：此設定在建立使用者後無法變更。',
   'userId.selected': '使用者 ID 格式：{{format}}',
 
-  // Optional components
-  'components.title': '選用元件',
-  'components.note': '注意：社交登入和政策引擎是標準元件',
+  // Standard components
+  'components.title': '標準元件',
+  'components.note': 'SAML、Device Flow/CIBA、VC、社交登入和政策引擎預設安裝。',
   'components.samlPrompt': '啟用 SAML 支援？',
   'components.vcPrompt': '啟用可驗證憑證（VC）？',
   'components.saml': 'SAML：',

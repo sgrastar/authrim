@@ -462,9 +462,10 @@ const de: Translations = {
     'Hinweis: Diese Einstellung kann nach der Benutzererstellung nicht geändert werden.',
   'userId.selected': 'Benutzer-ID-Format: {{format}}',
 
-  // Optional components
-  'components.title': 'Optionale Komponenten',
-  'components.note': 'Hinweis: Social Login und Policy Engine sind Standardkomponenten',
+  // Standard components
+  'components.title': 'Standardkomponenten',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Social Login und Policy Engine werden standardmäßig installiert.',
   'components.samlPrompt': 'SAML-Unterstützung aktivieren?',
   'components.vcPrompt': 'Verifizierbare Credentials aktivieren?',
   'components.saml': 'SAML:',

@@ -150,16 +150,23 @@ export const ComponentsConfigSchema = z.object({
   /** Admin UI component */
   adminUi: z.boolean().default(true),
   /** SAML IdP/SP support */
-  saml: z.boolean().default(false),
+  saml: z.boolean().default(true),
   /** Async queue processing */
-  async: z.boolean().default(false),
+  async: z.boolean().default(true),
   /** Verifiable Credentials */
-  vc: z.boolean().default(false),
+  vc: z.boolean().default(true),
   /** External IdP Bridge (Social Login) - standard component */
   bridge: z.boolean().default(true),
   /** ReBAC Policy service - standard component */
   policy: z.boolean().default(true),
-});
+}).transform((components) => ({
+  ...components,
+  saml: true,
+  async: true,
+  vc: true,
+  bridge: true,
+  policy: true,
+}));
 
 // =============================================================================
 // OIDC Configuration

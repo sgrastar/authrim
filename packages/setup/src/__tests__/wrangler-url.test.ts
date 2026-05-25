@@ -129,9 +129,9 @@ describe('generateEnvVars - ar-management', () => {
     expect(vars['UI_URL']).toBe(expectedUiUrl);
     expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
     expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
-    expect(vars['SAML_ENABLED']).toBe((config.components?.saml ?? false) ? 'true' : 'false');
-    expect(vars['ASYNC_ENABLED']).toBe((config.components?.async ?? false) ? 'true' : 'false');
-    expect(vars['VC_ENABLED']).toBe((config.components?.vc ?? false) ? 'true' : 'false');
+    expect(vars['SAML_ENABLED']).toBe('true');
+    expect(vars['ASYNC_ENABLED']).toBe('true');
+    expect(vars['VC_ENABLED']).toBe('true');
     expect(vars['DEFAULT_TENANT_ID']).toBe(expected.DEFAULT_TENANT_ID);
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
     expect(vars['ADMIN_UI_API_MODE']).toBe(expectedAdminUiApiMode(config));

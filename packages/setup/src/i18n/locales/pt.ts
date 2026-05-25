@@ -460,9 +460,10 @@ const pt: Translations = {
   'userId.note': 'Nota: Esta configuração não pode ser alterada após a criação de usuários.',
   'userId.selected': 'Formato de ID de usuário: {{format}}',
 
-  // Optional components
-  'components.title': 'Componentes Opcionais',
-  'components.note': 'Nota: Login Social e Motor de Políticas são componentes padrão',
+  // Standard components
+  'components.title': 'Componentes padrão',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Login Social e Motor de Políticas são instalados por padrão.',
   'components.samlPrompt': 'Habilitar suporte SAML?',
   'components.vcPrompt': 'Habilitar Credenciais Verificáveis?',
   'components.saml': 'SAML:',

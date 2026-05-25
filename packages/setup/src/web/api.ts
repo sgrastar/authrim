@@ -794,6 +794,11 @@ export function createApiRoutes(): Hono {
           config.components = {
             ...config.components,
             ...components,
+            saml: true,
+            async: true,
+            vc: true,
+            bridge: true,
+            policy: true,
           };
         }
 
@@ -1522,20 +1527,7 @@ export function createApiRoutes(): Hono {
         }
 
         if (!enabledComponents && cfg) {
-          enabledComponents = [
-            'ar-lib-core',
-            'ar-discovery',
-            'ar-auth',
-            'ar-token',
-            'ar-userinfo',
-            'ar-management',
-          ];
-          if (cfg?.components?.saml) enabledComponents.push('ar-saml');
-          if (cfg?.components?.async) enabledComponents.push('ar-async');
-          if (cfg?.components?.vc) enabledComponents.push('ar-vc');
-          if (cfg?.components?.bridge) enabledComponents.push('ar-bridge');
-          if (cfg?.components?.policy) enabledComponents.push('ar-policy');
-          enabledComponents.push('ar-router');
+          enabledComponents = Array.from(getEnabledComponents({}));
         }
 
         // Upload secrets first (secrets are read but not stored in state)

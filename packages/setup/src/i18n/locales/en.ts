@@ -455,9 +455,10 @@ const en: Translations = {
   'userId.note': 'Note: This setting cannot be changed after users are created.',
   'userId.selected': 'User ID format: {{format}}',
 
-  // Optional components
-  'components.title': 'Optional Components',
-  'components.note': 'Note: Social Login and Policy Engine are standard components',
+  // Standard components
+  'components.title': 'Standard Components',
+  'components.note':
+    'SAML, Device Flow/CIBA, VC, Social Login, and Policy Engine are installed by default.',
   'components.samlPrompt': 'Enable SAML support?',
   'components.vcPrompt': 'Enable Verifiable Credentials?',
   'components.saml': 'SAML:',

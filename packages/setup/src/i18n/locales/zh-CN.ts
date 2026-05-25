@@ -446,9 +446,9 @@ const zhCN: Translations = {
   'userId.note': '注意：此设置在创建用户后无法更改。',
   'userId.selected': '用户 ID 格式：{{format}}',
 
-  // Optional components
-  'components.title': '可选组件',
-  'components.note': '注意：社交登录和策略引擎是标准组件',
+  // Standard components
+  'components.title': '标准组件',
+  'components.note': 'SAML、Device Flow/CIBA、VC、社交登录和策略引擎默认安装。',
   'components.samlPrompt': '启用 SAML 支持？',
   'components.vcPrompt': '启用可验证凭据？',
   'components.saml': 'SAML：',
