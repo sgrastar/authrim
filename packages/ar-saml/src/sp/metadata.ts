@@ -21,7 +21,6 @@ import {
 } from '../common/xml-utils';
 import {
   getSAMLMetadataSigningCertificates,
-  getSAMLSigningPolicy,
   type SAMLMetadataSigningCertificate,
 } from '../common/saml-signing-keys';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -36,7 +35,7 @@ import {
   shouldSignSAMLMetadata,
   signSAMLMetadata,
 } from '../common/metadata-signing';
-import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../common/entity-id';
 
 /**
  * Handle SP metadata request
@@ -46,7 +45,10 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
   const log = getLogger(c).module('SAML-SP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  const { issuerUrl, spEntityId: entityId } = await getSAMLLocalEntityIds(env, tenantId);
+  const [{ issuerUrl, spEntityId: entityId }, settings] = await Promise.all([
+    getSAMLLocalEntityIds(env, tenantId),
+    getSAMLPublicSettings(env, tenantId),
+  ]);
 
   // Get signing certificates from KeyManager / SAML rollover policy.
   let signingCertificates: SAMLMetadataSigningCertificate[];
@@ -54,6 +56,8 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
     signingCertificates = await getSAMLMetadataSigningCertificates(env, {
       tenantId,
       role: 'sp',
+      policy: settings.signingKeyPolicies.sp,
+      certificateSubject: settings.certificateSubject,
     });
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
@@ -72,7 +76,8 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
       const signingMaterial = await getSAMLMetadataSigningMaterial(env, {
         tenantId,
         role: 'sp',
-        policy: getSAMLSigningPolicy(),
+        policy: settings.signingKeyPolicies.sp,
+        certificateSubject: settings.certificateSubject,
       });
       metadataXml = signSAMLMetadata(metadataXml, signingMaterial);
     } catch (error) {

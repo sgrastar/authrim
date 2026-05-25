@@ -7,7 +7,11 @@ import type {
   SAMLSigningRole,
   SAMLSPConfig,
 } from '@authrim/ar-lib-core';
-import { getSigningCertificate, getSigningKey } from './key-utils';
+import {
+  getSigningCertificate,
+  getSigningKey,
+  type SAMLSigningCertificateSubject,
+} from './key-utils';
 import { requireSAMLTenantId } from './tenant';
 
 export interface SAMLSigningKeyContext {
@@ -15,6 +19,7 @@ export interface SAMLSigningKeyContext {
   role: SAMLSigningRole;
   counterpartyEntityId?: string;
   policy?: SAMLSigningKeyPolicy;
+  certificateSubject?: SAMLSigningCertificateSubject;
 }
 
 export interface SAMLSigningMaterial {
@@ -60,7 +65,10 @@ export async function getSAMLSigningMaterial(
   const keyRef = resolveSAMLSigningKeyRef(context);
   const [key, certificate] = await Promise.all([
     getSigningKey(env, context.tenantId, { keyRef }),
-    getSigningCertificate(env, context.tenantId, { keyRef }),
+    getSigningCertificate(env, context.tenantId, {
+      keyRef,
+      certificateSubject: context.certificateSubject,
+    }),
   ]);
 
   return {
@@ -138,6 +146,7 @@ async function resolvePublishedCertificate(
 
   const certificate = await getSigningCertificate(env, context.tenantId, {
     keyRef: reference.keyRef,
+    certificateSubject: context.certificateSubject,
   });
 
   return {

@@ -66,6 +66,7 @@ import {
   listEnvironments,
   findAuthrimBaseDir,
   findLegacyConfigPath,
+  AUTHRIM_DIR,
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../core/paths.js';
@@ -283,7 +284,10 @@ async function beginProgressLog(
   progressLogState = null;
 
   try {
-    const logsDir = join(resolveProgressLogKeysDir(env), 'logs');
+    const logsDir =
+      operation === 'delete'
+        ? join(findAuthrimBaseDir(process.cwd()), AUTHRIM_DIR, 'logs', env)
+        : join(resolveProgressLogKeysDir(env), 'logs');
     await mkdir(logsDir, { recursive: true, mode: 0o700 });
     const filePath = join(logsDir, `${formatLogTimestamp()}-${operation}.log`);
     await writeFile(filePath, '', { encoding: 'utf-8', mode: 0o600 });
@@ -794,8 +798,6 @@ export function createApiRoutes(): Hono {
           config.components = {
             ...config.components,
             ...components,
-            loginUi: true,
-            adminUi: true,
             saml: true,
             async: true,
             vc: true,

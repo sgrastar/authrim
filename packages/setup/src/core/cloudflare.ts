@@ -1342,6 +1342,24 @@ interface CloudflareDnsMutationResponse {
   messages?: CloudflareApiMessage[];
 }
 
+interface CloudflareR2ObjectListResponse {
+  success?: boolean;
+  result?: Array<{ key?: string }>;
+  result_info?: {
+    cursor?: string;
+    is_truncated?: boolean;
+  };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareAccountsResponse {
+  success?: boolean;
+  result?: Array<{ id?: string }>;
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
 function hasCloudflareAlreadyExistsError(payload: {
   errors?: CloudflareApiMessage[];
   messages?: CloudflareApiMessage[];
@@ -3916,6 +3934,17 @@ export function parseObjectCatalogR2RowsFromWranglerJson(
   });
 }
 
+function formatCloudflareApiMessages(payload: {
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}): string {
+  const entries = [...(payload.errors ?? []), ...(payload.messages ?? [])];
+  return entries
+    .map((entry) => [entry.code, entry.message].filter(Boolean).join(': '))
+    .filter(Boolean)
+    .join('; ');
+}
+
 async function queryObjectCatalogR2Objects(
   dbName: string
 ): Promise<Array<{ bucketBinding: string; objectKey: string }>> {
@@ -4003,6 +4032,200 @@ async function removeKnownR2Objects(
   onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
 }
 
+async function getR2ApiCredentials(): Promise<{ accountId: string; token: string } | null> {
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo?.token) {
+    return null;
+  }
+
+  const accountId =
+    process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ||
+    (await getAccountId()) ||
+    (await getSingleAccountIdViaApi(tokenInfo.token));
+  if (!accountId) {
+    return null;
+  }
+
+  return { accountId, token: tokenInfo.token };
+}
+
+async function getSingleAccountIdViaApi(token: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=2', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = (await response.json().catch(() => ({}))) as CloudflareAccountsResponse;
+    if (!response.ok || data.success === false) {
+      return null;
+    }
+
+    const accounts = (data.result ?? []).flatMap((account) =>
+      typeof account.id === 'string' ? [account.id] : []
+    );
+    return accounts.length === 1 ? accounts[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listAllR2ObjectKeysViaApi(
+  bucketName: string,
+  credentials: { accountId: string; token: string }
+): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const params = new URLSearchParams({ per_page: '1000' });
+    if (cursor) {
+      params.set('cursor', cursor);
+    }
+
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+        },
+      }
+    );
+
+    const data = (await response.json().catch(() => ({}))) as CloudflareR2ObjectListResponse;
+    if (!response.ok || data.success === false) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare R2 object list failed (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+
+    for (const object of data.result ?? []) {
+      if (typeof object.key === 'string') {
+        keys.push(object.key);
+      }
+    }
+
+    cursor = data.result_info?.is_truncated ? data.result_info.cursor : undefined;
+  } while (cursor);
+
+  return keys;
+}
+
+async function deleteR2ObjectViaApi(
+  bucketName: string,
+  objectKey: string,
+  credentials: { accountId: string; token: string }
+): Promise<void> {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects/${encodeURIComponent(objectKey)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    }
+  );
+
+  if (response.status === 404) {
+    return;
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  };
+  if (!response.ok || data.success === false) {
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(
+      `Cloudflare R2 object delete failed (${response.status})${detail ? `: ${detail}` : ''}`
+    );
+  }
+}
+
+async function deleteR2BucketViaApi(
+  bucketName: string,
+  credentials: { accountId: string; token: string }
+): Promise<void> {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    }
+  );
+
+  if (response.status === 404) {
+    return;
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  };
+  if (!response.ok || data.success === false) {
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(
+      `Cloudflare R2 bucket delete failed (${response.status})${detail ? `: ${detail}` : ''}`
+    );
+  }
+}
+
+async function removeAllR2ObjectsViaApi(
+  bucketName: string,
+  onProgress?: (message: string) => void
+): Promise<void> {
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) {
+    onProgress?.(
+      `  ⚠️ R2 full object cleanup skipped for ${bucketName}: API token/account unavailable`
+    );
+    return;
+  }
+
+  const objectKeys = await listAllR2ObjectKeysViaApi(bucketName, credentials);
+  if (objectKeys.length === 0) {
+    return;
+  }
+
+  onProgress?.(`  🧹 Emptying all R2 objects: ${bucketName} (${objectKeys.length})...`);
+  const concurrency = 5;
+  let removed = 0;
+  let completed = 0;
+  let nextIndex = 0;
+
+  const workerCount = Math.min(concurrency, objectKeys.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < objectKeys.length) {
+        const objectKey = objectKeys[nextIndex];
+        nextIndex += 1;
+        try {
+          await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
+          removed += 1;
+        } catch (error) {
+          onProgress?.(`  ⚠️ R2 object cleanup failed for ${bucketName}: ${sanitizeError(error)}`);
+        } finally {
+          completed += 1;
+          if (completed % 50 === 0 || completed === objectKeys.length) {
+            onProgress?.(
+              `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+            );
+          }
+        }
+      }
+    })
+  );
+  onProgress?.(
+    `  R2 full object cleanup removed for ${bucketName}: ${removed}/${objectKeys.length}`
+  );
+}
+
 /**
  * Delete an R2 bucket
  */
@@ -4012,9 +4235,16 @@ export async function deleteR2Bucket(
 ): Promise<boolean> {
   try {
     await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
-    await wrangler(['r2', 'bucket', 'delete', name]);
+    await removeAllR2ObjectsViaApi(name, options.onProgress);
+    const credentials = await getR2ApiCredentials();
+    if (credentials) {
+      await deleteR2BucketViaApi(name, credentials);
+    } else {
+      await wrangler(['r2', 'bucket', 'delete', name]);
+    }
     return true;
-  } catch {
+  } catch (error) {
+    options.onProgress?.(`  ⚠️ R2 bucket delete failed for ${name}: ${sanitizeError(error)}`);
     return false;
   }
 }

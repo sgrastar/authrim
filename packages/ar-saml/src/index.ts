@@ -63,6 +63,7 @@ import {
   handleDeleteProvider,
   handleGetSAMLSettings,
   handleUpdateSAMLSettings,
+  handleUpdateSAMLLocalSigning,
   handleListAttributePresets,
   handleCreateAttributePreset,
   handleDeleteAttributePreset,
@@ -195,6 +196,7 @@ app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
 
 app.get('/api/admin/saml-settings', handleGetSAMLSettings);
 app.put('/api/admin/saml-settings', handleUpdateSAMLSettings);
+app.post('/api/admin/saml-settings/local-signing', handleUpdateSAMLLocalSigning);
 
 /**
  * List SAML Providers

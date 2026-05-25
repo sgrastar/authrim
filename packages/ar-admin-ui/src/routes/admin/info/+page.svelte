@@ -2,12 +2,34 @@
 	import { onMount } from 'svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { getTenantInfo, type TenantInfo } from '$lib/api/admin-info';
+	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	import { adminSAMLAPI, type SAMLSettings } from '$lib/api/admin-saml';
+	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
+
+	type LoginEntryMode = 'tenant_only' | 'discovery_optional' | 'discovery_required';
+
+	interface LoginEntryPreviewSettings {
+		overrideEnabled: boolean;
+		mode: LoginEntryMode;
+		discoveryMethods: string[];
+		selectionPolicy: string;
+		requireCommonDiscoveryBeforeLogin: boolean;
+		skipDiscoveryIfOnlyOneTenant: boolean;
+		redirectTenantDiscoverToCommonEntry: boolean;
+	}
 
 	// State
 	let info = $state<TenantInfo | null>(null);
+	let samlSettings = $state<SAMLSettings | null>(null);
+	let tenantLoginEntrySettings = $state<LoginEntryPreviewSettings | null>(null);
+	let commonLoginEntrySettings = $state<LoginEntryPreviewSettings | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let copiedKey = $state('');
+
+	const effectiveTenantLoginEntrySettings = $derived(
+		tenantLoginEntrySettings?.overrideEnabled ? tenantLoginEntrySettings : commonLoginEntrySettings
+	);
 
 	onMount(async () => {
 		await settingsContext.initialize();
@@ -20,6 +42,9 @@
 		if (!tenantId) {
 			loading = false;
 			info = null;
+			samlSettings = null;
+			tenantLoginEntrySettings = null;
+			commonLoginEntrySettings = null;
 			return;
 		}
 		loadInfo(tenantId);
@@ -29,8 +54,22 @@
 		loading = true;
 		error = '';
 		info = null;
+		samlSettings = null;
+		tenantLoginEntrySettings = null;
+		commonLoginEntrySettings = null;
 		try {
-			info = await getTenantInfo(tenantId);
+			const [infoResult, samlResult, tenantLoginEntryResult, commonLoginEntryResult] =
+				await Promise.all([
+					getTenantInfo(tenantId),
+					adminSAMLAPI.getSettings().catch(() => null),
+					adminSettingsAPI.getSettings('login-entry', tenantId).catch(() => null),
+					adminSettingsAPI.getPlatformSettings('login-entry').catch(() => null)
+				]);
+			info = infoResult;
+			samlSettings = samlResult;
+			tenantLoginEntrySettings = normalizeLoginEntrySettings(tenantLoginEntryResult);
+			commonLoginEntrySettings =
+				normalizeLoginEntrySettings(commonLoginEntryResult) ?? tenantLoginEntrySettings;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load info';
 		} finally {
@@ -48,6 +87,97 @@
 		} catch {
 			// clipboard not available
 		}
+	}
+
+	function normalizeLoginEntrySettings(
+		settings: CategorySettings | null
+	): LoginEntryPreviewSettings | null {
+		if (!settings) return null;
+		const values = settings.values;
+		const mode = values['login-entry.mode'];
+		return {
+			overrideEnabled: readBooleanSetting(values, 'login-entry.override_enabled', false),
+			mode:
+				mode === 'tenant_only' || mode === 'discovery_optional' || mode === 'discovery_required'
+					? mode
+					: 'discovery_optional',
+			discoveryMethods: parseDiscoveryMethods(values['login-entry.discovery_methods']),
+			selectionPolicy:
+				typeof values['login-entry.selection_policy'] === 'string'
+					? values['login-entry.selection_policy']
+					: 'select_if_multiple',
+			requireCommonDiscoveryBeforeLogin: readBooleanSetting(
+				values,
+				'login-entry.require_common_discovery_before_login',
+				true
+			),
+			skipDiscoveryIfOnlyOneTenant: readBooleanSetting(
+				values,
+				'login-entry.skip_discovery_if_only_one_tenant',
+				false
+			),
+			redirectTenantDiscoverToCommonEntry: readBooleanSetting(
+				values,
+				'login-entry.redirect_tenant_discover_to_common_entry',
+				true
+			)
+		};
+	}
+
+	function readBooleanSetting(values: Record<string, unknown>, key: string, fallback: boolean) {
+		return typeof values[key] === 'boolean' ? values[key] : fallback;
+	}
+
+	function formatDiscoveryMethods(methods: string[] | undefined) {
+		if (!methods || methods.length === 0) return 'None configured';
+		return methods
+			.map((method) => {
+				switch (method) {
+					case 'email_domain':
+						return 'Email/domain';
+					case 'tenant_code':
+						return 'Tenant code';
+					case 'tenant_slug':
+						return 'Tenant slug';
+					case 'wayf':
+						return 'WAYF dropdown';
+					default:
+						return method;
+				}
+			})
+			.join(', ');
+	}
+
+	function tenantLoginFirstPage() {
+		if (!info?.login_ui_url) return 'Not configured';
+		const settings = effectiveTenantLoginEntrySettings;
+		if (
+			info.discover_url &&
+			settings?.mode !== 'tenant_only' &&
+			settings?.requireCommonDiscoveryBeforeLogin
+		) {
+			return `Tenant discovery first, then ${info.login_ui_url}`;
+		}
+		return info.login_ui_url;
+	}
+
+	function globalLoginFirstPage() {
+		if (!info?.global_login_ui_url) return 'Not configured';
+		if (!info.discover_url) return info.global_login_ui_url;
+		const settings = commonLoginEntrySettings;
+		if (settings?.skipDiscoveryIfOnlyOneTenant) {
+			return `${info.discover_url} (may skip if only one tenant is active)`;
+		}
+		return info.discover_url;
+	}
+
+	function samlInteractiveFirstPage() {
+		if (!samlSettings) return 'Not configured';
+		const policy = samlSettings.interactiveLoginUrlPolicy;
+		if (policy === 'tenant_host') {
+			return tenantLoginFirstPage();
+		}
+		return globalLoginFirstPage();
 	}
 </script>
 
@@ -133,6 +263,11 @@
 				{:else}
 					{@render urlRow('Login URL (this tenant)', 'Not configured', 'login_ui_url_status')}
 				{/if}
+				{@render urlRow(
+					'Tenant Login First Page',
+					tenantLoginFirstPage(),
+					'tenant_login_first_page'
+				)}
 				{#if info.global_login_ui_url}
 					{@render urlRow(
 						'Global Login URL (common entry)',
@@ -147,6 +282,11 @@
 						'global_login_ui_url_status'
 					)}
 				{/if}
+				{@render urlRow(
+					'Global Login First Page',
+					globalLoginFirstPage(),
+					'global_login_first_page'
+				)}
 				{#if info.discover_url}
 					{@render urlRow(
 						'Tenant Discovery URL',
@@ -160,6 +300,52 @@
 				{:else}
 					{@render urlRow('Admin UI', 'Not deployed', 'admin_ui_status')}
 				{/if}
+			</div>
+		</section>
+
+		<!-- Login Entry / Tenant Discovery -->
+		<section class="info-section">
+			<h2 class="section-title">
+				<i class="i-ph-path w-5 h-5"></i>
+				Login Entry / Tenant Discovery
+			</h2>
+			<div class="url-grid">
+				{@render urlRow(
+					'Tenant override',
+					tenantLoginEntrySettings?.overrideEnabled ? 'Enabled' : 'Disabled',
+					'login_entry_override'
+				)}
+				{@render urlRow(
+					'Effective tenant mode',
+					effectiveTenantLoginEntrySettings?.mode ?? 'Not available',
+					'effective_tenant_mode',
+					undefined,
+					true
+				)}
+				{@render urlRow(
+					'Effective tenant methods',
+					formatDiscoveryMethods(effectiveTenantLoginEntrySettings?.discoveryMethods),
+					'effective_tenant_methods'
+				)}
+				{@render urlRow(
+					'Common entry mode',
+					commonLoginEntrySettings?.mode ?? 'Not available',
+					'common_entry_mode',
+					undefined,
+					true
+				)}
+				{@render urlRow(
+					'Common entry methods',
+					formatDiscoveryMethods(commonLoginEntrySettings?.discoveryMethods),
+					'common_entry_methods'
+				)}
+				{@render urlRow(
+					'Common discovery before tenant login',
+					effectiveTenantLoginEntrySettings?.requireCommonDiscoveryBeforeLogin
+						? 'Enabled'
+						: 'Disabled',
+					'common_before_tenant_login'
+				)}
 			</div>
 		</section>
 
@@ -263,9 +449,54 @@
 			</h2>
 			<div class="url-grid">
 				{#if info.components.saml}
+					{#if samlSettings}
+						{@render urlRow(
+							'Published IdP Entity ID',
+							samlSettings.generated.idpEntityId,
+							'saml_idp_entity_id',
+							undefined,
+							true
+						)}
+						{@render urlRow(
+							'Published SP Entity ID',
+							samlSettings.generated.spEntityId,
+							'saml_sp_entity_id',
+							undefined,
+							true
+						)}
+						{@render urlRow(
+							'Entity ID Style',
+							samlSettings.entityIdStyle,
+							'saml_entity_id_style',
+							undefined,
+							true
+						)}
+						{@render urlRow(
+							'Interactive Login Redirect',
+							samlSettings.interactiveLoginUrlPolicy === 'tenant_host'
+								? 'Tenant Host'
+								: 'UI Base URL',
+							'saml_interactive_login_policy'
+						)}
+						{@render urlRow(
+							'SAML First Visible Page',
+							samlInteractiveFirstPage(),
+							'saml_first_visible_page'
+						)}
+					{/if}
 					{@render urlRow('SSO (Single Sign-On)', info.saml.sso, 'saml_sso')}
-					{@render urlRow('IdP Metadata', info.saml.idp_metadata, 'saml_idp_metadata', info.saml.idp_metadata)}
-					{@render urlRow('SP Metadata', info.saml.sp_metadata ?? info.saml.metadata, 'saml_sp_metadata', info.saml.sp_metadata ?? info.saml.metadata)}
+					{@render urlRow(
+						'IdP Metadata',
+						info.saml.idp_metadata,
+						'saml_idp_metadata',
+						info.saml.idp_metadata
+					)}
+					{@render urlRow(
+						'SP Metadata',
+						info.saml.sp_metadata ?? info.saml.metadata,
+						'saml_sp_metadata',
+						info.saml.sp_metadata ?? info.saml.metadata
+					)}
 					{@render urlRow('ACS (Assertion Consumer Service)', info.saml.acs, 'saml_acs')}
 					{@render urlRow('SLO (Single Logout)', info.saml.slo, 'saml_slo')}
 				{:else}

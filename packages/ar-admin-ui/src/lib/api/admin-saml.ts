@@ -34,10 +34,20 @@ export interface SAMLSigningKeyReference {
 }
 
 export interface SAMLSigningKeyPolicy {
+	scope?: 'tenant_role' | 'provider';
 	metadataCertificatePublication?: 'active_only' | 'active_next' | 'active_next_backup';
 	active?: SAMLSigningKeyReference;
 	next?: SAMLSigningKeyReference;
 	backup?: SAMLSigningKeyReference;
+}
+
+export interface SAMLSigningCertificateSubject {
+	countryName: string;
+	stateOrProvinceName: string;
+	localityName: string;
+	organizationName: string;
+	organizationalUnitName: string;
+	commonName: string;
 }
 
 export interface SAMLCertificateValidationStatus {
@@ -151,6 +161,16 @@ export interface SAMLSettings {
 	tenantId: string;
 	entityIdStyle: SAMLEntityIdStyle;
 	interactiveLoginUrlPolicy: SAMLInteractiveLoginUrlPolicy;
+	certificateSubject?: SAMLSigningCertificateSubject;
+	signingKeyPolicies?: {
+		idp?: SAMLSigningKeyPolicy;
+		sp?: SAMLSigningKeyPolicy;
+	};
+	localSigning?: {
+		certificateSubject: SAMLSigningCertificateSubject;
+		idpSigningKeyPolicy: SAMLSigningKeyPolicy;
+		spSigningKeyPolicy: SAMLSigningKeyPolicy;
+	};
 	metadata: {
 		signingMode: 'disabled' | 'enabled';
 		signingEnabled: boolean;
@@ -365,6 +385,7 @@ export const adminSAMLAPI = {
 	async updateSettings(request: {
 		entityIdStyle?: SAMLEntityIdStyle;
 		interactiveLoginUrlPolicy?: SAMLInteractiveLoginUrlPolicy;
+		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
 	}): Promise<SAMLSettings> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
 			method: 'PUT',
@@ -374,6 +395,25 @@ export const adminSAMLAPI = {
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to update SAML settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async updateLocalSigning(request: {
+		role: 'idp' | 'sp';
+		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup';
+		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
+		keepPreviousAsBackup?: boolean;
+	}): Promise<SAMLSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings/local-signing`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		});
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to update SAML local signing settings');
 		}
 
 		return (await response.json()) as SAMLSettings;

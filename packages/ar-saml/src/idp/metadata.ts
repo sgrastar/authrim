@@ -26,7 +26,6 @@ import {
 } from '../common/xml-utils';
 import {
   getSAMLMetadataSigningCertificates,
-  getSAMLSigningPolicy,
   type SAMLMetadataSigningCertificate,
 } from '../common/saml-signing-keys';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -41,7 +40,7 @@ import {
   shouldSignSAMLMetadata,
   signSAMLMetadata,
 } from '../common/metadata-signing';
-import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../common/entity-id';
 
 /**
  * Handle IdP metadata request
@@ -51,7 +50,10 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  const { issuerUrl, idpEntityId: entityId } = await getSAMLLocalEntityIds(env, tenantId);
+  const [{ issuerUrl, idpEntityId: entityId }, settings] = await Promise.all([
+    getSAMLLocalEntityIds(env, tenantId),
+    getSAMLPublicSettings(env, tenantId),
+  ]);
 
   // Get signing certificates from KeyManager / SAML rollover policy.
   let signingCertificates: SAMLMetadataSigningCertificate[];
@@ -59,6 +61,8 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
     signingCertificates = await getSAMLMetadataSigningCertificates(env, {
       tenantId,
       role: 'idp',
+      policy: settings.signingKeyPolicies.idp,
+      certificateSubject: settings.certificateSubject,
     });
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
@@ -77,7 +81,8 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
       const signingMaterial = await getSAMLMetadataSigningMaterial(env, {
         tenantId,
         role: 'idp',
-        policy: getSAMLSigningPolicy(),
+        policy: settings.signingKeyPolicies.idp,
+        certificateSubject: settings.certificateSubject,
       });
       metadataXml = signSAMLMetadata(metadataXml, signingMaterial);
     } catch (error) {

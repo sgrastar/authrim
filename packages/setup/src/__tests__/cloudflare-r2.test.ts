@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const execaMock = vi.hoisted(() => vi.fn());
+const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('execa', () => ({
   execa: execaMock,
@@ -15,8 +16,27 @@ import {
 } from '../core/cloudflare.js';
 
 describe('Cloudflare R2 helpers', () => {
+  const originalApiToken = process.env.CLOUDFLARE_API_TOKEN;
+  const originalAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+
   beforeEach(() => {
     execaMock.mockReset();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    if (originalApiToken === undefined) {
+      delete process.env.CLOUDFLARE_API_TOKEN;
+    } else {
+      process.env.CLOUDFLARE_API_TOKEN = originalApiToken;
+    }
+    if (originalAccountId === undefined) {
+      delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    } else {
+      process.env.CLOUDFLARE_ACCOUNT_ID = originalAccountId;
+    }
+    vi.unstubAllGlobals();
   });
 
   it('does not treat non-conflict R2 bucket creation failures as success', async () => {
@@ -171,5 +191,52 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
     expect(
       execaMock.mock.calls.filter(([, args]) => args.includes('object') && args.includes('delete'))
     ).toHaveLength(12);
+  });
+
+  it('empties R2 objects listed by Cloudflare API before deleting the bucket', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [{ key: 'logs/v1/a.json' }],
+          result_info: { is_truncated: true, cursor: 'next-page' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [{ key: 'logs/v1/b.json' }],
+          result_info: { is_truncated: false },
+        }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true }),
+      });
+
+    await expect(deleteR2Bucket('prod-audit-archive')).resolves.toBe(true);
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls[0]).toContain('/r2/buckets/prod-audit-archive/objects?per_page=1000');
+    expect(urls[1]).toContain('cursor=next-page');
+    expect(urls).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('/objects/logs%2Fv1%2Fa.json'),
+        expect.stringContaining('/objects/logs%2Fv1%2Fb.json'),
+      ])
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/r2/buckets/prod-audit-archive',
+      expect.objectContaining({ method: 'DELETE' })
+    );
+    expect(execaMock).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,8 @@ export interface DatabaseConnection {
 	description: string | null;
 	provider: DatabaseConnectionProvider;
 	config: Record<string, unknown>;
+	managed_by?: 'setup' | 'admin';
+	read_only?: boolean;
 	has_credential: boolean;
 	credential_key_version: number | null;
 	credential_updated_at: number | null;
@@ -55,6 +57,13 @@ export const adminDatabaseConnectionsAPI = {
 			response,
 			'Failed to load database connections'
 		);
+	},
+
+	async get(id: string) {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/database-connections/${encodeURIComponent(id)}`
+		);
+		return parseResponse<DatabaseConnection>(response, 'Failed to load database connection');
 	},
 
 	async create(input: DatabaseConnectionInput) {

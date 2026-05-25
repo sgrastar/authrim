@@ -146,7 +146,7 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('id="mode-quick"');
   });
 
-  it('renders core components as standard items without setup checkboxes', () => {
+  it('renders Login UI and Admin UI as selectable components while advanced API components stay hidden', () => {
     const html = getHtmlTemplate(
       'session-token',
       false,
@@ -160,15 +160,17 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('data-i18n="web.comp.loginUi"');
     expect(html).toContain('data-i18n="web.comp.adminUi"');
     expect(html).not.toContain('id="comp-api"');
-    expect(html).not.toContain('id="comp-login-ui"');
-    expect(html).not.toContain('id="comp-admin-ui"');
-    expect(html).not.toContain("document.getElementById('comp-login-ui')");
-    expect(html).not.toContain("document.getElementById('comp-admin-ui')");
+    expect(html).toContain('id="comp-login-ui"');
+    expect(html).toContain('id="comp-admin-ui"');
+    expect(html).toContain("document.getElementById('comp-login-ui')");
+    expect(html).toContain("document.getElementById('comp-admin-ui')");
     expect(html).not.toContain('standard-component-badge');
     expect(html).not.toContain('<span class="preview-component-badge">SAML IdP</span>');
     expect(html).not.toContain('<span class="preview-component-badge">Device Flow/CIBA</span>');
     expect(html).not.toContain('<span class="preview-component-badge">VC SD-JWT</span>');
     expect(html).not.toContain("'SAML IdP', 'Device Flow/CIBA', 'VC SD-JWT'");
+    expect(html).toContain('loginUi: loginUiEnabled');
+    expect(html).toContain('adminUi: adminUiEnabled');
   });
 
   it('renders the keys saved panel with dark-mode styles and a copy button', () => {

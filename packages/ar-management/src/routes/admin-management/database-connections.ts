@@ -35,12 +35,108 @@ export const databaseConnectionsRouter = new Hono<{
   Variables: { adminAuth?: AdminAuthContext };
 }>();
 
+interface ManagedDatabaseConnection {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string | null;
+  provider: DatabaseConnectionProvider;
+  config: Record<string, unknown>;
+  managed_by: 'setup';
+  read_only: true;
+  has_credential: false;
+  credential_key_version: null;
+  credential_updated_at: null;
+  credential_updated_by: null;
+  status: AdminResourceStatus;
+  created_by: string;
+  updated_by: string;
+  created_at: number;
+  updated_at: number;
+}
+
+const SETUP_D1_CONNECTIONS: Array<{
+  id: string;
+  bindingRef: 'DB' | 'DB_PII' | 'DB_ADMIN';
+  name: string;
+  displayName: string;
+  role: string;
+  logicalSource: string;
+  description: string;
+}> = [
+  {
+    id: 'setup-d1-core',
+    bindingRef: 'DB',
+    name: 'setup-d1-core',
+    displayName: 'Core D1',
+    role: 'core',
+    logicalSource: 'core',
+    description: 'Setup-managed D1 database for non-PII auth data and runtime metadata.',
+  },
+  {
+    id: 'setup-d1-pii',
+    bindingRef: 'DB_PII',
+    name: 'setup-d1-pii',
+    displayName: 'PII D1',
+    role: 'pii',
+    logicalSource: 'pii',
+    description: 'Setup-managed D1 database for personal information and identity data.',
+  },
+  {
+    id: 'setup-d1-admin',
+    bindingRef: 'DB_ADMIN',
+    name: 'setup-d1-admin',
+    displayName: 'Admin D1',
+    role: 'control',
+    logicalSource: 'control',
+    description:
+      'Setup-managed D1 database for Admin UI users, sessions, audit logs, and control data.',
+  },
+];
+
 function getAdminAdapter(c: AdminContext) {
   return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-database-connections');
 }
 
 function getAuth(c: AdminContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
+}
+
+function hasRuntimeBinding(env: Env, bindingRef: string): boolean {
+  return Boolean((env as unknown as Record<string, unknown>)[bindingRef]);
+}
+
+function buildSetupD1Connections(env: Env): ManagedDatabaseConnection[] {
+  return SETUP_D1_CONNECTIONS.filter((connection) =>
+    hasRuntimeBinding(env, connection.bindingRef)
+  ).map((connection) => ({
+    id: connection.id,
+    name: connection.name,
+    display_name: connection.displayName,
+    description: connection.description,
+    provider: 'd1',
+    config: {
+      bindingRef: connection.bindingRef,
+      role: connection.role,
+      logicalSource: connection.logicalSource,
+      managedBy: 'setup',
+    },
+    managed_by: 'setup',
+    read_only: true,
+    has_credential: false,
+    credential_key_version: null,
+    credential_updated_at: null,
+    credential_updated_by: null,
+    status: 'active',
+    created_by: 'setup',
+    updated_by: 'setup',
+    created_at: 0,
+    updated_at: 0,
+  }));
+}
+
+function getSetupD1Connection(env: Env, id: string): ManagedDatabaseConnection | null {
+  return buildSetupD1Connections(env).find((connection) => connection.id === id) ?? null;
 }
 
 function hasPermission(authContext: AdminAuthContext, permission: string): boolean {
@@ -139,7 +235,18 @@ databaseConnectionsRouter.get('/', async (c) => {
 
   try {
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const items = await repo.listConnections();
+    const storedItems = await repo.listConnections();
+    const setupItems = buildSetupD1Connections(c.env);
+    const setupBindingRefs = new Set(
+      setupItems.map((item) => String(item.config.bindingRef ?? '').toUpperCase())
+    );
+    const items = [
+      ...setupItems,
+      ...storedItems.filter((item) => {
+        const bindingRef = String(item.config.bindingRef ?? '').toUpperCase();
+        return !bindingRef || !setupBindingRefs.has(bindingRef);
+      }),
+    ];
     return c.json({ items, total: items.length });
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -228,6 +335,11 @@ databaseConnectionsRouter.get('/:id', async (c) => {
   }
 
   try {
+    const setupConnection = getSetupD1Connection(c.env, c.req.param('id')!);
+    if (setupConnection) {
+      return c.json(setupConnection);
+    }
+
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
     const connection = await repo.getConnection(c.req.param('id')!);
     if (!connection) {
@@ -350,7 +462,10 @@ databaseConnectionsRouter.post('/:id/test', async (c) => {
 
   try {
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const connection = await repo.getConnectionWithCredential(c.req.param('id')!);
+    const setupConnection = getSetupD1Connection(c.env, c.req.param('id')!);
+    const connection = setupConnection
+      ? { ...setupConnection, credential_encrypted: null }
+      : await repo.getConnectionWithCredential(c.req.param('id')!);
     if (!connection) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }

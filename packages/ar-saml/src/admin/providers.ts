@@ -90,8 +90,15 @@ import {
   getSAMLPublicSettings,
   normalizeSAMLInteractiveLoginUrlPolicy,
   normalizeSAMLEntityIdStyle,
+  putSAMLLocalSigningSettings,
   putSAMLPublicSettings,
 } from '../common/entity-id';
+import { buildSAMLSigningKeyRef } from '../common/saml-signing-keys';
+import {
+  DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT,
+  rotateSigningKeyWithCertificate,
+  type SAMLSigningCertificateSubject,
+} from '../common/key-utils';
 import {
   buildSAMLMetadataValidUntil,
   SAML_METADATA_CACHE_DURATION,
@@ -126,6 +133,34 @@ function buildSAMLMetadataPublicationSettings(env: Env): {
     validityDays: SAML_METADATA_VALIDITY_DAYS,
     cacheDuration: SAML_METADATA_CACHE_DURATION,
   };
+}
+
+function normalizeSAMLSigningCertificateSubject(
+  value: unknown
+): Required<SAMLSigningCertificateSubject> {
+  const source =
+    typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+  return {
+    countryName: readSubjectString(source.countryName, 2).toUpperCase(),
+    stateOrProvinceName: readSubjectString(source.stateOrProvinceName, 128),
+    localityName: readSubjectString(source.localityName, 128),
+    organizationName:
+      readSubjectString(source.organizationName, 128) ||
+      DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT.organizationName,
+    organizationalUnitName: readSubjectString(source.organizationalUnitName, 128),
+    commonName:
+      readSubjectString(source.commonName, 128) ||
+      DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT.commonName,
+  };
+}
+
+function readSubjectString(value: unknown, maxLength: number): string {
+  return typeof value === 'string'
+    ? value
+        .replace(/[\u0000-\u001f\u007f]/g, '')
+        .trim()
+        .slice(0, maxLength)
+    : '';
 }
 
 interface SAMLMetadataConfigFields {
@@ -384,6 +419,11 @@ export async function handleGetSAMLSettings(c: AdminSAMLContext): Promise<Respon
       tenantId,
       ...settings,
       metadata: buildSAMLMetadataPublicationSettings(c.env),
+      localSigning: {
+        certificateSubject: settings.certificateSubject,
+        idpSigningKeyPolicy: settings.signingKeyPolicies.idp ?? {},
+        spSigningKeyPolicy: settings.signingKeyPolicies.sp ?? {},
+      },
       generated: {
         issuerUrl: entityIds.issuerUrl,
         idpEntityId: entityIds.idpEntityId,
@@ -410,6 +450,7 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
     const body = (await c.req.json()) as {
       entityIdStyle?: unknown;
       interactiveLoginUrlPolicy?: unknown;
+      certificateSubject?: unknown;
     };
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const before = await getSAMLPublicSettings(c.env, tenantId);
@@ -432,7 +473,17 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       });
     }
 
-    await putSAMLPublicSettings(c.env, tenantId, { entityIdStyle, interactiveLoginUrlPolicy });
+    const certificateSubject =
+      body.certificateSubject === undefined
+        ? before.certificateSubject
+        : normalizeSAMLSigningCertificateSubject(body.certificateSubject);
+
+    await putSAMLPublicSettings(c.env, tenantId, {
+      entityIdStyle,
+      interactiveLoginUrlPolicy,
+      certificateSubject,
+      signingKeyPolicies: before.signingKeyPolicies,
+    });
 
     await createSAMLAdminAudit(c, {
       tenantId,
@@ -444,6 +495,8 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
         entity_id_style: entityIdStyle,
         before_interactive_login_url_policy: before.interactiveLoginUrlPolicy,
         interactive_login_url_policy: interactiveLoginUrlPolicy,
+        certificate_subject_changed:
+          JSON.stringify(before.certificateSubject) !== JSON.stringify(certificateSubject),
       },
     });
 
@@ -452,7 +505,14 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       tenantId,
       entityIdStyle,
       interactiveLoginUrlPolicy,
+      certificateSubject,
+      signingKeyPolicies: before.signingKeyPolicies,
       metadata: buildSAMLMetadataPublicationSettings(c.env),
+      localSigning: {
+        certificateSubject,
+        idpSigningKeyPolicy: before.signingKeyPolicies.idp ?? {},
+        spSigningKeyPolicy: before.signingKeyPolicies.sp ?? {},
+      },
       generated: {
         issuerUrl: entityIds.issuerUrl,
         idpEntityId: entityIds.idpEntityId,
@@ -463,6 +523,146 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
     });
   } catch (error) {
     log.error('Update SAML settings error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as {
+      role?: unknown;
+      action?: unknown;
+      certificateSubject?: unknown;
+      keepPreviousAsBackup?: unknown;
+    };
+    const role: 'idp' | 'sp' | null = body.role === 'idp' || body.role === 'sp' ? body.role : null;
+    const action =
+      body.action === 'recreate_active' ||
+      body.action === 'publish_next' ||
+      body.action === 'promote_next' ||
+      body.action === 'retire_backup'
+        ? body.action
+        : null;
+    if (!role) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'role' },
+      });
+    }
+    if (!action) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'action' },
+      });
+    }
+
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const settings = await getSAMLPublicSettings(c.env, tenantId);
+    const certificateSubject =
+      body.certificateSubject === undefined
+        ? settings.certificateSubject
+        : normalizeSAMLSigningCertificateSubject(body.certificateSubject);
+    const signingKeyPolicies = { ...settings.signingKeyPolicies };
+    const currentPolicy = signingKeyPolicies[role] ?? {};
+    const baseContext = { tenantId, role };
+    let nextPolicy = currentPolicy;
+    let generated: { keyRef?: string; kid?: string; certificate?: string } = {};
+
+    if (action === 'recreate_active') {
+      const keyRef =
+        currentPolicy.active?.keyRef ??
+        buildSAMLSigningKeyRef({
+          tenantId,
+          role,
+          policy: currentPolicy,
+        });
+      generated = await rotateSigningKeyWithCertificate(c.env, tenantId, {
+        keyRef,
+        certificateSubject,
+      });
+      nextPolicy = {
+        ...currentPolicy,
+        active: {
+          slot: 'active',
+          keyRef: generated.keyRef,
+          kid: generated.kid,
+          certificate: generated.certificate,
+          state: 'active',
+          plannedActivationAt: Date.now(),
+        },
+        metadataCertificatePublication: currentPolicy.next ? 'active_next' : 'active_only',
+      };
+    } else if (action === 'publish_next') {
+      const keyRef = `${buildSAMLSigningKeyRef({
+        tenantId,
+        role,
+        policy: currentPolicy,
+      })}:next:${Date.now()}`;
+      generated = await rotateSigningKeyWithCertificate(c.env, tenantId, {
+        keyRef,
+        certificateSubject,
+      });
+      nextPolicy = publishSAMLNextSigningCertificate(currentPolicy, {
+        ...baseContext,
+        keyRef: generated.keyRef,
+        kid: generated.kid,
+        certificate: generated.certificate!,
+        metadataPublishFrom: Date.now(),
+        metadataCertificatePublication: currentPolicy.backup ? 'active_next_backup' : 'active_next',
+      });
+    } else if (action === 'promote_next') {
+      nextPolicy = promoteSAMLNextSigningCertificate(currentPolicy, {
+        ...baseContext,
+        keepPreviousAsBackup: body.keepPreviousAsBackup !== false,
+      });
+    } else {
+      nextPolicy = retireSAMLBackupSigningCertificate(currentPolicy);
+    }
+
+    signingKeyPolicies[role] = nextPolicy;
+    const nextSettings = await putSAMLLocalSigningSettings(c.env, tenantId, {
+      certificateSubject,
+      signingKeyPolicies,
+    });
+
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: `saml.local_signing.${action}`,
+      resource: 'saml_settings',
+      resourceId: `${tenantId}:${role}`,
+      severity: action === 'recreate_active' || action === 'promote_next' ? 'warning' : 'info',
+      metadata: {
+        role,
+        key_ref: generated.keyRef,
+        kid: generated.kid,
+      },
+    });
+
+    const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
+    return c.json({
+      tenantId,
+      ...nextSettings,
+      metadata: buildSAMLMetadataPublicationSettings(c.env),
+      localSigning: {
+        certificateSubject: nextSettings.certificateSubject,
+        idpSigningKeyPolicy: nextSettings.signingKeyPolicies.idp ?? {},
+        spSigningKeyPolicy: nextSettings.signingKeyPolicies.sp ?? {},
+      },
+      generated: {
+        issuerUrl: entityIds.issuerUrl,
+        idpEntityId: entityIds.idpEntityId,
+        spEntityId: entityIds.spEntityId,
+        idpMetadataUrl: entityIds.idpMetadataUrl,
+        spMetadataUrl: entityIds.spMetadataUrl,
+      },
+    });
+  } catch (error) {
+    log.error('Update SAML local signing error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
