@@ -530,9 +530,9 @@ async function verifyInitialTenantD1Bootstrap(input: {
   const [tenantRow] = await queryD1Rows<CountRow>(
     input.coreDatabaseName,
     `SELECT COUNT(*) AS count
-       FROM tenants
+      FROM tenants
       WHERE id = ${tenantIdSql}
-        AND is_active = 1;`
+        AND lifecycle_state = 'active';`
   );
   if (countValue(tenantRow) !== 1) {
     throw new Error('initial_tenant_d1_core_tenant_verification_failed');

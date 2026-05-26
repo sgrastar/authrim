@@ -365,7 +365,7 @@ async function listNextTokenRefreshTenantIds(env: Env, batchSize: number): Promi
 
   if (cursor) {
     const rows = await adapter.query<{ id: string }>(
-      'SELECT id FROM tenants WHERE is_active = 1 AND id > ? ORDER BY id ASC LIMIT ?',
+      "SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ? ORDER BY id ASC LIMIT ?",
       [cursor, batchSize]
     );
     if (rows.length > 0) {
@@ -374,7 +374,7 @@ async function listNextTokenRefreshTenantIds(env: Env, batchSize: number): Promi
   }
 
   const rows = await adapter.query<{ id: string }>(
-    'SELECT id FROM tenants WHERE is_active = 1 ORDER BY id ASC LIMIT ?',
+    "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
     [batchSize]
   );
   return rows.map((row) => row.id);

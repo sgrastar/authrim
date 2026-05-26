@@ -19,7 +19,16 @@ export interface Tenant {
 	tenant_code: string;
 	name: string;
 	description: string | null;
-	is_active: boolean;
+	lifecycle_state:
+		| 'provisioning'
+		| 'active'
+		| 'suspended'
+		| 'frozen'
+		| 'migration_read_only'
+		| 'deleting'
+		| 'deleted'
+		| 'restore_pending'
+		| 'restore_validating';
 	is_default: boolean;
 	created_at: number;
 	updated_at: number;
@@ -28,6 +37,12 @@ export interface Tenant {
 	provisioning_slot_id?: string | null;
 	provisioning_updated_at?: number | null;
 }
+
+export type OperatorMutableTenantLifecycleState =
+	| 'active'
+	| 'suspended'
+	| 'frozen'
+	| 'migration_read_only';
 
 export interface TenantListResponse {
 	tenants: Tenant[];
@@ -78,7 +93,7 @@ export interface UpdateTenantRequest {
 	name?: string;
 	tenant_code?: string;
 	description?: string | null;
-	is_active?: boolean;
+	lifecycle_state?: OperatorMutableTenantLifecycleState;
 }
 
 // =============================================================================
