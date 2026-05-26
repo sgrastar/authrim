@@ -35,7 +35,7 @@ export interface IssuerEnvLike {
 }
 
 /**
- * Validate that a tenant exists and is active using D1 + KV positive cache.
+ * Validate that a tenant exists and is runtime-active using D1 + KV positive cache.
  *
  * - Positive cache TTL: 300s (negative results are NOT cached to allow immediate
  *   recognition after tenant creation)
@@ -44,7 +44,7 @@ export interface IssuerEnvLike {
  * @param db - D1 database binding (undefined = fail-open)
  * @param kv - KV namespace for caching (undefined = skip cache)
  * @param tenantId - Tenant ID to validate
- * @returns true if tenant exists and is active, false if not found or inactive
+ * @returns true if tenant exists and is active, false if not found or not runtime-active
  */
 export async function validateTenantExistsAsync(
   db: DatabaseSource | undefined,
@@ -69,7 +69,7 @@ export async function validateTenantExistsAsync(
   try {
     const adapter = ensureDatabaseAdapter(db, 'tenant-exists');
     const row = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM tenants WHERE id = ? AND is_active = 1',
+      "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active'",
       [tenantId]
     );
 

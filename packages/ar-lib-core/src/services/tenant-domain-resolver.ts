@@ -39,8 +39,9 @@ export interface TenantDomainCandidate {
 /**
  * Resolve a tenant ID from an email address's domain.
  *
- * Looks up the email domain in `tenant_domain_mappings` (verified=1, is_active=1)
- * and returns the highest-priority matching tenant ID, or null if none found.
+ * Looks up the email domain in `tenant_domain_mappings` (verified=1, is_active=1),
+ * filters to tenants with `lifecycle_state='active'`, and returns the
+ * highest-priority matching tenant ID, or null if none found.
  *
  * This should only be called when the Host header resolves to 'default',
  * as Host-header tenant resolution always takes precedence.
@@ -68,7 +69,7 @@ export async function resolveTenantCandidatesFromEmailDomain(
        WHERE tenant_domain_mappings.active_domain_hash = ?
          AND tenant_domain_mappings.verified = 1
          AND tenant_domain_mappings.is_active = 1
-         AND tenants.is_active = 1
+         AND tenants.lifecycle_state = 'active'
        ORDER BY priority DESC, tenant_domain_mappings.tenant_id ASC`,
       [hashResult.hash]
     );

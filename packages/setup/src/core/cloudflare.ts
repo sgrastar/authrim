@@ -2174,7 +2174,7 @@ SET id = ${tenantIdSql},
     tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
-    is_active = 1,
+    lifecycle_state = 'active',
     updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = 'default'
   AND ${tenantIdSql} <> 'default'
@@ -2182,10 +2182,10 @@ WHERE id = 'default'
   AND (SELECT COUNT(*) FROM tenants) = 1;
 
 INSERT INTO tenants (
-  id, tenant_code, tenant_key, name, description, is_active, is_default,
+  id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
   default_tenant_guard, created_at, updated_at
 )
-SELECT ${tenantIdSql}, ${tenantCodeSql}, 't_' || lower(hex(randomblob(18))), ${displayNameSql}, NULL, 1,
+SELECT ${tenantIdSql}, ${tenantCodeSql}, 't_' || lower(hex(randomblob(18))), ${displayNameSql}, NULL, 'active',
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
        ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
@@ -2195,7 +2195,7 @@ UPDATE tenants
 SET tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
-    is_active = 1,
+    lifecycle_state = 'active',
     updated_at = ${sqlExpr.nowEpochSeconds}
 WHERE id = ${tenantIdSql};
 `.trim();

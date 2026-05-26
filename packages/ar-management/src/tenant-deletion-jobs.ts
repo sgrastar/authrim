@@ -195,7 +195,22 @@ async function deleteTenantRows(
     }
     await tx.execute(`DELETE FROM ${table} WHERE tenant_id = ?`, [targetTenantId]);
   }
-  await tx.execute('DELETE FROM tenants WHERE id = ?', [targetTenantId]);
+  await tx.execute("UPDATE tenants SET lifecycle_state = 'deleted', updated_at = ? WHERE id = ?", [
+    Math.floor(Date.now() / 1000),
+    targetTenantId,
+  ]);
+}
+
+async function suspendTenantAfterDeletionFailure(
+  adapter: Pick<DatabaseAdapter, 'execute'>,
+  targetTenantId: string | null
+): Promise<void> {
+  if (!targetTenantId) return;
+
+  await adapter.execute(
+    "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ?",
+    [Math.floor(Date.now() / 1000), targetTenantId]
+  );
 }
 
 export async function processPendingTenantDeletionJobs(
@@ -224,37 +239,52 @@ export async function processPendingTenantDeletionJobs(
     if (claim.rowsAffected === 0) continue;
     claimedCount += 1;
 
+    let targetTenantId: string | null = null;
+    let shouldSuspendOnFailure = false;
     try {
       const config = parseTenantDeletionJobConfig(job.config);
-      const { tenant_id: targetTenantId } = config;
+      targetTenantId = config.tenant_id;
+      const deletionTargetTenantId = config.tenant_id;
+      shouldSuspendOnFailure = true;
 
       const backup = await ensureDeletionBackupCompleted(coreAdapter, job, config);
       if (!backup.completed) {
         log.info('Tenant deletion job waiting for pre-purge backup', {
           job_id: job.id,
-          tenant_id: targetTenantId,
+          tenant_id: deletionTargetTenantId,
           backup_job_id: backup.backupJobId,
         });
         continue;
       }
 
-      await updateTenantDatabaseLifecycleState(controlAdapter, targetTenantId, job.id, 'deleting');
+      await updateTenantDatabaseLifecycleState(
+        controlAdapter,
+        deletionTargetTenantId,
+        job.id,
+        'deleting'
+      );
 
+      shouldSuspendOnFailure = false;
       await coreAdapter.transaction(async (tx) => {
         await deleteTenantRows(
           tx,
-          targetTenantId,
+          deletionTargetTenantId,
           job.id,
           backup.backupJobId ? [backup.backupJobId] : []
         );
       });
       if (controlAdapter) {
         await controlAdapter.transaction(async (tx) => {
-          await deleteTenantControlRows(tx, targetTenantId);
+          await deleteTenantControlRows(tx, deletionTargetTenantId);
         });
       }
 
-      await updateTenantDatabaseLifecycleState(controlAdapter, targetTenantId, job.id, 'deleted');
+      await updateTenantDatabaseLifecycleState(
+        controlAdapter,
+        deletionTargetTenantId,
+        job.id,
+        'deleted'
+      );
 
       const completedTs = Math.floor(Date.now() / 1000);
       await coreAdapter.execute(
@@ -262,9 +292,15 @@ export async function processPendingTenantDeletionJobs(
         [completedTs, completedTs, JSON.stringify({ stage: 'completed' }), job.id, jobTenantId]
       );
 
-      log.info('Tenant deletion job completed', { job_id: job.id, tenant_id: targetTenantId });
+      log.info('Tenant deletion job completed', {
+        job_id: job.id,
+        tenant_id: deletionTargetTenantId,
+      });
     } catch (jobError) {
       const failedTs = Math.floor(Date.now() / 1000);
+      if (shouldSuspendOnFailure) {
+        await suspendTenantAfterDeletionFailure(coreAdapter, targetTenantId);
+      }
       await coreAdapter.execute(
         "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
         [String(jobError), failedTs, failedTs, job.id, jobTenantId]

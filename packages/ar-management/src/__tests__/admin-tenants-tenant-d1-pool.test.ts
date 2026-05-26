@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   adminTenantCreateHandler,
+  adminTenantDeleteHandler,
   adminTenantGetHandler,
   adminTenantProvisioningCleanupHandler,
   adminTenantProvisioningRetryHandler,
+  adminTenantUpdateHandler,
   adminTenantsListHandler,
 } from '../admin-tenants';
 
@@ -27,7 +29,7 @@ interface TenantRow {
   tenant_code: string;
   name: string;
   description: string | null;
-  is_active: number;
+  lifecycle_state: string;
   is_default: number;
   created_at: number;
   updated_at: number;
@@ -189,7 +191,7 @@ function createTenantRow(id: string, overrides: Partial<TenantRow> = {}): Tenant
     tenant_code: id,
     name: id,
     description: null,
-    is_active: 1,
+    lifecycle_state: 'active',
     is_default: 0,
     created_at: 1,
     updated_at: 1,
@@ -202,7 +204,7 @@ function createTenantRowFromInsertParams(params: unknown[]): TenantRow {
     tenant_code: String(params[1]),
     name: String(params[3]),
     description: params[4] as string | null,
-    is_active: Number(params[5]),
+    lifecycle_state: String(params[5]),
     created_at: Number(params[7]),
     updated_at: Number(params[8]),
   });
@@ -464,16 +466,16 @@ describe('tenant D1 pool tenant management', () => {
         controlTenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes('UPDATE tenants SET is_active = 1')) {
+      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'active'")) {
         if (controlTenant) {
-          controlTenant = { ...controlTenant, is_active: 1, updated_at: Number(params[0]) };
+          controlTenant = { ...controlTenant, lifecycle_state: 'active', updated_at: Number(params[0]) };
         }
         return { rowsAffected: 1 };
       }
       if (
         op === 'queryOne' &&
         sql.includes(
-          'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?'
+          'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?'
         )
       ) {
         return controlTenant;
@@ -525,21 +527,21 @@ describe('tenant D1 pool tenant management', () => {
     );
     const body = (await response.json()) as {
       id: string;
-      is_active: boolean;
+      lifecycle_state: string;
       provisioning: { mode: string; slot_id: string; smoke_test: string };
     };
 
     expect(response.status).toBe(201);
     expect(body).toMatchObject({
       id: 'second',
-      is_active: true,
+      lifecycle_state: 'active',
       provisioning: {
         mode: 'tenant-d1-preallocated-pool',
         slot_id: 'slot-0001',
         smoke_test: 'passed',
       },
     });
-    expect(tenantDbRow).toMatchObject({ id: 'second', is_active: 1 });
+    expect(tenantDbRow).toMatchObject({ id: 'second', lifecycle_state: 'active' });
     expect(slotState).toBe('assigned');
     expect(assignedTenantId).toBe('second');
   });
@@ -562,18 +564,20 @@ describe('tenant D1 pool tenant management', () => {
         controlTenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes('UPDATE tenants SET is_active = 0')) {
+      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'suspended'")) {
         if (controlTenant) {
           controlTenant = {
             ...controlTenant,
-            is_active: 0,
+            lifecycle_state: 'suspended',
             updated_at: Number(params[0]),
           };
         }
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes('DELETE FROM tenants')) {
-        controlTenant = null;
+      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'deleted'")) {
+        controlTenant = controlTenant
+          ? { ...controlTenant, lifecycle_state: 'deleted', updated_at: Number(params[0]) }
+          : null;
         return { rowsAffected: 1 };
       }
       throw new Error(`unexpected default adapter SQL: ${sql}`);
@@ -647,7 +651,7 @@ describe('tenant D1 pool tenant management', () => {
 
     expect(response.status).toBe(500);
     expect(slotState).toBe('reset_required');
-    expect(controlTenant).toMatchObject({ id: 'second', is_active: 0 });
+    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'suspended' });
   });
 
   it('cleans up a failed provisioning draft without releasing the reset-required slot', async () => {
@@ -655,15 +659,19 @@ describe('tenant D1 pool tenant management', () => {
       state: 'reset_required',
       assigned_tenant_id: 'second',
     });
-    let controlTenant: TenantRow | null = createTenantRow('second', { is_active: 0 });
+    let controlTenant: TenantRow | null = createTenantRow('second', {
+      lifecycle_state: 'suspended',
+    });
     let cleanupAuditWritten = false;
 
     adapters.defaultAdapter = createAdapter((sql, _params, op) => {
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
         return controlTenant;
       }
-      if (op === 'execute' && sql.includes('DELETE FROM tenants')) {
-        controlTenant = null;
+      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'deleted'")) {
+        controlTenant = controlTenant
+          ? { ...controlTenant, lifecycle_state: 'deleted', updated_at: Number(_params[0]) }
+          : null;
         return { rowsAffected: 1 };
       }
       throw new Error(`unexpected default adapter SQL: ${sql}`);
@@ -718,7 +726,7 @@ describe('tenant D1 pool tenant management', () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: 'cleaned', slot_id: 'slot-0001' });
-    expect(controlTenant).toBeNull();
+    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'deleted' });
     expect(cleanupAuditWritten).toBe(true);
   });
 
@@ -730,7 +738,7 @@ describe('tenant D1 pool tenant management', () => {
 
     adapters.defaultAdapter = createAdapter((sql, _params, op) => {
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
-        return createTenantRow('second', { is_active: 0 });
+        return createTenantRow('second', { lifecycle_state: 'suspended' });
       }
       throw new Error(`unexpected default adapter SQL: ${sql}`);
     });
@@ -790,7 +798,9 @@ describe('tenant D1 pool tenant management', () => {
     const slot = createSlot({ state: 'available', assigned_tenant_id: null });
     let slotState = 'available';
     let assignedTenantId: string | null = null;
-    let controlTenant: TenantRow | null = createTenantRow('second', { is_active: 0 });
+    let controlTenant: TenantRow | null = createTenantRow('second', {
+      lifecycle_state: 'suspended',
+    });
     let tenantDbRow: TenantRow | null = null;
 
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
@@ -801,11 +811,11 @@ describe('tenant D1 pool tenant management', () => {
         controlTenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes('UPDATE tenants SET is_active = 1')) {
+      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'active'")) {
         if (controlTenant) {
           controlTenant = {
             ...controlTenant,
-            is_active: 1,
+            lifecycle_state: 'active',
             updated_at: Number(params[0]),
           };
         }
@@ -886,19 +896,19 @@ describe('tenant D1 pool tenant management', () => {
     );
     const body = (await response.json()) as {
       id: string;
-      is_active: boolean;
+      lifecycle_state: string;
       provisioning: { retry: string; slot_id: string };
     };
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
       id: 'second',
-      is_active: true,
+      lifecycle_state: 'active',
       provisioning: { retry: 'succeeded', slot_id: 'slot-0001' },
     });
     expect(slotState).toBe('assigned');
-    expect(controlTenant).toMatchObject({ id: 'second', is_active: 1 });
-    expect(tenantDbRow).toMatchObject({ id: 'second', is_active: 1 });
+    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'active' });
+    expect(tenantDbRow).toMatchObject({ id: 'second', lifecycle_state: 'active' });
   });
 
   it('rejects provisioning retry when the failed slot has already been reused', async () => {
@@ -910,7 +920,7 @@ describe('tenant D1 pool tenant management', () => {
 
     adapters.defaultAdapter = createAdapter((sql, _params, op) => {
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
-        return createTenantRow('second', { is_active: 0 });
+        return createTenantRow('second', { lifecycle_state: 'suspended' });
       }
       throw new Error(`unexpected default adapter SQL: ${sql}`);
     });
@@ -981,14 +991,18 @@ describe('tenant D1 pool tenant management', () => {
       state: 'assigned',
       assigned_tenant_id: 'third',
     });
-    let controlTenant: TenantRow | null = createTenantRow('second', { is_active: 0 });
+    let controlTenant: TenantRow | null = createTenantRow('second', {
+      lifecycle_state: 'suspended',
+    });
 
     adapters.defaultAdapter = createAdapter((sql, _params, op) => {
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
         return controlTenant;
       }
-      if (op === 'execute' && sql.includes('DELETE FROM tenants')) {
-        controlTenant = null;
+      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'deleted'")) {
+        controlTenant = controlTenant
+          ? { ...controlTenant, lifecycle_state: 'deleted', updated_at: Number(_params[0]) }
+          : null;
         return { rowsAffected: 1 };
       }
       throw new Error(`unexpected default adapter SQL: ${sql}`);
@@ -1045,6 +1059,170 @@ describe('tenant D1 pool tenant management', () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: 'cleaned', slot_id: 'slot-0001' });
-    expect(controlTenant).toBeNull();
+    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'deleted' });
+  });
+
+  it('allows operator lifecycle updates only for mutable lifecycle states', async () => {
+    let tenantRow = createTenantRow('second', { lifecycle_state: 'active' });
+    adapters.defaultAdapter = createAdapter((sql, params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
+        return tenantRow;
+      }
+      if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
+        tenantRow = { ...tenantRow, lifecycle_state: String(params[0]), updated_at: Number(params[1]) };
+        return { rowsAffected: 1 };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+
+    const response = await adminTenantUpdateHandler(
+      createContext({ lifecycle_state: 'suspended' }, {}, { id: 'second' })
+    );
+    const body = (await response.json()) as TenantRow;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ id: 'second', lifecycle_state: 'suspended' });
+  });
+
+  it('rejects direct PATCH requests to internal lifecycle states', async () => {
+    adapters.defaultAdapter = createAdapter();
+
+    const response = await adminTenantUpdateHandler(
+      createContext({ lifecycle_state: 'deleted' }, {}, { id: 'second' })
+    );
+
+    expect(response.status).toBe(400);
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+    expect(adapters.defaultAdapter.queryOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects direct lifecycle changes from terminal/internal states', async () => {
+    const tenantRow = createTenantRow('second', { lifecycle_state: 'deleted' });
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
+        return tenantRow;
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+
+    const response = await adminTenantUpdateHandler(
+      createContext({ lifecycle_state: 'active' }, {}, { id: 'second' })
+    );
+    const body = (await response.json()) as { details?: { variables?: { reason?: string } } };
+
+    expect(response.status).toBe(400);
+    expect(body.details?.variables?.reason).toBe('Lifecycle state requires a dedicated operation');
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects deactivating the current default tenant by row flag', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
+        return createTenantRow('second', { is_default: 1 });
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+
+    const response = await adminTenantUpdateHandler(
+      createContext({ lifecycle_state: 'suspended' }, {}, { id: 'second' })
+    );
+    const body = (await response.json()) as { details?: { variables?: { reason?: string } } };
+
+    expect(response.status).toBe(400);
+    expect(body.details?.variables?.reason).toBe('Cannot deactivate the default tenant');
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('queues tenant deletion and lifecycle update in one transaction', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return { id: 'second', is_default: 0, lifecycle_state: 'active' };
+      }
+      if (
+        op === 'execute' &&
+        (sql.includes("UPDATE tenants SET lifecycle_state = 'deleting'") ||
+          sql.includes('INSERT INTO admin_jobs'))
+      ) {
+        return { rowsAffected: 1 };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+
+    const response = await adminTenantDeleteHandler(createContext({}, {}, { id: 'second' }));
+    const body = (await response.json()) as { job_id: string; status: string };
+
+    expect(response.status).toBe(202);
+    expect(body.status).toBe('pending');
+    expect(adapters.defaultAdapter.transaction).toHaveBeenCalledOnce();
+    expect(adapters.defaultAdapter.execute).toHaveBeenCalledWith(
+      "UPDATE tenants SET lifecycle_state = 'deleting', updated_at = ? WHERE id = ?",
+      [expect.any(Number), 'second']
+    );
+    expect(adapters.defaultAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO admin_jobs'),
+      expect.arrayContaining(['tenants/delete', 'pending', JSON.stringify({ tenant_id: 'second' })])
+    );
+  });
+
+  it('rejects deleting the current default tenant by row flag', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return { id: 'second', is_default: 1, lifecycle_state: 'active' };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+
+    const response = await adminTenantDeleteHandler(createContext({}, {}, { id: 'second' }));
+    const body = (await response.json()) as { details?: { variables?: { reason?: string } } };
+
+    expect(response.status).toBe(400);
+    expect(body.details?.variables?.reason).toBe('Cannot delete the default tenant');
+    expect(adapters.defaultAdapter.transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects deleting tenants already in internal lifecycle states', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return { id: 'second', is_default: 0, lifecycle_state: 'deleting' };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+
+    const response = await adminTenantDeleteHandler(createContext({}, {}, { id: 'second' }));
+    const body = (await response.json()) as { details?: { variables?: { reason?: string } } };
+
+    expect(response.status).toBe(400);
+    expect(body.details?.variables?.reason).toBe('Lifecycle state requires a dedicated operation');
+    expect(adapters.defaultAdapter.transaction).not.toHaveBeenCalled();
+  });
+
+  it('does not invalidate tenant cache when deletion transaction fails', async () => {
+    const kv = createKVNamespace();
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return { id: 'second', is_default: 0, lifecycle_state: 'active' };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+    adapters.defaultAdapter.transaction.mockRejectedValueOnce(new Error('job insert failed'));
+
+    const response = await adminTenantDeleteHandler(
+      createContext({}, { AUTHRIM_CONFIG: kv }, { id: 'second' })
+    );
+
+    expect(response.status).toBe(500);
+    expect(kv.delete).not.toHaveBeenCalled();
   });
 });

@@ -1094,6 +1094,27 @@ describe('Settings API v2', () => {
   });
 
   describe('Authorization Boundaries', () => {
+    it('should allow org_admin access to tenant settings for their own tenant via adminAuth', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: {
+          userId: 'org_admin_1',
+          authMethod: 'bearer',
+          roles: ['org_admin'],
+          org_id: 'tenant_123',
+        },
+      });
+
+      const res = await app.request(
+        '/api/admin/tenants/tenant_123/settings/oauth',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as SettingsGetResult;
+      expect(body.scope).toEqual({ type: 'tenant', id: 'tenant_123' });
+    });
+
     it('should reject tenant settings access across tenant boundaries', async () => {
       const { app, mockEnv } = createTestApp({
         adminAuth: {

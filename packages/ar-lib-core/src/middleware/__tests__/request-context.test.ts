@@ -167,8 +167,8 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(body.error).toBe('not_found');
     });
 
-    it('returns 404 for an inactive tenant (no row returned)', async () => {
-      // is_active = 0 → query returns nothing (WHERE is_active = 1)
+    it('returns 404 for a non-active tenant (no row returned)', async () => {
+      // lifecycle_state != 'active' -> query returns nothing.
       const db = createMockDB({ tenantRow: null });
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
@@ -185,7 +185,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
       expect(res.status).toBe(200);
       expect(db.prepare).not.toHaveBeenCalledWith(
-        'SELECT id FROM tenants WHERE id = ? AND is_active = 1'
+        "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active'"
       );
     });
 

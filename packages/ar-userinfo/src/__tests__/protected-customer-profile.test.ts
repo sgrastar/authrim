@@ -596,6 +596,47 @@ describe('protected customer profile route', () => {
     });
   });
 
+  it('rejects delegated writes with unknown audit fields before Step-Up', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const response = await createApp().request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer actor-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'delegated-key-unknown-audit',
+        },
+        body: JSON.stringify({
+          input: { name: 'Alice Updated' },
+          audit: {
+            reason_code: 'admin_repair',
+            unexpected: 'not-supported',
+          },
+        }),
+      },
+      env
+    );
+    const payload = (await response.json()) as {
+      error?: string;
+      error_details?: {
+        code?: string;
+        field?: string;
+        severity?: string;
+        retryable?: boolean;
+      };
+    };
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe('unknown_audit_field');
+    expect(payload.error_details).toMatchObject({
+      code: 'unknown_audit_field',
+      field: 'audit.unexpected',
+      severity: 'error',
+      retryable: false,
+    });
+  });
+
   it('returns a Step-Up requirement when delegated write receipt is missing', async () => {
     const { env } = createDelegatedWriteEnv();
     const response = await createApp().request(

@@ -110,7 +110,7 @@ describe('scheduled bridge token refresh', () => {
     const result = await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
     expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      'SELECT id FROM tenants WHERE is_active = 1 AND id > ? ORDER BY id ASC LIMIT ?',
+      "SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ? ORDER BY id ASC LIMIT ?",
       ['tenant-a', 2]
     );
     expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(
@@ -154,12 +154,12 @@ describe('scheduled bridge token refresh', () => {
 
     expect(mockCoreAdapter.query).toHaveBeenNthCalledWith(
       1,
-      'SELECT id FROM tenants WHERE is_active = 1 AND id > ? ORDER BY id ASC LIMIT ?',
+      "SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ? ORDER BY id ASC LIMIT ?",
       ['tenant-z', 2]
     );
     expect(mockCoreAdapter.query).toHaveBeenNthCalledWith(
       2,
-      'SELECT id FROM tenants WHERE is_active = 1 ORDER BY id ASC LIMIT ?',
+      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
       [2]
     );
     expect(settings.put).toHaveBeenCalledWith(TOKEN_REFRESH_TENANT_CURSOR_KEY, 'tenant-a');
@@ -195,7 +195,7 @@ describe('scheduled bridge token refresh', () => {
     await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
     expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      'SELECT id FROM tenants WHERE is_active = 1 ORDER BY id ASC LIMIT ?',
+      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
       [100]
     );
     expect(mockIdentityAdapter.query).toHaveBeenCalledWith(expect.any(String), [
@@ -251,7 +251,7 @@ describe('scheduled bridge token refresh', () => {
     await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
     expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      'SELECT id FROM tenants WHERE is_active = 1 ORDER BY id ASC LIMIT ?',
+      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
       [100]
     );
     expect(mockIdentityAdapter.query).toHaveBeenCalledWith(expect.any(String), [
