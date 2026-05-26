@@ -6,6 +6,7 @@
 	import {
 		adminSAMLAPI,
 		type SAMLAttributePreset,
+		type SAMLJitEmailLinkingPolicy,
 		type SAMLProvider,
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
@@ -65,6 +66,8 @@
 	let authnRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('optional');
 	let logoutRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('required');
 	let authnContextPolicyMode = $state<'observe' | 'require_any'>('observe');
+	let jitEmailLinkingPolicy = $state<SAMLJitEmailLinkingPolicy>('email_linking');
+	let allowSyntheticEmailFallback = $state(false);
 	let allowedAuthnContextClassRefs = $state(
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
@@ -125,6 +128,8 @@
 		authnRequestSignaturePolicy = data.config.authnRequestSignaturePolicy || 'optional';
 		logoutRequestSignaturePolicy = data.config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = data.config.authnContextPolicy?.mode || 'observe';
+		jitEmailLinkingPolicy = data.config.jitEmailLinkingPolicy || 'email_linking';
+		allowSyntheticEmailFallback = data.config.allowSyntheticEmailFallback === true;
 		allowedAuthnContextClassRefs = (
 			data.config.authnContextPolicy?.allowedClassRefs?.length
 				? data.config.authnContextPolicy.allowedClassRefs
@@ -253,10 +258,12 @@
 		if (provider?.providerType === 'saml_idp') {
 			return {
 				...config,
-					providerName: providerName.trim() || undefined,
-					ssoUrl: ssoUrl.trim(),
-					logoutRequestSignaturePolicy,
-					authnContextPolicy: {
+				providerName: providerName.trim() || undefined,
+				ssoUrl: ssoUrl.trim(),
+				logoutRequestSignaturePolicy,
+				jitEmailLinkingPolicy,
+				allowSyntheticEmailFallback,
+				authnContextPolicy: {
 					mode: authnContextPolicyMode,
 					allowedClassRefs: allowedAuthnContextClassRefs
 						.split('\n')
@@ -271,10 +278,10 @@
 			acsUrl: acsUrl.trim(),
 			signAssertions,
 			signResponses,
-				samlProfile,
-				authnRequestSignaturePolicy,
-				logoutRequestSignaturePolicy,
-				authnContextClassRefMode,
+			samlProfile,
+			authnRequestSignaturePolicy,
+			logoutRequestSignaturePolicy,
+			authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
 			...selectedPresetConfig()
@@ -435,7 +442,7 @@
 		</div>
 		{#if preview.warnings.length > 0}
 			<div class="certificate-warnings">
-					{#each preview.warnings as warning (warning)}
+				{#each preview.warnings as warning (warning)}
 					<div><i class="i-ph-warning-circle"></i>{warning}</div>
 				{/each}
 			</div>
@@ -662,27 +669,57 @@
 							<input id="providerName" type="text" bind:value={providerName} class="form-input" />
 						</div>
 
-							<div class="form-group">
-								<label for="logoutRequestSignaturePolicy" class="form-label">
-									IdP LogoutRequest Signature
-								</label>
-								<select
-									id="logoutRequestSignaturePolicy"
-									bind:value={logoutRequestSignaturePolicy}
-									class="form-select"
-								>
-									<option value="required">Required</option>
-									<option value="optional">Optional</option>
-									<option value="disabled">Disabled</option>
-								</select>
-								<p class="field-hint">
-									Required by default. Use Optional or Disabled only for explicit legacy IdP
-									compatibility.
-								</p>
-							</div>
+						<div class="form-group">
+							<label for="jitEmailLinkingPolicy" class="form-label">JIT Linking Policy</label>
+							<select
+								id="jitEmailLinkingPolicy"
+								bind:value={jitEmailLinkingPolicy}
+								class="form-select"
+							>
+								<option value="email_linking">Existing verified email or JIT create</option>
+								<option value="jit_create_only">JIT create only</option>
+								<option value="disabled">Existing links only</option>
+							</select>
+							<p class="field-hint">
+								Controls whether first login can link by verified local email or create a user.
+							</p>
+						</div>
 
-							<div class="form-group">
-								<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
+						<div class="form-group form-group-full">
+							<label class="form-checkbox-label">
+								<input
+									type="checkbox"
+									bind:checked={allowSyntheticEmailFallback}
+									class="checkbox"
+								/>
+								Allow synthetic email fallback
+							</label>
+							<p class="field-hint">
+								Use only for legacy IdPs that cannot release an email attribute.
+							</p>
+						</div>
+
+						<div class="form-group">
+							<label for="logoutRequestSignaturePolicy" class="form-label">
+								IdP LogoutRequest Signature
+							</label>
+							<select
+								id="logoutRequestSignaturePolicy"
+								bind:value={logoutRequestSignaturePolicy}
+								class="form-select"
+							>
+								<option value="required">Required</option>
+								<option value="optional">Optional</option>
+								<option value="disabled">Disabled</option>
+							</select>
+							<p class="field-hint">
+								Required by default. Use Optional or Disabled only for explicit legacy IdP
+								compatibility.
+							</p>
+						</div>
+
+						<div class="form-group">
+							<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
 							<select
 								id="authnContextPolicyMode"
 								bind:value={authnContextPolicyMode}
@@ -733,9 +770,9 @@
 							</select>
 						</div>
 
-							<div class="form-group">
-								<label for="authnRequestSignaturePolicy" class="form-label">
-									AuthnRequest Signature
+						<div class="form-group">
+							<label for="authnRequestSignaturePolicy" class="form-label">
+								AuthnRequest Signature
 							</label>
 							<select
 								id="authnRequestSignaturePolicy"
@@ -746,25 +783,25 @@
 								<option value="required">Required</option>
 								<option value="disabled">Disabled</option>
 							</select>
-							</div>
+						</div>
 
-							<div class="form-group">
-								<label for="spLogoutRequestSignaturePolicy" class="form-label">
-									LogoutRequest Signature
-								</label>
-								<select
-									id="spLogoutRequestSignaturePolicy"
-									bind:value={logoutRequestSignaturePolicy}
-									class="form-select"
-								>
-									<option value="required">Required</option>
-									<option value="optional">Optional</option>
-									<option value="disabled">Disabled</option>
-								</select>
-								<p class="field-hint">
-									Required by default. Relax only for an explicit legacy SP exception.
-								</p>
-							</div>
+						<div class="form-group">
+							<label for="spLogoutRequestSignaturePolicy" class="form-label">
+								LogoutRequest Signature
+							</label>
+							<select
+								id="spLogoutRequestSignaturePolicy"
+								bind:value={logoutRequestSignaturePolicy}
+								class="form-select"
+							>
+								<option value="required">Required</option>
+								<option value="optional">Optional</option>
+								<option value="disabled">Disabled</option>
+							</select>
+							<p class="field-hint">
+								Required by default. Relax only for an explicit legacy SP exception.
+							</p>
+						</div>
 
 						<div class="form-group">
 							<label for="authnContextClassRefMode" class="form-label">AuthnContext Mode</label>

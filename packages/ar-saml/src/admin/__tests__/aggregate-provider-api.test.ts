@@ -6,6 +6,7 @@ import {
   handleListAggregatePreviewEntities,
   handlePreviewMetadata,
   handleStartAggregateBatchCreate,
+  handleUpdateProvider,
 } from '../providers';
 
 const mocks = vi.hoisted(() => ({
@@ -352,6 +353,151 @@ describe('SAML aggregate provider API', () => {
     expect(coreAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO identity_providers'),
       expect.arrayContaining([0])
+    );
+  });
+
+  it('normalizes SAML IdP JIT linking policy defaults on create', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Example IdP',
+          providerType: 'saml_idp',
+          enabled: true,
+          config: {
+            entityId: 'https://idp.example.test/idp',
+            ssoUrl: 'https://idp.example.test/sso',
+            certificate: 'invalid-test-certificate',
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+            attributeMapping: { email: 'email' },
+            allowedBindings: ['post'],
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as {
+      config: { jitEmailLinkingPolicy?: string; allowSyntheticEmailFallback?: boolean };
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.config).toMatchObject({
+      jitEmailLinkingPolicy: 'email_linking',
+      allowSyntheticEmailFallback: false,
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO identity_providers'),
+      expect.arrayContaining([expect.stringContaining('"jitEmailLinkingPolicy":"email_linking"')])
+    );
+  });
+
+  it('rejects invalid SAML IdP JIT linking policy values on create', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Example IdP',
+          providerType: 'saml_idp',
+          enabled: true,
+          config: {
+            entityId: 'https://idp.example.test/idp',
+            ssoUrl: 'https://idp.example.test/sso',
+            certificate: 'invalid-test-certificate',
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+            attributeMapping: { email: 'email' },
+            allowedBindings: ['post'],
+            jitEmailLinkingPolicy: 'unsafe_email_takeover',
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid SAML IdP JIT linking policy values on update', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'idp-1',
+      name: 'Example IdP',
+      provider_type: 'saml_idp',
+      enabled: 1,
+      config_json: JSON.stringify({
+        entityId: 'https://idp.example.test/idp',
+        ssoUrl: 'https://idp.example.test/sso',
+        certificate: 'invalid-test-certificate',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: { email: 'mail' },
+        allowedBindings: ['post'],
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'idp-1' },
+        body: {
+          config: {
+            jitEmailLinkingPolicy: 'unsafe_email_takeover',
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('normalizes SAML IdP JIT linking policy updates without dropping existing config', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'idp-1',
+      name: 'Example IdP',
+      provider_type: 'saml_idp',
+      enabled: 1,
+      config_json: JSON.stringify({
+        entityId: 'https://idp.example.test/idp',
+        ssoUrl: 'https://idp.example.test/sso',
+        certificate: 'invalid-test-certificate',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: { email: 'mail' },
+        allowedBindings: ['post'],
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'idp-1' },
+        body: {
+          config: {
+            jitEmailLinkingPolicy: 'disabled',
+            allowSyntheticEmailFallback: true,
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as {
+      config: {
+        jitEmailLinkingPolicy?: string;
+        allowSyntheticEmailFallback?: boolean;
+        attributeMapping?: Record<string, string>;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.config).toMatchObject({
+      jitEmailLinkingPolicy: 'disabled',
+      allowSyntheticEmailFallback: true,
+      attributeMapping: { email: 'mail' },
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE identity_providers'),
+      expect.arrayContaining([expect.stringContaining('"jitEmailLinkingPolicy":"disabled"')])
     );
   });
 
