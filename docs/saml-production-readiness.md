@@ -91,6 +91,8 @@ The Admin UI preview resolves the first visible page using the current tenant di
 Inbound SAML ACS resolution stores a stable provider subject in `linked_identities` using the
 IdP entityID, NameIDFormat, and NameID. Provider policy controls whether a first login may link
 to an existing verified local email, create a new JIT user, or require a pre-existing link.
+Resolution failures are audited with sanitized policy metadata only, avoiding raw NameID and
+assertion email values.
 
 The Admin UI exposes these controls on SAML IdP providers:
 
