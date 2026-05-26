@@ -56,6 +56,7 @@ const SESSION_COOKIE_NAME = 'authrim_session';
 const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
 const SESSION_HANDOFF_TTL_SECONDS = 60;
 const SAML_SP_HANDOFF_AUDIENCE = 'saml_sp_cookie_handoff';
+const SAML_JIT_EMAIL_LINKING_POLICIES = new Set(['email_linking', 'jit_create_only', 'disabled']);
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store',
   Pragma: 'no-cache',
@@ -71,6 +72,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
   const log = getLogger(c).module('SAML-SP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
   const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
+  let auditProviderId = 'unknown';
 
   try {
     // Parse POST data
@@ -94,6 +96,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       issuerUrl,
       spEntityId
     );
+    auditProviderId = issuer;
 
     // Get IdP configuration
     const idpConfig = await getIdPConfigByEntityId(env, tenantId, issuer);
@@ -145,8 +148,9 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Extract user information from assertion
     const userInfo = extractUserInfo(assertion, idpConfig);
 
-    // Find or create user
-    const userId = await findOrCreateUser(env, userInfo, idpConfig, tenantId);
+    // Resolve the federated identity before applying any future attribute mapping.
+    const identityResolution = await findOrCreateUser(env, userInfo, idpConfig, tenantId);
+    const userId = identityResolution.userId;
 
     // Create session
     const sessionId = await createSession(env, userId, tenantId);
@@ -199,6 +203,8 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         method: 'saml',
         idp_entity_id: issuer,
         authn_context_class_ref: authnContextClassRef,
+        federated_identity_resolution: identityResolution.action,
+        linked_identity_id: identityResolution.linkedIdentityId,
       }),
       severity: 'info',
     }).catch((err: unknown) => {
@@ -236,8 +242,15 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     log.error('ACS Error', {}, error as Error);
 
     if (error instanceof SamlProvisioningError) {
+      scheduleSAMLIdentityResolutionFailureAudit(c, tenantId, auditProviderId, error);
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-        variables: { field: 'custom_claims', reason: error.message },
+        variables: {
+          field:
+            error.reason === 'custom_claim_validation_failed'
+              ? 'custom_claims'
+              : 'federated_identity',
+          reason: error.message,
+        },
         extensions: error.missingRequiredFields
           ? {
               missing_required_fields: error.missingRequiredFields.map((field) => ({
@@ -272,6 +285,54 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
 
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+function scheduleSAMLIdentityResolutionFailureAudit(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  providerId: string,
+  error: SamlProvisioningError
+): void {
+  const auditPromise = createAuditLog(c.env, {
+    tenantId,
+    userId: 'saml-sp',
+    action: 'saml.identity_resolution.failed',
+    resource: 'linked_identity',
+    resourceId: providerId,
+    ipAddress:
+      c.req.header('CF-Connecting-IP') ||
+      c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+      c.req.header('X-Real-IP') ||
+      'unknown',
+    userAgent: c.req.header('User-Agent') || 'unknown',
+    metadata: JSON.stringify({
+      protocol: 'saml',
+      failure_reason: error.reason,
+      ...sanitizeSAMLIdentityResolutionAuditDetails(error.auditDetails),
+    }),
+    severity: 'warning',
+  }).catch((auditError: unknown) => {
+    getLogger(c)
+      .module('SAML-SP')
+      .error(
+        'Failed to create SAML identity resolution failure audit',
+        { reason: error.reason },
+        auditError as Error
+      );
+  });
+
+  c.executionCtx?.waitUntil(auditPromise);
+}
+
+function sanitizeSAMLIdentityResolutionAuditDetails(
+  details: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  if (!details) {
+    return {};
+  }
+
+  const allowedKeys = new Set(['linked_identity_id', 'policy']);
+  return Object.fromEntries(Object.entries(details).filter(([key]) => allowedKeys.has(key)));
 }
 
 async function createSessionHandoffResponse(
@@ -1056,18 +1117,53 @@ interface UserInfo {
   email?: string;
   name?: string;
   nameId: string;
+  nameIdFormat: string;
   attributes: Record<string, string[]>;
   customClaims: Record<string, unknown>;
 }
 
+type SAMLIdentityResolutionAction = 'existing_link' | 'email_link' | 'jit_create';
+
+interface SAMLIdentityResolution {
+  userId: string;
+  action: SAMLIdentityResolutionAction;
+  linkedIdentityId?: string;
+}
+
+interface SAMLLinkedIdentityRow {
+  id: string;
+  user_id: string;
+  provider_user_id?: string;
+}
+
+interface SAMLActiveUserRow {
+  id: string;
+  email_verified?: number | string | boolean | null;
+}
+
+type SAMLIdentityResolutionFailureReason =
+  | 'linked_identity_inactive_user'
+  | 'linked_identity_email_conflict'
+  | 'email_linking_disabled'
+  | 'email_match_inactive_user'
+  | 'email_match_unverified_local_email'
+  | 'email_match_provider_subject_conflict'
+  | 'jit_disabled'
+  | 'jit_policy_invalid'
+  | 'missing_email'
+  | 'custom_claim_validation_failed'
+  | 'linked_identity_subject_conflict';
+
 class SamlProvisioningError extends Error {
   constructor(
     message: string,
+    public readonly reason: SAMLIdentityResolutionFailureReason,
     public readonly missingRequiredFields?: Array<{
       fieldKey: string;
       label: string;
       fieldType: string;
-    }>
+    }>,
+    public readonly auditDetails?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'SamlProvisioningError';
@@ -1080,6 +1176,7 @@ class SamlProvisioningError extends Error {
 function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): UserInfo {
   const userInfo: UserInfo = {
     nameId: assertion.subject.nameId,
+    nameIdFormat: assertion.subject.nameIdFormat,
     attributes: {},
     customClaims: {},
   };
@@ -1127,7 +1224,7 @@ async function findOrCreateUser(
   userInfo: UserInfo,
   idpConfig: SAMLIdPConfig,
   tenantId: string
-): Promise<string> {
+): Promise<SAMLIdentityResolution> {
   const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(
     userStoreSources.coreDb,
@@ -1136,27 +1233,142 @@ async function findOrCreateUser(
   const piiAdapter: DatabaseAdapter | null = userStoreSources.piiDb
     ? ensureDatabaseAdapter(userStoreSources.piiDb, 'saml-acs-pii')
     : null;
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
+  const linkedIdentityAdapter = piiAdapter ?? coreAdapter;
+  const providerId = idpConfig.entityId;
+  const providerUserKey = buildSAMLProviderUserKey(userInfo);
+  const normalizedEmail = normalizeEmail(userInfo.email);
+  const jitEmailLinkingPolicy = resolveJitEmailLinkingPolicy(idpConfig);
+
+  const existingLink = await findSAMLLinkedIdentity(
+    linkedIdentityAdapter,
+    tenantId,
+    providerId,
+    providerUserKey
+  );
+  if (existingLink) {
+    const activeUser = await findActiveUser(coreAdapter, tenantId, existingLink.user_id);
+    if (!activeUser) {
+      throw new SamlProvisioningError(
+        'SAML linked identity points to an inactive user',
+        'linked_identity_inactive_user',
+        undefined,
+        { linked_identity_id: existingLink.id }
+      );
+    }
+
+    if (normalizedEmail && piiAdapter) {
+      const emailUser = await findUserIdByEmail(piiAdapter, tenantId, normalizedEmail);
+      if (emailUser && emailUser.id !== activeUser.id) {
+        throw new SamlProvisioningError(
+          'SAML linked identity email conflicts with another local user',
+          'linked_identity_email_conflict',
+          undefined,
+          { linked_identity_id: existingLink.id }
+        );
+      }
+    }
+
+    await touchSAMLLinkedIdentity(
+      linkedIdentityAdapter,
+      tenantId,
+      existingLink.id,
+      Boolean(piiAdapter)
+    );
+    return {
+      userId: activeUser.id,
+      action: 'existing_link',
+      linkedIdentityId: existingLink.id,
+    };
+  }
 
   // Try to find user by email (PII/Non-PII DB separation)
-  if (userInfo.email && piiAdapter) {
+  if (normalizedEmail && piiAdapter) {
     const existingUserPII = await piiAdapter.queryOne<{ id: string }>(
       'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-      [tenantId, userInfo.email.toLowerCase()]
+      [tenantId, normalizedEmail]
     );
 
     if (existingUserPII) {
-      // Verify user is active in Core DB
-      const userCore = await coreAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-        [existingUserPII.id, tenantId]
-      );
-      if (userCore) {
-        return userCore.id;
+      if (jitEmailLinkingPolicy !== 'email_linking') {
+        throw new SamlProvisioningError(
+          'SAML email matched an existing user but email linking is disabled for this IdP',
+          'email_linking_disabled',
+          undefined,
+          { policy: jitEmailLinkingPolicy }
+        );
       }
+
+      const activeUser = await findActiveUser(coreAdapter, tenantId, existingUserPII.id);
+      if (!activeUser) {
+        throw new SamlProvisioningError(
+          'SAML email matched an inactive user',
+          'email_match_inactive_user'
+        );
+      }
+      if (!isTruthyDatabaseFlag(activeUser.email_verified)) {
+        throw new SamlProvisioningError(
+          'SAML email matched a local user with unverified email',
+          'email_match_unverified_local_email'
+        );
+      }
+
+      const existingUserProviderLink = await findUserSAMLLinkedIdentityForProvider(
+        linkedIdentityAdapter,
+        tenantId,
+        activeUser.id,
+        providerId
+      );
+      if (
+        existingUserProviderLink &&
+        existingUserProviderLink.provider_user_id !== providerUserKey
+      ) {
+        throw new SamlProvisioningError(
+          'SAML email matched a user already linked to a different subject for this IdP',
+          'email_match_provider_subject_conflict',
+          undefined,
+          { linked_identity_id: existingUserProviderLink.id }
+        );
+      }
+      if (existingUserProviderLink) {
+        await touchSAMLLinkedIdentity(
+          linkedIdentityAdapter,
+          tenantId,
+          existingUserProviderLink.id,
+          Boolean(piiAdapter)
+        );
+        return {
+          userId: activeUser.id,
+          action: 'email_link',
+          linkedIdentityId: existingUserProviderLink.id,
+        };
+      }
+
+      const linkedIdentityId = await createSAMLLinkedIdentity({
+        adapter: linkedIdentityAdapter,
+        tenantId,
+        userId: activeUser.id,
+        providerId,
+        providerUserKey,
+        userInfo: { ...userInfo, email: normalizedEmail },
+        piiShape: Boolean(piiAdapter),
+      });
+
+      return {
+        userId: activeUser.id,
+        action: 'email_link',
+        linkedIdentityId,
+      };
     }
   }
 
+  if (jitEmailLinkingPolicy === 'disabled') {
+    throw new SamlProvisioningError(
+      'SAML JIT provisioning is disabled for this IdP',
+      'jit_disabled'
+    );
+  }
+
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
   const customClaimValidation = await validateCustomClaimWrite({
     db: customClaimSources.nonPiiDb,
     dbPii: customClaimSources.piiDb,
@@ -1169,6 +1381,7 @@ async function findOrCreateUser(
   if (!customClaimValidation.ok) {
     throw new SamlProvisioningError(
       customClaimValidation.error,
+      'custom_claim_validation_failed',
       customClaimValidation.missingRequiredFields
     );
   }
@@ -1176,12 +1389,13 @@ async function findOrCreateUser(
   // Create new user (JIT provisioning - PII/Non-PII DB separation)
   const userId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  if (!userInfo.email && !idpConfig.allowSyntheticEmailFallback) {
+  if (!normalizedEmail && !idpConfig.allowSyntheticEmailFallback) {
     throw new SamlProvisioningError(
-      'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled'
+      'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled',
+      'missing_email'
     );
   }
-  const email = userInfo.email?.toLowerCase() || `${userInfo.nameId}@saml.local`;
+  const email = normalizedEmail || (await buildSyntheticSAMLEmail(providerUserKey));
 
   // Step 1: Insert into users_core with pii_status='pending'
   await coreAdapter.execute(
@@ -1214,37 +1428,260 @@ async function findOrCreateUser(
       userId,
       validation: customClaimValidation,
     });
-  } catch (persistError) {
-    if (piiAdapter) {
-      await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-        userId,
-        tenantId,
-      ]);
-    }
-    await ensureDatabaseAdapter(
-      customClaimSources.nonPiiDb,
-      'saml-acs-custom-claim-cleanup'
-    ).execute('DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?', [
+
+    await syncUserLifecycleState({
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      schemaDb: customClaimSources.schemaDb,
+      stateDb: coreAdapter,
+      tenantId,
+      userId,
+    });
+
+    const linkedIdentityId = await createSAMLLinkedIdentity({
+      adapter: linkedIdentityAdapter,
+      tenantId,
+      userId,
+      providerId,
+      providerUserKey,
+      userInfo: { ...userInfo, email },
+      piiShape: Boolean(piiAdapter),
+    });
+
+    return {
+      userId,
+      action: 'jit_create',
+      linkedIdentityId,
+    };
+  } catch (jitError) {
+    await cleanupSAMLJitUser({
+      coreAdapter,
+      piiAdapter,
+      customClaimDb: customClaimSources.nonPiiDb,
       userId,
       tenantId,
-    ]);
-    await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
-      userId,
-      tenantId,
-    ]);
-    throw persistError;
+    });
+    throw jitError;
+  }
+}
+
+async function cleanupSAMLJitUser(params: {
+  coreAdapter: DatabaseAdapter;
+  piiAdapter: DatabaseAdapter | null;
+  customClaimDb: Parameters<typeof ensureDatabaseAdapter>[0];
+  userId: string;
+  tenantId: string;
+}): Promise<void> {
+  const operations: Array<Promise<unknown>> = [];
+  if (params.piiAdapter) {
+    operations.push(
+      params.piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
+        params.userId,
+        params.tenantId,
+      ])
+    );
+  }
+  operations.push(
+    ensureDatabaseAdapter(params.customClaimDb, 'saml-acs-custom-claim-cleanup').execute(
+      'DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?',
+      [params.userId, params.tenantId]
+    )
+  );
+  operations.push(
+    params.coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
+      params.userId,
+      params.tenantId,
+    ])
+  );
+
+  await Promise.allSettled(operations);
+}
+
+function buildSAMLProviderUserKey(userInfo: UserInfo): string {
+  return `saml:${encodeURIComponent(userInfo.nameIdFormat)}:${encodeURIComponent(userInfo.nameId)}`;
+}
+
+async function buildSyntheticSAMLEmail(providerUserKey: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(providerUserKey));
+  const localPart = Array.from(new Uint8Array(digest).slice(0, 16))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+  return `saml-${localPart}@saml.local`;
+}
+
+function normalizeEmail(email: string | undefined): string | undefined {
+  const normalized = email?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+function resolveJitEmailLinkingPolicy(
+  idpConfig: SAMLIdPConfig
+): 'email_linking' | 'jit_create_only' | 'disabled' {
+  const policy = idpConfig.jitEmailLinkingPolicy ?? 'email_linking';
+  if (SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
+    return policy;
+  }
+  throw new SamlProvisioningError(
+    'SAML IdP has an invalid JIT email linking policy',
+    'jit_policy_invalid',
+    undefined,
+    { policy: 'invalid' }
+  );
+}
+
+function isTruthyDatabaseFlag(value: SAMLActiveUserRow['email_verified']): boolean {
+  return value === true || value === 1 || value === '1';
+}
+
+async function findSAMLLinkedIdentity(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  providerId: string,
+  providerUserKey: string
+): Promise<SAMLLinkedIdentityRow | null> {
+  return adapter.queryOne<SAMLLinkedIdentityRow>(
+    `SELECT id, user_id, provider_user_id FROM linked_identities
+     WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?`,
+    [tenantId, providerId, providerUserKey]
+  );
+}
+
+async function findUserSAMLLinkedIdentityForProvider(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  providerId: string
+): Promise<SAMLLinkedIdentityRow | null> {
+  return adapter.queryOne<SAMLLinkedIdentityRow>(
+    `SELECT id, user_id, provider_user_id FROM linked_identities
+     WHERE tenant_id = ? AND user_id = ? AND provider_id = ?`,
+    [tenantId, userId, providerId]
+  );
+}
+
+async function findUserIdByEmail(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  email: string
+): Promise<{ id: string } | null> {
+  return adapter.queryOne<{ id: string }>(
+    'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
+    [tenantId, email]
+  );
+}
+
+async function findActiveUser(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string
+): Promise<SAMLActiveUserRow | null> {
+  return adapter.queryOne<SAMLActiveUserRow>(
+    'SELECT id, email_verified FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
+    [userId, tenantId]
+  );
+}
+
+async function touchSAMLLinkedIdentity(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  linkedIdentityId: string,
+  piiShape: boolean
+): Promise<void> {
+  const now = Date.now();
+  if (piiShape) {
+    await adapter.execute(
+      'UPDATE linked_identities SET last_used_at = ? WHERE tenant_id = ? AND id = ?',
+      [now, tenantId, linkedIdentityId]
+    );
+    return;
   }
 
-  await syncUserLifecycleState({
-    db: customClaimSources.nonPiiDb,
-    dbPii: customClaimSources.piiDb,
-    schemaDb: customClaimSources.schemaDb,
-    stateDb: coreAdapter,
-    tenantId,
-    userId,
+  await adapter.execute(
+    'UPDATE linked_identities SET last_login_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+    [now, now, tenantId, linkedIdentityId]
+  );
+}
+
+async function createSAMLLinkedIdentity(params: {
+  adapter: DatabaseAdapter;
+  tenantId: string;
+  userId: string;
+  providerId: string;
+  providerUserKey: string;
+  userInfo: UserInfo;
+  piiShape: boolean;
+}): Promise<string> {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const rawAttributes = JSON.stringify({
+    source: 'saml_sp_acs',
+    nameId: params.userInfo.nameId,
+    nameIdFormat: params.userInfo.nameIdFormat,
+    attributes: params.userInfo.attributes,
+    customClaims: params.userInfo.customClaims,
   });
 
-  return userId;
+  try {
+    if (params.piiShape) {
+      await params.adapter.execute(
+        `INSERT INTO linked_identities (
+          id, tenant_id, user_id, provider_id, provider_user_id,
+          provider_email, provider_name, raw_attributes, linked_at, last_used_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          params.tenantId,
+          params.userId,
+          params.providerId,
+          params.providerUserKey,
+          normalizeEmail(params.userInfo.email) ?? null,
+          params.userInfo.name ?? null,
+          rawAttributes,
+          now,
+          now,
+        ]
+      );
+      return id;
+    }
+
+    await params.adapter.execute(
+      `INSERT INTO linked_identities (
+        id, tenant_id, user_id, provider_id, provider_user_id,
+        provider_email, email_verified, access_token_encrypted, refresh_token_encrypted,
+        token_expires_at, raw_claims, profile_data, linked_at, last_login_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, NULL, ?, ?, ?)`,
+      [
+        id,
+        params.tenantId,
+        params.userId,
+        params.providerId,
+        params.providerUserKey,
+        normalizeEmail(params.userInfo.email) ?? null,
+        rawAttributes,
+        now,
+        now,
+        now,
+      ]
+    );
+    return id;
+  } catch (error) {
+    const existing = await findSAMLLinkedIdentity(
+      params.adapter,
+      params.tenantId,
+      params.providerId,
+      params.providerUserKey
+    );
+    if (existing?.user_id === params.userId) {
+      return existing.id;
+    }
+    if (existing) {
+      throw new SamlProvisioningError(
+        'SAML linked identity subject conflicts with another user',
+        'linked_identity_subject_conflict'
+      );
+    }
+    throw error;
+  }
 }
 
 /**

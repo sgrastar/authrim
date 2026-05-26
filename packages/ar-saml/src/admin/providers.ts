@@ -32,6 +32,7 @@ import type {
   SAMLMetadataEntityListResponse,
   SAMLMetadataVerificationSummary,
   SAMLCertificateValidationSummary,
+  SAMLJitEmailLinkingPolicy,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
@@ -170,6 +171,39 @@ interface SAMLMetadataConfigFields {
   metadataCriticalFields?: SAMLMetadataAnalysis['criticalFields'];
   metadataRefreshStatus?: SAMLMetadataRefreshStatus;
   metadataLastFetched?: number;
+}
+
+const SAML_JIT_EMAIL_LINKING_POLICIES = new Set<SAMLJitEmailLinkingPolicy>([
+  'email_linking',
+  'jit_create_only',
+  'disabled',
+]);
+
+function normalizeSAMLIdPJitLinkingPolicyConfig(
+  config: SAMLIdPConfig
+): SAMLIdPConfig | ResponseValidationError {
+  const policy = config.jitEmailLinkingPolicy ?? 'email_linking';
+  if (!SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
+    return { field: 'jitEmailLinkingPolicy' };
+  }
+
+  return {
+    ...config,
+    jitEmailLinkingPolicy: policy,
+    allowSyntheticEmailFallback: config.allowSyntheticEmailFallback === true,
+  };
+}
+
+interface ResponseValidationError {
+  field: string;
+}
+
+function isResponseValidationError(value: unknown): value is ResponseValidationError {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as ResponseValidationError).field === 'string'
+  );
 }
 
 function collectProviderCertificates(config: SAMLIdPConfig | SAMLSPConfig): string[] {
@@ -1047,7 +1081,12 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     const normalizedConfig =
       body.providerType === 'saml_sp'
         ? normalizeSAMLSPAttributePresetConfig(config as SAMLSPConfig)
-        : config;
+        : normalizeSAMLIdPJitLinkingPolicyConfig(config as SAMLIdPConfig);
+    if (isResponseValidationError(normalizedConfig)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: normalizedConfig.field },
+      });
+    }
     const normalizedConfigWithValidation =
       await withProviderCertificateValidation(normalizedConfig);
     const providerEnabled =
@@ -1216,7 +1255,12 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     const newConfig =
       existing.provider_type === 'saml_sp'
         ? normalizeSAMLSPAttributePresetConfig(mergedConfig as SAMLSPConfig)
-        : mergedConfig;
+        : normalizeSAMLIdPJitLinkingPolicyConfig(mergedConfig as SAMLIdPConfig);
+    if (isResponseValidationError(newConfig)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: newConfig.field },
+      });
+    }
     const newConfigWithValidation = await withProviderCertificateValidation(newConfig);
     const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
     const nextEnabled =

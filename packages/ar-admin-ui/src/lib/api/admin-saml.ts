@@ -94,6 +94,8 @@ export interface SAMLAttributeReleaseRule {
 	required?: boolean;
 }
 
+export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
+
 export interface SAMLProviderConfig {
 	description?: string;
 	providerName?: string;
@@ -115,6 +117,8 @@ export interface SAMLProviderConfig {
 		mode: 'observe' | 'require_any';
 		allowedClassRefs?: string[];
 	};
+	jitEmailLinkingPolicy?: SAMLJitEmailLinkingPolicy;
+	allowSyntheticEmailFallback?: boolean;
 	authnContextClassRefMode?: 'legacy_static' | 'session';
 	defaultAuthnContextClassRef?: string;
 	passkeyAuthnContextClassRef?: string;
