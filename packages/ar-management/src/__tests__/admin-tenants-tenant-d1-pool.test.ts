@@ -468,7 +468,11 @@ describe('tenant D1 pool tenant management', () => {
       }
       if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'active'")) {
         if (controlTenant) {
-          controlTenant = { ...controlTenant, lifecycle_state: 'active', updated_at: Number(params[0]) };
+          controlTenant = {
+            ...controlTenant,
+            lifecycle_state: 'active',
+            updated_at: Number(params[0]),
+          };
         }
         return { rowsAffected: 1 };
       }
@@ -1069,7 +1073,11 @@ describe('tenant D1 pool tenant management', () => {
         return tenantRow;
       }
       if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
-        tenantRow = { ...tenantRow, lifecycle_state: String(params[0]), updated_at: Number(params[1]) };
+        tenantRow = {
+          ...tenantRow,
+          lifecycle_state: String(params[0]),
+          updated_at: Number(params[1]),
+        };
         return { rowsAffected: 1 };
       }
       throw new Error(`unexpected default adapter SQL: ${sql}`);

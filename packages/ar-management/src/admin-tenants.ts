@@ -233,7 +233,9 @@ function isInternalLifecycleState(state: TenantLifecycleState): boolean {
 }
 
 function isOperatorMutableLifecycleState(state: TenantLifecycleState): boolean {
-  return (TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES as readonly TenantLifecycleState[]).includes(state);
+  return (TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES as readonly TenantLifecycleState[]).includes(
+    state
+  );
 }
 
 interface TenantDatabaseSlotRow {
@@ -304,7 +306,9 @@ function formatTenantWithProvisioning(row: TenantRow, metadata: TenantProvisioni
   return {
     ...formatTenant(row),
     ...(metadata ?? {
-      provisioning_status: isRuntimeActiveLifecycleState(row.lifecycle_state) ? 'active' : 'inactive',
+      provisioning_status: isRuntimeActiveLifecycleState(row.lifecycle_state)
+        ? 'active'
+        : 'inactive',
       provisioning_error: null,
       provisioning_slot_id: null,
       provisioning_updated_at: null,
@@ -2022,10 +2026,7 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
       id: string;
       is_default: number;
       lifecycle_state: TenantLifecycleState;
-    }>(
-      'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?',
-      [id]
-    );
+    }>('SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?', [id]);
 
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {

@@ -474,11 +474,7 @@ INSERT INTO tenants (
       runMigrationFiles(sqlite3Path, dbPath, ['007_tenant_lifecycle_state.sql']);
 
       expect(
-        readSqlite(
-          sqlite3Path,
-          dbPath,
-          "SELECT lifecycle_state FROM tenants WHERE id = 'default';"
-        )
+        readSqlite(sqlite3Path, dbPath, "SELECT lifecycle_state FROM tenants WHERE id = 'default';")
       ).toBe('active');
       expect(
         readSqlite(

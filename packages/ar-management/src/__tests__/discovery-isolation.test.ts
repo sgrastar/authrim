@@ -132,9 +132,8 @@ const mocked = vi.hoisted(() => {
 
       // Tenant lookup by id — lifecycle_state = 'active' filter applied
       if (query.includes("FROM tenants WHERE id = ? AND lifecycle_state = 'active'")) {
-        return (state.tenants.find(
-          (t) => t.id === params[0] && t.lifecycle_state === 'active'
-        ) ?? null) as T | null;
+        return (state.tenants.find((t) => t.id === params[0] && t.lifecycle_state === 'active') ??
+          null) as T | null;
       }
 
       // Invitation lookup — expires_at > now filter applied
