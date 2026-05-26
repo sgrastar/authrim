@@ -77,7 +77,7 @@ describe('tenant deletion jobs', () => {
     mockControlTx.execute.mockReset();
   });
 
-  it('updates job rows with id and tenant_id while deleting the target tenant', async () => {
+  it('updates job rows with id and tenant_id while tombstoning the target tenant', async () => {
     mockAdapter.query.mockResolvedValue([
       {
         id: 'job-1',
@@ -135,9 +135,10 @@ describe('tenant deletion jobs', () => {
       'DELETE FROM tenant_discovery_indexes WHERE tenant_id = ?',
       expect.any(Array)
     );
-    expect(mockTx.execute).toHaveBeenCalledWith('DELETE FROM tenants WHERE id = ?', [
-      'target-tenant',
-    ]);
+    expect(mockTx.execute).toHaveBeenCalledWith(
+      "UPDATE tenants SET lifecycle_state = 'deleted', updated_at = ? WHERE id = ?",
+      [expect.any(Number), 'target-tenant']
+    );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ? AND tenant_id = ?",
       [
@@ -199,7 +200,7 @@ describe('tenant deletion jobs', () => {
     expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
   });
 
-  it('marks the scoped job failed when tenant row deletion fails', async () => {
+  it('marks the scoped job failed without reactivating lifecycle after purge starts', async () => {
     const failure = new Error('delete failed');
     mockAdapter.query.mockResolvedValue([
       {
@@ -212,6 +213,10 @@ describe('tenant deletion jobs', () => {
 
     await processPendingTenantDeletionJobs({} as never, logger);
 
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ?",
+      expect.any(Array)
+    );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
       [
@@ -231,6 +236,75 @@ describe('tenant deletion jobs', () => {
       { job_id: 'job-3' },
       failure
     );
+  });
+
+  it('keeps the tenant deleted when control cleanup fails after core purge', async () => {
+    const failure = new Error('control cleanup failed');
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-control-failed',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+    mockControlAdapter.transaction.mockRejectedValueOnce(failure);
+
+    await processPendingTenantDeletionJobs({ DB_ADMIN: 'control-db' } as never, logger);
+
+    expect(mockTx.execute).toHaveBeenCalledWith(
+      "UPDATE tenants SET lifecycle_state = 'deleted', updated_at = ? WHERE id = ?",
+      [expect.any(Number), 'target-tenant']
+    );
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ?",
+      expect.any(Array)
+    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      [
+        expect.stringContaining('control cleanup failed'),
+        expect.any(Number),
+        expect.any(Number),
+        'job-control-failed',
+        'operator-tenant',
+      ]
+    );
+  });
+
+  it('marks the scoped job failed and suspends the tenant when the pre-purge backup job failed', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-backup-failed',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({
+          tenant_id: 'target-tenant',
+          backup_job_id: 'backup-job-1',
+        }),
+      },
+    ]);
+    mockAdapter.queryOne.mockResolvedValueOnce({ status: 'failed' });
+
+    await processPendingTenantDeletionJobs({} as never, logger);
+
+    expect(mockAdapter.queryOne).toHaveBeenCalledWith(
+      'SELECT status FROM admin_jobs WHERE id = ? AND tenant_id = ?',
+      ['backup-job-1', 'target-tenant']
+    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ?",
+      [expect.any(Number), 'target-tenant']
+    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      [
+        expect.stringContaining('tenant_deletion_backup_job_failed:backup-job-1'),
+        expect.any(Number),
+        expect.any(Number),
+        'job-backup-failed',
+        'operator-tenant',
+      ]
+    );
+    expect(mockAdapter.transaction).not.toHaveBeenCalled();
   });
 
   it('creates and waits for a deletion-before-purge backup job by default', async () => {

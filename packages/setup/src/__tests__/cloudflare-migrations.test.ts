@@ -435,6 +435,65 @@ INSERT INTO oauth_clients (
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('backfills tenant lifecycle state from is_active and drops the legacy column', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) {
+      return;
+    }
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-tenant-lifecycle-migration-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, ['001_core_foundation.sql']);
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `
+INSERT INTO tenants (
+  id,
+  tenant_code,
+  tenant_key,
+  name,
+  is_active,
+  created_at,
+  updated_at
+) VALUES (
+  'inactive-tenant',
+  'inactive-tenant',
+  'tenant-key-inactive',
+  'Inactive Tenant',
+  0,
+  1,
+  1
+);
+`
+      );
+
+      runMigrationFiles(sqlite3Path, dbPath, ['007_tenant_lifecycle_state.sql']);
+
+      expect(
+        readSqlite(sqlite3Path, dbPath, "SELECT lifecycle_state FROM tenants WHERE id = 'default';")
+      ).toBe('active');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT lifecycle_state FROM tenants WHERE id = 'inactive-tenant';"
+        )
+      ).toBe('suspended');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name = 'is_active';"
+        )
+      ).toBe('0');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('renderPortableMigrationSql', () => {

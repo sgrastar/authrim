@@ -2798,7 +2798,7 @@ async function listMaintenanceTenantIds(
 ): Promise<string[]> {
   try {
     const rows = await adapter.query<{ id: string }>(
-      'SELECT id FROM tenants WHERE is_active = 1 ORDER BY id'
+      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id"
     );
     const tenantIds = rows.map((row) => row.id).filter((id) => id.length > 0);
     if (tenantIds.length > 0) {

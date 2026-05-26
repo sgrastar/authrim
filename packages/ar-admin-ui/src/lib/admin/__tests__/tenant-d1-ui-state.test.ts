@@ -38,7 +38,7 @@ describe('tenant D1 UI state', () => {
 			tenant_code: 'draft-tenant',
 			name: 'Draft Tenant',
 			description: null,
-			is_active: false,
+			lifecycle_state: 'suspended',
 			is_default: false,
 			created_at: 1,
 			updated_at: 1,

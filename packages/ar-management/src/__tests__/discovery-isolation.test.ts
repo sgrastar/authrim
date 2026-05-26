@@ -15,9 +15,9 @@ import type { Env } from '@authrim/ar-lib-core';
  * - Request validation
  *
  * Design notes:
- * - resolveTenantCandidatesFromEmailDomain uses `INNER JOIN tenants … AND tenants.is_active = 1`
+ * - resolveTenantCandidatesFromEmailDomain uses `INNER JOIN tenants … AND tenants.lifecycle_state = 'active'`
  *   so the email mock must never return inactive tenants (mirrors real DB behaviour).
- * - FakeD1Adapter applies is_active = 1 on tenant_code lookups, fixing a gap in
+ * - FakeD1Adapter applies lifecycle_state = 'active' on tenant_code lookups, fixing a gap in
  *   the existing discovery.test.ts fixture.
  */
 
@@ -28,10 +28,15 @@ const mocked = vi.hoisted(() => {
 
   const state = {
     tenants: [
-      { id: 'default', tenant_code: 'default', name: 'Default Tenant', is_active: 1 },
-      { id: 'acme', tenant_code: 'acme-code', name: 'Acme Corp', is_active: 1 },
-      { id: 'beta', tenant_code: 'beta-code', name: 'Beta Inc', is_active: 1 },
-      { id: 'inactive', tenant_code: 'inactive-code', name: 'Gone Co', is_active: 0 },
+      { id: 'default', tenant_code: 'default', name: 'Default Tenant', lifecycle_state: 'active' },
+      { id: 'acme', tenant_code: 'acme-code', name: 'Acme Corp', lifecycle_state: 'active' },
+      { id: 'beta', tenant_code: 'beta-code', name: 'Beta Inc', lifecycle_state: 'active' },
+      {
+        id: 'inactive',
+        tenant_code: 'inactive-code',
+        name: 'Gone Co',
+        lifecycle_state: 'suspended',
+      },
     ],
     users: [
       { id: 'user-1', tenant_id: 'acme', email: 'user@gmail.com', is_active: 1 },
@@ -88,8 +93,8 @@ const mocked = vi.hoisted(() => {
    * FakeD1Adapter accurately mirrors the SQL filters used in discovery.ts.
    *
    * Key difference from the existing discovery.test.ts fixture:
-   * - tenant_code lookups apply AND is_active = 1, matching the real SQL:
-   *   `WHERE tenant_code = ? AND is_active = 1`
+   * - tenant_code lookups apply AND lifecycle_state = 'active', matching the real SQL:
+   *   `WHERE tenant_code = ? AND lifecycle_state = 'active'`
    */
   class FakeD1Adapter {
     constructor(_options: { db: unknown }) {}
@@ -102,8 +107,8 @@ const mocked = vi.hoisted(() => {
           .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
       }
 
-      if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
-        return state.tenants.filter((tenant) => tenant.is_active === 1) as T[];
+      if (query.includes('FROM tenants') && query.includes("WHERE lifecycle_state = 'active'")) {
+        return state.tenants.filter((tenant) => tenant.lifecycle_state === 'active') as T[];
       }
       if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
         return state.clients.filter((client) => client.client_id === params[0]) as T[];
@@ -118,15 +123,16 @@ const mocked = vi.hoisted(() => {
           (user) => user.id === params[0] && user.tenant_id === params[1] && user.is_active === 1
         ) ?? null) as T | null;
       }
-      // Tenant lookup by tenant_code — is_active = 1 filter applied
-      if (query.includes('FROM tenants WHERE tenant_code = ? AND is_active = 1')) {
-        return (state.tenants.find((t) => t.tenant_code === params[0] && t.is_active === 1) ??
-          null) as T | null;
+      // Tenant lookup by tenant_code — lifecycle_state = 'active' filter applied
+      if (query.includes("FROM tenants WHERE tenant_code = ? AND lifecycle_state = 'active'")) {
+        return (state.tenants.find(
+          (t) => t.tenant_code === params[0] && t.lifecycle_state === 'active'
+        ) ?? null) as T | null;
       }
 
-      // Tenant lookup by id — is_active = 1 filter applied
-      if (query.includes('FROM tenants WHERE id = ? AND is_active = 1')) {
-        return (state.tenants.find((t) => t.id === params[0] && t.is_active === 1) ??
+      // Tenant lookup by id — lifecycle_state = 'active' filter applied
+      if (query.includes("FROM tenants WHERE id = ? AND lifecycle_state = 'active'")) {
+        return (state.tenants.find((t) => t.id === params[0] && t.lifecycle_state === 'active') ??
           null) as T | null;
       }
 
@@ -560,7 +566,7 @@ describe('Discovery API: tenant_slug resolution', () => {
     expect(body.code).toBe('tenant_slug_not_found');
   });
 
-  it('returns not_found for an inactive tenant slug (is_active = 0)', async () => {
+  it('returns not_found for a suspended tenant slug', async () => {
     const { app, env } = createDiscoveryApp();
 
     const res = await postDiscovery(app, env, { mode: 'tenant_slug', value: 'inactive' });
@@ -729,7 +735,7 @@ describe('Discovery API: data isolation', () => {
       expect(body.candidate.tenant_id).toBe('beta');
     });
 
-    it('returns not_found for inactive-code (tenant is_active = 0)', async () => {
+    it('returns not_found for inactive-code (tenant lifecycle_state is suspended)', async () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'tenant_code', value: 'inactive-code' });
@@ -797,7 +803,7 @@ describe('Discovery API: data isolation', () => {
       const res = await postDiscovery(app, env, { mode: 'app_hint', value: 'inactive-app' });
       const body = (await res.json()) as { result: string; code: string };
 
-      // Client row is found, but getTenantRowById('inactive') returns null (is_active = 0)
+      // Client row is found, but getTenantRowById('inactive') returns null (not active).
       expect(body.result).toBe('not_found');
       expect(body.code).toBe('app_hint_not_found');
     });

@@ -2,7 +2,12 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { adminTenantsAPI, type Tenant } from '$lib/api/admin-tenants';
+	import {
+		adminTenantsAPI,
+		type OperatorMutableTenantLifecycleState,
+		type Tenant,
+		type UpdateTenantRequest
+	} from '$lib/api/admin-tenants';
 	import {
 		tenantVanityDomainsAPI,
 		type TenantVanityDomain
@@ -33,7 +38,7 @@
 	let editName = $state('');
 	let editTenantCode = $state('');
 	let editDescription = $state('');
-	let editIsActive = $state(true);
+	let editLifecycleState = $state<OperatorMutableTenantLifecycleState>('active');
 
 	// Delete confirmation
 	let showDeleteConfirm = $state(false);
@@ -72,7 +77,13 @@
 	const singleTenantMode = $derived(tenantStore.singleTenantMode);
 	const provisioningFailed = $derived(tenant?.provisioning_status === 'provisioning_failed');
 	const provisioningDraftState = $derived(getTenantProvisioningDraftUiState(tenant));
-	const tenantOperational = $derived(!!tenant?.is_active && !provisioningFailed);
+	const tenantOperational = $derived(tenant?.lifecycle_state === 'active' && !provisioningFailed);
+	const lifecycleEditable = $derived(
+		tenant?.lifecycle_state === 'active' ||
+			tenant?.lifecycle_state === 'suspended' ||
+			tenant?.lifecycle_state === 'frozen' ||
+			tenant?.lifecycle_state === 'migration_read_only'
+	);
 
 	// ==========================================================================
 	// Validation
@@ -155,7 +166,12 @@
 		editName = tenant.name;
 		editTenantCode = tenant.tenant_code;
 		editDescription = tenant.description ?? '';
-		editIsActive = tenant.is_active;
+		editLifecycleState =
+			tenant.lifecycle_state === 'suspended' ||
+			tenant.lifecycle_state === 'frozen' ||
+			tenant.lifecycle_state === 'migration_read_only'
+				? tenant.lifecycle_state
+				: 'active';
 		saveError = '';
 		isEditing = true;
 	}
@@ -176,7 +192,7 @@
 			saveError = 'Name is required';
 			return;
 		}
-		if (singleTenantMode && editIsActive !== tenant.is_active) {
+		if (singleTenantMode && lifecycleEditable && editLifecycleState !== tenant.lifecycle_state) {
 			saveError = 'The initial tenant must remain active in single-tenant mode.';
 			return;
 		}
@@ -184,12 +200,15 @@
 		saving = true;
 		saveError = '';
 		try {
-			const updated = await adminTenantsAPI.update(tenant.id, {
+			const payload: UpdateTenantRequest = {
 				name: editName.trim(),
 				tenant_code: editTenantCode.trim(),
-				description: editDescription.trim() || null,
-				is_active: editIsActive
-			});
+				description: editDescription.trim() || null
+			};
+			if (lifecycleEditable && editLifecycleState !== tenant.lifecycle_state) {
+				payload.lifecycle_state = editLifecycleState;
+			}
+			const updated = await adminTenantsAPI.update(tenant.id, payload);
 			tenantStore.update(updated);
 			tenant = updated;
 			isEditing = false;
@@ -224,7 +243,7 @@
 		deleteError = '';
 		try {
 			await adminTenantsAPI.delete(tenant.id);
-			tenantStore.update({ ...tenant, is_active: false });
+			tenantStore.update({ ...tenant, lifecycle_state: 'deleting' });
 			goto('/admin/tenants');
 		} catch (err) {
 			deleteError = err instanceof Error ? err.message : 'Failed to delete tenant';
@@ -449,10 +468,10 @@
 			<div class="status-row">
 				{#if provisioningFailed}
 					<span class="badge badge-error">Provisioning Failed</span>
-				{:else if tenant.is_active}
+				{:else if tenant.lifecycle_state === 'active'}
 					<span class="badge badge-active">Active</span>
 				{:else}
-					<span class="badge badge-inactive">Inactive</span>
+					<span class="badge badge-inactive">{tenant.lifecycle_state}</span>
 				{/if}
 				{#if tenant.description}
 					<p class="description">{tenant.description}</p>
@@ -467,7 +486,7 @@
 			</div>
 		{/if}
 
-		{#if provisioningFailed || !tenant.is_active}
+		{#if provisioningFailed || tenant.lifecycle_state !== 'active'}
 			<section class="card status-card">
 				<div class="status-card-header">
 					<i class={provisioningFailed ? 'i-ph-warning-circle' : 'i-ph-pause-circle'}></i>
@@ -578,30 +597,24 @@
 						></textarea>
 					</div>
 					<div class="form-group">
-						<label
-							class="form-label toggle-label"
-							class:disabled={singleTenantMode || tenant.is_default}
+						<label for="edit-lifecycle-state" class="form-label">Lifecycle State</label>
+						<select
+							id="edit-lifecycle-state"
+							class="form-input"
+							bind:value={editLifecycleState}
+							disabled={singleTenantMode || tenant.is_default || !lifecycleEditable}
 						>
-							<span>Active</span>
-							<div
-								class="toggle-switch"
-								class:checked={editIsActive}
-								class:disabled={singleTenantMode || tenant.is_default}
-							>
-								<input
-									type="checkbox"
-									bind:checked={editIsActive}
-									class="toggle-input"
-									id="edit-active"
-									disabled={singleTenantMode || tenant.is_default}
-								/>
-								<label for="edit-active" class="toggle-slider"></label>
-							</div>
-						</label>
+							<option value="active">Active</option>
+							<option value="suspended">Suspended</option>
+							<option value="frozen">Frozen</option>
+							<option value="migration_read_only">Migration read-only</option>
+						</select>
 						{#if singleTenantMode}
 							<p class="field-hint">Cannot be changed in single-tenant mode.</p>
 						{:else if tenant.is_default}
 							<p class="field-hint">The default tenant must remain active.</p>
+						{:else if !lifecycleEditable}
+							<p class="field-hint">This lifecycle state requires a dedicated operation.</p>
 						{/if}
 					</div>
 				</div>
@@ -635,10 +648,10 @@
 					<div class="detail-row">
 						<dt>Status</dt>
 						<dd>
-							{#if tenant.is_active}
+							{#if tenant.lifecycle_state === 'active'}
 								<span class="badge badge-active">Active</span>
 							{:else}
-								<span class="badge badge-inactive">Inactive</span>
+								<span class="badge badge-inactive">{tenant.lifecycle_state}</span>
 							{/if}
 						</dd>
 					</div>
@@ -1204,66 +1217,6 @@
 		margin-top: 20px;
 		padding-top: 16px;
 		border-top: 1px solid var(--border);
-	}
-
-	/* Toggle switch */
-	.toggle-label {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		cursor: pointer;
-	}
-
-	.toggle-label.disabled {
-		cursor: not-allowed;
-		opacity: 0.6;
-	}
-
-	.toggle-switch {
-		position: relative;
-	}
-
-	.toggle-input {
-		position: absolute;
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.toggle-slider {
-		display: block;
-		width: 40px;
-		height: 22px;
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-		position: relative;
-		cursor: pointer;
-		transition: background var(--transition-fast);
-	}
-
-	.toggle-switch.disabled .toggle-slider {
-		cursor: not-allowed;
-	}
-
-	.toggle-slider::after {
-		content: '';
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 16px;
-		height: 16px;
-		background: white;
-		border-radius: var(--radius-full);
-		transition: transform var(--transition-fast);
-		box-shadow: var(--shadow-sm);
-	}
-
-	.toggle-switch.checked .toggle-slider {
-		background: var(--primary);
-	}
-
-	.toggle-switch.checked .toggle-slider::after {
-		transform: translateX(18px);
 	}
 
 	/* Settings */

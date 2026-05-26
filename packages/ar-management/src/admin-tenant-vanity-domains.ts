@@ -293,7 +293,7 @@ async function createDomain(
 ) {
   const adapter = ensureDatabaseAdapter(db, 'tenant-vanity-domains');
   const tenant = await adapter.queryOne<{ id: string }>(
-    'SELECT id FROM tenants WHERE id = ? AND is_active = 1',
+    "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active'",
     [tenantId]
   );
   if (!tenant) {

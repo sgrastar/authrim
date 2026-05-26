@@ -45,7 +45,10 @@ describe('tenant-domain-resolver', () => {
       { tenant_id: 'acme', priority: 20 },
       { tenant_id: 'beta', priority: 10 },
     ]);
-    expect(adapter.query).toHaveBeenCalledOnce();
+    expect(adapter.query).toHaveBeenCalledWith(
+      expect.stringContaining("tenants.lifecycle_state = 'active'"),
+      ['hashed-domain']
+    );
   });
 
   it('returns the highest-priority tenant for the single-result helper', async () => {

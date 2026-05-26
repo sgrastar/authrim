@@ -1298,10 +1298,10 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
     const tenantKey = createOpaqueTenantKey();
     await adapter.execute(
       `INSERT INTO tenants (
-         id, tenant_code, tenant_key, name, description, is_active, is_default,
+         id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
          default_tenant_guard, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?)`,
       [newTenantId, newTenantId, tenantKey, name, description ?? null, null, nowTs, nowTs]
     );
 

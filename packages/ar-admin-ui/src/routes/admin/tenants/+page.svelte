@@ -134,10 +134,10 @@
 							<td class="tenant-name">{tenant.name}</td>
 							<td class="tenant-description">{tenant.description ?? '—'}</td>
 							<td>
-								{#if tenant.is_active}
+								{#if tenant.lifecycle_state === 'active'}
 									<span class="badge badge-active">Active</span>
 								{:else}
-									<span class="badge badge-inactive">Disabled</span>
+									<span class="badge badge-inactive">{tenant.lifecycle_state}</span>
 								{/if}
 							</td>
 							<td>

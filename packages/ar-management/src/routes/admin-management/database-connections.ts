@@ -68,7 +68,7 @@ interface DatabaseConnectionTenantAssignment {
 interface TenantLabelRow {
   id: string;
   name: string;
-  is_active?: boolean | number;
+  lifecycle_state?: string;
 }
 
 interface AssignableDatabaseConnection {
@@ -175,7 +175,7 @@ async function listTenantLabels(c: AdminContext): Promise<DatabaseConnectionTena
       return [];
     }
     const rows = await getCoreAdapter(c).query<TenantLabelRow>(
-      `SELECT id, name, is_active FROM tenants WHERE is_active = 1 ORDER BY name ASC`
+      `SELECT id, name, lifecycle_state FROM tenants WHERE lifecycle_state = 'active' ORDER BY name ASC`
     );
     return rows.map((row) => ({
       id: row.id,
