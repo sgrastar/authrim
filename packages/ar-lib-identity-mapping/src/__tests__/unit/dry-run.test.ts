@@ -13,6 +13,33 @@ describe('dry-run mapping', () => {
     expect(JSON.stringify(result.redactedValueSummaries)).not.toContain('user@example.test');
     expect(result.redactedValueSummaries[0]?.classification).toBe('pii');
     expect(result.redactedValueSummaries[0]?.fingerprint).toMatch(/^fixture\./);
+    expect(result.summary.mappedCount).toBe(1);
+    expect(result.ruleTrace.some((entry) => entry.action === 'mapped')).toBe(true);
+  });
+
+  it('executes transform steps and records transformed traces', () => {
+    const input = mappingInput([sourceValue('csv', 'email', ' USER@EXAMPLE.TEST ', 'pii')]);
+    const result = dryRunMapping({
+      ...input,
+      transforms: [
+        {
+          id: 'transform.email.trim',
+          inputEdgeIds: [input.edges[0]!.id],
+          operation: 'trim',
+          outputTargetRef: {
+            side: 'canonical',
+            namespace: 'authrim.profile',
+            path: 'email',
+            catalogEntryId: 'field.canonical.email',
+          },
+        },
+      ],
+    });
+
+    expect(result.status).toBe('success');
+    expect(result.summary.mappedCount).toBe(2);
+    expect(result.ruleTrace.some((entry) => entry.action === 'transformed')).toBe(true);
+    expect(JSON.stringify(result.redactedValueSummaries)).not.toContain('USER@EXAMPLE.TEST');
   });
 
   it('escalates required missing to failed', () => {

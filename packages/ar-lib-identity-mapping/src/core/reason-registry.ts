@@ -100,11 +100,25 @@ export const REASON_REGISTRY: ReasonRegistryEntry[] = [
     description: 'Mapping edge was evaluated during dry-run.',
   },
   {
+    code: 'trace.transform_evaluated',
+    category: 'trace',
+    severity: 'info',
+    stability: 'stable',
+    description: 'Transform step was evaluated during dry-run.',
+  },
+  {
     code: 'transform.invalid_output',
     category: 'transform',
     severity: 'error',
     stability: 'stable',
     description: 'Transform output does not satisfy its output contract.',
+  },
+  {
+    code: 'transform.missing_input',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+    description: 'Transform step input edge did not produce a value.',
   },
   {
     code: 'transform.invalid_parameter',

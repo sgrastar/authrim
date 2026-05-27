@@ -43,12 +43,43 @@ export function validateMappingInput(input: MappingInput): ValidationResult {
         severity: rule.defaultSeverity ?? 'critical',
       });
     }
+    if (rule.kind === 'type' && matched) {
+      const valueType = rule.parameters?.valueType;
+      if (typeof valueType === 'string' && !matchesValueType(valueType, matched.value)) {
+        reasons.push({
+          ...reason('validation.type_mismatch'),
+          severity: rule.defaultSeverity ?? 'error',
+        });
+      }
+    }
+    if (rule.kind === 'enum' && matched) {
+      const allowedValues = rule.parameters?.allowedValues;
+      if (Array.isArray(allowedValues) && !allowedValues.includes(matched.value)) {
+        reasons.push({
+          ...reason('validation.value_not_allowed'),
+          severity: rule.defaultSeverity ?? 'error',
+        });
+      }
+    }
     if (rule.kind === 'format' && matched && typeof matched.value === 'string') {
       const format = rule.parameters?.format as FormatKind | undefined;
       if (format && !matchesFormat(format, matched.value)) {
         reasons.push({
           ...reason('validation.format_mismatch'),
           severity: rule.defaultSeverity ?? 'warning',
+        });
+      }
+    }
+    if (rule.kind === 'cardinality' && matched) {
+      const cardinality = rule.parameters?.cardinality;
+      const isMulti = Array.isArray(matched.value);
+      if (
+        (cardinality === 'single' && isMulti) ||
+        (cardinality === 'multi' && !isMulti && !isMissing(matched.value))
+      ) {
+        reasons.push({
+          ...reason('validation.cardinality_mismatch'),
+          severity: rule.defaultSeverity ?? 'error',
         });
       }
     }

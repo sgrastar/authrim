@@ -236,6 +236,7 @@ export interface RedactedValueSummary {
 
 export interface TraceBuilderInput {
   reason: ReasonCode;
+  action?: MappingDecisionAction;
   fieldRef?: FieldRef;
   ruleId?: string;
   edgeId?: string;
@@ -247,6 +248,18 @@ export interface TraceBuilderInput {
 
 export interface RuleTraceEntry extends TraceBuilderInput {
   id: string;
+}
+
+export interface TransformExecutionInput {
+  step: MappingTransformStep;
+  edgeValues: Map<string, SourceValueEnvelope>;
+}
+
+export interface TransformExecutionResult {
+  status: MappingResultStatus;
+  value?: SourceValueEnvelope;
+  reasons: ReasonCode[];
+  trace: RuleTraceEntry[];
 }
 
 export interface DryRunSummary {

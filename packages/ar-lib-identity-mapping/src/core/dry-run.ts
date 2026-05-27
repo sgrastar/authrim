@@ -3,63 +3,93 @@ import { createDeterministicId } from './ids';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import { buildTraceEntry } from './trace';
+import { executeTransformStep } from './transforms';
 import { validateMappingInput } from './validation';
 import type {
   BatchDryRunResult,
   BatchMappingInput,
   DryRunResult,
   MappingInput,
+  MappingRuleEdge,
+  ReasonCode,
+  RuleTraceEntry,
   RedactedValueSummary,
+  SourceValueEnvelope,
 } from './types';
 
 export function dryRunMapping(input: MappingInput): DryRunResult {
   const validation = validateMappingInput(input);
-  const redactedValueSummaries = input.sourceValues.map((value): RedactedValueSummary => {
-    const entry = findCatalogEntry(input.catalog, value.sourceRef);
-    const classification = value.classificationHint ?? entry?.classification ?? 'internal';
-    return {
-      label: createDeterministicId({
-        kind: 'fixture',
-        semanticPath: [value.sourceRef.namespace, value.sourceRef.path],
-        contentHashParts: [value.sourceRef.namespace, value.sourceRef.path, classification],
-      }),
-      classification,
-      valueType: entry?.valueType ?? typeof value.value,
-      cardinality: Array.isArray(value.value) ? 'multi' : 'single',
-      presence:
-        value.value === undefined || value.value === null
-          ? 'missing'
-          : value.value === ''
-            ? 'empty'
-            : 'present',
-      fingerprint: input.fingerprintProvider?.fingerprint({ value: value.value, classification }),
+  const edgeValues = new Map<string, SourceValueEnvelope>();
+  const mappedValues: SourceValueEnvelope[] = [];
+  const transformReasons: ReasonCode[] = [];
+  const transformTrace: RuleTraceEntry[] = [];
+  const mappingTrace: RuleTraceEntry[] = [];
+
+  for (const edge of input.edges) {
+    const sourceValue = findSourceValue(input.sourceValues, edge);
+    if (!sourceValue) {
+      continue;
+    }
+    const targetValue: SourceValueEnvelope = {
+      ...sourceValue,
+      sourceRef: edge.targetRef,
     };
-  });
+    edgeValues.set(edge.id, targetValue);
+    mappedValues.push(targetValue);
+    mappingTrace.push(
+      buildTraceEntry({
+        reason: reason('trace.mapping_evaluated'),
+        action: 'mapped',
+        fieldRef: edge.targetRef,
+        edgeId: edge.id,
+      })
+    );
+  }
+
+  for (const step of input.transforms ?? []) {
+    const result = executeTransformStep({ step, edgeValues });
+    transformReasons.push(...result.reasons);
+    transformTrace.push(...result.trace);
+    if (result.value) {
+      mappedValues.push(result.value);
+    }
+  }
+
+  const reasons = dedupeReasons([...validation.reasons, ...transformReasons]);
+  const redactedValueSummaries = [...input.sourceValues, ...mappedValues].map((value) =>
+    toRedactedValueSummary(input, value)
+  );
+  const rejectedCount = reasons.filter(
+    (item) => item.severity === 'error' || item.severity === 'critical'
+  ).length;
 
   return {
-    status: statusFromReasons(validation.reasons),
+    status: statusFromReasons(reasons),
     summary: {
       inputCount: input.sourceValues.length,
-      mappedCount: Math.max(0, input.edges.length - validation.reasons.length),
+      mappedCount: mappedValues.length,
       omittedCount: 0,
-      rejectedCount: validation.reasons.filter((item) => item.severity === 'error').length,
-      warningCount: validation.reasons.filter((item) => item.severity === 'warning').length,
-      errorCount: validation.reasons.filter((item) => item.severity === 'error').length,
-      criticalCount: validation.reasons.filter((item) => item.severity === 'critical').length,
+      rejectedCount,
+      warningCount: reasons.filter((item) => item.severity === 'warning').length,
+      errorCount: reasons.filter((item) => item.severity === 'error').length,
+      criticalCount: reasons.filter((item) => item.severity === 'critical').length,
     },
-    reasons: validation.reasons,
-    ruleTrace: [
-      ...validation.trace,
-      ...input.edges.map((edge) =>
-        buildTraceEntry({
-          reason: reason('trace.mapping_evaluated'),
-          fieldRef: edge.targetRef,
-          edgeId: edge.id,
-        })
-      ),
-    ],
+    reasons,
+    ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
     redactedValueSummaries,
   };
+}
+
+function dedupeReasons(reasons: ReasonCode[]): ReasonCode[] {
+  const seen = new Set<string>();
+  return reasons.filter((item) => {
+    const key = `${item.code}:${item.severity}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 export function dryRunMappingBatch(input: BatchMappingInput): BatchDryRunResult {
@@ -93,5 +123,46 @@ export function dryRunMappingBatch(input: BatchMappingInput): BatchDryRunResult 
       count,
     })),
     criticalCount,
+  };
+}
+
+function findSourceValue(
+  sourceValues: SourceValueEnvelope[],
+  edge: MappingRuleEdge
+): SourceValueEnvelope | undefined {
+  return sourceValues.find((value) => {
+    if (value.sourceRef.catalogEntryId && edge.sourceRef.catalogEntryId) {
+      return value.sourceRef.catalogEntryId === edge.sourceRef.catalogEntryId;
+    }
+    return (
+      value.sourceRef.side === edge.sourceRef.side &&
+      value.sourceRef.namespace === edge.sourceRef.namespace &&
+      value.sourceRef.path === edge.sourceRef.path
+    );
+  });
+}
+
+function toRedactedValueSummary(
+  input: MappingInput,
+  value: SourceValueEnvelope
+): RedactedValueSummary {
+  const entry = findCatalogEntry(input.catalog, value.sourceRef);
+  const classification = value.classificationHint ?? entry?.classification ?? 'internal';
+  return {
+    label: createDeterministicId({
+      kind: 'fixture',
+      semanticPath: [value.sourceRef.namespace, value.sourceRef.path],
+      contentHashParts: [value.sourceRef.namespace, value.sourceRef.path, classification],
+    }),
+    classification,
+    valueType: entry?.valueType ?? typeof value.value,
+    cardinality: Array.isArray(value.value) ? 'multi' : 'single',
+    presence:
+      value.value === undefined || value.value === null
+        ? 'missing'
+        : value.value === ''
+          ? 'empty'
+          : 'present',
+    fingerprint: input.fingerprintProvider?.fingerprint({ value: value.value, classification }),
   };
 }

@@ -18,7 +18,9 @@ This file is the reviewed docs snapshot for the PR1 reason code registry.
 | `policy.rule_selected` | policy | info | stable | Candidate policy rule was selected during merge. |
 | `trace.unsafe_metadata` | trace | error | stable | Trace metadata key or value is not allowlisted. |
 | `trace.mapping_evaluated` | trace | info | stable | Mapping edge was evaluated during dry-run. |
+| `trace.transform_evaluated` | trace | info | stable | Transform step was evaluated during dry-run. |
 | `transform.invalid_output` | transform | error | stable | Transform output does not satisfy its output contract. |
+| `transform.missing_input` | transform | error | stable | Transform step input edge did not produce a value. |
 | `transform.invalid_parameter` | transform | error | stable | Transform parameter has an invalid type or value. |
 | `transform.missing_parameter` | transform | error | stable | Required transform parameter is missing. |
 | `transform.unknown_parameter` | transform | warning | stable | Transform parameter is not defined by the operation schema. |
