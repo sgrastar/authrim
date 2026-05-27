@@ -17,9 +17,26 @@ export function shortHash(parts: RedactionSafeIdPart[]): string {
 }
 
 function normalizeIdPart(value: RedactionSafeIdPart): string {
-  return String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  const input = String(value).trim().toLowerCase();
+  let normalized = '';
+  let previousWasSeparator = true;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]!;
+    const isAsciiLetter = char >= 'a' && char <= 'z';
+    const isDigit = char >= '0' && char <= '9';
+
+    if (isAsciiLetter || isDigit) {
+      normalized += char;
+      previousWasSeparator = false;
+      continue;
+    }
+
+    if (!previousWasSeparator) {
+      normalized += '-';
+      previousWasSeparator = true;
+    }
+  }
+
+  return previousWasSeparator ? normalized.slice(0, -1) : normalized;
 }

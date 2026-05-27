@@ -136,7 +136,7 @@ function matchesValueType(valueType: string, value: unknown): boolean {
 function matchesFormat(format: FormatKind, value: string): boolean {
   switch (format) {
     case 'email':
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+      return isSimpleEmail(value);
     case 'uri':
       try {
         new URL(value);
@@ -155,6 +155,38 @@ function matchesFormat(format: FormatKind, value: string): boolean {
     default:
       return true;
   }
+}
+
+function isSimpleEmail(value: string): boolean {
+  const atIndex = value.indexOf('@');
+  if (atIndex <= 0 || atIndex !== value.lastIndexOf('@') || atIndex === value.length - 1) {
+    return false;
+  }
+
+  const domain = value.slice(atIndex + 1);
+  if (domain.startsWith('.') || domain.endsWith('.') || !domain.includes('.')) {
+    return false;
+  }
+
+  let previousWasDomainDot = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!;
+    if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
+      return false;
+    }
+    if (index > atIndex && char === '.') {
+      if (previousWasDomainDot) {
+        return false;
+      }
+      previousWasDomainDot = true;
+      continue;
+    }
+    if (index > atIndex) {
+      previousWasDomainDot = false;
+    }
+  }
+
+  return true;
 }
 
 function isMissing(value: unknown): boolean {
