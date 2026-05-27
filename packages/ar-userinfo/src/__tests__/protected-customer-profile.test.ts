@@ -5,6 +5,7 @@ import {
   createProtectedCustomerProfileRouter,
   createCustomerProfileDelegatedWriteOperation,
   DEFAULT_USERINFO_PROTECTED_AUDIENCE,
+  type ProtectedCustomerProfileResource,
 } from '../protected-customer-profile';
 import {
   completeStepUpAction,
@@ -243,7 +244,7 @@ function createApp(options?: {
   updateProfileImpl?: (input: {
     subjectUserId: string;
     update: UpdateUserPIIInput;
-  }) => Promise<typeof sampleProfileForTest | null>;
+  }) => Promise<ProtectedCustomerProfileResource | null>;
 }) {
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
@@ -637,6 +638,66 @@ describe('protected customer profile route', () => {
     });
   });
 
+  it('rejects delegated writes with unknown input fields before Step-Up', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const response = await createApp().request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer actor-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'delegated-key-unknown-input',
+        },
+        body: JSON.stringify({
+          input: {
+            name: 'Alice Updated',
+            role: 'admin',
+          },
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'Unknown input field: role',
+      field: 'input.role',
+    });
+  });
+
+  it('rejects delegated writes with unknown address fields before Step-Up', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const response = await createApp().request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer actor-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'delegated-key-unknown-address',
+        },
+        body: JSON.stringify({
+          input: {
+            address: {
+              locality: 'Tokyo',
+              room_number: '101',
+            },
+          },
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'Unknown input.address field: room_number',
+      field: 'input.address.room_number',
+    });
+  });
+
   it('returns a Step-Up requirement when delegated write receipt is missing', async () => {
     const { env } = createDelegatedWriteEnv();
     const response = await createApp().request(
@@ -744,6 +805,68 @@ describe('protected customer profile route', () => {
     expect(secondUse.status).toBe(403);
     await expect(secondUse.json()).resolves.toMatchObject({
       error: 'step_up_required',
+    });
+  });
+
+  it('normalizes nullable delegated write fields before updating PII', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const input = {
+      email: 'alice+updated@example.com',
+      nickname: null,
+      address: null,
+    };
+    const receipt = await issueDelegatedWriteReceipt({
+      env,
+      subjectUserId: 'user-1',
+      idempotencyKey: 'delegated-key-nullable-update',
+      bodyInput: input,
+    });
+    let capturedUpdate: UpdateUserPIIInput | undefined;
+    const app = createApp({
+      updateProfileImpl: async ({ update }) => {
+        capturedUpdate = update;
+        return {
+          ...sampleProfileForTest,
+          email: update.email ?? sampleProfileForTest.email,
+          nickname: update.nickname ?? sampleProfileForTest.nickname,
+          address: null,
+          updatedAt: 1700000200,
+        };
+      },
+    });
+
+    const response = await app.request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer actor-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'delegated-key-nullable-update',
+          'Authrim-Step-Up-Receipt': receipt,
+        },
+        body: JSON.stringify({ input }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedUpdate).toMatchObject({
+      email: 'alice+updated@example.com',
+      nickname: null,
+      address_formatted: null,
+      address_street_address: null,
+      address_locality: null,
+      address_region: null,
+      address_postal_code: null,
+      address_country: null,
+    });
+    await expect(response.json()).resolves.toMatchObject({
+      customer_profile: {
+        sub: 'user-1',
+        email: 'alice+updated@example.com',
+        address: null,
+      },
     });
   });
 

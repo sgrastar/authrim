@@ -351,10 +351,15 @@ export class VCConfigManager {
       }
     }
 
-    // Use default (boolean configs don't have env var mapping currently)
-    const defaultValue = DEFAULT_VC_CONFIG[name] as boolean;
-    this.cache.set(name, { value: defaultValue, expiresAt: Date.now() + this.cacheTTL });
-    return defaultValue;
+    // Check environment variable
+    const envVarName = name as keyof Env;
+    const envValue =
+      this.envValues[envVarName] !== undefined
+        ? parseBool(this.envValues[envVarName] as string, DEFAULT_VC_CONFIG[name] as boolean)
+        : (DEFAULT_VC_CONFIG[name] as boolean);
+
+    this.cache.set(name, { value: envValue, expiresAt: Date.now() + this.cacheTTL });
+    return envValue;
   }
 
   // Convenience methods

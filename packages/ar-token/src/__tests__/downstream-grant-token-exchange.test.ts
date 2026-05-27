@@ -285,4 +285,201 @@ describe('downstream elevation grant token exchange', () => {
     );
     expect(ctx.req.parseBody).toHaveBeenCalledTimes(1);
   });
+
+  it('downgrades exchanged token scope to the subject, request, and client intersection', async () => {
+    const actual =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    const keySet = await actual.generateKeySet('subject-kid-1');
+    mocks.mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'subject-kid-1' });
+    mocks.mockParseToken.mockReturnValue({
+      iss: 'https://auth.example.com',
+      sub: 'user-1',
+      aud: ['service-client-1'],
+      client_id: 'upstream-client-1',
+      exp: Math.floor(Date.now() / 1000) + 300,
+      jti: 'subject-jti-1',
+      scope: 'read:data write:data',
+    });
+    mocks.mockGetClientCached.mockResolvedValueOnce({
+      client_id: 'service-client-1',
+      tenant_id: 'tenant-a',
+      client_secret_hash: 'hashed-secret',
+      token_exchange_allowed: true,
+      token_endpoint_auth_method: 'client_secret_basic',
+      delegation_mode: 'delegation',
+      allowed_scopes: ['read:data', 'profile'],
+      allowed_token_exchange_resources: ['https://service.example.com'],
+      allowed_subject_token_clients: [],
+    });
+
+    const ctx = createMockContext({
+      method: 'POST',
+      body: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        subject_token: 'subject-token',
+        subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        client_id: 'service-client-1',
+        client_secret: 'top-secret',
+        audience: 'https://service.example.com',
+        scope: 'read:data admin:data',
+      },
+      env: {
+        KEY_MANAGER: createMockDurableObjectNamespace({
+          rpcMethods: {
+            getActiveKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+              kid: 'subject-kid-1',
+              privatePEM: keySet.privatePEM,
+            }),
+            getAllPublicKeysRpc: vi.fn().mockResolvedValue([keySet.publicJWK]),
+          },
+        }),
+        ENABLE_TOKEN_EXCHANGE: 'true',
+        PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
+      },
+    });
+
+    const response = await tokenHandler(ctx);
+    const body = await parseJsonResponse<{ access_token: string; scope: string }>(response);
+
+    expect(response.status).toBe(200);
+    expect(body.access_token).toBe('downstream-access-token');
+    expect(body.scope).toBe('read:data');
+    expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sub: 'user-1',
+        aud: 'https://service.example.com',
+        client_id: 'service-client-1',
+        scope: 'read:data',
+        act: {
+          sub: 'client:service-client-1',
+          client_id: 'service-client-1',
+        },
+      }),
+      expect.anything(),
+      expect.anything(),
+      expect.any(Number),
+      'region-jti-1'
+    );
+  });
+
+  it('rejects repeated resource parameters above the env configured limit', async () => {
+    const ctx = createMockContext({
+      method: 'POST',
+      body: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+      },
+      env: {
+        ENABLE_TOKEN_EXCHANGE: 'true',
+        TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS: '1',
+      },
+    });
+    const repeatedResourceBody = {
+      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+      subject_token: 'subject-token',
+      subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+      client_id: 'service-client-1',
+      client_secret: 'top-secret',
+      resource: ['https://service.example.com/a', 'https://service.example.com/b'],
+    } as unknown as Awaited<ReturnType<typeof ctx.req.parseBody>>;
+    vi.mocked(ctx.req.parseBody).mockResolvedValueOnce(repeatedResourceBody);
+
+    const response = await tokenHandler(ctx);
+    const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_request');
+    expect(body.error_description).toBe('Too many resource parameters (max: 1)');
+    expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+  });
+
+  it('applies settings configured audience limits before client authentication', async () => {
+    mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      oidc: {
+        tokenExchange: {
+          maxAudienceParams: 1,
+        },
+      },
+    });
+    const ctx = createMockContext({
+      method: 'POST',
+      body: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+      },
+      env: {
+        ENABLE_TOKEN_EXCHANGE: 'true',
+        TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS: '10',
+      },
+    });
+    const repeatedAudienceBody = {
+      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+      subject_token: 'subject-token',
+      subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+      client_id: 'service-client-1',
+      client_secret: 'top-secret',
+      audience: ['https://service.example.com/a', 'https://service.example.com/b'],
+    } as unknown as Awaited<ReturnType<typeof ctx.req.parseBody>>;
+    vi.mocked(ctx.req.parseBody).mockResolvedValueOnce(repeatedAudienceBody);
+
+    const response = await tokenHandler(ctx);
+    const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_request');
+    expect(body.error_description).toBe('Too many audience parameters (max: 1)');
+    expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+  });
+
+  it('rejects subject token types that are not enabled by env configuration', async () => {
+    const ctx = createMockContext({
+      method: 'POST',
+      body: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        subject_token: 'subject-token',
+        subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        client_id: 'service-client-1',
+        client_secret: 'top-secret',
+      },
+      env: {
+        ENABLE_TOKEN_EXCHANGE: 'true',
+        TOKEN_EXCHANGE_ALLOWED_TYPES: 'jwt',
+      },
+    });
+
+    const response = await tokenHandler(ctx);
+    const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_request');
+    expect(body.error_description).toBe(
+      "subject_token_type 'urn:ietf:params:oauth:token-type:access_token' is not allowed. Allowed types: jwt"
+    );
+    expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+  });
+
+  it('rejects refresh tokens even if they are mistakenly enabled as subject token types', async () => {
+    const ctx = createMockContext({
+      method: 'POST',
+      body: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        subject_token: 'subject-token',
+        subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+        client_id: 'service-client-1',
+        client_secret: 'top-secret',
+      },
+      env: {
+        ENABLE_TOKEN_EXCHANGE: 'true',
+        TOKEN_EXCHANGE_ALLOWED_TYPES: 'refresh_token',
+      },
+    });
+
+    const response = await tokenHandler(ctx);
+    const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_request');
+    expect(body.error_description).toBe(
+      'refresh_token cannot be used as subject_token for security reasons'
+    );
+    expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+  });
 });
