@@ -43,6 +43,8 @@ export type {
   StableIdKind,
   TargetType,
   TraceBuilderInput,
+  TransformExecutionInput,
+  TransformExecutionResult,
   TransformOperation,
   TransformOperationSchema,
   TransformParameterSchema,
@@ -72,6 +74,7 @@ export {
 export { buildTraceEntry } from './core/trace';
 export {
   TRANSFORM_OPERATION_SCHEMAS,
+  executeTransformStep,
   validateTransformRegistry,
   validateTransformStep,
 } from './core/transforms';

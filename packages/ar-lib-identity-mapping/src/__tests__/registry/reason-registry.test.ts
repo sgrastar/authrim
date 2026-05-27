@@ -14,10 +14,11 @@ describe('reason registry', () => {
   it('keeps the reviewed docs snapshot in sync', () => {
     const docs = readFileSync(resolve(__dirname, '../../../docs/reason-codes.md'), 'utf8');
     for (const entry of REASON_REGISTRY) {
-      expect(docs).toContain(`\`${entry.code}\``);
-      expect(docs).toContain(entry.category);
-      expect(docs).toContain(entry.severity);
-      expect(docs).toContain(entry.stability);
+      const row = docs.split('\n').find((line) => line.includes(`| \`${entry.code}\``));
+      expect(row).toBeDefined();
+      expect(row).toContain(`| ${entry.category}`);
+      expect(row).toContain(`| ${entry.severity}`);
+      expect(row).toContain(`| ${entry.stability}`);
     }
   });
 });

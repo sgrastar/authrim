@@ -32,4 +32,12 @@ describe('package export boundary', () => {
     expect(experimental).toContain('adaptCsvPreview');
     expect(experimental).toContain("from './adapters'");
   });
+
+  it('exports documented stable transform execution API from root', () => {
+    const rootIndex = readFileSync(resolve(packageRoot, 'src/index.ts'), 'utf8');
+
+    expect(rootIndex).toContain('executeTransformStep');
+    expect(rootIndex).toContain('TransformExecutionInput');
+    expect(rootIndex).toContain('TransformExecutionResult');
+  });
 });

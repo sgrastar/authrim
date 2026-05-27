@@ -58,6 +58,27 @@ describe('dry-run mapping', () => {
     expect(result.reasons.map((item) => item.code)).toContain('validation.required_missing');
   });
 
+  it('preserves repeated reasons so row-level evidence is not collapsed', () => {
+    const input = mappingInput([sourceValue('csv', 'email', ['bad-email'], 'pii')]);
+    const result = dryRunMapping({
+      ...input,
+      validationRules: [
+        {
+          id: 'validation.email.cardinality',
+          kind: 'cardinality',
+          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          parameters: { cardinality: 'single' },
+        },
+      ],
+    });
+
+    expect(result.reasons.map((item) => item.code)).toEqual([
+      'validation.cardinality_mismatch',
+      'validation.cardinality_mismatch',
+    ]);
+    expect(result.summary.errorCount).toBe(2);
+  });
+
   it('uses batch aggregate status rules', () => {
     const success = mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]);
     const failed = {

@@ -17,6 +17,9 @@ export function validateMappingInput(input: MappingInput): ValidationResult {
   const reasons: ReasonCode[] = [...catalogResult.reasons];
 
   for (const edge of input.edges) {
+    if (!findCatalogEntry(input.catalog, edge.sourceRef)) {
+      reasons.push(reason('catalog.invalid_entry'));
+    }
     if (!findCatalogEntry(input.catalog, edge.targetRef)) {
       reasons.push(reason('catalog.invalid_entry'));
     }
@@ -26,6 +29,8 @@ export function validateMappingInput(input: MappingInput): ValidationResult {
     const entry = findCatalogEntry(input.catalog, value.sourceRef);
     if (entry) {
       reasons.push(...validateValueAgainstCatalog(value, entry));
+    } else {
+      reasons.push(reason('catalog.invalid_entry'));
     }
   }
 

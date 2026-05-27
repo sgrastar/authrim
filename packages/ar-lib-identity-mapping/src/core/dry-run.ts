@@ -55,7 +55,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
     }
   }
 
-  const reasons = dedupeReasons([...validation.reasons, ...transformReasons]);
+  const reasons = [...validation.reasons, ...transformReasons];
   const redactedValueSummaries = [...input.sourceValues, ...mappedValues].map((value) =>
     toRedactedValueSummary(input, value)
   );
@@ -78,18 +78,6 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
     ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
     redactedValueSummaries,
   };
-}
-
-function dedupeReasons(reasons: ReasonCode[]): ReasonCode[] {
-  const seen = new Set<string>();
-  return reasons.filter((item) => {
-    const key = `${item.code}:${item.severity}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
 }
 
 export function dryRunMappingBatch(input: BatchMappingInput): BatchDryRunResult {

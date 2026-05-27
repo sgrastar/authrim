@@ -6,8 +6,22 @@ import { dirname, extname, join, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, '../../..');
 const srcRoot = resolve(packageRoot, 'src');
+const runtimeSourceEntries = [
+  resolve(srcRoot, 'core'),
+  resolve(srcRoot, 'adapters'),
+  resolve(srcRoot, 'index.ts'),
+  resolve(srcRoot, 'experimental.ts'),
+];
 
-const forbiddenImports = [
+const forbiddenImportPrefixes = ['node:'];
+const forbiddenExactImports = [
+  'fs',
+  'path',
+  'url',
+  'crypto',
+  'buffer',
+  'stream',
+  'process',
   'hono',
   'cloudflare:workers',
   '@authrim/ar-lib-core',
@@ -22,16 +36,16 @@ describe('no-runtime boundary', () => {
   it('does not import runtime-only modules from source files', () => {
     const violations: string[] = [];
 
-    for (const file of listTsFiles(srcRoot)) {
+    for (const file of listRuntimeTsFiles(runtimeSourceEntries)) {
       const source = readFileSync(file, 'utf8');
-      for (const forbidden of forbiddenImports) {
-        if (
-          source.includes(`from '${forbidden}'`) ||
-          source.includes(`from "${forbidden}"`) ||
-          source.includes(`import('${forbidden}')`) ||
-          source.includes(`import("${forbidden}")`)
-        ) {
+      for (const forbidden of forbiddenExactImports) {
+        if (hasImportSpecifier(source, forbidden)) {
           violations.push(`${file}: ${forbidden}`);
+        }
+      }
+      for (const forbiddenPrefix of forbiddenImportPrefixes) {
+        if (hasImportSpecifierPrefix(source, forbiddenPrefix)) {
+          violations.push(`${file}: ${forbiddenPrefix}*`);
         }
       }
     }
@@ -44,6 +58,28 @@ describe('no-runtime boundary', () => {
     expect(Object.keys(packageJson.dependencies ?? {})).toEqual([]);
   });
 });
+
+function listRuntimeTsFiles(paths: string[]): string[] {
+  return paths.flatMap((path) => (statSync(path).isDirectory() ? listTsFiles(path) : [path]));
+}
+
+function hasImportSpecifier(source: string, specifier: string): boolean {
+  return (
+    source.includes(`from '${specifier}'`) ||
+    source.includes(`from "${specifier}"`) ||
+    source.includes(`import('${specifier}')`) ||
+    source.includes(`import("${specifier}")`)
+  );
+}
+
+function hasImportSpecifierPrefix(source: string, prefix: string): boolean {
+  return (
+    source.includes(`from '${prefix}`) ||
+    source.includes(`from "${prefix}`) ||
+    source.includes(`import('${prefix}`) ||
+    source.includes(`import("${prefix}`)
+  );
+}
 
 function listTsFiles(dir: string): string[] {
   const files: string[] = [];

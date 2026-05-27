@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateMappingInput } from '../../core/validation';
-import { mappingInput, sourceValue } from '../../test-support';
+import { edge, fieldRef, mappingInput, sourceValue } from '../../test-support';
 
 describe('validation rules', () => {
   it('validates type, enum, format, and cardinality rules', () => {
@@ -50,5 +50,30 @@ describe('validation rules', () => {
     });
 
     expect(result.reasons.map((item) => item.code)).toContain('validation.format_mismatch');
+  });
+
+  it('rejects unknown source values and edge source references', () => {
+    const input = mappingInput([
+      sourceValue('csv', 'email', 'user@example.test', 'pii'),
+      sourceValue('csv', 'unknownColumn', 'ignored', 'internal'),
+    ]);
+
+    const result = validateMappingInput({
+      ...input,
+      edges: [
+        ...input.edges,
+        edge(fieldRef('csv', 'unknownColumn'), {
+          side: 'canonical',
+          namespace: 'authrim.profile',
+          path: 'email',
+          catalogEntryId: 'field.canonical.email',
+        }),
+      ],
+    });
+
+    expect(result.reasons.map((item) => item.code)).toEqual([
+      'catalog.invalid_entry',
+      'catalog.invalid_entry',
+    ]);
   });
 });
