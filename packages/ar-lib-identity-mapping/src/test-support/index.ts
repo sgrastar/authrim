@@ -9,6 +9,9 @@ import type {
   SourceValueEnvelope,
 } from '../core/types';
 
+export type { StaticFixtureKind, StaticFixtureValidationResult } from './fixture-validation';
+export { validateStaticFixture } from './fixture-validation';
+
 export const TEST_CATALOG: FieldCatalogBundle = {
   identity: {
     id: 'authrim.pr1.test.catalog',

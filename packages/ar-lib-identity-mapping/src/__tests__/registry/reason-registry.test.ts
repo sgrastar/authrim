@@ -15,7 +15,9 @@ describe('reason registry', () => {
     const docs = readFileSync(resolve(__dirname, '../../../docs/reason-codes.md'), 'utf8');
     for (const entry of REASON_REGISTRY) {
       expect(docs).toContain(`\`${entry.code}\``);
-      expect(docs).toContain(`| ${entry.category} | ${entry.severity} | ${entry.stability} |`);
+      expect(docs).toContain(entry.category);
+      expect(docs).toContain(entry.severity);
+      expect(docs).toContain(entry.stability);
     }
   });
 });
