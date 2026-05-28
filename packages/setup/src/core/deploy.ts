@@ -784,10 +784,14 @@ export async function deployUiWorkerComponent(
     if (component === 'ar-admin-ui' && adminUiBffSecrets) {
       for (const [secretName, secretValue] of Object.entries(adminUiBffSecrets)) {
         onProgress?.(`Uploading ${secretName} to ${uiWorkerName}...`);
-        await execa('pnpm', ['exec', 'wrangler', 'secret', 'put', secretName, '--env', env], {
-          cwd: uiDir,
-          input: secretValue,
-        });
+        await execa(
+          'pnpm',
+          ['exec', 'wrangler', 'secret', 'put', secretName, '--name', uiWorkerName],
+          {
+            cwd: uiDir,
+            input: secretValue,
+          }
+        );
         onProgress?.(`  ✓ ${secretName} uploaded`);
       }
     }
