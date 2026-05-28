@@ -547,6 +547,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
+      '@authrim/ar-lib-identity-mapping':
+        specifier: workspace:*
+        version: link:../ar-lib-identity-mapping
       '@authrim/ar-lib-logging':
         specifier: workspace:*
         version: link:../ar-lib-logging
