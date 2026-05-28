@@ -36,9 +36,39 @@ import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simp
 
 const logger = createLogger().module('ADMIN_SETUP_API');
 const RP_NAME = 'Authrim Admin';
+const ADMIN_UI_BFF_MODE_HEADER = 'X-Authrim-Admin-UI-Api-Mode';
+const ADMIN_UI_BFF_MODE_VALUE = 'cross-site-proxy-bff';
+const ADMIN_UI_FORWARDED_ORIGIN_HEADER = 'X-Authrim-Forwarded-Origin';
 
 // Helper type for credential ID conversion
 type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
+
+function normalizeOrigin(value: string | undefined | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveAdminWebAuthnBrowserOrigin(c: Context<{ Bindings: Env }>): string | null {
+  const origin = normalizeOrigin(c.req.header('origin'));
+  const isAdminUiBff = c.req.header(ADMIN_UI_BFF_MODE_HEADER) === ADMIN_UI_BFF_MODE_VALUE;
+
+  if (isAdminUiBff) {
+    return normalizeOrigin(c.req.header(ADMIN_UI_FORWARDED_ORIGIN_HEADER)) ?? origin;
+  }
+
+  return origin;
+}
 
 /**
  * Convert various credential ID formats to base64url string
@@ -550,13 +580,12 @@ adminSetupApiApp.post('/api/admin/setup-token/generate', async (c) => {
  */
 adminSetupApiApp.post('/api/admin/auth/passkey/options', async (c) => {
   try {
-    // Get RP ID from origin header
-    const originHeader = c.req.header('origin');
-    if (!originHeader) {
+    const browserOrigin = resolveAdminWebAuthnBrowserOrigin(c);
+    if (!browserOrigin) {
       return c.json({ error: 'invalid_request', error_description: 'Origin header required' }, 400);
     }
 
-    const originUrl = new URL(originHeader);
+    const originUrl = new URL(browserOrigin);
     const rpID = originUrl.hostname;
 
     // Generate authentication options (discoverable credentials - no allowCredentials)
@@ -577,7 +606,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/options', async (c) => {
         JSON.stringify({
           challenge: options.challenge,
           rpID,
-          origin: originHeader,
+          origin: browserOrigin,
         }),
         { expirationTtl: 300 } // 5 minutes
       );

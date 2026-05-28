@@ -126,6 +126,9 @@ export interface MockEnv {
   ENABLE_CIBA?: string;
   ENABLE_CLIENT_CREDENTIALS?: string;
   ENABLE_REFRESH_TOKEN_ROTATION?: string;
+  TOKEN_EXCHANGE_ALLOWED_TYPES?: string;
+  TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS?: string;
+  TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS?: string;
   // Region-aware sharding
   CF_REGION?: string;
 }

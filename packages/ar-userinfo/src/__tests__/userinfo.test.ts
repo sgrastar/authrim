@@ -30,6 +30,19 @@ const mockCreateOAuthConfigManager = vi.hoisted(() =>
     isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
   }))
 );
+const mockLoadFeatureConfig = vi.hoisted(() => vi.fn().mockResolvedValue({ enabled: false }));
+const mockResolveCustomClaimRuntimeSourcesFromEnv = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    schemaDb: null,
+    nonPiiDb: null,
+    piiDb: null,
+  })
+);
+const mockCreateCustomClaimSchemaResolverFromSources = vi.hoisted(() =>
+  vi.fn().mockReturnValue({
+    resolveClaimsForTarget: vi.fn().mockResolvedValue({ claims: {} }),
+  })
+);
 
 // Mock the shared module
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -45,6 +58,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
     validateJWEOptions: mockValidateJWEOptions,
     getCachedUser: mockGetCachedUser,
     createOAuthConfigManager: mockCreateOAuthConfigManager,
+    loadFeatureConfig: mockLoadFeatureConfig,
+    resolveCustomClaimRuntimeSourcesFromEnv: mockResolveCustomClaimRuntimeSourcesFromEnv,
+    createCustomClaimSchemaResolverFromSources: mockCreateCustomClaimSchemaResolverFromSources,
   };
 });
 
@@ -171,6 +187,18 @@ describe('UserInfo Endpoint', () => {
     // Default mock for getCachedUser - returns sample user
     // Tests that need different behavior can override this
     vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
+    mockCreateOAuthConfigManager.mockReturnValue({
+      isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
+    });
+    mockLoadFeatureConfig.mockResolvedValue({ enabled: false });
+    mockResolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
+      schemaDb: null,
+      nonPiiDb: null,
+      piiDb: null,
+    });
+    mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
+      resolveClaimsForTarget: vi.fn().mockResolvedValue({ claims: {} }),
+    });
   });
 
   describe('Token Validation', () => {
@@ -250,6 +278,62 @@ describe('UserInfo Endpoint', () => {
         }),
         401
       );
+    });
+
+    it('should return server_error when invalid introspection has no error details', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer malformed-token' },
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: false,
+      });
+
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Unknown error',
+        },
+        500
+      );
+      expect(c.header).not.toHaveBeenCalledWith('WWW-Authenticate', expect.any(String));
+    });
+
+    it('should reject tokens without openid scope when configured as required', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      mockCreateOAuthConfigManager.mockReturnValue({
+        isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(true),
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'profile email',
+          client_id: 'client-123',
+        },
+      });
+
+      await userinfoHandler(c);
+
+      expect(c.header).toHaveBeenCalledWith(
+        'WWW-Authenticate',
+        'Bearer error="insufficient_scope", scope="openid"'
+      );
+      expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
+      expect(c.header).toHaveBeenCalledWith('Pragma', 'no-cache');
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'insufficient_scope',
+          error_description: 'Access token must have openid scope for UserInfo endpoint',
+        },
+        403
+      );
+      expect(getCachedUser).not.toHaveBeenCalled();
     });
 
     it('should return 401 when token does not contain sub claim', async () => {
@@ -772,6 +856,78 @@ describe('UserInfo Endpoint', () => {
       const responseBody = vi.mocked(c.json).mock.calls[0][0];
       expect(responseBody.sub).toBe('user-123');
       expect(responseBody.name).toBe('Test User');
+    });
+  });
+
+  describe('Custom Claims', () => {
+    it('should add custom claims without overwriting standard UserInfo claims', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      const resolveClaimsForTarget = vi.fn().mockResolvedValue({
+        claims: {
+          department: 'security',
+          name: 'Overridden Name',
+        },
+      });
+      mockLoadFeatureConfig.mockResolvedValue({ enabled: true });
+      mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
+        resolveClaimsForTarget,
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue(null);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      await userinfoHandler(c);
+
+      const responseBody = vi.mocked(c.json).mock.calls[0][0];
+      expect(responseBody.sub).toBe('user-123');
+      expect(responseBody.name).toBe('Test User');
+      expect(responseBody.department).toBe('security');
+      expect(mockResolveCustomClaimRuntimeSourcesFromEnv).toHaveBeenCalledWith(c.env, 'default');
+      expect(resolveClaimsForTarget).toHaveBeenCalledWith(
+        'default',
+        'user-123',
+        ['openid', 'profile'],
+        'userinfo'
+      );
+    });
+
+    it('should continue with standard claims when custom claim resolution fails', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      const resolveClaimsForTarget = vi.fn().mockRejectedValue(new Error('resolver unavailable'));
+      mockLoadFeatureConfig.mockResolvedValue({ enabled: true });
+      mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
+        resolveClaimsForTarget,
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue(null);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      await userinfoHandler(c);
+
+      const responseBody = vi.mocked(c.json).mock.calls[0][0];
+      expect(responseBody.sub).toBe('user-123');
+      expect(responseBody.name).toBe('Test User');
+      expect(responseBody.department).toBeUndefined();
     });
   });
 

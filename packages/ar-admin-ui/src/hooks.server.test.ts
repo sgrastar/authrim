@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiProxy, buildProxyHeaders } from './hooks.server';
+import {
+	apiProxy,
+	buildProxyHeaders,
+	clearBffAdminAccessTokenCacheForTests,
+	securityHeaders
+} from './hooks.server';
 
 function getSetCookies(headers: Headers): string[] {
 	const withGetSetCookie = headers as Headers & { getSetCookie?: () => string[] };
@@ -37,6 +42,7 @@ afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
+	clearBffAdminAccessTokenCacheForTests();
 });
 
 describe('buildProxyHeaders', () => {
@@ -70,10 +76,36 @@ describe('buildProxyHeaders', () => {
 		expect(headers.get('Authorization')).toBeNull();
 		expect(headers.get('Origin')).toBe('https://api.authrim.example');
 		expect(headers.get('Referer')).toBe('https://api.authrim.example/api/admin/stats');
+		expect(headers.get('X-Authrim-Forwarded-Origin')).toBe('https://mt-ar-admin-ui.pages.dev');
 		expect(headers.get('X-Request-Id')).toBe('req-browser-1');
 		expect(headers.get('X-Forwarded-Host')).toBe('multi-tenant.authrim.com');
 		expect(headers.get('X-Authrim-Admin-UI-Api-Mode')).toBe('cross-site-proxy-bff');
 		expect(headers.get('Cookie')).toBe('authrim_admin_session=session-123');
+	});
+});
+
+describe('securityHeaders', () => {
+	it('marks HTML shell responses as non-cacheable', async () => {
+		const resolve = vi.fn(
+			async () =>
+				new Response('<!doctype html><html><body>Admin</body></html>', {
+					headers: { 'content-type': 'text/html; charset=utf-8' }
+				})
+		);
+		const event = {
+			url: new URL('https://mt-ar-admin-ui.pages.dev/admin/login'),
+			request: new Request('https://mt-ar-admin-ui.pages.dev/admin/login', {
+				method: 'GET'
+			}),
+			platform: { env: {} },
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof securityHeaders>[0]['event'];
+
+		const response = await securityHeaders({ event, resolve });
+
+		expect(response.headers.get('Cache-Control')).toBe('no-store');
+		expect(response.headers.get('Pragma')).toBe('no-cache');
+		expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
 	});
 });
 
@@ -221,6 +253,93 @@ describe('apiProxy', () => {
 		expect(resolve).not.toHaveBeenCalled();
 	});
 
+	it('does not require a BFF machine token for Admin passkey bootstrap options', async () => {
+		const bffEnv = await createBffEnv();
+		const fetch = vi.fn().mockResolvedValueOnce(new Response('options'));
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('https://mt-ar-admin-ui.pages.dev/api/admin/auth/passkey/options'),
+			request: new Request('https://mt-ar-admin-ui.pages.dev/api/admin/auth/passkey/options', {
+				method: 'POST',
+				headers: {
+					Origin: 'https://mt-ar-admin-ui.pages.dev',
+					'Content-Type': 'application/json'
+				},
+				body: '{}'
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_AUTHRIM_ISSUER: 'https://api.authrim.example',
+					...bffEnv
+				}
+			},
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+		const proxiedRequest = fetch.mock.calls[0][0] as Request;
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe('options');
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(proxiedRequest.url).toBe('https://api.authrim.example/api/admin/auth/passkey/options');
+		expect(proxiedRequest.headers.get('Authorization')).toBeNull();
+		expect(proxiedRequest.headers.get('X-Authrim-Admin-UI-Api-Mode')).toBe('cross-site-proxy-bff');
+		expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Origin')).toBe(
+			'https://mt-ar-admin-ui.pages.dev'
+		);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('reuses cached BFF machine tokens for protected Admin API requests', async () => {
+		const bffEnv = await createBffEnv();
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						access_token: 'cached-bff-token',
+						token_type: 'Bearer',
+						expires_in: 600
+					}),
+					{ headers: { 'content-type': 'application/json' } }
+				)
+			)
+			.mockResolvedValue(new Response('proxied'));
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const env = {
+			AR_ROUTER: { fetch },
+			PUBLIC_AUTHRIM_ISSUER: 'https://api.authrim.example',
+			...bffEnv
+		};
+		const createEvent = (path: string) =>
+			({
+				url: new URL(`https://mt-ar-admin-ui.pages.dev${path}`),
+				request: new Request(`https://mt-ar-admin-ui.pages.dev${path}`, {
+					method: 'GET',
+					headers: {
+						Cookie: 'authrim_admin_session=session-123',
+						'X-Tenant-Id': 'first'
+					}
+				}),
+				platform: { env },
+				getClientAddress: () => '203.0.113.10'
+			}) as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		await apiProxy({ event: createEvent('/api/admin/stats'), resolve });
+		await apiProxy({ event: createEvent('/api/admin/me/session'), resolve });
+
+		expect(fetch).toHaveBeenCalledTimes(3);
+		expect((fetch.mock.calls[0][0] as Request).url).toBe('https://api.authrim.example/token');
+		expect((fetch.mock.calls[1][0] as Request).headers.get('Authorization')).toBe(
+			'Bearer cached-bff-token'
+		);
+		expect((fetch.mock.calls[2][0] as Request).headers.get('Authorization')).toBe(
+			'Bearer cached-bff-token'
+		);
+	});
+
 	it('rejects state-changing Admin API proxy requests with a foreign Origin', async () => {
 		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const fetch = vi.fn();
@@ -330,6 +449,9 @@ describe('apiProxy', () => {
 
 		expect(response.status).toBe(200);
 		expect(proxiedRequest.headers.get('Origin')).toBe('https://api.authrim.example');
+		expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Origin')).toBe(
+			'https://mt-ar-admin-ui.pages.dev'
+		);
 		expect(proxiedRequest.headers.get('Referer')).toBe(
 			'https://api.authrim.example/api/admin/settings'
 		);

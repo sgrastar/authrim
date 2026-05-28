@@ -1,0 +1,16 @@
+{
+  "userName": "user@example.test",
+  "externalId": "ext-001",
+  "active": true,
+  "name": {
+    "givenName": "Example",
+    "familyName": "User"
+  },
+  "emails": [
+    {
+      "value": "user@example.test",
+      "primary": true
+    }
+  ],
+  "groups": []
+}

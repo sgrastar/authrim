@@ -1,0 +1,7 @@
+[
+  {
+    "name": "mail",
+    "nameFormat": "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+    "values": ["user@example.test"]
+  }
+]
