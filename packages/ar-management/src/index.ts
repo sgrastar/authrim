@@ -637,6 +637,7 @@ import {
   getWebhookDelivery,
   replayWebhookDelivery,
 } from './routes/settings/webhooks';
+import { adminCsvDryRunPreviewHandler } from './identity-mapping-preview';
 import {
   getLoggingConfig,
   updateLoggingConfig,
@@ -2154,6 +2155,16 @@ app.post(
     ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ,
   ]),
   replayWebhookDelivery
+);
+
+// =============================================================================
+// Identity Mapping Preview API
+// =============================================================================
+// Dry-run only. Does not persist CSV rows or canonical identity values.
+app.post(
+  '/api/admin/identity-mapping/preview/csv',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminCsvDryRunPreviewHandler
 );
 
 // =============================================================================
