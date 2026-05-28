@@ -48,6 +48,15 @@ interface BffTokenRequestOptions {
 	sendRequest?: (request: Request) => Promise<Response>;
 }
 
+interface BffAdminAccessToken {
+	accessToken: string;
+	expiresAtMs: number;
+}
+
+const BFF_TOKEN_CACHE_SKEW_SECONDS = 30;
+const bffAdminAccessTokenCache = new Map<string, BffAdminAccessToken>();
+const bffAdminAccessTokenInflight = new Map<string, Promise<BffAdminAccessToken>>();
+
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
@@ -269,7 +278,7 @@ async function requestBffAdminAccessToken(
 	apiBackendUrl: string,
 	config: AdminUiBffMachineCredentialConfig,
 	options: BffTokenRequestOptions = {}
-): Promise<string> {
+): Promise<BffAdminAccessToken> {
 	const tokenEndpoint = new URL('/token', apiBackendUrl).href;
 	const assertion = await createBffClientAssertion(tokenEndpoint, config);
 	const form = new URLSearchParams({
@@ -322,6 +331,7 @@ async function requestBffAdminAccessToken(
 	const payload = (await response.json()) as {
 		access_token?: string;
 		token_type?: string;
+		expires_in?: number;
 	};
 	if (!payload.access_token || payload.token_type !== 'Bearer') {
 		throw Object.assign(new Error('Admin UI BFF token response invalid'), {
@@ -329,7 +339,59 @@ async function requestBffAdminAccessToken(
 		});
 	}
 
-	return payload.access_token;
+	const expiresIn = Number.isFinite(payload.expires_in) ? Number(payload.expires_in) : 60;
+	const usableTtlSeconds = Math.max(1, expiresIn - BFF_TOKEN_CACHE_SKEW_SECONDS);
+	return {
+		accessToken: payload.access_token,
+		expiresAtMs: Date.now() + usableTtlSeconds * 1000
+	};
+}
+
+function buildBffTokenCacheKey(
+	apiBackendUrl: string,
+	config: AdminUiBffMachineCredentialConfig,
+	tenantId?: string | null
+): string {
+	return [
+		new URL('/token', apiBackendUrl).href,
+		config.clientId,
+		config.keyId,
+		config.scopes,
+		tenantId?.trim() || ''
+	].join('\n');
+}
+
+async function getBffAdminAccessToken(
+	apiBackendUrl: string,
+	config: AdminUiBffMachineCredentialConfig,
+	options: BffTokenRequestOptions = {}
+): Promise<string> {
+	const cacheKey = buildBffTokenCacheKey(apiBackendUrl, config, options.tenantId);
+	const now = Date.now();
+	const cached = bffAdminAccessTokenCache.get(cacheKey);
+	if (cached && cached.expiresAtMs > now) {
+		return cached.accessToken;
+	}
+
+	const inflight = bffAdminAccessTokenInflight.get(cacheKey);
+	if (inflight) {
+		return (await inflight).accessToken;
+	}
+
+	const tokenPromise = requestBffAdminAccessToken(apiBackendUrl, config, options);
+	bffAdminAccessTokenInflight.set(cacheKey, tokenPromise);
+	try {
+		const token = await tokenPromise;
+		bffAdminAccessTokenCache.set(cacheKey, token);
+		return token.accessToken;
+	} finally {
+		bffAdminAccessTokenInflight.delete(cacheKey);
+	}
+}
+
+export function clearBffAdminAccessTokenCacheForTests(): void {
+	bffAdminAccessTokenCache.clear();
+	bffAdminAccessTokenInflight.clear();
 }
 
 /**
@@ -343,6 +405,14 @@ function isProxyEnabled(platformEnv?: Record<string, unknown>): boolean {
 	}
 
 	return isLocalAdminProxyEnabled(platformEnv) || isFixedHttpsBffProxyEnabled(platformEnv);
+}
+
+function isAdminBootstrapProxyPath(pathname: string): boolean {
+	return (
+		pathname === '/api/admin/auth/passkey/options' ||
+		pathname === '/api/admin/auth/passkey/verify' ||
+		pathname.startsWith('/api/admin/setup-token/')
+	);
 }
 
 function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
@@ -688,6 +758,8 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
 		event.url.pathname === '/api/admin' || event.url.pathname.startsWith('/api/admin/');
 	const includeTransportBffMode =
 		includeBffMode && (Boolean(arRouter) || fixedHttpsBffProxyEnabled);
+	const attachBffAccessToken =
+		includeTransportBffMode && !isAdminBootstrapProxyPath(event.url.pathname);
 
 	if (!arRouter && !localProxyEnabled && !fixedHttpsBffProxyEnabled) {
 		logProxySecurityEvent(event, proxyRequestId, 'proxy_not_configured', 'rejected', {
@@ -755,7 +827,7 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
 			includeBffMode: includeTransportBffMode
 		});
 		const bffMachineCredentialConfig = getBffMachineCredentialConfig(platformEnv);
-		if (includeTransportBffMode && !bffMachineCredentialConfig) {
+		if (attachBffAccessToken && !bffMachineCredentialConfig) {
 			logProxySecurityEvent(event, proxyRequestId, 'bff_credential_not_configured', 'rejected', {
 				status: 500
 			});
@@ -774,15 +846,11 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
 		let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
 		try {
-			if (includeTransportBffMode && bffMachineCredentialConfig) {
-				const accessToken = await requestBffAdminAccessToken(
-					apiPublicUrl,
-					bffMachineCredentialConfig,
-					{
-						tenantId: event.request.headers.get('x-tenant-id'),
-						sendRequest: (request) => arRouter.fetch(request)
-					}
-				);
+			if (attachBffAccessToken && bffMachineCredentialConfig) {
+				const accessToken = await getBffAdminAccessToken(apiPublicUrl, bffMachineCredentialConfig, {
+					tenantId: event.request.headers.get('x-tenant-id'),
+					sendRequest: (request) => arRouter.fetch(request)
+				});
 				headers.set('Authorization', `Bearer ${accessToken}`);
 			}
 			const response = await Promise.race([
@@ -825,8 +893,8 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
 		const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
 
 		try {
-			if (fixedHttpsBffProxyEnabled && bffMachineCredentialConfig) {
-				const accessToken = await requestBffAdminAccessToken(
+			if (fixedHttpsBffProxyEnabled && attachBffAccessToken && bffMachineCredentialConfig) {
+				const accessToken = await getBffAdminAccessToken(
 					apiBackendUrl,
 					bffMachineCredentialConfig,
 					{ tenantId: event.request.headers.get('x-tenant-id') }
@@ -854,9 +922,15 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
  * Security headers hook
  * Adds comprehensive security headers to all responses.
  */
-const securityHeaders: Handle = async ({ event, resolve }) => {
+export const securityHeaders: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event);
 	const platformEnv = getPlatformEnv(event);
+	const contentType = response.headers.get('content-type') || '';
+
+	if (contentType.includes('text/html')) {
+		response.headers.set('Cache-Control', 'no-store');
+		response.headers.set('Pragma', 'no-cache');
+	}
 
 	// Content Security Policy
 	// - 'unsafe-inline' required for SvelteKit style injection and inline scripts
