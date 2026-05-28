@@ -1,6 +1,10 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 
 export type InternalNotificationEventCategory =
+  | 'identity_mapping_signal'
+  | 'identity_mapping_manual_review'
+  | 'identity_mapping_propagation_failure'
+  | 'identity_mapping_bulk_impact'
   | 'storage_registry_security'
   | 'storage_registry_health'
   | 'tenant_database_stats'

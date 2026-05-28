@@ -263,6 +263,19 @@ export interface ValueProvenanceRow {
   created_at: number;
 }
 
+export interface SubjectLifecycleTimelineEventRow {
+  id: string;
+  tenant_id: string;
+  subject_id: string | null;
+  account_id: string | null;
+  event_type: string;
+  source_type: string | null;
+  source_id: string | null;
+  summary_json: string | null;
+  event_at: number;
+  created_at: number;
+}
+
 export interface ContactPointSearchIndexRow {
   id: string;
   tenant_id: string;
@@ -461,6 +474,18 @@ export interface CreateValueProvenanceInput {
   observed_at?: number;
   confidence_score?: number | null;
   provenance?: JsonObject | null;
+}
+
+export interface CreateSubjectLifecycleTimelineEventInput {
+  id?: string;
+  tenant_id?: string;
+  subject_id?: string | null;
+  account_id?: string | null;
+  event_type: string;
+  source_type?: string | null;
+  source_id?: string | null;
+  summary?: JsonObject | null;
+  event_at?: number;
 }
 
 export interface CreateContactPointSearchIndexInput {
@@ -1475,6 +1500,46 @@ export class CanonicalIdentityRepository {
         row.observed_at,
         row.confidence_score,
         row.provenance_json,
+        row.created_at,
+      ]
+    );
+    return row;
+  }
+
+  async recordSubjectLifecycleTimelineEvent(
+    input: CreateSubjectLifecycleTimelineEventInput
+  ): Promise<SubjectLifecycleTimelineEventRow> {
+    const id = input.id ?? generateId();
+    const now = getCurrentTimestamp();
+    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
+    const row: SubjectLifecycleTimelineEventRow = {
+      id,
+      tenant_id: tenantId,
+      subject_id: input.subject_id ?? null,
+      account_id: input.account_id ?? null,
+      event_type: input.event_type,
+      source_type: input.source_type ?? null,
+      source_id: input.source_id ?? null,
+      summary_json: encodeJson(input.summary),
+      event_at: input.event_at ?? now,
+      created_at: now,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO subject_lifecycle_timeline_events (
+        id, tenant_id, subject_id, account_id, event_type, source_type, source_id,
+        summary_json, event_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.tenant_id,
+        row.subject_id,
+        row.account_id,
+        row.event_type,
+        row.source_type,
+        row.source_id,
+        row.summary_json,
+        row.event_at,
         row.created_at,
       ]
     );
