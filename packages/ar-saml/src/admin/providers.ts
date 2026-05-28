@@ -1803,12 +1803,31 @@ export async function handleDeleteFederationTrustProfile(c: AdminSAMLContext): P
   try {
     const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
     if (forbidden) return forbidden;
+    if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'saml-federation-trust');
-    await adapter.execute(
-      'DELETE FROM saml_federation_trust_profiles WHERE tenant_id = ? AND id = ?',
-      [tenantId, id]
-    );
+    await adapter.transaction(async (tx) => {
+      await tx.execute(
+        'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, id]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_scope_bindings WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, id]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_context_snapshots WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, id]
+      );
+      await tx.execute('DELETE FROM federation_trust_sources WHERE tenant_id = ? AND id = ?', [
+        tenantId,
+        id,
+      ]);
+      await tx.execute(
+        'DELETE FROM saml_federation_trust_profiles WHERE tenant_id = ? AND id = ?',
+        [tenantId, id]
+      );
+    });
     await createSAMLAdminAudit(c, {
       tenantId,
       action: 'saml.federation_trust_profile.deleted',
@@ -2478,29 +2497,32 @@ async function listFederationTrustProfiles(
     certificates_json: string;
     policy: string | null;
     enabled: number;
+    normalized_migration_state?: string | null;
     created_at: number;
     updated_at: number;
   }>(
     `SELECT id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
-            policy, enabled, created_at, updated_at
+            policy, enabled, normalized_migration_state, created_at, updated_at
        FROM saml_federation_trust_profiles
        WHERE tenant_id = ?
        ORDER BY name ASC`,
     [tenantId]
   );
 
-  const legacyProfiles: SAMLFederationTrustProfile[] = rows.map((row) => ({
-    id: row.id,
-    tenantId: row.tenant_id,
-    name: row.name,
-    description: row.description ?? undefined,
-    metadataUrlPatterns: JSON.parse(row.metadata_url_patterns_json),
-    certificates: JSON.parse(row.certificates_json),
-    policy: normalizeFederationTrustPolicy(row.policy),
-    enabled: row.enabled === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  const legacyProfiles: SAMLFederationTrustProfile[] = rows
+    .filter((row) => row.normalized_migration_state !== 'migrated')
+    .map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      name: row.name,
+      description: row.description ?? undefined,
+      metadataUrlPatterns: JSON.parse(row.metadata_url_patterns_json),
+      certificates: JSON.parse(row.certificates_json),
+      policy: normalizeFederationTrustPolicy(row.policy),
+      enabled: row.enabled === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   const normalizedProfiles = await listNormalizedSamlFederationTrustProfiles(env, tenantId);
   return [...legacyProfiles, ...normalizedProfiles].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -2574,6 +2596,36 @@ function normalizeFederationTrustPolicy(value: unknown): SAMLFederationTrustProf
   return value === 'strict' || value === 'warn' || value === 'disabled' ? value : undefined;
 }
 
+async function hashStableJson(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(stableJson(value));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortForStableJson(value));
+}
+
+function sortForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortForStableJson);
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
+  return Object.keys(value)
+    .sort()
+    .reduce<Record<string, unknown>>((sorted, key) => {
+      const item = (value as Record<string, unknown>)[key];
+      if (item !== undefined) {
+        sorted[key] = sortForStableJson(item);
+      }
+      return sorted;
+    }, {});
+}
+
 function isSamlFederationTrustCertificate(
   value: unknown
 ): value is SAMLFederationTrustProfile['certificates'][number] {
@@ -2604,32 +2656,119 @@ async function upsertFederationTrustProfile(
   profile: SAMLFederationTrustProfile
 ): Promise<void> {
   const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
-  await adapter.execute(
-    `INSERT INTO saml_federation_trust_profiles
-       (id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
-        policy, enabled, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       description = excluded.description,
-       metadata_url_patterns_json = excluded.metadata_url_patterns_json,
-       certificates_json = excluded.certificates_json,
-       policy = excluded.policy,
-       enabled = excluded.enabled,
-       updated_at = excluded.updated_at`,
-    [
-      profile.id,
-      profile.tenantId,
-      profile.name,
-      profile.description ?? null,
-      JSON.stringify(profile.metadataUrlPatterns),
-      JSON.stringify(profile.certificates),
-      profile.policy ?? null,
-      profile.enabled ? 1 : 0,
-      profile.createdAt,
-      profile.updatedAt,
-    ]
-  );
+  const payload = {
+    description: profile.description ?? null,
+    metadataUrlPatterns: profile.metadataUrlPatterns,
+    policy: profile.policy ?? 'warn',
+    certificates: profile.certificates,
+  };
+  const trustContext = {
+    protocol: 'saml',
+    profileId: profile.id,
+    policy: profile.policy ?? 'warn',
+    enabled: profile.enabled,
+    metadataUrlPatterns: profile.metadataUrlPatterns,
+    anchorHashes: profile.certificates.map((certificate) => certificate.fingerprintSha256),
+  };
+  const snapshotHash = await hashStableJson(trustContext);
+  const lifecycleState = profile.enabled ? 'active' : 'draft';
+
+  await adapter.transaction(async (tx) => {
+    await tx.execute(
+      `INSERT INTO federation_trust_sources (
+        id, tenant_id, source_type, source_key, display_name, lifecycle_state,
+        protocol_payload_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        source_type = excluded.source_type,
+        source_key = excluded.source_key,
+        display_name = excluded.display_name,
+        lifecycle_state = excluded.lifecycle_state,
+        protocol_payload_json = excluded.protocol_payload_json,
+        updated_at = excluded.updated_at`,
+      [
+        profile.id,
+        profile.tenantId,
+        'saml_aggregate',
+        `saml-profile:${profile.id}`,
+        profile.name,
+        lifecycleState,
+        stableJson(payload),
+        profile.createdAt,
+        profile.updatedAt,
+      ]
+    );
+    await tx.execute(
+      'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
+      [profile.tenantId, profile.id]
+    );
+    await tx.execute(
+      'DELETE FROM federation_trust_scope_bindings WHERE tenant_id = ? AND trust_source_id = ?',
+      [profile.tenantId, profile.id]
+    );
+    for (const certificate of profile.certificates) {
+      await tx.execute(
+        `INSERT INTO federation_trust_anchors (
+          id, tenant_id, trust_source_id, anchor_type, anchor_hash, anchor_ref,
+          not_before, not_after, lifecycle_state, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          crypto.randomUUID(),
+          profile.tenantId,
+          profile.id,
+          'x509_sha256',
+          certificate.fingerprintSha256,
+          certificate.id,
+          null,
+          null,
+          'active',
+          profile.updatedAt,
+          profile.updatedAt,
+        ]
+      );
+    }
+    await tx.execute(
+      `INSERT INTO federation_trust_scope_bindings (
+        id, tenant_id, trust_source_id, scope_type, scope_id, priority,
+        lifecycle_state, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        crypto.randomUUID(),
+        profile.tenantId,
+        profile.id,
+        'tenant',
+        profile.tenantId,
+        0,
+        'active',
+        profile.updatedAt,
+        profile.updatedAt,
+      ]
+    );
+    await tx.execute(
+      `INSERT INTO federation_trust_context_snapshots (
+        id, tenant_id, trust_source_id, snapshot_hash, trust_context_json,
+        lifecycle_state, created_at, activated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        crypto.randomUUID(),
+        profile.tenantId,
+        profile.id,
+        snapshotHash,
+        stableJson(trustContext),
+        lifecycleState,
+        profile.updatedAt,
+        profile.enabled ? profile.updatedAt : null,
+      ]
+    );
+    await tx.execute(
+      `UPDATE saml_federation_trust_profiles
+          SET federation_trust_source_id = ?,
+              normalized_migration_state = ?,
+              updated_at = ?
+        WHERE tenant_id = ? AND id = ?`,
+      [profile.id, 'migrated', profile.updatedAt, profile.tenantId, profile.id]
+    );
+  });
 }
 
 async function storeAggregatePreview(
@@ -2819,12 +2958,27 @@ async function processAggregateBatchCreate(
           providerType,
           name,
         });
+        await recordFederationSelectedEntityImportEvent(env, {
+          tenantId: input.tenantId,
+          trustSourceId: preview.verification.trustProfileId,
+          providerId,
+          importAction: 'create_provider',
+          outcome: 'success',
+          reasonCodes: ['federation.selected_entity.imported'],
+        });
         existingEntityKeys.add(entityKey);
       } catch (error) {
         await recordAggregateBatchResult(env, input.batchId, {
           entityId,
           success: false,
           error: error instanceof Error ? error.message : 'Import failed',
+        });
+        await recordFederationSelectedEntityImportEvent(env, {
+          tenantId: input.tenantId,
+          trustSourceId: preview.verification.trustProfileId,
+          importAction: 'create_provider',
+          outcome: 'failed',
+          reasonCodes: ['federation.selected_entity.import_failed'],
         });
       }
     }
@@ -2836,6 +2990,44 @@ async function processAggregateBatchCreate(
       input.batchId,
       error instanceof Error ? error.message : 'Batch failed'
     );
+  }
+}
+
+async function recordFederationSelectedEntityImportEvent(
+  env: Env,
+  input: {
+    tenantId: string;
+    trustSourceId?: string;
+    providerId?: string;
+    importAction: string;
+    outcome: string;
+    reasonCodes: string[];
+  }
+): Promise<void> {
+  if (!input.trustSourceId) {
+    return;
+  }
+  try {
+    const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
+    await adapter.execute(
+      `INSERT INTO federation_selected_entity_import_events (
+        id, tenant_id, trust_source_id, metadata_entity_summary_id, provider_id,
+        import_action, outcome, reason_codes_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        crypto.randomUUID(),
+        input.tenantId,
+        input.trustSourceId,
+        null,
+        input.providerId ?? null,
+        input.importAction,
+        input.outcome,
+        stableJson(input.reasonCodes),
+        Date.now(),
+      ]
+    );
+  } catch {
+    // Best-effort operational evidence must not fail the provider import itself.
   }
 }
 

@@ -1235,7 +1235,27 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('INSERT INTO federation_trust_sources'),
       expect.stringContaining('INSERT INTO federation_trust_anchors'),
       expect.stringContaining('INSERT INTO federation_trust_scope_bindings'),
+      expect.stringContaining('INSERT INTO federation_trust_context_snapshots'),
     ]);
+    expect(String(adapter.executes[3].params[4])).toContain('sourceKey');
+  });
+
+  it('rejects unsupported federation trust source lifecycle states', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'edugain-pilot',
+        displayName: 'eduGAIN pilot',
+        lifecycleState: 'deleted' as never,
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('lists normalized federation trust source metadata for Admin UI migration', async () => {
@@ -1271,7 +1291,7 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
   });
 
   it('registers federation metadata documents with validation and entity summaries', async () => {
-    const adapter = createAdapter({});
+    const adapter = createAdapter({ queryOneRows: [{ id: 'trust-source-1' }] });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
     await expect(
@@ -1301,6 +1321,58 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('INSERT INTO federation_metadata_entity_summaries'),
     ]);
     expect(String(adapter.executes[2].params[6])).toContain('requestedAttributes');
+  });
+
+  it('rejects federation metadata documents for unknown trust sources', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.registerFederationMetadataDocument('tenant_a', {
+        trustSourceId: 'missing-source',
+        documentType: 'saml_aggregate',
+        documentHash: 'sha256:metadata',
+      })
+    ).rejects.toMatchObject({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('records key access only for existing tenant-scoped registries and versions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'key-registry-1' }, { id: 'key-version-1' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.recordKeyAccess('tenant_a', 'key-registry-1', {
+        keyVersionId: 'key-version-1',
+        accessType: 'material.sign',
+        outcome: 'success',
+        actorId: 'admin-1',
+      })
+    ).resolves.toEqual({ keyRegistryId: 'key-registry-1', recorded: true });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO key_access_events'),
+    ]);
+  });
+
+  it('rejects unsupported key access event values before writing audit rows', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.recordKeyAccess('tenant_a', 'key-registry-1', {
+        accessType: 'arbitrary.event',
+        outcome: 'success',
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('migrates legacy SAML federation trust profiles into normalized trust context', async () => {

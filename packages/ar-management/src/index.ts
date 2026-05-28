@@ -2378,22 +2378,34 @@ app.post(
 );
 app.post(
   '/api/admin/identity-mapping/key-registries',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  requireAdminPermissions([
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
+  ]),
   adminIdentityMappingKeyRegistryCreateHandler
 );
 app.get(
   '/api/admin/identity-mapping/key-registries',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  requireAdminPermissions([
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
+  ]),
   adminIdentityMappingKeyRegistriesListHandler
 );
 app.post(
   '/api/admin/identity-mapping/key-registries/:keyRegistryId/rotate',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  requireAdminPermissions([
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
+  ]),
   adminIdentityMappingKeyRegistryRotateHandler
 );
 app.post(
   '/api/admin/identity-mapping/key-registries/:keyRegistryId/access-events',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  requireAdminPermissions([
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
+  ]),
   adminIdentityMappingKeyAccessRecordHandler
 );
 app.post(

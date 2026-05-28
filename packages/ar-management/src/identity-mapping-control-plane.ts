@@ -511,6 +511,20 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
   'saml_metadata',
   'saml_federation',
 ]);
+const FEDERATION_TRUST_LIFECYCLE_STATES = new Set(['draft', 'active', 'retired']);
+const FEDERATION_METADATA_VALIDATION_STATES = new Set(['pending', 'valid', 'invalid', 'warning']);
+const KEY_ACCESS_TYPES = new Set([
+  'registry.create',
+  'registry.rotate',
+  'material.ref.read',
+  'material.unwrap',
+  'material.sign',
+  'material.verify',
+  'blind_index.derive',
+  'rewrap.read',
+  'debug_metadata.read',
+]);
+const KEY_ACCESS_OUTCOMES = new Set(['success', 'denied', 'failed']);
 
 interface RepositoryResult<T> {
   result: T;
@@ -2583,6 +2597,16 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(keyRegistryId, 'keyRegistryId');
     validateRequiredString(input.accessType, 'accessType');
     validateRequiredString(input.outcome, 'outcome');
+    if (!KEY_ACCESS_TYPES.has(input.accessType)) {
+      throw badRequest('accessType is not supported for key access events');
+    }
+    if (!KEY_ACCESS_OUTCOMES.has(input.outcome)) {
+      throw badRequest('outcome is not supported for key access events');
+    }
+    await this.ensureKeyRegistry(tenantId, keyRegistryId);
+    if (input.keyVersionId) {
+      await this.ensureKeyVersion(tenantId, keyRegistryId, input.keyVersionId);
+    }
     await this.recordKeyAccessEvent(tenantId, keyRegistryId, input);
     return { keyRegistryId, recorded: true };
   }
@@ -2594,11 +2618,30 @@ export class IdentityMappingControlPlaneRepository {
     if (!FEDERATION_TRUST_SOURCE_TYPES.has(input.sourceType)) {
       throw badRequest('sourceType is not supported for federation trust');
     }
+    const lifecycleState = input.lifecycleState ?? 'draft';
+    if (!FEDERATION_TRUST_LIFECYCLE_STATES.has(lifecycleState)) {
+      throw badRequest('lifecycleState is not supported for federation trust sources');
+    }
     if (input.protocolPayload) {
       assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
     }
+    if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
+      throw badRequest('anchors must be an array');
+    }
+    if (input.scopeBindings !== undefined && !Array.isArray(input.scopeBindings)) {
+      throw badRequest('scopeBindings must be an array');
+    }
     const now = this.now();
     const sourceId = createId('federation_trust_source');
+    const trustContext = {
+      sourceType: input.sourceType,
+      sourceKey: input.sourceKey,
+      displayName: input.displayName,
+      protocolPayload: input.protocolPayload ?? null,
+      anchors: input.anchors ?? [],
+      scopeBindings: input.scopeBindings ?? [],
+    };
+    const snapshotHash = await hashStableJson(trustContext);
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
         `INSERT INTO federation_trust_sources (
@@ -2611,7 +2654,7 @@ export class IdentityMappingControlPlaneRepository {
           input.sourceType,
           input.sourceKey,
           input.displayName,
-          input.lifecycleState ?? 'draft',
+          lifecycleState,
           input.protocolPayload ? stableJson(input.protocolPayload) : null,
           now,
           now,
@@ -2660,13 +2703,30 @@ export class IdentityMappingControlPlaneRepository {
           ]
         );
       }
+      await tx.execute(
+        `INSERT INTO federation_trust_context_snapshots (
+          id, tenant_id, trust_source_id, snapshot_hash, trust_context_json,
+          lifecycle_state, created_at, activated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('federation_trust_context_snapshot'),
+          tenantId,
+          sourceId,
+          snapshotHash,
+          stableJson(trustContext),
+          lifecycleState === 'active' ? 'active' : 'draft',
+          now,
+          lifecycleState === 'active' ? now : null,
+        ]
+      );
     });
     return {
       id: sourceId,
       tenantId,
       sourceType: input.sourceType,
       sourceKey: input.sourceKey,
-      lifecycleState: input.lifecycleState ?? 'draft',
+      lifecycleState,
+      snapshotHash,
     };
   }
 
@@ -2710,6 +2770,14 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.trustSourceId, 'trustSourceId');
     validateRequiredString(input.documentType, 'documentType');
     validateRequiredString(input.documentHash, 'documentHash');
+    const validationState = input.validationState ?? 'pending';
+    if (!FEDERATION_METADATA_VALIDATION_STATES.has(validationState)) {
+      throw badRequest('validationState is not supported for federation metadata documents');
+    }
+    if (input.entitySummaries !== undefined && !Array.isArray(input.entitySummaries)) {
+      throw badRequest('entitySummaries must be an array');
+    }
+    await this.ensureFederationTrustSource(tenantId, input.trustSourceId);
     const now = this.now();
     const documentId = createId('federation_metadata_document');
     await this.adapter.transaction(async (tx) => {
@@ -2727,8 +2795,8 @@ export class IdentityMappingControlPlaneRepository {
           input.documentHash,
           input.documentRef ?? null,
           now,
-          input.validationState && input.validationState !== 'pending' ? now : null,
-          input.validationState ?? 'pending',
+          validationState !== 'pending' ? now : null,
+          validationState,
           now,
           now,
         ]
@@ -2743,8 +2811,8 @@ export class IdentityMappingControlPlaneRepository {
           tenantId,
           input.trustSourceId,
           documentId,
-          input.validationState ?? 'pending',
-          stableJson([`federation.metadata.${input.validationState ?? 'pending'}`]),
+          validationState,
+          stableJson([`federation.metadata.${validationState}`]),
           `metadata-document:${documentId}`,
           now,
         ]
@@ -2774,7 +2842,7 @@ export class IdentityMappingControlPlaneRepository {
     return {
       id: documentId,
       trustSourceId: input.trustSourceId,
-      validationState: input.validationState ?? 'pending',
+      validationState,
     };
   }
 
@@ -2967,6 +3035,49 @@ export class IdentityMappingControlPlaneRepository {
         this.now(),
       ]
     );
+  }
+
+  private async ensureKeyRegistry(tenantId: string, keyRegistryId: string): Promise<void> {
+    const row = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM key_registries
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, keyRegistryId]
+    );
+    if (!row) {
+      throw notFound('key registry not found');
+    }
+  }
+
+  private async ensureKeyVersion(
+    tenantId: string,
+    keyRegistryId: string,
+    keyVersionId: string
+  ): Promise<void> {
+    const row = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM key_versions
+        WHERE tenant_id = ? AND key_registry_id = ? AND id = ?`,
+      [tenantId, keyRegistryId, keyVersionId]
+    );
+    if (!row) {
+      throw notFound('key version not found');
+    }
+  }
+
+  private async ensureFederationTrustSource(
+    tenantId: string,
+    trustSourceId: string
+  ): Promise<void> {
+    const row = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!row) {
+      throw notFound('federation trust source not found');
+    }
   }
 
   private async applyProvisioningAssignment(
