@@ -1320,6 +1320,77 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should create a canonical runtime user when runtime cutover is enabled', async () => {
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({
+        results: [createCustomClaimSchemaRow({ is_required: 0 })],
+      });
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        id: 'new-user-id',
+        tenant_id: 'default',
+        email_verified: 1,
+        phone_number_verified: 0,
+        is_active: 1,
+        user_type: 'end_user',
+        pii_partition: 'default',
+        pii_status: 'active',
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+
+      const mockDBPII = createMockDB({
+        runResult: { success: true },
+      });
+      let piiQueryCount = 0;
+      (mockDBPII as any)._mockStatement.first.mockImplementation(() => {
+        piiQueryCount++;
+        if (piiQueryCount === 1) {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve({
+          id: 'new-user-id',
+          tenant_id: 'default',
+          email: 'newuser@example.com',
+          name: 'New User',
+        });
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          email: 'newuser@example.com',
+          name: 'New User',
+        },
+        db: mockDB,
+        dbPII: mockDBPII,
+        envOverrides: {
+          ENABLE_CANONICAL_IDENTITY_RUNTIME: 'true',
+        },
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO identity_subjects')
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO identity_accounts')
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO contact_points')
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({
+            email: 'newuser@example.com',
+          }),
+        }),
+        201
+      );
+    });
+
     it('should prevent duplicate email (409 error)', async () => {
       // PII/Non-PII DB Separation:
       // Email uniqueness is checked in PII DB (not Core DB)
@@ -1492,6 +1563,75 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should sync the canonical runtime user when runtime cutover is enabled', async () => {
+      const userId = 'user-to-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+      (mockDB as any)._mockStatement.all
+        .mockResolvedValueOnce({
+          results: [createCustomClaimSchemaRow({ is_required: 0 })],
+        })
+        .mockResolvedValueOnce({
+          results: [],
+        });
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        id: userId,
+        tenant_id: 'default',
+        legacy_user_id: userId,
+        primary_subject_id: `subject:${userId}`,
+        email_verified: 1,
+        phone_number_verified: 0,
+        is_active: 1,
+        lifecycle_state: 'active',
+        user_type: 'end_user',
+        pii_partition: 'default',
+        pii_status: 'active',
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+
+      const mockDBPII = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          id: userId,
+          tenant_id: 'default',
+          email: 'old@example.com',
+          name: 'Updated Name',
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: userId },
+        body: {
+          name: 'Updated Name',
+          email_verified: true,
+        },
+        db: mockDB,
+        dbPII: mockDBPII,
+        envOverrides: {
+          ENABLE_CANONICAL_IDENTITY_RUNTIME: 'true',
+        },
+      });
+
+      await adminUserUpdateHandler(c);
+
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE identity_accounts')
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE identity_subjects')
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({
+            id: userId,
+          }),
+        })
+      );
+    });
+
     it('should mark pii_status failed when a PII field update fails after core update', async () => {
       const userId = 'user-pii-update-fails';
       const mockDB = createMockDB({
@@ -1649,6 +1789,51 @@ describe('Admin API Handlers', () => {
       // PII/Non-PII DB separation: User deletion is now soft delete
       expect(mockDB.prepare).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE users_core SET is_active = ?')
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+        })
+      );
+    });
+
+    it('should mark the canonical runtime user deleted when runtime cutover is enabled', async () => {
+      const userId = 'user-to-delete';
+      const mockDB = createMockDB({
+        firstResult: {
+          id: 'account:user-to-delete',
+          tenant_id: 'default',
+          legacy_user_id: userId,
+          primary_subject_id: 'subject:user-to-delete',
+          lifecycle_state: 'active',
+          pii_partition: 'default',
+          pii_status: 'active',
+          is_active: 1,
+          email_verified: 1,
+          phone_number_verified: 0,
+          user_type: 'end_user',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+        envOverrides: {
+          ENABLE_CANONICAL_IDENTITY_RUNTIME: 'true',
+        },
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE identity_accounts')
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE identity_subjects')
       );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({

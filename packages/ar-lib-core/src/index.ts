@@ -91,6 +91,7 @@ export * from './utils/refresh-token-sharding';
 export * from './utils/refresh-token-store';
 export * from './utils/oauth-config';
 export * from './utils/oidc-claims';
+export * from './utils/canonical-runtime-claims';
 export * from './utils/dcr-config';
 export * from './utils/encryption-config';
 export * from './utils/settings-manager';

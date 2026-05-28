@@ -1,6 +1,8 @@
 import { Context } from 'hono';
-import type { Env, UserCore, UserPII } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env, UserCore, UserPII } from '@authrim/ar-lib-core';
 import {
+  CanonicalIdentityRepository,
+  CanonicalRuntimeUserWriter,
   invalidateUserCache,
   getTenantIdFromContext,
   createPIIContextFromHono,
@@ -33,6 +35,98 @@ import {
   getErrorDetailsForResponse,
   toMilliseconds,
 } from './admin-shared';
+
+function isCanonicalIdentityRuntimeEnabled(c: Context<{ Bindings: Env }>): boolean {
+  return c.env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
+}
+
+function createCanonicalRuntimeUserWriter(
+  coreAdapter: DatabaseAdapter,
+  tenantId: string
+): CanonicalRuntimeUserWriter {
+  return new CanonicalRuntimeUserWriter(new CanonicalIdentityRepository(coreAdapter, tenantId));
+}
+
+const ADMIN_RUNTIME_PII_FIELDS = {
+  email: true,
+  phone_number: true,
+  name: true,
+  given_name: true,
+  family_name: true,
+  nickname: true,
+  preferred_username: true,
+  picture: true,
+} as const;
+
+async function maybeCreateCanonicalRuntimeUserForAdmin(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  userCore: Pick<UserCore, 'email_verified' | 'phone_number_verified' | 'user_type'>,
+  userPII: Pick<
+    UserPII,
+    | 'email'
+    | 'phone_number'
+    | 'name'
+    | 'given_name'
+    | 'family_name'
+    | 'nickname'
+    | 'preferred_username'
+    | 'picture'
+  > | null
+): Promise<void> {
+  if (!isCanonicalIdentityRuntimeEnabled(c)) {
+    return;
+  }
+  await createCanonicalRuntimeUserWriter(coreAdapter, tenantId).createFromRuntimeUser({
+    userId,
+    tenantId,
+    active: true,
+    emailVerified: Boolean(userCore.email_verified),
+    phoneNumberVerified: Boolean(userCore.phone_number_verified),
+    userType: userCore.user_type,
+    displayName: userPII?.name ?? userPII?.preferred_username ?? userPII?.email ?? null,
+    sourceRef: 'admin:/users',
+    piiFields: userPII ? ADMIN_RUNTIME_PII_FIELDS : {},
+  });
+}
+
+async function maybeSyncCanonicalRuntimeUserForAdmin(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  userCore: Pick<UserCore, 'email_verified' | 'phone_number_verified' | 'user_type' | 'is_active'>,
+  userPII: Pick<UserPII, 'email' | 'name' | 'preferred_username'> | null
+): Promise<void> {
+  if (!isCanonicalIdentityRuntimeEnabled(c)) {
+    return;
+  }
+  await createCanonicalRuntimeUserWriter(coreAdapter, tenantId).syncFromRuntimeUser({
+    userId,
+    tenantId,
+    active: Boolean(userCore.is_active),
+    emailVerified: Boolean(userCore.email_verified),
+    phoneNumberVerified: Boolean(userCore.phone_number_verified),
+    userType: userCore.user_type,
+    displayName: userPII?.name ?? userPII?.preferred_username ?? userPII?.email ?? null,
+    sourceRef: 'admin:/users',
+    piiFields: userPII ? ADMIN_RUNTIME_PII_FIELDS : {},
+  });
+}
+
+async function maybeDeleteCanonicalRuntimeUserForAdmin(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string
+): Promise<void> {
+  if (!isCanonicalIdentityRuntimeEnabled(c)) {
+    return;
+  }
+  await createCanonicalRuntimeUserWriter(coreAdapter, tenantId).deleteRuntimeUser(userId);
+}
 
 /**
  * Get admin statistics.
@@ -611,9 +705,32 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         tenantId,
         userId,
       });
+      await maybeCreateCanonicalRuntimeUserForAdmin(
+        c,
+        authCtx.coreAdapter,
+        tenantId,
+        userId,
+        {
+          email_verified: email_verified ?? false,
+          phone_number_verified: phone_number_verified ?? false,
+          user_type: (user_type as UserCore['user_type']) || 'end_user',
+        },
+        hasPIIDatabase(c)
+          ? {
+              email,
+              phone_number: phone_number ?? null,
+              name: name ?? null,
+              given_name: given_name ?? null,
+              family_name: family_name ?? null,
+              nickname: nickname ?? null,
+              preferred_username: preferred_username ?? null,
+              picture: picture ?? null,
+            }
+          : null
+      );
     } catch (customFieldError) {
       logSanitizedError(
-        'Custom claim persistence failed during admin user create',
+        'Custom claim or canonical runtime persistence failed during admin user create',
         customFieldError
       );
 
@@ -882,6 +999,17 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       updatedPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
     }
 
+    if (updatedCore) {
+      await maybeSyncCanonicalRuntimeUserForAdmin(
+        c,
+        authCtx.coreAdapter,
+        tenantId,
+        userId,
+        updatedCore,
+        updatedPII
+      );
+    }
+
     const updatedUser = {
       id: updatedCore?.id,
       tenant_id: updatedCore?.tenant_id,
@@ -988,6 +1116,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       pii_status: 'deleted',
     });
 
+    await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
     await invalidateUserCache(c.env, tenantId, userId);
 
     const log = getLogger(c).module('ADMIN-USER');

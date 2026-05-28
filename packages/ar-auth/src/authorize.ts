@@ -1,6 +1,8 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalRuntimeUserProjectionRepository,
+  LegacyUsersPiiValueResolver,
   validateResponseType,
   validateClientId,
   validateRedirectUri,
@@ -59,6 +61,7 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
@@ -103,6 +106,38 @@ const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
 const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
 const HTTPS_REQUEST_URI_MAX_REDIRECTS = 5;
+
+function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
+  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
+}
+
+async function loadOIDCClaimsUser(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  piiCtx: ReturnType<typeof createPIIContextFromHono>
+): Promise<
+  Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
+> {
+  if (isCanonicalIdentityRuntimeEnabled(c.env)) {
+    const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      piiCtx.coreAdapter,
+      tenantId,
+      new LegacyUsersPiiValueResolver(piiCtx.defaultPiiAdapter)
+    );
+    const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+    if (projection) {
+      return canonicalProjectionToOIDCClaimsUser(projection);
+    }
+  }
+
+  return getCachedUser(c.env, tenantId, userId, {
+    coreDb: piiCtx.coreAdapter,
+    piiDb: piiCtx.defaultPiiAdapter,
+    cacheScope: piiCtx.userCacheScope,
+    piiCacheMode: piiCtx.piiCacheMode,
+  });
+}
 
 function clampHandoffArtifactTtlSeconds(value: number): number {
   return Math.min(
@@ -3501,12 +3536,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       if (isIdTokenOnly || hasRequestedIdTokenClaims || hasIdTokenSAORules) {
         // Fetch user data from cache (Read-Through Cache) or D1
         const piiCtx = createPIIContextFromHono(c, tenantId);
-        const user = await getCachedUser(c.env, tenantId, sub, {
-          coreDb: piiCtx.coreAdapter,
-          piiDb: piiCtx.defaultPiiAdapter,
-          cacheScope: piiCtx.userCacheScope,
-          piiCacheMode: piiCtx.piiCacheMode,
-        });
+        const user = await loadOIDCClaimsUser(c, tenantId, sub, piiCtx);
 
         const userData: Record<string, unknown> = {
           ...(user ? buildStandardUserClaims(user) : {}),

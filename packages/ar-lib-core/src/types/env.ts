@@ -277,6 +277,9 @@ export interface Env {
   CONFIG_CACHE_TTL?: string; // Config in-memory cache TTL in seconds (default: 180 = 3 minutes)
   SETTINGS_CACHE_TTL?: string; // Settings/config in-memory cache TTL in seconds (default: 300 = 5 minutes)
 
+  // Unified Identity Mapping runtime cutover guard
+  ENABLE_CANONICAL_IDENTITY_RUNTIME?: string; // "true" to read SCIM user runtime projection from canonical identity tables
+
   // ============================================================
   // RBAC Configuration
   // ============================================================

@@ -40,3 +40,21 @@ export {
   type SubjectAccountLinkRow,
   type SubjectAccountLinkType,
 } from './canonical-identity';
+
+export {
+  CanonicalRuntimeUserProjectionRepository,
+  LegacyUsersPiiValueResolver,
+  decodeLegacyUsersPiiValueRef,
+  encodeLegacyUsersPiiValueRef,
+  type CanonicalRuntimeUserProjection,
+  type CanonicalRuntimeUserProjectionOptions,
+  type CanonicalRuntimeValueResolver,
+  type LegacyUsersPiiField,
+  type LegacyUsersPiiValueRefInput,
+} from './canonical-runtime-user-projection';
+
+export {
+  CanonicalRuntimeUserWriter,
+  type CanonicalRuntimeUserWriteInput,
+  type CanonicalRuntimeUserWriteResult,
+} from './canonical-runtime-user-writer';

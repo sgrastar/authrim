@@ -34,6 +34,10 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
+  CanonicalIdentityRepository,
+  CanonicalRuntimeUserProjectionRepository,
+  CanonicalRuntimeUserWriter,
+  LegacyUsersPiiValueResolver,
   generateId,
   generateUserIdFromSettings,
   hashPassword,
@@ -43,6 +47,11 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
+import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
+
+interface ScimUserReadOptions {
+  canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
+}
 
 /**
  * Create database adapters from Hono context.
@@ -62,6 +71,129 @@ function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   return { coreAdapter, piiAdapter };
 }
 
+function isCanonicalIdentityRuntimeEnabled(c: Context<{ Bindings: Env }>): boolean {
+  return c.env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
+}
+
+function createCanonicalProjectionRepository(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null,
+  tenantId: string
+): CanonicalRuntimeUserProjectionRepository | null {
+  if (!isCanonicalIdentityRuntimeEnabled(c) || !piiAdapter) {
+    return null;
+  }
+  return new CanonicalRuntimeUserProjectionRepository(
+    coreAdapter,
+    tenantId,
+    new LegacyUsersPiiValueResolver(piiAdapter)
+  );
+}
+
+async function maybeCreateCanonicalRuntimeUser(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  internalUser: Partial<InternalUser>
+): Promise<void> {
+  if (!isCanonicalIdentityRuntimeEnabled(c)) {
+    return;
+  }
+  const writer = new CanonicalRuntimeUserWriter(
+    new CanonicalIdentityRepository(coreAdapter, tenantId)
+  );
+  await writer.createFromRuntimeUser({
+    userId,
+    tenantId,
+    active: internalUser.active === undefined ? true : internalUser.active !== 0,
+    emailVerified: Boolean(internalUser.email_verified),
+    phoneNumberVerified: Boolean(internalUser.phone_number_verified),
+    userType: 'end_user',
+    displayName: internalUser.name ?? internalUser.preferred_username ?? internalUser.email ?? null,
+    locale: internalUser.locale ?? null,
+    zoneinfo: internalUser.zoneinfo ?? null,
+    sourceRef: 'scim:/Users',
+    piiFields: {
+      email: true,
+      phone_number: true,
+      name: true,
+      given_name: true,
+      family_name: true,
+      middle_name: true,
+      nickname: true,
+      preferred_username: true,
+      profile: true,
+      picture: true,
+      website: true,
+      gender: true,
+      birthdate: true,
+      zoneinfo: true,
+      locale: true,
+    },
+  });
+}
+
+async function maybeSyncCanonicalRuntimeUser(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  internalUser: Partial<InternalUser>
+): Promise<void> {
+  if (!isCanonicalIdentityRuntimeEnabled(c)) {
+    return;
+  }
+  const writer = new CanonicalRuntimeUserWriter(
+    new CanonicalIdentityRepository(coreAdapter, tenantId)
+  );
+  await writer.syncFromRuntimeUser({
+    userId,
+    tenantId,
+    active: internalUser.active === undefined ? true : internalUser.active !== 0,
+    emailVerified: Boolean(internalUser.email_verified),
+    phoneNumberVerified: Boolean(internalUser.phone_number_verified),
+    userType: 'end_user',
+    displayName: internalUser.name ?? internalUser.preferred_username ?? internalUser.email ?? null,
+    locale: internalUser.locale ?? null,
+    zoneinfo: internalUser.zoneinfo ?? null,
+    sourceRef: 'scim:/Users',
+    piiFields: {
+      email: true,
+      phone_number: true,
+      name: true,
+      given_name: true,
+      family_name: true,
+      middle_name: true,
+      nickname: true,
+      preferred_username: true,
+      profile: true,
+      picture: true,
+      website: true,
+      gender: true,
+      birthdate: true,
+      zoneinfo: true,
+      locale: true,
+    },
+  });
+}
+
+async function maybeDeleteCanonicalRuntimeUser(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string
+): Promise<void> {
+  if (!isCanonicalIdentityRuntimeEnabled(c)) {
+    return;
+  }
+  const writer = new CanonicalRuntimeUserWriter(
+    new CanonicalIdentityRepository(coreAdapter, tenantId)
+  );
+  await writer.deleteRuntimeUser(userId);
+}
+
 /**
  * Fetch user from both Core and PII databases and merge into InternalUser
  */
@@ -69,8 +201,15 @@ async function fetchUserWithPII(
   coreAdapter: DatabaseAdapter,
   piiAdapter: DatabaseAdapter | null,
   userId: string,
-  tenantId: string
+  tenantId: string,
+  options: ScimUserReadOptions = {}
 ): Promise<InternalUser | null> {
+  const canonicalProjection =
+    await options.canonicalProjectionRepository?.findByLegacyUserId(userId);
+  if (canonicalProjection) {
+    return canonicalProjectionToScimInternalUser(canonicalProjection);
+  }
+
   // Query Core DB via Adapter
   const userCore = await coreAdapter.queryOne<{
     id: string;
@@ -1393,9 +1532,17 @@ app.get('/Users/:id', async (c) => {
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
 
     // Fetch user from both Core and PII DBs via Adapter
-    const user = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+    const user = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+      canonicalProjectionRepository,
+    });
 
     if (!user) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -1536,10 +1683,11 @@ app.post('/Users', async (c) => {
 
     try {
       await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+      await maybeCreateCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
     } catch (customFieldError) {
       const log = getLogger(c).module('SCIM');
       log.error(
-        'SCIM create custom claim persistence failed',
+        'SCIM create canonical/custom claim persistence failed',
         { action: 'create_user' },
         customFieldError as Error
       );
@@ -1560,8 +1708,17 @@ app.post('/Users', async (c) => {
       throw customFieldError;
     }
 
-    // Fetch created user from both DBs via Adapter
-    const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
+
+    // Fetch created user from the configured runtime source.
+    const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+      canonicalProjectionRepository,
+    });
 
     if (!createdUser) {
       return scimError(c, 500, 'Failed to create user');
@@ -1702,12 +1859,22 @@ app.put('/Users/:id', async (c) => {
     }
 
     await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
 
-    // Fetch updated user from both DBs
-    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
+
+    // Fetch updated user from the configured runtime source.
+    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+      canonicalProjectionRepository,
+    });
 
     if (!updatedUser) {
       return scimError(c, 500, 'Failed to fetch updated user');
@@ -1854,12 +2021,22 @@ app.patch('/Users/:id', async (c) => {
     }
 
     await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
 
-    // Fetch updated user from both DBs
-    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
+
+    // Fetch updated user from the configured runtime source.
+    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+      canonicalProjectionRepository,
+    });
 
     if (!updatedUser) {
       return scimError(c, 500, 'Failed to fetch updated user');
@@ -1943,6 +2120,7 @@ app.delete('/Users/:id', async (c) => {
       `UPDATE users_core SET is_active = 0, pii_status = 'deleted', updated_at = ? WHERE id = ? AND tenant_id = ?`,
       [Math.floor(now / 1000), userId, tenantId]
     );
+    await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, tenantId, userId);
 
     // Audit log (non-blocking) - severity: warning for deletion
     logScimAudit(
@@ -2955,14 +3133,24 @@ async function processUserOperation(
       }
 
       await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+      await maybeCreateCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
 
       // Store bulkId mapping for cross-references
       if (bulkId) {
         bulkIdMap.set(bulkId, userId);
       }
 
-      // Fetch created user
-      const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        c,
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
+
+      // Fetch created user from the configured runtime source.
+      const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+        canonicalProjectionRepository,
+      });
       const responseUser = createdUser
         ? userToScim(createdUser, { baseUrl, includeGroups: false })
         : null;
@@ -3107,10 +3295,19 @@ async function processUserOperation(
       }
 
       await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
+      await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, resourceId!, internalUser);
 
       await invalidateUserCache(c.env, tenantId, resourceId!);
 
-      const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId);
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        c,
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
+      const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId, {
+        canonicalProjectionRepository,
+      });
       const responseUser = updatedUser
         ? userToScim(updatedUser, { baseUrl, includeGroups: false })
         : null;
@@ -3256,10 +3453,19 @@ async function processUserOperation(
       }
 
       await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
+      await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, resourceId!, internalUser);
 
       await invalidateUserCache(c.env, tenantId, resourceId!);
 
-      const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId);
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        c,
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
+      const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId, {
+        canonicalProjectionRepository,
+      });
       const responseUser = updatedUser
         ? userToScim(updatedUser, { baseUrl, includeGroups: false })
         : null;
@@ -3320,6 +3526,7 @@ async function processUserOperation(
         `UPDATE users_core SET is_active = 0, pii_status = 'deleted', updated_at = ? WHERE id = ? AND tenant_id = ?`,
         [Math.floor(now / 1000), resourceId, tenantId]
       );
+      await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, tenantId, resourceId!);
 
       return {
         method: 'DELETE',
