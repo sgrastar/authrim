@@ -1,44 +1,23 @@
 import type { Context } from 'hono';
 import type { Env, DatabaseAdapter } from '@authrim/ar-lib-core';
 import { getTenantIdFromContext, requireDedicatedAdminDatabaseAdapter } from '@authrim/ar-lib-core';
+import type {
+  LifecycleSignalType,
+  ProvisioningAssignmentCondition,
+  ProvisioningAssignmentContext,
+  ProvisioningAssignmentOwnershipContext,
+  ProvisioningAssignmentTargetType,
+} from './identity-provisioning-assignment';
+import {
+  decideLifecycleSignalRevocation,
+  evaluateProvisioningAssignmentRule,
+} from './identity-provisioning-assignment';
 import { validateCatalogBundle } from '@authrim/ar-lib-identity-mapping';
 import type { FieldCatalogEntry } from '@authrim/ar-lib-identity-mapping';
 
 type AdminContext = Context<{ Bindings: Env }>;
 
 type LifecycleState = 'draft' | 'published' | 'active' | 'scheduled' | 'retired';
-type ProvisioningAssignmentEventType = 'import' | 'jit' | 'registration';
-type ProvisioningAssignmentTargetType = 'group' | 'entitlement' | 'permission';
-type LifecycleSignalType =
-  | 'scim_active_false'
-  | 'scim_group_removed'
-  | 'csv_diff_removed'
-  | 'claim_disappeared';
-
-interface ProvisioningAssignmentCondition {
-  eventTypes?: ProvisioningAssignmentEventType[];
-  sourceTypes?: string[];
-  sourceIds?: string[];
-  domain?: string;
-  domains?: string[];
-  claims?: Record<string, string | number | boolean>;
-}
-
-interface ProvisioningAssignmentContext {
-  eventType: ProvisioningAssignmentEventType;
-  sourceType?: string;
-  sourceId?: string;
-  domain?: string | null;
-  claims?: Record<string, unknown>;
-}
-
-interface ProvisioningAssignmentOwnershipContext {
-  assignmentType: string;
-  assignmentId: string;
-  ownershipPolicy?: 'source_owned' | 'manual' | 'protected' | string | null;
-  revokePolicy?: 'auto' | 'review' | 'keep' | string | null;
-  protectedUntil?: number | null;
-}
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const ACTIVATION_LEASE_TTL_MS = 60 * 1000;
@@ -465,6 +444,10 @@ interface RepositoryResult<T> {
 
 interface SqlExecutor {
   execute(sql: string, params?: unknown[]): Promise<unknown>;
+}
+
+interface SqlQueryExecutor extends SqlExecutor {
+  queryOne<T>(sql: string, params?: unknown[]): Promise<T | null>;
 }
 
 class IdentityMappingControlPlaneError extends Error {
@@ -1734,10 +1717,17 @@ export class IdentityMappingControlPlaneRepository {
     if (input.metadata) {
       assertNoSensitiveMetadata(input.metadata, 'metadata');
     }
+    return this.adapter.transaction((tx) => this.upsertGroup(tenantId, input, tx));
+  }
 
+  private async upsertGroup(
+    tenantId: string,
+    input: CreateGroupRequest,
+    executor: SqlQueryExecutor
+  ) {
     const now = this.now();
     const id = createId('group');
-    await this.adapter.execute(
+    await executor.execute(
       `INSERT INTO "groups" (
         id, tenant_id, group_key, display_name, description, parent_group_id,
         lifecycle_state, metadata_json, created_at, updated_at
@@ -1761,7 +1751,7 @@ export class IdentityMappingControlPlaneRepository {
         now,
       ]
     );
-    const group = await this.adapter.queryOne<{
+    const group = await executor.queryOne<{
       id: string;
       group_key: string;
       display_name: string;
@@ -1782,9 +1772,17 @@ export class IdentityMappingControlPlaneRepository {
     if (!input.subjectId && !input.accountId) {
       throw badRequest('subjectId or accountId is required');
     }
+    return this.adapter.transaction((tx) => this.upsertGroupMembership(tenantId, input, tx));
+  }
+
+  private async upsertGroupMembership(
+    tenantId: string,
+    input: CreateGroupMembershipRequest,
+    executor: SqlQueryExecutor
+  ) {
     const now = this.now();
     const id = createId('group_membership');
-    const existing = await this.adapter.queryOne<{ id: string }>(
+    const existing = await executor.queryOne<{ id: string }>(
       `SELECT id
          FROM group_memberships
         WHERE tenant_id = ?
@@ -1802,7 +1800,7 @@ export class IdentityMappingControlPlaneRepository {
       ]
     );
     if (existing) {
-      await this.adapter.execute(
+      await executor.execute(
         `UPDATE group_memberships
             SET assignment_source = ?,
                 lifecycle_state = ?,
@@ -1811,7 +1809,7 @@ export class IdentityMappingControlPlaneRepository {
         [input.assignmentSource ?? 'manual', 'active', now, tenantId, existing.id]
       );
     } else {
-      await this.adapter.execute(
+      await executor.execute(
         `INSERT INTO group_memberships (
           id, tenant_id, group_id, subject_id, account_id, membership_type,
           assignment_source, lifecycle_state, starts_at, expires_at, created_at, updated_at
@@ -1833,14 +1831,18 @@ export class IdentityMappingControlPlaneRepository {
       );
     }
     const assignmentId = existing?.id ?? id;
-    await this.recordAssignmentOwnership(tenantId, {
-      assignmentType: 'group_membership',
-      assignmentId,
-      sourceId: input.assignmentSource ?? 'manual',
-      ownershipPolicy: input.ownershipPolicy ?? 'manual',
-      revokePolicy: input.revokePolicy ?? 'review',
-      protectedUntil: input.protectedUntil ?? null,
-    });
+    await this.recordAssignmentOwnership(
+      tenantId,
+      {
+        assignmentType: 'group_membership',
+        assignmentId,
+        sourceId: input.assignmentSource ?? 'manual',
+        ownershipPolicy: input.ownershipPolicy ?? 'manual',
+        revokePolicy: input.revokePolicy ?? 'review',
+        protectedUntil: input.protectedUntil ?? null,
+      },
+      executor
+    );
     return {
       id: assignmentId,
       tenantId,
@@ -1860,10 +1862,17 @@ export class IdentityMappingControlPlaneRepository {
     if (input.value) {
       assertNoReviewPayloadRawIdentifiers(input.value, 'value');
     }
+    return this.adapter.transaction((tx) => this.upsertEntitlementGrant(tenantId, input, tx));
+  }
 
+  private async upsertEntitlementGrant(
+    tenantId: string,
+    input: GrantEntitlementRequest,
+    executor: SqlQueryExecutor
+  ) {
     const now = this.now();
     const id = createId('entitlement');
-    const existing = await this.adapter.queryOne<{ id: string }>(
+    const existing = await executor.queryOne<{ id: string }>(
       `SELECT id
          FROM entitlements
         WHERE tenant_id = ?
@@ -1881,7 +1890,7 @@ export class IdentityMappingControlPlaneRepository {
       ]
     );
     if (existing) {
-      await this.adapter.execute(
+      await executor.execute(
         `UPDATE entitlements
             SET source_id = ?,
                 lifecycle_state = ?,
@@ -1898,7 +1907,7 @@ export class IdentityMappingControlPlaneRepository {
         ]
       );
     } else {
-      await this.adapter.execute(
+      await executor.execute(
         `INSERT INTO entitlements (
           id, tenant_id, subject_id, account_id, entitlement_type, entitlement_key,
           source_id, lifecycle_state, value_json, created_at, updated_at
@@ -1919,14 +1928,18 @@ export class IdentityMappingControlPlaneRepository {
       );
     }
     const assignmentId = existing?.id ?? id;
-    await this.recordAssignmentOwnership(tenantId, {
-      assignmentType: input.entitlementType === 'permission' ? 'permission' : 'entitlement',
-      assignmentId,
-      sourceId: input.sourceId ?? null,
-      ownershipPolicy: input.ownershipPolicy ?? 'source_owned',
-      revokePolicy: input.revokePolicy ?? 'review',
-      protectedUntil: input.protectedUntil ?? null,
-    });
+    await this.recordAssignmentOwnership(
+      tenantId,
+      {
+        assignmentType: input.entitlementType === 'permission' ? 'permission' : 'entitlement',
+        assignmentId,
+        sourceId: input.sourceId ?? null,
+        ownershipPolicy: input.ownershipPolicy ?? 'source_owned',
+        revokePolicy: input.revokePolicy ?? 'review',
+        protectedUntil: input.protectedUntil ?? null,
+      },
+      executor
+    );
     return {
       id: assignmentId,
       tenantId,
@@ -1950,10 +1963,17 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('condition must be an object');
     }
     assertNoReviewPayloadRawIdentifiers(input.condition, 'condition');
+    return this.insertProvisioningAssignmentRule(tenantId, input, this.adapter);
+  }
 
+  private async insertProvisioningAssignmentRule(
+    tenantId: string,
+    input: CreateProvisioningAssignmentRuleRequest,
+    executor: SqlExecutor
+  ) {
     const now = this.now();
     const id = createId('provisioning_assignment_rule');
-    await this.adapter.execute(
+    await executor.execute(
       `INSERT INTO provisioning_assignment_rules (
         id, tenant_id, scope_type, scope_id, rule_type, target_type, target_id,
         condition_json, priority, lifecycle_state, created_at, updated_at
@@ -2005,28 +2025,42 @@ export class IdentityMappingControlPlaneRepository {
         id: rule.id,
         targetType: rule.target_type,
         targetId: rule.target_id,
-        condition: parseJsonObject(
-          rule.condition_json,
-          {}
-        ) as unknown as ProvisioningAssignmentCondition,
+        condition: parseProvisioningAssignmentCondition(rule.condition_json),
         priority: rule.priority,
       },
       input
     );
     const outcome = evaluation.matched ? 'assigned' : 'skipped';
     if (evaluation.matched && !input.dryRun) {
-      await this.applyProvisioningAssignment(tenantId, rule, input);
+      await this.adapter.transaction(async (tx) => {
+        await this.applyProvisioningAssignment(tenantId, rule, input, tx);
+        await this.recordProvisioningAssignmentEvent(
+          tenantId,
+          {
+            ruleId,
+            subjectId: input.subjectId,
+            accountId: input.accountId,
+            targetType: rule.target_type,
+            targetId: rule.target_id,
+            outcome,
+            reasonCodes: evaluation.reasonCodes,
+            traceRef: `rule:${ruleId}`,
+          },
+          tx
+        );
+      });
+    } else {
+      await this.recordProvisioningAssignmentEvent(tenantId, {
+        ruleId,
+        subjectId: input.subjectId,
+        accountId: input.accountId,
+        targetType: rule.target_type,
+        targetId: rule.target_id,
+        outcome,
+        reasonCodes: evaluation.reasonCodes,
+        traceRef: input.dryRun ? `dry-run:${ruleId}` : `rule:${ruleId}`,
+      });
     }
-    await this.recordProvisioningAssignmentEvent(tenantId, {
-      ruleId,
-      subjectId: input.subjectId,
-      accountId: input.accountId,
-      targetType: rule.target_type,
-      targetId: rule.target_id,
-      outcome,
-      reasonCodes: evaluation.reasonCodes,
-      traceRef: input.dryRun ? `dry-run:${ruleId}` : `rule:${ruleId}`,
-    });
     return {
       ...evaluation,
       outcome,
@@ -2054,43 +2088,52 @@ export class IdentityMappingControlPlaneRepository {
       throw notFound('org domain mapping not found');
     }
 
-    const group = await this.createGroup(tenantId, {
-      groupKey: input.groupKey,
-      displayName: input.displayName,
-      description: input.description,
-      metadata: {
-        migratedFrom: 'org_domain_mappings',
-        legacyOrgId: mapping.org_id,
-      },
-    });
-    const rule = await this.createProvisioningAssignmentRule(tenantId, {
-      ruleType: 'domain_group_assignment',
-      targetType: 'group',
-      targetId: group.id,
-      condition: {
-        sourceTypes: ['domain_mapping'],
-        claims: {
-          domainHash: mapping.domain_hash,
+    return this.adapter.transaction(async (tx) => {
+      const group = await this.upsertGroup(
+        tenantId,
+        {
+          groupKey: input.groupKey,
+          displayName: input.displayName,
+          description: input.description,
+          metadata: {
+            migratedFrom: 'org_domain_mappings',
+            legacyOrgId: mapping.org_id,
+          },
         },
-      },
-      priority: input.priority ?? 0,
-      lifecycleState: 'active',
+        tx
+      );
+      const rule = await this.insertProvisioningAssignmentRule(
+        tenantId,
+        {
+          ruleType: 'domain_group_assignment',
+          targetType: 'group',
+          targetId: group.id,
+          condition: {
+            claims: {
+              domainHash: mapping.domain_hash,
+            },
+          },
+          priority: input.priority ?? 0,
+          lifecycleState: 'active',
+        },
+        tx
+      );
+      await tx.execute(
+        `UPDATE org_domain_mappings
+            SET group_id = ?,
+                provisioning_assignment_rule_id = ?,
+                org_to_group_migration_state = ?,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [group.id, rule.id, 'migrated', this.now(), tenantId, mappingId]
+      );
+      return {
+        mappingId,
+        groupId: group.id,
+        provisioningAssignmentRuleId: rule.id,
+        migrationState: 'migrated',
+      };
     });
-    await this.adapter.execute(
-      `UPDATE org_domain_mappings
-          SET group_id = ?,
-              provisioning_assignment_rule_id = ?,
-              org_to_group_migration_state = ?,
-              updated_at = ?
-        WHERE tenant_id = ? AND id = ?`,
-      [group.id, rule.id, 'migrated', this.now(), tenantId, mappingId]
-    );
-    return {
-      mappingId,
-      groupId: group.id,
-      provisioningAssignmentRuleId: rule.id,
-      migrationState: 'migrated',
-    };
   }
 
   async recordExternalLifecycleSignal(tenantId: string, input: RecordLifecycleSignalRequest) {
@@ -2120,106 +2163,140 @@ export class IdentityMappingControlPlaneRepository {
       input.targetType,
       input.targetId,
     ].join(':');
-    const eventId = createId('external_lifecycle_signal_event');
-    await this.adapter.execute(
-      `INSERT INTO external_lifecycle_signal_events (
-        id, tenant_id, source_type, source_id, source_event_id, source_timestamp,
-        observed_at, binding_version, payload_ref, signal_type, dedupe_key,
-        processing_state, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(tenant_id, source_type, source_id, dedupe_key) DO UPDATE SET
-        observed_at = excluded.observed_at,
-        processing_state = excluded.processing_state,
-        updated_at = excluded.updated_at`,
-      [
-        eventId,
-        tenantId,
-        input.sourceType,
-        input.sourceId,
-        input.sourceEventId,
-        input.sourceTimestamp ?? null,
-        now,
-        input.bindingVersion ?? null,
-        input.payloadRef ?? null,
-        input.signalType,
-        dedupeKey,
-        'processing',
-        now,
-        now,
-      ]
-    );
-    const event = await this.adapter.queryOne<{ id: string }>(
-      `SELECT id
+    const existingEvent = await this.adapter.queryOne<{ id: string; processing_state: string }>(
+      `SELECT id, processing_state
          FROM external_lifecycle_signal_events
         WHERE tenant_id = ? AND source_type = ? AND source_id = ? AND dedupe_key = ?
         LIMIT 1`,
       [tenantId, input.sourceType, input.sourceId, dedupeKey]
     );
-    const signalEventId = event?.id ?? eventId;
-    const ownership = input.ownership ?? (await this.findAssignmentOwnership(tenantId, input));
-    const decision = decideLifecycleSignalRevocation({
-      signalType: input.signalType,
-      targetType: input.targetType,
-      ownership,
-      now,
-    });
-    await this.adapter.execute(
-      `INSERT INTO external_lifecycle_signal_decisions (
-        id, tenant_id, signal_event_id, subject_id, account_id, decision,
-        propagation_targets_json, reason_codes_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        createId('external_lifecycle_signal_decision'),
-        tenantId,
-        signalEventId,
-        input.subjectId ?? null,
-        input.accountId ?? null,
-        decision.decision,
-        stableJson([{ targetType: input.targetType, targetId: input.targetId }]),
-        stableJson(decision.reasonCodes),
+    if (existingEvent) {
+      const existingDecision = await this.adapter.queryOne<{
+        decision: string;
+        reason_codes_json: string | null;
+      }>(
+        `SELECT decision, reason_codes_json
+           FROM external_lifecycle_signal_decisions
+          WHERE tenant_id = ? AND signal_event_id = ?
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [tenantId, existingEvent.id]
+      );
+      if (existingDecision) {
+        return {
+          signalEventId: existingEvent.id,
+          decision: existingDecision.decision,
+          reasonCodes: parseJsonArray(existingDecision.reason_codes_json),
+          idempotent: true,
+        };
+      }
+    }
+
+    const eventId = existingEvent?.id ?? createId('external_lifecycle_signal_event');
+    const signalEventId = eventId;
+    const lifecycleDecision = await this.adapter.transaction(async (tx) => {
+      if (!existingEvent) {
+        await tx.execute(
+          `INSERT INTO external_lifecycle_signal_events (
+            id, tenant_id, source_type, source_id, source_event_id, source_timestamp,
+            observed_at, binding_version, payload_ref, signal_type, dedupe_key,
+            processing_state, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            eventId,
+            tenantId,
+            input.sourceType,
+            input.sourceId,
+            input.sourceEventId,
+            input.sourceTimestamp ?? null,
+            now,
+            input.bindingVersion ?? null,
+            input.payloadRef ?? null,
+            input.signalType,
+            dedupeKey,
+            'processing',
+            now,
+            now,
+          ]
+        );
+      }
+      const ownership =
+        input.ownership ?? (await this.findAssignmentOwnership(tenantId, input, tx));
+      const decision = decideLifecycleSignalRevocation({
+        signalType: input.signalType,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        ownership,
         now,
-      ]
-    );
-    await this.applyLifecycleSignalDecision(tenantId, input, signalEventId, decision);
-    await this.adapter.execute(
-      `UPDATE external_lifecycle_signal_events
-          SET processing_state = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ?`,
-      ['processed', now, tenantId, signalEventId]
-    );
+      });
+      await tx.execute(
+        `INSERT INTO external_lifecycle_signal_decisions (
+          id, tenant_id, signal_event_id, subject_id, account_id, decision,
+          propagation_targets_json, reason_codes_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('external_lifecycle_signal_decision'),
+          tenantId,
+          signalEventId,
+          input.subjectId ?? null,
+          input.accountId ?? null,
+          decision.decision,
+          stableJson([{ targetType: input.targetType, targetId: input.targetId }]),
+          stableJson(decision.reasonCodes),
+          now,
+        ]
+      );
+      await this.applyLifecycleSignalDecision(tenantId, input, signalEventId, decision, tx);
+      await tx.execute(
+        `UPDATE external_lifecycle_signal_events
+            SET processing_state = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        ['processed', now, tenantId, signalEventId]
+      );
+      return decision;
+    });
     return {
       signalEventId,
-      decision: decision.decision,
-      reasonCodes: decision.reasonCodes,
+      decision: lifecycleDecision.decision,
+      reasonCodes: lifecycleDecision.reasonCodes,
     };
   }
 
   private async applyProvisioningAssignment(
     tenantId: string,
     rule: ProvisioningAssignmentRuleRow,
-    input: EvaluateProvisioningAssignmentRequest
+    input: EvaluateProvisioningAssignmentRequest,
+    executor: SqlQueryExecutor
   ) {
     if (rule.target_type === 'group') {
-      await this.createGroupMembership(tenantId, {
-        groupId: rule.target_id,
-        subjectId: input.subjectId,
-        accountId: input.accountId,
-        membershipType: 'member',
-        assignmentSource: `rule:${rule.id}`,
-        ownershipPolicy: 'source_owned',
-        revokePolicy: 'review',
-      });
+      await this.upsertGroupMembership(
+        tenantId,
+        {
+          groupId: rule.target_id,
+          subjectId: input.subjectId,
+          accountId: input.accountId,
+          membershipType: 'member',
+          assignmentSource: `rule:${rule.id}`,
+          ownershipPolicy: 'source_owned',
+          revokePolicy: 'review',
+        },
+        executor
+      );
       return;
     }
-    await this.grantEntitlement(tenantId, {
-      subjectId: input.subjectId,
-      accountId: input.accountId,
-      entitlementType: rule.target_type === 'permission' ? 'permission' : 'entitlement',
-      entitlementKey: rule.target_id,
-      sourceId: rule.id,
-      ownershipPolicy: 'source_owned',
-      revokePolicy: 'review',
-    });
+    await this.upsertEntitlementGrant(
+      tenantId,
+      {
+        subjectId: input.subjectId,
+        accountId: input.accountId,
+        entitlementType: rule.target_type === 'permission' ? 'permission' : 'entitlement',
+        entitlementKey: rule.target_id,
+        sourceId: rule.id,
+        ownershipPolicy: 'source_owned',
+        revokePolicy: 'review',
+      },
+      executor
+    );
   }
 
   private async recordProvisioningAssignmentEvent(
@@ -2233,9 +2310,10 @@ export class IdentityMappingControlPlaneRepository {
       outcome: string;
       reasonCodes: string[];
       traceRef: string;
-    }
+    },
+    executor: SqlExecutor = this.adapter
   ) {
-    await this.adapter.execute(
+    await executor.execute(
       `INSERT INTO provisioning_assignment_events (
         id, tenant_id, rule_id, subject_id, account_id, target_type, target_id,
         outcome, reason_codes_json, trace_ref, created_at
@@ -2265,19 +2343,44 @@ export class IdentityMappingControlPlaneRepository {
       ownershipPolicy: string;
       revokePolicy: string;
       protectedUntil?: number | null;
-    }
+    },
+    executor: SqlQueryExecutor = this.adapter
   ) {
     const now = this.now();
-    await this.adapter.execute(
+    const existing = await executor.queryOne<{ id: string }>(
+      `SELECT id
+         FROM provisioning_assignment_ownership
+        WHERE tenant_id = ?
+          AND assignment_type = ?
+          AND assignment_id = ?
+          AND source_id IS ?
+        LIMIT 1`,
+      [tenantId, input.assignmentType, input.assignmentId, input.sourceId ?? null]
+    );
+    if (existing) {
+      await executor.execute(
+        `UPDATE provisioning_assignment_ownership
+            SET ownership_policy = ?,
+                revoke_policy = ?,
+                protected_until = ?,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [
+          input.ownershipPolicy,
+          input.revokePolicy,
+          input.protectedUntil ?? null,
+          now,
+          tenantId,
+          existing.id,
+        ]
+      );
+      return;
+    }
+    await executor.execute(
       `INSERT INTO provisioning_assignment_ownership (
         id, tenant_id, assignment_type, assignment_id, source_id, ownership_policy,
         revoke_policy, protected_until, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(tenant_id, assignment_type, assignment_id, source_id) DO UPDATE SET
-        ownership_policy = excluded.ownership_policy,
-        revoke_policy = excluded.revoke_policy,
-        protected_until = excluded.protected_until,
-        updated_at = excluded.updated_at`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         createId('provisioning_assignment_ownership'),
         tenantId,
@@ -2295,9 +2398,10 @@ export class IdentityMappingControlPlaneRepository {
 
   private async findAssignmentOwnership(
     tenantId: string,
-    input: Pick<RecordLifecycleSignalRequest, 'targetType' | 'targetId'>
+    input: Pick<RecordLifecycleSignalRequest, 'targetType' | 'targetId'>,
+    executor: SqlQueryExecutor = this.adapter
   ): Promise<ProvisioningAssignmentOwnershipContext | null> {
-    const row = await this.adapter.queryOne<ProvisioningAssignmentOwnershipRow>(
+    const row = await executor.queryOne<ProvisioningAssignmentOwnershipRow>(
       `SELECT assignment_type, assignment_id, ownership_policy, revoke_policy, protected_until
          FROM provisioning_assignment_ownership
         WHERE tenant_id = ? AND assignment_type = ? AND assignment_id = ?
@@ -2321,11 +2425,12 @@ export class IdentityMappingControlPlaneRepository {
     tenantId: string,
     input: RecordLifecycleSignalRequest,
     signalEventId: string,
-    decision: { decision: string; reasonCodes: string[] }
+    decision: { decision: string; reasonCodes: string[] },
+    executor: SqlExecutor = this.adapter
   ) {
     if (decision.decision === 'revoke') {
       if (input.targetType === 'group_membership') {
-        await this.adapter.execute(
+        await executor.execute(
           `UPDATE group_memberships
               SET lifecycle_state = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ?`,
@@ -2333,7 +2438,7 @@ export class IdentityMappingControlPlaneRepository {
         );
       }
       if (input.targetType === 'entitlement' || input.targetType === 'permission') {
-        await this.adapter.execute(
+        await executor.execute(
           `UPDATE entitlements
               SET lifecycle_state = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ?`,
@@ -2342,14 +2447,14 @@ export class IdentityMappingControlPlaneRepository {
       }
     }
     if (decision.decision === 'suspend_account') {
-      await this.adapter.execute(
+      await executor.execute(
         `UPDATE identity_accounts
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
         ['suspended', this.now(), tenantId, input.targetId]
       );
     }
-    await this.adapter.execute(
+    await executor.execute(
       `INSERT INTO provisioning_revocation_events (
         id, tenant_id, subject_id, account_id, source_event_id, target_type,
         target_id, decision, reason_codes_json, created_at
@@ -3071,113 +3176,6 @@ function assertNoReviewPayloadRawIdentifiers(value: unknown, path: string): void
   }
 }
 
-function evaluateProvisioningAssignmentRule(
-  rule: {
-    id: string;
-    targetType: ProvisioningAssignmentTargetType;
-    targetId: string;
-    condition: ProvisioningAssignmentCondition;
-    priority?: number;
-  },
-  context: ProvisioningAssignmentContext
-) {
-  const reasonCodes: string[] = [];
-  const condition = rule.condition;
-  if (condition.eventTypes?.length && !condition.eventTypes.includes(context.eventType)) {
-    reasonCodes.push('provisioning.assignment.event_type_mismatch');
-  }
-  if (
-    condition.sourceTypes?.length &&
-    (!context.sourceType || !condition.sourceTypes.includes(context.sourceType))
-  ) {
-    reasonCodes.push('provisioning.assignment.source_type_mismatch');
-  }
-  if (
-    condition.sourceIds?.length &&
-    (!context.sourceId || !condition.sourceIds.includes(context.sourceId))
-  ) {
-    reasonCodes.push('provisioning.assignment.source_id_mismatch');
-  }
-  const domains = [
-    ...(condition.domain ? [condition.domain] : []),
-    ...(condition.domains ?? []),
-  ].map(normalizeDomain);
-  if (domains.length && !domains.includes(normalizeDomain(context.domain))) {
-    reasonCodes.push('provisioning.assignment.domain_mismatch');
-  }
-  for (const [claim, expected] of Object.entries(condition.claims ?? {})) {
-    if (context.claims?.[claim] !== expected) {
-      reasonCodes.push('provisioning.assignment.claim_mismatch');
-    }
-  }
-  return {
-    matched: reasonCodes.length === 0,
-    ruleId: rule.id,
-    targetType: rule.targetType,
-    targetId: rule.targetId,
-    reasonCodes: reasonCodes.length ? reasonCodes : ['provisioning.assignment.matched'],
-  };
-}
-
-function decideLifecycleSignalRevocation(input: {
-  signalType: LifecycleSignalType;
-  targetType: 'account' | 'group_membership' | 'entitlement' | 'permission';
-  ownership?: ProvisioningAssignmentOwnershipContext | null;
-  now: number;
-}) {
-  const reasonCodes = [lifecycleSignalReasonCode(input.signalType)];
-  if (input.signalType === 'scim_active_false' && input.targetType === 'account') {
-    return { decision: 'suspend_account', reasonCodes };
-  }
-  const ownershipPolicy = input.ownership?.ownershipPolicy ?? 'source_owned';
-  const revokePolicy = input.ownership?.revokePolicy ?? 'review';
-  if (revokePolicy === 'keep') {
-    return {
-      decision: 'keep',
-      reasonCodes: [...reasonCodes, 'provisioning.revocation.keep_policy'],
-    };
-  }
-  if (input.ownership?.protectedUntil && input.ownership.protectedUntil > input.now) {
-    return {
-      decision: 'review',
-      reasonCodes: [...reasonCodes, 'provisioning.revocation.protected_assignment'],
-    };
-  }
-  if (ownershipPolicy === 'manual' || ownershipPolicy === 'protected') {
-    return {
-      decision: 'review',
-      reasonCodes: [...reasonCodes, 'provisioning.revocation.manual_assignment'],
-    };
-  }
-  if (revokePolicy === 'auto') {
-    return {
-      decision: 'revoke',
-      reasonCodes: [...reasonCodes, 'provisioning.revocation.source_owned_auto'],
-    };
-  }
-  return {
-    decision: 'review',
-    reasonCodes: [...reasonCodes, 'provisioning.revocation.review_required'],
-  };
-}
-
-function lifecycleSignalReasonCode(signalType: LifecycleSignalType): string {
-  switch (signalType) {
-    case 'scim_active_false':
-      return 'lifecycle_signal.scim_active_false';
-    case 'scim_group_removed':
-      return 'lifecycle_signal.scim_group_removed';
-    case 'csv_diff_removed':
-      return 'lifecycle_signal.csv_diff_removed';
-    case 'claim_disappeared':
-      return 'lifecycle_signal.claim_disappeared';
-  }
-}
-
-function normalizeDomain(value: string | null | undefined): string {
-  return (value ?? '').trim().toLowerCase();
-}
-
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
@@ -3191,6 +3189,35 @@ function parseJsonObject(
     return isRecord(parsed) ? parsed : fallback;
   } catch {
     return fallback;
+  }
+}
+
+function parseProvisioningAssignmentCondition(value: string): ProvisioningAssignmentCondition {
+  try {
+    const parsed = JSON.parse(value);
+    if (!isRecord(parsed)) {
+      throw badRequest('provisioning assignment rule condition must be an object');
+    }
+    return parsed as unknown as ProvisioningAssignmentCondition;
+  } catch (error) {
+    if (error instanceof IdentityMappingControlPlaneError) {
+      throw error;
+    }
+    throw badRequest('provisioning assignment rule condition is invalid JSON');
+  }
+}
+
+function parseJsonArray(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
   }
 }
 

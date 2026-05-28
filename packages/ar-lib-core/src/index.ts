@@ -197,7 +197,6 @@ export * from './services/sensitive-detail-chunk-store';
 export * from './services/identity-identifier-bridge';
 export * from './services/identity-resolution';
 export * from './services/identity-release-consent';
-export * from './services/identity-provisioning-assignment';
 export * from './services/logging-runtime-policy';
 export * from './services/logging-runtime-emitter';
 export * from './services/pii-compensation-policy';
