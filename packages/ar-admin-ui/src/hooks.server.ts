@@ -517,6 +517,12 @@ export function buildProxyHeaders(
 	headers.set('X-Authrim-Forwarded-Host', forwardedHost);
 	headers.set('X-Forwarded-Host', forwardedHost);
 	headers.set('X-Forwarded-Proto', 'https');
+	headers.set(
+		'X-Authrim-Forwarded-Origin',
+		getOriginFromHeader(event.request.headers.get('origin')) ??
+			getOriginFromHeader(event.request.headers.get('referer')) ??
+			event.url.origin
+	);
 	if (options.includeBffMode ?? true) {
 		headers.set('X-Authrim-Admin-UI-Api-Mode', 'cross-site-proxy-bff');
 	}

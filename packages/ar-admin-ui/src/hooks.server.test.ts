@@ -70,6 +70,7 @@ describe('buildProxyHeaders', () => {
 		expect(headers.get('Authorization')).toBeNull();
 		expect(headers.get('Origin')).toBe('https://api.authrim.example');
 		expect(headers.get('Referer')).toBe('https://api.authrim.example/api/admin/stats');
+		expect(headers.get('X-Authrim-Forwarded-Origin')).toBe('https://mt-ar-admin-ui.pages.dev');
 		expect(headers.get('X-Request-Id')).toBe('req-browser-1');
 		expect(headers.get('X-Forwarded-Host')).toBe('multi-tenant.authrim.com');
 		expect(headers.get('X-Authrim-Admin-UI-Api-Mode')).toBe('cross-site-proxy-bff');
@@ -330,6 +331,9 @@ describe('apiProxy', () => {
 
 		expect(response.status).toBe(200);
 		expect(proxiedRequest.headers.get('Origin')).toBe('https://api.authrim.example');
+		expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Origin')).toBe(
+			'https://mt-ar-admin-ui.pages.dev'
+		);
 		expect(proxiedRequest.headers.get('Referer')).toBe(
 			'https://api.authrim.example/api/admin/settings'
 		);
