@@ -416,6 +416,240 @@ describe('IdentityMappingControlPlaneRepository identity registry operations', (
   });
 });
 
+describe('IdentityMappingControlPlaneRepository review and notification operations', () => {
+  it('creates redacted review tasks and records idempotent state transitions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'review-task-1',
+          status: 'open',
+          subject_id: 'subject-1',
+          account_id: 'account-1',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const task = await repository.createReviewTask('tenant_a', {
+      taskType: 'identity_link_review',
+      subjectId: 'subject-1',
+      accountId: 'account-1',
+      priority: 20,
+      payload: {
+        source: 'saml',
+        destination: 'oidc',
+        riskSummary: 'verified-anchor candidate requires admin approval',
+      },
+    });
+    const transition = await repository.transitionReviewTask('tenant_a', 'review-task-1', {
+      status: 'approved',
+      assignedTo: 'admin-1',
+      reasonCodes: ['admin_approved_candidate_link'],
+    });
+
+    expect(task.status).toBe('open');
+    expect(transition).toMatchObject({
+      previousStatus: 'open',
+      status: 'approved',
+      idempotent: false,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO review_tasks'),
+      expect.stringContaining('UPDATE review_tasks'),
+      expect.stringContaining('INSERT INTO mapping_events'),
+    ]);
+  });
+
+  it('groups bulk review impact without storing raw values', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const group = await repository.createReviewTaskGroup('tenant_a', {
+      groupKey: 'bulk-impact:policy-version-1',
+      summary: {
+        affectedTenant: 'tenant_a',
+        source: 'scim-directory',
+        destination: 'saml-sp',
+        affectedSubjects: 35,
+        risk: 'medium',
+      },
+    });
+
+    expect(group.groupKey).toBe('bulk-impact:policy-version-1');
+    expect(adapter.executes[0].sql).toContain('INSERT INTO review_task_groups');
+    expect(String(adapter.executes[0].params[4])).toContain('"affectedSubjects":35');
+  });
+
+  it('creates operational notification state for high priority identity mapping events', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const notification = await repository.enqueueOperationalNotification('tenant_a', {
+      category: 'identity_mapping_manual_review',
+      eventType: 'identity_mapping.review_required',
+      severity: 'high',
+      subjectType: 'review_task',
+      subjectId: 'review-task-1',
+      deduplicationKey: 'review-task-1:manual-review',
+      payload: {
+        reviewTaskId: 'review-task-1',
+        reasonCodes: ['candidate_requires_admin_approval'],
+      },
+    });
+
+    expect(notification).toMatchObject({
+      state: 'open',
+      severity: 'high',
+      category: 'identity_mapping_manual_review',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO internal_notification_events'),
+      expect.stringContaining('INSERT INTO operational_notification_states'),
+    ]);
+    expect(adapter.executes[0].params[6]).toBe('tenant_a:review-task-1:manual-review');
+  });
+
+  it('returns an existing operational notification state for duplicate deduplication keys', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'notification-state-1',
+          notification_event_id: 'notification-event-1',
+          state: 'open',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const notification = await repository.enqueueOperationalNotification('tenant_a', {
+      category: 'identity_mapping_manual_review',
+      eventType: 'identity_mapping.review_required',
+      severity: 'high',
+      subjectType: 'review_task',
+      subjectId: 'review-task-1',
+      deduplicationKey: 'review-task-1:manual-review',
+      payload: {
+        reviewTaskId: 'review-task-1',
+        reasonCodes: ['candidate_requires_admin_approval'],
+      },
+    });
+
+    expect(notification).toMatchObject({
+      id: 'notification-state-1',
+      notificationEventId: 'notification-event-1',
+      idempotent: true,
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('acknowledges and resolves operational notification states idempotently', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'notification-state-1',
+          state: 'open',
+        },
+        {
+          id: 'notification-state-1',
+          state: 'resolved',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.transitionOperationalNotificationState('tenant_a', 'notification-state-1', {
+        state: 'resolved',
+        assignedTo: 'admin-1',
+      })
+    ).resolves.toMatchObject({
+      previousState: 'open',
+      state: 'resolved',
+      idempotent: false,
+    });
+    await expect(
+      repository.transitionOperationalNotificationState('tenant_a', 'notification-state-1', {
+        state: 'resolved',
+      })
+    ).resolves.toMatchObject({
+      state: 'resolved',
+      idempotent: true,
+    });
+    expect(adapter.executes).toHaveLength(1);
+    expect(adapter.executes[0].sql).toContain('UPDATE operational_notification_states');
+  });
+
+  it('rejects raw values in review and notification payloads', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createReviewTask('tenant_a', {
+        taskType: 'release_review',
+        payload: { email: 'person@example.edu' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+
+    await expect(
+      repository.enqueueOperationalNotification('tenant_a', {
+        category: 'identity_mapping_signal',
+        eventType: 'identity_mapping.high_signal',
+        severity: 'critical',
+        subjectType: 'subject',
+        subjectId: 'subject-1',
+        payload: { token: 'secret-token' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects unsupported review statuses and notification categories before storage', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'review-task-1',
+          status: 'open',
+          subject_id: 'subject-1',
+          account_id: null,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.transitionReviewTask('tenant_a', 'review-task-1', {
+        status: 'raw_user_supplied_status',
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+
+    await expect(
+      repository.enqueueOperationalNotification('tenant_a', {
+        category: 'storage_registry_security',
+        eventType: 'identity_mapping.review_required',
+        severity: 'high',
+        subjectType: 'review_task',
+        subjectId: 'review-task-1',
+        payload: {
+          reviewTaskId: 'review-task-1',
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+});
+
 describe('IdentityMappingControlPlaneRepository schema and template catalogs', () => {
   it('stores protocol schemas, external schemas, and mapping templates', async () => {
     const adapter = createAdapter({});

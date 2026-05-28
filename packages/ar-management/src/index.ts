@@ -656,6 +656,12 @@ import {
   adminIdentityMappingPolicyVersionPublishHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
+  adminIdentityMappingOperationalNotificationAcknowledgeHandler,
+  adminIdentityMappingOperationalNotificationCreateHandler,
+  adminIdentityMappingOperationalNotificationResolveHandler,
+  adminIdentityMappingReviewTaskCreateHandler,
+  adminIdentityMappingReviewTaskGroupCreateHandler,
+  adminIdentityMappingReviewTaskTransitionHandler,
   adminIdentityMappingSourceAuthorityContractCreateHandler,
   adminIdentityMappingSourceAuthorityContractsListHandler,
   adminIdentityMappingSourceAuthorityEvaluateHandler,
@@ -2289,6 +2295,36 @@ app.post(
   '/api/admin/identity-mapping/source-authority-contracts/evaluate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceAuthorityEvaluateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/review-tasks',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingReviewTaskCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/review-tasks/:reviewTaskId/transition',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingReviewTaskTransitionHandler
+);
+app.post(
+  '/api/admin/identity-mapping/review-task-groups',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingReviewTaskGroupCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/operational-notifications',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingOperationalNotificationCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/operational-notification-states/:stateId/acknowledge',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingOperationalNotificationAcknowledgeHandler
+);
+app.post(
+  '/api/admin/identity-mapping/operational-notification-states/:stateId/resolve',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingOperationalNotificationResolveHandler
 );
 
 // =============================================================================

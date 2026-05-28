@@ -16,6 +16,7 @@ const CANONICAL_TABLES = [
   'identity_resolution_candidates',
   'assurance_evidence',
   'value_provenance',
+  'subject_lifecycle_timeline_events',
   'contact_point_search_indexes',
   'identity_binding_lookup_indexes',
 ];
@@ -268,6 +269,31 @@ describe('CanonicalIdentityRepository', () => {
     expect(
       adapter.getById('identity_binding_lookup_indexes', 'binding-index-1')?.lookup_value
     ).toBe('blind-index-nameid');
+  });
+
+  it('records subject lifecycle timeline events with redacted summaries', async () => {
+    const event = await repository.recordSubjectLifecycleTimelineEvent({
+      id: 'timeline-event-1',
+      subject_id: 'subject-1',
+      account_id: 'account-1',
+      event_type: 'attribute_release.challenge_required',
+      source_type: 'review_task',
+      source_id: 'review-task-1',
+      summary: {
+        destination: 'https://sp.example.org/saml',
+        reasonCodes: ['release.attribute_consent.attribute_set_changed'],
+      },
+      event_at: 2000,
+    });
+
+    expect(event.event_at).toBe(2000);
+    expect(JSON.parse(event.summary_json ?? '{}')).toEqual({
+      destination: 'https://sp.example.org/saml',
+      reasonCodes: ['release.attribute_consent.attribute_set_changed'],
+    });
+    expect(
+      adapter.getById('subject_lifecycle_timeline_events', 'timeline-event-1')?.event_type
+    ).toBe('attribute_release.challenge_required');
   });
 
   it('transitions subject and account lifecycle without hard deleting rows', async () => {

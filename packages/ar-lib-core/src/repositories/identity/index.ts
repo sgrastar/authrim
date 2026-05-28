@@ -23,6 +23,7 @@ export {
   type CreateProfileInput,
   type CreateStructuredAttributeValueInput,
   type CreateSubjectAccountLinkInput,
+  type CreateSubjectLifecycleTimelineEventInput,
   type CreateValueProvenanceInput,
   type IdentityAccountRow,
   type IdentityAccountType,
@@ -44,6 +45,7 @@ export {
   type StructuredAttributeValueRow,
   type SubjectAccountLinkRow,
   type SubjectAccountLinkType,
+  type SubjectLifecycleTimelineEventRow,
   type ValueProvenanceRow,
 } from './canonical-identity';
 
@@ -64,3 +66,10 @@ export {
   type CanonicalRuntimeUserWriteInput,
   type CanonicalRuntimeUserWriteResult,
 } from './canonical-runtime-user-writer';
+
+export {
+  AttributeReleaseConsentRepository,
+  type AttributeReleaseConsentRow,
+  type AttributeReleaseConsentState,
+  type GrantAttributeReleaseConsentInput,
+} from './attribute-release-consent';

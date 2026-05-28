@@ -278,6 +278,62 @@ interface UpsertAdminSearchProjectionRequest {
   lifecycleState?: string;
 }
 
+interface CreateReviewTaskRequest {
+  taskType: string;
+  subjectId?: string;
+  accountId?: string;
+  priority?: number;
+  assignedTo?: string;
+  payload: Record<string, unknown>;
+  dueAt?: number;
+}
+
+interface TransitionReviewTaskRequest {
+  status: string;
+  assignedTo?: string | null;
+  reasonCodes?: string[];
+}
+
+interface CreateReviewTaskGroupRequest {
+  groupKey: string;
+  summary: Record<string, unknown>;
+}
+
+interface EnqueueOperationalNotificationRequest {
+  category: string;
+  eventType: string;
+  severity: string;
+  subjectType: string;
+  subjectId: string;
+  payload: Record<string, unknown>;
+  deduplicationKey?: string;
+}
+
+interface TransitionOperationalNotificationStateRequest {
+  state: string;
+  assignedTo?: string | null;
+}
+
+const REVIEW_TASK_STATUSES = new Set([
+  'open',
+  'in_review',
+  'approved',
+  'rejected',
+  'resolved',
+  'dismissed',
+]);
+
+const OPERATIONAL_NOTIFICATION_STATES = new Set(['open', 'acknowledged', 'resolved']);
+
+const IDENTITY_MAPPING_NOTIFICATION_CATEGORIES = new Set([
+  'identity_mapping_signal',
+  'identity_mapping_manual_review',
+  'identity_mapping_propagation_failure',
+  'identity_mapping_bulk_impact',
+]);
+
+const OPERATIONAL_NOTIFICATION_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'info']);
+
 interface RepositoryResult<T> {
   result: T;
 }
@@ -1262,6 +1318,291 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  async createReviewTask(tenantId: string, input: CreateReviewTaskRequest) {
+    validateRequiredString(input.taskType, 'taskType');
+    if (!isRecord(input.payload)) {
+      throw badRequest('payload must be an object');
+    }
+    assertNoReviewPayloadRawIdentifiers(input.payload, 'payload');
+
+    const now = this.now();
+    const id = createId('review_task');
+    await this.adapter.execute(
+      `INSERT INTO review_tasks (
+        id, tenant_id, task_type, subject_id, account_id, status, priority,
+        assigned_to, payload_json, due_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        tenantId,
+        input.taskType,
+        input.subjectId ?? null,
+        input.accountId ?? null,
+        'open',
+        input.priority ?? 0,
+        input.assignedTo ?? null,
+        stableJson(input.payload),
+        input.dueAt ?? null,
+        now,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId,
+      taskType: input.taskType,
+      status: 'open',
+      priority: input.priority ?? 0,
+      payload: input.payload,
+    };
+  }
+
+  async transitionReviewTask(
+    tenantId: string,
+    reviewTaskId: string,
+    input: TransitionReviewTaskRequest
+  ) {
+    validateRequiredString(reviewTaskId, 'reviewTaskId');
+    validateRequiredString(input.status, 'status');
+    if (!REVIEW_TASK_STATUSES.has(input.status)) {
+      throw badRequest('status is not supported for review task transitions');
+    }
+    const existing = await this.adapter.queryOne<{
+      id: string;
+      status: string;
+      subject_id: string | null;
+      account_id: string | null;
+    }>(
+      'SELECT id, status, subject_id, account_id FROM review_tasks WHERE tenant_id = ? AND id = ?',
+      [tenantId, reviewTaskId]
+    );
+    if (!existing) {
+      throw notFound('review task not found');
+    }
+    if (existing.status === input.status) {
+      return {
+        id: reviewTaskId,
+        status: input.status,
+        idempotent: true,
+      };
+    }
+
+    const now = this.now();
+    await this.adapter.execute(
+      `UPDATE review_tasks
+          SET status = ?, assigned_to = ?, updated_at = ?
+        WHERE tenant_id = ? AND id = ?`,
+      [input.status, input.assignedTo ?? null, now, tenantId, reviewTaskId]
+    );
+    await this.recordMappingEvent(tenantId, {
+      eventType: 'review_task.transition',
+      subjectId: existing.subject_id ?? undefined,
+      outcome: input.status,
+      reasonCodes: input.reasonCodes ?? [],
+      traceRef: `review_task:${reviewTaskId}`,
+    });
+    return {
+      id: reviewTaskId,
+      previousStatus: existing.status,
+      status: input.status,
+      idempotent: false,
+    };
+  }
+
+  async createReviewTaskGroup(tenantId: string, input: CreateReviewTaskGroupRequest) {
+    validateRequiredString(input.groupKey, 'groupKey');
+    if (!isRecord(input.summary)) {
+      throw badRequest('summary must be an object');
+    }
+    assertNoReviewPayloadRawIdentifiers(input.summary, 'summary');
+
+    const now = this.now();
+    const id = createId('review_task_group');
+    await this.adapter.execute(
+      `INSERT INTO review_task_groups (
+        id, tenant_id, group_key, status, summary_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(tenant_id, group_key) DO UPDATE SET
+        summary_json = excluded.summary_json,
+        updated_at = excluded.updated_at`,
+      [id, tenantId, input.groupKey, 'open', stableJson(input.summary), now, now]
+    );
+    const group = await this.adapter.queryOne<{
+      id: string;
+      status: string;
+      summary_json: string | null;
+    }>(
+      `SELECT id, status, summary_json
+         FROM review_task_groups
+        WHERE tenant_id = ? AND group_key = ?
+        LIMIT 1`,
+      [tenantId, input.groupKey]
+    );
+    return {
+      id: group?.id ?? id,
+      tenantId,
+      groupKey: input.groupKey,
+      status: group?.status ?? 'open',
+      summary: group?.summary_json ? parseJsonObject(group.summary_json, {}) : input.summary,
+    };
+  }
+
+  async enqueueOperationalNotification(
+    tenantId: string,
+    input: EnqueueOperationalNotificationRequest
+  ) {
+    validateRequiredString(input.category, 'category');
+    validateRequiredString(input.eventType, 'eventType');
+    validateRequiredString(input.severity, 'severity');
+    validateRequiredString(input.subjectType, 'subjectType');
+    validateRequiredString(input.subjectId, 'subjectId');
+    if (!IDENTITY_MAPPING_NOTIFICATION_CATEGORIES.has(input.category)) {
+      throw badRequest('category is not supported for identity mapping notifications');
+    }
+    if (!OPERATIONAL_NOTIFICATION_SEVERITIES.has(input.severity)) {
+      throw badRequest('severity is not supported for operational notifications');
+    }
+    if (!isRecord(input.payload)) {
+      throw badRequest('payload must be an object');
+    }
+    assertNoReviewPayloadRawIdentifiers(input.payload, 'payload');
+
+    const now = this.now();
+    const deduplicationKey = input.deduplicationKey
+      ? `${tenantId}:${input.deduplicationKey}`
+      : null;
+    if (deduplicationKey) {
+      const existing = await this.adapter.queryOne<{
+        id: string;
+        notification_event_id: string;
+        state: string;
+      }>(
+        `SELECT s.id, s.notification_event_id, s.state
+           FROM operational_notification_states s
+           JOIN internal_notification_events e ON e.id = s.notification_event_id
+          WHERE e.tenant_id = ? AND e.deduplication_key = ?
+          LIMIT 1`,
+        [tenantId, deduplicationKey]
+      );
+      if (existing) {
+        return {
+          id: existing.id,
+          tenantId,
+          notificationEventId: existing.notification_event_id,
+          state: existing.state,
+          severity: input.severity,
+          category: input.category,
+          idempotent: true,
+        };
+      }
+    }
+
+    const notificationEventId = createId('notification_event');
+    const stateId = createId('operational_notification_state');
+    await this.adapter.execute(
+      `INSERT INTO internal_notification_events (
+        id, tenant_id, category, event_type, severity, status, deduplication_key,
+        payload_json, attempts, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        notificationEventId,
+        tenantId,
+        input.category,
+        input.eventType,
+        input.severity,
+        'pending',
+        deduplicationKey,
+        stableJson(input.payload),
+        0,
+        new Date(now).toISOString(),
+        new Date(now).toISOString(),
+      ]
+    );
+    await this.adapter.execute(
+      `INSERT INTO operational_notification_states (
+        id, tenant_id, notification_event_id, subject_type, subject_id, state,
+        assigned_to, acknowledged_at, resolved_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        stateId,
+        tenantId,
+        notificationEventId,
+        input.subjectType,
+        input.subjectId,
+        'open',
+        null,
+        null,
+        null,
+        now,
+        now,
+      ]
+    );
+    return {
+      id: stateId,
+      tenantId,
+      notificationEventId,
+      state: 'open',
+      severity: input.severity,
+      category: input.category,
+    };
+  }
+
+  async transitionOperationalNotificationState(
+    tenantId: string,
+    stateId: string,
+    input: TransitionOperationalNotificationStateRequest
+  ) {
+    validateRequiredString(stateId, 'stateId');
+    if (!OPERATIONAL_NOTIFICATION_STATES.has(input.state) || input.state === 'open') {
+      throw badRequest('state is not supported for notification state transitions');
+    }
+    const existing = await this.adapter.queryOne<{
+      id: string;
+      state: string;
+    }>('SELECT id, state FROM operational_notification_states WHERE tenant_id = ? AND id = ?', [
+      tenantId,
+      stateId,
+    ]);
+    if (!existing) {
+      throw notFound('notification state not found');
+    }
+    if (existing.state === input.state) {
+      return {
+        id: stateId,
+        state: input.state,
+        idempotent: true,
+      };
+    }
+
+    const now = this.now();
+    await this.adapter.execute(
+      `UPDATE operational_notification_states
+          SET state = ?,
+              assigned_to = ?,
+              acknowledged_at = CASE WHEN ? = 'acknowledged' THEN ? ELSE acknowledged_at END,
+              resolved_at = CASE WHEN ? = 'resolved' THEN ? ELSE resolved_at END,
+              updated_at = ?
+        WHERE tenant_id = ? AND id = ?`,
+      [
+        input.state,
+        input.assignedTo ?? null,
+        input.state,
+        now,
+        input.state,
+        now,
+        now,
+        tenantId,
+        stateId,
+      ]
+    );
+    return {
+      id: stateId,
+      previousState: existing.state,
+      state: input.state,
+      idempotent: false,
+    };
+  }
+
   async runIdempotent<T>(
     tenantId: string,
     operationKey: string,
@@ -1669,6 +2010,59 @@ export async function adminIdentityMappingSourceAuthorityEvaluateHandler(c: Admi
   );
 }
 
+export async function adminIdentityMappingReviewTaskCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'review-task.create', async (repository, tenantId, body) =>
+    repository.createReviewTask(tenantId, body as CreateReviewTaskRequest)
+  );
+}
+
+export async function adminIdentityMappingReviewTaskTransitionHandler(c: AdminContext) {
+  const reviewTaskId = c.req.param('reviewTaskId') ?? '';
+  return handleMutation(c, 'review-task.transition', async (repository, tenantId, body) =>
+    repository.transitionReviewTask(tenantId, reviewTaskId, body as TransitionReviewTaskRequest)
+  );
+}
+
+export async function adminIdentityMappingReviewTaskGroupCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'review-task-group.create', async (repository, tenantId, body) =>
+    repository.createReviewTaskGroup(tenantId, body as CreateReviewTaskGroupRequest)
+  );
+}
+
+export async function adminIdentityMappingOperationalNotificationCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'operational-notification.create', async (repository, tenantId, body) =>
+    repository.enqueueOperationalNotification(
+      tenantId,
+      body as EnqueueOperationalNotificationRequest
+    )
+  );
+}
+
+export async function adminIdentityMappingOperationalNotificationAcknowledgeHandler(
+  c: AdminContext
+) {
+  const stateId = c.req.param('stateId') ?? '';
+  return handleMutation(
+    c,
+    'operational-notification.acknowledge',
+    async (repository, tenantId, body) =>
+      repository.transitionOperationalNotificationState(tenantId, stateId, {
+        ...(body as Omit<TransitionOperationalNotificationStateRequest, 'state'>),
+        state: 'acknowledged',
+      })
+  );
+}
+
+export async function adminIdentityMappingOperationalNotificationResolveHandler(c: AdminContext) {
+  const stateId = c.req.param('stateId') ?? '';
+  return handleMutation(c, 'operational-notification.resolve', async (repository, tenantId, body) =>
+    repository.transitionOperationalNotificationState(tenantId, stateId, {
+      ...(body as Omit<TransitionOperationalNotificationStateRequest, 'state'>),
+      state: 'resolved',
+    })
+  );
+}
+
 async function handleControlPlane<T>(
   c: AdminContext,
   operation: (repository: IdentityMappingControlPlaneRepository, tenantId: string) => Promise<T>
@@ -1817,8 +2211,50 @@ function assertNoSensitiveMetadata(value: unknown, path: string): void {
   }
 }
 
+function assertNoReviewPayloadRawIdentifiers(value: unknown, path: string): void {
+  assertNoSensitiveMetadata(value, path);
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoReviewPayloadRawIdentifiers(item, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[_-]/g, '');
+    if (
+      normalized === 'email' ||
+      normalized === 'mail' ||
+      normalized === 'nameid' ||
+      normalized === 'phone' ||
+      normalized === 'phonenumber' ||
+      normalized === 'sub' ||
+      normalized === 'uid' ||
+      normalized === 'userid'
+    ) {
+      throw badRequest(`${path}.${key} is not allowed in identity mapping review payloads`);
+    }
+    assertNoReviewPayloadRawIdentifiers(item, `${path}.${key}`);
+  }
+}
+
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
+}
+
+function parseJsonObject(
+  value: string,
+  fallback: Record<string, unknown>
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 async function hashStableJson(value: unknown): Promise<string> {
