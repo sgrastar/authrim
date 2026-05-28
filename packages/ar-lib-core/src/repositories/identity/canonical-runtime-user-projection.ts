@@ -140,6 +140,11 @@ const PROFILE_ATTRIBUTE_TO_RUNTIME_FIELD: Record<
 };
 
 const ADDRESS_CATALOG_IDS = new Set(['address', 'field.canonical.address']);
+const CUSTOM_ATTRIBUTES_CATALOG_IDS = new Set([
+  'custom_attributes',
+  'custom_attributes_json',
+  'field.canonical.custom_attributes',
+]);
 const LEGACY_USERS_PII_REF_SCHEME = 'legacy-users-pii:';
 const LEGACY_USERS_PII_FIELDS = new Set<string>([
   'email',
@@ -380,6 +385,10 @@ export class CanonicalRuntimeUserProjectionRepository {
       const field = PROFILE_ATTRIBUTE_TO_RUNTIME_FIELD[attribute.catalog_entry_id];
       if (field) {
         projection[field] = toStringOrNull(value);
+      } else if (CUSTOM_ATTRIBUTES_CATALOG_IDS.has(attribute.catalog_entry_id)) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          Object.assign(customAttributes, value);
+        }
       } else if (!ADDRESS_CATALOG_IDS.has(attribute.catalog_entry_id)) {
         customAttributes[attribute.catalog_entry_id] = value;
       }
@@ -428,13 +437,18 @@ export class CanonicalRuntimeUserProjectionRepository {
     subject: IdentitySubjectRow,
     account: IdentityAccountRow
   ): Promise<void> {
-    const contacts = await this.adapter.query<ContactPointRow>(
+    const subjectContacts = await this.adapter.query<ContactPointRow>(
       `SELECT *
          FROM contact_points
         WHERE subject_id = ? AND tenant_id = ?${activeClause(false)}
         ORDER BY is_primary DESC, created_at ASC`,
       [subject.id, this.tenantId]
     );
+    const accountContacts = subjectContacts.filter((contact) => contact.account_id === account.id);
+    const contacts =
+      accountContacts.length > 0
+        ? accountContacts
+        : subjectContacts.filter((contact) => contact.account_id === null);
 
     for (const contact of contacts) {
       const value = toStringOrNull(

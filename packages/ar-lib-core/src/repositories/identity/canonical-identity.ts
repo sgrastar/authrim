@@ -574,6 +574,25 @@ export class CanonicalIdentityRepository {
     return result.rowsAffected > 0;
   }
 
+  async updateSubjectRuntimeFields(
+    subjectId: string,
+    input: {
+      lifecycleState: IdentityLifecycleState;
+      displayLabel?: string | null;
+    }
+  ): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const deletedAt =
+      input.lifecycleState === 'deleted' || input.lifecycleState === 'deleting' ? now : null;
+    const result = await this.adapter.execute(
+      `UPDATE identity_subjects
+          SET lifecycle_state = ?, display_label = ?, updated_at = ?, deleted_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [input.lifecycleState, input.displayLabel ?? null, now, deletedAt, subjectId, this.tenantId]
+    );
+    return result.rowsAffected > 0;
+  }
+
   async createAccount(input: CreateIdentityAccountInput): Promise<IdentityAccountRow> {
     return this.insertAccount(this.adapter, input);
   }
@@ -617,6 +636,25 @@ export class CanonicalIdentityRepository {
     return result.rowsAffected > 0;
   }
 
+  async updateAccountRuntimeFields(
+    accountId: string,
+    input: {
+      lifecycleState: IdentityLifecycleState;
+      displayLabel?: string | null;
+    }
+  ): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const deletedAt =
+      input.lifecycleState === 'deleted' || input.lifecycleState === 'deleting' ? now : null;
+    const result = await this.adapter.execute(
+      `UPDATE identity_accounts
+          SET lifecycle_state = ?, display_label = ?, updated_at = ?, deleted_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [input.lifecycleState, input.displayLabel ?? null, now, deletedAt, accountId, this.tenantId]
+    );
+    return result.rowsAffected > 0;
+  }
+
   async createSubjectAccountLink(
     input: CreateSubjectAccountLinkInput
   ): Promise<SubjectAccountLinkRow> {
@@ -651,6 +689,34 @@ export class CanonicalIdentityRepository {
         ORDER BY profile_type ASC, created_at ASC`,
       [subjectId, this.tenantId]
     );
+  }
+
+  async updateProfileRuntimeFields(
+    profileId: string,
+    input: {
+      lifecycleState: IdentityLifecycleState;
+      locale?: string | null;
+      zoneinfo?: string | null;
+    }
+  ): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const deletedAt =
+      input.lifecycleState === 'deleted' || input.lifecycleState === 'deleting' ? now : null;
+    const result = await this.adapter.execute(
+      `UPDATE profiles
+          SET lifecycle_state = ?, locale = ?, zoneinfo = ?, updated_at = ?, deleted_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [
+        input.lifecycleState,
+        input.locale ?? null,
+        input.zoneinfo ?? null,
+        now,
+        deletedAt,
+        profileId,
+        this.tenantId,
+      ]
+    );
+    return result.rowsAffected > 0;
   }
 
   async createProfileAttributeValue(
@@ -708,6 +774,90 @@ export class CanonicalIdentityRepository {
     return row;
   }
 
+  async upsertProfileAttributeValue(
+    input: CreateProfileAttributeValueInput
+  ): Promise<ProfileAttributeValueRow> {
+    assertProfileAttributeStorageBoundary(input);
+
+    const id = input.id ?? generateId();
+    const now = getCurrentTimestamp();
+    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
+    const row: ProfileAttributeValueRow = {
+      id,
+      tenant_id: tenantId,
+      profile_id: input.profile_id,
+      catalog_entry_id: input.catalog_entry_id,
+      value_type: input.value_type,
+      value_json: encodeJson(input.value),
+      value_storage_ref: input.value_storage_ref ?? null,
+      value_hash: input.value_hash ?? null,
+      classification: input.classification ?? 'internal',
+      purpose: input.purpose ?? null,
+      is_primary: input.is_primary ? 1 : 0,
+      display_order: input.display_order ?? 0,
+      lifecycle_state: input.lifecycle_state ?? 'active',
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO profile_attribute_values (
+        id, tenant_id, profile_id, catalog_entry_id, value_type, value_json, value_storage_ref,
+        value_hash, classification, purpose, is_primary, display_order, lifecycle_state,
+        created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        profile_id = excluded.profile_id,
+        catalog_entry_id = excluded.catalog_entry_id,
+        value_type = excluded.value_type,
+        value_json = excluded.value_json,
+        value_storage_ref = excluded.value_storage_ref,
+        value_hash = excluded.value_hash,
+        classification = excluded.classification,
+        purpose = excluded.purpose,
+        is_primary = excluded.is_primary,
+        display_order = excluded.display_order,
+        lifecycle_state = excluded.lifecycle_state,
+        updated_at = excluded.updated_at,
+        deleted_at = excluded.deleted_at`,
+      [
+        row.id,
+        row.tenant_id,
+        row.profile_id,
+        row.catalog_entry_id,
+        row.value_type,
+        row.value_json,
+        row.value_storage_ref,
+        row.value_hash,
+        row.classification,
+        row.purpose,
+        row.is_primary,
+        row.display_order,
+        row.lifecycle_state,
+        row.created_at,
+        row.updated_at,
+        row.deleted_at,
+      ]
+    );
+    return row;
+  }
+
+  async transitionProfileAttributeValueLifecycle(
+    attributeValueId: string,
+    lifecycleState: IdentityLifecycleState
+  ): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const deletedAt = lifecycleState === 'deleted' || lifecycleState === 'deleting' ? now : null;
+    const result = await this.adapter.execute(
+      `UPDATE profile_attribute_values
+          SET lifecycle_state = ?, updated_at = ?, deleted_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [lifecycleState, now, deletedAt, attributeValueId, this.tenantId]
+    );
+    return result.rowsAffected > 0;
+  }
+
   async createStructuredAttributeValue(
     input: CreateStructuredAttributeValueInput
   ): Promise<StructuredAttributeValueRow> {
@@ -752,6 +902,75 @@ export class CanonicalIdentityRepository {
     return row;
   }
 
+  async upsertStructuredAttributeValue(
+    input: CreateStructuredAttributeValueInput
+  ): Promise<StructuredAttributeValueRow> {
+    const id = input.id ?? generateId();
+    const now = getCurrentTimestamp();
+    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
+    const row: StructuredAttributeValueRow = {
+      id,
+      tenant_id: tenantId,
+      owner_type: input.owner_type,
+      owner_id: input.owner_id,
+      catalog_entry_id: input.catalog_entry_id,
+      canonical_json: JSON.stringify(input.canonical),
+      projected_index_json: encodeJson(input.projected_index),
+      classification: input.classification ?? 'internal',
+      lifecycle_state: input.lifecycle_state ?? 'active',
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO structured_attribute_values (
+        id, tenant_id, owner_type, owner_id, catalog_entry_id, canonical_json,
+        projected_index_json, classification, lifecycle_state, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        owner_type = excluded.owner_type,
+        owner_id = excluded.owner_id,
+        catalog_entry_id = excluded.catalog_entry_id,
+        canonical_json = excluded.canonical_json,
+        projected_index_json = excluded.projected_index_json,
+        classification = excluded.classification,
+        lifecycle_state = excluded.lifecycle_state,
+        updated_at = excluded.updated_at,
+        deleted_at = excluded.deleted_at`,
+      [
+        row.id,
+        row.tenant_id,
+        row.owner_type,
+        row.owner_id,
+        row.catalog_entry_id,
+        row.canonical_json,
+        row.projected_index_json,
+        row.classification,
+        row.lifecycle_state,
+        row.created_at,
+        row.updated_at,
+        row.deleted_at,
+      ]
+    );
+    return row;
+  }
+
+  async transitionStructuredAttributeValueLifecycle(
+    structuredValueId: string,
+    lifecycleState: IdentityLifecycleState
+  ): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const deletedAt = lifecycleState === 'deleted' || lifecycleState === 'deleting' ? now : null;
+    const result = await this.adapter.execute(
+      `UPDATE structured_attribute_values
+          SET lifecycle_state = ?, updated_at = ?, deleted_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [lifecycleState, now, deletedAt, structuredValueId, this.tenantId]
+    );
+    return result.rowsAffected > 0;
+  }
+
   async createContactPoint(input: CreateContactPointInput): Promise<ContactPointRow> {
     const id = input.id ?? generateId();
     const now = getCurrentTimestamp();
@@ -780,6 +999,68 @@ export class CanonicalIdentityRepository {
         value_storage_ref, display_label, is_primary, verification_state, lifecycle_state,
         created_at, updated_at, deleted_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.tenant_id,
+        row.subject_id,
+        row.account_id,
+        row.contact_type,
+        row.purpose,
+        row.normalized_hash,
+        row.value_storage_ref,
+        row.display_label,
+        row.is_primary,
+        row.verification_state,
+        row.lifecycle_state,
+        row.created_at,
+        row.updated_at,
+        row.deleted_at,
+      ]
+    );
+    return row;
+  }
+
+  async upsertContactPoint(input: CreateContactPointInput): Promise<ContactPointRow> {
+    const id = input.id ?? generateId();
+    const now = getCurrentTimestamp();
+    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
+    const row: ContactPointRow = {
+      id,
+      tenant_id: tenantId,
+      subject_id: input.subject_id ?? null,
+      account_id: input.account_id ?? null,
+      contact_type: input.contact_type,
+      purpose: input.purpose ?? 'primary',
+      normalized_hash: input.normalized_hash,
+      value_storage_ref: input.value_storage_ref,
+      display_label: input.display_label ?? null,
+      is_primary: input.is_primary ? 1 : 0,
+      verification_state: input.verification_state ?? 'unverified',
+      lifecycle_state: input.lifecycle_state ?? 'active',
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO contact_points (
+        id, tenant_id, subject_id, account_id, contact_type, purpose, normalized_hash,
+        value_storage_ref, display_label, is_primary, verification_state, lifecycle_state,
+        created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        subject_id = excluded.subject_id,
+        account_id = excluded.account_id,
+        contact_type = excluded.contact_type,
+        purpose = excluded.purpose,
+        normalized_hash = excluded.normalized_hash,
+        value_storage_ref = excluded.value_storage_ref,
+        display_label = excluded.display_label,
+        is_primary = excluded.is_primary,
+        verification_state = excluded.verification_state,
+        lifecycle_state = excluded.lifecycle_state,
+        updated_at = excluded.updated_at,
+        deleted_at = excluded.deleted_at`,
       [
         row.id,
         row.tenant_id,

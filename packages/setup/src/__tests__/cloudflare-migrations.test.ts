@@ -35,6 +35,7 @@ function readSqlite(sqlite3Path: string, dbPath: string, sql: string): string {
 }
 
 const rootMigrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
+const docsTestingDir = fileURLToPath(new URL('../../../../docs/testing', import.meta.url));
 const coreMigrationExclusions = new Set(['admin', 'archive', 'external', 'pii']);
 const sqliteMigrationApplyTimeoutMs = 20_000;
 
@@ -62,6 +63,10 @@ function activeD1MigrationFiles(): string[] {
 
 function readMigration(relativePath: string): string {
   return readFileSync(join(rootMigrationsDir, relativePath), 'utf-8');
+}
+
+function readTestingDoc(relativePath: string): string {
+  return readFileSync(join(docsTestingDir, relativePath), 'utf-8');
 }
 
 function readMigrations(relativePaths: string[]): string {
@@ -327,6 +332,22 @@ ${insertOAuthClientSql('tenant-b', 'shared-mobile', 'Tenant B Mobile')}
             "SELECT COUNT(*) FROM oauth_clients WHERE client_id = 'shared-mobile';"
           )
         ).toBe('2');
+        for (const tableName of [
+          'subject_account_links',
+          'profiles',
+          'profile_attribute_values',
+          'structured_attribute_values',
+          'contact_points',
+          'identity_bindings',
+        ]) {
+          expect(
+            readSqlite(
+              sqlite3Path,
+              dbPath,
+              `SELECT COUNT(*) FROM pragma_table_info('${tableName}') WHERE name = 'deleted_at';`
+            )
+          ).toBe('1');
+        }
 
         expect(() =>
           runSqlite(
@@ -562,6 +583,29 @@ INSERT INTO tenants (
     expect(migrationIds.has('UIM-SCH-085')).toBe(false);
     expect(migrationIds.has('UIM-SCH-086')).toBe(false);
     expect(migrationIds.has('UIM-SCH-087')).toBe(false);
+  });
+
+  it('keeps PR6 canonical runtime cutover items closed in the readiness snapshot', () => {
+    const readinessSnapshot = readTestingDoc('unified-identity-mapping-cutover-hardening.md');
+    const requiredClosedIds = [
+      'UIM-SCH-001',
+      'UIM-SCH-002',
+      'UIM-SCH-003',
+      'UIM-SCH-004',
+      'UIM-SCH-005',
+      'UIM-SCH-006',
+      'UIM-SCH-007',
+      'UIM-SCH-032A',
+    ];
+
+    for (const id of requiredClosedIds) {
+      const row = readinessSnapshot
+        .split('\n')
+        .find((line) => new RegExp(`^\\|\\s+${id}\\s+\\|`).test(line));
+      expect(row, `${id} is listed in PR6 readiness snapshot`).toBeDefined();
+      expect(row, `${id} has PR6 cutover hardening evidence`).toContain('PR6 hardening');
+      expect(row, `${id} is tested before PR6 exits`).toContain('| tested |');
+    }
   });
 });
 

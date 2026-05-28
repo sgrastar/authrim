@@ -141,23 +141,95 @@ describe('CanonicalRuntimeUserWriter', () => {
       active: true,
       emailVerified: true,
       displayName: 'Example Person',
-      piiFields: { email: true },
+      piiFields: { email: true, phone_number: true },
+      inlineProfileFields: {
+        'field.custom.employee_number': 'E-001',
+      },
+      addressJson: JSON.stringify({ formatted: 'old address', country: 'JP' }),
+      customAttributesJson: JSON.stringify({ department: 'Engineering' }),
     });
 
     const result = await writer.syncFromRuntimeUser({
       userId: 'user-1',
       tenantId: 'tenant-a',
       active: false,
-      displayName: 'Example Person',
-      piiFields: { email: true },
+      emailVerified: false,
+      phoneNumberVerified: true,
+      displayName: 'Updated Person',
+      locale: 'en-US',
+      zoneinfo: 'America/Los_Angeles',
+      piiFields: { email: true, phone_number: true },
+      inlineProfileFields: {
+        'field.custom.employee_number': 'E-002',
+      },
+      addressJson: JSON.stringify({ formatted: 'new address', country: 'US' }),
+      customAttributesJson: JSON.stringify({ department: 'Product' }),
     });
 
-    expect(result).toMatchObject({ created: false });
+    expect(result).toMatchObject({
+      created: false,
+      profileAttributeCount: 2,
+      contactPointCount: 2,
+    });
     expect(adapter.getById('identity_accounts', 'account:user-1')).toMatchObject({
       lifecycle_state: 'deprovisioned',
+      display_label: 'Updated Person',
     });
     expect(adapter.getById('identity_subjects', 'subject:user-1')).toMatchObject({
       lifecycle_state: 'deprovisioned',
+      display_label: 'Updated Person',
+    });
+    expect(adapter.getById('profiles', 'profile:user-1')).toMatchObject({
+      lifecycle_state: 'deprovisioned',
+      locale: 'en-US',
+      zoneinfo: 'America/Los_Angeles',
+    });
+    expect(adapter.getById('contact_points', 'contact:user-1:email')).toMatchObject({
+      verification_state: 'unverified',
+    });
+    expect(adapter.getById('contact_points', 'contact:user-1:phone')).toMatchObject({
+      verification_state: 'verified',
+    });
+    expect(
+      adapter.getById(
+        'profile_attribute_values',
+        'profile-attribute:user-1:field.custom.employee_number'
+      )
+    ).toMatchObject({
+      value_json: JSON.stringify('E-002'),
+    });
+    expect(
+      adapter.getById('profile_attribute_values', 'profile-attribute:user-1:custom_attributes')
+    ).toMatchObject({
+      value_json: JSON.stringify({ department: 'Product' }),
+    });
+    expect(
+      adapter.getById('structured_attribute_values', 'structured-attribute:user-1:address')
+    ).toMatchObject({
+      canonical_json: JSON.stringify({ formatted: 'new address', country: 'US' }),
+    });
+
+    await writer.syncFromRuntimeUser({
+      userId: 'user-1',
+      tenantId: 'tenant-a',
+      active: true,
+      emailVerified: true,
+      phoneNumberVerified: false,
+      displayName: 'Updated Person',
+      piiFields: { email: true, phone_number: true },
+      addressJson: null,
+      customAttributesJson: null,
+    });
+
+    expect(
+      adapter.getById('profile_attribute_values', 'profile-attribute:user-1:custom_attributes')
+    ).toMatchObject({
+      lifecycle_state: 'deleted',
+    });
+    expect(
+      adapter.getById('structured_attribute_values', 'structured-attribute:user-1:address')
+    ).toMatchObject({
+      lifecycle_state: 'deleted',
     });
   });
 
