@@ -182,7 +182,7 @@ export interface ContactVerificationRow {
 export interface IdentityBindingRow {
   id: string;
   tenant_id: string;
-  subject_id: string | null;
+  subject_id: string;
   account_id: string | null;
   protocol: string;
   source_id: string;
@@ -244,6 +244,46 @@ export interface AssuranceEvidenceRow {
   expires_at: number | null;
   revoked_at: number | null;
   metadata_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ValueProvenanceRow {
+  id: string;
+  tenant_id: string;
+  owner_table: string;
+  owner_id: string;
+  source_id: string;
+  source_record_id: string | null;
+  source_field_ref: string | null;
+  source_authority_contract_id: string | null;
+  observed_at: number;
+  confidence_score: number | null;
+  provenance_json: string | null;
+  created_at: number;
+}
+
+export interface ContactPointSearchIndexRow {
+  id: string;
+  tenant_id: string;
+  contact_point_id: string;
+  index_kind: string;
+  index_value: string;
+  index_version: number;
+  classification: AttributeClassification;
+  status: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface IdentityBindingLookupIndexRow {
+  id: string;
+  tenant_id: string;
+  identity_binding_id: string;
+  lookup_kind: string;
+  lookup_value: string;
+  lookup_version: number;
+  status: string;
   created_at: number;
   updated_at: number;
 }
@@ -351,7 +391,7 @@ export interface CreateContactVerificationInput {
 export interface CreateIdentityBindingInput {
   id?: string;
   tenant_id?: string;
-  subject_id?: string | null;
+  subject_id: string;
   account_id?: string | null;
   protocol: string;
   source_id: string;
@@ -407,6 +447,41 @@ export interface CreateAssuranceEvidenceInput {
   expires_at?: number | null;
   revoked_at?: number | null;
   metadata?: JsonObject | null;
+}
+
+export interface CreateValueProvenanceInput {
+  id?: string;
+  tenant_id?: string;
+  owner_table: string;
+  owner_id: string;
+  source_id: string;
+  source_record_id?: string | null;
+  source_field_ref?: string | null;
+  source_authority_contract_id?: string | null;
+  observed_at?: number;
+  confidence_score?: number | null;
+  provenance?: JsonObject | null;
+}
+
+export interface CreateContactPointSearchIndexInput {
+  id?: string;
+  tenant_id?: string;
+  contact_point_id: string;
+  index_kind: string;
+  index_value: string;
+  index_version?: number;
+  classification?: AttributeClassification;
+  status?: string;
+}
+
+export interface CreateIdentityBindingLookupIndexInput {
+  id?: string;
+  tenant_id?: string;
+  identity_binding_id: string;
+  lookup_kind: string;
+  lookup_value: string;
+  lookup_version?: number;
+  status?: string;
 }
 
 export interface CreateCanonicalIdentityGraphInput {
@@ -1356,6 +1431,127 @@ export class CanonicalIdentityRepository {
         row.expires_at,
         row.revoked_at,
         row.metadata_json,
+        row.created_at,
+        row.updated_at,
+      ]
+    );
+    return row;
+  }
+
+  async recordValueProvenance(input: CreateValueProvenanceInput): Promise<ValueProvenanceRow> {
+    const id = input.id ?? generateId();
+    const now = getCurrentTimestamp();
+    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
+    const row: ValueProvenanceRow = {
+      id,
+      tenant_id: tenantId,
+      owner_table: input.owner_table,
+      owner_id: input.owner_id,
+      source_id: input.source_id,
+      source_record_id: input.source_record_id ?? null,
+      source_field_ref: input.source_field_ref ?? null,
+      source_authority_contract_id: input.source_authority_contract_id ?? null,
+      observed_at: input.observed_at ?? now,
+      confidence_score: input.confidence_score ?? null,
+      provenance_json: encodeJson(input.provenance),
+      created_at: now,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO value_provenance (
+        id, tenant_id, owner_table, owner_id, source_id, source_record_id,
+        source_field_ref, source_authority_contract_id, observed_at, confidence_score,
+        provenance_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.tenant_id,
+        row.owner_table,
+        row.owner_id,
+        row.source_id,
+        row.source_record_id,
+        row.source_field_ref,
+        row.source_authority_contract_id,
+        row.observed_at,
+        row.confidence_score,
+        row.provenance_json,
+        row.created_at,
+      ]
+    );
+    return row;
+  }
+
+  async createContactPointSearchIndex(
+    input: CreateContactPointSearchIndexInput
+  ): Promise<ContactPointSearchIndexRow> {
+    const id = input.id ?? generateId();
+    const now = getCurrentTimestamp();
+    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
+    const row: ContactPointSearchIndexRow = {
+      id,
+      tenant_id: tenantId,
+      contact_point_id: input.contact_point_id,
+      index_kind: input.index_kind,
+      index_value: input.index_value,
+      index_version: input.index_version ?? 1,
+      classification: input.classification ?? 'internal',
+      status: input.status ?? 'active',
+      created_at: now,
+      updated_at: now,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO contact_point_search_indexes (
+        id, tenant_id, contact_point_id, index_kind, index_value, index_version,
+        classification, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.tenant_id,
+        row.contact_point_id,
+        row.index_kind,
+        row.index_value,
+        row.index_version,
+        row.classification,
+        row.status,
+        row.created_at,
+        row.updated_at,
+      ]
+    );
+    return row;
+  }
+
+  async createIdentityBindingLookupIndex(
+    input: CreateIdentityBindingLookupIndexInput
+  ): Promise<IdentityBindingLookupIndexRow> {
+    const id = input.id ?? generateId();
+    const now = getCurrentTimestamp();
+    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
+    const row: IdentityBindingLookupIndexRow = {
+      id,
+      tenant_id: tenantId,
+      identity_binding_id: input.identity_binding_id,
+      lookup_kind: input.lookup_kind,
+      lookup_value: input.lookup_value,
+      lookup_version: input.lookup_version ?? 1,
+      status: input.status ?? 'active',
+      created_at: now,
+      updated_at: now,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO identity_binding_lookup_indexes (
+        id, tenant_id, identity_binding_id, lookup_kind, lookup_value, lookup_version,
+        status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.tenant_id,
+        row.identity_binding_id,
+        row.lookup_kind,
+        row.lookup_value,
+        row.lookup_version,
+        row.status,
         row.created_at,
         row.updated_at,
       ]

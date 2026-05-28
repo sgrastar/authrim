@@ -194,6 +194,8 @@ export * from './services/object-artifact-crypto';
 export * from './services/object-artifact-store';
 export * from './services/object-catalog';
 export * from './services/sensitive-detail-chunk-store';
+export * from './services/identity-identifier-bridge';
+export * from './services/identity-resolution';
 export * from './services/logging-runtime-policy';
 export * from './services/logging-runtime-emitter';
 export * from './services/pii-compensation-policy';

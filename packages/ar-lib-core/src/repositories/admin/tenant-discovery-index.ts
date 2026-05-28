@@ -20,6 +20,8 @@ export interface TenantDiscoveryIndexRow {
   indexed_at: string;
   status: TenantDiscoveryIndexStatus;
   metadata_json: string | null;
+  mapping_snapshot_id: string | null;
+  source_projection_version: string | null;
 }
 
 export interface TenantDiscoveryIndexInput {
@@ -33,6 +35,8 @@ export interface TenantDiscoveryIndexInput {
   indexed_at?: string;
   status?: TenantDiscoveryIndexStatus;
   metadata_json?: string | null;
+  mapping_snapshot_id?: string | null;
+  source_projection_version?: string | null;
 }
 
 export type TenantDiscoverySelectionPolicy = LoginEntrySettings['login-entry.selection_policy'];
@@ -81,15 +85,18 @@ export class TenantDiscoveryIndexRepository {
     await this.adapter.execute(
       `INSERT INTO tenant_discovery_indexes (
         tenant_id, subject_id, index_kind, index_value, index_version, key_version,
-        source_updated_at, indexed_at, status, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_updated_at, indexed_at, status, metadata_json, mapping_snapshot_id,
+        source_projection_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (
         index_kind, index_value, tenant_id, subject_id, index_version, key_version
       ) DO UPDATE SET
         source_updated_at = excluded.source_updated_at,
         indexed_at = excluded.indexed_at,
         status = excluded.status,
-        metadata_json = excluded.metadata_json`,
+        metadata_json = excluded.metadata_json,
+        mapping_snapshot_id = excluded.mapping_snapshot_id,
+        source_projection_version = excluded.source_projection_version`,
       [
         input.tenant_id,
         input.subject_id,
@@ -101,6 +108,8 @@ export class TenantDiscoveryIndexRepository {
         normalizeIndexedAt(input.indexed_at),
         input.status ?? 'active',
         input.metadata_json ?? null,
+        input.mapping_snapshot_id ?? null,
+        input.source_projection_version ?? null,
       ]
     );
   }
@@ -131,7 +140,8 @@ export class TenantDiscoveryIndexRepository {
 
     return this.adapter.query<TenantDiscoveryIndexRow>(
       `SELECT tenant_id, subject_id, index_kind, index_value, index_version, key_version,
-              source_updated_at, indexed_at, status, metadata_json
+              source_updated_at, indexed_at, status, metadata_json, mapping_snapshot_id,
+              source_projection_version
          FROM tenant_discovery_indexes
         WHERE index_kind = ?
           AND index_value IN (${createPlaceholders(indexValues.length)})
