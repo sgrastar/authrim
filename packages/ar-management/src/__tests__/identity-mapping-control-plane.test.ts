@@ -1092,6 +1092,374 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
   });
 });
 
+describe('IdentityMappingControlPlaneRepository federation trust and key lifecycle operations', () => {
+  it('creates key registries with external material references only', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createKeyRegistry('tenant_a', {
+        keyPurpose: 'blind_index',
+        scope: { table: 'contact_points', field: 'normalized_hash' },
+        algorithm: 'hmac-sha256',
+        backendType: 'wrangler_secret',
+        materialRef: 'wrangler-secret:CONTACT_BLIND_INDEX_KEY_V1',
+        materialMetadata: { rotationWindowDays: 30 },
+        actorId: 'admin-1',
+      })
+    ).resolves.toMatchObject({
+      tenantId: 'tenant_a',
+      keyPurpose: 'blind_index',
+      status: 'active',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO key_registries'),
+      expect.stringContaining('INSERT INTO key_versions'),
+      expect.stringContaining('INSERT INTO key_material_refs'),
+      expect.stringContaining('INSERT INTO key_access_events'),
+    ]);
+    expect(adapter.executes[2].params[4]).toBe('wrangler-secret:CONTACT_BLIND_INDEX_KEY_V1');
+  });
+
+  it('lists key registry metadata without material references', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'key-registry-1',
+          key_purpose: 'blind_index',
+          scope_json: JSON.stringify({ table: 'contact_points' }),
+          active_version_id: 'key-version-1',
+          status: 'active',
+          created_at: 1000,
+          updated_at: 1100,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(repository.listKeyRegistries('tenant_a')).resolves.toEqual([
+      {
+        id: 'key-registry-1',
+        tenantId: 'tenant_a',
+        keyPurpose: 'blind_index',
+        scope: { table: 'contact_points' },
+        activeVersionId: 'key-version-1',
+        status: 'active',
+        createdAt: 1000,
+        updatedAt: 1100,
+      },
+    ]);
+  });
+
+  it('rejects inline private key material for key lifecycle references', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createKeyRegistry('tenant_a', {
+        keyPurpose: 'signing',
+        scope: { surface: 'saml' },
+        algorithm: 'rsa-pss-sha256',
+        backendType: 'inline',
+        materialRef: '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----',
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rotates key registries and queues resumable rewrap and blind-index jobs', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ active_version_id: 'key-version-1' }, { version: 1 }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.rotateKeyRegistry('tenant_a', 'key-registry-1', {
+        algorithm: 'hmac-sha256',
+        backendType: 'wrangler_secret',
+        materialRef: 'wrangler-secret:CONTACT_BLIND_INDEX_KEY_V2',
+        jobMode: 'both',
+        artifactScope: { tables: ['contact_points', 'identity_binding_lookup_indexes'] },
+        actorId: 'admin-1',
+      })
+    ).resolves.toMatchObject({
+      keyRegistryId: 'key-registry-1',
+      version: 2,
+      jobs: [{ type: 'rewrap' }, { type: 'blind_index_rotation' }],
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO key_versions'),
+      expect.stringContaining('INSERT INTO key_material_refs'),
+      expect.stringContaining('UPDATE key_versions'),
+      expect.stringContaining('UPDATE key_registries'),
+      expect.stringContaining('INSERT INTO rewrap_jobs'),
+      expect.stringContaining('INSERT INTO blind_index_rotation_jobs'),
+      expect.stringContaining('INSERT INTO key_access_events'),
+    ]);
+    expect(String(adapter.executes[5].params[6])).toContain('dual_read');
+  });
+
+  it('creates normalized SAML federation trust sources with anchors and scope bindings', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'edugain-pilot',
+        displayName: 'eduGAIN pilot',
+        lifecycleState: 'active',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
+          policy: 'strict',
+        },
+        anchors: [
+          {
+            anchorType: 'x509_sha256',
+            anchorHash: 'sha256:abc',
+            anchorRef: 'cert-1',
+          },
+        ],
+        scopeBindings: [{ scopeType: 'tenant', scopeId: 'tenant_a' }],
+      })
+    ).resolves.toMatchObject({
+      tenantId: 'tenant_a',
+      sourceType: 'saml_aggregate',
+      sourceKey: 'edugain-pilot',
+      lifecycleState: 'active',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO federation_trust_sources'),
+      expect.stringContaining('INSERT INTO federation_trust_anchors'),
+      expect.stringContaining('INSERT INTO federation_trust_scope_bindings'),
+      expect.stringContaining('INSERT INTO federation_trust_context_snapshots'),
+    ]);
+    expect(String(adapter.executes[3].params[4])).toContain('sourceKey');
+  });
+
+  it('rejects unsupported federation trust source lifecycle states', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'edugain-pilot',
+        displayName: 'eduGAIN pilot',
+        lifecycleState: 'deleted' as never,
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('lists normalized federation trust source metadata for Admin UI migration', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'trust-source-1',
+          source_type: 'saml_aggregate',
+          source_key: 'legacy-saml-profile:profile-1',
+          display_name: 'Legacy Federation',
+          lifecycle_state: 'active',
+          protocol_payload_json: JSON.stringify({ policy: 'strict' }),
+          created_at: 1000,
+          updated_at: 1100,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(repository.listFederationTrustSources('tenant_a')).resolves.toEqual([
+      {
+        id: 'trust-source-1',
+        tenantId: 'tenant_a',
+        sourceType: 'saml_aggregate',
+        sourceKey: 'legacy-saml-profile:profile-1',
+        displayName: 'Legacy Federation',
+        lifecycleState: 'active',
+        protocolPayload: { policy: 'strict' },
+        createdAt: 1000,
+        updatedAt: 1100,
+      },
+    ]);
+  });
+
+  it('registers federation metadata documents with validation and entity summaries', async () => {
+    const adapter = createAdapter({ queryOneRows: [{ id: 'trust-source-1' }] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.registerFederationMetadataDocument('tenant_a', {
+        trustSourceId: 'trust-source-1',
+        documentType: 'saml_aggregate',
+        sourceUrl: 'https://metadata.example.test/aggregate.xml',
+        documentHash: 'sha256:metadata',
+        documentRef: 'r2://metadata/aggregate.xml',
+        validationState: 'valid',
+        entitySummaries: [
+          {
+            entityId: 'https://sp.example.test/sp',
+            entityRole: 'sp',
+            displayName: 'Example SP',
+            summary: { requestedAttributes: ['mail'] },
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      trustSourceId: 'trust-source-1',
+      validationState: 'valid',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO federation_metadata_documents'),
+      expect.stringContaining('INSERT INTO federation_metadata_validation_events'),
+      expect.stringContaining('INSERT INTO federation_metadata_entity_summaries'),
+    ]);
+    expect(String(adapter.executes[2].params[6])).toContain('requestedAttributes');
+  });
+
+  it('rejects federation metadata documents for unknown trust sources', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.registerFederationMetadataDocument('tenant_a', {
+        trustSourceId: 'missing-source',
+        documentType: 'saml_aggregate',
+        documentHash: 'sha256:metadata',
+      })
+    ).rejects.toMatchObject({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('records key access only for existing tenant-scoped registries and versions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'key-registry-1' }, { id: 'key-version-1' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.recordKeyAccess('tenant_a', 'key-registry-1', {
+        keyVersionId: 'key-version-1',
+        accessType: 'material.sign',
+        outcome: 'success',
+        actorId: 'admin-1',
+      })
+    ).resolves.toEqual({ keyRegistryId: 'key-registry-1', recorded: true });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO key_access_events'),
+    ]);
+  });
+
+  it('rejects unsupported key access event values before writing audit rows', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.recordKeyAccess('tenant_a', 'key-registry-1', {
+        accessType: 'arbitrary.event',
+        outcome: 'success',
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('migrates legacy SAML federation trust profiles into normalized trust context', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'legacy-profile-1',
+          tenant_id: 'tenant_a',
+          name: 'Legacy Federation',
+          description: 'legacy trust profile',
+          metadata_url_patterns_json: JSON.stringify(['https://metadata.example.test/*.xml']),
+          certificates_json: JSON.stringify([
+            {
+              id: 'cert-1',
+              name: 'Signing CA',
+              certificate: '-----BEGIN CERTIFICATE-----public-----END CERTIFICATE-----',
+              fingerprintSha256: 'sha256:cert-1',
+              createdAt: 900,
+            },
+          ]),
+          policy: 'strict',
+          enabled: 1,
+          federation_trust_source_id: null,
+          normalized_migration_state: 'pending',
+          created_at: 900,
+          updated_at: 900,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.migrateSamlFederationTrustProfile('tenant_a', {
+        profileId: 'legacy-profile-1',
+      })
+    ).resolves.toMatchObject({
+      profileId: 'legacy-profile-1',
+      migrationState: 'migrated',
+      snapshotHash: expect.any(String),
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO federation_trust_sources'),
+      expect.stringContaining('INSERT INTO federation_trust_anchors'),
+      expect.stringContaining('INSERT INTO federation_trust_context_snapshots'),
+      expect.stringContaining('INSERT INTO federation_trust_scope_bindings'),
+      expect.stringContaining('UPDATE saml_federation_trust_profiles'),
+      expect.stringContaining('INSERT INTO federation_metadata_validation_events'),
+    ]);
+    expect(adapter.executes[1].params[4]).toBe('sha256:cert-1');
+    expect(String(adapter.executes[2].params[4])).toContain('legacyProfileId');
+  });
+
+  it('returns migrated legacy SAML trust profile migrations idempotently', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'legacy-profile-1',
+          tenant_id: 'tenant_a',
+          name: 'Legacy Federation',
+          description: null,
+          metadata_url_patterns_json: '[]',
+          certificates_json: '[]',
+          policy: 'warn',
+          enabled: 1,
+          federation_trust_source_id: 'trust-source-1',
+          normalized_migration_state: 'migrated',
+          created_at: 900,
+          updated_at: 900,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.migrateSamlFederationTrustProfile('tenant_a', {
+        profileId: 'legacy-profile-1',
+      })
+    ).resolves.toMatchObject({
+      profileId: 'legacy-profile-1',
+      trustSourceId: 'trust-source-1',
+      migrationState: 'migrated',
+      idempotent: true,
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+});
+
 describe('IdentityMappingControlPlaneRepository schema and template catalogs', () => {
   it('stores protocol schemas, external schemas, and mapping templates', async () => {
     const adapter = createAdapter({});

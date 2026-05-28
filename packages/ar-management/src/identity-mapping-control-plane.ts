@@ -411,6 +411,74 @@ interface RecordLifecycleSignalRequest {
   ownership?: ProvisioningAssignmentOwnershipContext | null;
 }
 
+interface CreateKeyRegistryRequest {
+  keyPurpose: string;
+  scope: Record<string, unknown>;
+  algorithm: string;
+  backendType: string;
+  materialRef: string;
+  materialMetadata?: Record<string, unknown>;
+  actorId?: string;
+}
+
+interface RotateKeyRegistryRequest {
+  algorithm: string;
+  backendType: string;
+  materialRef: string;
+  materialMetadata?: Record<string, unknown>;
+  actorId?: string;
+  jobMode?: 'rewrap' | 'blind_index' | 'both' | 'none';
+  artifactScope?: Record<string, unknown>;
+}
+
+interface RecordKeyAccessRequest {
+  keyVersionId?: string | null;
+  actorId?: string | null;
+  accessType: string;
+  outcome: string;
+}
+
+interface CreateFederationTrustSourceRequest {
+  sourceType: 'saml_aggregate' | 'saml_metadata' | 'saml_federation';
+  sourceKey: string;
+  displayName: string;
+  lifecycleState?: 'draft' | 'active' | 'retired';
+  protocolPayload?: Record<string, unknown>;
+  anchors?: Array<{
+    anchorType: string;
+    anchorHash: string;
+    anchorRef?: string | null;
+    notBefore?: number | null;
+    notAfter?: number | null;
+  }>;
+  scopeBindings?: Array<{
+    scopeType: string;
+    scopeId?: string | null;
+    priority?: number;
+  }>;
+}
+
+interface RegisterFederationMetadataDocumentRequest {
+  trustSourceId: string;
+  documentType: string;
+  sourceUrl?: string | null;
+  documentHash: string;
+  documentRef?: string | null;
+  validationState?: 'pending' | 'valid' | 'invalid' | 'warning';
+  entitySummaries?: Array<{
+    entityId: string;
+    entityRole: string;
+    displayName?: string | null;
+    summary?: Record<string, unknown>;
+  }>;
+}
+
+interface MigrateSamlFederationTrustProfileRequest {
+  profileId: string;
+  sourceKey?: string;
+  activate?: boolean;
+}
+
 const REVIEW_TASK_STATUSES = new Set([
   'open',
   'in_review',
@@ -437,6 +505,26 @@ const LIFECYCLE_SIGNAL_TYPES = new Set([
   'csv_diff_removed',
   'claim_disappeared',
 ]);
+const KEY_JOB_MODES = new Set(['rewrap', 'blind_index', 'both', 'none']);
+const FEDERATION_TRUST_SOURCE_TYPES = new Set([
+  'saml_aggregate',
+  'saml_metadata',
+  'saml_federation',
+]);
+const FEDERATION_TRUST_LIFECYCLE_STATES = new Set(['draft', 'active', 'retired']);
+const FEDERATION_METADATA_VALIDATION_STATES = new Set(['pending', 'valid', 'invalid', 'warning']);
+const KEY_ACCESS_TYPES = new Set([
+  'registry.create',
+  'registry.rotate',
+  'material.ref.read',
+  'material.unwrap',
+  'material.sign',
+  'material.verify',
+  'blind_index.derive',
+  'rewrap.read',
+  'debug_metadata.read',
+]);
+const KEY_ACCESS_OUTCOMES = new Set(['success', 'denied', 'failed']);
 
 interface RepositoryResult<T> {
   result: T;
@@ -2262,6 +2350,736 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  async createKeyRegistry(tenantId: string, input: CreateKeyRegistryRequest) {
+    validateRequiredString(input.keyPurpose, 'keyPurpose');
+    validateRequiredString(input.algorithm, 'algorithm');
+    validateRequiredString(input.backendType, 'backendType');
+    validateRequiredString(input.materialRef, 'materialRef');
+    if (!isRecord(input.scope)) {
+      throw badRequest('scope must be an object');
+    }
+    if (input.materialMetadata) {
+      assertNoSensitiveMetadata(input.materialMetadata, 'materialMetadata');
+    }
+    assertSafeMaterialBackend(input.backendType);
+    assertSafeMaterialRef(input.materialRef);
+
+    const now = this.now();
+    const registryId = createId('key_registry');
+    const versionId = createId('key_version');
+    const materialRefId = createId('key_material_ref');
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO key_registries (
+          id, tenant_id, key_purpose, scope_json, active_version_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          registryId,
+          tenantId,
+          input.keyPurpose,
+          stableJson(input.scope),
+          versionId,
+          'active',
+          now,
+          now,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO key_versions (
+          id, tenant_id, key_registry_id, version, status, algorithm,
+          created_at, activated_at, retired_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [versionId, tenantId, registryId, 1, 'active', input.algorithm, now, now, null]
+      );
+      await tx.execute(
+        `INSERT INTO key_material_refs (
+          id, tenant_id, key_version_id, backend_type, material_ref, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          materialRefId,
+          tenantId,
+          versionId,
+          input.backendType,
+          input.materialRef,
+          input.materialMetadata ? stableJson(input.materialMetadata) : null,
+          now,
+        ]
+      );
+      await this.recordKeyAccessEvent(
+        tenantId,
+        registryId,
+        {
+          keyVersionId: versionId,
+          actorId: input.actorId ?? null,
+          accessType: 'registry.create',
+          outcome: 'success',
+        },
+        tx
+      );
+    });
+    return {
+      id: registryId,
+      tenantId,
+      activeVersionId: versionId,
+      keyPurpose: input.keyPurpose,
+      status: 'active',
+    };
+  }
+
+  async listKeyRegistries(tenantId: string) {
+    const rows = await this.adapter.query<{
+      id: string;
+      key_purpose: string;
+      scope_json: string;
+      active_version_id: string | null;
+      status: string;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT id, key_purpose, scope_json, active_version_id, status, created_at, updated_at
+         FROM key_registries
+        WHERE tenant_id = ?
+        ORDER BY updated_at DESC`,
+      [tenantId]
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId,
+      keyPurpose: row.key_purpose,
+      scope: parseJsonObject(row.scope_json, {}),
+      activeVersionId: row.active_version_id,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async rotateKeyRegistry(
+    tenantId: string,
+    keyRegistryId: string,
+    input: RotateKeyRegistryRequest
+  ) {
+    validateRequiredString(keyRegistryId, 'keyRegistryId');
+    validateRequiredString(input.algorithm, 'algorithm');
+    validateRequiredString(input.backendType, 'backendType');
+    validateRequiredString(input.materialRef, 'materialRef');
+    if (input.materialMetadata) {
+      assertNoSensitiveMetadata(input.materialMetadata, 'materialMetadata');
+    }
+    assertSafeMaterialBackend(input.backendType);
+    assertSafeMaterialRef(input.materialRef);
+    const jobMode = input.jobMode ?? 'rewrap';
+    if (!KEY_JOB_MODES.has(jobMode)) {
+      throw badRequest('jobMode is not supported');
+    }
+    const registry = await this.adapter.queryOne<{ active_version_id: string | null }>(
+      `SELECT active_version_id
+         FROM key_registries
+        WHERE tenant_id = ? AND id = ? AND status = ?`,
+      [tenantId, keyRegistryId, 'active']
+    );
+    if (!registry) {
+      throw notFound('key registry not found');
+    }
+    const latest = await this.adapter.queryOne<{ version: number }>(
+      `SELECT version
+         FROM key_versions
+        WHERE tenant_id = ? AND key_registry_id = ?
+        ORDER BY version DESC
+        LIMIT 1`,
+      [tenantId, keyRegistryId]
+    );
+    const now = this.now();
+    const nextVersion = (latest?.version ?? 0) + 1;
+    const versionId = createId('key_version');
+    const materialRefId = createId('key_material_ref');
+    const jobs: Array<{ id: string; type: 'rewrap' | 'blind_index_rotation' }> = [];
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO key_versions (
+          id, tenant_id, key_registry_id, version, status, algorithm,
+          created_at, activated_at, retired_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [versionId, tenantId, keyRegistryId, nextVersion, 'active', input.algorithm, now, now, null]
+      );
+      await tx.execute(
+        `INSERT INTO key_material_refs (
+          id, tenant_id, key_version_id, backend_type, material_ref, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          materialRefId,
+          tenantId,
+          versionId,
+          input.backendType,
+          input.materialRef,
+          input.materialMetadata ? stableJson(input.materialMetadata) : null,
+          now,
+        ]
+      );
+      if (registry.active_version_id) {
+        await tx.execute(
+          `UPDATE key_versions
+              SET status = ?, retired_at = ?
+            WHERE tenant_id = ? AND id = ?`,
+          ['retiring', now, tenantId, registry.active_version_id]
+        );
+      }
+      await tx.execute(
+        `UPDATE key_registries
+            SET active_version_id = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [versionId, now, tenantId, keyRegistryId]
+      );
+      if (jobMode === 'rewrap' || jobMode === 'both') {
+        const jobId = createId('rewrap_job');
+        jobs.push({ id: jobId, type: 'rewrap' });
+        await tx.execute(
+          `INSERT INTO rewrap_jobs (
+            id, tenant_id, key_registry_id, source_version_id, target_version_id,
+            artifact_scope_json, status, cursor_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            jobId,
+            tenantId,
+            keyRegistryId,
+            registry.active_version_id ?? null,
+            versionId,
+            stableJson(input.artifactScope ?? { scope: 'registry', keyRegistryId }),
+            'queued',
+            stableJson({ offset: 0 }),
+            now,
+            now,
+          ]
+        );
+      }
+      if (jobMode === 'blind_index' || jobMode === 'both') {
+        const jobId = createId('blind_index_rotation_job');
+        jobs.push({ id: jobId, type: 'blind_index_rotation' });
+        await tx.execute(
+          `INSERT INTO blind_index_rotation_jobs (
+            id, tenant_id, key_registry_id, source_version_id, target_version_id,
+            status, cursor_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            jobId,
+            tenantId,
+            keyRegistryId,
+            registry.active_version_id ?? null,
+            versionId,
+            'queued',
+            stableJson({ phase: 'dual_read', offset: 0 }),
+            now,
+            now,
+          ]
+        );
+      }
+      await this.recordKeyAccessEvent(
+        tenantId,
+        keyRegistryId,
+        {
+          keyVersionId: versionId,
+          actorId: input.actorId ?? null,
+          accessType: 'registry.rotate',
+          outcome: 'success',
+        },
+        tx
+      );
+    });
+    return {
+      keyRegistryId,
+      activeVersionId: versionId,
+      version: nextVersion,
+      jobs,
+    };
+  }
+
+  async recordKeyAccess(tenantId: string, keyRegistryId: string, input: RecordKeyAccessRequest) {
+    validateRequiredString(keyRegistryId, 'keyRegistryId');
+    validateRequiredString(input.accessType, 'accessType');
+    validateRequiredString(input.outcome, 'outcome');
+    if (!KEY_ACCESS_TYPES.has(input.accessType)) {
+      throw badRequest('accessType is not supported for key access events');
+    }
+    if (!KEY_ACCESS_OUTCOMES.has(input.outcome)) {
+      throw badRequest('outcome is not supported for key access events');
+    }
+    await this.ensureKeyRegistry(tenantId, keyRegistryId);
+    if (input.keyVersionId) {
+      await this.ensureKeyVersion(tenantId, keyRegistryId, input.keyVersionId);
+    }
+    await this.recordKeyAccessEvent(tenantId, keyRegistryId, input);
+    return { keyRegistryId, recorded: true };
+  }
+
+  async createFederationTrustSource(tenantId: string, input: CreateFederationTrustSourceRequest) {
+    validateRequiredString(input.sourceType, 'sourceType');
+    validateRequiredString(input.sourceKey, 'sourceKey');
+    validateRequiredString(input.displayName, 'displayName');
+    if (!FEDERATION_TRUST_SOURCE_TYPES.has(input.sourceType)) {
+      throw badRequest('sourceType is not supported for federation trust');
+    }
+    const lifecycleState = input.lifecycleState ?? 'draft';
+    if (!FEDERATION_TRUST_LIFECYCLE_STATES.has(lifecycleState)) {
+      throw badRequest('lifecycleState is not supported for federation trust sources');
+    }
+    if (input.protocolPayload) {
+      assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
+    }
+    if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
+      throw badRequest('anchors must be an array');
+    }
+    if (input.scopeBindings !== undefined && !Array.isArray(input.scopeBindings)) {
+      throw badRequest('scopeBindings must be an array');
+    }
+    const now = this.now();
+    const sourceId = createId('federation_trust_source');
+    const trustContext = {
+      sourceType: input.sourceType,
+      sourceKey: input.sourceKey,
+      displayName: input.displayName,
+      protocolPayload: input.protocolPayload ?? null,
+      anchors: input.anchors ?? [],
+      scopeBindings: input.scopeBindings ?? [],
+    };
+    const snapshotHash = await hashStableJson(trustContext);
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO federation_trust_sources (
+          id, tenant_id, source_type, source_key, display_name, lifecycle_state,
+          protocol_payload_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          sourceId,
+          tenantId,
+          input.sourceType,
+          input.sourceKey,
+          input.displayName,
+          lifecycleState,
+          input.protocolPayload ? stableJson(input.protocolPayload) : null,
+          now,
+          now,
+        ]
+      );
+      for (const anchor of input.anchors ?? []) {
+        validateRequiredString(anchor.anchorType, 'anchor.anchorType');
+        validateRequiredString(anchor.anchorHash, 'anchor.anchorHash');
+        await tx.execute(
+          `INSERT INTO federation_trust_anchors (
+            id, tenant_id, trust_source_id, anchor_type, anchor_hash, anchor_ref,
+            not_before, not_after, lifecycle_state, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            createId('federation_trust_anchor'),
+            tenantId,
+            sourceId,
+            anchor.anchorType,
+            anchor.anchorHash,
+            anchor.anchorRef ?? null,
+            anchor.notBefore ?? null,
+            anchor.notAfter ?? null,
+            'active',
+            now,
+            now,
+          ]
+        );
+      }
+      for (const binding of input.scopeBindings ?? []) {
+        validateRequiredString(binding.scopeType, 'scopeBinding.scopeType');
+        await tx.execute(
+          `INSERT INTO federation_trust_scope_bindings (
+            id, tenant_id, trust_source_id, scope_type, scope_id, priority,
+            lifecycle_state, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            createId('federation_trust_scope_binding'),
+            tenantId,
+            sourceId,
+            binding.scopeType,
+            binding.scopeId ?? null,
+            binding.priority ?? 0,
+            'active',
+            now,
+            now,
+          ]
+        );
+      }
+      await tx.execute(
+        `INSERT INTO federation_trust_context_snapshots (
+          id, tenant_id, trust_source_id, snapshot_hash, trust_context_json,
+          lifecycle_state, created_at, activated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('federation_trust_context_snapshot'),
+          tenantId,
+          sourceId,
+          snapshotHash,
+          stableJson(trustContext),
+          lifecycleState === 'active' ? 'active' : 'draft',
+          now,
+          lifecycleState === 'active' ? now : null,
+        ]
+      );
+    });
+    return {
+      id: sourceId,
+      tenantId,
+      sourceType: input.sourceType,
+      sourceKey: input.sourceKey,
+      lifecycleState,
+      snapshotHash,
+    };
+  }
+
+  async listFederationTrustSources(tenantId: string) {
+    const rows = await this.adapter.query<{
+      id: string;
+      source_type: string;
+      source_key: string;
+      display_name: string;
+      lifecycle_state: string;
+      protocol_payload_json: string | null;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT id, source_type, source_key, display_name, lifecycle_state,
+              protocol_payload_json, created_at, updated_at
+         FROM federation_trust_sources
+        WHERE tenant_id = ?
+        ORDER BY updated_at DESC`,
+      [tenantId]
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId,
+      sourceType: row.source_type,
+      sourceKey: row.source_key,
+      displayName: row.display_name,
+      lifecycleState: row.lifecycle_state,
+      protocolPayload: row.protocol_payload_json
+        ? parseJsonObject(row.protocol_payload_json, {})
+        : null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async registerFederationMetadataDocument(
+    tenantId: string,
+    input: RegisterFederationMetadataDocumentRequest
+  ) {
+    validateRequiredString(input.trustSourceId, 'trustSourceId');
+    validateRequiredString(input.documentType, 'documentType');
+    validateRequiredString(input.documentHash, 'documentHash');
+    const validationState = input.validationState ?? 'pending';
+    if (!FEDERATION_METADATA_VALIDATION_STATES.has(validationState)) {
+      throw badRequest('validationState is not supported for federation metadata documents');
+    }
+    if (input.entitySummaries !== undefined && !Array.isArray(input.entitySummaries)) {
+      throw badRequest('entitySummaries must be an array');
+    }
+    await this.ensureFederationTrustSource(tenantId, input.trustSourceId);
+    const now = this.now();
+    const documentId = createId('federation_metadata_document');
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO federation_metadata_documents (
+          id, tenant_id, trust_source_id, document_type, source_url, document_hash,
+          document_ref, fetched_at, validated_at, validation_state, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          documentId,
+          tenantId,
+          input.trustSourceId,
+          input.documentType,
+          input.sourceUrl ?? null,
+          input.documentHash,
+          input.documentRef ?? null,
+          now,
+          validationState !== 'pending' ? now : null,
+          validationState,
+          now,
+          now,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO federation_metadata_validation_events (
+          id, tenant_id, trust_source_id, metadata_document_id, validation_state,
+          reason_codes_json, trace_ref, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('federation_metadata_validation_event'),
+          tenantId,
+          input.trustSourceId,
+          documentId,
+          validationState,
+          stableJson([`federation.metadata.${validationState}`]),
+          `metadata-document:${documentId}`,
+          now,
+        ]
+      );
+      for (const summary of input.entitySummaries ?? []) {
+        validateRequiredString(summary.entityId, 'entitySummary.entityId');
+        validateRequiredString(summary.entityRole, 'entitySummary.entityRole');
+        await tx.execute(
+          `INSERT INTO federation_metadata_entity_summaries (
+            id, tenant_id, metadata_document_id, entity_id, entity_role,
+            display_name, summary_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            createId('federation_metadata_entity_summary'),
+            tenantId,
+            documentId,
+            summary.entityId,
+            summary.entityRole,
+            summary.displayName ?? null,
+            summary.summary ? stableJson(summary.summary) : null,
+            now,
+            now,
+          ]
+        );
+      }
+    });
+    return {
+      id: documentId,
+      trustSourceId: input.trustSourceId,
+      validationState,
+    };
+  }
+
+  async migrateSamlFederationTrustProfile(
+    tenantId: string,
+    input: MigrateSamlFederationTrustProfileRequest
+  ) {
+    validateRequiredString(input.profileId, 'profileId');
+    const row = await this.adapter.queryOne<{
+      id: string;
+      tenant_id: string;
+      name: string;
+      description: string | null;
+      metadata_url_patterns_json: string;
+      certificates_json: string;
+      policy: string | null;
+      enabled: number;
+      federation_trust_source_id: string | null;
+      normalized_migration_state: string | null;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
+              policy, enabled, federation_trust_source_id, normalized_migration_state,
+              created_at, updated_at
+         FROM saml_federation_trust_profiles
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, input.profileId]
+    );
+    if (!row) {
+      throw notFound('SAML federation trust profile not found');
+    }
+    if (row.federation_trust_source_id && row.normalized_migration_state === 'migrated') {
+      return {
+        profileId: row.id,
+        trustSourceId: row.federation_trust_source_id,
+        migrationState: 'migrated',
+        idempotent: true,
+      };
+    }
+
+    const metadataUrlPatterns = parseJsonStringArray(row.metadata_url_patterns_json);
+    const certificates = parseJsonRecords(row.certificates_json);
+    if (metadataUrlPatterns.length === 0 || certificates.length === 0) {
+      throw badRequest('legacy SAML federation trust profile is not migration-ready');
+    }
+    const now = this.now();
+    const trustSourceId = createId('federation_trust_source');
+    const sourceKey = input.sourceKey ?? `legacy-saml-profile:${row.id}`;
+    const trustContext = {
+      protocol: 'saml',
+      legacyProfileId: row.id,
+      policy: normalizeSamlFederationPolicy(row.policy),
+      enabled: row.enabled === 1,
+      metadataUrlPatterns,
+      anchorHashes: certificates.map((certificate) => readCertificateFingerprint(certificate)),
+    };
+    const snapshotHash = await hashStableJson(trustContext);
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO federation_trust_sources (
+          id, tenant_id, source_type, source_key, display_name, lifecycle_state,
+          protocol_payload_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          trustSourceId,
+          tenantId,
+          'saml_aggregate',
+          sourceKey,
+          row.name,
+          input.activate === false || row.enabled !== 1 ? 'draft' : 'active',
+          stableJson({
+            legacyProfileId: row.id,
+            description: row.description,
+            metadataUrlPatterns,
+            policy: normalizeSamlFederationPolicy(row.policy),
+            certificates,
+          }),
+          now,
+          now,
+        ]
+      );
+      for (const certificate of certificates) {
+        const anchorHash = readCertificateFingerprint(certificate);
+        await tx.execute(
+          `INSERT INTO federation_trust_anchors (
+            id, tenant_id, trust_source_id, anchor_type, anchor_hash, anchor_ref,
+            not_before, not_after, lifecycle_state, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            createId('federation_trust_anchor'),
+            tenantId,
+            trustSourceId,
+            'x509_sha256',
+            anchorHash,
+            readOptionalString(certificate.id) ?? null,
+            null,
+            null,
+            'active',
+            now,
+            now,
+          ]
+        );
+      }
+      await tx.execute(
+        `INSERT INTO federation_trust_context_snapshots (
+          id, tenant_id, trust_source_id, snapshot_hash, trust_context_json,
+          lifecycle_state, created_at, activated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('federation_trust_context_snapshot'),
+          tenantId,
+          trustSourceId,
+          snapshotHash,
+          stableJson(trustContext),
+          input.activate === false || row.enabled !== 1 ? 'draft' : 'active',
+          now,
+          input.activate === false || row.enabled !== 1 ? null : now,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO federation_trust_scope_bindings (
+          id, tenant_id, trust_source_id, scope_type, scope_id, priority,
+          lifecycle_state, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('federation_trust_scope_binding'),
+          tenantId,
+          trustSourceId,
+          'tenant',
+          tenantId,
+          0,
+          'active',
+          now,
+          now,
+        ]
+      );
+      await tx.execute(
+        `UPDATE saml_federation_trust_profiles
+            SET federation_trust_source_id = ?,
+                normalized_migration_state = ?,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [trustSourceId, 'migrated', now, tenantId, row.id]
+      );
+      await tx.execute(
+        `INSERT INTO federation_metadata_validation_events (
+          id, tenant_id, trust_source_id, metadata_document_id, validation_state,
+          reason_codes_json, trace_ref, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('federation_metadata_validation_event'),
+          tenantId,
+          trustSourceId,
+          null,
+          'valid',
+          stableJson(['federation.saml_legacy_profile.migrated']),
+          `saml-federation-trust-profile:${row.id}`,
+          now,
+        ]
+      );
+    });
+    return {
+      profileId: row.id,
+      trustSourceId,
+      migrationState: 'migrated',
+      snapshotHash,
+    };
+  }
+
+  private async recordKeyAccessEvent(
+    tenantId: string,
+    keyRegistryId: string,
+    input: RecordKeyAccessRequest,
+    executor: SqlExecutor = this.adapter
+  ) {
+    await executor.execute(
+      `INSERT INTO key_access_events (
+        id, tenant_id, key_registry_id, key_version_id, actor_id,
+        access_type, outcome, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        createId('key_access_event'),
+        tenantId,
+        keyRegistryId,
+        input.keyVersionId ?? null,
+        input.actorId ?? null,
+        input.accessType,
+        input.outcome,
+        this.now(),
+      ]
+    );
+  }
+
+  private async ensureKeyRegistry(tenantId: string, keyRegistryId: string): Promise<void> {
+    const row = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM key_registries
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, keyRegistryId]
+    );
+    if (!row) {
+      throw notFound('key registry not found');
+    }
+  }
+
+  private async ensureKeyVersion(
+    tenantId: string,
+    keyRegistryId: string,
+    keyVersionId: string
+  ): Promise<void> {
+    const row = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM key_versions
+        WHERE tenant_id = ? AND key_registry_id = ? AND id = ?`,
+      [tenantId, keyRegistryId, keyVersionId]
+    );
+    if (!row) {
+      throw notFound('key version not found');
+    }
+  }
+
+  private async ensureFederationTrustSource(
+    tenantId: string,
+    trustSourceId: string
+  ): Promise<void> {
+    const row = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!row) {
+      throw notFound('federation trust source not found');
+    }
+  }
+
   private async applyProvisioningAssignment(
     tenantId: string,
     rule: ProvisioningAssignmentRuleRow,
@@ -2998,6 +3816,76 @@ export async function adminIdentityMappingLifecycleSignalRecordHandler(c: AdminC
   );
 }
 
+export async function adminIdentityMappingKeyRegistryCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'key-registry.create', async (repository, tenantId, body) =>
+    repository.createKeyRegistry(tenantId, body as CreateKeyRegistryRequest)
+  );
+}
+
+export async function adminIdentityMappingKeyRegistriesListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    keyRegistries: await repository.listKeyRegistries(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingKeyRegistryRotateHandler(c: AdminContext) {
+  return handleMutation(c, 'key-registry.rotate', async (repository, tenantId, body) =>
+    repository.rotateKeyRegistry(
+      tenantId,
+      requiredParam(c, 'keyRegistryId'),
+      body as RotateKeyRegistryRequest
+    )
+  );
+}
+
+export async function adminIdentityMappingKeyAccessRecordHandler(c: AdminContext) {
+  return handleMutation(c, 'key-access.record', async (repository, tenantId, body) =>
+    repository.recordKeyAccess(
+      tenantId,
+      requiredParam(c, 'keyRegistryId'),
+      body as RecordKeyAccessRequest
+    )
+  );
+}
+
+export async function adminIdentityMappingFederationTrustSourceCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'federation-trust-source.create', async (repository, tenantId, body) =>
+    repository.createFederationTrustSource(tenantId, body as CreateFederationTrustSourceRequest)
+  );
+}
+
+export async function adminIdentityMappingFederationTrustSourcesListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    federationTrustSources: await repository.listFederationTrustSources(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingFederationMetadataDocumentCreateHandler(c: AdminContext) {
+  return handleMutation(
+    c,
+    'federation-metadata-document.create',
+    async (repository, tenantId, body) =>
+      repository.registerFederationMetadataDocument(
+        tenantId,
+        body as RegisterFederationMetadataDocumentRequest
+      )
+  );
+}
+
+export async function adminIdentityMappingSamlFederationTrustProfileMigrateHandler(
+  c: AdminContext
+) {
+  return handleMutation(
+    c,
+    'saml-federation-trust-profile.migrate',
+    async (repository, tenantId, body) =>
+      repository.migrateSamlFederationTrustProfile(
+        tenantId,
+        body as MigrateSamlFederationTrustProfileRequest
+      )
+  );
+}
+
 async function handleControlPlane<T>(
   c: AdminContext,
   operation: (repository: IdentityMappingControlPlaneRepository, tenantId: string) => Promise<T>
@@ -3219,6 +4107,66 @@ function parseJsonArray(value: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+function parseJsonStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonRecords(value: string): Array<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+  } catch {
+    return [];
+  }
+}
+
+function assertSafeMaterialRef(materialRef: string): void {
+  const normalized = materialRef.trim().toLowerCase();
+  if (!normalized.includes('://') && !normalized.startsWith('wrangler-secret:')) {
+    throw badRequest('materialRef must be an external reference, not inline key material');
+  }
+  if (
+    /-----begin [^-]+key-----/i.test(materialRef) ||
+    /-----begin certificate-----/i.test(materialRef) ||
+    normalized.includes('private_key=') ||
+    normalized.includes('client_secret=') ||
+    normalized.includes('password=') ||
+    normalized.includes('token=')
+  ) {
+    throw badRequest('materialRef must not contain inline key material or secrets');
+  }
+}
+
+function assertSafeMaterialBackend(backendType: string): void {
+  const normalized = backendType.trim().toLowerCase().replace(/[_-]/g, '');
+  if (normalized === 'inline' || normalized === 'localfile' || normalized === 'plaintext') {
+    throw badRequest('backendType must reference an external key material backend');
+  }
+}
+
+function normalizeSamlFederationPolicy(value: string | null): 'strict' | 'warn' | 'disabled' {
+  return value === 'strict' || value === 'disabled' ? value : 'warn';
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readCertificateFingerprint(certificate: Record<string, unknown>): string {
+  const fingerprint = readOptionalString(certificate.fingerprintSha256);
+  if (fingerprint) {
+    return fingerprint;
+  }
+  throw badRequest('legacy SAML federation trust certificate is missing a fingerprint');
 }
 
 async function hashStableJson(value: unknown): Promise<string> {

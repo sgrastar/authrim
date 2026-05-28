@@ -2,6 +2,8 @@ import type { Env } from '@authrim/ar-lib-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   handleCreateProvider,
+  handleCreateFederationTrustProfile,
+  handleDeleteFederationTrustProfile,
   handleGetAggregateBatchStatus,
   handleListAggregatePreviewEntities,
   handlePreviewMetadata,
@@ -103,16 +105,17 @@ interface StoredBatch {
 }
 
 function createMockAdapter() {
-  return {
+  const adapter = {
     query: vi.fn().mockResolvedValue([]),
     queryOne: vi.fn().mockResolvedValue(null),
     execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
-    transaction: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+    transaction: vi.fn(async (fn: (tx: typeof adapter) => Promise<unknown>) => fn(adapter)),
     batch: vi.fn().mockResolvedValue([]),
     isHealthy: vi.fn().mockResolvedValue(true),
     getType: vi.fn().mockReturnValue('mock'),
     close: vi.fn().mockResolvedValue(undefined),
   };
+  return adapter;
 }
 
 function createAggregateStoreNamespace(input: {
@@ -277,6 +280,99 @@ describe('SAML aggregate provider API', () => {
     expect(mocks.safeFetchText).toHaveBeenCalledWith(
       'https://metadata.example.test/aggregate.xml',
       expect.objectContaining({ maxResponseSize: 10 * 1024 * 1024 })
+    );
+  });
+
+  it('loads normalized SAML federation trust sources during aggregate preview', async () => {
+    const adminAdapter = createMockAdapter();
+    adminAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: 'trust-source-1',
+        tenant_id: 'tenant-a',
+        source_type: 'saml_aggregate',
+        display_name: 'Normalized federation',
+        lifecycle_state: 'active',
+        protocol_payload_json: JSON.stringify({
+          metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
+          certificates: [
+            {
+              id: 'cert-1',
+              certificate: expiredCertificate,
+              fingerprintSha256: 'sha256:cert-1',
+              createdAt: 1_700_000_000_000,
+            },
+          ],
+          policy: 'warn',
+        }),
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_000,
+      },
+    ]);
+    mocks.safeFetchText.mockResolvedValue(aggregateXml);
+
+    const response = await handlePreviewMetadata(
+      createContext({
+        body: { metadataUrl: 'https://metadata.example.test/aggregate.xml' },
+        env: {
+          DB_ADMIN: adminAdapter as never,
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({}) as never,
+          SAML_AGGREGATE_METADATA_SIGNATURE_POLICY: 'disabled',
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(adminAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM federation_trust_sources'),
+      ['tenant-a']
+    );
+  });
+
+  it('replaces legacy federation trust profile writes with normalized trust sources', async () => {
+    const adminAdapter = createMockAdapter();
+
+    const response = await handleCreateFederationTrustProfile(
+      createContext({
+        body: {
+          name: 'Normalized Federation',
+          metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
+          certificates: [{ certificate: expiredCertificate }],
+          policy: 'warn',
+          enabled: true,
+        },
+        env: { DB_ADMIN: adminAdapter as never },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(adminAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO federation_trust_sources'),
+      expect.any(Array)
+    );
+    expect(adminAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO saml_federation_trust_profiles'),
+      expect.any(Array)
+    );
+  });
+
+  it('deletes normalized and legacy federation trust rows through the compatibility endpoint', async () => {
+    const adminAdapter = createMockAdapter();
+
+    const response = await handleDeleteFederationTrustProfile(
+      createContext({
+        params: { id: 'trust-source-1' },
+        env: { DB_ADMIN: adminAdapter as never },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(adminAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM federation_trust_sources'),
+      ['tenant-a', 'trust-source-1']
+    );
+    expect(adminAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM saml_federation_trust_profiles'),
+      ['tenant-a', 'trust-source-1']
     );
   });
 
@@ -505,18 +601,24 @@ describe('SAML aggregate provider API', () => {
     'creates selected aggregate entities through the batch API using the runtime storage resolver: %s',
     async () => {
       const coreAdapter = createMockAdapter();
+      const adminAdapter = createMockAdapter();
       const waitUntil: Array<Promise<unknown>> = [];
       mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(coreAdapter);
       const previewId = 'preview-1';
       const env = {
         DEFAULT_TENANT_ID: 'tenant-a',
+        DB_ADMIN: adminAdapter as never,
         SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
           previewId,
           preview: {
             tenantId: 'tenant-a',
             metadataXml: aggregateXml,
             metadataUrl: 'https://metadata.example.test/aggregate.xml',
-            verification: { status: 'skipped', policy: 'disabled' },
+            verification: {
+              status: 'skipped',
+              policy: 'disabled',
+              trustProfileId: 'trust-source-1',
+            },
           },
         }) as never,
       };
@@ -572,6 +674,10 @@ describe('SAML aggregate provider API', () => {
           expect.any(Number),
           expect.any(Number),
         ])
+      );
+      expect(adminAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO federation_selected_entity_import_events'),
+        expect.arrayContaining(['tenant-a', 'trust-source-1', null, expect.any(String)])
       );
     }
   );
