@@ -280,6 +280,51 @@ describe('SAML aggregate provider API', () => {
     );
   });
 
+  it('loads normalized SAML federation trust sources during aggregate preview', async () => {
+    const adminAdapter = createMockAdapter();
+    adminAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: 'trust-source-1',
+        tenant_id: 'tenant-a',
+        source_type: 'saml_aggregate',
+        display_name: 'Normalized federation',
+        lifecycle_state: 'active',
+        protocol_payload_json: JSON.stringify({
+          metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
+          certificates: [
+            {
+              id: 'cert-1',
+              certificate: expiredCertificate,
+              fingerprintSha256: 'sha256:cert-1',
+              createdAt: 1_700_000_000_000,
+            },
+          ],
+          policy: 'warn',
+        }),
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_000,
+      },
+    ]);
+    mocks.safeFetchText.mockResolvedValue(aggregateXml);
+
+    const response = await handlePreviewMetadata(
+      createContext({
+        body: { metadataUrl: 'https://metadata.example.test/aggregate.xml' },
+        env: {
+          DB_ADMIN: adminAdapter as never,
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({}) as never,
+          SAML_AGGREGATE_METADATA_SIGNATURE_POLICY: 'disabled',
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(adminAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM federation_trust_sources'),
+      ['tenant-a']
+    );
+  });
+
   it('returns a validation error for unsafe XML during metadata preview', async () => {
     const response = await handlePreviewMetadata(
       createContext({

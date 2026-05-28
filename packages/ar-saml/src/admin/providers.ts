@@ -715,6 +715,13 @@ interface SAMLFederationTrustProfileRequest {
   enabled?: boolean;
 }
 
+interface NormalizedSAMLFederationTrustPayload {
+  description?: string;
+  metadataUrlPatterns?: string[];
+  certificates?: SAMLFederationTrustProfile['certificates'];
+  policy?: 'strict' | 'warn' | 'disabled';
+}
+
 interface SAMLMetadataBatchCreateRequest {
   entityIds?: string[];
   providerType?: 'saml_idp' | 'saml_sp';
@@ -2482,21 +2489,104 @@ async function listFederationTrustProfiles(
     [tenantId]
   );
 
-  return rows.map((row) => ({
+  const legacyProfiles: SAMLFederationTrustProfile[] = rows.map((row) => ({
     id: row.id,
     tenantId: row.tenant_id,
     name: row.name,
     description: row.description ?? undefined,
     metadataUrlPatterns: JSON.parse(row.metadata_url_patterns_json),
     certificates: JSON.parse(row.certificates_json),
-    policy:
-      row.policy === 'strict' || row.policy === 'warn' || row.policy === 'disabled'
-        ? row.policy
-        : undefined,
+    policy: normalizeFederationTrustPolicy(row.policy),
     enabled: row.enabled === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
+  const normalizedProfiles = await listNormalizedSamlFederationTrustProfiles(env, tenantId);
+  return [...legacyProfiles, ...normalizedProfiles].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function listNormalizedSamlFederationTrustProfiles(
+  env: Env,
+  tenantId: string
+): Promise<SAMLFederationTrustProfile[]> {
+  const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
+  const rows = await adapter.query<{
+    id: string;
+    tenant_id: string;
+    source_type: string;
+    display_name: string;
+    lifecycle_state: string;
+    protocol_payload_json: string | null;
+    created_at: number;
+    updated_at: number;
+  }>(
+    `SELECT id, tenant_id, source_type, display_name, lifecycle_state, protocol_payload_json,
+            created_at, updated_at
+       FROM federation_trust_sources
+       WHERE tenant_id = ?
+         AND source_type IN ('saml_aggregate', 'saml_metadata', 'saml_federation')
+         AND lifecycle_state IN ('active', 'draft')
+       ORDER BY display_name ASC`,
+    [tenantId]
+  );
+
+  return rows.flatMap((row) => {
+    const payload = parseNormalizedSamlFederationPayload(row.protocol_payload_json);
+    if (payload.metadataUrlPatterns.length === 0 || payload.certificates.length === 0) {
+      return [];
+    }
+    return [
+      {
+        id: row.id,
+        tenantId: row.tenant_id,
+        name: row.display_name,
+        description: payload.description,
+        metadataUrlPatterns: payload.metadataUrlPatterns,
+        certificates: payload.certificates,
+        policy: payload.policy,
+        enabled: row.lifecycle_state === 'active',
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    ];
+  });
+}
+
+function parseNormalizedSamlFederationPayload(
+  value: string | null
+): Required<NormalizedSAMLFederationTrustPayload> {
+  const parsed = value ? (JSON.parse(value) as NormalizedSAMLFederationTrustPayload) : {};
+  return {
+    description: typeof parsed.description === 'string' ? parsed.description : '',
+    metadataUrlPatterns: Array.isArray(parsed.metadataUrlPatterns)
+      ? parsed.metadataUrlPatterns.filter(
+          (pattern): pattern is string => typeof pattern === 'string'
+        )
+      : [],
+    certificates: Array.isArray(parsed.certificates)
+      ? parsed.certificates.filter(isSamlFederationTrustCertificate)
+      : [],
+    policy: normalizeFederationTrustPolicy(parsed.policy) ?? 'warn',
+  };
+}
+
+function normalizeFederationTrustPolicy(value: unknown): SAMLFederationTrustProfile['policy'] {
+  return value === 'strict' || value === 'warn' || value === 'disabled' ? value : undefined;
+}
+
+function isSamlFederationTrustCertificate(
+  value: unknown
+): value is SAMLFederationTrustProfile['certificates'][number] {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const certificate = value as Partial<SAMLFederationTrustProfile['certificates'][number]>;
+  return (
+    typeof certificate.id === 'string' &&
+    typeof certificate.certificate === 'string' &&
+    typeof certificate.fingerprintSha256 === 'string' &&
+    typeof certificate.createdAt === 'number'
+  );
 }
 
 async function getFederationTrustProfile(

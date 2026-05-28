@@ -655,8 +655,14 @@ import {
   adminIdentityMappingPolicyVersionCreateHandler,
   adminIdentityMappingPolicyVersionPublishHandler,
   adminIdentityMappingEntitlementGrantHandler,
+  adminIdentityMappingFederationMetadataDocumentCreateHandler,
+  adminIdentityMappingFederationTrustSourceCreateHandler,
   adminIdentityMappingGroupCreateHandler,
   adminIdentityMappingGroupMembershipCreateHandler,
+  adminIdentityMappingKeyAccessRecordHandler,
+  adminIdentityMappingKeyRegistriesListHandler,
+  adminIdentityMappingKeyRegistryCreateHandler,
+  adminIdentityMappingKeyRegistryRotateHandler,
   adminIdentityMappingLifecycleSignalRecordHandler,
   adminIdentityMappingOrgDomainMappingMigrateHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
@@ -669,9 +675,11 @@ import {
   adminIdentityMappingReviewTaskCreateHandler,
   adminIdentityMappingReviewTaskGroupCreateHandler,
   adminIdentityMappingReviewTaskTransitionHandler,
+  adminIdentityMappingSamlFederationTrustProfileMigrateHandler,
   adminIdentityMappingSourceAuthorityContractCreateHandler,
   adminIdentityMappingSourceAuthorityContractsListHandler,
   adminIdentityMappingSourceAuthorityEvaluateHandler,
+  adminIdentityMappingFederationTrustSourcesListHandler,
   adminIdentityMappingTemplateCreateHandler,
   adminIdentityMappingTemplatesListHandler,
 } from './identity-mapping-control-plane';
@@ -2367,6 +2375,46 @@ app.post(
   '/api/admin/identity-mapping/lifecycle-signals',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingLifecycleSignalRecordHandler
+);
+app.post(
+  '/api/admin/identity-mapping/key-registries',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingKeyRegistryCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/key-registries',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingKeyRegistriesListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/key-registries/:keyRegistryId/rotate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingKeyRegistryRotateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/key-registries/:keyRegistryId/access-events',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingKeyAccessRecordHandler
+);
+app.post(
+  '/api/admin/identity-mapping/federation-trust-sources',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingFederationTrustSourceCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/federation-trust-sources',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingFederationTrustSourcesListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/federation-metadata-documents',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingFederationMetadataDocumentCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/saml-federation-trust-profiles/migrate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSamlFederationTrustProfileMigrateHandler
 );
 
 // =============================================================================
