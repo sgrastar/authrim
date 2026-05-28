@@ -36,6 +36,7 @@ function readSqlite(sqlite3Path: string, dbPath: string, sql: string): string {
 
 const rootMigrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
 const coreMigrationExclusions = new Set(['admin', 'archive', 'external', 'pii']);
+const sqliteMigrationApplyTimeoutMs = 20_000;
 
 function activeCoreMigrationFiles(): string[] {
   return listD1MigrationSqlFiles(rootMigrationsDir, {
@@ -287,22 +288,24 @@ describe('migration seed SQL portability', () => {
     );
   });
 
-  it('applies the consolidated core baseline in SQLite', () => {
-    const sqlite3Path = findSqlite3();
-    if (!sqlite3Path) {
-      return;
-    }
+  it(
+    'applies the consolidated core baseline in SQLite',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
 
-    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-oauth-client-migration-'));
-    const dbPath = join(tempDir, 'test.db');
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-oauth-client-migration-'));
+      const dbPath = join(tempDir, 'test.db');
 
-    try {
-      runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
 
-      runSqlite(
-        sqlite3Path,
-        dbPath,
-        `
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `
 PRAGMA foreign_keys = ON;
 INSERT INTO tenants (id, tenant_code, tenant_key, name, created_at, updated_at)
 VALUES ('tenant-a', 'tenant-a', 'tenant-key-a', 'Tenant A', 1, 1);
@@ -315,31 +318,31 @@ VALUES ('session-a', 'tenant-a', 'user-a', 9999999999, 1);
 ${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Tenant A Mobile')}
 ${insertOAuthClientSql('tenant-b', 'shared-mobile', 'Tenant B Mobile')}
 `
-      );
+        );
 
-      expect(
-        readSqlite(
-          sqlite3Path,
-          dbPath,
-          "SELECT COUNT(*) FROM oauth_clients WHERE client_id = 'shared-mobile';"
-        )
-      ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT COUNT(*) FROM oauth_clients WHERE client_id = 'shared-mobile';"
+          )
+        ).toBe('2');
 
-      expect(() =>
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `
+PRAGMA foreign_keys = ON;
+${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Duplicate Tenant A Mobile')}
+`
+          )
+        ).toThrow();
+
         runSqlite(
           sqlite3Path,
           dbPath,
           `
-PRAGMA foreign_keys = ON;
-${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Duplicate Tenant A Mobile')}
-`
-        )
-      ).toThrow();
-
-      runSqlite(
-        sqlite3Path,
-        dbPath,
-        `
 PRAGMA foreign_keys = ON;
 INSERT INTO session_clients (
   id,
@@ -357,13 +360,13 @@ INSERT INTO session_clients (
   1
 );
 `
-      );
+        );
 
-      expect(() =>
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `
 PRAGMA foreign_keys = ON;
 INSERT INTO session_clients (
   id,
@@ -381,13 +384,13 @@ INSERT INTO session_clients (
   1
 );
 `
-        )
-      ).toThrow();
+          )
+        ).toThrow();
 
-      runSqlite(
-        sqlite3Path,
-        dbPath,
-        `
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `
 PRAGMA foreign_keys = ON;
 INSERT INTO oauth_clients (
   tenant_id,
@@ -417,24 +420,26 @@ INSERT INTO oauth_clients (
   1
 );
 `
-      );
+        );
 
-      expect(
-        readSqlite(
-          sqlite3Path,
-          dbPath,
-          "SELECT device_secret_revoke_enabled || ':' || device_secret_introspection_enabled FROM oauth_clients WHERE tenant_id = 'tenant-a' AND client_id = 'device-policy-client';"
-        )
-      ).toBe('1:1');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT device_secret_revoke_enabled || ':' || device_secret_introspection_enabled FROM oauth_clients WHERE tenant_id = 'tenant-a' AND client_id = 'device-policy-client';"
+          )
+        ).toBe('1:1');
 
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_secrets;')).toBe('0');
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_installations;')).toBe(
-        '0'
-      );
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
+        expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_secrets;')).toBe('0');
+        expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_installations;')).toBe(
+          '0'
+        );
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
 
   it('backfills tenant lifecycle state from is_active and drops the legacy column', () => {
     const sqlite3Path = findSqlite3();
@@ -493,6 +498,70 @@ INSERT INTO tenants (
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it(
+    'applies the unified identity mapping admin control-plane baseline in SQLite',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-uim-admin-migration-'));
+      const dbPath = join(tempDir, 'test.db');
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeAdminMigrationFiles());
+
+        expect(
+          Number(
+            readSqlite(
+              sqlite3Path,
+              dbPath,
+              "SELECT COUNT(*) FROM pragma_table_info('mapping_rules');"
+            )
+          )
+        ).toBeGreaterThan(0);
+        expect(
+          Number(
+            readSqlite(
+              sqlite3Path,
+              dbPath,
+              "SELECT COUNT(*) FROM pragma_table_info('federation_trust_sources');"
+            )
+          )
+        ).toBeGreaterThan(0);
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT COUNT(*) FROM pragma_table_info('tenant_discovery_indexes') WHERE name = 'mapping_snapshot_id';"
+          )
+        ).toBe('1');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it('keeps unified identity mapping schema migrations annotated with schema-readiness IDs', () => {
+    const migrationSql = [
+      readMigration('008_unified_identity_canonical_schema.sql'),
+      readMigration('admin/007_identity_mapping_control_plane_schema.sql'),
+    ].join('\n');
+    const migrationIds = new Set(migrationSql.match(/UIM-SCH-\d{3}/g) ?? []);
+    const expectedIds = [
+      ...Array.from({ length: 84 }, (_, index) => `UIM-SCH-${String(index + 1).padStart(3, '0')}`),
+      'UIM-SCH-088',
+    ];
+
+    expect([...migrationIds].sort()).toEqual(expectedIds.sort());
+    expect(migrationIds.has('UIM-SCH-032A')).toBe(false);
+    expect(migrationIds.has('UIM-SCH-085')).toBe(false);
+    expect(migrationIds.has('UIM-SCH-086')).toBe(false);
+    expect(migrationIds.has('UIM-SCH-087')).toBe(false);
   });
 });
 
