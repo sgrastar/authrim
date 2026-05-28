@@ -643,6 +643,23 @@ import {
   adminSamlReleasePreviewHandler,
 } from './identity-mapping-preview';
 import {
+  adminIdentityMappingCatalogCreateHandler,
+  adminIdentityMappingCatalogsListHandler,
+  adminIdentityMappingExternalSchemaImportHandler,
+  adminIdentityMappingExternalSchemasListHandler,
+  adminIdentityMappingPoliciesListHandler,
+  adminIdentityMappingPolicyCreateHandler,
+  adminIdentityMappingPolicyRollbackHandler,
+  adminIdentityMappingPolicyVersionActivateHandler,
+  adminIdentityMappingPolicyVersionCompileHandler,
+  adminIdentityMappingPolicyVersionCreateHandler,
+  adminIdentityMappingPolicyVersionPublishHandler,
+  adminIdentityMappingProtocolSchemaCreateHandler,
+  adminIdentityMappingProtocolSchemasListHandler,
+  adminIdentityMappingTemplateCreateHandler,
+  adminIdentityMappingTemplatesListHandler,
+} from './identity-mapping-control-plane';
+import {
   getLoggingConfig,
   updateLoggingConfig,
   resetLoggingConfig,
@@ -2179,6 +2196,81 @@ app.post(
   '/api/admin/identity-mapping/preview/oidc',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminOidcReleasePreviewHandler
+);
+app.get(
+  '/api/admin/identity-mapping/catalogs',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingCatalogsListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/catalogs',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingCatalogCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/protocol-schemas',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingProtocolSchemasListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/protocol-schemas',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingProtocolSchemaCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/external-schemas',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingExternalSchemasListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/external-schemas',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingExternalSchemaImportHandler
+);
+app.get(
+  '/api/admin/identity-mapping/templates',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingTemplatesListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/templates',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingTemplateCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/policies',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingPoliciesListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/policies',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/policies/:policySetId/versions',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyVersionCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/policies/:policySetId/versions/:policyVersionId/publish',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyVersionPublishHandler
+);
+app.post(
+  '/api/admin/identity-mapping/policies/:policySetId/versions/:policyVersionId/compile',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyVersionCompileHandler
+);
+app.post(
+  '/api/admin/identity-mapping/policies/:policySetId/versions/:policyVersionId/activate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyVersionActivateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/policies/:policySetId/rollback',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyRollbackHandler
 );
 
 // =============================================================================
