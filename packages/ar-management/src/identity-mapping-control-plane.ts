@@ -223,6 +223,61 @@ interface ActivatePolicyRequest {
   holderId?: string;
 }
 
+interface CreateSourceAuthorityContractRequest {
+  sourceType: string;
+  sourceId: string;
+  fieldRef: Record<string, unknown>;
+  authorityActions: string[];
+  condition?: Record<string, unknown>;
+  priority?: number;
+}
+
+interface EvaluateSourceAuthorityContractRequest {
+  sourceType: string;
+  sourceId: string;
+  fieldRef: Record<string, unknown>;
+  authorityAction: string;
+}
+
+interface RecordMappingEventRequest {
+  eventType: string;
+  policyVersionId?: string;
+  subjectId?: string;
+  sourceId?: string;
+  outcome: string;
+  reasonCodes?: string[];
+  traceRef?: string;
+}
+
+interface EnqueueProjectionOutboxRequest {
+  eventType: string;
+  subjectId?: string;
+  aggregateType: string;
+  aggregateId: string;
+  payload?: Record<string, unknown>;
+  availableAt?: number;
+}
+
+interface CreateProjectionJobRequest {
+  jobType: string;
+  scope: Record<string, unknown>;
+}
+
+interface CreateReplayJobRequest {
+  replayType: string;
+  impactScope: Record<string, unknown>;
+}
+
+interface UpsertAdminSearchProjectionRequest {
+  id?: string;
+  subjectId?: string;
+  accountId?: string;
+  projectionKind: string;
+  projection: Record<string, unknown>;
+  classification?: string;
+  lifecycleState?: string;
+}
+
 interface RepositoryResult<T> {
   result: T;
 }
@@ -904,6 +959,309 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  async createSourceAuthorityContract(
+    tenantId: string,
+    input: CreateSourceAuthorityContractRequest
+  ) {
+    validateRequiredString(input.sourceType, 'sourceType');
+    validateRequiredString(input.sourceId, 'sourceId');
+    if (!isRecord(input.fieldRef)) {
+      throw badRequest('fieldRef must be an object');
+    }
+    if (!Array.isArray(input.authorityActions) || input.authorityActions.length === 0) {
+      throw badRequest('authorityActions must contain at least one action');
+    }
+    input.authorityActions.forEach((action) => validateRequiredString(action, 'authorityAction'));
+    assertNoSensitiveMetadata(input.fieldRef, 'fieldRef');
+    assertNoSensitiveMetadata(input.condition, 'condition');
+
+    const now = this.now();
+    const id = createId('source_authority');
+    await this.adapter.execute(
+      `INSERT INTO source_authority_contracts (
+        id, tenant_id, source_type, source_id, field_ref_json, authority_actions_json,
+        condition_json, priority, lifecycle_state, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        tenantId,
+        input.sourceType,
+        input.sourceId,
+        stableJson(input.fieldRef),
+        stableJson(input.authorityActions),
+        input.condition ? stableJson(input.condition) : null,
+        input.priority ?? 0,
+        'active',
+        now,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      fieldRef: input.fieldRef,
+      authorityActions: input.authorityActions,
+      priority: input.priority ?? 0,
+      lifecycleState: 'active',
+    };
+  }
+
+  async listSourceAuthorityContracts(tenantId: string) {
+    const rows = await this.adapter.query<{
+      id: string;
+      tenant_id: string;
+      source_type: string;
+      source_id: string;
+      field_ref_json: string;
+      authority_actions_json: string;
+      condition_json: string | null;
+      priority: number;
+      lifecycle_state: string;
+    }>(
+      `SELECT *
+         FROM source_authority_contracts
+        WHERE tenant_id = ?
+        ORDER BY priority DESC, updated_at DESC`,
+      [tenantId]
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      sourceType: row.source_type,
+      sourceId: row.source_id,
+      fieldRef: JSON.parse(row.field_ref_json) as Record<string, unknown>,
+      authorityActions: JSON.parse(row.authority_actions_json) as string[],
+      condition: row.condition_json
+        ? (JSON.parse(row.condition_json) as Record<string, unknown>)
+        : null,
+      priority: row.priority,
+      lifecycleState: row.lifecycle_state,
+    }));
+  }
+
+  async evaluateSourceAuthorityContract(
+    tenantId: string,
+    input: EvaluateSourceAuthorityContractRequest
+  ) {
+    validateRequiredString(input.sourceType, 'sourceType');
+    validateRequiredString(input.sourceId, 'sourceId');
+    validateRequiredString(input.authorityAction, 'authorityAction');
+    if (!isRecord(input.fieldRef)) {
+      throw badRequest('fieldRef must be an object');
+    }
+    assertNoSensitiveMetadata(input.fieldRef, 'fieldRef');
+
+    const requestedFieldRef = stableJson(input.fieldRef);
+    const rows = await this.adapter.query<{
+      id: string;
+      tenant_id: string;
+      source_type: string;
+      source_id: string;
+      field_ref_json: string;
+      authority_actions_json: string;
+      condition_json: string | null;
+      priority: number;
+      lifecycle_state: string;
+    }>(
+      `SELECT *
+         FROM source_authority_contracts
+        WHERE tenant_id = ?
+          AND source_type = ?
+          AND source_id = ?
+          AND lifecycle_state = ?
+        ORDER BY priority DESC, updated_at DESC`,
+      [tenantId, input.sourceType, input.sourceId, 'active']
+    );
+
+    const matched = rows.find((row) => {
+      const actions = JSON.parse(row.authority_actions_json) as string[];
+      return row.field_ref_json === requestedFieldRef && actions.includes(input.authorityAction);
+    });
+
+    return {
+      allowed: Boolean(matched),
+      contractId: matched?.id ?? null,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      authorityAction: input.authorityAction,
+      fieldRef: input.fieldRef,
+      reasonCode: matched
+        ? 'source_authority.allowed'
+        : 'source_authority.no_matching_active_contract',
+    };
+  }
+
+  async recordMappingEvent(tenantId: string, input: RecordMappingEventRequest) {
+    validateRequiredString(input.eventType, 'eventType');
+    validateRequiredString(input.outcome, 'outcome');
+    const now = this.now();
+    const id = createId('mapping_event');
+    await this.adapter.execute(
+      `INSERT INTO mapping_events (
+        id, tenant_id, event_type, policy_version_id, subject_id, source_id,
+        outcome, reason_codes_json, trace_ref, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        tenantId,
+        input.eventType,
+        input.policyVersionId ?? null,
+        input.subjectId ?? null,
+        input.sourceId ?? null,
+        input.outcome,
+        stableJson(input.reasonCodes ?? []),
+        input.traceRef ?? null,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId,
+      eventType: input.eventType,
+      outcome: input.outcome,
+      reasonCodes: input.reasonCodes ?? [],
+      createdAt: now,
+    };
+  }
+
+  async enqueueProjectionOutbox(tenantId: string, input: EnqueueProjectionOutboxRequest) {
+    validateRequiredString(input.eventType, 'eventType');
+    validateRequiredString(input.aggregateType, 'aggregateType');
+    validateRequiredString(input.aggregateId, 'aggregateId');
+    assertNoSensitiveMetadata(input.payload, 'payload');
+    const now = this.now();
+    const id = createId('projection_outbox');
+    await this.adapter.execute(
+      `INSERT INTO projection_outbox (
+        id, tenant_id, event_type, subject_id, aggregate_type, aggregate_id,
+        payload_json, status, available_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        tenantId,
+        input.eventType,
+        input.subjectId ?? null,
+        input.aggregateType,
+        input.aggregateId,
+        input.payload ? stableJson(input.payload) : null,
+        'pending',
+        input.availableAt ?? now,
+        now,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId,
+      eventType: input.eventType,
+      aggregateType: input.aggregateType,
+      aggregateId: input.aggregateId,
+      status: 'pending',
+      availableAt: input.availableAt ?? now,
+    };
+  }
+
+  async createProjectionJob(tenantId: string, input: CreateProjectionJobRequest) {
+    validateRequiredString(input.jobType, 'jobType');
+    if (!isRecord(input.scope)) {
+      throw badRequest('scope must be an object');
+    }
+    assertNoSensitiveMetadata(input.scope, 'scope');
+    const now = this.now();
+    const id = createId('projection_job');
+    await this.adapter.execute(
+      `INSERT INTO projection_jobs (
+        id, tenant_id, job_type, scope_json, status, cursor_json,
+        started_at, completed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, tenantId, input.jobType, stableJson(input.scope), 'queued', null, null, null, now, now]
+    );
+    return {
+      id,
+      tenantId,
+      jobType: input.jobType,
+      status: 'queued',
+    };
+  }
+
+  async createReplayJob(tenantId: string, input: CreateReplayJobRequest) {
+    validateRequiredString(input.replayType, 'replayType');
+    if (!isRecord(input.impactScope)) {
+      throw badRequest('impactScope must be an object');
+    }
+    assertNoSensitiveMetadata(input.impactScope, 'impactScope');
+    const now = this.now();
+    const id = createId('replay_job');
+    await this.adapter.execute(
+      `INSERT INTO replay_jobs (
+        id, tenant_id, replay_type, impact_scope_json, status, cursor_json,
+        result_summary_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        tenantId,
+        input.replayType,
+        stableJson(input.impactScope),
+        'queued',
+        null,
+        null,
+        now,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId,
+      replayType: input.replayType,
+      status: 'queued',
+    };
+  }
+
+  async upsertAdminSearchProjection(tenantId: string, input: UpsertAdminSearchProjectionRequest) {
+    validateRequiredString(input.projectionKind, 'projectionKind');
+    if (!isRecord(input.projection)) {
+      throw badRequest('projection must be an object');
+    }
+    assertNoSensitiveMetadata(input.projection, 'projection');
+    const now = this.now();
+    const id = input.id ?? createId('admin_search_projection');
+    await this.adapter.execute(
+      `INSERT INTO admin_search_projections (
+        id, tenant_id, subject_id, account_id, projection_kind, projection_json,
+        classification, lifecycle_state, indexed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        projection_json = excluded.projection_json,
+        classification = excluded.classification,
+        lifecycle_state = excluded.lifecycle_state,
+        indexed_at = excluded.indexed_at,
+        updated_at = excluded.updated_at`,
+      [
+        id,
+        tenantId,
+        input.subjectId ?? null,
+        input.accountId ?? null,
+        input.projectionKind,
+        stableJson(input.projection),
+        input.classification ?? 'internal',
+        input.lifecycleState ?? 'active',
+        now,
+        now,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId,
+      projectionKind: input.projectionKind,
+      classification: input.classification ?? 'internal',
+      lifecycleState: input.lifecycleState ?? 'active',
+      indexedAt: now,
+    };
+  }
+
   async runIdempotent<T>(
     tenantId: string,
     operationKey: string,
@@ -1284,6 +1642,30 @@ export async function adminIdentityMappingPolicyVersionActivateHandler(c: AdminC
 export async function adminIdentityMappingPolicyRollbackHandler(c: AdminContext) {
   return handleMutation(c, 'policy.rollback', async (repository, tenantId) =>
     repository.rollbackPolicySet(tenantId, requiredParam(c, 'policySetId'))
+  );
+}
+
+export async function adminIdentityMappingSourceAuthorityContractsListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    sourceAuthorityContracts: await repository.listSourceAuthorityContracts(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingSourceAuthorityContractCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'source-authority-contract.create', async (repository, tenantId, body) =>
+    repository.createSourceAuthorityContract(tenantId, body as CreateSourceAuthorityContractRequest)
+  );
+}
+
+export async function adminIdentityMappingSourceAuthorityEvaluateHandler(c: AdminContext) {
+  return handleMutation(
+    c,
+    'source-authority-contract.evaluate',
+    async (repository, tenantId, body) =>
+      repository.evaluateSourceAuthorityContract(
+        tenantId,
+        body as EvaluateSourceAuthorityContractRequest
+      )
   );
 }
 

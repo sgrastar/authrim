@@ -15,6 +15,9 @@ const CANONICAL_TABLES = [
   'identity_resolution_events',
   'identity_resolution_candidates',
   'assurance_evidence',
+  'value_provenance',
+  'contact_point_search_indexes',
+  'identity_binding_lookup_indexes',
 ];
 
 describe('CanonicalIdentityRepository', () => {
@@ -221,6 +224,50 @@ describe('CanonicalIdentityRepository', () => {
     expect(adapter.getById('identity_resolution_candidates', 'candidate-1')?.decision_state).toBe(
       'approved'
     );
+  });
+
+  it('records provenance and protected lookup indexes for runtime discovery', async () => {
+    const provenance = await repository.recordValueProvenance({
+      id: 'provenance-1',
+      owner_table: 'profile_attribute_values',
+      owner_id: 'profile-value-1',
+      source_id: 'scim-directory',
+      source_record_id: 'Users/user-1',
+      source_field_ref: 'emails[type eq "work"].value',
+      source_authority_contract_id: 'source-authority-1',
+      confidence_score: 95,
+      provenance: { ruleId: 'rule-email', reason: 'source_authority' },
+    });
+    const contactIndex = await repository.createContactPointSearchIndex({
+      id: 'contact-index-1',
+      contact_point_id: 'contact-1',
+      index_kind: 'email_exact',
+      index_value: 'blind-index-email',
+      classification: 'sensitive',
+    });
+    const bindingIndex = await repository.createIdentityBindingLookupIndex({
+      id: 'binding-index-1',
+      identity_binding_id: 'binding-1',
+      lookup_kind: 'saml:persistent_nameid',
+      lookup_value: 'blind-index-nameid',
+    });
+
+    expect(provenance.source_authority_contract_id).toBe('source-authority-1');
+    expect(JSON.parse(provenance.provenance_json ?? '{}')).toEqual({
+      ruleId: 'rule-email',
+      reason: 'source_authority',
+    });
+    expect(contactIndex.classification).toBe('sensitive');
+    expect(bindingIndex.status).toBe('active');
+    expect(adapter.getById('value_provenance', 'provenance-1')?.source_field_ref).toBe(
+      'emails[type eq "work"].value'
+    );
+    expect(adapter.getById('contact_point_search_indexes', 'contact-index-1')?.index_value).toBe(
+      'blind-index-email'
+    );
+    expect(
+      adapter.getById('identity_binding_lookup_indexes', 'binding-index-1')?.lookup_value
+    ).toBe('blind-index-nameid');
   });
 
   it('transitions subject and account lifecycle without hard deleting rows', async () => {

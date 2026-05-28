@@ -656,6 +656,9 @@ import {
   adminIdentityMappingPolicyVersionPublishHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
+  adminIdentityMappingSourceAuthorityContractCreateHandler,
+  adminIdentityMappingSourceAuthorityContractsListHandler,
+  adminIdentityMappingSourceAuthorityEvaluateHandler,
   adminIdentityMappingTemplateCreateHandler,
   adminIdentityMappingTemplatesListHandler,
 } from './identity-mapping-control-plane';
@@ -2271,6 +2274,21 @@ app.post(
   '/api/admin/identity-mapping/policies/:policySetId/rollback',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingPolicyRollbackHandler
+);
+app.get(
+  '/api/admin/identity-mapping/source-authority-contracts',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingSourceAuthorityContractsListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/source-authority-contracts',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSourceAuthorityContractCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/source-authority-contracts/evaluate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSourceAuthorityEvaluateHandler
 );
 
 // =============================================================================

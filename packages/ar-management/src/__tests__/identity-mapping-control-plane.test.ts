@@ -272,6 +272,150 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
   });
 });
 
+describe('IdentityMappingControlPlaneRepository identity registry operations', () => {
+  it('stores source authority contracts and queues projection work without raw values', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const authority = await repository.createSourceAuthorityContract('tenant_a', {
+      sourceType: 'scim',
+      sourceId: 'scim-directory',
+      fieldRef: { namespace: 'authrim.profile', path: 'email' },
+      authorityActions: ['write', 'verify'],
+      condition: { assuranceLevel: 'ial2' },
+      priority: 10,
+    });
+    const event = await repository.recordMappingEvent('tenant_a', {
+      eventType: 'identity.binding.matched',
+      sourceId: 'scim-directory',
+      subjectId: 'subject-1',
+      outcome: 'matched',
+      reasonCodes: ['identity.hard_match'],
+      traceRef: 'trace://identity/1',
+    });
+    const outbox = await repository.enqueueProjectionOutbox('tenant_a', {
+      eventType: 'subject.updated',
+      subjectId: 'subject-1',
+      aggregateType: 'identity_subject',
+      aggregateId: 'subject-1',
+      payload: { changedFields: ['email'] },
+    });
+
+    expect(authority.priority).toBe(10);
+    expect(event.reasonCodes).toEqual(['identity.hard_match']);
+    expect(outbox.status).toBe('pending');
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO source_authority_contracts'),
+      expect.stringContaining('INSERT INTO mapping_events'),
+      expect.stringContaining('INSERT INTO projection_outbox'),
+    ]);
+  });
+
+  it('evaluates source authority contracts by source, action, and field ref', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'authority-1',
+          tenant_id: 'tenant_a',
+          source_type: 'scim',
+          source_id: 'scim-directory',
+          field_ref_json: JSON.stringify({ namespace: 'authrim.profile', path: 'email' }),
+          authority_actions_json: JSON.stringify(['write', 'verify']),
+          condition_json: null,
+          priority: 10,
+          lifecycle_state: 'active',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.evaluateSourceAuthorityContract('tenant_a', {
+        sourceType: 'scim',
+        sourceId: 'scim-directory',
+        fieldRef: { path: 'email', namespace: 'authrim.profile' },
+        authorityAction: 'write',
+      })
+    ).resolves.toMatchObject({
+      allowed: true,
+      contractId: 'authority-1',
+      reasonCode: 'source_authority.allowed',
+    });
+
+    await expect(
+      repository.evaluateSourceAuthorityContract('tenant_a', {
+        sourceType: 'scim',
+        sourceId: 'scim-directory',
+        fieldRef: { namespace: 'authrim.profile', path: 'email' },
+        authorityAction: 'revoke',
+      })
+    ).resolves.toMatchObject({
+      allowed: false,
+      contractId: null,
+      reasonCode: 'source_authority.no_matching_active_contract',
+    });
+  });
+
+  it('creates replay and projection jobs with safe scoped payloads', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const projectionJob = await repository.createProjectionJob('tenant_a', {
+      jobType: 'tenant_discovery_rebuild',
+      scope: { tenantId: 'tenant_a', subjectIds: ['subject-1'] },
+    });
+    const replayJob = await repository.createReplayJob('tenant_a', {
+      replayType: 'mapping_policy_impact',
+      impactScope: { policyVersionId: 'policy-version-1' },
+    });
+    const projection = await repository.upsertAdminSearchProjection('tenant_a', {
+      id: 'projection-1',
+      subjectId: 'subject-1',
+      projectionKind: 'identity_summary',
+      projection: { displayLabel: 'Ada L.', matchReasons: ['email_domain'] },
+      classification: 'internal',
+    });
+
+    expect(projectionJob.status).toBe('queued');
+    expect(replayJob.status).toBe('queued');
+    expect(projection.id).toBe('projection-1');
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO projection_jobs'),
+      expect.stringContaining('INSERT INTO replay_jobs'),
+      expect.stringContaining('INSERT INTO admin_search_projections'),
+    ]);
+  });
+
+  it('rejects sensitive projection and outbox payloads', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.enqueueProjectionOutbox('tenant_a', {
+        eventType: 'subject.updated',
+        aggregateType: 'identity_subject',
+        aggregateId: 'subject-1',
+        payload: { rawValue: 'person@example.edu' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+
+    await expect(
+      repository.upsertAdminSearchProjection('tenant_a', {
+        projectionKind: 'identity_summary',
+        projection: { token: 'secret-token' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+
+    expect(adapter.executes).toHaveLength(0);
+  });
+});
+
 describe('IdentityMappingControlPlaneRepository schema and template catalogs', () => {
   it('stores protocol schemas, external schemas, and mapping templates', async () => {
     const adapter = createAdapter({});
