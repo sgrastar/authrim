@@ -1,9 +1,15 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { previewCsvDryRun } from '@authrim/ar-lib-identity-mapping/experimental';
+import {
+  previewCsvDryRun,
+  previewOutboundRelease,
+} from '@authrim/ar-lib-identity-mapping/experimental';
 import type {
   CsvDryRunPreviewInput,
   CsvDryRunPreviewResult,
+  OutboundPreviewProtocol,
+  OutboundReleasePreviewInput,
+  OutboundReleasePreviewResult,
 } from '@authrim/ar-lib-identity-mapping/experimental';
 
 type AdminContext = Context<{ Bindings: Env }>;
@@ -15,6 +21,13 @@ export interface AdminCsvDryRunPreviewResponse extends CsvDryRunPreviewResult {
     protocol: 'csv';
     persisted: false;
     maxRows: number;
+  };
+}
+
+export interface AdminOutboundReleasePreviewResponse extends OutboundReleasePreviewResult {
+  preview: {
+    protocol: OutboundPreviewProtocol;
+    persisted: false;
   };
 }
 
@@ -53,6 +66,48 @@ export async function adminCsvDryRunPreviewHandler(c: AdminContext): Promise<Res
   });
 }
 
+export async function adminSamlReleasePreviewHandler(c: AdminContext): Promise<Response | void> {
+  return adminOutboundReleasePreviewHandler(c, 'saml');
+}
+
+export async function adminOidcReleasePreviewHandler(c: AdminContext): Promise<Response | void> {
+  return adminOutboundReleasePreviewHandler(c, 'oidc');
+}
+
+async function adminOutboundReleasePreviewHandler(
+  c: AdminContext,
+  protocol: OutboundPreviewProtocol
+): Promise<Response | void> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return invalidRequest(c, 'Request body must be valid JSON');
+  }
+
+  const validationError = validateOutboundReleasePreviewRequest(body, protocol);
+  if (validationError) {
+    return invalidRequest(c, validationError);
+  }
+
+  const request = body as OutboundReleasePreviewInput;
+  const result = previewOutboundRelease({
+    ...request,
+    destination: {
+      ...request.destination,
+      protocol,
+    },
+  });
+
+  return c.json<AdminOutboundReleasePreviewResponse>({
+    preview: {
+      protocol,
+      persisted: false,
+    },
+    ...result,
+  });
+}
+
 function validateCsvDryRunPreviewRequest(body: unknown): string | null {
   if (!isRecord(body)) {
     return 'Request body must be an object';
@@ -83,6 +138,46 @@ function validateCsvDryRunPreviewRequest(body: unknown): string | null {
   }
   if (body.validationRules !== undefined && !Array.isArray(body.validationRules)) {
     return 'validationRules must be an array';
+  }
+  return null;
+}
+
+function validateOutboundReleasePreviewRequest(
+  body: unknown,
+  protocol: OutboundPreviewProtocol
+): string | null {
+  if (!isRecord(body)) {
+    return 'Request body must be an object';
+  }
+  if (!isRecord(body.destination)) {
+    return 'destination is required';
+  }
+  if (body.destination.protocol !== undefined && body.destination.protocol !== protocol) {
+    return `destination.protocol must be ${protocol}`;
+  }
+  if (typeof body.destination.destinationId !== 'string') {
+    return 'destination.destinationId is required';
+  }
+  if (typeof body.destination.purpose !== 'string') {
+    return 'destination.purpose is required';
+  }
+  if (!Array.isArray(body.values)) {
+    return 'values must be an array';
+  }
+  if (!body.values.every(isRecord)) {
+    return 'each value must be an object';
+  }
+  if (
+    body.oidcClaimsRequest !== undefined &&
+    (protocol !== 'oidc' || !isRecord(body.oidcClaimsRequest))
+  ) {
+    return 'oidcClaimsRequest is only valid for OIDC previews and must be an object';
+  }
+  if (
+    body.samlRequestedAttributes !== undefined &&
+    (protocol !== 'saml' || !Array.isArray(body.samlRequestedAttributes))
+  ) {
+    return 'samlRequestedAttributes is only valid for SAML previews and must be an array';
   }
   return null;
 }

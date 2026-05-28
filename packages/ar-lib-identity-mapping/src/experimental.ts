@@ -12,6 +12,7 @@ export {
   adaptScimUserPreview,
 } from './adapters';
 export { previewCsvDryRun } from './previews/csv-dry-run';
+export { previewOutboundRelease } from './previews/outbound-release';
 export type {
   CsvPreviewAdapterInput,
   OidcClaimsPreviewAdapterInput,
@@ -26,3 +27,21 @@ export type {
   CsvDryRunPreviewRowResult,
   CsvHeaderSuggestion,
 } from './previews/csv-dry-run';
+export type {
+  AttributeReleaseConsentMode,
+  AttributeReleaseConsentPreview,
+  AttributeReleaseConsentPreviewInput,
+  OidcAdvancedClaimConstraint,
+  OidcConstraintPreview,
+  OutboundPreviewDestination,
+  OutboundPreviewProtocol,
+  OutboundReleasePreviewInput,
+  OutboundReleasePreviewItem,
+  OutboundReleasePreviewResult,
+  OutboundReleaseValueInput,
+  ReleaseDecision,
+  ReleaseLegalBasis,
+  ReleaseReason,
+  SamlRequestedAttributeConstraint,
+  SamlRequestedAttributePreview,
+} from './previews/outbound-release';

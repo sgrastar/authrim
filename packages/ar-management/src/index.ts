@@ -637,7 +637,11 @@ import {
   getWebhookDelivery,
   replayWebhookDelivery,
 } from './routes/settings/webhooks';
-import { adminCsvDryRunPreviewHandler } from './identity-mapping-preview';
+import {
+  adminCsvDryRunPreviewHandler,
+  adminOidcReleasePreviewHandler,
+  adminSamlReleasePreviewHandler,
+} from './identity-mapping-preview';
 import {
   getLoggingConfig,
   updateLoggingConfig,
@@ -2165,6 +2169,16 @@ app.post(
   '/api/admin/identity-mapping/preview/csv',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminCsvDryRunPreviewHandler
+);
+app.post(
+  '/api/admin/identity-mapping/preview/saml',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminSamlReleasePreviewHandler
+);
+app.post(
+  '/api/admin/identity-mapping/preview/oidc',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminOidcReleasePreviewHandler
 );
 
 // =============================================================================
