@@ -9,7 +9,7 @@
  * - Shutdown
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { z } from 'zod';
 import { PluginLoader, createPluginLoader } from '../core/loader';
 import { CapabilityRegistry } from '../core/registry';
@@ -66,6 +66,10 @@ describe('PluginLoader - Basic Lifecycle', () => {
     registry = new CapabilityRegistry();
     context = createMockContext();
     loader = new PluginLoader(registry, context);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('loadPlugin', () => {
@@ -160,19 +164,23 @@ describe('PluginLoader - Basic Lifecycle', () => {
     });
 
     it('should measure load time correctly', async () => {
+      vi.useFakeTimers();
       const plugin = createTestPlugin({
         initialize: async () => {
           await new Promise((resolve) => setTimeout(resolve, 50));
         },
       });
 
-      const result = await loader.loadPlugin(plugin, { value: 'test' });
+      const resultPromise = loader.loadPlugin(plugin, { value: 'test' });
+      await vi.advanceTimersByTimeAsync(50);
+      const result = await resultPromise;
 
       expect(result.success).toBe(true);
-      expect(result.loadTimeMs).toBeGreaterThanOrEqual(45);
+      expect(result.loadTimeMs).toBe(50);
     });
 
     it('should measure load time even on failure', async () => {
+      vi.useFakeTimers();
       const plugin = createTestPlugin({
         initialize: async () => {
           await new Promise((resolve) => setTimeout(resolve, 30));
@@ -180,10 +188,12 @@ describe('PluginLoader - Basic Lifecycle', () => {
         },
       });
 
-      const result = await loader.loadPlugin(plugin, { value: 'test' });
+      const resultPromise = loader.loadPlugin(plugin, { value: 'test' });
+      await vi.advanceTimersByTimeAsync(30);
+      const result = await resultPromise;
 
       expect(result.success).toBe(false);
-      expect(result.loadTimeMs).toBeGreaterThanOrEqual(30);
+      expect(result.loadTimeMs).toBe(30);
     });
   });
 
