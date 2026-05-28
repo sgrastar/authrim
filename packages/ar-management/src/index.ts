@@ -654,11 +654,18 @@ import {
   adminIdentityMappingPolicyVersionCompileHandler,
   adminIdentityMappingPolicyVersionCreateHandler,
   adminIdentityMappingPolicyVersionPublishHandler,
+  adminIdentityMappingEntitlementGrantHandler,
+  adminIdentityMappingGroupCreateHandler,
+  adminIdentityMappingGroupMembershipCreateHandler,
+  adminIdentityMappingLifecycleSignalRecordHandler,
+  adminIdentityMappingOrgDomainMappingMigrateHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
   adminIdentityMappingOperationalNotificationAcknowledgeHandler,
   adminIdentityMappingOperationalNotificationCreateHandler,
   adminIdentityMappingOperationalNotificationResolveHandler,
+  adminIdentityMappingProvisioningAssignmentRuleCreateHandler,
+  adminIdentityMappingProvisioningAssignmentRuleEvaluateHandler,
   adminIdentityMappingReviewTaskCreateHandler,
   adminIdentityMappingReviewTaskGroupCreateHandler,
   adminIdentityMappingReviewTaskTransitionHandler,
@@ -2325,6 +2332,41 @@ app.post(
   '/api/admin/identity-mapping/operational-notification-states/:stateId/resolve',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingOperationalNotificationResolveHandler
+);
+app.post(
+  '/api/admin/identity-mapping/groups',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingGroupCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/groups/:groupId/memberships',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingGroupMembershipCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/entitlements',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingEntitlementGrantHandler
+);
+app.post(
+  '/api/admin/identity-mapping/provisioning-assignment-rules',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingProvisioningAssignmentRuleCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/provisioning-assignment-rules/:ruleId/evaluate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingProvisioningAssignmentRuleEvaluateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/org-domain-mappings/:mappingId/migrate-to-group',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingOrgDomainMappingMigrateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/lifecycle-signals',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingLifecycleSignalRecordHandler
 );
 
 // =============================================================================

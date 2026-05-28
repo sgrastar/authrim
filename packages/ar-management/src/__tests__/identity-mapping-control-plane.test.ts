@@ -650,6 +650,448 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
   });
 });
 
+describe('IdentityMappingControlPlaneRepository provisioning assignment operations', () => {
+  it('creates groups, memberships, entitlements, and ownership records', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'group-1',
+          group_key: 'faculty',
+          display_name: 'Faculty',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createGroup('tenant_a', {
+        groupKey: 'faculty',
+        displayName: 'Faculty',
+        metadata: {
+          source: 'provisioning',
+        },
+      })
+    ).resolves.toMatchObject({
+      id: 'group-1',
+      groupKey: 'faculty',
+    });
+    await repository.createGroupMembership('tenant_a', {
+      groupId: 'group-1',
+      subjectId: 'subject-1',
+      assignmentSource: 'rule:assignment-rule-1',
+      ownershipPolicy: 'source_owned',
+      revokePolicy: 'review',
+    });
+    await repository.grantEntitlement('tenant_a', {
+      subjectId: 'subject-1',
+      entitlementType: 'permission',
+      entitlementKey: 'profile:read',
+      sourceId: 'assignment-rule-1',
+      revokePolicy: 'auto',
+    });
+
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO "groups"'),
+      expect.stringContaining('INSERT INTO group_memberships'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
+      expect.stringContaining('INSERT INTO entitlements'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
+    ]);
+  });
+
+  it('updates existing subject-only assignments before inserting duplicates', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'existing-membership',
+        },
+        null,
+        {
+          id: 'existing-entitlement',
+        },
+        null,
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createGroupMembership('tenant_a', {
+        groupId: 'group-1',
+        subjectId: 'subject-1',
+        assignmentSource: 'rule:assignment-rule-1',
+      })
+    ).resolves.toMatchObject({
+      id: 'existing-membership',
+    });
+    await expect(
+      repository.grantEntitlement('tenant_a', {
+        subjectId: 'subject-1',
+        entitlementType: 'permission',
+        entitlementKey: 'profile:read',
+      })
+    ).resolves.toMatchObject({
+      id: 'existing-entitlement',
+    });
+
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('UPDATE group_memberships'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
+      expect.stringContaining('UPDATE entitlements'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
+    ]);
+  });
+
+  it('evaluates conditional assignment and grants a group on import, JIT, or registration context', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'assignment-rule-1',
+          target_type: 'group',
+          target_id: 'group-1',
+          condition_json: JSON.stringify({
+            eventTypes: ['import', 'jit', 'registration'],
+            sourceTypes: ['scim'],
+            domains: ['example.edu'],
+          }),
+          priority: 10,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const evaluation = await repository.evaluateProvisioningAssignmentRule(
+      'tenant_a',
+      'assignment-rule-1',
+      {
+        eventType: 'jit',
+        sourceType: 'scim',
+        domain: 'example.edu',
+        subjectId: 'subject-1',
+      }
+    );
+
+    expect(evaluation).toMatchObject({
+      matched: true,
+      outcome: 'assigned',
+      targetType: 'group',
+      targetId: 'group-1',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO group_memberships'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_events'),
+    ]);
+  });
+
+  it('records dry-run assignment events without granting memberships or entitlements', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'assignment-rule-1',
+          target_type: 'permission',
+          target_id: 'profile:read',
+          condition_json: JSON.stringify({
+            eventTypes: ['import'],
+          }),
+          priority: 10,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.evaluateProvisioningAssignmentRule('tenant_a', 'assignment-rule-1', {
+        eventType: 'import',
+        subjectId: 'subject-1',
+        dryRun: true,
+      })
+    ).resolves.toMatchObject({
+      matched: true,
+      outcome: 'assigned',
+      dryRun: true,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO provisioning_assignment_events'),
+    ]);
+  });
+
+  it('does not grant assignments when a persisted rule has malformed condition JSON', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'assignment-rule-1',
+          target_type: 'group',
+          target_id: 'group-1',
+          condition_json: '{not-json',
+          priority: 10,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.evaluateProvisioningAssignmentRule('tenant_a', 'assignment-rule-1', {
+        eventType: 'jit',
+        sourceType: 'scim',
+        domain: 'example.edu',
+        subjectId: 'subject-1',
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects raw identifiers in assignment conditions and entitlement values', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createProvisioningAssignmentRule('tenant_a', {
+        ruleType: 'email_exact_match',
+        targetType: 'group',
+        targetId: 'group-1',
+        condition: {
+          claims: {
+            email: 'person@example.edu',
+          },
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    await expect(
+      repository.grantEntitlement('tenant_a', {
+        subjectId: 'subject-1',
+        entitlementType: 'permission',
+        entitlementKey: 'profile:read',
+        value: {
+          email: 'person@example.edu',
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('migrates organization domain mapping to group assignment without making org the source of truth', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'mapping-1',
+          domain_hash: 'blind-domain-hash',
+          org_id: 'legacy-org-1',
+        },
+        {
+          id: 'group-1',
+          group_key: 'example-edu',
+          display_name: 'Example EDU',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const migration = await repository.migrateOrgDomainMappingToGroup('tenant_a', 'mapping-1', {
+      groupKey: 'example-edu',
+      displayName: 'Example EDU',
+    });
+
+    expect(migration).toMatchObject({
+      mappingId: 'mapping-1',
+      groupId: 'group-1',
+      migrationState: 'migrated',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO "groups"'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_rules'),
+      expect.stringContaining('UPDATE org_domain_mappings'),
+    ]);
+    expect(String(adapter.executes[1].params[7])).toContain('blind-domain-hash');
+  });
+
+  it('creates migrated org-domain rules that can match later source contexts by domain hash', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'assignment-rule-1',
+          target_type: 'group',
+          target_id: 'group-1',
+          condition_json: JSON.stringify({
+            claims: {
+              domainHash: 'blind-domain-hash',
+            },
+          }),
+          priority: 10,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.evaluateProvisioningAssignmentRule('tenant_a', 'assignment-rule-1', {
+        eventType: 'jit',
+        sourceType: 'scim',
+        subjectId: 'subject-1',
+        claims: {
+          domainHash: 'blind-domain-hash',
+        },
+      })
+    ).resolves.toMatchObject({
+      matched: true,
+      outcome: 'assigned',
+      targetType: 'group',
+      targetId: 'group-1',
+    });
+  });
+
+  it('records SCIM active:false lifecycle signal as an account suspension decision', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [null],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const result = await repository.recordExternalLifecycleSignal('tenant_a', {
+      sourceType: 'scim',
+      sourceId: 'directory-1',
+      sourceEventId: 'event-1',
+      signalType: 'scim_active_false',
+      accountId: 'account-1',
+      targetType: 'account',
+      targetId: 'account-1',
+    });
+
+    expect(result).toMatchObject({
+      decision: 'suspend_account',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
+      expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
+      expect.stringContaining('UPDATE identity_accounts'),
+      expect.stringContaining('INSERT INTO provisioning_revocation_events'),
+      expect.stringContaining('UPDATE external_lifecycle_signal_events'),
+    ]);
+  });
+
+  it('routes protected SCIM group removal, CSV diff, and claim disappearance to review instead of silent revoke', async () => {
+    for (const signalType of [
+      'scim_group_removed',
+      'csv_diff_removed',
+      'claim_disappeared',
+    ] as const) {
+      const adapter = createAdapter({
+        queryOneRows: [null],
+      });
+      const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+      const result = await repository.recordExternalLifecycleSignal('tenant_a', {
+        sourceType: signalType.startsWith('scim') ? 'scim' : 'csv',
+        sourceId: 'source-1',
+        sourceEventId: `${signalType}-source-event`,
+        signalType,
+        subjectId: 'subject-1',
+        targetType: signalType === 'scim_group_removed' ? 'group_membership' : 'entitlement',
+        targetId: 'assignment-1',
+        ownership: {
+          assignmentType: signalType === 'scim_group_removed' ? 'group_membership' : 'entitlement',
+          assignmentId: 'assignment-1',
+          ownershipPolicy: 'manual',
+          revokePolicy: 'auto',
+          protectedUntil: 2000,
+        },
+      });
+
+      expect(result.decision).toBe('review');
+      expect(adapter.executes.map((item) => item.sql).join('\n')).not.toContain(
+        'SET lifecycle_state = ?'
+      );
+      expect(adapter.executes.map((item) => item.sql)).toEqual([
+        expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
+        expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
+        expect.stringContaining('INSERT INTO provisioning_revocation_events'),
+        expect.stringContaining('UPDATE external_lifecycle_signal_events'),
+      ]);
+    }
+  });
+
+  it('applies source-owned auto revocation for entitlement lifecycle signals', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [null],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const result = await repository.recordExternalLifecycleSignal('tenant_a', {
+      sourceType: 'csv',
+      sourceId: 'directory-export',
+      sourceEventId: 'event-1',
+      signalType: 'csv_diff_removed',
+      subjectId: 'subject-1',
+      targetType: 'entitlement',
+      targetId: 'entitlement-1',
+      ownership: {
+        assignmentType: 'entitlement',
+        assignmentId: 'entitlement-1',
+        ownershipPolicy: 'source_owned',
+        revokePolicy: 'auto',
+      },
+    });
+
+    expect(result).toMatchObject({
+      decision: 'revoke',
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
+      expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
+      expect.stringContaining('UPDATE entitlements'),
+      expect.stringContaining('INSERT INTO provisioning_revocation_events'),
+      expect.stringContaining('UPDATE external_lifecycle_signal_events'),
+    ]);
+  });
+
+  it('does not duplicate lifecycle signal decisions or revocation side effects for retries', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'signal-event-1',
+          processing_state: 'processed',
+        },
+        {
+          decision: 'review',
+          reason_codes_json: JSON.stringify([
+            'lifecycle_signal.scim_group_removed',
+            'provisioning.revocation.review_required',
+          ]),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.recordExternalLifecycleSignal('tenant_a', {
+        sourceType: 'scim',
+        sourceId: 'directory-1',
+        sourceEventId: 'event-1',
+        signalType: 'scim_group_removed',
+        subjectId: 'subject-1',
+        targetType: 'group_membership',
+        targetId: 'membership-1',
+      })
+    ).resolves.toMatchObject({
+      signalEventId: 'signal-event-1',
+      decision: 'review',
+      idempotent: true,
+      reasonCodes: [
+        'lifecycle_signal.scim_group_removed',
+        'provisioning.revocation.review_required',
+      ],
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+});
+
 describe('IdentityMappingControlPlaneRepository schema and template catalogs', () => {
   it('stores protocol schemas, external schemas, and mapping templates', async () => {
     const adapter = createAdapter({});
