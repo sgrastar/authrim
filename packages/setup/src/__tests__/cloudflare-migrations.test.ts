@@ -494,6 +494,66 @@ INSERT INTO tenants (
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('applies the unified identity mapping admin control-plane baseline in SQLite', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) {
+      return;
+    }
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-uim-admin-migration-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, activeAdminMigrationFiles());
+
+      expect(
+        Number(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT COUNT(*) FROM pragma_table_info('mapping_rules');"
+          )
+        )
+      ).toBeGreaterThan(0);
+      expect(
+        Number(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT COUNT(*) FROM pragma_table_info('federation_trust_sources');"
+          )
+        )
+      ).toBeGreaterThan(0);
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('tenant_discovery_indexes') WHERE name = 'mapping_snapshot_id';"
+        )
+      ).toBe('1');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps unified identity mapping schema migrations annotated with schema-readiness IDs', () => {
+    const migrationSql = [
+      readMigration('008_unified_identity_canonical_schema.sql'),
+      readMigration('admin/007_identity_mapping_control_plane_schema.sql'),
+    ].join('\n');
+    const migrationIds = new Set(migrationSql.match(/UIM-SCH-\d{3}/g) ?? []);
+    const expectedIds = [
+      ...Array.from({ length: 84 }, (_, index) => `UIM-SCH-${String(index + 1).padStart(3, '0')}`),
+      'UIM-SCH-088',
+    ];
+
+    expect([...migrationIds].sort()).toEqual(expectedIds.sort());
+    expect(migrationIds.has('UIM-SCH-032A')).toBe(false);
+    expect(migrationIds.has('UIM-SCH-085')).toBe(false);
+    expect(migrationIds.has('UIM-SCH-086')).toBe(false);
+    expect(migrationIds.has('UIM-SCH-087')).toBe(false);
+  });
 });
 
 describe('renderPortableMigrationSql', () => {
