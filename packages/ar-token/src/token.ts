@@ -1,6 +1,8 @@
 import type { Context } from 'hono';
 import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalRuntimeUserProjectionRepository,
+  LegacyUsersPiiValueResolver,
   createAuthContextFromHono,
   createPIIContextFromHono,
   getRuntimeUserStoreSourcesFromHonoContext,
@@ -46,6 +48,7 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
   canIssueTokenWithPIIStatus,
   resolveOIDCPIIRequirement,
@@ -160,6 +163,38 @@ const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callba
 type DirectAuthChannel = 'browser' | 'native' | 'server';
 type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
 type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+
+function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
+  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
+}
+
+async function loadOIDCClaimsUser(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  piiCtx: ReturnType<typeof createPIIContextFromHono>
+): Promise<
+  Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
+> {
+  if (isCanonicalIdentityRuntimeEnabled(c.env)) {
+    const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      piiCtx.coreAdapter,
+      tenantId,
+      new LegacyUsersPiiValueResolver(piiCtx.defaultPiiAdapter)
+    );
+    const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+    if (projection) {
+      return canonicalProjectionToOIDCClaimsUser(projection);
+    }
+  }
+
+  return getCachedUser(c.env, tenantId, userId, {
+    coreDb: piiCtx.coreAdapter,
+    piiDb: piiCtx.defaultPiiAdapter,
+    cacheScope: piiCtx.userCacheScope,
+    piiCacheMode: piiCtx.piiCacheMode,
+  });
+}
 
 function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
   return channel === 'browser' || channel === 'native' || channel === 'server';
@@ -2060,12 +2095,7 @@ async function handleAuthorizationCodeGrant(
   if (shouldEvaluateIdTokenClaims && parsedClaimsRequest.request) {
     try {
       const piiCtx = createPIIContextFromHono(c, tenantId);
-      const user = await getCachedUser(c.env, tenantId, authCodeData.sub, {
-        coreDb: authCtx.coreAdapter,
-        piiDb: piiCtx.defaultPiiAdapter,
-        cacheScope: piiCtx.userCacheScope,
-        piiCacheMode: piiCtx.piiCacheMode,
-      });
+      const user = await loadOIDCClaimsUser(c, tenantId, authCodeData.sub, piiCtx);
       const availableClaims: Record<string, unknown> = {
         ...(user ? buildStandardUserClaims(user) : {}),
         sub: authCodeData.sub,

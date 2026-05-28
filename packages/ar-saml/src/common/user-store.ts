@@ -1,6 +1,8 @@
 import type { Env } from '@authrim/ar-lib-core';
 import {
   ensureDatabaseAdapter,
+  CanonicalRuntimeUserProjectionRepository,
+  LegacyUsersPiiValueResolver,
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
   type DatabaseAdapter,
@@ -20,6 +22,26 @@ async function resolveUserStoreAdapters(
     coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'saml-user-core'),
     piiAdapter: sources.piiDb ? ensureDatabaseAdapter(sources.piiDb, 'saml-user-pii') : null,
   };
+}
+
+function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
+  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
+}
+
+function createCanonicalProjectionRepository(
+  env: Env,
+  tenantId: string,
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null
+): CanonicalRuntimeUserProjectionRepository | null {
+  if (!isCanonicalIdentityRuntimeEnabled(env) || !piiAdapter) {
+    return null;
+  }
+  return new CanonicalRuntimeUserProjectionRepository(
+    coreAdapter,
+    tenantId,
+    new LegacyUsersPiiValueResolver(piiAdapter)
+  );
 }
 
 export async function findActiveSamlUserByEmail(
@@ -53,7 +75,17 @@ export async function getSamlUserNameIdById(
   tenantId: string,
   userId: string
 ): Promise<string | null> {
-  const { piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
+  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
+  const canonicalProjection = await createCanonicalProjectionRepository(
+    env,
+    tenantId,
+    coreAdapter,
+    piiAdapter
+  )?.findByLegacyUserId(userId);
+  if (canonicalProjection) {
+    return canonicalProjection.email;
+  }
+
   if (!piiAdapter) {
     return null;
   }
@@ -71,6 +103,22 @@ export async function getSamlUserInfoById(
   userId: string
 ): Promise<SAMLUserInfo | null> {
   const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
+  const canonicalProjection = await createCanonicalProjectionRepository(
+    env,
+    tenantId,
+    coreAdapter,
+    piiAdapter
+  )?.findByLegacyUserId(userId);
+  if (canonicalProjection?.email) {
+    return {
+      id: canonicalProjection.id,
+      email: canonicalProjection.email,
+      name: canonicalProjection.name ?? undefined,
+      customClaims: await getNonPiiCustomClaims(env, tenantId, userId),
+      customFields: parseCustomFields(canonicalProjection.custom_attributes_json),
+    };
+  }
+
   const userCore = await coreAdapter.queryOne<{ id: string }>(
     'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
     [userId, tenantId]

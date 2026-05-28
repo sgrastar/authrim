@@ -16,6 +16,8 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalIdentityRepository,
+  CanonicalRuntimeUserWriter,
   // Setup utilities
   isSetupDisabled,
   validateSetupToken,
@@ -115,6 +117,10 @@ const moduleLogger = createLogger().module('SETUP');
 
 // Create Hono app for setup routes
 export const setupApp = new Hono<{ Bindings: Env }>();
+
+function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
+  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
+}
 
 /**
  * Generate a cryptographically secure random string
@@ -340,6 +346,13 @@ async function rollbackUserCreation(
 
     // Fallback to legacy DB
     const authCtx = createAuthContextFromHono(c, tenantId);
+
+    if (isCanonicalIdentityRuntimeEnabled(c.env)) {
+      const writer = new CanonicalRuntimeUserWriter(
+        new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId)
+      );
+      await writer.deleteRuntimeUser(userId);
+    }
 
     // Delete from users_core
     await authCtx.repositories.userCore.delete(userId);
@@ -604,6 +617,27 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
         name: name || null,
         preferred_username: preferredUsername,
       });
+
+      if (isCanonicalIdentityRuntimeEnabled(c.env)) {
+        const writer = new CanonicalRuntimeUserWriter(
+          new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId)
+        );
+        await writer.createFromRuntimeUser({
+          userId,
+          tenantId,
+          active: true,
+          emailVerified: true,
+          phoneNumberVerified: false,
+          userType: 'admin',
+          displayName: name || email.toLowerCase(),
+          sourceRef: 'setup:/api/admin-init-setup/initialize',
+          piiFields: {
+            email: true,
+            name: true,
+            preferred_username: true,
+          },
+        });
+      }
     }
 
     // Assign super_admin role

@@ -1,9 +1,12 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalRuntimeUserProjectionRepository,
+  LegacyUsersPiiValueResolver,
   introspectTokenFromContext,
   getClientCached,
   getCachedUser,
+  getCachedUserCore,
   createPIIContextFromHono,
   resolveCustomClaimRuntimeSourcesFromEnv,
   encryptJWT,
@@ -21,6 +24,7 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  canonicalProjectionToOIDCClaimsUser,
   canServeUserInfoWithPIIStatus,
   resolveOIDCPIIRequirement,
 } from '@authrim/ar-lib-core';
@@ -38,6 +42,10 @@ const signingKeyCache = new Map<
   }
 >();
 const KEY_CACHE_TTL = 60000; // 60 seconds
+
+function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
+  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
+}
 
 /**
  * Get signing key from KeyManager with per-tenant caching.
@@ -156,15 +164,39 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const parsedClaims = parseClaimsRequest(claimsParam);
   const claimsRequest = parsedClaims.ok ? parsedClaims.request : undefined;
 
-  // Fetch user data from KV cache (falls back to D1 on cache miss)
-  // This dramatically reduces D1 calls under high load
   const piiCtx = createPIIContextFromHono(c, tenantId);
-  const user = await getCachedUser(c.env, tenantId, sub, {
-    coreDb: piiCtx.coreAdapter,
-    piiDb: piiCtx.defaultPiiAdapter,
-    cacheScope: piiCtx.userCacheScope,
-    piiCacheMode: piiCtx.piiCacheMode,
-  });
+  let user:
+    | Awaited<ReturnType<typeof getCachedUser>>
+    | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
+    | null = null;
+  let piiStatus: NonNullable<Awaited<ReturnType<typeof getCachedUser>>>['pii_status'];
+
+  if (isCanonicalIdentityRuntimeEnabled(c.env)) {
+    const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      piiCtx.coreAdapter,
+      tenantId,
+      new LegacyUsersPiiValueResolver(piiCtx.defaultPiiAdapter)
+    );
+    const projection = await canonicalProjectionRepository.findByLegacyUserId(sub);
+    if (projection) {
+      user = canonicalProjectionToOIDCClaimsUser(projection);
+      const coreStatus = await getCachedUserCore(c.env, tenantId, sub, piiCtx.coreAdapter);
+      piiStatus = coreStatus?.pii_status;
+    }
+  }
+
+  if (!user) {
+    // Fetch user data from KV cache (falls back to D1 on cache miss)
+    // This dramatically reduces D1 calls under high load
+    const legacyUser = await getCachedUser(c.env, tenantId, sub, {
+      coreDb: piiCtx.coreAdapter,
+      piiDb: piiCtx.defaultPiiAdapter,
+      cacheScope: piiCtx.userCacheScope,
+      piiCacheMode: piiCtx.piiCacheMode,
+    });
+    user = legacyUser;
+    piiStatus = legacyUser?.pii_status;
+  }
 
   if (!user) {
     // Security: Generic message to prevent user enumeration
@@ -183,8 +215,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     claimsRequest,
     targets: ['userinfo'],
   });
-  if (user.pii_status) {
-    const piiAccess = canServeUserInfoWithPIIStatus(user.pii_status, {
+  if (piiStatus) {
+    const piiAccess = canServeUserInfoWithPIIStatus(piiStatus, {
       requiresPII: piiRequirement.requiresPII,
     });
     if (!piiAccess.ok) {
