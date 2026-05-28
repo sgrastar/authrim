@@ -280,6 +280,23 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     ]);
     adapter.seed('contact_points', [
       {
+        id: 'contact-email-other-account',
+        tenant_id: 'tenant-a',
+        subject_id: 'subject-1',
+        account_id: 'account-2',
+        contact_type: 'email',
+        purpose: 'primary',
+        normalized_hash: 'hash-email-other-account',
+        value_storage_ref: 'pii://tenant-a/email/other-account',
+        display_label: 'other@example.test',
+        is_primary: 1,
+        verification_state: 'verified',
+        lifecycle_state: 'active',
+        created_at: 1_699_999_999,
+        updated_at: 1_699_999_999,
+        deleted_at: null,
+      },
+      {
         id: 'contact-email',
         tenant_id: 'tenant-a',
         subject_id: 'subject-1',

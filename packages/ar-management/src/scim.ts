@@ -115,6 +115,8 @@ async function maybeCreateCanonicalRuntimeUser(
     locale: internalUser.locale ?? null,
     zoneinfo: internalUser.zoneinfo ?? null,
     sourceRef: 'scim:/Users',
+    addressJson: internalUser.address_json ?? null,
+    customAttributesJson: internalUser.custom_attributes_json ?? null,
     piiFields: {
       email: true,
       phone_number: true,
@@ -159,6 +161,8 @@ async function maybeSyncCanonicalRuntimeUser(
     locale: internalUser.locale ?? null,
     zoneinfo: internalUser.zoneinfo ?? null,
     sourceRef: 'scim:/Users',
+    addressJson: internalUser.address_json ?? null,
+    customAttributesJson: internalUser.custom_attributes_json ?? null,
     piiFields: {
       email: true,
       phone_number: true,

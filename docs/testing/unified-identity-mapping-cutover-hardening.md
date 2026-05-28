@@ -11,14 +11,15 @@ canonical runtime cutover.
 
 ## Automated Gates
 
-| Gate                   | Purpose                                                                             | Command                                                                                                                                                |
-| ---------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Split-brain regression | Verify canonical writes and protocol reads use the same subject/account graph.      | `pnpm --filter @authrim/ar-lib-core test -- src/repositories/__tests__/canonical-runtime-cutover-hardening.test.ts`                                    |
-| Source gate            | Keep canonical runtime writer/projection free of unquarantined legacy table access. | `pnpm --filter @authrim/ar-lib-core test -- src/repositories/__tests__/canonical-runtime-cutover-gate.test.ts`                                         |
-| Admin / SCIM runtime   | Verify Admin API and SCIM canonical write paths.                                    | `pnpm --filter @authrim/ar-management test -- src/__tests__/admin.test.ts src/__tests__/identity-canonical-runtime.test.ts src/__tests__/scim.test.ts` |
-| SAML runtime           | Verify SAML user-store reads prefer canonical projection when enabled.              | `pnpm --filter @authrim/ar-saml test -- src/common/__tests__/user-store.test.ts`                                                                       |
-| UserInfo runtime       | Verify UserInfo uses canonical projection while preserving PII status gating.       | `pnpm --filter @authrim/ar-userinfo test -- src/__tests__/userinfo.test.ts`                                                                            |
-| Migration freshness    | Verify schema IDs and PR6 readiness snapshot remain aligned.                        | `pnpm --filter @authrim/setup test -- src/__tests__/cloudflare-migrations.test.ts`                                                                     |
+| Gate                   | Purpose                                                                                         | Command                                                                                                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Split-brain regression | Verify canonical writes and protocol reads use the same subject/account graph.                  | `pnpm --filter @authrim/ar-lib-core test -- src/repositories/__tests__/canonical-runtime-cutover-hardening.test.ts`                                                                |
+| Source gate            | Keep canonical runtime writer/projection free of unquarantined legacy table access.             | `pnpm --filter @authrim/ar-lib-core test -- src/repositories/__tests__/canonical-runtime-cutover-gate.test.ts`                                                                     |
+| Admin / SCIM runtime   | Verify Admin API and SCIM canonical write paths.                                                | `pnpm --filter @authrim/ar-management test -- src/__tests__/admin.test.ts src/__tests__/identity-canonical-runtime.test.ts src/__tests__/scim.test.ts`                             |
+| Canonical sync         | Verify runtime updates refresh lifecycle, contact verification, address, and custom attributes. | `pnpm --filter @authrim/ar-lib-core test -- src/repositories/__tests__/canonical-runtime-user-writer.test.ts src/repositories/__tests__/canonical-runtime-user-projection.test.ts` |
+| SAML runtime           | Verify SAML user-store reads prefer canonical projection when enabled.                          | `pnpm --filter @authrim/ar-saml test -- src/common/__tests__/user-store.test.ts`                                                                                                   |
+| UserInfo runtime       | Verify UserInfo uses canonical projection while preserving PII status gating.                   | `pnpm --filter @authrim/ar-userinfo test -- src/__tests__/userinfo.test.ts`                                                                                                        |
+| Migration freshness    | Verify schema IDs and PR6 readiness snapshot remain aligned.                                    | `pnpm --filter @authrim/setup test -- src/__tests__/cloudflare-migrations.test.ts`                                                                                                 |
 
 The hot-path smoke test reports `canonical-runtime-hot-path-smoke` with `p95Ms` and
 `maxReadCount`. PR6 budget is `p95Ms < 50ms` and `maxReadCount <= 6`.
@@ -39,6 +40,19 @@ runtime cutover gate.
 | UIM-SCH-007  | `contact_points`              | PR #270 repository coverage, PR #271 runtime cutover, PR6 hardening | tested |
 | UIM-SCH-032A | canonical repository contract | PR #270 repository coverage, PR #271 runtime cutover, PR6 hardening | tested |
 
+## Tier 1 Completion Boundary
+
+This checklist closes the Tier 1 vertical slice for canonical runtime cutover:
+
+- SCIM/Admin runtime writes create and sync the canonical subject/account/profile graph.
+- SAML, OIDC token, UserInfo, and SCIM read paths can project from the canonical graph.
+- Runtime updates refresh lifecycle, display labels, profile locale/zoneinfo, contact verification
+  state, structured address, and custom attributes.
+- PII materialization remains behind the explicit value resolver and rejects malformed or
+  cross-tenant storage references before querying PII storage.
+
+Reserved Tier 3 adapters and future protocol runtimes are intentionally outside this gate.
+
 ## Manual Verification Checklist
 
 Run these checks in a real Cloudflare environment before promoting the cutover to `main`.
@@ -50,6 +64,8 @@ Run these checks in a real Cloudflare environment before promoting the cutover t
   account and subject.
 - Create a user through SCIM `POST /scim/v2/Users` and verify UserInfo and SAML user lookup return
   the same email/name from canonical projection.
+- Update the SCIM user's address and enterprise custom attributes, then verify canonical projection
+  returns the updated values and omits removed values.
 - Deactivate a user through SCIM or Admin API and verify canonical projection no longer returns the
   account as active.
 - Delete a user through SCIM or Admin API and verify canonical account and subject transition to

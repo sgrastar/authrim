@@ -332,6 +332,22 @@ ${insertOAuthClientSql('tenant-b', 'shared-mobile', 'Tenant B Mobile')}
             "SELECT COUNT(*) FROM oauth_clients WHERE client_id = 'shared-mobile';"
           )
         ).toBe('2');
+        for (const tableName of [
+          'subject_account_links',
+          'profiles',
+          'profile_attribute_values',
+          'structured_attribute_values',
+          'contact_points',
+          'identity_bindings',
+        ]) {
+          expect(
+            readSqlite(
+              sqlite3Path,
+              dbPath,
+              `SELECT COUNT(*) FROM pragma_table_info('${tableName}') WHERE name = 'deleted_at';`
+            )
+          ).toBe('1');
+        }
 
         expect(() =>
           runSqlite(

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS subject_account_links (
   source_ref TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  deleted_at INTEGER,
   UNIQUE (tenant_id, subject_id, account_id, link_type),
   FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE,
   FOREIGN KEY (account_id) REFERENCES identity_accounts(id) ON DELETE CASCADE
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   metadata_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  deleted_at INTEGER,
   UNIQUE (tenant_id, subject_id, profile_type),
   FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE
 );
@@ -100,6 +102,7 @@ CREATE TABLE IF NOT EXISTS profile_attribute_values (
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  deleted_at INTEGER,
   FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
 );
 
@@ -118,7 +121,8 @@ CREATE TABLE IF NOT EXISTS structured_attribute_values (
   classification TEXT NOT NULL DEFAULT 'internal',
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_structured_attribute_values_owner
@@ -140,6 +144,7 @@ CREATE TABLE IF NOT EXISTS contact_points (
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  deleted_at INTEGER,
   FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE,
   FOREIGN KEY (account_id) REFERENCES identity_accounts(id) ON DELETE CASCADE
 );
@@ -185,6 +190,7 @@ CREATE TABLE IF NOT EXISTS identity_bindings (
   metadata_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  deleted_at INTEGER,
   last_seen_at INTEGER,
   UNIQUE (tenant_id, protocol, source_id, provider_subject_key_hash),
   FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE,
