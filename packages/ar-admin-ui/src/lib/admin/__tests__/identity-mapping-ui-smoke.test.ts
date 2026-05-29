@@ -32,6 +32,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 	it('keeps the flow editor graph interaction affordances present', () => {
 		const flowEditor = readComponent('identity-mapping/IdentityMappingFlowEditor.svelte');
+		const page = readRoute('admin/identity-mapping/+page.svelte');
 
 		expect(flowEditor).toContain('startConnectionDrag');
 		expect(flowEditor).toContain('drag-edge');
@@ -45,6 +46,12 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('Privacy Policy');
 		expect(flowEditor).toContain("role === 'source' && toNode.role === 'target'");
 		expect(flowEditor).toContain("role === 'target' && toNode.role === 'destination'");
+		expect(flowEditor).toContain('$props');
+		expect(flowEditor).not.toContain('mappingSamples');
+		expect(flowEditor).not.toContain('SAML Salesforce columns');
+		expect(page).toContain('buildIdentityMappingFlowSamples');
+		expect(page).toContain('getSchemaReadiness');
+		expect(page).toContain('samples={flowSamples}');
 	});
 
 	it('wires operation, profile, resolution, and federation pages to their APIs', () => {

@@ -1,0 +1,104 @@
+import { describe, expect, it } from 'vitest';
+import { buildIdentityMappingFlowSamples } from '../flow-data';
+
+describe('identity mapping flow data adapter', () => {
+	it('builds graph nodes from control-plane schemas instead of preview fixtures', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [
+				{
+					id: 'policy_1',
+					tenantId: 'tenant_a',
+					policyKey: 'default',
+					displayName: 'Default policy',
+					lifecycleState: 'draft'
+				}
+			],
+			catalogs: [],
+			protocolSchemas: [
+				{
+					id: 'protocol_oidc',
+					tenantId: 'tenant_a',
+					protocol: 'oidc',
+					schemaKey: 'userinfo',
+					schemaVersion: '1.0',
+					schema: { claims: { email: { type: 'string' }, name: { type: 'string' } } },
+					lifecycleState: 'active'
+				}
+			],
+			externalSchemas: [
+				{
+					id: 'external_csv',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					sourceId: 'hr-import',
+					schemaKey: 'employee-columns',
+					schema: { columns: ['employee_id', 'email', 'department'] },
+					lifecycleState: 'active'
+				}
+			],
+			schemaReadinessRows: [
+				{
+					id: 'UIM-SCH-001',
+					objectName: 'identity_accounts',
+					area: 'Canonical identity account',
+					introducedPr: 'PR1',
+					expectedConnectionPr: 'PR6',
+					runtimePath: 'canonical repository',
+					status: 'repo_connected',
+					gate: 'connected',
+					schemaObject: 'identity_accounts',
+					requiredForTier2Gate: true,
+					schemaPresent: true,
+					gateState: 'pass'
+				}
+			]
+		});
+
+		const csvSample = samples.find((sample) => sample.title === 'employee-columns');
+		expect(csvSample).toBeDefined();
+		expect(csvSample?.nodes.some((node) => node.label === 'employee_id')).toBe(true);
+		expect(csvSample?.nodes.some((node) => node.label === 'identity_accounts')).toBe(true);
+		expect(
+			csvSample?.nodes.some((node) => node.label === 'email' && node.role === 'destination')
+		).toBe(true);
+		expect(csvSample?.rules[csvSample.activeRuleId].runtime).toBe('loaded control-plane schema');
+		expect(JSON.stringify(samples)).not.toContain('Salesforce');
+		expect(JSON.stringify(samples)).not.toContain('sample policy preview only');
+	});
+
+	it('shows schema readiness targets when no source profiles are registered yet', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: [
+				{
+					id: 'UIM-SCH-010',
+					objectName: 'contact_points',
+					area: 'Canonical contact storage',
+					introducedPr: 'PR1',
+					expectedConnectionPr: 'PR6',
+					runtimePath: 'PII repository',
+					status: 'repo_connected',
+					gate: 'connected',
+					schemaObject: 'contact_points',
+					requiredForTier2Gate: true,
+					schemaPresent: true,
+					gateState: 'pass'
+				}
+			]
+		});
+
+		expect(samples).toHaveLength(1);
+		expect(samples[0].id).toBe('schema-readiness-inventory');
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'target',
+					label: 'contact_points'
+				})
+			])
+		);
+	});
+});

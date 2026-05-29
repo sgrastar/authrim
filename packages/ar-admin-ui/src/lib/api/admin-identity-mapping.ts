@@ -16,8 +16,9 @@ export interface IdentityMappingCatalogSummary {
 	tenantId: string;
 	catalogKey: string;
 	displayName: string;
-	versionLabel: string;
+	versionLabel?: string | null;
 	lifecycleState: string;
+	bundleHash?: string | null;
 }
 
 export interface IdentityMappingProtocolSchemaSummary {
@@ -25,8 +26,10 @@ export interface IdentityMappingProtocolSchemaSummary {
 	tenantId: string;
 	protocol: string;
 	schemaKey: string;
-	displayName: string;
-	versionLabel: string;
+	displayName?: string;
+	versionLabel?: string;
+	schemaVersion?: string | null;
+	schema?: Record<string, unknown>;
 	lifecycleState: string;
 }
 
@@ -34,10 +37,14 @@ export interface IdentityMappingExternalSchemaSummary {
 	id: string;
 	tenantId: string;
 	sourceType: string;
-	sourceKey: string;
-	displayName: string;
-	versionLabel: string;
+	sourceId?: string;
+	sourceKey?: string;
+	schemaKey: string;
+	displayName?: string;
+	versionLabel?: string;
+	schema?: Record<string, unknown>;
 	lifecycleState: string;
+	importedAt?: number;
 }
 
 export interface IdentityMappingTemplateSummary {

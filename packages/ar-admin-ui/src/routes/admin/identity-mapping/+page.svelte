@@ -2,9 +2,12 @@
 	import { onMount } from 'svelte';
 	import { adminIdentityMappingAPI } from '$lib/api/admin-identity-mapping';
 	import IdentityMappingFlowEditor from '$lib/components/identity-mapping/IdentityMappingFlowEditor.svelte';
+	import { buildIdentityMappingFlowSamples } from '$lib/components/identity-mapping/flow-data';
+	import type { MappingSample } from '$lib/components/identity-mapping/types';
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
+	let flowSamples = $state<MappingSample[]>([]);
 	let summary = $state({
 		policies: 0,
 		catalogs: 0,
@@ -14,14 +17,21 @@
 
 	onMount(async () => {
 		try {
-			const [policies, catalogs, protocolSchemas, externalSchemas, federationTrustSources] =
-				await Promise.all([
-					adminIdentityMappingAPI.listPolicies(),
-					adminIdentityMappingAPI.listCatalogs(),
-					adminIdentityMappingAPI.listProtocolSchemas(),
-					adminIdentityMappingAPI.listExternalSchemas(),
-					adminIdentityMappingAPI.listFederationTrustSources()
-				]);
+			const [
+				policies,
+				catalogs,
+				protocolSchemas,
+				externalSchemas,
+				federationTrustSources,
+				schemaReadiness
+			] = await Promise.all([
+				adminIdentityMappingAPI.listPolicies(),
+				adminIdentityMappingAPI.listCatalogs(),
+				adminIdentityMappingAPI.listProtocolSchemas(),
+				adminIdentityMappingAPI.listExternalSchemas(),
+				adminIdentityMappingAPI.listFederationTrustSources(),
+				adminIdentityMappingAPI.getSchemaReadiness()
+			]);
 
 			summary = {
 				policies: policies.policies.length,
@@ -29,6 +39,13 @@
 				profiles: protocolSchemas.protocolSchemas.length + externalSchemas.externalSchemas.length,
 				federationTrustSources: federationTrustSources.federationTrustSources.length
 			};
+			flowSamples = buildIdentityMappingFlowSamples({
+				policies: policies.policies,
+				catalogs: catalogs.catalogs,
+				protocolSchemas: protocolSchemas.protocolSchemas,
+				externalSchemas: externalSchemas.externalSchemas,
+				schemaReadinessRows: schemaReadiness.rows
+			});
 		} catch (error) {
 			loadError = error instanceof Error ? error.message : 'Failed to load identity mapping state';
 		} finally {
@@ -75,7 +92,7 @@
 		</div>
 	</div>
 
-	<IdentityMappingFlowEditor />
+	<IdentityMappingFlowEditor samples={flowSamples} {loading} {loadError} />
 
 	<section class="operations-grid" aria-label="Identity mapping operations">
 		<div class="operation-card">
@@ -97,16 +114,14 @@
 			<p>Profiles</p>
 			<a href="/admin/identity-mapping/profiles">{summary.profiles} profiles</a>
 			<span
-				>Inbound sources and outbound destinations are prepared here before they are selected in
-				the graph.</span
+				>Inbound sources and outbound destinations are prepared here before they are selected in the
+				graph.</span
 			>
 		</div>
 		<div class="operation-card">
 			<p>Schema Readiness</p>
 			<a href="/admin/identity-mapping/schema-readiness">Inventory gate</a>
-			<span
-				>Schema-readiness IDs and migration cross-references are shown before activation.</span
-			>
+			<span>Schema-readiness IDs and migration cross-references are shown before activation.</span>
 		</div>
 		<div class="operation-card">
 			<p>Resolution</p>

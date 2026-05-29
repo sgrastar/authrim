@@ -1,14 +1,37 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import {
-		mappingSamples,
 		type MappingAdapter,
 		type MappingEdge,
-		type MappingNode
-	} from './sample-data';
+		type MappingNode,
+		type MappingSample
+	} from './types';
+
+	const {
+		samples = [],
+		loading = false,
+		loadError = null
+	} = $props<{
+		samples?: MappingSample[];
+		loading?: boolean;
+		loadError?: string | null;
+	}>();
 
 	const adapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
-	const initialSample = mappingSamples[0];
+	const emptySample: MappingSample = {
+		id: 'empty-control-plane',
+		title: 'No control-plane schemas loaded',
+		snapshot: 'not available',
+		status: 'empty',
+		reviewGates: '0 fields',
+		inboundAdapter: 'CSV',
+		outboundAdapter: 'OIDC',
+		activeRuleId: 'empty-flow',
+		metrics: ['0 / 0', '0 schemas', '0', 'no catalog'],
+		nodes: [],
+		edges: [],
+		rules: {}
+	};
 	const nodeHeight = 30;
 	const targetHeight = 46;
 	const graphBaseTop = 48;
@@ -17,20 +40,20 @@
 
 	let canvas: HTMLDivElement;
 	let canvasWidth = $state(1000);
-	let sample = $state(initialSample);
-	let inboundAdapter = $state<MappingAdapter>(sample.inboundAdapter);
-	let outboundAdapter = $state<MappingAdapter>(sample.outboundAdapter);
-	let activeRuleId = $state(sample.activeRuleId);
+	let sample = $state(emptySample);
+	let selectedSampleId = $state<string | null>(null);
+	let activeSampleRef = $state<MappingSample | null>(null);
+	let inboundAdapter = $state<MappingAdapter>(emptySample.inboundAdapter);
+	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
+	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
 	let viewMode = $state<'preview' | 'edit' | 'dryrun'>('preview');
 	let activeTheme = $state<'light' | 'dark'>('dark');
 	let customCounter = $state(0);
-	let nodes = $state<MappingNode[]>([...sample.nodes]);
-	let edges = $state<MappingEdge[]>([...sample.edges]);
+	let nodes = $state<MappingNode[]>([...emptySample.nodes]);
+	let edges = $state<MappingEdge[]>([...emptySample.edges]);
 	let hoverNodeId = $state<string | null>(null);
-	let selectedNodeId = $state<string | null>(
-		initialSample.nodes.find((node) => node.ruleId === initialSample.activeRuleId)?.id ?? null
-	);
+	let selectedNodeId = $state<string | null>(null);
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
@@ -54,12 +77,25 @@
 	const sourceNodes = $derived(nodes.filter((node) => node.role === 'source'));
 	const targetNodes = $derived(nodes.filter((node) => node.role === 'target'));
 	const destinationNodes = $derived(nodes.filter((node) => node.role === 'destination'));
+	const hasControlPlaneData = $derived(samples.length > 0);
 	const rule = $derived(sample.rules[activeRuleId] ?? fallbackRule());
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
 	const graphEdges = $derived(edges.filter((edge) => nodeById(edge.from) && nodeById(edge.to)));
 	const selectedEdges = $derived(connectedEdgeIds(selectedNodeId));
 	const hoverEdges = $derived(connectedEdgeIds(hoverNodeId));
+
+	$effect(() => {
+		const next =
+			(samples as MappingSample[]).find(
+				(candidate: MappingSample) => candidate.id === selectedSampleId
+			) ??
+			samples[0] ??
+			emptySample;
+		if (activeSampleRef !== next) {
+			activateSample(next);
+		}
+	});
 
 	onMount(() => {
 		const resize = () => {
@@ -76,6 +112,23 @@
 			window.removeEventListener('resize', resize);
 		};
 	});
+
+	function activateSample(next: MappingSample) {
+		activeSampleRef = next;
+		sample = {
+			...next,
+			nodes: [...next.nodes],
+			edges: [...next.edges],
+			rules: { ...next.rules }
+		};
+		selectedSampleId = next.id;
+		inboundAdapter = next.inboundAdapter;
+		outboundAdapter = next.outboundAdapter;
+		activeRuleId = next.activeRuleId;
+		nodes = [...next.nodes];
+		edges = [...next.edges];
+		selectedNodeId = next.nodes.find((node) => node.ruleId === next.activeRuleId)?.id ?? null;
+	}
 
 	onDestroy(() => {
 		window.removeEventListener('pointermove', handlePointerMove);
@@ -410,11 +463,11 @@
 			privacyPolicyVersion: 'not configured',
 			denyReason: 'none',
 			runtime: 'graph preview',
-			conflict: 'sample policy decides precedence',
+			conflict: 'not evaluated',
 			disclosure: 'redacted summary',
 			dryrunStatus: 'pending',
 			dryrunTone: 'warn' as const,
-			input: '[sample fixture]',
+			input: 'No runtime input selected.',
 			output: 'No mapping edge yet.',
 			trace: 'Select a mapping node to inspect rule behavior.',
 			review: '0 tasks',
@@ -435,8 +488,18 @@
 		<div class="topbar-actions">
 			<div class="profile-select">
 				<label for="sourceProfile">Source profile</label>
-				<select id="sourceProfile" value={sample.id}>
-					<option value="saml-salesforce">SAML Salesforce columns</option>
+				<select
+					id="sourceProfile"
+					bind:value={selectedSampleId}
+					disabled={loading || samples.length === 0}
+				>
+					{#if samples.length === 0}
+						<option value={emptySample.id}>No profiles</option>
+					{:else}
+						{#each samples as option (option.id)}
+							<option value={option.id}>{option.title}</option>
+						{/each}
+					{/if}
 				</select>
 			</div>
 			<div class="mode-toggle" aria-label="View mode">
@@ -504,6 +567,24 @@
 			</div>
 
 			<div class="graph-canvas" bind:this={canvas} style={`height:${layout.height}px`}>
+				{#if loading || loadError || !hasControlPlaneData}
+					<div class="graph-empty-state">
+						<strong
+							>{loading
+								? 'Loading control-plane schemas'
+								: loadError
+									? 'Control-plane schema load failed'
+									: 'No source or destination profiles registered'}</strong
+						>
+						<span
+							>{loading
+								? 'The graph will render protocol, external, and canonical schemas when loading completes.'
+								: loadError
+									? loadError
+									: 'Register source and destination profiles, or add a field catalog, to populate this graph.'}</span
+						>
+					</div>
+				{/if}
 				<div class="lane-label lane-inbound">
 					<span>Inbound adapter</span>
 					<select bind:value={inboundAdapter}>
@@ -697,27 +778,27 @@
 					<span>Attribute set</span>
 					<strong>{rule.attributeSetHash}</strong>
 				</div>
-					<div class="control-row">
-						<span>Challenge mode</span>
-						<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
-					</div>
-					<div class="control-row">
-						<span>Release policy</span>
-						<strong>{rule.releasePolicyVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>Terms</span>
-						<strong>{rule.termsVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>Privacy Policy</span>
-						<strong>{rule.privacyPolicyVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>Deny reason</span>
-						<strong>{rule.denyReason}</strong>
-					</div>
+				<div class="control-row">
+					<span>Challenge mode</span>
+					<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
 				</div>
+				<div class="control-row">
+					<span>Release policy</span>
+					<strong>{rule.releasePolicyVersion}</strong>
+				</div>
+				<div class="control-row">
+					<span>Terms</span>
+					<strong>{rule.termsVersion}</strong>
+				</div>
+				<div class="control-row">
+					<span>Privacy Policy</span>
+					<strong>{rule.privacyPolicyVersion}</strong>
+				</div>
+				<div class="control-row">
+					<span>Deny reason</span>
+					<strong>{rule.denyReason}</strong>
+				</div>
+			</div>
 
 			<div class="control-block">
 				<div class="control-row">
@@ -985,6 +1066,27 @@
 		position: relative;
 		overflow: hidden;
 		background: var(--map-canvas);
+	}
+
+	.graph-empty-state {
+		position: absolute;
+		inset: 68px 24px auto;
+		z-index: 6;
+		display: grid;
+		gap: 4px;
+		max-width: 520px;
+		padding: 14px 16px;
+		border: 1px solid var(--map-line);
+		border-radius: var(--map-radius);
+		color: var(--map-text);
+		background: color-mix(in srgb, var(--map-surface) 92%, transparent);
+		box-shadow: 0 16px 40px rgb(0 0 0 / 0.18);
+	}
+
+	.graph-empty-state span {
+		color: var(--map-muted);
+		font-size: 12px;
+		line-height: 1.45;
 	}
 
 	.lane-label {

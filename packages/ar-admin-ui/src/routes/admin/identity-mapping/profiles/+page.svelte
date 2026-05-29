@@ -65,9 +65,11 @@
 	const visibleProfiles = $derived(
 		activeKind === 'all' ? profiles : profiles.filter((profile) => profile.kind === activeKind)
 	);
-	const selectedProfile = $derived(profiles.find((profile) => profile.id === selectedProfileId) ?? null);
+	const selectedProfile = $derived(
+		profiles.find((profile) => profile.id === selectedProfileId) ?? null
+	);
 	const selectedConsentDraft = $derived(
-		selectedProfileId ? consentDrafts[selectedProfileId] ?? null : null
+		selectedProfileId ? (consentDrafts[selectedProfileId] ?? null) : null
 	);
 	const inboundCount = $derived(profiles.filter((profile) => profile.kind === 'inbound').length);
 	const outboundCount = $derived(profiles.filter((profile) => profile.kind === 'outbound').length);
@@ -107,8 +109,8 @@
 			id: schema.id,
 			kind: ['saml', 'oidc'].includes(schema.protocol.toLowerCase()) ? 'outbound' : 'inbound',
 			protocol: schema.protocol,
-			displayName: schema.displayName,
-			versionLabel: schema.versionLabel,
+			displayName: schema.displayName ?? schema.schemaKey,
+			versionLabel: schema.versionLabel ?? schema.schemaVersion ?? 'current',
 			lifecycleState: schema.lifecycleState,
 			source: schema.schemaKey
 		};
@@ -119,10 +121,10 @@
 			id: schema.id,
 			kind: 'inbound',
 			protocol: schema.sourceType,
-			displayName: schema.displayName,
-			versionLabel: schema.versionLabel,
+			displayName: schema.displayName ?? schema.schemaKey,
+			versionLabel: schema.versionLabel ?? `imported:${schema.importedAt ?? 'current'}`,
 			lifecycleState: schema.lifecycleState,
-			source: schema.sourceKey
+			source: schema.sourceKey ?? schema.sourceId ?? schema.schemaKey
 		};
 	}
 
@@ -189,171 +191,169 @@
 		{:else if visibleProfiles.length === 0}
 			<div class="empty-state">No profiles match this filter.</div>
 		{:else}
-				<div class="profile-grid">
-					{#each visibleProfiles as profile (profile.id)}
-						<article class:selected={profile.id === selectedProfileId}>
-							<div class="profile-heading">
-								<span>{profile.kind}</span>
-								<strong>{profile.lifecycleState}</strong>
-							</div>
-							<h2>{profile.displayName}</h2>
-							<p>{profile.protocol} / {profile.source}</p>
-							<small>{profile.versionLabel}</small>
-							{#if profile.kind === 'outbound'}
-								<button type="button" onclick={() => selectConsentProfile(profile)}>
-									Configure release consent
-								</button>
-							{/if}
-						</article>
-					{/each}
-				</div>
-			{/if}
-		</section>
-
-		{#if selectedProfile && selectedConsentDraft}
-			<section class="consent-panel" aria-label="Destination attribute release consent settings">
-				<div>
-					<p class="eyebrow">Destination Consent Settings</p>
-					<h2>{selectedProfile.displayName}</h2>
-					<p class="summary">
-						Set tenant defaults and client overrides for attribute release consent. Flow Editor
-						previews use the same legal basis, challenge mode, and policy version fields without
-						showing raw attribute values.
-					</p>
-				</div>
-
-				<div class="settings-grid">
-					<label>
-						<span>Scope</span>
-						<select
-							value={selectedConsentDraft.scope}
-							onchange={(event) =>
-								updateSelectedConsentDraft({
-									scope: getInputValue(event) as DestinationConsentSettingsDraft['scope']
-								})}
-						>
-							<option value="tenant_default">Tenant default</option>
-							<option value="client_override">Client override</option>
-						</select>
-					</label>
-
-					<label>
-						<span>Client override ID</span>
-						<input
-							value={selectedConsentDraft.clientId}
-							placeholder="client id for override"
-							disabled={selectedConsentDraft.scope === 'tenant_default'}
-							oninput={(event) => updateSelectedConsentDraft({ clientId: getInputValue(event) })}
-						/>
-					</label>
-
-					<label>
-						<span>Consent mode</span>
-						<select
-							value={selectedConsentDraft.consentMode}
-							onchange={(event) =>
-								updateSelectedConsentDraft({
-									consentMode: getInputValue(
-										event
-									) as DestinationConsentSettingsDraft['consentMode']
-								})}
-						>
-							<option value="once">Once</option>
-							<option value="every_time">Every time</option>
-							<option value="until_attributes_change">Until attributes change</option>
-						</select>
-					</label>
-
-					<label>
-						<span>Legal basis</span>
-						<select
-							value={selectedConsentDraft.legalBasis}
-							onchange={(event) =>
-								updateSelectedConsentDraft({
-									legalBasis: getInputValue(event) as DestinationConsentSettingsDraft['legalBasis']
-								})}
-						>
-							<option value="consent">Consent</option>
-							<option value="legal_obligation">Legal obligation</option>
-							<option value="contract">Contract</option>
-							<option value="legitimate_interest">Legitimate interest</option>
-						</select>
-					</label>
-
-					<label>
-						<span>Purpose</span>
-						<input
-							value={selectedConsentDraft.purpose}
-							oninput={(event) => updateSelectedConsentDraft({ purpose: getInputValue(event) })}
-						/>
-					</label>
-
-					<label>
-						<span>Attribute set policy version</span>
-						<input
-							value={selectedConsentDraft.attributeSetPolicyVersion}
-							oninput={(event) =>
-								updateSelectedConsentDraft({ attributeSetPolicyVersion: getInputValue(event) })}
-						/>
-					</label>
-
-					<label>
-						<span>Terms version</span>
-						<input
-							value={selectedConsentDraft.termsVersion}
-							oninput={(event) => updateSelectedConsentDraft({ termsVersion: getInputValue(event) })}
-						/>
-					</label>
-
-					<label>
-						<span>Privacy Policy version</span>
-						<input
-							value={selectedConsentDraft.privacyPolicyVersion}
-							oninput={(event) =>
-								updateSelectedConsentDraft({ privacyPolicyVersion: getInputValue(event) })}
-						/>
-					</label>
-
-					<label>
-						<span>Challenge handling</span>
-						<select
-							value={selectedConsentDraft.challengeExperience}
-							onchange={(event) =>
-								updateSelectedConsentDraft({
-									challengeExperience: getInputValue(
-										event
-									) as DestinationConsentSettingsDraft['challengeExperience']
-								})}
-						>
-							<option value="login_flow">Login flow challenge</option>
-							<option value="step_up_required">Step-up required</option>
-						</select>
-					</label>
-
-					<label class="checkbox-row">
-						<input
-							type="checkbox"
-							checked={selectedConsentDraft.regulatedPurposeGuard}
-							onchange={(event) =>
-								updateSelectedConsentDraft({
-									regulatedPurposeGuard:
-										event.currentTarget instanceof HTMLInputElement
-											? event.currentTarget.checked
-											: true
-								})}
-						/>
-						<span>Require purpose guard for regulated attributes</span>
-					</label>
-				</div>
-
-				<div class="consent-preview">
-					<span>Preview</span>
-					<strong>{summarizeDestinationConsentSettings(selectedConsentDraft)}</strong>
-					<small>Raw attribute values remain {selectedConsentDraft.rawValueDisplay}.</small>
-				</div>
-			</section>
+			<div class="profile-grid">
+				{#each visibleProfiles as profile (profile.id)}
+					<article class:selected={profile.id === selectedProfileId}>
+						<div class="profile-heading">
+							<span>{profile.kind}</span>
+							<strong>{profile.lifecycleState}</strong>
+						</div>
+						<h2>{profile.displayName}</h2>
+						<p>{profile.protocol} / {profile.source}</p>
+						<small>{profile.versionLabel}</small>
+						{#if profile.kind === 'outbound'}
+							<button type="button" onclick={() => selectConsentProfile(profile)}>
+								Configure release consent
+							</button>
+						{/if}
+					</article>
+				{/each}
+			</div>
 		{/if}
-	</div>
+	</section>
+
+	{#if selectedProfile && selectedConsentDraft}
+		<section class="consent-panel" aria-label="Destination attribute release consent settings">
+			<div>
+				<p class="eyebrow">Destination Consent Settings</p>
+				<h2>{selectedProfile.displayName}</h2>
+				<p class="summary">
+					Set tenant defaults and client overrides for attribute release consent. Flow Editor
+					previews use the same legal basis, challenge mode, and policy version fields without
+					showing raw attribute values.
+				</p>
+			</div>
+
+			<div class="settings-grid">
+				<label>
+					<span>Scope</span>
+					<select
+						value={selectedConsentDraft.scope}
+						onchange={(event) =>
+							updateSelectedConsentDraft({
+								scope: getInputValue(event) as DestinationConsentSettingsDraft['scope']
+							})}
+					>
+						<option value="tenant_default">Tenant default</option>
+						<option value="client_override">Client override</option>
+					</select>
+				</label>
+
+				<label>
+					<span>Client override ID</span>
+					<input
+						value={selectedConsentDraft.clientId}
+						placeholder="client id for override"
+						disabled={selectedConsentDraft.scope === 'tenant_default'}
+						oninput={(event) => updateSelectedConsentDraft({ clientId: getInputValue(event) })}
+					/>
+				</label>
+
+				<label>
+					<span>Consent mode</span>
+					<select
+						value={selectedConsentDraft.consentMode}
+						onchange={(event) =>
+							updateSelectedConsentDraft({
+								consentMode: getInputValue(event) as DestinationConsentSettingsDraft['consentMode']
+							})}
+					>
+						<option value="once">Once</option>
+						<option value="every_time">Every time</option>
+						<option value="until_attributes_change">Until attributes change</option>
+					</select>
+				</label>
+
+				<label>
+					<span>Legal basis</span>
+					<select
+						value={selectedConsentDraft.legalBasis}
+						onchange={(event) =>
+							updateSelectedConsentDraft({
+								legalBasis: getInputValue(event) as DestinationConsentSettingsDraft['legalBasis']
+							})}
+					>
+						<option value="consent">Consent</option>
+						<option value="legal_obligation">Legal obligation</option>
+						<option value="contract">Contract</option>
+						<option value="legitimate_interest">Legitimate interest</option>
+					</select>
+				</label>
+
+				<label>
+					<span>Purpose</span>
+					<input
+						value={selectedConsentDraft.purpose}
+						oninput={(event) => updateSelectedConsentDraft({ purpose: getInputValue(event) })}
+					/>
+				</label>
+
+				<label>
+					<span>Attribute set policy version</span>
+					<input
+						value={selectedConsentDraft.attributeSetPolicyVersion}
+						oninput={(event) =>
+							updateSelectedConsentDraft({ attributeSetPolicyVersion: getInputValue(event) })}
+					/>
+				</label>
+
+				<label>
+					<span>Terms version</span>
+					<input
+						value={selectedConsentDraft.termsVersion}
+						oninput={(event) => updateSelectedConsentDraft({ termsVersion: getInputValue(event) })}
+					/>
+				</label>
+
+				<label>
+					<span>Privacy Policy version</span>
+					<input
+						value={selectedConsentDraft.privacyPolicyVersion}
+						oninput={(event) =>
+							updateSelectedConsentDraft({ privacyPolicyVersion: getInputValue(event) })}
+					/>
+				</label>
+
+				<label>
+					<span>Challenge handling</span>
+					<select
+						value={selectedConsentDraft.challengeExperience}
+						onchange={(event) =>
+							updateSelectedConsentDraft({
+								challengeExperience: getInputValue(
+									event
+								) as DestinationConsentSettingsDraft['challengeExperience']
+							})}
+					>
+						<option value="login_flow">Login flow challenge</option>
+						<option value="step_up_required">Step-up required</option>
+					</select>
+				</label>
+
+				<label class="checkbox-row">
+					<input
+						type="checkbox"
+						checked={selectedConsentDraft.regulatedPurposeGuard}
+						onchange={(event) =>
+							updateSelectedConsentDraft({
+								regulatedPurposeGuard:
+									event.currentTarget instanceof HTMLInputElement
+										? event.currentTarget.checked
+										: true
+							})}
+					/>
+					<span>Require purpose guard for regulated attributes</span>
+				</label>
+			</div>
+
+			<div class="consent-preview">
+				<span>Preview</span>
+				<strong>{summarizeDestinationConsentSettings(selectedConsentDraft)}</strong>
+				<small>Raw attribute values remain {selectedConsentDraft.rawValueDisplay}.</small>
+			</div>
+		</section>
+	{/if}
+</div>
 
 <style>
 	.profiles-page {
