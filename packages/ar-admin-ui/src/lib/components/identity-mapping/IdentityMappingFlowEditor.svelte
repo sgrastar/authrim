@@ -42,7 +42,7 @@
 	let canvasWidth = $state(1000);
 	let sample = $state(emptySample);
 	let selectedSampleId = $state<string | null>(null);
-	let activeSampleRef = $state<MappingSample | null>(null);
+	let activeSampleRef: MappingSample | null = null;
 	let inboundAdapter = $state<MappingAdapter>(emptySample.inboundAdapter);
 	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
 	let activeRuleId = $state(emptySample.activeRuleId);
