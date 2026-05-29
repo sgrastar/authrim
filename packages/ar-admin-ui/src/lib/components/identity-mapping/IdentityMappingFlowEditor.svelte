@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		type MappingAdapter,
@@ -53,6 +54,8 @@
 	let edges = $state<MappingEdge[]>([...emptySample.edges]);
 	let hoverNodeId = $state<string | null>(null);
 	let selectedNodeId = $state<string | null>(null);
+	let selectedEdgeId = $state<string | null>(null);
+	let hasUnsavedDraftChanges = $state(false);
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
@@ -85,12 +88,19 @@
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
 	const hasControlPlaneData = $derived(samples.length > 0);
-	const rule = $derived(sample.rules[activeRuleId] ?? fallbackRule());
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
 	const graphEdges = $derived(edges.filter((edge) => nodeById(edge.from) && nodeById(edge.to)));
-	const selectedEdges = $derived(connectedEdgeIds(selectedNodeId));
+	const selectedEdge = $derived(
+		selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) : null
+	);
+	const selectedEdges = $derived(
+		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
+	);
 	const hoverEdges = $derived(connectedEdgeIds(hoverNodeId));
+	const rule = $derived(
+		selectedEdge ? edgeInspectorRule(selectedEdge) : (sample.rules[activeRuleId] ?? fallbackRule())
+	);
 
 	$effect(() => {
 		const next =
@@ -104,6 +114,16 @@
 		}
 	});
 
+	beforeNavigate((navigation) => {
+		if (!hasUnsavedDraftChanges) return;
+		const shouldLeave = window.confirm(
+			'You have unsaved mapping draft changes. Leave this page and discard them?'
+		);
+		if (!shouldLeave) {
+			navigation.cancel();
+		}
+	});
+
 	onMount(() => {
 		const resize = () => {
 			const rect = canvas?.getBoundingClientRect();
@@ -112,11 +132,20 @@
 		};
 		resize();
 		const observer = new ResizeObserver(resize);
+		const beforeUnload = (event: BeforeUnloadEvent) => {
+			if (!hasUnsavedDraftChanges) return;
+			event.preventDefault();
+			event.returnValue = '';
+		};
 		if (canvas) observer.observe(canvas);
 		window.addEventListener('resize', resize);
+		window.addEventListener('keydown', handleGlobalKeyDown);
+		window.addEventListener('beforeunload', beforeUnload);
 		return () => {
 			observer.disconnect();
 			window.removeEventListener('resize', resize);
+			window.removeEventListener('keydown', handleGlobalKeyDown);
+			window.removeEventListener('beforeunload', beforeUnload);
 		};
 	});
 
@@ -134,7 +163,9 @@
 		activeRuleId = next.activeRuleId;
 		nodes = [...next.nodes];
 		edges = [...next.edges];
+		selectedEdgeId = null;
 		selectedNodeId = next.nodes.find((node) => node.ruleId === next.activeRuleId)?.id ?? null;
+		hasUnsavedDraftChanges = false;
 	}
 
 	onDestroy(() => {
@@ -156,7 +187,13 @@
 
 	function selectRule(ruleId: string) {
 		activeRuleId = ruleId;
+		selectedEdgeId = null;
 		selectedNodeId = nodeForRule(ruleId)?.id ?? null;
+	}
+
+	function selectEdge(edge: MappingEdge) {
+		selectedEdgeId = edge.id;
+		selectedNodeId = null;
 	}
 
 	function connectedEdgeIds(nodeId: string | null): Set<string> {
@@ -309,6 +346,7 @@
 			edge.outbound ? 'outbound-edge' : '',
 			edge.custom ? 'custom-edge' : '',
 			edge.id === activeRuleId ? 'active' : '',
+			edge.id === selectedEdgeId ? 'edge-picked' : '',
 			hoverEdges.has(edge.id) ? 'edge-connected' : '',
 			selectedEdges.has(edge.id) ? 'edge-selected' : '',
 			fromNode?.hidden || toNode?.hidden ? 'edge-muted' : ''
@@ -393,16 +431,51 @@
 	function addEdge(from: string, to: string) {
 		if (edges.some((edge) => edge.from === from && edge.to === to)) return;
 		customCounter += 1;
-		edges = [
-			...edges,
-			{
-				id: `custom-edge-${customCounter}`,
-				from,
-				to,
-				outbound: nodeById(from)?.role === 'target',
-				custom: true
-			}
-		];
+		const edge = {
+			id: `custom-edge-${customCounter}`,
+			from,
+			to,
+			outbound: nodeById(from)?.role === 'target',
+			custom: true
+		};
+		edges = [...edges, edge];
+		selectedEdgeId = edge.id;
+		selectedNodeId = null;
+		hasUnsavedDraftChanges = true;
+	}
+
+	function deleteSelectedEdge() {
+		if (!selectedEdgeId) return;
+		edges = edges.filter((edge) => edge.id !== selectedEdgeId);
+		selectedEdgeId = null;
+		hasUnsavedDraftChanges = true;
+	}
+
+	function handleGlobalKeyDown(event: KeyboardEvent) {
+		if (!selectedEdgeId || (event.key !== 'Backspace' && event.key !== 'Delete')) return;
+		const target = event.target as HTMLElement | null;
+		if (
+			target?.closest('input, textarea, select, [contenteditable="true"]') ||
+			target?.isContentEditable
+		) {
+			return;
+		}
+		event.preventDefault();
+		deleteSelectedEdge();
+	}
+
+	function selectSample(event: Event) {
+		const select = event.currentTarget as HTMLSelectElement;
+		const nextId = select.value;
+		if (nextId === selectedSampleId) return;
+		if (
+			hasUnsavedDraftChanges &&
+			!window.confirm('You have unsaved mapping draft changes. Switch profiles and discard them?')
+		) {
+			select.value = selectedSampleId ?? emptySample.id;
+			return;
+		}
+		selectedSampleId = nextId;
 	}
 
 	function addNode(role: 'source' | 'destination') {
@@ -417,6 +490,7 @@
 			caption: 'drag handle to connect'
 		};
 		nodes = [...nodes, node];
+		hasUnsavedDraftChanges = true;
 		sample.rules[node.ruleId] = {
 			...fallbackRule(),
 			title: node.label,
@@ -426,6 +500,37 @@
 			trace: 'Custom draft node added. Drag a connection handle to attach it to canonical schema.'
 		};
 		selectRule(node.ruleId);
+	}
+
+	function edgeInspectorRule(edge: MappingEdge) {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		const base = sample.rules[fromNode?.ruleId ?? toNode?.ruleId ?? activeRuleId] ?? fallbackRule();
+		const source =
+			fromNode?.role === 'source'
+				? `${fromNode.adapter} / ${fromNode.label}`
+				: (base.source ?? 'Not connected');
+		const target =
+			fromNode?.role === 'target'
+				? fromNode.label
+				: toNode?.role === 'target'
+					? toNode.label
+					: (base.target ?? 'No canonical target selected');
+		const destination =
+			toNode?.role === 'destination'
+				? `${toNode.adapter} / ${toNode.label}`
+				: (base.destination ?? 'Not connected');
+		return {
+			...base,
+			title: `${fromNode?.label ?? 'Mapping edge'} -> ${toNode?.label ?? 'Target'}`,
+			source,
+			target,
+			destination,
+			validation: edge.custom
+				? 'draft edge selected; Backspace/Delete removes it'
+				: 'loaded edge selected; Backspace/Delete removes it from this draft',
+			trace: 'Selected edge. Press Backspace or Delete to remove this connection from the draft.'
+		};
 	}
 
 	function fallbackRule() {
@@ -477,8 +582,9 @@
 						<span>Source profile</span>
 						<select
 							id="sourceProfile"
-							bind:value={selectedSampleId}
+							value={selectedSampleId ?? emptySample.id}
 							disabled={loading || samples.length === 0}
+							onchange={selectSample}
 						>
 							{#if samples.length === 0}
 								<option value={emptySample.id}>No profiles</option>
@@ -594,8 +700,29 @@
 					</div>
 				{/if}
 
-				<svg class="edge-layer" viewBox={`0 0 ${canvasWidth} ${layout.height}`} aria-hidden="true">
+				<svg
+					class="edge-layer"
+					viewBox={`0 0 ${canvasWidth} ${layout.height}`}
+					aria-label="Mapping edges"
+				>
 					{#each graphEdges as edge (edge.id)}
+						<path
+							class="edge-hit"
+							d={edgePath(edge)}
+							role="button"
+							tabindex="0"
+							aria-label={`Select mapping edge ${nodeById(edge.from)?.label ?? edge.from} to ${nodeById(edge.to)?.label ?? edge.to}`}
+							onclick={(event) => {
+								event.stopPropagation();
+								selectEdge(edge);
+							}}
+							onkeydown={(event) => {
+								if (event.key === 'Enter' || event.key === ' ') {
+									event.preventDefault();
+									selectEdge(edge);
+								}
+							}}
+						/>
 						<path
 							class={edgeClasses(edge)}
 							style={`--edge-accent:${edgeAccent(edge)}`}
@@ -1120,7 +1247,15 @@
 		width: 100%;
 		height: 100%;
 		z-index: 1;
-		pointer-events: none;
+		pointer-events: auto;
+	}
+
+	.edge-hit {
+		fill: none;
+		stroke: transparent;
+		stroke-width: 14;
+		cursor: pointer;
+		pointer-events: stroke;
 	}
 
 	.edge {
@@ -1128,6 +1263,7 @@
 		stroke: #5f7085;
 		stroke-width: 1.5;
 		opacity: 0.72;
+		pointer-events: none;
 		transition:
 			opacity 180ms ease,
 			stroke 180ms ease,
@@ -1162,7 +1298,8 @@
 	}
 
 	.edge.edge-connected,
-	.edge.edge-selected {
+	.edge.edge-selected,
+	.edge.edge-picked {
 		stroke: var(--edge-accent, var(--map-brand));
 		stroke-dasharray: 6 6;
 		opacity: 1;
@@ -1177,6 +1314,13 @@
 
 	.edge.edge-selected {
 		stroke-width: 2.7;
+	}
+
+	.edge.edge-picked {
+		stroke-width: 3;
+		filter: drop-shadow(
+			0 0 4px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 56%, transparent)
+		);
 	}
 
 	.outbound-edge {
@@ -1241,7 +1385,7 @@
 	}
 
 	.target-node {
-		padding-bottom: 18px;
+		padding-bottom: 20px;
 		border-color: rgba(96, 165, 250, 0.64);
 	}
 
@@ -1338,7 +1482,7 @@
 		position: absolute;
 		left: 7px;
 		right: 7px;
-		bottom: 5px;
+		bottom: 6px;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -1353,8 +1497,8 @@
 	}
 
 	.target-badge {
-		height: 9px;
-		padding: 0 3px;
+		height: 11px;
+		padding: 0 4px;
 		border: 1px solid color-mix(in srgb, var(--map-brand) 36%, transparent);
 		border-radius: 2px;
 		color: var(--map-muted);
@@ -1362,9 +1506,9 @@
 		font-family:
 			ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
 			monospace;
-		font-size: 7px;
+		font-size: 8px;
 		font-weight: 700;
-		line-height: 8px;
+		line-height: 10px;
 	}
 
 	.target-badge.required {

@@ -39,6 +39,13 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 		expect(flowEditor).toContain('startConnectionDrag');
 		expect(flowEditor).toContain('drag-edge');
+		expect(flowEditor).toContain('edge-hit');
+		expect(flowEditor).toContain('selectEdge');
+		expect(flowEditor).toContain('deleteSelectedEdge');
+		expect(flowEditor).toContain('handleGlobalKeyDown');
+		expect(flowEditor).toContain('beforeNavigate');
+		expect(flowEditor).toContain('beforeunload');
+		expect(flowEditor).toContain('hasUnsavedDraftChanges');
 		expect(flowEditor).toContain('edge-selected');
 		expect(flowEditor).toContain('adapter-hidden');
 		expect(flowEditor).toContain('node-handle output');
