@@ -12,8 +12,11 @@ import {
   decideLifecycleSignalRevocation,
   evaluateProvisioningAssignmentRule,
 } from './identity-provisioning-assignment';
-import { validateCatalogBundle } from '@authrim/ar-lib-identity-mapping';
-import type { FieldCatalogEntry } from '@authrim/ar-lib-identity-mapping';
+import { parseCsvSourceProfile, validateCatalogBundle } from '@authrim/ar-lib-identity-mapping';
+import type {
+  CsvSourceProfileParserOptions,
+  FieldCatalogEntry,
+} from '@authrim/ar-lib-identity-mapping';
 
 type AdminContext = Context<{ Bindings: Env }>;
 
@@ -277,6 +280,39 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     gate: 'repository + release challenge tests; user-facing challenge UI later',
     schemaObject: 'attribute_release_consents',
   },
+  {
+    id: 'UIM-SCH-089',
+    objectName: 'source_profiles',
+    area: 'Source and destination profile registration',
+    introducedPr: 'source profile CSV PR',
+    expectedConnectionPr: 'PR12 Admin UI',
+    runtimePath: 'Source & Destination Profiles / Flow Editor selector',
+    status: 'api_connected',
+    gate: 'CSV create/list API + Admin UI + tests',
+    schemaObject: 'source_profiles',
+  },
+  {
+    id: 'UIM-SCH-090',
+    objectName: 'source_profile_versions',
+    area: 'Versioned source profile schema summaries',
+    introducedPr: 'source profile CSV PR',
+    expectedConnectionPr: 'PR12 Admin UI',
+    runtimePath: 'CSV source profile draft/review/active lifecycle',
+    status: 'api_connected',
+    gate: 'version lifecycle API + tests; no raw sample persistence',
+    schemaObject: 'source_profile_versions',
+  },
+  {
+    id: 'UIM-SCH-091',
+    objectName: 'source_profile_parse_drafts',
+    area: 'Temporary schema-only parse drafts',
+    introducedPr: 'source profile CSV PR',
+    expectedConnectionPr: 'PR12 Admin UI',
+    runtimePath: 'CSV parse preview before save',
+    status: 'api_connected',
+    gate: 'parse API + expiry metadata + no raw sample persistence tests',
+    schemaObject: 'source_profile_parse_drafts',
+  },
 ];
 
 interface MappingPolicySetRow {
@@ -365,6 +401,38 @@ interface MappingTemplateRow {
   updated_at: number;
 }
 
+interface SourceProfileRow {
+  id: string;
+  tenant_id: string;
+  source_type: string;
+  profile_key: string;
+  display_name: string;
+  lifecycle_state: string;
+  active_version_id: string | null;
+  created_at: number;
+  updated_at: number;
+  version_id: string | null;
+  version_label: string | null;
+  version_lifecycle_state: string | null;
+  schema_hash: string | null;
+  schema_json: string | null;
+  warning_summary_json: string | null;
+}
+
+interface SourceProfileParseDraftRow {
+  id: string;
+  tenant_id: string;
+  source_type: string;
+  schema_hash: string;
+  schema_json: string;
+  parser_options_json: string | null;
+  warning_summary_json: string | null;
+  source_metadata_json: string | null;
+  expires_at: number;
+  created_at: number;
+  updated_at: number;
+}
+
 interface CompiledMappingSnapshotRow {
   id: string;
   tenant_id: string;
@@ -443,6 +511,25 @@ interface CreateMappingTemplateRequest {
   templateScope?: string;
   displayName: string;
   template: Record<string, unknown>;
+}
+
+interface ParseCsvSourceProfileRequest {
+  contentBase64: string;
+  encoding?: string;
+  parserOptions?: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown>;
+}
+
+interface CreateSourceProfileRequest {
+  sourceType: 'csv';
+  profileKey: string;
+  displayName: string;
+  versionLabel?: string;
+  parseDraftId?: string;
+  schema?: Record<string, unknown>;
+  parserOptions?: Record<string, unknown>;
+  warningSummary?: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown>;
 }
 
 interface PolicyVersionRuleInput {
@@ -810,6 +897,8 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
   'saml_metadata',
   'saml_federation',
 ]);
+const SOURCE_PROFILE_TYPES = new Set(['csv']);
+const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const FEDERATION_TRUST_LIFECYCLE_STATES = new Set(['draft', 'active', 'retired']);
 const FEDERATION_METADATA_VALIDATION_STATES = new Set(['pending', 'valid', 'invalid', 'warning']);
 const KEY_ACCESS_TYPES = new Set([
@@ -1126,6 +1215,275 @@ export class IdentityMappingControlPlaneRepository {
       lifecycleState: row.lifecycle_state,
       importedAt: row.imported_at,
     }));
+  }
+
+  async parseCsvSourceProfile(tenantId: string, input: ParseCsvSourceProfileRequest) {
+    validateRequiredString(input.contentBase64, 'contentBase64');
+    const now = this.now();
+    const encoding = normalizeCsvEncoding(input.encoding);
+    assertNoSensitiveMetadata(input.sourceMetadata, 'sourceProfile.parse.sourceMetadata');
+    const content = decodeBase64Text(input.contentBase64, encoding);
+    const schema = parseCsvSourceProfile(content, normalizeCsvParserOptions(input.parserOptions));
+    const schemaHash = await hashStableJson(schema);
+    const draftId = createId('source_profile_parse_draft');
+    const warningSummary = schema.summary;
+    const parserOptions = schema.parser;
+    const sourceMetadata = {
+      ...(isRecord(input.sourceMetadata) ? input.sourceMetadata : {}),
+      encoding,
+      rawContentPersisted: false,
+    };
+
+    await this.adapter.execute(
+      `INSERT INTO source_profile_parse_drafts (
+        id, tenant_id, source_type, schema_hash, schema_json, parser_options_json,
+        warning_summary_json, source_metadata_json, expires_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        draftId,
+        tenantId,
+        'csv',
+        schemaHash,
+        stableJson(schema),
+        stableJson(parserOptions),
+        stableJson(warningSummary),
+        stableJson(sourceMetadata),
+        now + 60 * 60 * 1000,
+        now,
+        now,
+      ]
+    );
+
+    return {
+      parseDraftId: draftId,
+      tenantId,
+      sourceType: 'csv',
+      schemaHash,
+      schema,
+      parserOptions,
+      warningSummary,
+      expiresAt: now + 60 * 60 * 1000,
+    };
+  }
+
+  async createSourceProfile(tenantId: string, input: CreateSourceProfileRequest) {
+    validateRequiredString(input.sourceType, 'sourceType');
+    validateRequiredString(input.profileKey, 'profileKey');
+    validateRequiredString(input.displayName, 'displayName');
+    if (!SOURCE_PROFILE_TYPES.has(input.sourceType)) {
+      throw badRequest('sourceType must be csv');
+    }
+    const now = this.now();
+    const draft = input.parseDraftId
+      ? await this.getSourceProfileParseDraft(tenantId, input.parseDraftId, now)
+      : null;
+    const schema = isRecord(input.schema)
+      ? input.schema
+      : draft
+        ? (JSON.parse(draft.schema_json) as Record<string, unknown>)
+        : null;
+    if (!schema) {
+      throw badRequest('schema or parseDraftId is required');
+    }
+    assertNoSourceProfileRawSamples(schema, 'sourceProfile.schema');
+    assertNoSensitiveMetadata(input.sourceMetadata, 'sourceProfile.sourceMetadata');
+    const profileId = createId('source_profile');
+    const versionId = createId('source_profile_version');
+    const schemaHash = await hashStableJson(schema);
+    const parserOptions = isRecord(input.parserOptions)
+      ? input.parserOptions
+      : draft?.parser_options_json
+        ? (JSON.parse(draft.parser_options_json) as Record<string, unknown>)
+        : {};
+    const warningSummary = normalizeWarningSummary(
+      input.warningSummary,
+      draft?.warning_summary_json
+    );
+    const sourceMetadata = {
+      ...(draft?.source_metadata_json
+        ? (JSON.parse(draft.source_metadata_json) as Record<string, unknown>)
+        : {}),
+      ...(isRecord(input.sourceMetadata) ? input.sourceMetadata : {}),
+      parseDraftId: input.parseDraftId ?? null,
+      rawContentPersisted: false,
+    };
+
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO source_profiles (
+          id, tenant_id, source_type, profile_key, display_name, lifecycle_state,
+          active_version_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          profileId,
+          tenantId,
+          input.sourceType,
+          input.profileKey,
+          input.displayName,
+          'draft',
+          null,
+          now,
+          now,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO source_profile_versions (
+          id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json,
+          parser_options_json, warning_summary_json, source_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          versionId,
+          tenantId,
+          profileId,
+          input.versionLabel ?? 'v1',
+          'draft',
+          schemaHash,
+          stableJson(schema),
+          stableJson(parserOptions),
+          stableJson(warningSummary),
+          stableJson(sourceMetadata),
+          now,
+          now,
+        ]
+      );
+    });
+
+    return {
+      id: profileId,
+      tenantId,
+      sourceType: input.sourceType,
+      profileKey: input.profileKey,
+      displayName: input.displayName,
+      lifecycleState: 'draft',
+      version: {
+        id: versionId,
+        versionLabel: input.versionLabel ?? 'v1',
+        lifecycleState: 'draft',
+        schemaHash,
+        schema,
+        warningSummary,
+      },
+    };
+  }
+
+  async listSourceProfiles(tenantId: string) {
+    const rows = await this.adapter.query<SourceProfileRow>(
+      `SELECT p.*,
+              v.id AS version_id,
+              v.version_label,
+              v.lifecycle_state AS version_lifecycle_state,
+              v.schema_hash,
+              v.schema_json,
+              v.warning_summary_json
+         FROM source_profiles p
+         LEFT JOIN source_profile_versions v
+           ON v.id = COALESCE(
+             p.active_version_id,
+             (
+               SELECT latest.id
+                 FROM source_profile_versions latest
+                WHERE latest.tenant_id = p.tenant_id
+                  AND latest.profile_id = p.id
+                ORDER BY latest.updated_at DESC
+                LIMIT 1
+             )
+           )
+        WHERE p.tenant_id = ?
+        ORDER BY p.updated_at DESC`,
+      [tenantId]
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      sourceType: row.source_type,
+      profileKey: row.profile_key,
+      displayName: row.display_name,
+      lifecycleState: row.lifecycle_state,
+      activeVersionId: row.active_version_id,
+      version: row.version_id
+        ? {
+            id: row.version_id,
+            versionLabel: row.version_label,
+            lifecycleState: row.version_lifecycle_state,
+            schemaHash: row.schema_hash,
+            schema: row.schema_json ? (JSON.parse(row.schema_json) as Record<string, unknown>) : {},
+            warningSummary: row.warning_summary_json
+              ? (JSON.parse(row.warning_summary_json) as Record<string, unknown>)
+              : {},
+          }
+        : null,
+    }));
+  }
+
+  async reviewSourceProfileVersion(tenantId: string, profileId: string, versionId: string) {
+    const row = await this.adapter.queryOne<{
+      warning_summary_json: string | null;
+      lifecycle_state: string;
+    }>(
+      `SELECT warning_summary_json, lifecycle_state
+         FROM source_profile_versions
+        WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+      [tenantId, profileId, versionId]
+    );
+    if (!row) {
+      throw notFound('source profile version not found');
+    }
+    if (!SOURCE_PROFILE_VERSION_STATES.has(row.lifecycle_state)) {
+      throw badRequest('source profile version lifecycle state is invalid');
+    }
+    const warningSummary = row.warning_summary_json
+      ? (JSON.parse(row.warning_summary_json) as Record<string, unknown>)
+      : {};
+    const blockingCount = getNumberProperty(warningSummary, 'blockingWarningCount');
+    const confirmedCount = getNumberProperty(warningSummary, 'confirmedBlockingWarningCount');
+    if (blockingCount > confirmedCount) {
+      throw badRequest('PII and regulated candidates must be confirmed before review');
+    }
+    const now = this.now();
+    await this.adapter.execute(
+      `UPDATE source_profile_versions
+          SET lifecycle_state = ?, reviewed_at = ?, updated_at = ?
+        WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+      ['reviewed', now, now, tenantId, profileId, versionId]
+    );
+    return { id: versionId, lifecycleState: 'reviewed', reviewedAt: now };
+  }
+
+  async activateSourceProfileVersion(tenantId: string, profileId: string, versionId: string) {
+    const row = await this.adapter.queryOne<{ lifecycle_state: string }>(
+      `SELECT lifecycle_state
+         FROM source_profile_versions
+        WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+      [tenantId, profileId, versionId]
+    );
+    if (!row) {
+      throw notFound('source profile version not found');
+    }
+    if (row.lifecycle_state !== 'reviewed' && row.lifecycle_state !== 'active') {
+      throw badRequest('source profile version must be reviewed before activation');
+    }
+    const now = this.now();
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `UPDATE source_profile_versions
+            SET lifecycle_state = ?, updated_at = ?
+          WHERE tenant_id = ? AND profile_id = ? AND lifecycle_state = ?`,
+        ['reviewed', now, tenantId, profileId, 'active']
+      );
+      await tx.execute(
+        `UPDATE source_profile_versions
+            SET lifecycle_state = ?, activated_at = ?, updated_at = ?
+          WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+        ['active', now, now, tenantId, profileId, versionId]
+      );
+      await tx.execute(
+        `UPDATE source_profiles
+            SET lifecycle_state = ?, active_version_id = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        ['active', versionId, now, tenantId, profileId]
+      );
+    });
+    return { id: versionId, lifecycleState: 'active', activatedAt: now };
   }
 
   async createMappingTemplate(tenantId: string, input: CreateMappingTemplateRequest) {
@@ -3948,6 +4306,22 @@ export class IdentityMappingControlPlaneRepository {
     }
   }
 
+  private async getSourceProfileParseDraft(tenantId: string, draftId: string, now: number) {
+    const draft = await this.adapter.queryOne<SourceProfileParseDraftRow>(
+      `SELECT *
+         FROM source_profile_parse_drafts
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, draftId]
+    );
+    if (!draft) {
+      throw notFound('source profile parse draft not found');
+    }
+    if (draft.expires_at <= now) {
+      throw badRequest('source profile parse draft has expired');
+    }
+    return draft;
+  }
+
   private async acquireActivationLease(
     tenantId: string,
     leaseKey: string,
@@ -4017,6 +4391,44 @@ export async function adminIdentityMappingExternalSchemasListHandler(c: AdminCon
 export async function adminIdentityMappingExternalSchemaImportHandler(c: AdminContext) {
   return handleMutation(c, 'external-schema.import', async (repository, tenantId, body) =>
     repository.importExternalSchema(tenantId, body as ImportExternalSchemaRequest)
+  );
+}
+
+export async function adminIdentityMappingSourceProfilesListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    sourceProfiles: await repository.listSourceProfiles(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingCsvSourceProfileParseHandler(c: AdminContext) {
+  return handleMutation(c, 'source-profile.csv.parse', async (repository, tenantId, body) =>
+    repository.parseCsvSourceProfile(tenantId, body as ParseCsvSourceProfileRequest)
+  );
+}
+
+export async function adminIdentityMappingSourceProfileCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'source-profile.create', async (repository, tenantId, body) =>
+    repository.createSourceProfile(tenantId, body as CreateSourceProfileRequest)
+  );
+}
+
+export async function adminIdentityMappingSourceProfileReviewHandler(c: AdminContext) {
+  return handleMutation(c, 'source-profile.review', async (repository, tenantId) =>
+    repository.reviewSourceProfileVersion(
+      tenantId,
+      requiredParam(c, 'sourceProfileId'),
+      requiredParam(c, 'sourceProfileVersionId')
+    )
+  );
+}
+
+export async function adminIdentityMappingSourceProfileActivateHandler(c: AdminContext) {
+  return handleMutation(c, 'source-profile.activate', async (repository, tenantId) =>
+    repository.activateSourceProfileVersion(
+      tenantId,
+      requiredParam(c, 'sourceProfileId'),
+      requiredParam(c, 'sourceProfileVersionId')
+    )
   );
 }
 
@@ -4405,6 +4817,72 @@ function validateRequiredString(value: unknown, field: string): asserts value is
   }
 }
 
+function normalizeCsvEncoding(value: unknown): string {
+  const encoding = typeof value === 'string' ? value.trim().toLowerCase() : 'utf-8';
+  if (encoding === 'utf8' || encoding === 'utf-8-bom') return 'utf-8';
+  if (['utf-8', 'shift_jis', 'shift-jis', 'cp932', 'euc-jp'].includes(encoding)) {
+    return encoding;
+  }
+  throw badRequest('encoding must be utf-8, shift_jis, cp932, or euc-jp');
+}
+
+function normalizeCsvParserOptions(value: unknown): CsvSourceProfileParserOptions {
+  if (!isRecord(value)) return {};
+  const options: CsvSourceProfileParserOptions = {};
+  if (isCsvDelimiter(value.delimiter)) options.delimiter = value.delimiter;
+  if (value.quote === '"' || value.quote === "'") options.quote = value.quote;
+  if (value.escape === '"' || value.escape === "'" || value.escape === '\\') {
+    options.escape = value.escape;
+  }
+  if (value.newline === 'auto' || value.newline === '\n' || value.newline === '\r\n') {
+    options.newline = value.newline;
+  }
+  if (
+    value.headerMode === 'auto' ||
+    value.headerMode === 'first_row' ||
+    value.headerMode === 'none'
+  ) {
+    options.headerMode = value.headerMode;
+  }
+  if (typeof value.maxRows === 'number') options.maxRows = value.maxRows;
+  if (typeof value.maxColumns === 'number') options.maxColumns = value.maxColumns;
+  return options;
+}
+
+function isCsvDelimiter(
+  value: unknown
+): value is NonNullable<CsvSourceProfileParserOptions['delimiter']> {
+  return value === 'auto' || value === ',' || value === '\t' || value === ';' || value === '|';
+}
+
+function decodeBase64Text(contentBase64: string, encoding: string): string {
+  try {
+    const binary = atob(contentBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new TextDecoder(encoding, { fatal: false, ignoreBOM: false }).decode(bytes);
+  } catch {
+    throw badRequest('contentBase64 could not be decoded with the selected encoding');
+  }
+}
+
+function normalizeWarningSummary(
+  value: unknown,
+  fallbackJson?: string | null
+): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  if (!fallbackJson) return {};
+  const parsed = JSON.parse(fallbackJson) as unknown;
+  return isRecord(parsed) ? parsed : {};
+}
+
+function getNumberProperty(value: Record<string, unknown>, key: string): number {
+  const candidate = value[key];
+  return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : 0;
+}
+
 function requiredParam(c: AdminContext, name: string): string {
   const value = c.req.param(name);
   validateRequiredString(value, name);
@@ -4464,6 +4942,32 @@ function assertNoSensitiveMetadata(value: unknown, path: string): void {
       throw badRequest(`${path}.${key} is not allowed in identity mapping metadata`);
     }
     assertNoSensitiveMetadata(item, `${path}.${key}`);
+  }
+}
+
+function assertNoSourceProfileRawSamples(value: unknown, path: string): void {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoSourceProfileRawSamples(item, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[_-]/g, '');
+    if (
+      normalized === 'samplevalues' ||
+      normalized === 'rawvalues' ||
+      normalized === 'rawrows' ||
+      normalized === 'rawcsv' ||
+      normalized === 'contentbase64'
+    ) {
+      throw badRequest(`${path}.${key} is not allowed in source profile schema`);
+    }
+    assertNoSourceProfileRawSamples(item, `${path}.${key}`);
   }
 }
 

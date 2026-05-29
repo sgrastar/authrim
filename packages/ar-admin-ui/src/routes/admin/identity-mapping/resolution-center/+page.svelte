@@ -60,8 +60,8 @@
 		{
 			id: 'res-001',
 			category: 'missing_mappings',
-			title: 'SAML User.UserType has no approved release target',
-			source: 'SAML Salesforce columns',
+			title: 'Imported source field has no approved release target',
+			source: 'Source profile preview',
 			impact: 'OIDC destination preview omits the claim until a profile owner confirms the target.',
 			severity: 'medium',
 			status: 'open'
@@ -174,8 +174,10 @@
 		if (normalized.includes('conflict')) return 'conflicts';
 		if (normalized.includes('consent') || normalized.includes('release')) return 'consent_required';
 		if (normalized.includes('link') || normalized.includes('identity')) return 'linking_decisions';
-		if (normalized.includes('lifecycle') || normalized.includes('provision')) return 'lifecycle_actions';
-		if (normalized.includes('activation') || normalized.includes('compile')) return 'activation_blockers';
+		if (normalized.includes('lifecycle') || normalized.includes('provision'))
+			return 'lifecycle_actions';
+		if (normalized.includes('activation') || normalized.includes('compile'))
+			return 'activation_blockers';
 		return 'missing_mappings';
 	}
 
@@ -236,8 +238,8 @@
 				{:else if loadError}
 					{loadError}. Showing safe preview examples.
 				{:else}
-					{reviewTasks.length} unresolved item{reviewTasks.length === 1 ? '' : 's'} loaded from the
-					resolution feed.
+					{reviewTasks.length} unresolved item{reviewTasks.length === 1 ? '' : 's'} loaded from the resolution
+					feed.
 				{/if}
 			</span>
 		</div>

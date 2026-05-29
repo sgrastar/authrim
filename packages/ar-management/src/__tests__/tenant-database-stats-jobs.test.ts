@@ -75,7 +75,7 @@ describe('tenant database stats jobs', () => {
       accountCount: 700000,
       activeUserCount: 650000,
       activePendingUserCount: 675000,
-      rowCountEstimates: { users_core: 700000 },
+      rowCountEstimates: { identity_accounts: 700000 },
       checkedAt: '2026-05-16T00:00:00.000Z',
     });
     mockEvaluateTenantDatabaseStatsWarning.mockReturnValue({
@@ -147,7 +147,7 @@ describe('tenant database stats jobs', () => {
         d1_file_size_bytes: 8_000_000_000,
         d1_file_size_checked_at: '2026-05-16T00:00:00.000Z',
         d1_file_size_status: 'fresh',
-        row_count_estimate_json: '{"users_core":700000}',
+        row_count_estimate_json: '{"identity_accounts":700000}',
         warning_state: 'warning',
         warning_reasons_json: '["account_count_warning_threshold"]',
         stats_checked_at: '2026-05-16T00:00:00.000Z',

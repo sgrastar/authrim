@@ -132,6 +132,90 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
   });
 });
 
+describe('IdentityMappingControlPlaneRepository source profiles', () => {
+  it('parses CSV into a schema-only draft without persisting raw sampled values', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    const contentBase64 = btoa('Email,TaxId\nalice@example.test,123-45-6789');
+
+    const result = await repository.parseCsvSourceProfile('tenant_a', {
+      contentBase64,
+      encoding: 'utf-8',
+      parserOptions: { headerMode: 'first_row' },
+      sourceMetadata: { fileName: 'users.csv' },
+    });
+
+    expect(result.schema.summary.blockingWarningCount).toBe(2);
+    expect(adapter.executes[0]?.sql).toContain('INSERT INTO source_profile_parse_drafts');
+    expect(JSON.stringify(adapter.executes[0]?.params)).not.toContain('alice@example.test');
+    expect(JSON.stringify(adapter.executes[0]?.params)).not.toContain('123-45-6789');
+    expect(JSON.parse(String(adapter.executes[0]?.params[7]))).toMatchObject({
+      rawContentPersisted: false,
+    });
+  });
+
+  it('creates, reviews, and activates CSV source profile versions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          warning_summary_json: '{"blockingWarningCount":1,"confirmedBlockingWarningCount":1}',
+          lifecycle_state: 'draft',
+        },
+        {
+          lifecycle_state: 'reviewed',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const created = await repository.createSourceProfile('tenant_a', {
+      sourceType: 'csv',
+      profileKey: 'workday_csv',
+      displayName: 'Workday CSV',
+      schema: {
+        sourceType: 'csv',
+        columns: [{ stableColumnId: 'csv.email.1', headerName: 'Email' }],
+      },
+      warningSummary: {
+        blockingWarningCount: 1,
+        confirmedBlockingWarningCount: 1,
+      },
+    });
+
+    await repository.reviewSourceProfileVersion('tenant_a', created.id, created.version.id);
+    await repository.activateSourceProfileVersion('tenant_a', created.id, created.version.id);
+
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO source_profiles'),
+      expect.stringContaining('INSERT INTO source_profile_versions'),
+      expect.stringContaining('UPDATE source_profile_versions'),
+      expect.stringContaining('UPDATE source_profile_versions'),
+      expect.stringContaining('UPDATE source_profile_versions'),
+      expect.stringContaining('UPDATE source_profiles'),
+    ]);
+  });
+
+  it('blocks review until PII and regulated candidates are confirmed', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          warning_summary_json: '{"blockingWarningCount":2,"confirmedBlockingWarningCount":1}',
+          lifecycle_state: 'draft',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.reviewSourceProfileVersion('tenant_a', 'profile_1', 'version_1')
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+});
+
 describe('IdentityMappingControlPlaneRepository policy activation', () => {
   it('compiles a load-time verified snapshot with dependency graph hash', async () => {
     const adapter = createAdapter({

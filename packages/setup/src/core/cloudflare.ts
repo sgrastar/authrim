@@ -1777,11 +1777,6 @@ export async function executeD1Migration(
   sqlFilePath: string,
   onProgress?: (message: string) => void
 ): Promise<{ success: boolean; error?: string }> {
-  const isAlreadyAppliedError = (message: string): boolean =>
-    message.includes('already exists') ||
-    message.includes('duplicate column name') ||
-    message.includes('UNIQUE constraint');
-
   const isTransientD1MigrationError = (message: string): boolean => {
     const normalized = message.toLowerCase();
     return (
@@ -1825,11 +1820,6 @@ export async function executeD1Migration(
           return { success: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (isAlreadyAppliedError(message)) {
-            onProgress?.('  ⚠️ Migration already applied (skipped)');
-            return { success: true };
-          }
-
           const canRetry =
             attempt < D1_MIGRATION_MAX_ATTEMPTS && isTransientD1MigrationError(message);
           if (!canRetry) {
@@ -1852,11 +1842,6 @@ export async function executeD1Migration(
     return { success: false, error: 'D1 migration retry loop exited unexpectedly' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // Ignore "already exists" errors - migration may have been partially applied
-    if (isAlreadyAppliedError(message)) {
-      onProgress?.('  ⚠️ Migration already applied (skipped)');
-      return { success: true };
-    }
     return { success: false, error: message };
   }
 }
@@ -3046,6 +3031,50 @@ export async function createQueue(name: string): Promise<{ id: string; name: str
   }
 }
 
+export function getQueueConsumerWorkerNamesForDeletion(
+  env: string,
+  workers: Array<{ name: string }>
+): string[] {
+  const workerNames = Array.from(new Set(workers.map((worker) => worker.name))).sort();
+  const managementWorkerName = `${env}-ar-management`;
+  if (workerNames.includes(managementWorkerName)) {
+    return [managementWorkerName];
+  }
+  return workerNames.filter(
+    (workerName) => workerName.startsWith(`${env}-`) && workerName.endsWith('-ar-management')
+  );
+}
+
+export async function deleteQueueConsumer(queueName: string, workerName: string): Promise<boolean> {
+  try {
+    await wrangler(['queues', 'consumer', 'remove', queueName, workerName]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteQueueConsumersForWorkers(
+  queues: Array<{ name: string }>,
+  workerNames: string[],
+  onProgress?: (message: string) => void
+): Promise<Array<{ queueName: string; workerName: string }>> {
+  const removed: Array<{ queueName: string; workerName: string }> = [];
+  for (const workerName of workerNames) {
+    for (const queue of queues) {
+      onProgress?.(`  ⏳ Detaching ${workerName} from ${queue.name}...`);
+      const success = await deleteQueueConsumer(queue.name, workerName);
+      if (success) {
+        removed.push({ queueName: queue.name, workerName });
+        onProgress?.(`  ✅ ${queue.name} -> ${workerName}`);
+      } else {
+        onProgress?.(`  ⚠️ ${queue.name} -> ${workerName} (not attached or already removed)`);
+      }
+    }
+  }
+  return removed;
+}
+
 // =============================================================================
 // R2 Bucket Operations
 // =============================================================================
@@ -3469,6 +3498,7 @@ export interface DeleteOptions {
   deleteR2?: boolean;
   deletePages?: boolean;
   knownD1Names?: string[];
+  knownQueueNames?: string[];
   onProgress?: (message: string) => void;
 }
 
@@ -3477,6 +3507,21 @@ export function filterKnownD1NamesForEnvironment(env: string, names: string[]): 
     new Set(
       names.filter(
         (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
+      )
+    )
+  );
+}
+
+export function filterKnownQueueNamesForEnvironment(env: string, names: string[]): string[] {
+  return Array.from(
+    new Set(
+      names.filter((name) =>
+        [
+          `${env}-audit-queue`,
+          `${env}-logging-delivery-critical-queue`,
+          `${env}-logging-delivery-queue`,
+          `${env}-logging-delivery-bulk-queue`,
+        ].includes(name)
       )
     )
   );
@@ -3726,10 +3771,18 @@ export async function detectEnvironments(
       const match = q.name.match(AUTHRIM_PATTERNS.queue);
       if (match) {
         const env = match[1].toLowerCase();
-        // Only attach Queues to environments that already have Workers or D1
-        if (environments.has(env)) {
-          environments.get(env)!.queues.push({ name: q.name, id: q.id });
+        if (!environments.has(env)) {
+          environments.set(env, {
+            env,
+            workers: [],
+            d1: [],
+            kv: [],
+            queues: [],
+            r2: [],
+            pages: [],
+          });
         }
+        environments.get(env)!.queues.push({ name: q.name, id: q.id });
       }
     }
   } catch (error) {
@@ -3772,9 +3825,9 @@ export async function detectEnvironments(
     );
   }
 
-  // Filter: only keep environments that have actual Workers or D1 databases
+  // Filter out empty placeholders while keeping queue-only environments for cleanup.
   for (const [env, info] of environments) {
-    if (info.workers.length === 0 && info.d1.length === 0) {
+    if (info.workers.length === 0 && info.d1.length === 0 && info.queues.length === 0) {
       environments.delete(env);
     }
   }
@@ -4273,6 +4326,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleteR2 = true,
     deletePages = true,
     knownD1Names = [],
+    knownQueueNames = [],
     onProgress = console.log,
   } = options;
 
@@ -4292,8 +4346,9 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   const envs = await detectEnvironments(onProgress);
   let envInfo = envs.find((e) => e.env === env);
   const safeKnownD1Names = filterKnownD1NamesForEnvironment(env, knownD1Names);
+  const safeKnownQueueNames = filterKnownQueueNamesForEnvironment(env, knownQueueNames);
 
-  if (!envInfo && safeKnownD1Names.length === 0) {
+  if (!envInfo && safeKnownD1Names.length === 0 && safeKnownQueueNames.length === 0) {
     return {
       success: false,
       deleted,
@@ -4311,6 +4366,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       pages: [],
     };
   }
+
   const knownD1Set = new Set(envInfo.d1.map((db) => db.name));
   for (const name of safeKnownD1Names) {
     if (!knownD1Set.has(name)) {
@@ -4318,11 +4374,28 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       knownD1Set.add(name);
     }
   }
+  const knownQueueSet = new Set(envInfo.queues.map((queue) => queue.name));
+  for (const name of safeKnownQueueNames) {
+    if (!knownQueueSet.has(name)) {
+      envInfo.queues.push({ name });
+      knownQueueSet.add(name);
+    }
+  }
 
   onProgress(`🗑️ Deleting environment: ${env}`);
   onProgress('');
 
-  // Delete Workers (must be done first as they reference D1/KV)
+  // Queue consumers must be detached before Cloudflare allows the Worker script to be deleted.
+  if (deleteWorkers && envInfo.workers.length > 0 && envInfo.queues.length > 0) {
+    const queueConsumerWorkerNames = getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers);
+    if (queueConsumerWorkerNames.length > 0) {
+      onProgress(`📨 Detaching Queue Consumers (${envInfo.queues.length})...`);
+      await deleteQueueConsumersForWorkers(envInfo.queues, queueConsumerWorkerNames, onProgress);
+      onProgress('');
+    }
+  }
+
+  // Delete Workers before D1/KV because they reference runtime bindings.
   if (deleteWorkers && envInfo.workers.length > 0) {
     onProgress(`🔧 Deleting Workers (${envInfo.workers.length})...`);
     for (const worker of envInfo.workers) {

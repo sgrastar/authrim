@@ -16,8 +16,9 @@ export interface IdentityMappingCatalogSummary {
 	tenantId: string;
 	catalogKey: string;
 	displayName: string;
-	versionLabel: string;
+	versionLabel?: string | null;
 	lifecycleState: string;
+	bundleHash?: string | null;
 }
 
 export interface IdentityMappingProtocolSchemaSummary {
@@ -25,8 +26,10 @@ export interface IdentityMappingProtocolSchemaSummary {
 	tenantId: string;
 	protocol: string;
 	schemaKey: string;
-	displayName: string;
-	versionLabel: string;
+	displayName?: string;
+	versionLabel?: string;
+	schemaVersion?: string | null;
+	schema?: Record<string, unknown>;
 	lifecycleState: string;
 }
 
@@ -34,10 +37,87 @@ export interface IdentityMappingExternalSchemaSummary {
 	id: string;
 	tenantId: string;
 	sourceType: string;
-	sourceKey: string;
-	displayName: string;
-	versionLabel: string;
+	sourceId?: string;
+	sourceKey?: string;
+	schemaKey: string;
+	displayName?: string;
+	versionLabel?: string;
+	schema?: Record<string, unknown>;
 	lifecycleState: string;
+	importedAt?: number;
+}
+
+export interface IdentityMappingSourceProfileColumn {
+	stableColumnId: string;
+	headerName: string;
+	label: string;
+	valueType: string;
+	required: boolean;
+	classification: string;
+	candidates?: {
+		valueType?: string;
+		required?: boolean;
+		classification?: string;
+	};
+	warnings?: string[];
+	emptyRate?: number;
+	observedNonEmptyRows?: number;
+}
+
+export interface IdentityMappingSourceProfileSchema {
+	sourceType: 'csv';
+	parser?: Record<string, unknown>;
+	columns: IdentityMappingSourceProfileColumn[];
+	warnings?: Array<Record<string, unknown>>;
+	summary?: Record<string, unknown>;
+}
+
+export interface IdentityMappingSourceProfileSummary {
+	id: string;
+	tenantId: string;
+	sourceType: 'csv';
+	profileKey: string;
+	displayName: string;
+	lifecycleState: string;
+	activeVersionId?: string | null;
+	version?: {
+		id: string;
+		versionLabel?: string | null;
+		lifecycleState?: string | null;
+		schemaHash?: string | null;
+		schema?: IdentityMappingSourceProfileSchema;
+		warningSummary?: Record<string, unknown>;
+	} | null;
+}
+
+export interface IdentityMappingCsvParseRequest {
+	contentBase64: string;
+	encoding?: string;
+	parserOptions?: Record<string, unknown>;
+	sourceMetadata?: Record<string, unknown>;
+}
+
+export interface IdentityMappingCsvParseResult {
+	parseDraftId: string;
+	tenantId: string;
+	sourceType: 'csv';
+	schemaHash: string;
+	schema: IdentityMappingSourceProfileSchema;
+	parserOptions: Record<string, unknown>;
+	warningSummary: Record<string, unknown>;
+	expiresAt: number;
+}
+
+export interface IdentityMappingSourceProfileCreateRequest {
+	sourceType: 'csv';
+	profileKey: string;
+	displayName: string;
+	versionLabel?: string;
+	parseDraftId?: string;
+	schema?: IdentityMappingSourceProfileSchema;
+	parserOptions?: Record<string, unknown>;
+	warningSummary?: Record<string, unknown>;
+	sourceMetadata?: Record<string, unknown>;
 }
 
 export interface IdentityMappingTemplateSummary {
@@ -190,6 +270,13 @@ function toQueryString(filters: IdentityMappingReviewTaskFilters = {}): string {
 	return query ? `?${query}` : '';
 }
 
+function mutationHeaders(): Record<string, string> {
+	return {
+		'Content-Type': 'application/json',
+		'Idempotency-Key': crypto.randomUUID()
+	};
+}
+
 export const adminIdentityMappingAPI = {
 	async listPolicies(): Promise<{ policies: IdentityMappingPolicySummary[] }> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/policies`);
@@ -268,6 +355,69 @@ export const adminIdentityMappingAPI = {
 			`${API_BASE_URL}/api/admin/identity-mapping/external-schemas`
 		);
 		return parseJson(response, 'Failed to load identity mapping external schemas');
+	},
+
+	async listSourceProfiles(): Promise<{ sourceProfiles: IdentityMappingSourceProfileSummary[] }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/source-profiles`);
+		return parseJson(response, 'Failed to load identity mapping source profiles');
+	},
+
+	async parseCsvSourceProfile(
+		request: IdentityMappingCsvParseRequest
+	): Promise<{ result: IdentityMappingCsvParseResult }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/csv/parse`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to parse CSV source profile');
+	},
+
+	async createSourceProfile(
+		request: IdentityMappingSourceProfileCreateRequest
+	): Promise<{ result: IdentityMappingSourceProfileSummary }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create identity mapping source profile');
+	},
+
+	async reviewSourceProfileVersion(
+		sourceProfileId: string,
+		sourceProfileVersionId: string
+	): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}/versions/${encodeURIComponent(sourceProfileVersionId)}/review`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
+		);
+		return parseJson(response, 'Failed to review identity mapping source profile');
+	},
+
+	async activateSourceProfileVersion(
+		sourceProfileId: string,
+		sourceProfileVersionId: string
+	): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}/versions/${encodeURIComponent(sourceProfileVersionId)}/activate`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
+		);
+		return parseJson(response, 'Failed to activate identity mapping source profile');
 	},
 
 	async listTemplates(): Promise<{ templates: IdentityMappingTemplateSummary[] }> {

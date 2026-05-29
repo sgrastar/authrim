@@ -118,9 +118,9 @@ export async function resolveUserStoreRuntimeSourcesFromEnv(
     );
   }
 
-  const coreTarget = getOptionalStorageSliceTarget(storageProfile, 'users_core');
+  const coreTarget = getOptionalStorageSliceTarget(storageProfile, 'identity_core');
   const piiTarget =
-    getOptionalStorageSliceTarget(storageProfile, 'users_pii') ??
+    getOptionalStorageSliceTarget(storageProfile, 'identity_pii') ??
     getOptionalStorageSliceTarget(storageProfile, 'custom_pii');
   const policyTarget =
     getOptionalStorageLogicalSourceTarget(storageProfile, 'policy') ?? coreTarget;

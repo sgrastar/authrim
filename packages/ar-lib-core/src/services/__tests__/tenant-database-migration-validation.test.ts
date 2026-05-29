@@ -14,10 +14,10 @@ describe('validateTenantDatabaseMigrationTargets', () => {
           sourceRowCount: 100,
           targetRowCount: 100,
           checksumSamplesSource: [
-            { table: 'users_core', sampleKey: 'tenant-a:user-1', checksumSha256: 'abc' },
+            { table: 'identity_core', sampleKey: 'tenant-a:user-1', checksumSha256: 'abc' },
           ],
           checksumSamplesTarget: [
-            { table: 'users_core', sampleKey: 'tenant-a:user-1', checksumSha256: 'abc' },
+            { table: 'identity_core', sampleKey: 'tenant-a:user-1', checksumSha256: 'abc' },
           ],
         },
       ],
@@ -47,10 +47,10 @@ describe('validateTenantDatabaseMigrationTargets', () => {
         sourceRowCount: 10,
         targetRowCount: 9,
         checksumSamplesSource: [
-          { table: 'users_pii', sampleKey: 'tenant-a:user-1', checksumSha256: 'source' },
+          { table: 'identity_pii', sampleKey: 'tenant-a:user-1', checksumSha256: 'source' },
         ],
         checksumSamplesTarget: [
-          { table: 'users_pii', sampleKey: 'tenant-a:user-1', checksumSha256: 'target' },
+          { table: 'identity_pii', sampleKey: 'tenant-a:user-1', checksumSha256: 'target' },
         ],
       },
     ]);

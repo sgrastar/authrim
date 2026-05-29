@@ -127,8 +127,8 @@ describe('runtime-profile-resolver', () => {
       deploymentProfile: 'shared-d1',
       scope: 'deployment',
       logicalSources: {
-        users_core: { bindingRef: 'DB' },
-        users_pii: { bindingRef: 'DB_PII' },
+        identity_core: { bindingRef: 'DB' },
+        identity_pii: { bindingRef: 'DB_PII' },
         passkeys: { bindingRef: 'DB' },
         linked_identities: { bindingRef: 'DB_PII' },
         consent: { bindingRef: 'DB' },
@@ -139,8 +139,8 @@ describe('runtime-profile-resolver', () => {
       deploymentProfile: 'tenant-d1',
       scope: 'deployment',
       logicalSources: {
-        users_core: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
-        users_pii: { resolverRef: 'tenant-database-registry', role: 'tenant_pii' },
+        identity_core: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
+        identity_pii: { resolverRef: 'tenant-database-registry', role: 'tenant_pii' },
         passkeys: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
         linked_identities: { resolverRef: 'tenant-database-registry', role: 'tenant_pii' },
         consent: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
@@ -151,8 +151,8 @@ describe('runtime-profile-resolver', () => {
       deploymentProfile: 'external-durable',
       scope: 'deployment',
       logicalSources: {
-        users_core: { driver: 'postgres', connectionRef: 'core-primary' },
-        users_pii: { driver: 'postgres', connectionRef: 'pii-primary' },
+        identity_core: { driver: 'postgres', connectionRef: 'core-primary' },
+        identity_pii: { driver: 'postgres', connectionRef: 'pii-primary' },
         passkeys: { driver: 'postgres', connectionRef: 'core-primary' },
         linked_identities: { driver: 'postgres', connectionRef: 'pii-primary' },
         consent: { driver: 'postgres', connectionRef: 'core-primary' },

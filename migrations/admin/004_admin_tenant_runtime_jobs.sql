@@ -266,8 +266,8 @@ CREATE TABLE IF NOT EXISTS tenant_runtime_cache_generations (
       'settings',
       'policy',
       'runtime_registry',
-      'users_core',
-      'users_pii',
+      'identity_core',
+      'identity_pii',
       'clients',
       'consent',
       'rebac'

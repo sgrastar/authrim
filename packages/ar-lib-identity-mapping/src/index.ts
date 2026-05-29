@@ -79,3 +79,12 @@ export {
   validateTransformStep,
 } from './core/transforms';
 export { validateMappingInput } from './core/validation';
+export type {
+  CsvSourceProfileColumn,
+  CsvSourceProfileParserOptions,
+  CsvSourceProfileParseResult,
+  CsvSourceProfileValueType,
+  CsvSourceProfileWarning,
+  CsvSourceProfileWarningCode,
+} from './source-profiles/csv';
+export { parseCsvSourceProfile } from './source-profiles/csv';

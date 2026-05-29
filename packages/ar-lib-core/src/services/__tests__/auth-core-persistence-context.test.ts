@@ -92,7 +92,7 @@ describe('auth-core-persistence-context', () => {
           kind: 'storage',
           label: 'Custom Auth Core',
           slices: {
-            users_core: {
+            identity_core: {
               driver: 'postgres',
               bindingRef: 'EXTRA_CORE_DB',
               role: 'core',
@@ -149,7 +149,7 @@ describe('auth-core-persistence-context', () => {
           kind: 'storage',
           label: 'Custom Auth Core',
           slices: {
-            users_core: {
+            identity_core: {
               driver: 'postgres',
               bindingRef: 'EXTRA_CORE_DB',
               role: 'core',

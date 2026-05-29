@@ -320,12 +320,12 @@ describe('Settings API v2', () => {
 
       it('rejects tenant storage profile overrides that change the auth core plane', async () => {
         const disallowedProfile = makeStorageProfile('tenant-external-storage', {
-          users_core: {
+          identity_core: {
             driver: 'postgres',
             connectionRef: 'tenant-a-core',
             role: 'core',
           },
-          users_pii: {
+          identity_pii: {
             driver: 'postgres',
             connectionRef: 'tenant-a-pii',
             role: 'pii',
@@ -372,7 +372,7 @@ describe('Settings API v2', () => {
 
       it('allows tenant storage profile overrides when the auth core plane is compatible', async () => {
         const allowedProfile = makeStorageProfile('tenant-pii-storage', {
-          users_pii: {
+          identity_pii: {
             driver: 'postgres',
             connectionRef: 'tenant-a-pii',
             role: 'pii',
