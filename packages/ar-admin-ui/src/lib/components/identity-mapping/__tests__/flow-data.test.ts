@@ -59,7 +59,8 @@ describe('identity mapping flow data adapter', () => {
 		const csvSample = samples.find((sample) => sample.title === 'employee-columns');
 		expect(csvSample).toBeDefined();
 		expect(csvSample?.nodes.some((node) => node.label === 'employee_id')).toBe(true);
-		expect(csvSample?.nodes.some((node) => node.label === 'identity_accounts')).toBe(true);
+		expect(csvSample?.nodes.some((node) => node.label === 'Subject identifier')).toBe(true);
+		expect(csvSample?.nodes.some((node) => node.label === 'Email')).toBe(true);
 		expect(
 			csvSample?.nodes.some((node) => node.label === 'email' && node.role === 'destination')
 		).toBe(true);
@@ -68,7 +69,7 @@ describe('identity mapping flow data adapter', () => {
 		expect(JSON.stringify(samples)).not.toContain('sample policy preview only');
 	});
 
-	it('shows schema readiness targets when no source profiles are registered yet', () => {
+	it('shows built-in canonical targets when no source profiles are registered yet', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [],
 			catalogs: [],
@@ -100,7 +101,11 @@ describe('identity mapping flow data adapter', () => {
 			expect.arrayContaining([
 				expect.objectContaining({
 					role: 'target',
-					label: 'contact_points'
+					label: 'Email'
+				}),
+				expect.objectContaining({
+					role: 'target',
+					label: 'Group membership'
 				})
 			])
 		);

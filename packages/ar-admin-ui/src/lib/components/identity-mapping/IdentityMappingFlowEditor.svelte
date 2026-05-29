@@ -237,7 +237,7 @@
 			const selected = node.adapter === inboundAdapter;
 			const visibleOffset = selected ? nextOffset(`source:${groupKey}`) : 0;
 			const hiddenOffset = selected ? 0 : nextOffset(`source-hidden:${groupKey}`) + 1;
-			const top = (targetId ? orderedTargets[targetId] : cursor) ?? graphBaseTop;
+			const top = (targetId ? orderedTargets[targetId] : graphBaseTop) ?? graphBaseTop;
 			return {
 				...node,
 				top: top + (selected ? visibleOffset * graphStep : 0),
@@ -265,7 +265,7 @@
 			const selected = node.adapter === outboundAdapter;
 			const visibleOffset = selected ? nextOffset(`destination:${groupKey}`) : 0;
 			const hiddenOffset = selected ? 0 : nextOffset(`destination-hidden:${groupKey}`) + 1;
-			const top = (targetId ? orderedTargets[targetId] : cursor) ?? graphBaseTop;
+			const top = (targetId ? orderedTargets[targetId] : graphBaseTop) ?? graphBaseTop;
 			return {
 				...node,
 				top: top + (selected ? visibleOffset * graphStep : 0),
@@ -277,9 +277,13 @@
 			};
 		});
 
+		const laidOut = [...sourceLayout, ...targetLayout, ...destinationLayout];
 		return {
-			nodes: [...sourceLayout, ...targetLayout, ...destinationLayout],
-			height: minHeight
+			nodes: laidOut,
+			height: Math.max(
+				minHeight,
+				...laidOut.filter((node) => !node.hidden).map((node) => node.top + node.height + 36)
+			)
 		};
 	}
 

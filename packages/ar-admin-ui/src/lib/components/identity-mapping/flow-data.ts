@@ -47,6 +47,136 @@ interface ExtractedField {
 }
 
 const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
+const defaultCanonicalTargets: MappingNode[] = [
+	{
+		id: 'canonical-subject-identifier',
+		ruleId: 'canonical-subject-identifier',
+		role: 'target',
+		label: 'Subject identifier',
+		caption: 'identity_accounts.subject_id',
+		type: 'stable identifier',
+		privacy: 'non-PII',
+		required: true
+	},
+	{
+		id: 'canonical-email',
+		ruleId: 'canonical-email',
+		role: 'target',
+		label: 'Email',
+		caption: 'contact_points.value_storage_ref / contact_type=email',
+		type: 'email',
+		privacy: 'PII',
+		required: true
+	},
+	{
+		id: 'canonical-phone',
+		ruleId: 'canonical-phone',
+		role: 'target',
+		label: 'Phone',
+		caption: 'contact_points.value_storage_ref / contact_type=phone',
+		type: 'phone',
+		privacy: 'PII'
+	},
+	{
+		id: 'canonical-mobile-phone',
+		ruleId: 'canonical-mobile-phone',
+		role: 'target',
+		label: 'Mobile phone',
+		caption: 'contact_points.value_storage_ref / contact_type=mobile',
+		type: 'phone',
+		privacy: 'PII'
+	},
+	{
+		id: 'canonical-given-name',
+		ruleId: 'canonical-given-name',
+		role: 'target',
+		label: 'Given name',
+		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=given_name',
+		type: 'text',
+		privacy: 'PII'
+	},
+	{
+		id: 'canonical-family-name',
+		ruleId: 'canonical-family-name',
+		role: 'target',
+		label: 'Family name',
+		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=family_name',
+		type: 'text',
+		privacy: 'PII'
+	},
+	{
+		id: 'canonical-display-name',
+		ruleId: 'canonical-display-name',
+		role: 'target',
+		label: 'Display name',
+		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=display_name',
+		type: 'text',
+		privacy: 'PII'
+	},
+	{
+		id: 'canonical-address',
+		ruleId: 'canonical-address',
+		role: 'target',
+		label: 'Address',
+		caption: 'contact_points.value_storage_ref / contact_type=address',
+		type: 'json',
+		privacy: 'PII'
+	},
+	{
+		id: 'canonical-locale',
+		ruleId: 'canonical-locale',
+		role: 'target',
+		label: 'Locale',
+		caption: 'profile_attribute_values.value_json / catalog_entry_id=locale',
+		type: 'locale',
+		privacy: 'non-PII'
+	},
+	{
+		id: 'canonical-timezone',
+		ruleId: 'canonical-timezone',
+		role: 'target',
+		label: 'Timezone',
+		caption: 'profile_attribute_values.value_json / catalog_entry_id=timezone',
+		type: 'text',
+		privacy: 'non-PII'
+	},
+	{
+		id: 'canonical-group-membership',
+		ruleId: 'canonical-group-membership',
+		role: 'target',
+		label: 'Group membership',
+		caption: 'group_memberships.group_id',
+		type: 'multi-value',
+		privacy: 'non-PII'
+	},
+	{
+		id: 'canonical-entitlements',
+		ruleId: 'canonical-entitlements',
+		role: 'target',
+		label: 'Entitlements',
+		caption: 'entitlement_grants.entitlement_id',
+		type: 'multi-value',
+		privacy: 'non-PII'
+	},
+	{
+		id: 'canonical-linked-identity',
+		ruleId: 'canonical-linked-identity',
+		role: 'target',
+		label: 'Linked identity',
+		caption: 'linked_identities.provider_subject',
+		type: 'identifier',
+		privacy: 'non-PII'
+	},
+	{
+		id: 'canonical-lifecycle-state',
+		ruleId: 'canonical-lifecycle-state',
+		role: 'target',
+		label: 'Lifecycle state',
+		caption: 'identity_accounts.lifecycle_state',
+		type: 'enum',
+		privacy: 'non-PII'
+	}
+];
 
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
 	const sourceProfiles = [
@@ -60,7 +190,7 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		...input.destinationProfiles.map(destinationProfileToProfile),
 		...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
 	];
-	const canonicalTargets = buildCanonicalTargets(input.catalogs, input.schemaReadinessRows);
+	const canonicalTargets = buildCanonicalTargets(input.catalogs);
 
 	if (
 		sourceProfiles.length === 0 &&
@@ -201,37 +331,17 @@ function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): 
 	};
 }
 
-function buildCanonicalTargets(
-	catalogs: IdentityMappingCatalogSummary[],
-	readinessRows: IdentityMappingSchemaReadinessRow[]
-): MappingNode[] {
-	if (catalogs.length > 0) {
-		return catalogs.slice(0, 18).map((catalog) => ({
-			id: `catalog-${slug(catalog.id)}`,
-			ruleId: `catalog-${slug(catalog.id)}`,
-			role: 'target',
-			label: catalog.displayName,
-			caption: `${catalog.catalogKey} / ${catalog.versionLabel ?? 'no active version'}`,
-			type: 'catalog',
-			privacy: 'Other',
-			required: catalog.lifecycleState === 'active'
-		}));
-	}
+function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): MappingNode[] {
+	const activeCatalog =
+		catalogs.find((catalog) => catalog.lifecycleState === 'active') ?? catalogs[0];
+	const catalogCaption = activeCatalog
+		? `${activeCatalog.catalogKey} / ${activeCatalog.versionLabel ?? 'built-in canonical defaults'}`
+		: 'Authrim built-in canonical defaults';
 
-	return readinessRows
-		.filter((row) => row.schemaObject || row.schemaPresent)
-		.filter((row) => !['reserved_planned', 'adapter_deferred', 'deferred'].includes(row.status))
-		.slice(0, 18)
-		.map((row) => ({
-			id: `schema-${slug(row.schemaObject ?? row.objectName)}`,
-			ruleId: `schema-${slug(row.id)}`,
-			role: 'target',
-			label: row.schemaObject ?? row.objectName,
-			caption: `${row.id} / ${row.runtimePath}`,
-			type: row.area,
-			privacy: privacyFrom(row.objectName),
-			required: row.requiredForTier2Gate ?? row.gateState === 'pass'
-		}));
+	return defaultCanonicalTargets.map((target) => ({
+		...target,
+		caption: `${target.caption} / ${catalogCaption}`
+	}));
 }
 
 function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'): MappingNode[] {
