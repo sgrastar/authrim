@@ -16,29 +16,27 @@ function createStorageProfile(id: string, slices: StorageProfile['slices']): Sto
 }
 
 describe('storage-boundary-policy', () => {
-  it('treats users_core as auth-core shorthand instead of tenant-overridable user data', () => {
-    expect(getStorageSliceBoundaryPolicy('users_core')).toEqual({
-      slice: 'users_core',
+  it('treats identity_core as the protected auth-core identity plane', () => {
+    expect(getStorageSliceBoundaryPolicy('identity_core')).toEqual({
+      slice: 'identity_core',
       boundaryClass: 'auth_core',
       tenantOverrideAllowed: false,
       d1Default: true,
       nonD1OptionRequired: false,
-      compatibilityShorthand: true,
     });
   });
 
   it('lists the current machine-readable boundary policy for every storage slice', () => {
     expect(listStorageSliceBoundaryPolicies()).toEqual([
       {
-        slice: 'users_core',
+        slice: 'identity_core',
         boundaryClass: 'auth_core',
         tenantOverrideAllowed: false,
         d1Default: true,
         nonD1OptionRequired: false,
-        compatibilityShorthand: true,
       },
       {
-        slice: 'users_pii',
+        slice: 'identity_pii',
         boundaryClass: 'pii',
         tenantOverrideAllowed: true,
         d1Default: true,
@@ -98,7 +96,7 @@ describe('storage-boundary-policy', () => {
 
   it('allows tenant overrides that only move PII or custom slices', () => {
     const defaultProfile = createStorageProfile('default', {
-      users_core: {
+      identity_core: {
         driver: 'd1',
         bindingRef: 'DB',
         role: 'core',
@@ -110,7 +108,7 @@ describe('storage-boundary-policy', () => {
         connectionRef: 'tenant-custom',
         role: 'core',
       },
-      users_pii: {
+      identity_pii: {
         driver: 'postgres',
         connectionRef: 'tenant-pii',
         role: 'pii',
@@ -122,7 +120,7 @@ describe('storage-boundary-policy', () => {
 
   it('rejects tenant overrides that move protected passkey or authorization slices', () => {
     const defaultProfile = createStorageProfile('default', {
-      users_core: {
+      identity_core: {
         driver: 'd1',
         bindingRef: 'DB',
         role: 'core',
@@ -149,14 +147,14 @@ describe('storage-boundary-policy', () => {
 
   it('rejects tenant overrides that change the auth core slice target', () => {
     const defaultProfile = createStorageProfile('default', {
-      users_core: {
+      identity_core: {
         driver: 'd1',
         bindingRef: 'DB',
         role: 'core',
       },
     });
     const candidateProfile = createStorageProfile('tenant-auth-core', {
-      users_core: {
+      identity_core: {
         driver: 'postgres',
         connectionRef: 'tenant-core',
         role: 'core',
@@ -170,9 +168,9 @@ describe('storage-boundary-policy', () => {
     );
   });
 
-  it('treats omitted users_core as an implicit D1 target when comparing against external defaults', () => {
+  it('treats omitted identity_core as an implicit D1 target when comparing against external defaults', () => {
     const defaultProfile = createStorageProfile('default-external', {
-      users_core: {
+      identity_core: {
         driver: 'postgres',
         connectionRef: 'core-primary',
         role: 'core',

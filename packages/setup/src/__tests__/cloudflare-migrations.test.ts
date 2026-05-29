@@ -560,6 +560,20 @@ INSERT INTO tenants (
             "SELECT COUNT(*) FROM pragma_table_info('tenant_discovery_indexes') WHERE name = 'mapping_snapshot_id';"
           )
         ).toBe('1');
+        expect(() =>
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "INSERT INTO tenant_runtime_cache_generations (tenant_id, cache_namespace) VALUES ('tenant-a', 'users_core');"
+          )
+        ).toThrow();
+        expect(() =>
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "INSERT INTO tenant_runtime_cache_generations (tenant_id, cache_namespace) VALUES ('tenant-a', 'identity_core');"
+          )
+        ).not.toThrow();
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }

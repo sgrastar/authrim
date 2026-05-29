@@ -201,12 +201,11 @@ describe('runtime profile admin handlers', () => {
         environmentDefaultStorageProfileId: string;
         authCoreSlices: string[];
         slicePolicies: {
-          users_core: {
+          identity_core: {
             boundaryClass: string;
             tenantOverrideAllowed: boolean;
-            compatibilityShorthand?: boolean;
           };
-          users_pii: {
+          identity_pii: {
             boundaryClass: string;
             nonD1OptionRequired: boolean;
           };
@@ -337,15 +336,14 @@ describe('runtime profile admin handlers', () => {
         }),
       })
     );
-    expect(allBody.storage_policy.authCoreSlices).toEqual(['users_core']);
-    expect(allBody.storage_policy.slicePolicies.users_core).toEqual(
+    expect(allBody.storage_policy.authCoreSlices).toEqual(['identity_core']);
+    expect(allBody.storage_policy.slicePolicies.identity_core).toEqual(
       expect.objectContaining({
         boundaryClass: 'auth_core',
         tenantOverrideAllowed: false,
-        compatibilityShorthand: true,
       })
     );
-    expect(allBody.storage_policy.slicePolicies.users_pii).toEqual(
+    expect(allBody.storage_policy.slicePolicies.identity_pii).toEqual(
       expect.objectContaining({
         boundaryClass: 'pii',
         nonD1OptionRequired: true,
@@ -927,12 +925,12 @@ describe('runtime profile admin handlers', () => {
         label: 'External Storage',
         builtin: false,
         slices: {
-          users_core: {
+          identity_core: {
             driver: 'postgres',
             connectionRef: 'core-primary',
             role: 'core',
           },
-          users_pii: {
+          identity_pii: {
             driver: 'postgres',
             connectionRef: 'pii-primary',
             role: 'pii',
@@ -965,13 +963,13 @@ describe('runtime profile admin handlers', () => {
     expect(getBody.reference_status).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: 'slices.users_core',
+          path: 'slices.identity_core',
           resolution: 'configured',
           severity: 'info',
           activation: 'ready',
         }),
         expect.objectContaining({
-          path: 'slices.users_pii',
+          path: 'slices.identity_pii',
           resolution: 'configured',
           severity: 'info',
           activation: 'ready',
@@ -1099,7 +1097,7 @@ describe('runtime profile admin handlers', () => {
         kind: 'storage',
         label: 'Tenant Auth Core Storage',
         slices: {
-          users_core: {
+          identity_core: {
             driver: 'postgres',
             connectionRef: 'tenant-a-core',
             role: 'core',
@@ -1120,18 +1118,18 @@ describe('runtime profile admin handlers', () => {
         authCoreSlice: string;
         authCoreSlices: string[];
         slicePolicies: {
-          users_core: {
-            compatibilityShorthand?: boolean;
-          };
+          identity_core: Record<string, unknown>;
         };
         tenantOverrideAllowed: boolean;
         violationCode?: string;
       };
     };
 
-    expect(body.storage_policy.authCoreSlice).toBe('users_core');
-    expect(body.storage_policy.authCoreSlices).toEqual(['users_core']);
-    expect(body.storage_policy.slicePolicies.users_core.compatibilityShorthand).toBe(true);
+    expect(body.storage_policy.authCoreSlice).toBe('identity_core');
+    expect(body.storage_policy.authCoreSlices).toEqual(['identity_core']);
+    expect(body.storage_policy.slicePolicies.identity_core).not.toHaveProperty(
+      'compatibilityShorthand'
+    );
     expect(body.storage_policy.tenantOverrideAllowed).toBe(false);
     expect(body.storage_policy.violationCode).toBe('tenant_auth_core_override_not_allowed');
   });

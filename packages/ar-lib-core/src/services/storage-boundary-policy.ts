@@ -1,6 +1,6 @@
 import type { StorageProfile, StorageSlice, StorageTarget } from '../types/runtime-profile';
 
-export const AUTH_CORE_STORAGE_SLICE = 'users_core' as const;
+export const AUTH_CORE_STORAGE_SLICE = 'identity_core' as const;
 export const AUTH_CORE_STORAGE_SLICES = [AUTH_CORE_STORAGE_SLICE] as const;
 
 export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension' | 'authorization';
@@ -11,22 +11,20 @@ export interface StorageSliceBoundaryPolicy {
   tenantOverrideAllowed: boolean;
   d1Default: boolean;
   nonD1OptionRequired: boolean;
-  compatibilityShorthand?: boolean;
 }
 
 export const STORAGE_SLICE_BOUNDARY_POLICIES: Readonly<
   Record<StorageSlice, StorageSliceBoundaryPolicy>
 > = {
-  users_core: {
-    slice: 'users_core',
+  identity_core: {
+    slice: 'identity_core',
     boundaryClass: 'auth_core',
     tenantOverrideAllowed: false,
     d1Default: true,
     nonD1OptionRequired: false,
-    compatibilityShorthand: true,
   },
-  users_pii: {
-    slice: 'users_pii',
+  identity_pii: {
+    slice: 'identity_pii',
     boundaryClass: 'pii',
     tenantOverrideAllowed: true,
     d1Default: true,
@@ -133,7 +131,7 @@ export function listStorageSliceBoundaryPolicies(): StorageSliceBoundaryPolicy[]
 }
 
 export function getEffectiveAuthCoreTarget(profile: StorageProfile): StorageTarget {
-  return profile.slices.users_core ?? IMPLICIT_AUTH_CORE_TARGET;
+  return profile.slices.identity_core ?? IMPLICIT_AUTH_CORE_TARGET;
 }
 
 function getEffectiveStorageSliceTarget(

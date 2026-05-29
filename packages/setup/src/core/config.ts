@@ -400,16 +400,16 @@ const StorageProfileSeedSchema = z.object({
   residencyProfileId: ProfileIdSchema.optional(),
   slices: z
     .object({
-      users_core: StorageTargetSeedSchema.optional(),
-      users_pii: StorageTargetSeedSchema.optional(),
+      identity_core: StorageTargetSeedSchema.optional(),
+      identity_pii: StorageTargetSeedSchema.optional(),
       custom_claims: StorageTargetSeedSchema.optional(),
       registration_fields: StorageTargetSeedSchema.optional(),
       custom_pii: StorageTargetSeedSchema.optional(),
     })
     .superRefine((value, ctx) => {
       if (
-        !value.users_core &&
-        !value.users_pii &&
+        !value.identity_core &&
+        !value.identity_pii &&
         !value.custom_claims &&
         !value.registration_fields &&
         !value.custom_pii

@@ -29,7 +29,7 @@ describe('checkStorageProfileTargetHealth', () => {
       kind: 'storage',
       label: 'External Test',
       slices: {
-        users_core: {
+        identity_core: {
           driver: 'postgres',
           bindingRef: 'CORE_DB',
           role: 'core',
@@ -41,7 +41,7 @@ describe('checkStorageProfileTargetHealth', () => {
       { CORE_DB: coreDb },
       profile,
       'slice',
-      'users_core',
+      'identity_core',
       '2026-05-16T00:00:00.000Z'
     );
 
@@ -49,7 +49,7 @@ describe('checkStorageProfileTargetHealth', () => {
     expect(result).toMatchObject({
       profileId: 'external-test',
       targetKind: 'slice',
-      targetName: 'users_core',
+      targetName: 'identity_core',
       driver: 'postgres',
       role: 'core',
       bindingRef: 'CORE_DB',
@@ -67,11 +67,11 @@ describe('checkStorageProfileTargetHealth', () => {
       label: 'External Test',
       slices: {},
       logicalSources: {
-        users_pii: {
+        identity_pii: {
           driver: 'postgres',
           bindingRef: 'PII_DB',
           role: 'pii',
-          logicalSource: 'users_pii',
+          logicalSource: 'identity_pii',
         },
       },
     };
@@ -80,7 +80,7 @@ describe('checkStorageProfileTargetHealth', () => {
       { PII_DB: piiDb },
       profile,
       'logical_source',
-      'users_pii',
+      'identity_pii',
       '2026-05-16T00:00:00.000Z'
     );
 

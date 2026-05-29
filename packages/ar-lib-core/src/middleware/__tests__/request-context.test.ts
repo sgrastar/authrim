@@ -591,12 +591,12 @@ describe('requestContextMiddleware – tenant existence check', () => {
         scope: 'deployment',
         deploymentProfile: 'tenant-d1',
         slices: {
-          users_core: {
+          identity_core: {
             driver: 'd1',
             resolverRef: 'unsupported-registry',
             role: 'tenant_core',
           },
-          users_pii: {
+          identity_pii: {
             driver: 'd1',
             resolverRef: 'unsupported-registry',
             role: 'tenant_pii',

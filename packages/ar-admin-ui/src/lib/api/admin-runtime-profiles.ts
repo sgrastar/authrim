@@ -62,8 +62,8 @@ export interface RuntimeProfileReferenceCatalog {
 export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension' | 'authorization';
 
 export type StorageSlice =
-	| 'users_core'
-	| 'users_pii'
+	| 'identity_core'
+	| 'identity_pii'
 	| 'custom_claims'
 	| 'registration_fields'
 	| 'custom_pii'
@@ -78,7 +78,6 @@ export interface StorageSliceBoundaryPolicy {
 	tenantOverrideAllowed: boolean;
 	d1Default: boolean;
 	nonD1OptionRequired: boolean;
-	compatibilityShorthand?: boolean;
 }
 
 export interface StorageProfileTenantOverridePolicy {
