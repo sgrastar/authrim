@@ -10,6 +10,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { consentGetHandler, consentPostHandler } from '../consent';
 
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    getConsentUserInfo: vi.fn(async (_db, subjectId: string) => {
+      if (subjectId !== 'user-123') return null;
+      return {
+        id: 'user-123',
+        email: 'user@example.com',
+        name: 'Example User',
+        picture: undefined,
+      };
+    }),
+  };
+});
+
 // Helper to create mock D1Database
 function createMockDB(options: {
   firstResult?: any;

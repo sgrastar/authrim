@@ -35,13 +35,13 @@ describe('tenant database stats', () => {
       activeUserCount: 7,
       activePendingUserCount: 9,
       rowCountEstimates: {
-        users_core: 10,
+        identity_accounts: 10,
       },
       checkedAt: '2026-05-16T00:00:00.000Z',
     });
     expect(adapter.queryOne).toHaveBeenNthCalledWith(
       1,
-      'SELECT COUNT(*) AS count FROM users_core WHERE tenant_id = ?',
+      'SELECT COUNT(*) AS count FROM identity_accounts WHERE tenant_id = ?',
       ['tenant-a']
     );
   });

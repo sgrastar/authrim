@@ -180,6 +180,23 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ),
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
     resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
+    CanonicalRuntimeUserStore: class {
+      private tenantId: string;
+
+      constructor(options: { tenantId: string }) {
+        this.tenantId = options.tenantId;
+      }
+
+      async findByEmail(email: string) {
+        const user = mocked.state.users.find(
+          (candidate) =>
+            candidate.email === email &&
+            candidate.tenant_id === this.tenantId &&
+            candidate.is_active === 1
+        );
+        return user ? { id: user.id, tenant_id: user.tenant_id, email: user.email } : null;
+      }
+    },
   };
 });
 

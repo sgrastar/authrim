@@ -45,6 +45,40 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        const core = await mocks.userCoreRepository.findById(userId);
+        if (!core) return null;
+        const isActive = core.active ?? core.is_active;
+        if (!isActive) {
+          return {
+            id: core.id,
+            active: 0,
+            account_type: core.user_type === 'admin' ? 'admin' : 'user',
+            email: null,
+            name: null,
+            email_verified: core.email_verified ? 1 : 0,
+            phone_number_verified: core.phone_number_verified ? 1 : 0,
+            created_at: new Date(core.created_at ?? Date.now()).toISOString(),
+            updated_at: new Date(core.updated_at ?? Date.now()).toISOString(),
+            last_login_at: core.last_login_at ?? null,
+          };
+        }
+        const pii = await mocks.userPIIRepository.findById(userId);
+        return {
+          id: core.id,
+          active: isActive ? 1 : 0,
+          account_type: core.user_type === 'admin' ? 'admin' : 'user',
+          email: pii?.email ?? null,
+          name: pii?.name ?? null,
+          email_verified: core.email_verified ? 1 : 0,
+          phone_number_verified: core.phone_number_verified ? 1 : 0,
+          created_at: new Date(core.created_at ?? Date.now()).toISOString(),
+          updated_at: new Date(core.updated_at ?? Date.now()).toISOString(),
+          last_login_at: core.last_login_at ?? null,
+        };
+      }
+    },
     getSessionStoreBySessionId: mocks.getSessionStoreBySessionId,
     isShardedSessionId: mocks.isShardedSessionId,
     getTenantIdFromContext: mocks.getTenantIdFromContext,
@@ -205,7 +239,7 @@ describe('Direct Auth session endpoint', () => {
       error: 'user_not_found',
       error_description: 'User not found',
     });
-    expect(mocks.createPIIContextFromHono).not.toHaveBeenCalled();
+    expect(mocks.userPIIRepository.findById).not.toHaveBeenCalled();
   });
 });
 

@@ -52,6 +52,7 @@ import { canonicalProjectionToScimInternalUser } from './identity-canonical-runt
 
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
+  includeInactive?: boolean;
 }
 
 type CanonicalUserFilterValue = string | number | boolean | null | undefined;
@@ -239,8 +240,10 @@ async function fetchUserWithPII(
   userId: string,
   options: ScimUserReadOptions
 ): Promise<InternalUser | null> {
-  const canonicalProjection =
-    await options.canonicalProjectionRepository?.findByLegacyUserId(userId);
+  const canonicalProjection = await options.canonicalProjectionRepository?.findByLegacyUserId(
+    userId,
+    { includeInactive: options.includeInactive }
+  );
   return canonicalProjection ? canonicalProjectionToScimInternalUser(canonicalProjection) : null;
 }
 
@@ -1482,6 +1485,7 @@ app.post('/Users', async (c) => {
     // Fetch created user from the configured runtime source.
     const createdUser = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
+      includeInactive: true,
     });
 
     if (!createdUser) {
@@ -1582,6 +1586,7 @@ app.put('/Users/:id', async (c) => {
     // Fetch updated user from the configured runtime source.
     const updatedUser = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
+      includeInactive: true,
     });
 
     if (!updatedUser) {
@@ -1687,6 +1692,7 @@ app.patch('/Users/:id', async (c) => {
     // Fetch updated user from the configured runtime source.
     const updatedUser = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
+      includeInactive: true,
     });
 
     if (!updatedUser) {
@@ -2772,6 +2778,7 @@ async function processUserOperation(
       // Fetch created user from the configured runtime source.
       const createdUser = await fetchUserWithPII(userId, {
         canonicalProjectionRepository,
+        includeInactive: true,
       });
       const responseUser = createdUser
         ? userToScim(createdUser, { baseUrl, includeGroups: false })
@@ -2873,6 +2880,7 @@ async function processUserOperation(
 
       const updatedUser = await fetchUserWithPII(resourceId!, {
         canonicalProjectionRepository,
+        includeInactive: true,
       });
       const responseUser = updatedUser
         ? userToScim(updatedUser, { baseUrl, includeGroups: false })
@@ -2975,6 +2983,7 @@ async function processUserOperation(
 
       const updatedUser = await fetchUserWithPII(resourceId!, {
         canonicalProjectionRepository,
+        includeInactive: true,
       });
       const responseUser = updatedUser
         ? userToScim(updatedUser, { baseUrl, includeGroups: false })

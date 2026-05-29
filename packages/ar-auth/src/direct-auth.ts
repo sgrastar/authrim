@@ -2582,7 +2582,7 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
         id: runtimeUser.id,
         email: runtimeUser.email,
         name: runtimeUser.name,
-        emailVerified: runtimeUser.email_verified,
+        emailVerified: runtimeUser.email_verified === 1,
         createdAt: runtimeUser.created_at,
         updatedAt: runtimeUser.updated_at,
         lastLoginAt: runtimeUser.last_login_at,

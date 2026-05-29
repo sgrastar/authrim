@@ -125,6 +125,8 @@ const mocks = vi.hoisted(() => {
 
     // User
     mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
+    mockFindCanonicalRuntimeUserProjection: vi.fn(),
+    mockFindCanonicalRuntimeAccount: vi.fn(),
 
     // Native SSO
     mockDeviceSecretRepository: {
@@ -207,6 +209,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     buildAuthCodeShardInstanceName: mocks.mockBuildAuthCodeShardInstanceName,
     generateRegionAwareJti: mocks.mockGenerateRegionAwareJti,
     D1Adapter: mocks.mockD1Adapter,
+    CanonicalRuntimeUserProjectionRepository: vi.fn(
+      function CanonicalRuntimeUserProjectionRepositoryMock() {
+        return {
+          findByLegacyUserId: mocks.mockFindCanonicalRuntimeUserProjection,
+        };
+      }
+    ),
+    CanonicalSensitiveValueResolver: vi.fn(function CanonicalSensitiveValueResolverMock() {
+      return {};
+    }),
+    CanonicalIdentityRepository: vi.fn(function CanonicalIdentityRepositoryMock() {
+      return {
+        findAccountByLegacyUserId: mocks.mockFindCanonicalRuntimeAccount,
+      };
+    }),
     requireDedicatedAdminDatabaseAdapter: mocks.mockRequireDedicatedAdminDatabaseAdapter,
     getIDTokenRBACClaims: mocks.mockGetIDTokenRBACClaims,
     getAccessTokenRBACClaims: mocks.mockGetAccessTokenRBACClaims,
@@ -431,6 +448,53 @@ function resetAllMocks() {
   mocks.mockIsCustomClaimsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockIsIdLevelPermissionsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockGetCachedUserCore.mockReset().mockResolvedValue(null);
+  mocks.mockFindCanonicalRuntimeUserProjection
+    .mockReset()
+    .mockImplementation(async (userId: string) => ({
+      id: userId,
+      tenant_id: 'default',
+      subject_id: `subject-${userId}`,
+      account_id: `account-${userId}`,
+      account_type: 'end_user',
+      lifecycle_state: 'active',
+      email: 'user@example.com',
+      email_verified: 1,
+      name: 'Test User',
+      given_name: 'Test',
+      family_name: 'User',
+      middle_name: null,
+      nickname: null,
+      preferred_username: null,
+      profile: null,
+      picture: null,
+      website: null,
+      gender: null,
+      birthdate: null,
+      zoneinfo: null,
+      locale: null,
+      phone_number: null,
+      phone_number_verified: 0,
+      address_json: null,
+      password_hash: null,
+      external_id: null,
+      last_login_at: null,
+      active: 1,
+      custom_attributes_json: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }));
+  mocks.mockFindCanonicalRuntimeAccount.mockReset().mockImplementation(async (userId: string) => ({
+    id: `account-${userId}`,
+    tenant_id: 'default',
+    subject_id: `subject-${userId}`,
+    legacy_user_id: userId,
+    account_type: 'end_user',
+    lifecycle_state: 'active',
+    display_label: null,
+    metadata_json: '{}',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }));
 }
 
 // ============================================================================
