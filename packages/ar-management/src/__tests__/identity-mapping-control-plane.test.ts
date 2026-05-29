@@ -11,6 +11,9 @@ import {
   adminIdentityMappingProtocolSchemasListHandler,
   adminIdentityMappingPoliciesListHandler,
   adminIdentityMappingPolicyCreateHandler,
+  adminIdentityMappingFederationMetadataDocumentsListHandler,
+  adminIdentityMappingReviewTasksListHandler,
+  adminIdentityMappingSchemaReadinessHandler,
   IdentityMappingControlPlaneRepository,
 } from '../identity-mapping-control-plane';
 
@@ -19,17 +22,25 @@ interface RecordedExecute {
   params: unknown[];
 }
 
+interface RecordedQuery {
+  sql: string;
+  params: unknown[];
+}
+
 function createAdapter(options: {
   queryRows?: Record<string, unknown>[];
   queryOneRows?: Array<Record<string, unknown> | null>;
-}): DatabaseAdapter & { executes: RecordedExecute[] } {
+}): DatabaseAdapter & { executes: RecordedExecute[]; queries: RecordedQuery[] } {
   const executes: RecordedExecute[] = [];
+  const queries: RecordedQuery[] = [];
   const queryRows = [...(options.queryRows ?? [])];
   const queryOneRows = [...(options.queryOneRows ?? [])];
   const executeResult: ExecuteResult = { rowsAffected: 1, success: true };
   return {
     executes,
-    async query<T>(): Promise<T[]> {
+    queries,
+    async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+      queries.push({ sql, params });
       return queryRows as T[];
     },
     async queryOne<T>(): Promise<T | null> {
@@ -458,6 +469,84 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
       expect.stringContaining('UPDATE review_tasks'),
       expect.stringContaining('INSERT INTO mapping_events'),
     ]);
+  });
+
+  it('lists review tasks with safe filters for the resolution center', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'review-task-1',
+          tenant_id: 'tenant_a',
+          task_type: 'mapping_conflict',
+          subject_id: 'subject-1',
+          account_id: null,
+          status: 'open',
+          priority: 30,
+          assigned_to: 'admin-1',
+          payload_json: JSON.stringify({
+            title: 'Department conflict needs review',
+            source: 'SCIM Directory',
+            riskSummary: 'Two trusted sources disagree on a non-PII department label.',
+          }),
+          due_at: null,
+          created_at: 1000,
+          updated_at: 1000,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const tasks = await repository.listReviewTasks('tenant_a', {
+      status: 'open',
+      taskType: 'mapping_conflict',
+      assignedTo: 'admin-1',
+      limit: 500,
+    });
+
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        id: 'review-task-1',
+        tenantId: 'tenant_a',
+        taskType: 'mapping_conflict',
+        status: 'open',
+        priority: 30,
+        assignedTo: 'admin-1',
+        payload: expect.objectContaining({
+          title: 'Department conflict needs review',
+        }),
+      }),
+    ]);
+    expect(adapter.queries[0]).toEqual({
+      sql: expect.stringContaining('FROM review_tasks'),
+      params: ['tenant_a', 'open', 'mapping_conflict', 'admin-1', 200],
+    });
+  });
+
+  it('fails closed when stored review task payload contains raw identifiers', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'review-task-raw',
+          tenant_id: 'tenant_a',
+          task_type: 'identity_link_review',
+          subject_id: null,
+          account_id: null,
+          status: 'open',
+          priority: 10,
+          assigned_to: null,
+          payload_json: JSON.stringify({ email: 'person@example.test' }),
+          due_at: null,
+          created_at: 1000,
+          updated_at: 1000,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(repository.listReviewTasks('tenant_a')).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
   });
 
   it('groups bulk review impact without storing raw values', async () => {
@@ -1323,6 +1412,87 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
     expect(String(adapter.executes[2].params[6])).toContain('requestedAttributes');
   });
 
+  it('lists federation metadata documents with normalized entity summaries', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'trust-source-1' }],
+      queryRows: [
+        {
+          id: 'metadata-document-1',
+          trust_source_id: 'trust-source-1',
+          document_type: 'saml_aggregate',
+          source_url: 'https://metadata.example.test/aggregate.xml',
+          document_hash: 'sha256:metadata',
+          document_ref: 'r2://metadata/aggregate.xml',
+          fetched_at: 1000,
+          validated_at: 1100,
+          validation_state: 'valid',
+          created_at: 1000,
+          updated_at: 1100,
+          entity_summary_id: 'entity-summary-1',
+          entity_id: 'https://sp.example.test/sp',
+          entity_role: 'sp',
+          display_name: 'Example SP',
+          summary_json: JSON.stringify({ requestedAttributes: ['mail'] }),
+        },
+        {
+          id: 'metadata-document-1',
+          trust_source_id: 'trust-source-1',
+          document_type: 'saml_aggregate',
+          source_url: 'https://metadata.example.test/aggregate.xml',
+          document_hash: 'sha256:metadata',
+          document_ref: 'r2://metadata/aggregate.xml',
+          fetched_at: 1000,
+          validated_at: 1100,
+          validation_state: 'valid',
+          created_at: 1000,
+          updated_at: 1100,
+          entity_summary_id: 'entity-summary-2',
+          entity_id: 'https://idp.example.test/idp',
+          entity_role: 'idp',
+          display_name: 'Example IdP',
+          summary_json: null,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.listFederationMetadataDocuments('tenant_a', 'trust-source-1')
+    ).resolves.toEqual([
+      {
+        id: 'metadata-document-1',
+        tenantId: 'tenant_a',
+        trustSourceId: 'trust-source-1',
+        documentType: 'saml_aggregate',
+        sourceUrl: 'https://metadata.example.test/aggregate.xml',
+        documentHash: 'sha256:metadata',
+        documentRef: 'r2://metadata/aggregate.xml',
+        fetchedAt: 1000,
+        validatedAt: 1100,
+        validationState: 'valid',
+        createdAt: 1000,
+        updatedAt: 1100,
+        entitySummaries: [
+          {
+            id: 'entity-summary-1',
+            entityId: 'https://sp.example.test/sp',
+            entityRole: 'sp',
+            displayName: 'Example SP',
+            summary: { requestedAttributes: ['mail'] },
+          },
+          {
+            id: 'entity-summary-2',
+            entityId: 'https://idp.example.test/idp',
+            entityRole: 'idp',
+            displayName: 'Example IdP',
+            summary: null,
+          },
+        ],
+      },
+    ]);
+    expect(adapter.queries[0].sql).toContain('FROM federation_metadata_documents');
+  });
+
   it('rejects federation metadata documents for unknown trust sources', async () => {
     const adapter = createAdapter({ queryOneRows: [null] });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -1575,6 +1745,191 @@ describe('identity mapping control plane Admin API handlers', () => {
           schemaVersion: '2.0',
           schema: { attributes: [{ name: 'userName' }] },
           lifecycleState: 'active',
+        },
+      ],
+    });
+  });
+
+  it('lists review tasks through the Admin API response shape', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'review-task-1',
+          tenant_id: 'tenant_a',
+          task_type: 'missing_mapping',
+          subject_id: null,
+          account_id: 'account-1',
+          status: 'open',
+          priority: 12,
+          assigned_to: null,
+          payload_json: JSON.stringify({
+            title: 'CSV department needs target',
+            source: 'CSV import profile',
+            impact: 'Activation remains blocked until the target field is selected.',
+          }),
+          due_at: null,
+          created_at: 1000,
+          updated_at: 1100,
+        },
+      ],
+    });
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
+      await next();
+    });
+    app.get('/api/admin/identity-mapping/review-tasks', adminIdentityMappingReviewTasksListHandler);
+
+    const response = await app.request(
+      '/api/admin/identity-mapping/review-tasks?status=open&limit=5',
+      { headers: { 'X-Tenant-Id': 'tenant_a' } },
+      { DB_ADMIN: adapter } as unknown as Env
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      reviewTasks: [
+        {
+          id: 'review-task-1',
+          tenantId: 'tenant_a',
+          taskType: 'missing_mapping',
+          subjectId: null,
+          accountId: 'account-1',
+          status: 'open',
+          priority: 12,
+          assignedTo: null,
+          payload: {
+            title: 'CSV department needs target',
+            source: 'CSV import profile',
+            impact: 'Activation remains blocked until the target field is selected.',
+          },
+          dueAt: null,
+          createdAt: 1000,
+          updatedAt: 1100,
+        },
+      ],
+    });
+    expect(adapter.queries[0].params).toEqual(['tenant_a', 'open', 5]);
+  });
+
+  it('lists schema readiness with gate state and schema presence from sqlite metadata', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        { name: 'mapping_policy_sets' },
+        { name: 'mapping_policy_versions' },
+        { name: 'mapping_rule_edges' },
+        { name: 'review_tasks' },
+        { name: 'attribute_release_consents' },
+      ],
+    });
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
+      await next();
+    });
+    app.get(
+      '/api/admin/identity-mapping/schema-readiness',
+      adminIdentityMappingSchemaReadinessHandler
+    );
+
+    const response = await app.request(
+      '/api/admin/identity-mapping/schema-readiness',
+      { headers: { 'X-Tenant-Id': 'tenant_a' } },
+      { DB_ADMIN: adapter } as unknown as Env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      rows: Array<{
+        id: string;
+        schemaObject?: string;
+        schemaPresent: boolean | null;
+        gateState: string;
+      }>;
+      summary: { blocked: number; deferred: number; total: number };
+    };
+    expect(body.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'UIM-SCH-016',
+          schemaObject: 'mapping_policy_sets',
+          schemaPresent: true,
+          gateState: 'pass',
+        }),
+        expect.objectContaining({
+          id: 'UIM-SCH-071',
+          schemaObject: 'federation_trust_sources',
+          schemaPresent: false,
+          gateState: 'blocked',
+        }),
+        expect.objectContaining({
+          id: 'UIM-SCH-086',
+          schemaPresent: null,
+          gateState: 'deferred',
+        }),
+      ])
+    );
+    expect(body.summary.total).toBeGreaterThan(10);
+    expect(body.summary.blocked).toBeGreaterThan(0);
+    expect(body.summary.deferred).toBeGreaterThan(0);
+  });
+
+  it('lists federation metadata documents through the Admin API response shape', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'trust-source-1' }],
+      queryRows: [
+        {
+          id: 'metadata-document-1',
+          trust_source_id: 'trust-source-1',
+          document_type: 'saml_aggregate',
+          source_url: null,
+          document_hash: 'sha256:metadata',
+          document_ref: null,
+          fetched_at: 1000,
+          validated_at: 1100,
+          validation_state: 'valid',
+          created_at: 1000,
+          updated_at: 1100,
+          entity_summary_id: 'entity-summary-1',
+          entity_id: 'https://sp.example.test/sp',
+          entity_role: 'sp',
+          display_name: 'Example SP',
+          summary_json: '{}',
+        },
+      ],
+    });
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
+      await next();
+    });
+    app.get(
+      '/api/admin/identity-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
+      adminIdentityMappingFederationMetadataDocumentsListHandler
+    );
+
+    const response = await app.request(
+      '/api/admin/identity-mapping/federation-trust-sources/trust-source-1/metadata-documents',
+      {},
+      { DB_ADMIN: adapter } as unknown as Env
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      federationMetadataDocuments: [
+        {
+          id: 'metadata-document-1',
+          tenantId: 'tenant_a',
+          trustSourceId: 'trust-source-1',
+          validationState: 'valid',
+          entitySummaries: [
+            {
+              id: 'entity-summary-1',
+              entityId: 'https://sp.example.test/sp',
+              entityRole: 'sp',
+              displayName: 'Example SP',
+            },
+          ],
         },
       ],
     });

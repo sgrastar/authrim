@@ -22,6 +22,265 @@ type LifecycleState = 'draft' | 'published' | 'active' | 'scheduled' | 'retired'
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const ACTIVATION_LEASE_TTL_MS = 60 * 1000;
 
+const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
+  {
+    id: 'UIM-SCH-016',
+    objectName: 'mapping_policy_sets',
+    area: 'Mapping policy root',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'policy authoring',
+    status: 'api_connected',
+    gate: 'repo/API/tests; UI in PR12',
+    schemaObject: 'mapping_policy_sets',
+  },
+  {
+    id: 'UIM-SCH-017',
+    objectName: 'mapping_policy_versions',
+    area: 'Draft/published/active versions',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'activation / compile',
+    status: 'api_connected',
+    gate: 'repo/API/tests; hot-path use in later runtime slices',
+    schemaObject: 'mapping_policy_versions',
+  },
+  {
+    id: 'UIM-SCH-019',
+    objectName: 'mapping_rule_edges',
+    area: 'Graph field-to-field edges',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation / PR12 UI',
+    runtimePath: 'Svelte Flow graph',
+    status: 'api_connected',
+    gate: 'API/tests; UI in PR12',
+    schemaObject: 'mapping_rule_edges',
+  },
+  {
+    id: 'UIM-SCH-024',
+    objectName: 'mapping_policy_activations',
+    area: 'Activation / schedule state',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'active snapshot selection',
+    status: 'api_connected',
+    gate: 'activation API/tests; runtime pointer use in later slices',
+    schemaObject: 'mapping_policy_activations',
+  },
+  {
+    id: 'UIM-SCH-025',
+    objectName: 'compiled_mapping_snapshots',
+    area: 'Hot-path compiled policy',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'hot path',
+    status: 'api_connected',
+    gate: 'compile/activate API/tests; runtime hot-path use in later slices',
+    schemaObject: 'compiled_mapping_snapshots',
+  },
+  {
+    id: 'UIM-SCH-030',
+    objectName: 'protocol_schema_catalogs',
+    area: 'Protocol schema catalog',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'adapter validation',
+    status: 'api_connected',
+    gate: 'API/tests',
+    schemaObject: 'protocol_schema_catalogs',
+  },
+  {
+    id: 'UIM-SCH-031',
+    objectName: 'external_schema_catalogs',
+    area: 'Imported external metadata',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'draft suggestions',
+    status: 'api_connected',
+    gate: 'API/tests; import workflow later',
+    schemaObject: 'external_schema_catalogs',
+  },
+  {
+    id: 'UIM-SCH-032',
+    objectName: 'mapping_templates',
+    area: 'Built-in/custom templates',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'policy creation',
+    status: 'api_connected',
+    gate: 'API/tests; UI in PR12',
+    schemaObject: 'mapping_templates',
+  },
+  {
+    id: 'UIM-SCH-044',
+    objectName: 'review_tasks',
+    area: 'Manual review queue',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR9 consent / review',
+    runtimePath: 'linking/conflict/release review',
+    status: 'api_connected',
+    gate: 'create/transition API + tests; full Admin UI queue in PR12',
+    schemaObject: 'review_tasks',
+  },
+  {
+    id: 'UIM-SCH-045',
+    objectName: 'review_task_groups',
+    area: 'Grouped bulk review',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR9 consent / review',
+    runtimePath: 'bulk import/activation review',
+    status: 'api_connected',
+    gate: 'group API + tests; full Admin UI queue in PR12',
+    schemaObject: 'review_task_groups',
+  },
+  {
+    id: 'UIM-SCH-047',
+    objectName: 'mapping_activation_leases',
+    area: 'Activation concurrency lock',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'publish/activate/schedule',
+    status: 'api_connected',
+    gate: 'API/tests',
+    schemaObject: 'mapping_activation_leases',
+  },
+  {
+    id: 'UIM-SCH-048',
+    objectName: 'idempotency_records',
+    area: 'Mutation retry safety',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR7 policy foundation',
+    runtimePath: 'Admin API mutation',
+    status: 'api_connected',
+    gate: 'API/tests',
+    schemaObject: 'idempotency_records',
+  },
+  {
+    id: 'UIM-SCH-068',
+    objectName: 'external_lifecycle_signal_events',
+    area: 'Lifecycle signal ledger',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR10 provisioning assignment',
+    runtimePath: 'SCIM / VC / CSV / SAML / OIDC implemented source signal intake',
+    status: 'api_connected',
+    gate: 'implemented lifecycle signals connected; SSF adapter remains deferred',
+    schemaObject: 'external_lifecycle_signal_events',
+  },
+  {
+    id: 'UIM-SCH-071',
+    objectName: 'federation_trust_sources',
+    area: 'Normalized trust source registry',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'federation metadata PR',
+    runtimePath: 'SAML-first trust source; OIDC/VC/SCIM/agent slots reserved',
+    status: 'schema_added',
+    gate: 'SAML repo + runtime + reserved slots disabled',
+    schemaObject: 'federation_trust_sources',
+    requiredForTier2Gate: true,
+  },
+  {
+    id: 'UIM-SCH-072',
+    objectName: 'federation_trust_anchors',
+    area: 'Trust anchors / certificates / issuer roots',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'federation metadata PR',
+    runtimePath: 'SAML aggregate / VC issuer validation; OIDC Fed no runtime in initial slice',
+    status: 'schema_added',
+    gate: 'repo + runtime + tests',
+    schemaObject: 'federation_trust_anchors',
+    requiredForTier2Gate: true,
+  },
+  {
+    id: 'UIM-SCH-073',
+    objectName: 'federation_metadata_documents',
+    area: 'Fetched/imported metadata document ledger',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'federation metadata PR',
+    runtimePath: 'metadata import / refresh / audit',
+    status: 'schema_added',
+    gate: 'jobs + audit + tests',
+    schemaObject: 'federation_metadata_documents',
+    requiredForTier2Gate: true,
+  },
+  {
+    id: 'UIM-SCH-074',
+    objectName: 'federation_entity_statements',
+    area: 'OIDC Federation entity statement storage',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'future OIDC Federation PR',
+    runtimePath: 'reserved only in initial slice',
+    status: 'reserved_planned',
+    gate: 'disabled feature + no runtime exposure + documented readiness',
+    schemaObject: 'federation_entity_statements',
+  },
+  {
+    id: 'UIM-SCH-075',
+    objectName: 'federation_trust_chains',
+    area: 'OIDC Federation trust chain resolution results',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'future OIDC Federation PR',
+    runtimePath: 'reserved only in initial slice',
+    status: 'reserved_planned',
+    gate: 'disabled feature + no runtime exposure + documented readiness',
+    schemaObject: 'federation_trust_chains',
+  },
+  {
+    id: 'UIM-SCH-076',
+    objectName: 'saml_federation_trust_profiles migration',
+    area: 'Legacy SAML aggregate trust profile migration',
+    introducedPr: 'existing',
+    expectedConnectionPr: 'SAML federation migration PR',
+    runtimePath: 'SAML aggregate metadata import / trust validation',
+    status: 'existing_to_migrate',
+    gate: 'migration + adapter + API/UI/tests',
+    schemaObject: 'saml_federation_trust_profiles',
+    requiredForTier2Gate: true,
+  },
+  {
+    id: 'UIM-SCH-083',
+    objectName: 'federation_metadata_entity_summaries',
+    area: 'Aggregate metadata entity summary index',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'federation metadata PR',
+    runtimePath: 'SAML aggregate entity selection / diff',
+    status: 'schema_added',
+    gate: 'import + UI + tests',
+    schemaObject: 'federation_metadata_entity_summaries',
+    requiredForTier2Gate: true,
+  },
+  {
+    id: 'UIM-SCH-086',
+    objectName: 'SSF / CAEP / RISC adapter',
+    area: 'Future shared signal protocol adapter',
+    introducedPr: 'TBD',
+    expectedConnectionPr: 'future lifecycle signal adapter PR',
+    runtimePath: 'no runtime exposure in initial slice',
+    status: 'adapter_deferred',
+    gate: 'disabled feature + no endpoint + resume criteria',
+  },
+  {
+    id: 'UIM-SCH-087',
+    objectName: 'existing consent statement integration',
+    area: 'Existing consent statement/version/user record APIs',
+    introducedPr: 'existing',
+    expectedConnectionPr: 'PR9 consent / review',
+    runtimePath: 'release decision consent gate',
+    status: 'service_connected',
+    gate: 'legal basis gate service + tests; live protocol challenge UI later',
+  },
+  {
+    id: 'UIM-SCH-088',
+    objectName: 'attribute_release_consents',
+    area: 'Destination-specific released attribute set consent',
+    introducedPr: 'schema baseline PR',
+    expectedConnectionPr: 'PR9 consent / review',
+    runtimePath: 'SAML / federation release consent',
+    status: 'repo_connected',
+    gate: 'repository + release challenge tests; user-facing challenge UI later',
+    schemaObject: 'attribute_release_consents',
+  },
+];
+
 interface MappingPolicySetRow {
   id: string;
   tenant_id: string;
@@ -315,6 +574,40 @@ interface CreateReviewTaskRequest {
   dueAt?: number;
 }
 
+interface ListReviewTasksOptions {
+  status?: string;
+  taskType?: string;
+  assignedTo?: string;
+  limit?: number;
+}
+
+type SchemaReadinessStatus =
+  | 'tested'
+  | 'closed'
+  | 'api_connected'
+  | 'repo_connected'
+  | 'service_connected'
+  | 'schema_added'
+  | 'reserved_planned'
+  | 'adapter_deferred'
+  | 'existing_to_migrate'
+  | 'breaking_planned';
+
+type SchemaReadinessGateState = 'pass' | 'attention' | 'blocked' | 'deferred';
+
+interface SchemaReadinessInventoryDefinition {
+  id: string;
+  objectName: string;
+  area: string;
+  introducedPr: string;
+  expectedConnectionPr: string;
+  runtimePath: string;
+  status: SchemaReadinessStatus;
+  gate: string;
+  schemaObject?: string;
+  requiredForTier2Gate?: boolean;
+}
+
 interface TransitionReviewTaskRequest {
   status: string;
   assignedTo?: string | null;
@@ -479,6 +772,25 @@ interface MigrateSamlFederationTrustProfileRequest {
   activate?: boolean;
 }
 
+interface FederationMetadataDocumentListRow {
+  id: string;
+  trust_source_id: string;
+  document_type: string;
+  source_url: string | null;
+  document_hash: string;
+  document_ref: string | null;
+  fetched_at: number | null;
+  validated_at: number | null;
+  validation_state: string;
+  created_at: number;
+  updated_at: number;
+  entity_summary_id: string | null;
+  entity_id: string | null;
+  entity_role: string | null;
+  display_name: string | null;
+  summary_json: string | null;
+}
+
 const REVIEW_TASK_STATUSES = new Set([
   'open',
   'in_review',
@@ -553,6 +865,33 @@ export class IdentityMappingControlPlaneRepository {
     private readonly adapter: DatabaseAdapter,
     private readonly now: () => number = () => Date.now()
   ) {}
+
+  async listSchemaReadiness() {
+    const schemaRows = await this.adapter.query<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type IN ('table', 'index')"
+    );
+    const schemaObjects = new Set(schemaRows.map((row) => row.name));
+    const readiness = SCHEMA_READINESS_INVENTORY.map((item) => {
+      const schemaPresent = item.schemaObject ? schemaObjects.has(item.schemaObject) : null;
+      const gateState = resolveSchemaReadinessGateState(item, schemaPresent);
+      return {
+        ...item,
+        schemaPresent,
+        gateState,
+      };
+    });
+
+    return {
+      rows: readiness,
+      summary: {
+        total: readiness.length,
+        pass: readiness.filter((item) => item.gateState === 'pass').length,
+        attention: readiness.filter((item) => item.gateState === 'attention').length,
+        blocked: readiness.filter((item) => item.gateState === 'blocked').length,
+        deferred: readiness.filter((item) => item.gateState === 'deferred').length,
+      },
+    };
+  }
 
   async createCatalog(tenantId: string, input: CreateCatalogRequest) {
     validateRequiredString(input.catalogKey, 'catalogKey');
@@ -1551,6 +1890,69 @@ export class IdentityMappingControlPlaneRepository {
       priority: input.priority ?? 0,
       payload: input.payload,
     };
+  }
+
+  async listReviewTasks(tenantId: string, options: ListReviewTasksOptions = {}) {
+    const where = ['tenant_id = ?'];
+    const params: Array<string | number> = [tenantId];
+
+    if (options.status) {
+      if (!REVIEW_TASK_STATUSES.has(options.status)) {
+        throw badRequest('status is not supported for review task filters');
+      }
+      where.push('status = ?');
+      params.push(options.status);
+    }
+    if (options.taskType) {
+      where.push('task_type = ?');
+      params.push(options.taskType);
+    }
+    if (options.assignedTo) {
+      where.push('assigned_to = ?');
+      params.push(options.assignedTo);
+    }
+
+    const limit = clampListLimit(options.limit, 50, 200);
+    params.push(limit);
+
+    const rows = await this.adapter.query<{
+      id: string;
+      tenant_id: string;
+      task_type: string;
+      subject_id: string | null;
+      account_id: string | null;
+      status: string;
+      priority: number;
+      assigned_to: string | null;
+      payload_json: string;
+      due_at: number | null;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT
+        id, tenant_id, task_type, subject_id, account_id, status, priority,
+        assigned_to, payload_json, due_at, created_at, updated_at
+      FROM review_tasks
+      WHERE ${where.join(' AND ')}
+      ORDER BY priority DESC, created_at ASC
+      LIMIT ?`,
+      params
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      taskType: row.task_type,
+      subjectId: row.subject_id,
+      accountId: row.account_id,
+      status: row.status,
+      priority: row.priority,
+      assignedTo: row.assigned_to,
+      payload: parseReviewTaskPayload(row.payload_json),
+      dueAt: row.due_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   async transitionReviewTask(
@@ -2846,6 +3248,96 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  async listFederationMetadataDocuments(tenantId: string, trustSourceId: string) {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    await this.ensureFederationTrustSource(tenantId, trustSourceId);
+
+    const rows = await this.adapter.query<FederationMetadataDocumentListRow>(
+      `SELECT
+        d.id,
+        d.trust_source_id,
+        d.document_type,
+        d.source_url,
+        d.document_hash,
+        d.document_ref,
+        d.fetched_at,
+        d.validated_at,
+        d.validation_state,
+        d.created_at,
+        d.updated_at,
+        e.id AS entity_summary_id,
+        e.entity_id,
+        e.entity_role,
+        e.display_name,
+        e.summary_json
+      FROM federation_metadata_documents d
+      LEFT JOIN federation_metadata_entity_summaries e
+        ON e.tenant_id = d.tenant_id
+       AND e.metadata_document_id = d.id
+      WHERE d.tenant_id = ? AND d.trust_source_id = ?
+      ORDER BY d.fetched_at DESC, d.created_at DESC, e.display_name ASC, e.entity_id ASC`,
+      [tenantId, trustSourceId]
+    );
+
+    const documents = new Map<
+      string,
+      {
+        id: string;
+        tenantId: string;
+        trustSourceId: string;
+        documentType: string;
+        sourceUrl: string | null;
+        documentHash: string;
+        documentRef: string | null;
+        fetchedAt: number | null;
+        validatedAt: number | null;
+        validationState: string;
+        createdAt: number;
+        updatedAt: number;
+        entitySummaries: Array<{
+          id: string;
+          entityId: string;
+          entityRole: string;
+          displayName: string | null;
+          summary: Record<string, unknown> | null;
+        }>;
+      }
+    >();
+
+    for (const row of rows) {
+      let document = documents.get(row.id);
+      if (!document) {
+        document = {
+          id: row.id,
+          tenantId,
+          trustSourceId: row.trust_source_id,
+          documentType: row.document_type,
+          sourceUrl: row.source_url,
+          documentHash: row.document_hash,
+          documentRef: row.document_ref,
+          fetchedAt: row.fetched_at,
+          validatedAt: row.validated_at,
+          validationState: row.validation_state,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          entitySummaries: [],
+        };
+        documents.set(row.id, document);
+      }
+      if (row.entity_summary_id && row.entity_id && row.entity_role) {
+        document.entitySummaries.push({
+          id: row.entity_summary_id,
+          entityId: row.entity_id,
+          entityRole: row.entity_role,
+          displayName: row.display_name,
+          summary: row.summary_json ? parseJsonObject(row.summary_json, {}) : null,
+        });
+      }
+    }
+
+    return [...documents.values()];
+  }
+
   async migrateSamlFederationTrustProfile(
     tenantId: string,
     input: MigrateSamlFederationTrustProfileRequest
@@ -3699,6 +4191,21 @@ export async function adminIdentityMappingSourceAuthorityEvaluateHandler(c: Admi
   );
 }
 
+export async function adminIdentityMappingSchemaReadinessHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository) => repository.listSchemaReadiness());
+}
+
+export async function adminIdentityMappingReviewTasksListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    reviewTasks: await repository.listReviewTasks(tenantId, {
+      status: c.req.query('status'),
+      taskType: c.req.query('taskType'),
+      assignedTo: c.req.query('assignedTo'),
+      limit: parseOptionalInteger(c.req.query('limit')),
+    }),
+  }));
+}
+
 export async function adminIdentityMappingReviewTaskCreateHandler(c: AdminContext) {
   return handleMutation(c, 'review-task.create', async (repository, tenantId, body) =>
     repository.createReviewTask(tenantId, body as CreateReviewTaskRequest)
@@ -3857,6 +4364,15 @@ export async function adminIdentityMappingFederationTrustSourceCreateHandler(c: 
 export async function adminIdentityMappingFederationTrustSourcesListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     federationTrustSources: await repository.listFederationTrustSources(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingFederationMetadataDocumentsListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    federationMetadataDocuments: await repository.listFederationMetadataDocuments(
+      tenantId,
+      requiredParam(c, 'trustSourceId')
+    ),
   }));
 }
 
@@ -4064,8 +4580,47 @@ function assertNoReviewPayloadRawIdentifiers(value: unknown, path: string): void
   }
 }
 
+function resolveSchemaReadinessGateState(
+  item: SchemaReadinessInventoryDefinition,
+  schemaPresent: boolean | null
+): SchemaReadinessGateState {
+  if (item.status === 'reserved_planned' || item.status === 'adapter_deferred') {
+    return 'deferred';
+  }
+  if (schemaPresent === false) {
+    return 'blocked';
+  }
+  if (
+    item.status === 'schema_added' ||
+    item.status === 'existing_to_migrate' ||
+    item.status === 'breaking_planned'
+  ) {
+    return item.requiredForTier2Gate ? 'blocked' : 'attention';
+  }
+  return 'pass';
+}
+
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
+}
+
+function parseOptionalInteger(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function clampListLimit(value: number | undefined, defaultValue: number, maxValue: number): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return defaultValue;
+  }
+  return Math.max(1, Math.min(Math.trunc(value), maxValue));
 }
 
 function parseJsonObject(
@@ -4078,6 +4633,12 @@ function parseJsonObject(
   } catch {
     return fallback;
   }
+}
+
+function parseReviewTaskPayload(value: string): Record<string, unknown> {
+  const payload = parseJsonObject(value, {});
+  assertNoReviewPayloadRawIdentifiers(payload, 'payload');
+  return payload;
 }
 
 function parseProvisioningAssignmentCondition(value: string): ProvisioningAssignmentCondition {

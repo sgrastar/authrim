@@ -86,6 +86,7 @@
 			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' }
 		],
 		identitySchema: [
+			{ path: '/admin/identity-mapping', label: 'Identity Mapping', icon: 'i-ph-graph' },
 			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
