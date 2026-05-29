@@ -53,7 +53,14 @@ export async function countUsersWithPiiCustomClaimData(
 ): Promise<number> {
   const piiAdapter = ensureDatabaseAdapter(dbPii, 'custom-claims-storage-admin-pii');
   const result = await piiAdapter.query<{ count: number }>(
-    "SELECT COUNT(*) as count FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}'",
+    `SELECT COUNT(*) as count
+       FROM identity_sensitive_values
+      WHERE tenant_id = ?
+        AND owner_type = 'runtime_user'
+        AND value_key = 'custom_attributes_json'
+        AND lifecycle_state = 'active'
+        AND value_json IS NOT NULL
+        AND value_json != '{}'`,
     [tenantId]
   );
   return result[0]?.count || 0;
@@ -127,10 +134,20 @@ export async function deleteStoredCustomClaimData(
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const batch = await piiAdapter.query<{
-      id: string;
-      custom_attributes_json: string;
+      owner_id: string;
+      value_json: string;
     }>(
-      "SELECT id, custom_attributes_json FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}' AND id > ? ORDER BY id LIMIT ?",
+      `SELECT owner_id, value_json
+         FROM identity_sensitive_values
+        WHERE tenant_id = ?
+          AND owner_type = 'runtime_user'
+          AND value_key = 'custom_attributes_json'
+          AND lifecycle_state = 'active'
+          AND value_json IS NOT NULL
+          AND value_json != '{}'
+          AND owner_id > ?
+        ORDER BY owner_id
+        LIMIT ?`,
       [tenantId, lastProcessedId, piiBatchSize]
     );
 
@@ -140,12 +157,17 @@ export async function deleteStoredCustomClaimData(
 
     for (const user of batch) {
       try {
-        const attrs = JSON.parse(user.custom_attributes_json) as Record<string, unknown>;
+        const attrs = JSON.parse(user.value_json) as Record<string, unknown>;
         if (fieldKey in attrs) {
           delete attrs[fieldKey];
           await piiAdapter.execute(
-            'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-            [JSON.stringify(attrs), updatedAt, user.id, tenantId]
+            `UPDATE identity_sensitive_values
+                SET value_json = ?, updated_at = ?
+              WHERE tenant_id = ?
+                AND owner_type = 'runtime_user'
+                AND owner_id = ?
+                AND value_key = 'custom_attributes_json'`,
+            [JSON.stringify(attrs), updatedAt, tenantId, user.owner_id]
           );
           affectedUsers++;
         }
@@ -155,7 +177,7 @@ export async function deleteStoredCustomClaimData(
     }
 
     processedUsers += batch.length;
-    lastProcessedId = batch[batch.length - 1].id;
+    lastProcessedId = batch[batch.length - 1].owner_id;
     if (batch.length < piiBatchSize) {
       break;
     }
@@ -208,10 +230,20 @@ export async function renameStoredCustomClaimData(
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const batch = await piiAdapter.query<{
-      id: string;
-      custom_attributes_json: string;
+      owner_id: string;
+      value_json: string;
     }>(
-      "SELECT id, custom_attributes_json FROM users_pii WHERE tenant_id = ? AND custom_attributes_json IS NOT NULL AND custom_attributes_json != '{}' AND id > ? ORDER BY id LIMIT ?",
+      `SELECT owner_id, value_json
+         FROM identity_sensitive_values
+        WHERE tenant_id = ?
+          AND owner_type = 'runtime_user'
+          AND value_key = 'custom_attributes_json'
+          AND lifecycle_state = 'active'
+          AND value_json IS NOT NULL
+          AND value_json != '{}'
+          AND owner_id > ?
+        ORDER BY owner_id
+        LIMIT ?`,
       [tenantId, lastProcessedId, piiBatchSize]
     );
 
@@ -221,13 +253,18 @@ export async function renameStoredCustomClaimData(
 
     for (const user of batch) {
       try {
-        const attrs = JSON.parse(user.custom_attributes_json) as Record<string, unknown>;
+        const attrs = JSON.parse(user.value_json) as Record<string, unknown>;
         if (oldKey in attrs && !(newKey in attrs)) {
           attrs[newKey] = attrs[oldKey];
           delete attrs[oldKey];
           await piiAdapter.execute(
-            'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-            [JSON.stringify(attrs), updatedAt, user.id, tenantId]
+            `UPDATE identity_sensitive_values
+                SET value_json = ?, updated_at = ?
+              WHERE tenant_id = ?
+                AND owner_type = 'runtime_user'
+                AND owner_id = ?
+                AND value_key = 'custom_attributes_json'`,
+            [JSON.stringify(attrs), updatedAt, tenantId, user.owner_id]
           );
           affectedUsers++;
         }
@@ -237,7 +274,7 @@ export async function renameStoredCustomClaimData(
     }
 
     processedUsers += batch.length;
-    lastProcessedId = batch[batch.length - 1].id;
+    lastProcessedId = batch[batch.length - 1].owner_id;
     if (batch.length < piiBatchSize) {
       break;
     }

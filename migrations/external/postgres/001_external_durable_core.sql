@@ -11,6 +11,244 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   rollback_sql TEXT
 );
 
+CREATE TABLE IF NOT EXISTS identity_subjects (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  subject_type TEXT NOT NULL,
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  display_label TEXT,
+  primary_account_id TEXT,
+  risk_tier TEXT,
+  assurance_level TEXT,
+  metadata_json TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_subjects_tenant_type
+  ON identity_subjects(tenant_id, subject_type, lifecycle_state);
+
+CREATE TABLE IF NOT EXISTS identity_accounts (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  account_type TEXT NOT NULL,
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  legacy_user_id TEXT,
+  primary_subject_id TEXT,
+  display_label TEXT,
+  metadata_json TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT,
+  CONSTRAINT identity_accounts_subject_fk
+    FOREIGN KEY (primary_subject_id) REFERENCES identity_subjects(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_accounts_legacy_user
+  ON identity_accounts(tenant_id, legacy_user_id);
+CREATE INDEX IF NOT EXISTS idx_identity_accounts_tenant_state
+  ON identity_accounts(tenant_id, account_type, lifecycle_state);
+
+CREATE TABLE IF NOT EXISTS subject_account_links (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  subject_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  link_type TEXT NOT NULL DEFAULT 'primary',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  source_ref TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT,
+  CONSTRAINT subject_account_links_unique_link UNIQUE (tenant_id, subject_id, account_id, link_type),
+  CONSTRAINT subject_account_links_subject_fk
+    FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE,
+  CONSTRAINT subject_account_links_account_fk
+    FOREIGN KEY (account_id) REFERENCES identity_accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_subject_account_links_account
+  ON subject_account_links(tenant_id, account_id, lifecycle_state);
+
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  subject_id TEXT NOT NULL,
+  profile_type TEXT NOT NULL DEFAULT 'person',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  locale TEXT,
+  zoneinfo TEXT,
+  display_name_ref TEXT,
+  metadata_json TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT,
+  CONSTRAINT profiles_unique_subject_type UNIQUE (tenant_id, subject_id, profile_type),
+  CONSTRAINT profiles_subject_fk FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS profile_attribute_values (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  profile_id TEXT NOT NULL,
+  catalog_entry_id TEXT NOT NULL,
+  value_type TEXT NOT NULL,
+  value_json TEXT,
+  value_storage_ref TEXT,
+  value_hash TEXT,
+  classification TEXT NOT NULL DEFAULT 'internal',
+  purpose TEXT,
+  is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT,
+  CONSTRAINT profile_attribute_values_profile_fk
+    FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_attribute_values_profile
+  ON profile_attribute_values(tenant_id, profile_id, catalog_entry_id, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_profile_attribute_values_hash
+  ON profile_attribute_values(tenant_id, catalog_entry_id, value_hash, lifecycle_state);
+
+CREATE TABLE IF NOT EXISTS structured_attribute_values (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  owner_type TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  catalog_entry_id TEXT NOT NULL,
+  canonical_json TEXT NOT NULL,
+  projected_index_json TEXT,
+  classification TEXT NOT NULL DEFAULT 'internal',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_structured_attribute_values_owner
+  ON structured_attribute_values(tenant_id, owner_type, owner_id, catalog_entry_id);
+
+CREATE TABLE IF NOT EXISTS contact_points (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  subject_id TEXT,
+  account_id TEXT,
+  contact_type TEXT NOT NULL,
+  purpose TEXT NOT NULL DEFAULT 'primary',
+  normalized_hash TEXT,
+  value_storage_ref TEXT,
+  display_label TEXT,
+  is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+  verification_state TEXT NOT NULL DEFAULT 'unverified',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT,
+  CONSTRAINT contact_points_subject_fk
+    FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE,
+  CONSTRAINT contact_points_account_fk
+    FOREIGN KEY (account_id) REFERENCES identity_accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_contact_points_subject
+  ON contact_points(tenant_id, subject_id, contact_type, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_contact_points_lookup
+  ON contact_points(tenant_id, contact_type, normalized_hash);
+
+CREATE TABLE IF NOT EXISTS contact_verifications (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  contact_point_id TEXT NOT NULL,
+  verification_type TEXT NOT NULL,
+  verification_state TEXT NOT NULL,
+  evidence_ref TEXT,
+  verified_at BIGINT,
+  expires_at BIGINT,
+  revoked_at BIGINT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT contact_verifications_contact_fk
+    FOREIGN KEY (contact_point_id) REFERENCES contact_points(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_contact_verifications_contact
+  ON contact_verifications(tenant_id, contact_point_id, verification_state);
+
+CREATE TABLE IF NOT EXISTS identity_bindings (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  subject_id TEXT NOT NULL,
+  account_id TEXT,
+  protocol TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  provider_subject_key_hash TEXT NOT NULL,
+  binding_kind TEXT NOT NULL DEFAULT 'external_subject',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  assurance_level TEXT,
+  trust_context_snapshot_id TEXT,
+  metadata_json TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  deleted_at BIGINT,
+  last_seen_at BIGINT,
+  CONSTRAINT identity_bindings_unique_provider_subject
+    UNIQUE (tenant_id, protocol, source_id, provider_subject_key_hash),
+  CONSTRAINT identity_bindings_subject_fk
+    FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE CASCADE,
+  CONSTRAINT identity_bindings_account_fk
+    FOREIGN KEY (account_id) REFERENCES identity_accounts(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_bindings_subject
+  ON identity_bindings(tenant_id, subject_id, lifecycle_state);
+
+CREATE TABLE IF NOT EXISTS identity_resolution_events (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  subject_id TEXT,
+  account_id TEXT,
+  binding_id TEXT,
+  source_id TEXT NOT NULL,
+  resolution_method TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  reason_codes_json TEXT,
+  trace_ref TEXT,
+  metadata_json TEXT,
+  created_at BIGINT NOT NULL,
+  CONSTRAINT identity_resolution_events_subject_fk
+    FOREIGN KEY (subject_id) REFERENCES identity_subjects(id) ON DELETE SET NULL,
+  CONSTRAINT identity_resolution_events_account_fk
+    FOREIGN KEY (account_id) REFERENCES identity_accounts(id) ON DELETE SET NULL,
+  CONSTRAINT identity_resolution_events_binding_fk
+    FOREIGN KEY (binding_id) REFERENCES identity_bindings(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_resolution_events_subject
+  ON identity_resolution_events(tenant_id, subject_id, created_at);
+
+CREATE TABLE IF NOT EXISTS identity_resolution_candidates (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  candidate_subject_id TEXT,
+  candidate_account_id TEXT,
+  candidate_binding_id TEXT,
+  candidate_score INTEGER NOT NULL DEFAULT 0,
+  risk_tier TEXT,
+  decision_state TEXT NOT NULL DEFAULT 'pending',
+  reason_codes_json TEXT,
+  review_task_id TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_resolution_candidates_state
+  ON identity_resolution_candidates(tenant_id, decision_state, created_at);
+
 CREATE TABLE IF NOT EXISTS users_core (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',

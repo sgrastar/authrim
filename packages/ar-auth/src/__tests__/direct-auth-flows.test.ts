@@ -96,6 +96,68 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        const core = await mocks.userCore.findById(userId);
+        if (!core?.is_active) return null;
+        const pii = await mocks.userPII.findById(userId);
+        return {
+          id: core.id,
+          account_type: core.user_type === 'admin' ? 'admin' : 'user',
+          active: core.is_active ? 1 : 0,
+          email: pii?.email ?? null,
+          name: pii?.name ?? null,
+          email_verified: core.email_verified ? 1 : 0,
+          phone_number_verified: core.phone_number_verified ? 1 : 0,
+          created_at: new Date(core.created_at ?? Date.now()).toISOString(),
+          updated_at: new Date(core.updated_at ?? Date.now()).toISOString(),
+          last_login_at: core.last_login_at ?? null,
+        };
+      }
+      async findByEmail(email: string) {
+        const pii = await mocks.userPII.findByTenantAndEmail('tenant_test', email);
+        if (!pii) return null;
+        return this.findById(pii.id);
+      }
+      async syncUser(input: { userId: string; email?: string | null; name?: string | null }) {
+        await mocks.userCore.createUser({
+          id: input.userId,
+          tenant_id: 'tenant_test',
+          email_verified: false,
+          user_type: 'end_user',
+        });
+        await mocks.userPII.createPII({
+          id: input.userId,
+          tenant_id: 'tenant_test',
+          email: input.email,
+          name: input.name,
+          preferred_username: input.email?.split('@')[0],
+        });
+        await mocks.userCore.updatePIIStatus(input.userId, 'active');
+        return { created: true, graph: null, profileAttributeCount: 0, contactPointCount: 0 };
+      }
+      async markEmailVerified(userId: string) {
+        await mocks.coreAdapter.execute(
+          'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
+          [Date.now(), userId, 'tenant_test']
+        );
+        return true;
+      }
+      async markEmailVerifiedAndTouchLastLogin(userId: string) {
+        await mocks.coreAdapter.execute(
+          'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+          [Date.now(), Date.now(), userId, 'tenant_test']
+        );
+        return true;
+      }
+      async touchLastLogin(userId: string) {
+        await mocks.userCore.updateLastLogin(userId);
+        return true;
+      }
+      async deleteUser() {
+        return true;
+      }
+    },
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     getDefaultTenantId: vi.fn(() => 'default'),
     getTenantSettings: mocks.getTenantSettings,

@@ -2,7 +2,8 @@ import type { Context } from 'hono';
 import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
-  LegacyUsersPiiValueResolver,
+  CanonicalSensitiveValueResolver,
+  CanonicalIdentityRepository,
   createAuthContextFromHono,
   createPIIContextFromHono,
   getRuntimeUserStoreSourcesFromHonoContext,
@@ -56,7 +57,6 @@ import {
 import {
   revokeToken,
   getCachedUser,
-  getCachedUserCore,
   // Native SSO (OIDC Native SSO 1.0)
   DeviceInstallationRepository,
   DeviceSecretRepository,
@@ -164,10 +164,6 @@ type DirectAuthChannel = 'browser' | 'native' | 'server';
 type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
 type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 
-function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
-  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
-}
-
 async function loadOIDCClaimsUser(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -176,24 +172,25 @@ async function loadOIDCClaimsUser(
 ): Promise<
   Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
 > {
-  if (isCanonicalIdentityRuntimeEnabled(c.env)) {
-    const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
-      piiCtx.coreAdapter,
-      tenantId,
-      new LegacyUsersPiiValueResolver(piiCtx.defaultPiiAdapter)
-    );
-    const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
-    if (projection) {
-      return canonicalProjectionToOIDCClaimsUser(projection);
-    }
-  }
+  const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+    piiCtx.coreAdapter,
+    tenantId,
+    new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
+  );
+  const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+  return projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
+}
 
-  return getCachedUser(c.env, tenantId, userId, {
-    coreDb: piiCtx.coreAdapter,
-    piiDb: piiCtx.defaultPiiAdapter,
-    cacheScope: piiCtx.userCacheScope,
-    piiCacheMode: piiCtx.piiCacheMode,
-  });
+async function findCanonicalRuntimeAccount(
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  options?: { includeInactive?: boolean }
+) {
+  return new CanonicalIdentityRepository(coreAdapter, tenantId).findAccountByLegacyUserId(
+    userId,
+    options
+  );
 }
 
 function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
@@ -1640,14 +1637,13 @@ async function handleAuthorizationCodeGrant(
     targets: ['userinfo', 'id_token'],
   });
   try {
-    const subjectCore = await getCachedUserCore(
-      c.env,
+    const subjectAccount = await findCanonicalRuntimeAccount(
+      authCtx.coreAdapter,
       tenantId,
-      authCodeData.sub,
-      authCtx.coreAdapter
+      authCodeData.sub
     );
-    if (subjectCore?.pii_status) {
-      const piiAccess = canIssueTokenWithPIIStatus(subjectCore.pii_status, {
+    if (!subjectAccount && tokenPIIRequirement.requiresPII) {
+      const piiAccess = canIssueTokenWithPIIStatus('failed', {
         requiresPII: tokenPIIRequirement.requiresPII,
       });
       if (!piiAccess.ok) {
@@ -1740,13 +1736,12 @@ async function handleAuthorizationCodeGrant(
   // Anonymous user claims (architecture-decisions.md §17)
   let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(
-      c.env,
+    const userAccount = await findCanonicalRuntimeAccount(
+      authCtx.coreAdapter,
       tenantId,
-      authCodeData.sub,
-      authCtx.coreAdapter
+      authCodeData.sub
     );
-    if (userCore?.user_type === 'anonymous') {
+    if (userAccount?.account_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
         upgrade_eligible: true, // Anonymous users can always upgrade
@@ -2805,13 +2800,12 @@ async function handleRefreshTokenGrant(
   // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
   let anonymousClaimsRefresh: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(
-      c.env,
+    const userAccount = await findCanonicalRuntimeAccount(
+      authCtx.coreAdapter,
       tenantId,
-      refreshTokenData.sub,
-      authCtx.coreAdapter
+      refreshTokenData.sub
     );
-    if (userCore?.user_type === 'anonymous') {
+    if (userAccount?.account_type === 'anonymous') {
       anonymousClaimsRefresh = {
         user_type: 'anonymous',
         upgrade_eligible: true,
@@ -4088,17 +4082,14 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
 
-  // Verify user exists in Core DB (PII/Non-PII separation: NO PII DB access in token endpoint)
-  // Note: metadata.sub is guaranteed to exist due to the check at line 2340
-  // Use getCachedUserCore() instead of getCachedUser() to avoid unnecessary PII DB access
-  const userCore = await getCachedUserCore(
-    c.env,
+  // Verify user exists in canonical runtime account tables without reading PII.
+  const userAccount = await findCanonicalRuntimeAccount(
+    authCtx.coreAdapter,
     getTenantIdFromContext(c),
-    metadata.sub,
-    authCtx.coreAdapter
+    metadata.sub
   );
 
-  if (!userCore) {
+  if (!userAccount) {
     // Security: Internal error - don't leak user existence
     return c.json(
       {

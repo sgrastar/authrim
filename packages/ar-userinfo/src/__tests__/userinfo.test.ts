@@ -34,7 +34,7 @@ const mockCanonicalRuntimeUserProjectionRepository = vi.hoisted(() =>
     };
   })
 );
-const mockLegacyUsersPiiValueResolver = vi.hoisted(() => vi.fn());
+const mockCanonicalSensitiveValueResolver = vi.hoisted(() => vi.fn());
 const mockCreateOAuthConfigManager = vi.hoisted(() =>
   vi.fn(() => ({
     isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
@@ -69,7 +69,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getCachedUser: mockGetCachedUser,
     getCachedUserCore: mockGetCachedUserCore,
     CanonicalRuntimeUserProjectionRepository: mockCanonicalRuntimeUserProjectionRepository,
-    LegacyUsersPiiValueResolver: mockLegacyUsersPiiValueResolver,
+    CanonicalSensitiveValueResolver: mockCanonicalSensitiveValueResolver,
     createOAuthConfigManager: mockCreateOAuthConfigManager,
     loadFeatureConfig: mockLoadFeatureConfig,
     resolveCustomClaimRuntimeSourcesFromEnv: mockResolveCustomClaimRuntimeSourcesFromEnv,
@@ -190,6 +190,40 @@ const sampleUser = {
   updated_at: 1700000000000,
 };
 
+function sampleCanonicalProjection(overrides: Record<string, unknown> = {}) {
+  return {
+    id: sampleUser.id,
+    tenant_id: 'default',
+    subject_id: `subject:${sampleUser.id}`,
+    account_id: `account:${sampleUser.id}`,
+    email: sampleUser.email,
+    email_verified: 1,
+    name: sampleUser.name,
+    given_name: sampleUser.given_name,
+    family_name: sampleUser.family_name,
+    middle_name: sampleUser.middle_name,
+    nickname: sampleUser.nickname,
+    preferred_username: sampleUser.preferred_username,
+    profile: sampleUser.profile,
+    picture: sampleUser.picture,
+    website: sampleUser.website,
+    gender: sampleUser.gender,
+    birthdate: sampleUser.birthdate,
+    zoneinfo: sampleUser.zoneinfo,
+    locale: sampleUser.locale,
+    phone_number: sampleUser.phone_number,
+    phone_number_verified: 1,
+    address_json: sampleUser.address,
+    password_hash: null,
+    external_id: null,
+    active: 1,
+    custom_attributes_json: null,
+    created_at: new Date(1_700_000_000_000).toISOString(),
+    updated_at: new Date(sampleUser.updated_at).toISOString(),
+    ...overrides,
+  };
+}
+
 describe('UserInfo Endpoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -208,7 +242,7 @@ describe('UserInfo Endpoint', () => {
       phone_number_verified: true,
       updated_at: 1700000000000,
     });
-    mockCanonicalFindByLegacyUserId.mockResolvedValue(null);
+    mockCanonicalFindByLegacyUserId.mockResolvedValue(sampleCanonicalProjection());
     mockCreateOAuthConfigManager.mockReturnValue({
       isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
     });
@@ -420,8 +454,7 @@ describe('UserInfo Endpoint', () => {
         },
       });
 
-      // Mock getCachedUser to return null (user not found in PII/Non-PII DB)
-      vi.mocked(getCachedUser).mockResolvedValue(null);
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(null);
 
       await userinfoHandler(c);
 
@@ -435,7 +468,7 @@ describe('UserInfo Endpoint', () => {
       );
     });
 
-    it('passes runtime-resolved tenant adapters and cache scope to getCachedUser', async () => {
+    it('passes runtime-resolved tenant adapters to canonical projection', async () => {
       const createAdapter = (name: string) => ({
         query: vi.fn(),
         queryOne: vi.fn(),
@@ -492,24 +525,12 @@ describe('UserInfo Endpoint', () => {
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
-      vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
-
       await userinfoHandler(c);
 
-      expect(getCachedUser).toHaveBeenCalledWith(
-        c.env,
+      expect(mockCanonicalRuntimeUserProjectionRepository).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
         'tenant-a',
-        'user-123',
-        expect.objectContaining({
-          coreDb: runtimeCoreAdapter,
-          piiDb: runtimePiiAdapter,
-          cacheScope: {
-            storageProfileId: 'builtin:storage:tenant-d1',
-            sourceGeneration: 'core:2:pii:2',
-            schemaVersion: 'core:87:pii:12',
-          },
-          piiCacheMode: 'no_cross_request_pii',
-        })
+        expect.any(Object)
       );
     });
   });
@@ -623,7 +644,6 @@ describe('UserInfo Endpoint', () => {
     it('should prefer canonical runtime projection when cutover flag is enabled', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
-        env: { ENABLE_CANONICAL_IDENTITY_RUNTIME: 'true' },
       });
 
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
@@ -677,19 +697,13 @@ describe('UserInfo Endpoint', () => {
         updated_at: 1767312000,
       });
       expect(mockCanonicalFindByLegacyUserId).toHaveBeenCalledWith('user-123');
-      expect(getCachedUserCore).toHaveBeenCalledWith(
-        c.env,
-        'default',
-        'user-123',
-        expect.anything()
-      );
+      expect(getCachedUserCore).not.toHaveBeenCalled();
       expect(getCachedUser).not.toHaveBeenCalled();
     });
 
-    it('should still enforce pii_status when canonical projection supplies UserInfo claims', async () => {
+    it('returns canonical claims without consulting legacy pii_status', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
-        env: { ENABLE_CANONICAL_IDENTITY_RUNTIME: 'true' },
       });
 
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
@@ -730,27 +744,16 @@ describe('UserInfo Endpoint', () => {
         created_at: '2026-01-01T00:00:00.000Z',
         updated_at: '2026-01-02T00:00:00.000Z',
       });
-      vi.mocked(getCachedUserCore).mockResolvedValue({
-        id: 'user-123',
-        pii_status: 'failed',
-        email_verified: true,
-        phone_number_verified: true,
-        updated_at: 1700000000000,
-      });
-
       await userinfoHandler(c);
 
       expect(c.json).toHaveBeenCalledWith(
-        {
-          error: 'temporarily_unavailable',
-          error_description: 'Requested claims require PII that is not currently available.',
-        },
-        503
+        expect.objectContaining({ sub: 'user-123', email: 'canonical@example.com' })
       );
+      expect(getCachedUserCore).not.toHaveBeenCalled();
       expect(getCachedUser).not.toHaveBeenCalled();
     });
 
-    it('should fail when requested scopes require PII but pii_status is failed', async () => {
+    it('does not use legacy cached user pii_status for canonical userinfo', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
       });
@@ -763,20 +766,12 @@ describe('UserInfo Endpoint', () => {
           client_id: 'client-123',
         },
       });
-      vi.mocked(getCachedUser).mockResolvedValue({
-        ...sampleUser,
-        pii_status: 'failed',
-      });
-
       await userinfoHandler(c);
 
       expect(c.json).toHaveBeenCalledWith(
-        {
-          error: 'temporarily_unavailable',
-          error_description: 'Requested claims require PII that is not currently available.',
-        },
-        503
+        expect.objectContaining({ sub: 'user-123', email: 'test@example.com' })
       );
+      expect(getCachedUser).not.toHaveBeenCalled();
     });
 
     it('should return phone claims with phone scope', async () => {
@@ -1329,11 +1324,9 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Mock getCachedUser with phone_number_verified: false (CachedUser format uses boolean)
-      vi.mocked(getCachedUser).mockResolvedValue({
-        ...sampleUser,
-        phone_number_verified: false,
-      });
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(
+        sampleCanonicalProjection({ phone_number_verified: 0 })
+      );
 
       await userinfoHandler(c);
 
@@ -1390,11 +1383,9 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Mock getCachedUser with malformed address JSON (CachedUser format uses address string)
-      vi.mocked(getCachedUser).mockResolvedValue({
-        ...sampleUser,
-        address: 'invalid-json{{{',
-      });
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(
+        sampleCanonicalProjection({ address_json: 'invalid-json{{{' })
+      );
 
       await userinfoHandler(c);
 
@@ -1419,11 +1410,10 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Override getCachedUser to return user with null fields
-      vi.mocked(getCachedUser).mockResolvedValue({
-        id: 'user-123',
-        email: 'user-123@unknown', // Fallback email when PII not available
-        email_verified: false,
+      mockCanonicalFindByLegacyUserId.mockResolvedValue({
+        ...sampleCanonicalProjection(),
+        email: 'user-123@unknown',
+        email_verified: 0,
         name: null,
         family_name: null,
         given_name: null,
@@ -1434,13 +1424,14 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
         locale: null,
         phone_number: null,
         phone_number_verified: false,
-        address: null,
+        address_json: null,
         birthdate: null,
         gender: null,
         profile: null,
         website: null,
         zoneinfo: null,
-        updated_at: 0,
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
       });
 
       await userinfoHandler(c);
@@ -1469,8 +1460,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
         },
       });
 
-      // Mock getCachedUser to return null (user not found in PII/Non-PII DB)
-      vi.mocked(getCachedUser).mockResolvedValue(null);
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(null);
 
       await userinfoHandler(c1);
 

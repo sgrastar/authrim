@@ -51,14 +51,14 @@ export {
 
 export {
   CanonicalRuntimeUserProjectionRepository,
-  LegacyUsersPiiValueResolver,
-  decodeLegacyUsersPiiValueRef,
-  encodeLegacyUsersPiiValueRef,
+  CanonicalSensitiveValueResolver,
+  decodeCanonicalSensitiveValueRef,
+  encodeCanonicalSensitiveValueRef,
   type CanonicalRuntimeUserProjection,
   type CanonicalRuntimeUserProjectionOptions,
   type CanonicalRuntimeValueResolver,
-  type LegacyUsersPiiField,
-  type LegacyUsersPiiValueRefInput,
+  type CanonicalSensitiveUserField,
+  type CanonicalSensitiveValueRefInput,
 } from './canonical-runtime-user-projection';
 
 export {
@@ -66,6 +66,12 @@ export {
   type CanonicalRuntimeUserWriteInput,
   type CanonicalRuntimeUserWriteResult,
 } from './canonical-runtime-user-writer';
+
+export {
+  CanonicalRuntimeUserStore,
+  type CanonicalRuntimeUserCreateInput,
+  type CanonicalRuntimeUserStoreOptions,
+} from './canonical-runtime-user-store';
 
 export {
   AttributeReleaseConsentRepository,

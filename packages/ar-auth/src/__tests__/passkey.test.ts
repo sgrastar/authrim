@@ -113,6 +113,57 @@ vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        const core = await mockUserCoreRepository.findById(userId);
+        if (!core?.is_active) return null;
+        const pii = await mockUserPIIRepository.findById(userId);
+        return {
+          id: core.id,
+          account_type: core.user_type === 'admin' ? 'admin' : 'user',
+          active: core.is_active ? 1 : 0,
+          email: pii?.email ?? null,
+          name: pii?.name ?? null,
+          email_verified: core.email_verified ? 1 : 0,
+          phone_number_verified: core.phone_number_verified ? 1 : 0,
+          created_at: new Date(core.created_at ?? Date.now()).toISOString(),
+          updated_at: new Date(core.updated_at ?? Date.now()).toISOString(),
+          last_login_at: core.last_login_at ?? null,
+        };
+      }
+      async findByEmail(email: string) {
+        const pii = await mockUserPIIRepository.findByTenantAndEmail('default', email);
+        if (!pii) return null;
+        return this.findById(pii.id);
+      }
+      async syncUser(input: { userId: string; email?: string | null; name?: string | null }) {
+        await mockUserCoreRepository.createUser({
+          id: input.userId,
+          tenant_id: 'default',
+          email_verified: false,
+          user_type: 'end_user',
+        });
+        await mockUserPIIRepository.createPII({
+          id: input.userId,
+          tenant_id: 'default',
+          email: input.email,
+          name: input.name,
+        });
+        await mockUserCoreRepository.updatePIIStatus(input.userId, 'active');
+        return { created: true, graph: null, profileAttributeCount: 0, contactPointCount: 0 };
+      }
+      async markEmailVerified(userId: string) {
+        await mockCoreAdapter.execute('', [Date.now(), userId, 'default']);
+        return true;
+      }
+      async touchLastLogin(userId: string) {
+        await mockUserCoreRepository.updateLastLogin(userId);
+        return true;
+      }
+      async deleteUser() {
+        return true;
+      }
+    },
     getSessionStoreForNewSession: () =>
       Promise.resolve({
         stub: mockSessionStoreStub,

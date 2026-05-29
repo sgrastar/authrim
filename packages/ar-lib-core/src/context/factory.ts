@@ -31,7 +31,6 @@ import type { Context as HonoContext } from 'hono';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { PIIPartitionRouter, PartitionKey } from '../db/partition-router';
 import {
-  UserCoreRepository,
   ClientRepository,
   SessionRepository,
   PasskeyRepository,
@@ -39,12 +38,12 @@ import {
   SessionClientRepository,
 } from '../repositories/core';
 import {
-  UserPIIRepository,
   TombstoneRepository,
   SubjectIdentifierRepository,
   LinkedIdentityRepository,
   PIIAuditLogRepository,
 } from '../repositories/pii';
+import { CanonicalRuntimeUserStore } from '../repositories/identity';
 import {
   type AuthContext,
   type PIIContext,
@@ -206,7 +205,6 @@ export class ContextFactory implements IContextFactory {
    */
   private createCoreRepositories(): CoreRepositories {
     return {
-      userCore: new UserCoreRepository(this.coreAdapter, this.tenantId),
       client: new ClientRepository(this.coreAdapter, this.tenantId),
       session: new SessionRepository(this.coreAdapter, this.tenantId),
       passkey: new PasskeyRepository(this.coreAdapter, this.tenantId),
@@ -223,7 +221,6 @@ export class ContextFactory implements IContextFactory {
    */
   private createPIIRepositories(piiAdapter: DatabaseAdapter): PIIRepositories {
     return {
-      userPII: new UserPIIRepository(piiAdapter, this.tenantId),
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),
@@ -299,21 +296,12 @@ export function isPIIContext(ctx: AuthContext | PIIContext): ctx is PIIContext {
 export async function getUserWithPII(
   ctx: PIIContext,
   userId: string
-): Promise<{
-  core: Awaited<ReturnType<typeof ctx.repositories.userCore.findById>>;
-  pii: Awaited<ReturnType<typeof ctx.piiRepositories.userPII.findByUserId>> | null;
-} | null> {
-  // 1. Get user from Core DB (includes pii_partition)
-  const core = await ctx.repositories.userCore.findById(userId);
-  if (!core) {
-    return null;
-  }
-
-  // 2. Get PII adapter for user's partition
-  const piiAdapter = ctx.getPiiAdapter(core.pii_partition);
-
-  // 3. Fetch PII
-  const pii = await ctx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
-
-  return { core, pii };
+): Promise<Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>>> {
+  const piiAdapter = ctx.getPiiAdapter('default');
+  const userStore = new CanonicalRuntimeUserStore({
+    coreAdapter: ctx.coreAdapter,
+    piiAdapter,
+    tenantId: ctx.tenantId,
+  });
+  return userStore.findById(userId);
 }

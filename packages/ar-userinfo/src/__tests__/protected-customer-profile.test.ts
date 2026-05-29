@@ -5,6 +5,7 @@ import {
   createProtectedCustomerProfileRouter,
   createCustomerProfileDelegatedWriteOperation,
   DEFAULT_USERINFO_PROTECTED_AUDIENCE,
+  type CustomerProfileUpdateInput,
   type ProtectedCustomerProfileResource,
 } from '../protected-customer-profile';
 import {
@@ -16,7 +17,6 @@ import {
   type Challenge,
   type ConsumeChallengeRequest,
   type StoreChallengeRequest,
-  type UpdateUserPIIInput,
 } from '@authrim/ar-lib-core';
 
 function createTestJwt(payload: Record<string, unknown>): string {
@@ -243,7 +243,7 @@ function createApp(options?: {
   delegatedActorClaims?: Record<string, unknown>;
   updateProfileImpl?: (input: {
     subjectUserId: string;
-    update: UpdateUserPIIInput;
+    update: CustomerProfileUpdateInput;
   }) => Promise<ProtectedCustomerProfileResource | null>;
 }) {
   const app = new Hono<{ Bindings: Env }>();
@@ -821,7 +821,7 @@ describe('protected customer profile route', () => {
       idempotencyKey: 'delegated-key-nullable-update',
       bodyInput: input,
     });
-    let capturedUpdate: UpdateUserPIIInput | undefined;
+    let capturedUpdate: CustomerProfileUpdateInput | undefined;
     const app = createApp({
       updateProfileImpl: async ({ update }) => {
         capturedUpdate = update;

@@ -68,6 +68,22 @@
 		authorization: 'Authorization Plane'
 	};
 
+	const storageSliceLabels: Record<string, string> = {
+		users_core: 'Identity Core Plane',
+		users_pii: 'Identity PII Plane',
+		custom_claims: 'Custom Claims',
+		registration_fields: 'Registration Fields',
+		custom_pii: 'Custom PII',
+		passkeys: 'Passkeys',
+		linked_identities: 'Linked Identities',
+		consent: 'Consent',
+		authorization: 'Authorization'
+	};
+
+	function formatStorageSliceLabel(slice: string): string {
+		return storageSliceLabels[slice] ?? slice;
+	}
+
 	function getStorageTenantPolicy(profileId: string): StorageProfileTenantOverridePolicy | null {
 		return storagePolicy?.tenantOverrideEligibility?.[profileId] ?? null;
 	}
@@ -89,7 +105,7 @@
 		if (slices.length === 0) {
 			return 'No storage slices configured';
 		}
-		return slices.join(', ');
+		return slices.map(formatStorageSliceLabel).join(', ');
 	}
 
 	function describeTenantOverrideCompatibility(
@@ -526,10 +542,10 @@
 						<div class="chip-row">
 							{#if storagePolicy?.authCoreSlices?.length}
 									{#each storagePolicy.authCoreSlices as slice (slice)}
-									<span class="badge">{slice}</span>
+									<span class="badge">{formatStorageSliceLabel(slice)}</span>
 								{/each}
 							{:else}
-								<span class="badge">users_core</span>
+								<span class="badge">Identity Core Plane</span>
 							{/if}
 						</div>
 					</div>
@@ -608,7 +624,7 @@
 							{#each Object.values(storagePolicy.slicePolicies) as policy (policy.slice)}
 							<article class="policy-card">
 								<div class="policy-card-header">
-									<strong>{policy.slice}</strong>
+									<strong>{formatStorageSliceLabel(policy.slice)}</strong>
 									<span
 										class:badge-primary={policy.tenantOverrideAllowed}
 										class:badge-muted={!policy.tenantOverrideAllowed}
@@ -622,7 +638,7 @@
 									<div>D1 default: {policy.d1Default ? 'Yes' : 'No'}</div>
 									<div>Non-D1 option required: {policy.nonD1OptionRequired ? 'Yes' : 'No'}</div>
 									{#if policy.compatibilityShorthand}
-										<div>`users_core` is treated as auth-core shorthand.</div>
+										<div>Identity Core Plane is pinned to the auth-core boundary.</div>
 									{/if}
 								</div>
 							</article>

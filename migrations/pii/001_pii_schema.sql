@@ -743,3 +743,27 @@ CREATE INDEX IF NOT EXISTS idx_linked_ids_tenant_user
 CREATE INDEX IF NOT EXISTS idx_linked_ids_provider_sub
   ON linked_identities(provider_id, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_linked_ids_email ON linked_identities(provider_email);
+
+-- -----------------------------------------------------------------------------
+-- Source: pii/006_identity_sensitive_values.sql
+-- -----------------------------------------------------------------------------
+
+-- Canonical identity sensitive values live in the PII database. Canonical
+-- profile/contact tables in the core database store only value_storage_ref values.
+CREATE TABLE IF NOT EXISTS identity_sensitive_values (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  owner_type TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  value_key TEXT NOT NULL,
+  value_json TEXT,
+  value_hash TEXT,
+  classification TEXT NOT NULL DEFAULT 'sensitive',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (tenant_id, owner_type, owner_id, value_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_sensitive_values_owner
+  ON identity_sensitive_values(tenant_id, owner_type, owner_id, value_key, lifecycle_state);

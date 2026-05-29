@@ -7,7 +7,7 @@ import {
 } from './write-validator';
 
 /**
- * Account lifecycle stages are intentionally separate from users_core.status.
+ * Account lifecycle stages are intentionally separate from operational account status.
  * status controls operational access (active/suspended/locked), while lifecycle_state
  * describes where the account is in its provisioning/completion journey.
  *
@@ -53,8 +53,8 @@ export async function setUserLifecycleState(
   const { db, tenantId, userId, lifecycleState } = params;
   const adapter = ensureDatabaseAdapter(db, 'custom-claims-lifecycle');
 
-  const currentRow = await adapter.queryOne<{ lifecycle_state: string | null }>(
-    'SELECT lifecycle_state FROM users_core WHERE id = ? AND tenant_id = ?',
+  const currentRow = await adapter.queryOne<{ id: string; lifecycle_state: string | null }>(
+    'SELECT id, lifecycle_state FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
     [userId, tenantId]
   );
 
@@ -63,8 +63,8 @@ export async function setUserLifecycleState(
   }
 
   await adapter.execute(
-    'UPDATE users_core SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-    [lifecycleState, Date.now(), userId, tenantId]
+    'UPDATE identity_accounts SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+    [lifecycleState, Date.now(), currentRow.id, tenantId]
   );
 
   return lifecycleState;

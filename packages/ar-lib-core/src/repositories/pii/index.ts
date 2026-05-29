@@ -5,20 +5,11 @@
  * Contains personal information separated from Core DB.
  *
  * Included repositories:
- * - UserPIIRepository: User personal information
  * - TombstoneRepository: GDPR deletion tracking
  * - SubjectIdentifierRepository: Pairwise subject identifiers
  * - LinkedIdentityRepository: External IdP linked identities
  * - PIIAuditLogRepository: PII access audit log
  */
-
-export {
-  UserPIIRepository,
-  type UserPII,
-  type CreateUserPIIInput,
-  type UpdateUserPIIInput,
-  type OIDCUserInfo,
-} from './user-pii';
 
 export {
   TombstoneRepository,

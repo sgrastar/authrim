@@ -89,6 +89,27 @@ CREATE INDEX IF NOT EXISTS idx_linked_identities_provider_sub
 CREATE INDEX IF NOT EXISTS idx_linked_identities_email
   ON linked_identities(tenant_id, provider_email);
 
+CREATE TABLE IF NOT EXISTS identity_sensitive_values (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  owner_type TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  value_key TEXT NOT NULL,
+  value_json JSONB,
+  value_hash TEXT,
+  classification TEXT NOT NULL DEFAULT 'sensitive',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT identity_sensitive_values_unique_owner_key
+    UNIQUE(tenant_id, owner_type, owner_id, value_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_sensitive_values_owner
+  ON identity_sensitive_values(tenant_id, owner_type, owner_id, value_key, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_identity_sensitive_values_hash
+  ON identity_sensitive_values(tenant_id, value_key, value_hash, lifecycle_state);
+
 CREATE TABLE IF NOT EXISTS audit_log_pii (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',

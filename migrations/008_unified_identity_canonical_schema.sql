@@ -430,10 +430,8 @@ CREATE TABLE IF NOT EXISTS provisioning_assignment_events (
   created_at INTEGER NOT NULL
 );
 
--- UIM-SCH-065 org_domain_mappings migration
-ALTER TABLE org_domain_mappings ADD COLUMN group_id TEXT;
-ALTER TABLE org_domain_mappings ADD COLUMN provisioning_assignment_rule_id TEXT;
-ALTER TABLE org_domain_mappings ADD COLUMN org_to_group_migration_state TEXT DEFAULT 'pending';
+-- UIM-SCH-065 old org_domain_mappings bridge is intentionally removed.
+-- Group assignment rules are the canonical provisioning source of truth.
 
 -- UIM-SCH-066 provisioning_assignment_ownership
 CREATE TABLE IF NOT EXISTS provisioning_assignment_ownership (

@@ -523,23 +523,22 @@ export async function resolveOrganizationInfo(
 }
 
 /**
- * Get user's user_type from users_core table (non-PII)
- *
- * @param db - D1 database
- * @param subjectId - User ID
- * @returns User type or 'end_user' as default
+ * Get user's runtime type from canonical identity accounts.
  */
 export async function resolveUserType(
   db: DatabaseSource,
   subjectId: string,
   tenantId: string
 ): Promise<UserType> {
-  const result = await getRBACDatabaseAdapter(db).queryOne<{ user_type: string }>(
-    'SELECT user_type FROM users_core WHERE id = ? AND tenant_id = ?',
+  const result = await getRBACDatabaseAdapter(db).queryOne<{ account_type: string }>(
+    'SELECT account_type FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
     [subjectId, tenantId]
   );
 
-  return (result?.user_type as UserType) || 'end_user';
+  if (result?.account_type === 'admin') return 'system_admin';
+  if (result?.account_type === 'service_account') return 'end_user';
+  if (result?.account_type === 'anonymous') return 'anonymous';
+  return 'end_user';
 }
 
 /**

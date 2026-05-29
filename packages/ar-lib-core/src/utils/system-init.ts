@@ -6,7 +6,7 @@
  *
  * Admin/EndUser Separation:
  * - Uses DB_ADMIN for Admin user management (admin_users, admin_roles, admin_role_assignments)
- * - Falls back to legacy DB (users_core, roles, role_assignments) for backward compatibility
+ * - Falls back to the auth core database (identity_accounts, roles, role_assignments)
  */
 
 import type { Env } from '../types/env';
@@ -86,22 +86,21 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
     }
   }
 
-  // Fallback to legacy DB (for backward compatibility)
+  // Fallback to tenant runtime DB when admin_users is not available.
   try {
     const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'system-init');
     const tenantId = DEFAULT_TENANT_ID;
     const now = Math.floor(Date.now() / 1000); // UNIX seconds for legacy role_assignments
 
-    // Count users with active, non-expired system_admin role (legacy)
     const result = await coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(DISTINCT ra.subject_id) as count
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
-       JOIN users_core u ON ra.subject_id = u.id
+       JOIN identity_accounts u ON ra.subject_id = u.legacy_user_id
        WHERE r.name = 'system_admin'
          AND ra.tenant_id = ?
          AND r.tenant_id = ?
-         AND u.is_active = 1
+         AND u.lifecycle_state = 'active'
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
       [tenantId, tenantId, now]
     );

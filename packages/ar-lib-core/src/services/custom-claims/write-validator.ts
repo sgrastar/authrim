@@ -369,19 +369,22 @@ export async function persistCustomClaimWrite(
     throw new Error('PII storage is not available');
   }
 
-  const currentRow = await piiAdapter.queryOne<{ custom_attributes_json: string | null }>(
-    'SELECT custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?',
-    [userId, tenantId]
+  const currentRow = await piiAdapter.queryOne<{ value_json: string | null }>(
+    `SELECT value_json
+       FROM identity_sensitive_values
+      WHERE tenant_id = ?
+        AND owner_type = 'runtime_user'
+        AND owner_id = ?
+        AND value_key = 'custom_attributes_json'
+        AND lifecycle_state = 'active'
+      LIMIT 1`,
+    [tenantId, userId]
   );
 
-  if (!currentRow) {
-    throw new Error('PII user record not found');
-  }
-
   let attributes: Record<string, unknown> = {};
-  if (currentRow.custom_attributes_json) {
+  if (currentRow?.value_json) {
     try {
-      const parsed = JSON.parse(currentRow.custom_attributes_json);
+      const parsed = JSON.parse(currentRow.value_json);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         attributes = parsed as Record<string, unknown>;
       }
@@ -399,9 +402,18 @@ export async function persistCustomClaimWrite(
   }
 
   const serialized = Object.keys(attributes).length > 0 ? JSON.stringify(attributes) : '{}';
+  const now = Date.now();
 
   await piiAdapter.execute(
-    'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-    [serialized, Date.now(), userId, tenantId]
+    `INSERT INTO identity_sensitive_values (
+      id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
+      classification, lifecycle_state, created_at, updated_at
+    ) VALUES (?, ?, 'runtime_user', ?, 'custom_attributes_json', ?, NULL, 'sensitive', 'active', ?, ?)
+    ON CONFLICT(tenant_id, owner_type, owner_id, value_key) DO UPDATE SET
+      value_json = excluded.value_json,
+      classification = excluded.classification,
+      lifecycle_state = excluded.lifecycle_state,
+      updated_at = excluded.updated_at`,
+    [`sensitive-value:${userId}:custom_attributes_json`, tenantId, userId, serialized, now, now]
   );
 }

@@ -34,10 +34,11 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
+  type IdentityAccountRow,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
-  LegacyUsersPiiValueResolver,
+  CanonicalSensitiveValueResolver,
   generateId,
   generateUserIdFromSettings,
   hashPassword,
@@ -52,6 +53,8 @@ import { canonicalProjectionToScimInternalUser } from './identity-canonical-runt
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
 }
+
+type CanonicalUserFilterValue = string | number | boolean | null | undefined;
 
 /**
  * Create database adapters from Hono context.
@@ -71,38 +74,33 @@ function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   return { coreAdapter, piiAdapter };
 }
 
-function isCanonicalIdentityRuntimeEnabled(c: Context<{ Bindings: Env }>): boolean {
-  return c.env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
-}
-
 function createCanonicalProjectionRepository(
-  c: Context<{ Bindings: Env }>,
+  _c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
   piiAdapter: DatabaseAdapter | null,
   tenantId: string
 ): CanonicalRuntimeUserProjectionRepository | null {
-  if (!isCanonicalIdentityRuntimeEnabled(c) || !piiAdapter) {
+  if (!piiAdapter) {
     return null;
   }
   return new CanonicalRuntimeUserProjectionRepository(
     coreAdapter,
     tenantId,
-    new LegacyUsersPiiValueResolver(piiAdapter)
+    new CanonicalSensitiveValueResolver(piiAdapter)
   );
 }
 
 async function maybeCreateCanonicalRuntimeUser(
   c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter,
   tenantId: string,
   userId: string,
   internalUser: Partial<InternalUser>
 ): Promise<void> {
-  if (!isCanonicalIdentityRuntimeEnabled(c)) {
-    return;
-  }
   const writer = new CanonicalRuntimeUserWriter(
-    new CanonicalIdentityRepository(coreAdapter, tenantId)
+    new CanonicalIdentityRepository(coreAdapter, tenantId),
+    piiAdapter
   );
   await writer.createFromRuntimeUser({
     userId,
@@ -115,6 +113,8 @@ async function maybeCreateCanonicalRuntimeUser(
     locale: internalUser.locale ?? null,
     zoneinfo: internalUser.zoneinfo ?? null,
     sourceRef: 'scim:/Users',
+    externalId: internalUser.external_id ?? null,
+    passwordHash: internalUser.password_hash ?? null,
     addressJson: internalUser.address_json ?? null,
     customAttributesJson: internalUser.custom_attributes_json ?? null,
     piiFields: {
@@ -134,21 +134,37 @@ async function maybeCreateCanonicalRuntimeUser(
       zoneinfo: true,
       locale: true,
     },
+    sensitiveValues: {
+      email: internalUser.email,
+      phone_number: internalUser.phone_number,
+      name: internalUser.name,
+      given_name: internalUser.given_name,
+      family_name: internalUser.family_name,
+      middle_name: internalUser.middle_name,
+      nickname: internalUser.nickname,
+      preferred_username: internalUser.preferred_username,
+      profile: internalUser.profile,
+      picture: internalUser.picture,
+      website: internalUser.website,
+      gender: internalUser.gender,
+      birthdate: internalUser.birthdate,
+      zoneinfo: internalUser.zoneinfo,
+      locale: internalUser.locale,
+    },
   });
 }
 
 async function maybeSyncCanonicalRuntimeUser(
   c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter,
   tenantId: string,
   userId: string,
   internalUser: Partial<InternalUser>
 ): Promise<void> {
-  if (!isCanonicalIdentityRuntimeEnabled(c)) {
-    return;
-  }
   const writer = new CanonicalRuntimeUserWriter(
-    new CanonicalIdentityRepository(coreAdapter, tenantId)
+    new CanonicalIdentityRepository(coreAdapter, tenantId),
+    piiAdapter
   );
   await writer.syncFromRuntimeUser({
     userId,
@@ -161,6 +177,8 @@ async function maybeSyncCanonicalRuntimeUser(
     locale: internalUser.locale ?? null,
     zoneinfo: internalUser.zoneinfo ?? null,
     sourceRef: 'scim:/Users',
+    externalId: internalUser.external_id ?? null,
+    passwordHash: internalUser.password_hash ?? null,
     addressJson: internalUser.address_json ?? null,
     customAttributesJson: internalUser.custom_attributes_json ?? null,
     piiFields: {
@@ -180,20 +198,36 @@ async function maybeSyncCanonicalRuntimeUser(
       zoneinfo: true,
       locale: true,
     },
+    sensitiveValues: {
+      email: internalUser.email,
+      phone_number: internalUser.phone_number,
+      name: internalUser.name,
+      given_name: internalUser.given_name,
+      family_name: internalUser.family_name,
+      middle_name: internalUser.middle_name,
+      nickname: internalUser.nickname,
+      preferred_username: internalUser.preferred_username,
+      profile: internalUser.profile,
+      picture: internalUser.picture,
+      website: internalUser.website,
+      gender: internalUser.gender,
+      birthdate: internalUser.birthdate,
+      zoneinfo: internalUser.zoneinfo,
+      locale: internalUser.locale,
+    },
   });
 }
 
 async function maybeDeleteCanonicalRuntimeUser(
   c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter,
   tenantId: string,
   userId: string
 ): Promise<void> {
-  if (!isCanonicalIdentityRuntimeEnabled(c)) {
-    return;
-  }
   const writer = new CanonicalRuntimeUserWriter(
-    new CanonicalIdentityRepository(coreAdapter, tenantId)
+    new CanonicalIdentityRepository(coreAdapter, tenantId),
+    piiAdapter
   );
   await writer.deleteRuntimeUser(userId);
 }
@@ -202,162 +236,12 @@ async function maybeDeleteCanonicalRuntimeUser(
  * Fetch user from both Core and PII databases and merge into InternalUser
  */
 async function fetchUserWithPII(
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
   userId: string,
-  tenantId: string,
-  options: ScimUserReadOptions = {}
+  options: ScimUserReadOptions
 ): Promise<InternalUser | null> {
   const canonicalProjection =
     await options.canonicalProjectionRepository?.findByLegacyUserId(userId);
-  if (canonicalProjection) {
-    return canonicalProjectionToScimInternalUser(canonicalProjection);
-  }
-
-  // Query Core DB via Adapter
-  const userCore = await coreAdapter.queryOne<{
-    id: string;
-    tenant_id: string;
-    email_verified: number;
-    phone_number_verified: number;
-    password_hash: string | null;
-    is_active: number;
-    user_type: string;
-    external_id: string | null;
-    pii_partition: string;
-    created_at: number;
-    updated_at: number;
-  }>(
-    `SELECT id, tenant_id, email_verified, phone_number_verified, password_hash,
-            is_active, user_type, external_id, pii_partition, created_at, updated_at
-     FROM users_core WHERE id = ? AND tenant_id = ?`,
-    [userId, tenantId]
-  );
-
-  if (!userCore) return null;
-
-  // Query PII DB (if configured) via Adapter
-  let userPII: {
-    email: string;
-    name: string | null;
-    given_name: string | null;
-    family_name: string | null;
-    middle_name: string | null;
-    nickname: string | null;
-    preferred_username: string | null;
-    profile: string | null;
-    picture: string | null;
-    website: string | null;
-    gender: string | null;
-    birthdate: string | null;
-    zoneinfo: string | null;
-    locale: string | null;
-    phone_number: string | null;
-    address_formatted: string | null;
-    address_street_address: string | null;
-    address_locality: string | null;
-    address_region: string | null;
-    address_postal_code: string | null;
-    address_country: string | null;
-    custom_attributes_json: string | null;
-  } | null = null;
-
-  if (piiAdapter) {
-    userPII = await piiAdapter.queryOne(
-      `SELECT email, name, given_name, family_name, middle_name, nickname,
-              preferred_username, profile, picture, website, gender, birthdate,
-              zoneinfo, locale, phone_number, address_formatted, address_street_address,
-              address_locality, address_region, address_postal_code, address_country,
-              custom_attributes_json
-       FROM users_pii WHERE id = ? AND tenant_id = ?`,
-      [userId, tenantId]
-    );
-  }
-
-  // Merge into InternalUser format
-  return {
-    id: userCore.id as string,
-    tenant_id: userCore.tenant_id as string,
-    email: userPII?.email ?? null,
-    email_verified: userCore.email_verified as number,
-    name: userPII?.name ?? null,
-    given_name: userPII?.given_name ?? null,
-    family_name: userPII?.family_name ?? null,
-    middle_name: userPII?.middle_name ?? null,
-    nickname: userPII?.nickname ?? null,
-    preferred_username: userPII?.preferred_username ?? null,
-    profile: userPII?.profile ?? null,
-    picture: userPII?.picture ?? null,
-    website: userPII?.website ?? null,
-    gender: userPII?.gender ?? null,
-    birthdate: userPII?.birthdate ?? null,
-    zoneinfo: userPII?.zoneinfo ?? null,
-    locale: userPII?.locale ?? null,
-    phone_number: userPII?.phone_number ?? null,
-    phone_number_verified: userCore.phone_number_verified as number,
-    address_json: userPII
-      ? JSON.stringify({
-          formatted: userPII.address_formatted,
-          street_address: userPII.address_street_address,
-          locality: userPII.address_locality,
-          region: userPII.address_region,
-          postal_code: userPII.address_postal_code,
-          country: userPII.address_country,
-        })
-      : null,
-    password_hash: userCore.password_hash as string | null,
-    external_id: userCore.external_id as string | null,
-    active: userCore.is_active as number,
-    custom_attributes_json: userPII?.custom_attributes_json ?? null,
-    created_at: new Date(userCore.created_at * 1000).toISOString(),
-    updated_at: new Date(userCore.updated_at * 1000).toISOString(),
-  } as InternalUser;
-}
-
-/**
- * Core user row from database
- */
-interface CoreUserRow {
-  id: string;
-  tenant_id: string;
-  email_verified: number;
-  phone_number_verified: number;
-  password_hash: string | null;
-  is_active: number;
-  user_type: string;
-  external_id: string | null;
-  pii_partition: string;
-  created_at: number;
-  updated_at: number;
-}
-
-/**
- * Address components for SCIM address parsing
- */
-interface AddressComponents {
-  formatted?: string;
-  street_address?: string;
-  locality?: string;
-  region?: string;
-  postal_code?: string;
-  country?: string;
-}
-
-function parseAddressParts(addressJson: string | null | undefined): AddressComponents {
-  if (!addressJson) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(addressJson);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as AddressComponents;
-    }
-  } catch {
-    // Ignore parse errors from stored address JSON.
-  }
-
-  return {};
+  return canonicalProjection ? canonicalProjectionToScimInternalUser(canonicalProjection) : null;
 }
 
 function parseScimCustomAttributes(
@@ -432,107 +316,90 @@ async function persistScimCustomClaimWrite(
   });
 }
 
-/**
- * PII user row from database
- */
-interface PIIUserRow {
-  id: string;
-  email: string | null;
-  name: string | null;
-  given_name: string | null;
-  family_name: string | null;
-  middle_name: string | null;
-  nickname: string | null;
-  preferred_username: string | null;
-  profile: string | null;
-  picture: string | null;
-  website: string | null;
-  gender: string | null;
-  birthdate: string | null;
-  zoneinfo: string | null;
-  locale: string | null;
-  phone_number: string | null;
-  address_formatted: string | null;
-  address_street_address: string | null;
-  address_locality: string | null;
-  address_region: string | null;
-  address_postal_code: string | null;
-  address_country: string | null;
-  custom_attributes_json: string | null;
-}
-
-/**
- * Fetch multiple users with PII for list operations
- */
-async function fetchUsersWithPII(
-  piiAdapter: DatabaseAdapter | null,
-  coreUsers: CoreUserRow[],
-  tenantId: string
+async function fetchCanonicalUsers(
+  coreAdapter: DatabaseAdapter,
+  projectionRepository: CanonicalRuntimeUserProjectionRepository,
+  tenantId: string,
+  options: { includeInactive?: boolean } = {}
 ): Promise<InternalUser[]> {
-  if (coreUsers.length === 0) return [];
+  const lifecycleClause = options.includeInactive ? '' : " AND lifecycle_state = 'active'";
+  const accounts = await coreAdapter.query<IdentityAccountRow>(
+    `SELECT *
+       FROM identity_accounts
+      WHERE tenant_id = ?
+        AND legacy_user_id IS NOT NULL${lifecycleClause}
+      ORDER BY created_at DESC`,
+    [tenantId]
+  );
 
-  // Query PII for all users via Adapter
-  const userIds = coreUsers.map((u) => u.id);
-  const piiMap = new Map<string, PIIUserRow>();
-
-  if (piiAdapter && userIds.length > 0) {
-    const placeholders = userIds.map(() => '?').join(',');
-    const piiResults = await piiAdapter.query<PIIUserRow>(
-      `SELECT id, email, name, given_name, family_name, middle_name, nickname,
-              preferred_username, profile, picture, website, gender, birthdate,
-              zoneinfo, locale, phone_number, address_formatted, address_street_address,
-              address_locality, address_region, address_postal_code, address_country,
-              custom_attributes_json
-       FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-      [tenantId, ...userIds]
-    );
-
-    for (const pii of piiResults) {
-      piiMap.set(pii.id, pii);
+  const users: InternalUser[] = [];
+  for (const account of accounts) {
+    if (!account.legacy_user_id) {
+      continue;
+    }
+    const projection = await projectionRepository.findByLegacyUserId(account.legacy_user_id, {
+      includeInactive: options.includeInactive,
+    });
+    if (projection) {
+      users.push(canonicalProjectionToScimInternalUser(projection));
     }
   }
+  return users;
+}
 
-  // Merge Core and PII
-  return coreUsers.map((core) => {
-    const pii = piiMap.get(core.id);
-    return {
-      id: core.id,
-      tenant_id: core.tenant_id,
-      email: pii?.email ?? null,
-      email_verified: core.email_verified,
-      name: pii?.name ?? null,
-      given_name: pii?.given_name ?? null,
-      family_name: pii?.family_name ?? null,
-      middle_name: pii?.middle_name ?? null,
-      nickname: pii?.nickname ?? null,
-      preferred_username: pii?.preferred_username ?? null,
-      profile: pii?.profile ?? null,
-      picture: pii?.picture ?? null,
-      website: pii?.website ?? null,
-      gender: pii?.gender ?? null,
-      birthdate: pii?.birthdate ?? null,
-      zoneinfo: pii?.zoneinfo ?? null,
-      locale: pii?.locale ?? null,
-      phone_number: pii?.phone_number ?? null,
-      phone_number_verified: core.phone_number_verified,
-      address_json: pii
-        ? JSON.stringify({
-            formatted: pii.address_formatted,
-            street_address: pii.address_street_address,
-            locality: pii.address_locality,
-            region: pii.address_region,
-            postal_code: pii.address_postal_code,
-            country: pii.address_country,
-          })
-        : null,
-      password_hash: core.password_hash,
-      external_id: core.external_id,
-      active: core.is_active,
-      custom_attributes_json: pii?.custom_attributes_json ?? null,
-      created_at: new Date(core.created_at * 1000).toISOString(),
-      updated_at: new Date(core.updated_at * 1000).toISOString(),
-    } as InternalUser;
-  });
+function getScimUserFilterValue(user: InternalUser, attribute: string): CanonicalUserFilterValue {
+  switch (attribute) {
+    case 'id':
+      return user.id;
+    case 'userName':
+    case 'preferred_username':
+      return user.preferred_username || user.email;
+    case 'emails.value':
+    case 'email':
+      return user.email;
+    case 'name':
+    case 'displayName':
+      return user.name;
+    case 'name.givenName':
+    case 'given_name':
+      return user.given_name;
+    case 'name.familyName':
+    case 'family_name':
+      return user.family_name;
+    case 'active':
+      return Boolean(user.active);
+    case 'externalId':
+    case 'external_id':
+      return user.external_id;
+    default:
+      return undefined;
+  }
+}
+
+function userMatchesScimFilter(user: InternalUser, filter: string): boolean {
+  const match = filter.match(/^([\w.]+)\s+(eq|co|sw|ew)\s+"?([^"]+)"?$/i);
+  if (!match) {
+    throw new Error('Unsupported SCIM filter');
+  }
+  const [, attribute, operator, rawExpected] = match;
+  const actual = getScimUserFilterValue(user, attribute);
+  if (operator.toLowerCase() === 'eq' && attribute === 'active') {
+    return Boolean(actual) === (rawExpected.toLowerCase() === 'true');
+  }
+  const actualString = actual == null ? '' : String(actual).toLowerCase();
+  const expected = rawExpected.toLowerCase();
+  switch (operator.toLowerCase()) {
+    case 'eq':
+      return actualString === expected;
+    case 'co':
+      return actualString.includes(expected);
+    case 'sw':
+      return actualString.startsWith(expected);
+    case 'ew':
+      return actualString.endsWith(expected);
+    default:
+      return false;
+  }
 }
 
 /**
@@ -541,7 +408,7 @@ async function fetchUsersWithPII(
  */
 async function fetchGroupMembersWithPII(
   coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
+  projectionRepository: CanonicalRuntimeUserProjectionRepository | null,
   roleId: string,
   tenantId: string
 ): Promise<{ user_id: string; email: string }[]> {
@@ -555,19 +422,13 @@ async function fetchGroupMembersWithPII(
     return [];
   }
 
-  const userIds = roleMembers.map((r) => r.user_id);
   const emailMap = new Map<string, string>();
-
-  // Fetch emails from PII DB via Adapter
-  if (piiAdapter && userIds.length > 0) {
-    const placeholders = userIds.map(() => '?').join(',');
-    const piiResults = await piiAdapter.query<{ id: string; email: string }>(
-      `SELECT id, email FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-      [tenantId, ...userIds]
-    );
-
-    for (const pii of piiResults) {
-      emailMap.set(pii.id, pii.email);
+  if (projectionRepository) {
+    for (const member of roleMembers) {
+      const projection = await projectionRepository.findByLegacyUserId(member.user_id);
+      if (projection?.email) {
+        emailMap.set(member.user_id, projection.email);
+      }
     }
   }
 
@@ -590,7 +451,11 @@ async function findMissingTenantUserIds(
 
   const placeholders = uniqueUserIds.map(() => '?').join(',');
   const rows = await coreAdapter.query<{ id: string }>(
-    `SELECT id FROM users_core WHERE tenant_id = ? AND id IN (${placeholders})`,
+    `SELECT legacy_user_id as id
+       FROM identity_accounts
+      WHERE tenant_id = ?
+        AND legacy_user_id IN (${placeholders})
+        AND lifecycle_state = 'active'`,
     [tenantId, ...uniqueUserIds]
   );
   const found = new Set(rows.map((row) => row.id));
@@ -1387,82 +1252,26 @@ app.get('/Users', async (c) => {
     const params = parseQueryParams(c);
     const baseUrl = getBaseUrl(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
+    if (!canonicalProjectionRepository) {
+      return scimError(c, 500, 'Configured PII store is not available');
+    }
 
     // Pagination defaults
     const startIndex = params.startIndex || 1; // SCIM uses 1-based indexing
     const count = Math.min(params.count || 100, 1000); // Max 1000 per page
     const offset = startIndex - 1;
 
-    // Build SQL query for Core DB - tenant_id is always first for index usage
-    // Note: For PII filters (email, name, etc.), we query PII DB first to get matching IDs
-    let sql = `SELECT id, tenant_id, email_verified, phone_number_verified, password_hash,
-               is_active, user_type, external_id, pii_partition, created_at, updated_at
-               FROM users_core WHERE tenant_id = ?`;
-    const sqlParams: (string | number | boolean | null)[] = [tenantId];
-
-    // Apply filter if present
-    // For SCIM filters referencing PII fields, we need to query PII DB first
+    let users = await fetchCanonicalUsers(coreAdapter, canonicalProjectionRepository, tenantId);
     if (params.filter) {
       try {
-        const filterAst = parseScimFilter(params.filter);
-
-        // Check if filter references PII fields
-        const piiFields = [
-          'email',
-          'name',
-          'given_name',
-          'family_name',
-          'nickname',
-          'preferred_username',
-        ];
-        const filterStr = params.filter.toLowerCase();
-        const hasPiiFilter = piiFields.some((f) => filterStr.includes(f.toLowerCase()));
-
-        if (hasPiiFilter && piiAdapter) {
-          // Query PII DB first to get matching user IDs via Adapter
-          const piiAttributeMap: Record<string, string> = {
-            userName: 'preferred_username',
-            'name.givenName': 'given_name',
-            'name.familyName': 'family_name',
-            'emails.value': 'email',
-          };
-          const { sql: whereSql, params: whereParams } = filterToSql(filterAst, piiAttributeMap);
-          const piiSql = `SELECT id FROM users_pii WHERE tenant_id = ? AND ${whereSql}`;
-          const piiResults = await piiAdapter.query<{ id: string }>(piiSql, [
-            tenantId,
-            ...whereParams,
-          ]);
-          const matchingIds = piiResults.map((r) => r.id);
-
-          if (matchingIds.length === 0) {
-            // No matches found - return empty result
-            const response: ScimListResponse<ScimUser> = {
-              schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
-              totalResults: 0,
-              startIndex,
-              itemsPerPage: 0,
-              Resources: [],
-            };
-            return c.json(response);
-          }
-
-          // Filter Core DB by matching IDs
-          const placeholders = matchingIds.map(() => '?').join(',');
-          sql += ` AND id IN (${placeholders})`;
-          sqlParams.push(...matchingIds);
-        } else {
-          // Non-PII filter - apply directly to Core DB
-          const coreAttributeMap: Record<string, string> = {
-            active: 'is_active',
-            externalId: 'external_id',
-          };
-          const { sql: whereSql, params: whereParams } = filterToSql(filterAst, coreAttributeMap);
-          sql += ` AND ${whereSql}`;
-          // Filter out undefined values from whereParams
-          sqlParams.push(
-            ...whereParams.filter((p): p is string | number | boolean | null => p !== undefined)
-          );
-        }
+        parseScimFilter(params.filter);
+        users = users.filter((user) => userMatchesScimFilter(user, params.filter!));
       } catch (error) {
         // Log full error for debugging but don't expose to client
         const log = getLogger(c).module('SCIM');
@@ -1472,13 +1281,8 @@ app.get('/Users', async (c) => {
       }
     }
 
-    // Get total count via Adapter
-    const countQuery = sql.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM');
-    const totalResult = await coreAdapter.queryOne<{ total: number }>(countQuery, sqlParams);
-    const totalResults = totalResult?.total || 0;
+    const totalResults = users.length;
 
-    // Apply sorting with whitelist validation (prevents SQL injection)
-    // Note: Sorting by PII fields requires fetching PII first - not supported in DB-separated mode
     if (params.sortBy) {
       const sortColumn = validateSortColumn(params.sortBy, ALLOWED_USER_SORT_COLUMNS);
       if (!sortColumn) {
@@ -1489,26 +1293,18 @@ app.get('/Users', async (c) => {
           'invalidValue'
         );
       }
-      // Map Core columns (some may need adjustment for users_core schema)
-      const coreSortColumn = sortColumn === 'active' ? 'is_active' : sortColumn;
-      const sortDirection = params.sortOrder === 'descending' ? 'DESC' : 'ASC';
-      sql += ` ORDER BY ${coreSortColumn} ${sortDirection}`;
-    } else {
-      sql += ' ORDER BY created_at DESC';
+      const sortDirection = params.sortOrder === 'descending' ? -1 : 1;
+      users.sort((a, b) => {
+        const aValue = getScimUserFilterValue(a, sortColumn);
+        const bValue = getScimUserFilterValue(b, sortColumn);
+        return String(aValue ?? '').localeCompare(String(bValue ?? '')) * sortDirection;
+      });
     }
 
-    // Apply pagination
-    sql += ` LIMIT ? OFFSET ?`;
-    sqlParams.push(count, offset);
-
-    // Execute query against Core DB via Adapter
-    const coreResults = await coreAdapter.query<CoreUserRow>(sql, sqlParams);
-
-    // Fetch PII data and merge into InternalUser format
-    const users = await fetchUsersWithPII(piiAdapter, coreResults, tenantId);
+    const pageUsers = users.slice(offset, offset + count);
 
     // Convert to SCIM format
-    const scimUsers = users.map((user) => userToScim(user, { baseUrl, includeGroups: false }));
+    const scimUsers = pageUsers.map((user) => userToScim(user, { baseUrl, includeGroups: false }));
 
     const response: ScimListResponse<ScimUser> = {
       schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
@@ -1542,9 +1338,10 @@ app.get('/Users/:id', async (c) => {
       piiAdapter,
       tenantId
     );
-
-    // Fetch user from both Core and PII DBs via Adapter
-    const user = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+    if (!canonicalProjectionRepository || !piiAdapter) {
+      return scimError(c, 500, 'Configured PII store is not available');
+    }
+    const user = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
     });
 
@@ -1587,6 +1384,9 @@ app.post('/Users', async (c) => {
     const coreAdapter = authCtx.coreAdapter;
     const piiCtx = hasPIIDatabase(c) ? createPIIContextFromHono(c, tenantId) : null;
     const piiAdapter = piiCtx?.defaultPiiAdapter ?? null;
+    if (!piiAdapter) {
+      return scimError(c, 500, 'Configured PII store is not available');
+    }
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
@@ -1598,10 +1398,17 @@ app.post('/Users', async (c) => {
     const primaryEmail =
       scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
 
-    if (primaryEmail && piiAdapter) {
+    if (primaryEmail) {
       const existing = await piiAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-        [tenantId, primaryEmail]
+        `SELECT owner_id as id
+           FROM identity_sensitive_values
+          WHERE tenant_id = ?
+            AND owner_type = 'runtime_user'
+            AND value_key = 'email'
+            AND value_json = ?
+            AND lifecycle_state = 'active'
+          LIMIT 1`,
+        [tenantId, JSON.stringify(primaryEmail)]
       );
 
       if (existing) {
@@ -1634,60 +1441,16 @@ app.post('/Users', async (c) => {
     if (!internalUser.email_verified) internalUser.email_verified = 0;
     if (internalUser.active === undefined) internalUser.active = 1;
 
-    // Parse address JSON if provided
-    const addressParts = parseAddressParts(internalUser.address_json);
-
-    await authCtx.repositories.userCore.createUser({
-      id: userId,
-      tenant_id: tenantId,
-      email_verified: Boolean(internalUser.email_verified),
-      phone_number_verified: false,
-      password_hash: internalUser.password_hash ?? null,
-      is_active: internalUser.active === undefined ? true : Boolean(internalUser.active),
-      user_type: 'end_user',
-      pii_partition: 'default',
-      pii_status: piiCtx ? 'pending' : 'none',
-    });
-
-    if (piiCtx) {
-      try {
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: userId,
-          tenant_id: tenantId,
-          pii_class: 'PROFILE',
-          email: internalUser.email!,
-          phone_number: internalUser.phone_number ?? null,
-          name: internalUser.name ?? null,
-          given_name: internalUser.given_name ?? null,
-          family_name: internalUser.family_name ?? null,
-          nickname: internalUser.nickname ?? null,
-          preferred_username: internalUser.preferred_username ?? null,
-          picture: internalUser.picture ?? null,
-          website: internalUser.website ?? null,
-          locale: internalUser.locale ?? null,
-          zoneinfo: internalUser.zoneinfo ?? null,
-          address_formatted: addressParts.formatted ?? null,
-          address_street_address: addressParts.street_address ?? null,
-          address_locality: addressParts.locality ?? null,
-          address_region: addressParts.region ?? null,
-          address_postal_code: addressParts.postal_code ?? null,
-          address_country: addressParts.country ?? null,
-        });
-
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-      } catch (piiError) {
-        const log = getLogger(c).module('SCIM');
-        log.error('SCIM create PII insert failed', { action: 'create_user' }, piiError as Error);
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'failed');
-        throw piiError;
-      }
-    } else {
-      await authCtx.repositories.userCore.updatePIIStatus(userId, 'none');
-    }
-
     try {
+      await maybeCreateCanonicalRuntimeUser(
+        c,
+        coreAdapter,
+        piiAdapter,
+        tenantId,
+        userId,
+        internalUser
+      );
       await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
-      await maybeCreateCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
     } catch (customFieldError) {
       const log = getLogger(c).module('SCIM');
       log.error(
@@ -1697,10 +1460,7 @@ app.post('/Users', async (c) => {
       );
 
       try {
-        if (piiCtx) {
-          await piiCtx.piiRepositories.userPII.deletePII(userId);
-        }
-        await authCtx.repositories.userCore.delete(userId);
+        await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
       } catch (cleanupError) {
         log.error(
           'SCIM create rollback failed after custom claim persistence error',
@@ -1720,7 +1480,7 @@ app.post('/Users', async (c) => {
     );
 
     // Fetch created user from the configured runtime source.
-    const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+    const createdUser = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
     });
 
@@ -1757,6 +1517,15 @@ app.put('/Users/:id', async (c) => {
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
+    if (!canonicalProjectionRepository || !piiAdapter) {
+      return scimError(c, 500, 'Configured PII store is not available');
+    }
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
@@ -1765,7 +1534,7 @@ app.put('/Users/:id', async (c) => {
     }
 
     // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+    const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
 
     if (!existingUser) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -1797,7 +1566,6 @@ app.put('/Users/:id', async (c) => {
         toCustomClaimErrorExtensions(customFieldValidation)
       );
     }
-    const nowUnix = Math.floor(Date.now() / 1000);
     internalUser.updated_at = new Date().toISOString();
 
     // Hash password if changed
@@ -1805,78 +1573,14 @@ app.put('/Users/:id', async (c) => {
       internalUser.password_hash = await hashPassword(scimUser.password);
     }
 
-    // Parse address JSON if provided
-    const addressParts = parseAddressParts(internalUser.address_json);
-
-    // Update Core DB (non-PII fields)
-    await coreAdapter.execute(
-      `UPDATE users_core SET
-        is_active = ?, external_id = ?, updated_at = ?,
-        password_hash = COALESCE(?, password_hash)
-       WHERE id = ? AND tenant_id = ?`,
-      [
-        internalUser.active,
-        internalUser.external_id,
-        nowUnix,
-        internalUser.password_hash,
-        userId,
-        tenantId,
-      ]
-    );
-
-    // Update PII DB (PII fields)
-    if (piiAdapter) {
-      await piiAdapter.execute(
-        `UPDATE users_pii SET
-          email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
-          nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
-          zoneinfo = ?, locale = ?, phone_number = ?,
-          address_formatted = ?, address_street_address = ?, address_locality = ?,
-          address_region = ?, address_postal_code = ?, address_country = ?,
-          updated_at = ?
-         WHERE id = ? AND tenant_id = ?`,
-        [
-          internalUser.email,
-          internalUser.name,
-          internalUser.given_name,
-          internalUser.family_name,
-          internalUser.middle_name,
-          internalUser.nickname,
-          internalUser.preferred_username,
-          internalUser.profile,
-          internalUser.picture,
-          internalUser.website,
-          internalUser.zoneinfo,
-          internalUser.locale,
-          internalUser.phone_number,
-          addressParts.formatted || null,
-          addressParts.street_address || null,
-          addressParts.locality || null,
-          addressParts.region || null,
-          addressParts.postal_code || null,
-          addressParts.country || null,
-          nowUnix,
-          userId,
-          tenantId,
-        ]
-      );
-    }
-
     await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
-    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
+    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
 
-    const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
-      coreAdapter,
-      piiAdapter,
-      tenantId
-    );
-
     // Fetch updated user from the configured runtime source.
-    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+    const updatedUser = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
     });
 
@@ -1913,9 +1617,18 @@ app.patch('/Users/:id', async (c) => {
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
+    if (!canonicalProjectionRepository || !piiAdapter) {
+      return scimError(c, 500, 'Configured PII store is not available');
+    }
 
     // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+    const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
 
     if (!existingUser) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -1965,80 +1678,14 @@ app.patch('/Users/:id', async (c) => {
       internalUser.password_hash = await hashPassword(scimUser.password);
     }
 
-    const nowUnix = Math.floor(Date.now() / 1000);
-
-    // Parse address JSON if provided
-    const addressParts = parseAddressParts(internalUser.address_json);
-
-    // Update Core DB (non-PII fields)
-    await coreAdapter.execute(
-      `UPDATE users_core SET
-        is_active = ?, external_id = ?, updated_at = ?,
-        password_hash = COALESCE(?, password_hash)
-       WHERE id = ? AND tenant_id = ?`,
-      [
-        internalUser.active,
-        internalUser.external_id,
-        nowUnix,
-        internalUser.password_hash,
-        userId,
-        tenantId,
-      ]
-    );
-
-    // Update PII DB (PII fields)
-    if (piiAdapter) {
-      await piiAdapter.execute(
-        `UPDATE users_pii SET
-          email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
-          nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
-          zoneinfo = ?, locale = ?, phone_number = ?,
-          address_formatted = ?, address_street_address = ?, address_locality = ?,
-          address_region = ?, address_postal_code = ?, address_country = ?,
-          updated_at = ?
-         WHERE id = ? AND tenant_id = ?`,
-        [
-          internalUser.email,
-          internalUser.name,
-          internalUser.given_name,
-          internalUser.family_name,
-          internalUser.middle_name,
-          internalUser.nickname,
-          internalUser.preferred_username,
-          internalUser.profile,
-          internalUser.picture,
-          internalUser.website,
-          internalUser.zoneinfo,
-          internalUser.locale,
-          internalUser.phone_number,
-          addressParts.formatted || null,
-          addressParts.street_address || null,
-          addressParts.locality || null,
-          addressParts.region || null,
-          addressParts.postal_code || null,
-          addressParts.country || null,
-          nowUnix,
-          userId,
-          tenantId,
-        ]
-      );
-    }
-
     await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
-    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
+    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
 
-    const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
-      coreAdapter,
-      piiAdapter,
-      tenantId
-    );
-
     // Fetch updated user from the configured runtime source.
-    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+    const updatedUser = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
     });
 
@@ -2073,9 +1720,18 @@ app.delete('/Users/:id', async (c) => {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      c,
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    );
+    if (!canonicalProjectionRepository || !piiAdapter) {
+      return scimError(c, 500, 'Configured PII store is not available');
+    }
 
     // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId);
+    const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
 
     if (!existingUser) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -2111,20 +1767,9 @@ app.delete('/Users/:id', async (c) => {
         .catch(() => {
           // Ignore tombstone creation errors - not critical
         });
-
-      // Step 2: Hard delete from PII DB
-      await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-        userId,
-        tenantId,
-      ]);
     }
 
-    // Step 3: Soft delete in Core DB (set is_active = 0 and pii_status = 'deleted')
-    await coreAdapter.execute(
-      `UPDATE users_core SET is_active = 0, pii_status = 'deleted', updated_at = ? WHERE id = ? AND tenant_id = ?`,
-      [Math.floor(now / 1000), userId, tenantId]
-    );
-    await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, tenantId, userId);
+    await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
 
     // Audit log (non-blocking) - severity: warning for deletion
     logScimAudit(
@@ -2225,7 +1870,7 @@ app.get('/Groups', async (c) => {
       // Fetch members if needed (PII/Non-PII DB separation)
       const members = await fetchGroupMembersWithPII(
         coreAdapter,
-        piiAdapter,
+        createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
         group.id as string,
         tenantId
       );
@@ -2278,7 +1923,12 @@ app.get('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId, tenantId);
+    const members = await fetchGroupMembersWithPII(
+      coreAdapter,
+      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
+      groupId,
+      tenantId
+    );
 
     const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members);
 
@@ -2362,7 +2012,12 @@ app.post('/Groups', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId, tenantId);
+    const members = await fetchGroupMembersWithPII(
+      coreAdapter,
+      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
+      groupId,
+      tenantId
+    );
 
     const responseGroup = groupToScim(createdGroup, { baseUrl, includeMembers: true }, members);
 
@@ -2458,7 +2113,12 @@ app.put('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId, tenantId);
+    const members = await fetchGroupMembersWithPII(
+      coreAdapter,
+      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
+      groupId,
+      tenantId
+    );
 
     const responseGroup = groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members);
 
@@ -2514,7 +2174,7 @@ app.patch('/Groups/:id', async (c) => {
     // Fetch current members (PII/Non-PII DB separation)
     const currentMembers = await fetchGroupMembersWithPII(
       coreAdapter,
-      piiAdapter,
+      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
       groupId,
       tenantId
     );
@@ -2572,7 +2232,7 @@ app.patch('/Groups/:id', async (c) => {
     // Fetch updated members (PII/Non-PII DB separation)
     const updatedMembers = await fetchGroupMembersWithPII(
       coreAdapter,
-      piiAdapter,
+      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
       groupId,
       tenantId
     );
@@ -2957,7 +2617,8 @@ async function processOperation(
         baseUrl,
         coreAdapter,
         piiAdapter,
-        bulkIdMap
+        bulkIdMap,
+        c
       );
     }
   } catch (error) {
@@ -2996,6 +2657,25 @@ async function processUserOperation(
   bulkIdMap: Map<string, string>,
   c: Context<{ Bindings: Env }>
 ): Promise<ScimBulkOperationResponse> {
+  const canonicalProjectionRepository = createCanonicalProjectionRepository(
+    c,
+    coreAdapter,
+    piiAdapter,
+    tenantId
+  );
+  if (!canonicalProjectionRepository || !piiAdapter) {
+    return {
+      method: method as ScimBulkMethod,
+      bulkId,
+      status: '500',
+      response: {
+        schemas: [SCIM_SCHEMAS.ERROR],
+        status: '500',
+        detail: 'Configured PII store is not available',
+      },
+    };
+  }
+
   switch (method) {
     case 'POST': {
       // Create user
@@ -3018,10 +2698,17 @@ async function processUserOperation(
       // Check for duplicate email
       const primaryEmail =
         scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
-      if (primaryEmail && piiAdapter) {
+      if (primaryEmail) {
         const existing = await piiAdapter.queryOne<{ id: string }>(
-          'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-          [tenantId, primaryEmail]
+          `SELECT owner_id as id
+             FROM identity_sensitive_values
+            WHERE tenant_id = ?
+              AND owner_type = 'runtime_user'
+              AND value_key = 'email'
+              AND value_json = ?
+              AND lifecycle_state = 'active'
+            LIMIT 1`,
+          [tenantId, JSON.stringify(primaryEmail)]
         );
         if (existing) {
           return {
@@ -3057,7 +2744,6 @@ async function processUserOperation(
       }
       const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
       const now = new Date().toISOString();
-      const nowUnix = Math.floor(Date.now() / 1000);
       internalUser.created_at = now;
       internalUser.updated_at = now;
       if (!internalUser.email_verified) internalUser.email_verified = 0;
@@ -3068,91 +2754,23 @@ async function processUserOperation(
         internalUser.password_hash = await hashPassword(scimUser.password);
       }
 
-      // Parse address JSON if provided
-      const addressParts = parseAddressParts(internalUser.address_json);
-
-      // Insert into Core DB
-      await coreAdapter.execute(
-        `INSERT INTO users_core (
-          id, tenant_id, email_verified, phone_number_verified, password_hash,
-          is_active, user_type, external_id, pii_partition, pii_status,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'end_user', ?, 'default', 'pending', ?, ?)`,
-        [
-          userId,
-          tenantId,
-          internalUser.email_verified,
-          0,
-          internalUser.password_hash,
-          internalUser.active,
-          internalUser.external_id,
-          nowUnix,
-          nowUnix,
-        ]
+      await maybeCreateCanonicalRuntimeUser(
+        c,
+        coreAdapter,
+        piiAdapter,
+        tenantId,
+        userId,
+        internalUser
       );
-
-      // Insert into PII DB
-      if (piiAdapter) {
-        await piiAdapter.execute(
-          `INSERT INTO users_pii (
-            id, tenant_id, email, name, given_name, family_name, middle_name,
-            nickname, preferred_username, profile, picture, website, gender,
-            birthdate, zoneinfo, locale, phone_number,
-            address_formatted, address_street_address, address_locality,
-            address_region, address_postal_code, address_country,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            userId,
-            tenantId,
-            internalUser.email,
-            internalUser.name,
-            internalUser.given_name,
-            internalUser.family_name,
-            internalUser.middle_name,
-            internalUser.nickname,
-            internalUser.preferred_username,
-            internalUser.profile,
-            internalUser.picture,
-            internalUser.website,
-            null,
-            null,
-            internalUser.zoneinfo,
-            internalUser.locale,
-            internalUser.phone_number,
-            addressParts.formatted || null,
-            addressParts.street_address || null,
-            addressParts.locality || null,
-            addressParts.region || null,
-            addressParts.postal_code || null,
-            addressParts.country || null,
-            nowUnix,
-            nowUnix,
-          ]
-        );
-        await coreAdapter.execute(
-          'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
-          ['active', userId, tenantId]
-        );
-      }
-
       await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
-      await maybeCreateCanonicalRuntimeUser(c, coreAdapter, tenantId, userId, internalUser);
 
       // Store bulkId mapping for cross-references
       if (bulkId) {
         bulkIdMap.set(bulkId, userId);
       }
 
-      const canonicalProjectionRepository = createCanonicalProjectionRepository(
-        c,
-        coreAdapter,
-        piiAdapter,
-        tenantId
-      );
-
       // Fetch created user from the configured runtime source.
-      const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId, tenantId, {
+      const createdUser = await fetchUserWithPII(userId, {
         canonicalProjectionRepository,
       });
       const responseUser = createdUser
@@ -3171,7 +2789,7 @@ async function processUserOperation(
 
     case 'PUT': {
       // Replace user
-      const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId);
+      const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
       if (!existingUser) {
         return {
           method: 'PUT',
@@ -3235,81 +2853,25 @@ async function processUserOperation(
           },
         };
       }
-      const nowUnix = Math.floor(Date.now() / 1000);
       internalUser.updated_at = new Date().toISOString();
 
       if (scimUser.password) {
         internalUser.password_hash = await hashPassword(scimUser.password);
       }
 
-      const addressParts = parseAddressParts(internalUser.address_json);
-
-      // Update Core DB
-      await coreAdapter.execute(
-        `UPDATE users_core SET
-          is_active = ?, external_id = ?, updated_at = ?,
-          password_hash = COALESCE(?, password_hash)
-         WHERE id = ? AND tenant_id = ?`,
-        [
-          internalUser.active,
-          internalUser.external_id,
-          nowUnix,
-          internalUser.password_hash,
-          resourceId,
-          tenantId,
-        ]
-      );
-
-      // Update PII DB
-      if (piiAdapter) {
-        await piiAdapter.execute(
-          `UPDATE users_pii SET
-            email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
-            nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
-            zoneinfo = ?, locale = ?, phone_number = ?,
-            address_formatted = ?, address_street_address = ?, address_locality = ?,
-            address_region = ?, address_postal_code = ?, address_country = ?,
-            updated_at = ?
-           WHERE id = ? AND tenant_id = ?`,
-          [
-            internalUser.email,
-            internalUser.name,
-            internalUser.given_name,
-            internalUser.family_name,
-            internalUser.middle_name,
-            internalUser.nickname,
-            internalUser.preferred_username,
-            internalUser.profile,
-            internalUser.picture,
-            internalUser.website,
-            internalUser.zoneinfo,
-            internalUser.locale,
-            internalUser.phone_number,
-            addressParts.formatted || null,
-            addressParts.street_address || null,
-            addressParts.locality || null,
-            addressParts.region || null,
-            addressParts.postal_code || null,
-            addressParts.country || null,
-            nowUnix,
-            resourceId,
-            tenantId,
-          ]
-        );
-      }
-
       await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
-      await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, resourceId!, internalUser);
-
-      await invalidateUserCache(c.env, tenantId, resourceId!);
-
-      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      await maybeSyncCanonicalRuntimeUser(
         c,
         coreAdapter,
         piiAdapter,
-        tenantId
+        tenantId,
+        resourceId!,
+        internalUser
       );
-      const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId, {
+
+      await invalidateUserCache(c.env, tenantId, resourceId!);
+
+      const updatedUser = await fetchUserWithPII(resourceId!, {
         canonicalProjectionRepository,
       });
       const responseUser = updatedUser
@@ -3327,7 +2889,7 @@ async function processUserOperation(
 
     case 'PATCH': {
       // Partial update user
-      const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId);
+      const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
       if (!existingUser) {
         return {
           method: 'PATCH',
@@ -3393,81 +2955,25 @@ async function processUserOperation(
           },
         };
       }
-      const nowUnix = Math.floor(Date.now() / 1000);
       internalUser.updated_at = new Date().toISOString();
 
       if (scimUser.password) {
         internalUser.password_hash = await hashPassword(scimUser.password);
       }
 
-      const addressParts = parseAddressParts(internalUser.address_json);
-
-      // Update Core DB
-      await coreAdapter.execute(
-        `UPDATE users_core SET
-          is_active = ?, external_id = ?, updated_at = ?,
-          password_hash = COALESCE(?, password_hash)
-         WHERE id = ? AND tenant_id = ?`,
-        [
-          internalUser.active,
-          internalUser.external_id,
-          nowUnix,
-          internalUser.password_hash,
-          resourceId,
-          tenantId,
-        ]
-      );
-
-      // Update PII DB
-      if (piiAdapter) {
-        await piiAdapter.execute(
-          `UPDATE users_pii SET
-            email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
-            nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
-            zoneinfo = ?, locale = ?, phone_number = ?,
-            address_formatted = ?, address_street_address = ?, address_locality = ?,
-            address_region = ?, address_postal_code = ?, address_country = ?,
-            updated_at = ?
-           WHERE id = ? AND tenant_id = ?`,
-          [
-            internalUser.email,
-            internalUser.name,
-            internalUser.given_name,
-            internalUser.family_name,
-            internalUser.middle_name,
-            internalUser.nickname,
-            internalUser.preferred_username,
-            internalUser.profile,
-            internalUser.picture,
-            internalUser.website,
-            internalUser.zoneinfo,
-            internalUser.locale,
-            internalUser.phone_number,
-            addressParts.formatted || null,
-            addressParts.street_address || null,
-            addressParts.locality || null,
-            addressParts.region || null,
-            addressParts.postal_code || null,
-            addressParts.country || null,
-            nowUnix,
-            resourceId,
-            tenantId,
-          ]
-        );
-      }
-
       await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
-      await maybeSyncCanonicalRuntimeUser(c, coreAdapter, tenantId, resourceId!, internalUser);
-
-      await invalidateUserCache(c.env, tenantId, resourceId!);
-
-      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+      await maybeSyncCanonicalRuntimeUser(
         c,
         coreAdapter,
         piiAdapter,
-        tenantId
+        tenantId,
+        resourceId!,
+        internalUser
       );
-      const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId, {
+
+      await invalidateUserCache(c.env, tenantId, resourceId!);
+
+      const updatedUser = await fetchUserWithPII(resourceId!, {
         canonicalProjectionRepository,
       });
       const responseUser = updatedUser
@@ -3485,7 +2991,7 @@ async function processUserOperation(
 
     case 'DELETE': {
       // Delete user
-      const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, resourceId!, tenantId);
+      const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
       if (!existingUser) {
         return {
           method: 'DELETE',
@@ -3515,22 +3021,7 @@ async function processUserOperation(
         }
       }
 
-      const now = Date.now();
-
-      // Hard delete from PII DB
-      if (piiAdapter) {
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-          resourceId,
-          tenantId,
-        ]);
-      }
-
-      // Soft delete in Core DB
-      await coreAdapter.execute(
-        `UPDATE users_core SET is_active = 0, pii_status = 'deleted', updated_at = ? WHERE id = ? AND tenant_id = ?`,
-        [Math.floor(now / 1000), resourceId, tenantId]
-      );
-      await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, tenantId, resourceId!);
+      await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, resourceId!);
 
       return {
         method: 'DELETE',
@@ -3564,8 +3055,28 @@ async function processGroupOperation(
   baseUrl: string,
   coreAdapter: DatabaseAdapter,
   piiAdapter: DatabaseAdapter | null,
-  bulkIdMap: Map<string, string>
+  bulkIdMap: Map<string, string>,
+  c: Context<{ Bindings: Env }>
 ): Promise<ScimBulkOperationResponse> {
+  const canonicalProjectionRepository = createCanonicalProjectionRepository(
+    c,
+    coreAdapter,
+    piiAdapter,
+    tenantId
+  );
+  if (!canonicalProjectionRepository) {
+    return {
+      method: method as ScimBulkMethod,
+      bulkId,
+      status: '500',
+      response: {
+        schemas: [SCIM_SCHEMAS.ERROR],
+        status: '500',
+        detail: 'Configured PII store is not available',
+      },
+    };
+  }
+
   switch (method) {
     case 'POST': {
       // Create group
@@ -3639,7 +3150,12 @@ async function processGroupOperation(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
         [groupId, tenantId]
       );
-      const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId, tenantId);
+      const members = await fetchGroupMembersWithPII(
+        coreAdapter,
+        canonicalProjectionRepository,
+        groupId,
+        tenantId
+      );
       const responseGroup = createdGroup
         ? groupToScim(createdGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -3738,7 +3254,7 @@ async function processGroupOperation(
       );
       const members = await fetchGroupMembersWithPII(
         coreAdapter,
-        piiAdapter,
+        canonicalProjectionRepository,
         resourceId!,
         tenantId
       );
@@ -3791,7 +3307,7 @@ async function processGroupOperation(
 
       const currentMembers = await fetchGroupMembersWithPII(
         coreAdapter,
-        piiAdapter,
+        canonicalProjectionRepository,
         resourceId!,
         tenantId
       );
@@ -3851,7 +3367,7 @@ async function processGroupOperation(
       );
       const members = await fetchGroupMembersWithPII(
         coreAdapter,
-        piiAdapter,
+        canonicalProjectionRepository,
         resourceId!,
         tenantId
       );

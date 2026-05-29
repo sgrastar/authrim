@@ -19,8 +19,9 @@ import {
   getSessionStoreBySessionId,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
+  createAuthContextFromHono,
   createPIIContextFromHono,
-  hasPIIDatabase,
+  CanonicalRuntimeUserStore,
   getTenantIdFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
@@ -315,23 +316,27 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Fetch user email from PII database if available via Repository
+    // Fetch user email from the canonical runtime user store.
     let userEmail: string | undefined;
     let userName: string | undefined;
 
-    if (hasPIIDatabase(c)) {
-      try {
-        const tenantId = getTenantIdFromContext(c);
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        const userPII = await piiCtx.piiRepositories.userPII.findById(session.userId);
+    try {
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const runtimeUsers = new CanonicalRuntimeUserStore({
+        coreAdapter: authCtx.coreAdapter,
+        piiAdapter: piiCtx.defaultPiiAdapter,
+        tenantId,
+      });
+      const user = await runtimeUsers.findById(session.userId);
 
-        if (userPII) {
-          userEmail = userPII.email;
-          userName = userPII.name ?? undefined;
-        }
-      } catch (error) {
-        log.warn('Failed to fetch user PII for session status', { action: 'fetch_user_pii' });
+      if (user) {
+        userEmail = user.email ?? undefined;
+        userName = user.name ?? undefined;
       }
+    } catch (error) {
+      log.warn('Failed to fetch user profile for session status', { action: 'fetch_user_profile' });
     }
 
     return c.json({

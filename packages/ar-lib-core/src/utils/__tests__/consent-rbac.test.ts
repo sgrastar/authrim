@@ -51,6 +51,106 @@ function createMockDB(queryResults: Record<string, unknown>) {
         }
       } else if (sql.includes('FROM relationships')) {
         result = queryResults['relationship'] ?? null;
+      } else if (sql.includes('FROM identity_accounts')) {
+        const user = (queryResults['userCore'] ?? queryResults['user']) as
+          | { id: string; name?: string | null }
+          | undefined;
+        result = user
+          ? {
+              id: `account:${user.id}`,
+              tenant_id: 'default',
+              account_type: 'user',
+              lifecycle_state: 'active',
+              legacy_user_id: user.id,
+              primary_subject_id: `subject:${user.id}`,
+              display_label: user.name ?? null,
+              metadata_json: null,
+              created_at: 1,
+              updated_at: 1,
+              deleted_at: null,
+            }
+          : null;
+      } else if (sql.includes('FROM identity_subjects')) {
+        const user = (queryResults['userCore'] ?? queryResults['user']) as
+          | { id: string; name?: string | null }
+          | undefined;
+        result = user
+          ? {
+              id: `subject:${user.id}`,
+              tenant_id: 'default',
+              subject_type: 'person',
+              lifecycle_state: 'active',
+              display_label: user.name ?? null,
+              created_at: 1,
+              updated_at: 1,
+              deleted_at: null,
+            }
+          : null;
+      } else if (sql.includes('FROM profiles')) {
+        const user = (queryResults['userCore'] ?? queryResults['user']) as
+          | { id: string }
+          | undefined;
+        result = user
+          ? {
+              id: `profile:${user.id}`,
+              tenant_id: 'default',
+              subject_id: `subject:${user.id}`,
+              profile_type: 'default',
+              lifecycle_state: 'active',
+              locale: null,
+              zoneinfo: null,
+              created_at: 1,
+              updated_at: 1,
+              deleted_at: null,
+            }
+          : null;
+      } else if (sql.includes('FROM profile_attribute_values')) {
+        const subject = String((queryResults['userCore'] as { id?: string } | undefined)?.id ?? (queryResults['user'] as { id?: string } | undefined)?.id ?? 'user-123');
+        result = {
+          results: ['name', 'picture'].map((field) => ({
+            id: `attr:${subject}:${field}`,
+            tenant_id: 'default',
+            profile_id: `profile:${subject}`,
+            catalog_entry_id: `field.canonical.${field}`,
+            value_type: 'reference',
+            value_json: null,
+            value_storage_ref: `canonical-sensitive://default/${subject}/${field}`,
+            classification: 'sensitive',
+            purpose: 'profile',
+            is_primary: 0,
+            display_order: field === 'name' ? 0 : 1,
+            lifecycle_state: 'active',
+            created_at: 1,
+            updated_at: 1,
+            deleted_at: null,
+          })),
+        };
+      } else if (sql.includes('FROM contact_points')) {
+        const user = (queryResults['userCore'] ?? queryResults['user']) as
+          | { id: string; email?: string; picture?: string | null }
+          | undefined;
+        result = user
+          ? {
+              results: [
+                {
+                  id: `contact:${user.id}:email`,
+                  tenant_id: 'default',
+                  subject_id: `subject:${user.id}`,
+                  account_id: `account:${user.id}`,
+                  contact_type: 'email',
+                  purpose: 'primary',
+                  normalized_hash: 'email',
+                  value_storage_ref: `canonical-sensitive://default/${user.id}/email`,
+                  is_primary: 1,
+                  verification_state: 'verified',
+                  lifecycle_state: 'active',
+                  created_at: 1,
+                  updated_at: 1,
+                  deleted_at: null,
+                },
+              ],
+            }
+          : { results: [] };
       } else if (sql.includes('FROM users_core WHERE id')) {
         // PII/Non-PII separation: users_core returns { id } only
         result =
@@ -80,6 +180,7 @@ function createMockPIIDB(queryResults: Record<string, unknown>) {
   return {
     prepare: vi.fn((sql: string) => {
       let result: unknown = null;
+      let boundParams: unknown[] = [];
 
       if (sql.includes('FROM users_pii WHERE id')) {
         // users_pii returns { email, name, picture }
@@ -92,10 +193,35 @@ function createMockPIIDB(queryResults: Record<string, unknown>) {
             picture: user.picture,
           };
         }
+      } else if (sql.includes('FROM identity_sensitive_values')) {
+        const piiData = queryResults['userPII'] ?? queryResults['user'];
+        const user = piiData as
+          | { email?: string; name?: string | null; picture?: string | null }
+          | undefined;
+        const key = String(boundParams[2] ?? 'email') as 'email' | 'name' | 'picture';
+        const value = user?.[key];
+        result = value === undefined ? null : { value_json: JSON.stringify(value) };
       }
 
       return {
-        bind: vi.fn().mockReturnThis(),
+        bind: vi.fn((...params: unknown[]) => {
+          boundParams = params;
+          return {
+            first: vi.fn().mockImplementation(async () => {
+              if (sql.includes('FROM identity_sensitive_values')) {
+                const piiData = queryResults['userPII'] ?? queryResults['user'];
+                const user = piiData as
+                  | { email?: string; name?: string | null; picture?: string | null }
+                  | undefined;
+                const key = String(boundParams[2] ?? 'email') as 'email' | 'name' | 'picture';
+                const value = user?.[key];
+                return value === undefined ? null : { value_json: JSON.stringify(value) };
+              }
+              return result;
+            }),
+            all: vi.fn().mockResolvedValue(result),
+          };
+        }),
         first: vi.fn().mockResolvedValue(result),
         all: vi.fn().mockResolvedValue(result),
       };

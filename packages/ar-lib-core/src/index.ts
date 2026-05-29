@@ -422,6 +422,11 @@ export * from './db';
 
 // Repositories (PII/Non-PII separation)
 export * from './repositories';
+export {
+  CanonicalRuntimeUserStore,
+  type CanonicalRuntimeUserCreateInput,
+  type CanonicalRuntimeUserStoreOptions,
+} from './repositories/identity';
 
 // Context (PII/Non-PII separation)
 export * from './context';

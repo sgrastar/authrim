@@ -3570,13 +3570,13 @@ async function configureRequiredHyperdriveReferences(
     await ensureHyperdriveReference(config, {
       refKey: 'core-primary',
       driver: 'postgres',
-      label: 'Storage users_core/custom_claims/registration_fields',
+      label: 'Storage identity core/custom claims/registration fields',
       suggestedBinding: 'HYPERDRIVE_CORE_PRIMARY',
     });
     await ensureHyperdriveReference(config, {
       refKey: 'pii-primary',
       driver: 'postgres',
-      label: 'Storage users_pii/custom_pii',
+      label: 'Storage identity PII/custom PII',
       suggestedBinding: 'HYPERDRIVE_PII_PRIMARY',
     });
   }

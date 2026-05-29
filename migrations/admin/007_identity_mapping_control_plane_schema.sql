@@ -666,9 +666,8 @@ CREATE TABLE IF NOT EXISTS federation_trust_chains (
   updated_at INTEGER NOT NULL
 );
 
--- UIM-SCH-076 saml_federation_trust_profiles migration
-ALTER TABLE saml_federation_trust_profiles ADD COLUMN federation_trust_source_id TEXT;
-ALTER TABLE saml_federation_trust_profiles ADD COLUMN normalized_migration_state TEXT DEFAULT 'pending';
+-- UIM-SCH-076 legacy SAML federation trust profile storage is intentionally removed.
+-- Normalized federation_trust_sources are the canonical trust profile source of truth.
 
 -- UIM-SCH-077 federation_metadata_refresh_jobs
 CREATE TABLE IF NOT EXISTS federation_metadata_refresh_jobs (

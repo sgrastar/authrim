@@ -21,11 +21,23 @@
 import type { Context } from 'hono';
 import {
   createAuthContextFromHono,
+  createPIIContextFromHono,
+  CanonicalRuntimeUserStore,
   getTenantIdFromContext,
   isAnonymousAuthEnabled,
   getLogger,
   type Env,
 } from '@authrim/ar-lib-core';
+
+function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string) {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+}
 
 // ============================================================================
 // Configuration API
@@ -293,10 +305,11 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get user core data
-    const user = await authCtx.repositories.userCore.findById(userId);
+    const user = await createRuntimeUserStore(c, tenantId).findById(userId, {
+      includeInactive: true,
+    });
 
-    if (!user || user.tenant_id !== tenantId) {
+    if (!user) {
       return c.json(
         {
           error: 'not_found',
@@ -306,7 +319,7 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (user.user_type !== 'anonymous') {
+    if (user.account_type !== 'anonymous') {
       return c.json(
         {
           error: 'invalid_request',
@@ -353,8 +366,8 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
 
     return c.json({
       user_id: userId,
-      user_type: user.user_type,
-      created_at: user.created_at,
+      user_type: 'anonymous',
+      created_at: Date.parse(user.created_at),
       last_login_at: user.last_login_at,
       devices: devices.map((d) => ({
         id: d.id,
@@ -474,9 +487,10 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
     }
 
     // Verify user exists and is anonymous
-    const user = await authCtx.repositories.userCore.findById(userId);
+    const runtimeUsers = createRuntimeUserStore(c, tenantId);
+    const user = await runtimeUsers.findById(userId, { includeInactive: true });
 
-    if (!user || user.tenant_id !== tenantId) {
+    if (!user) {
       return c.json(
         {
           error: 'not_found',
@@ -486,7 +500,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (user.user_type !== 'anonymous') {
+    if (user.account_type !== 'anonymous') {
       return c.json(
         {
           error: 'invalid_request',
@@ -503,7 +517,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
     );
 
     // Delete user (upgrade history preserved for audit)
-    await authCtx.repositories.userCore.delete(userId);
+    await runtimeUsers.deleteUser(userId);
 
     return c.json({
       success: true,
@@ -557,9 +571,9 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
     }>(
       `SELECT ad.user_id, ad.id as device_id, ad.expires_at
        FROM anonymous_devices ad
-       INNER JOIN users_core uc ON ad.user_id = uc.id
+       INNER JOIN identity_accounts uc ON ad.user_id = uc.legacy_user_id
        WHERE ad.tenant_id = ? AND ad.is_active = 1 AND ad.expires_at IS NOT NULL AND ad.expires_at < ?
-         AND uc.user_type = 'anonymous'
+         AND uc.account_type = 'anonymous'
        ORDER BY ad.expires_at ASC
        LIMIT ?`,
       [tenantId, now, limit]
@@ -601,7 +615,7 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
           'DELETE FROM anonymous_devices WHERE tenant_id = ? AND user_id = ?',
           [tenantId, userId]
         );
-        await authCtx.repositories.userCore.delete(userId);
+        await createRuntimeUserStore(c, tenantId).deleteUser(userId);
         deletedUsers++;
         deletedDevices += expiredDevices.filter((d) => d.user_id === userId).length;
       } else {

@@ -967,42 +967,7 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     expect(adapter.executes).toHaveLength(0);
   });
 
-  it('migrates organization domain mapping to group assignment without making org the source of truth', async () => {
-    const adapter = createAdapter({
-      queryOneRows: [
-        {
-          id: 'mapping-1',
-          domain_hash: 'blind-domain-hash',
-          org_id: 'legacy-org-1',
-        },
-        {
-          id: 'group-1',
-          group_key: 'example-edu',
-          display_name: 'Example EDU',
-        },
-      ],
-    });
-    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
-
-    const migration = await repository.migrateOrgDomainMappingToGroup('tenant_a', 'mapping-1', {
-      groupKey: 'example-edu',
-      displayName: 'Example EDU',
-    });
-
-    expect(migration).toMatchObject({
-      mappingId: 'mapping-1',
-      groupId: 'group-1',
-      migrationState: 'migrated',
-    });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO "groups"'),
-      expect.stringContaining('INSERT INTO provisioning_assignment_rules'),
-      expect.stringContaining('UPDATE org_domain_mappings'),
-    ]);
-    expect(String(adapter.executes[1].params[7])).toContain('blind-domain-hash');
-  });
-
-  it('creates migrated org-domain rules that can match later source contexts by domain hash', async () => {
+  it('creates domain group rules that can match later source contexts by domain hash', async () => {
     const adapter = createAdapter({
       queryOneRows: [
         {
@@ -1541,90 +1506,6 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
     ).rejects.toMatchObject({
       status: 400,
       code: 'invalid_request',
-    });
-    expect(adapter.executes).toHaveLength(0);
-  });
-
-  it('migrates legacy SAML federation trust profiles into normalized trust context', async () => {
-    const adapter = createAdapter({
-      queryOneRows: [
-        {
-          id: 'legacy-profile-1',
-          tenant_id: 'tenant_a',
-          name: 'Legacy Federation',
-          description: 'legacy trust profile',
-          metadata_url_patterns_json: JSON.stringify(['https://metadata.example.test/*.xml']),
-          certificates_json: JSON.stringify([
-            {
-              id: 'cert-1',
-              name: 'Signing CA',
-              certificate: '-----BEGIN CERTIFICATE-----public-----END CERTIFICATE-----',
-              fingerprintSha256: 'sha256:cert-1',
-              createdAt: 900,
-            },
-          ]),
-          policy: 'strict',
-          enabled: 1,
-          federation_trust_source_id: null,
-          normalized_migration_state: 'pending',
-          created_at: 900,
-          updated_at: 900,
-        },
-      ],
-    });
-    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
-
-    await expect(
-      repository.migrateSamlFederationTrustProfile('tenant_a', {
-        profileId: 'legacy-profile-1',
-      })
-    ).resolves.toMatchObject({
-      profileId: 'legacy-profile-1',
-      migrationState: 'migrated',
-      snapshotHash: expect.any(String),
-    });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO federation_trust_sources'),
-      expect.stringContaining('INSERT INTO federation_trust_anchors'),
-      expect.stringContaining('INSERT INTO federation_trust_context_snapshots'),
-      expect.stringContaining('INSERT INTO federation_trust_scope_bindings'),
-      expect.stringContaining('UPDATE saml_federation_trust_profiles'),
-      expect.stringContaining('INSERT INTO federation_metadata_validation_events'),
-    ]);
-    expect(adapter.executes[1].params[4]).toBe('sha256:cert-1');
-    expect(String(adapter.executes[2].params[4])).toContain('legacyProfileId');
-  });
-
-  it('returns migrated legacy SAML trust profile migrations idempotently', async () => {
-    const adapter = createAdapter({
-      queryOneRows: [
-        {
-          id: 'legacy-profile-1',
-          tenant_id: 'tenant_a',
-          name: 'Legacy Federation',
-          description: null,
-          metadata_url_patterns_json: '[]',
-          certificates_json: '[]',
-          policy: 'warn',
-          enabled: 1,
-          federation_trust_source_id: 'trust-source-1',
-          normalized_migration_state: 'migrated',
-          created_at: 900,
-          updated_at: 900,
-        },
-      ],
-    });
-    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
-
-    await expect(
-      repository.migrateSamlFederationTrustProfile('tenant_a', {
-        profileId: 'legacy-profile-1',
-      })
-    ).resolves.toMatchObject({
-      profileId: 'legacy-profile-1',
-      trustSourceId: 'trust-source-1',
-      migrationState: 'migrated',
-      idempotent: true,
     });
     expect(adapter.executes).toHaveLength(0);
   });

@@ -25,6 +25,7 @@ import {
   AR_ERROR_CODES,
   generateId,
   createAuditLogFromContext,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -80,6 +81,53 @@ function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   return { coreAdapter, piiAdapter };
 }
 
+function createRuntimeUserStore(
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null,
+  tenantId: string
+): CanonicalRuntimeUserStore | null {
+  if (!piiAdapter) {
+    return null;
+  }
+  return new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId });
+}
+
+async function fetchRuntimeUserContactMap(
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null,
+  tenantId: string,
+  userIds: string[]
+): Promise<Map<string, { email: string | null; name: string | null }>> {
+  const map = new Map<string, { email: string | null; name: string | null }>();
+  const runtimeUsers = createRuntimeUserStore(coreAdapter, piiAdapter, tenantId);
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (!runtimeUsers || uniqueIds.length === 0) {
+    return map;
+  }
+  await Promise.all(
+    uniqueIds.map(async (id) => {
+      const user = await runtimeUsers.findById(id, { includeInactive: true });
+      if (user) {
+        map.set(id, { email: user.email, name: user.name });
+      }
+    })
+  );
+  return map;
+}
+
+async function runtimeUserExists(
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  const runtimeUsers = createRuntimeUserStore(coreAdapter, piiAdapter, tenantId);
+  if (!runtimeUsers) {
+    return false;
+  }
+  return (await runtimeUsers.findById(userId)) !== null;
+}
+
 // =============================================================================
 // Organization Management
 // =============================================================================
@@ -90,7 +138,7 @@ function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
  */
 export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const page = parseInt(c.req.query('page') || '1');
     const limit = parseInt(c.req.query('limit') || '20');
@@ -188,7 +236,7 @@ export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }
  */
 export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
 
@@ -245,7 +293,7 @@ export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>)
  */
 export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const body = await c.req.json<{
       name: string;
@@ -346,7 +394,7 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
  */
 export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const body = await c.req.json<{
@@ -478,7 +526,7 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
  */
 export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
 
@@ -572,27 +620,12 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
     const totalPages = Math.ceil(total / limit);
 
     // Fetch PII for member users from PII DB
-    const memberUserIds = [...new Set(members.map((m) => m.subject_id as string))];
-    const memberPIIMap = new Map<string, { email: string | null; name: string | null }>();
-
-    if (piiAdapter && memberUserIds.length > 0) {
-      const placeholders = memberUserIds.map(() => '?').join(',');
-      const piiResult = await piiAdapter.query<{
-        id: string;
-        email: string | null;
-        name: string | null;
-      }>(`SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`, [
-        tenantId,
-        ...memberUserIds,
-      ]);
-
-      for (const pii of piiResult) {
-        memberPIIMap.set(pii.id, {
-          email: pii.email || null,
-          name: pii.name || null,
-        });
-      }
-    }
+    const memberPIIMap = await fetchRuntimeUserContactMap(
+      coreAdapter,
+      piiAdapter,
+      tenantId,
+      members.map((m) => m.subject_id as string)
+    );
 
     const formattedMembers = members.map((m: Record<string, unknown>) => {
       const pii = memberPIIMap.get(m.subject_id as string);
@@ -641,7 +674,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
  */
 export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const body = await c.req.json<{
@@ -707,13 +740,7 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
       );
     }
 
-    // Check if user exists
-    const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
-      [subject_id, tenantId]
-    );
-
-    if (!user) {
+    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, subject_id))) {
       return c.json(
         {
           error: 'not_found',
@@ -797,7 +824,7 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
  */
 export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const subjectId = c.req.param('subjectId')!;
@@ -855,7 +882,7 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
  */
 export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const roles = await coreAdapter.query<Record<string, unknown>>(
       `SELECT id, tenant_id, name, display_name, description, permissions_json,
@@ -994,17 +1021,11 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
 
-    // Check if user exists
-    const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
-
-    if (!user) {
+    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json(
         {
           error: 'not_found',
@@ -1067,7 +1088,9 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRoleAssignHandler(c: AdminContext) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(
+      c as unknown as Context<{ Bindings: Env }>
+    );
     const tenantId = getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
     const userId = c.req.param('id')!;
     const adminAuth = getAdminAuth(c);
@@ -1091,13 +1114,7 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
       );
     }
 
-    // Check if user exists
-    const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
-
-    if (!user) {
+    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json(
         {
           error: 'not_found',
@@ -1291,13 +1308,7 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     const userId = c.req.param('id')!;
     const direction = c.req.query('direction'); // 'outgoing', 'incoming', or undefined for both
 
-    // Check if user exists in Core DB
-    const userCore = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-      [userId, tenantId]
-    );
-
-    if (!userCore) {
+    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json(
         {
           error: 'not_found',
@@ -1328,26 +1339,12 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
       const relatedUserIds = [
         ...new Set(outgoingResult.map((r) => r.related_subject_id as string)),
       ];
-      const relatedUserPIIMap = new Map<string, { email: string | null; name: string | null }>();
-
-      if (piiAdapter && relatedUserIds.length > 0) {
-        const placeholders = relatedUserIds.map(() => '?').join(',');
-        const piiResult = await piiAdapter.query<{
-          id: string;
-          email: string | null;
-          name: string | null;
-        }>(
-          `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-          [tenantId, ...relatedUserIds]
-        );
-
-        for (const pii of piiResult) {
-          relatedUserPIIMap.set(pii.id, {
-            email: pii.email || null,
-            name: pii.name || null,
-          });
-        }
-      }
+      const relatedUserPIIMap = await fetchRuntimeUserContactMap(
+        coreAdapter,
+        piiAdapter,
+        tenantId,
+        relatedUserIds
+      );
 
       for (const rel of outgoingResult) {
         const pii = relatedUserPIIMap.get(rel.related_subject_id as string);
@@ -1377,27 +1374,12 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
       );
 
       // Fetch PII for subject users from PII DB
-      const subjectUserIds = [...new Set(incomingResult.map((r) => r.subject_id as string))];
-      const subjectUserPIIMap = new Map<string, { email: string | null; name: string | null }>();
-
-      if (piiAdapter && subjectUserIds.length > 0) {
-        const placeholders = subjectUserIds.map(() => '?').join(',');
-        const piiResult = await piiAdapter.query<{
-          id: string;
-          email: string | null;
-          name: string | null;
-        }>(
-          `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-          [tenantId, ...subjectUserIds]
-        );
-
-        for (const pii of piiResult) {
-          subjectUserPIIMap.set(pii.id, {
-            email: pii.email || null,
-            name: pii.name || null,
-          });
-        }
-      }
+      const subjectUserPIIMap = await fetchRuntimeUserContactMap(
+        coreAdapter,
+        piiAdapter,
+        tenantId,
+        incomingResult.map((r) => r.subject_id as string)
+      );
 
       for (const rel of incomingResult) {
         const pii = subjectUserPIIMap.get(rel.subject_id as string);
@@ -1441,7 +1423,7 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
  */
 export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const body = await c.req.json<{
@@ -1484,13 +1466,7 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
       );
     }
 
-    // Check if both users exist
-    const subject = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
-
-    if (!subject) {
+    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json(
         {
           error: 'not_found',
@@ -1500,12 +1476,7 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
       );
     }
 
-    const relatedSubject = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
-      [related_subject_id, tenantId]
-    );
-
-    if (!relatedSubject) {
+    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, related_subject_id))) {
       return c.json(
         {
           error: 'not_found',
@@ -1599,7 +1570,7 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
  */
 export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const relationshipId = c.req.param('relationshipId')!;
@@ -1838,7 +1809,7 @@ interface EffectivePermission {
  */
 export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
 
@@ -1846,13 +1817,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
       return c.json({ error: 'invalid_request', error_description: 'User ID is required' }, 400);
     }
 
-    // Check if user exists (email is in PII DB, not needed for this check)
-    const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
-
-    if (!user) {
+    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json({ error: 'not_found', error_description: 'User not found' }, 404);
     }
 
@@ -2046,31 +2011,15 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
       [roleId, tenantId, now, limit, offset]
     );
 
-    // Fetch PII for users from PII DB
-    const userIds = [...new Set(assignments.map((a) => a.subject_id as string))];
-    const userPIIMap = new Map<string, { email: string | null; name: string | null }>();
-
-    if (piiAdapter && userIds.length > 0) {
-      const placeholders = userIds.map(() => '?').join(',');
-      const piiResult = await piiAdapter.query<{
-        id: string;
-        email: string | null;
-        name: string | null;
-      }>(`SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`, [
-        tenantId,
-        ...userIds,
-      ]);
-
-      for (const pii of piiResult) {
-        userPIIMap.set(pii.id, {
-          email: pii.email || null,
-          name: pii.name || null,
-        });
-      }
-    }
+    const userContactMap = await fetchRuntimeUserContactMap(
+      coreAdapter,
+      piiAdapter,
+      tenantId,
+      assignments.map((a) => a.subject_id as string)
+    );
 
     const formattedAssignments = assignments.map((a: Record<string, unknown>) => {
-      const pii = userPIIMap.get(a.subject_id as string);
+      const pii = userContactMap.get(a.subject_id as string);
       return {
         assignment_id: a.id,
         user_id: a.subject_id,

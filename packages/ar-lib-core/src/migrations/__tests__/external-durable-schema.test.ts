@@ -37,6 +37,17 @@ function extractCreateTableBlock(sql: string, tableName: string): string {
 }
 
 const coreTables = [
+  'identity_subjects',
+  'identity_accounts',
+  'subject_account_links',
+  'profiles',
+  'profile_attribute_values',
+  'structured_attribute_values',
+  'contact_points',
+  'contact_verifications',
+  'identity_bindings',
+  'identity_resolution_events',
+  'identity_resolution_candidates',
   'users_core',
   'passkeys',
   'roles',
@@ -52,6 +63,7 @@ const coreTables = [
 
 const piiTables = [
   'users_pii',
+  'identity_sensitive_values',
   'subject_identifiers',
   'linked_identities',
   'audit_log_pii',

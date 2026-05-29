@@ -183,8 +183,8 @@ async function queryCount(
 /**
  * Collects capacity stats from the tenant core database.
  *
- * `accountCount` intentionally counts every `users_core` row for the tenant. Purged users should
- * no longer have a core row, while soft-deleted or PII-deleted accounts still consume tenant DB
+ * `accountCount` intentionally counts every canonical account row for the tenant. Purged users
+ * should no longer have an account row, while soft-deleted accounts still consume tenant DB
  * capacity and must remain part of D1-size warning thresholds.
  */
 export async function collectTenantCoreDatabaseStats(
@@ -195,26 +195,22 @@ export async function collectTenantCoreDatabaseStats(
   const checkedAt = options.checkedAt ?? new Date().toISOString();
   const accountCount = await queryCount(
     adapter,
-    'SELECT COUNT(*) AS count FROM users_core WHERE tenant_id = ?',
+    'SELECT COUNT(*) AS count FROM identity_accounts WHERE tenant_id = ?',
     [tenantId]
   );
   const activeUserCount = await queryCount(
     adapter,
     `SELECT COUNT(*) AS count
-       FROM users_core
+       FROM identity_accounts
       WHERE tenant_id = ?
-        AND is_active = 1
-        AND status = 'active'
         AND lifecycle_state = 'active'`,
     [tenantId]
   );
   const activePendingUserCount = await queryCount(
     adapter,
     `SELECT COUNT(*) AS count
-       FROM users_core
+       FROM identity_accounts
       WHERE tenant_id = ?
-        AND is_active = 1
-        AND status = 'active'
         AND lifecycle_state IN (${ACTIVE_PENDING_LIFECYCLE_STATES.map(() => '?').join(', ')})`,
     [tenantId, ...ACTIVE_PENDING_LIFECYCLE_STATES]
   );
@@ -225,7 +221,7 @@ export async function collectTenantCoreDatabaseStats(
     activeUserCount,
     activePendingUserCount,
     rowCountEstimates: {
-      users_core: accountCount,
+      identity_accounts: accountCount,
     },
     checkedAt,
   };

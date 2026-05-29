@@ -2,27 +2,24 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type {
   Env,
-  CachedUser,
   IntrospectionResponse,
   DelegatedWriteAudit,
-  UpdateUserPIIInput,
 } from '@authrim/ar-lib-core';
 import {
   buildRequestIssuerUrl,
   consumeStepUpReceipt,
   createDelegatedWriteEnvelopeErrorResponse,
+  createAuthContextFromHono,
   createDownstreamGrantProtectedResourceMiddleware,
   createDownstreamGrantServiceAuthorizer,
   createPIIContextFromHono,
   createStepUpErrorResponse,
   createStepUpOperationHash,
-  getCachedUser,
   getDownstreamGrantProtectedResourceContext,
   getDownstreamGrantRedactionLevel,
   getPublicKeyByKid,
   getProductProtectedResourceDefinition,
   introspectTokenFromContext,
-  invalidateUserCache,
   issueStepUpToken,
   parseDelegatedWriteEnvelope,
   projectDownstreamGrantProtectedResource,
@@ -30,8 +27,10 @@ import {
   requiredIdempotencyMiddleware,
   resolveProductProtectedResourceAudience,
   StepUpFlowError,
-  UserPIIRepository,
   DelegatedWriteEnvelopeError,
+  CanonicalRuntimeUserStore,
+  type CanonicalRuntimeUserProjection,
+  type CanonicalSensitiveUserField,
   type DownstreamGrantProtectedResourceProjector,
   type DownstreamGrantServiceAuthorizer,
   type ApprovalRedactionLevel,
@@ -75,6 +74,30 @@ export interface ProtectedCustomerProfileResource {
   } | null;
   updatedAt: number;
 }
+
+export type CustomerProfileUpdateInput = {
+  email?: string;
+  phone_number?: string | null;
+  name?: string | null;
+  given_name?: string | null;
+  family_name?: string | null;
+  middle_name?: string | null;
+  nickname?: string | null;
+  preferred_username?: string | null;
+  profile?: string | null;
+  picture?: string | null;
+  website?: string | null;
+  gender?: string | null;
+  birthdate?: string | null;
+  locale?: string | null;
+  zoneinfo?: string | null;
+  address_formatted?: string | null;
+  address_street_address?: string | null;
+  address_locality?: string | null;
+  address_region?: string | null;
+  address_postal_code?: string | null;
+  address_country?: string | null;
+};
 
 export interface ProtectedCustomerProfileSummaryView {
   sub: string;
@@ -143,7 +166,7 @@ export interface ProtectedCustomerProfileRouteOptions {
     tenantId: string;
     subjectUserId: string;
     actor: DelegatedWriteActorContext;
-    update: UpdateUserPIIInput;
+    update: CustomerProfileUpdateInput;
     audit?: DelegatedWriteAudit;
   }) => Promise<ProtectedCustomerProfileResource | null>;
 }
@@ -223,7 +246,7 @@ function parseAddress(addressJson: string | null): ProtectedCustomerProfileResou
 }
 
 function mapCachedUserToProtectedCustomerProfile(
-  user: CachedUser,
+  user: CanonicalRuntimeUserProjection,
   tenantId: string
 ): ProtectedCustomerProfileResource {
   return {
@@ -246,8 +269,8 @@ function mapCachedUserToProtectedCustomerProfile(
     emailVerified: Boolean(user.email_verified),
     phoneNumber: user.phone_number ?? null,
     phoneNumberVerified: Boolean(user.phone_number_verified),
-    address: parseAddress(user.address),
-    updatedAt: user.updated_at,
+    address: parseAddress(user.address_json),
+    updatedAt: Date.parse(user.updated_at),
   };
 }
 
@@ -256,17 +279,18 @@ async function loadProtectedCustomerProfileFromEnv(input: {
   tenantId: string;
   userId: string;
 }): Promise<ProtectedCustomerProfileResource | null> {
+  const authCtx = createAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
-  const cachedUser = await getCachedUser(input.c.env, input.tenantId, input.userId, {
-    coreDb: piiCtx.coreAdapter,
-    piiDb: piiCtx.defaultPiiAdapter,
-    cacheScope: piiCtx.userCacheScope,
-    piiCacheMode: piiCtx.piiCacheMode,
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId: input.tenantId,
   });
-  if (!cachedUser) {
+  const runtimeUser = await runtimeUsers.findById(input.userId);
+  if (!runtimeUser) {
     return null;
   }
-  return mapCachedUserToProtectedCustomerProfile(cachedUser, input.tenantId);
+  return mapCachedUserToProtectedCustomerProfile(runtimeUser, input.tenantId);
 }
 
 function noStoreJson(body: unknown, status: number): Response {
@@ -332,7 +356,7 @@ function readRequiredString(
   return value;
 }
 
-function normalizeAddressUpdate(value: unknown): Partial<UpdateUserPIIInput> | Response {
+function normalizeAddressUpdate(value: unknown): Partial<CustomerProfileUpdateInput> | Response {
   if (value === undefined) {
     return {};
   }
@@ -367,8 +391,8 @@ function normalizeAddressUpdate(value: unknown): Partial<UpdateUserPIIInput> | R
     }
   }
 
-  const update: Partial<UpdateUserPIIInput> = {};
-  type NullableStringUpdateField = Exclude<keyof UpdateUserPIIInput, 'pii_class'>;
+  const update: Partial<CustomerProfileUpdateInput> = {};
+  type NullableStringUpdateField = keyof CustomerProfileUpdateInput;
   const mapping: Array<[string, NullableStringUpdateField]> = [
     ['formatted', 'address_formatted'],
     ['street_address', 'address_street_address'],
@@ -389,7 +413,7 @@ function normalizeAddressUpdate(value: unknown): Partial<UpdateUserPIIInput> | R
   return update;
 }
 
-function normalizeCustomerProfileUpdateInput(input: unknown): UpdateUserPIIInput | Response {
+function normalizeCustomerProfileUpdateInput(input: unknown): CustomerProfileUpdateInput | Response {
   if (!isRecord(input)) {
     return invalidDelegatedWriteRequest('input must be an object', 'input');
   }
@@ -416,12 +440,12 @@ function normalizeCustomerProfileUpdateInput(input: unknown): UpdateUserPIIInput
     }
   }
 
-  const update: UpdateUserPIIInput = {};
+  const update: CustomerProfileUpdateInput = {};
   const email = readRequiredString(input, 'email');
   if (email instanceof Response) return email;
   if (email !== undefined) update.email = email;
 
-  type NullableStringUpdateField = Exclude<keyof UpdateUserPIIInput, 'pii_class'>;
+  type NullableStringUpdateField = keyof CustomerProfileUpdateInput;
   const directStringFields: Array<[string, NullableStringUpdateField]> = [
     ['phone_number', 'phone_number'],
     ['name', 'name'],
@@ -525,19 +549,71 @@ async function updateProtectedCustomerProfileFromEnv(input: {
   c: Context<{ Bindings: Env }>;
   tenantId: string;
   subjectUserId: string;
-  update: UpdateUserPIIInput;
+  update: CustomerProfileUpdateInput;
 }): Promise<ProtectedCustomerProfileResource | null> {
+  const authCtx = createAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
-  const repository = new UserPIIRepository(piiCtx.defaultPiiAdapter, input.tenantId);
-  const updated = await repository.updatePII(
-    input.subjectUserId,
-    input.update,
-    piiCtx.defaultPiiAdapter
-  );
-  if (!updated) {
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId: input.tenantId,
+  });
+  const current = await runtimeUsers.findById(input.subjectUserId, { includeInactive: true });
+  if (!current) {
     return null;
   }
-  await invalidateUserCache(input.c.env, input.tenantId, input.subjectUserId);
+
+  const sensitiveValues: Partial<Record<CanonicalSensitiveUserField, unknown>> = {};
+  const piiFields: Partial<Record<CanonicalSensitiveUserField, boolean>> = {};
+  const updateRecord = input.update as Record<string, unknown>;
+  const sensitiveFieldNames = [
+    'email',
+    'name',
+    'given_name',
+    'family_name',
+    'middle_name',
+    'nickname',
+    'preferred_username',
+    'profile',
+    'picture',
+    'website',
+    'gender',
+    'birthdate',
+    'zoneinfo',
+    'locale',
+    'phone_number',
+  ] as const;
+  for (const field of sensitiveFieldNames) {
+    if (Object.prototype.hasOwnProperty.call(updateRecord, field)) {
+      sensitiveValues[field] = updateRecord[field] ?? null;
+      piiFields[field] = true;
+    }
+  }
+
+  const addressFields = {
+    formatted: input.update.address_formatted,
+    street_address: input.update.address_street_address,
+    locality: input.update.address_locality,
+    region: input.update.address_region,
+    postal_code: input.update.address_postal_code,
+    country: input.update.address_country,
+  };
+  const hasAddressUpdate = Object.entries(addressFields).some(([key]) =>
+    Object.prototype.hasOwnProperty.call(input.update, `address_${key}`)
+  );
+
+  await runtimeUsers.syncUser({
+    userId: input.subjectUserId,
+    email: current.email,
+    name: current.name,
+    active: current.active === 1,
+    emailVerified: Boolean(current.email_verified),
+    phoneNumberVerified: Boolean(current.phone_number_verified),
+    userType: current.account_type === 'admin' ? 'admin' : 'end_user',
+    piiFields,
+    sensitiveValues,
+    addressJson: hasAddressUpdate ? JSON.stringify(addressFields) : undefined,
+  });
   return loadProtectedCustomerProfileFromEnv({
     c: input.c,
     tenantId: input.tenantId,

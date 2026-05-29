@@ -5,7 +5,11 @@ import type {
   ApprovalTransportMethod,
   Env,
 } from '@authrim/ar-lib-core';
-import { ensureDatabaseAdapter, resolveUserStoreRuntimeSourcesFromEnv } from '@authrim/ar-lib-core';
+import {
+  CanonicalRuntimeUserStore,
+  ensureDatabaseAdapter,
+  resolveUserStoreRuntimeSourcesFromEnv,
+} from '@authrim/ar-lib-core';
 
 type AdminContext = Context<any, any, any>;
 
@@ -34,52 +38,40 @@ async function resolveUserContact(
     requestPath: c.req?.path,
   });
   const coreAdapter = ensureDatabaseAdapter(userStoreSources.coreDb, 'approval-contact-core');
-  const coreRow = await coreAdapter.queryOne<{
-    pii_partition: string | null;
-    email_verified: number | boolean | null;
-    phone_number_verified: number | boolean | null;
-  }>(
-    `SELECT pii_partition, email_verified, phone_number_verified
-       FROM users_core
-      WHERE tenant_id = ? AND id = ? AND is_active = 1`,
-    [request.tenant_id, subjectId]
-  );
-
-  if (!coreRow) {
-    throw new ApprovalTransportChannelResolutionError(
-      'Approval transport resolution requires an active user approver record.'
-    );
-  }
-
   if (!userStoreSources.piiDb) {
     throw new ApprovalTransportChannelResolutionError(
       'Approval transport resolution requires a configured PII user store.'
     );
   }
   const piiAdapter = ensureDatabaseAdapter(userStoreSources.piiDb, 'approval-contact-pii');
-  const piiRow = await piiAdapter.queryOne<{
-    email: string | null;
-    phone_number: string | null;
-  }>('SELECT email, phone_number FROM users_pii WHERE tenant_id = ? AND id = ?', [
-    request.tenant_id,
-    subjectId,
-  ]);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter,
+    tenantId: request.tenant_id,
+  });
+  const user = await runtimeUsers.findById(subjectId);
+
+  if (!user) {
+    throw new ApprovalTransportChannelResolutionError(
+      'Approval transport resolution requires an active user approver record.'
+    );
+  }
 
   if (method === 'email_otp') {
-    if (!coreRow.email_verified || !piiRow?.email) {
+    if (!user.email_verified || !user.email) {
       throw new ApprovalTransportChannelResolutionError(
         'Approval transport resolution requires a verified email address for this approver.'
       );
     }
-    return piiRow.email;
+    return user.email;
   }
 
-  if (!coreRow.phone_number_verified || !piiRow?.phone_number) {
+  if (!user.phone_number_verified || !user.phone_number) {
     throw new ApprovalTransportChannelResolutionError(
       'Approval transport resolution requires a verified phone number for this approver.'
     );
   }
-  return piiRow.phone_number;
+  return user.phone_number;
 }
 
 async function resolveAdminContact(

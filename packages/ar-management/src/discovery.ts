@@ -13,6 +13,7 @@ import {
   resolveTenantCandidatesFromEmailDomain,
   usesNakedDomainIssuer,
   validateTenantRequestBinding,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import { getLogger } from '@authrim/ar-lib-core';
 import { SignJWT, jwtVerify } from 'jose';
@@ -119,16 +120,6 @@ interface DiscoveryConfigResponse {
 
 interface ClientLookupRow {
   client_id: string;
-  tenant_id: string;
-}
-
-interface ExactEmailUserRow {
-  id: string;
-  tenant_id: string;
-}
-
-interface ActiveUserTenantRow {
-  id: string;
   tenant_id: string;
 }
 
@@ -611,18 +602,16 @@ async function getTenantRowsByExactEmail(env: Env, email: string): Promise<Tenan
           userStoreSources.piiDb,
           `discovery-pii-${tenant.id}`
         );
-        const piiUser = await piiAdapter.queryOne<ExactEmailUserRow>(
-          'SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?',
-          [email, tenant.id]
+        const userCoreAdapter = ensureDatabaseAdapter(
+          userStoreSources.coreDb,
+          `discovery-user-core-${tenant.id}`
         );
-        if (!piiUser) {
-          return null;
-        }
-
-        const activeUser = await coreAdapter.queryOne<ActiveUserTenantRow>(
-          'SELECT id, tenant_id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-          [piiUser.id, piiUser.tenant_id]
-        );
+        const runtimeUsers = new CanonicalRuntimeUserStore({
+          coreAdapter: userCoreAdapter,
+          piiAdapter,
+          tenantId: tenant.id,
+        });
+        const activeUser = await runtimeUsers.findByEmail(email);
 
         return activeUser ? tenant : null;
       })

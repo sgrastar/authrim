@@ -457,6 +457,103 @@ describe('KV Utilities', () => {
   });
 
   describe('User Cache Read-Through', () => {
+    function createCanonicalUserAdapters(input?: {
+      userId?: string;
+      email?: string;
+      name?: string;
+    }): { coreAdapter: DatabaseAdapter; piiAdapter: DatabaseAdapter } {
+      const userId = input?.userId ?? 'user-1';
+      const email = input?.email ?? 'user@example.test';
+      const coreAdapter = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM profile_attribute_values')) return [];
+          if (sql.includes('FROM contact_points')) {
+            return [
+                {
+                  account_id: `account:${userId}`,
+                  contact_type: 'email',
+                  verification_state: 'verified',
+                  value_storage_ref: `canonical-sensitive://tenant-a/${userId}/email`,
+              },
+            ];
+          }
+          return [];
+        }),
+        queryOne: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM identity_accounts')) {
+            return {
+              id: `account:${userId}`,
+              tenant_id: 'tenant-a',
+              account_type: 'user',
+              lifecycle_state: 'active',
+              legacy_user_id: userId,
+              primary_subject_id: `subject:${userId}`,
+              display_label: null,
+              metadata_json: null,
+              created_at: 123,
+              updated_at: 124,
+              deleted_at: null,
+            };
+          }
+          if (sql.includes('FROM identity_subjects')) {
+            return {
+              id: `subject:${userId}`,
+              tenant_id: 'tenant-a',
+              subject_type: 'person',
+              lifecycle_state: 'active',
+              display_label: null,
+              primary_account_id: `account:${userId}`,
+              risk_tier: null,
+              assurance_level: null,
+              metadata_json: null,
+              created_at: 123,
+              updated_at: 124,
+              deleted_at: null,
+            };
+          }
+          if (sql.includes('FROM profiles')) {
+            return {
+              id: `profile:${userId}`,
+              tenant_id: 'tenant-a',
+              subject_id: `subject:${userId}`,
+              profile_type: 'person',
+              lifecycle_state: 'active',
+              locale: null,
+              zoneinfo: null,
+              display_name_ref: null,
+              metadata_json: null,
+              created_at: 123,
+              updated_at: 124,
+              deleted_at: null,
+            };
+          }
+          return null;
+        }),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+      const piiAdapter = {
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM identity_sensitive_values')) {
+            return { value_json: JSON.stringify(email) };
+          }
+          return null;
+        }),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
+        transaction: vi.fn(),
+        batch: vi.fn(),
+        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn(),
+      } as unknown as DatabaseAdapter;
+      return { coreAdapter, piiAdapter };
+    }
+
     it('builds profile-aware user cache keys when storage scope is provided', () => {
       expect(
         buildUserCacheKey('tenant-a', 'user-1', {
@@ -509,19 +606,11 @@ describe('KV Utilities', () => {
         JSON.stringify({ id: userId, email: 'old@example.test', email_verified: true })
       );
 
-      const coreAdapter = {
-        query: vi.fn().mockResolvedValue([]),
-        queryOne: vi.fn().mockResolvedValue(null),
-        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
-        transaction: vi.fn(),
-        batch: vi.fn(),
-        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
-        getType: vi.fn().mockReturnValue('mock'),
-        close: vi.fn(),
-      } as unknown as DatabaseAdapter;
+      const { coreAdapter, piiAdapter } = createCanonicalUserAdapters({ userId });
 
       const user = await getCachedUser(env, 'tenant-a', userId, {
         coreDb: coreAdapter,
+        piiDb: piiAdapter,
         piiCacheMode: 'merged',
         cacheScope: {
           storageProfileId: 'builtin:storage:tenant-d1',
@@ -530,30 +619,22 @@ describe('KV Utilities', () => {
         },
       });
 
-      expect(user).toBeNull();
+      expect(user?.email).not.toBe('old@example.test');
       expect(coreAdapter.queryOne).toHaveBeenCalled();
     });
 
     it('should include tenant scope in user DB fallback queries', async () => {
-      const coreAdapter = {
-        query: vi.fn().mockResolvedValue([]),
-        queryOne: vi.fn().mockResolvedValue(null),
-        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
-        transaction: vi.fn(),
-        batch: vi.fn(),
-        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
-        getType: vi.fn().mockReturnValue('mock'),
-        close: vi.fn(),
-      } as unknown as DatabaseAdapter;
+      const { coreAdapter, piiAdapter } = createCanonicalUserAdapters();
 
       await getCachedUser(env, 'tenant-a', 'user-1', {
         coreDb: coreAdapter,
+        piiDb: piiAdapter,
       });
 
-      expect(coreAdapter.queryOne).toHaveBeenCalledWith(expect.stringContaining('tenant_id = ?'), [
-        'user-1',
-        'tenant-a',
-      ]);
+      expect(coreAdapter.queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('tenant_id = ?'),
+        expect.arrayContaining(['user-1', 'tenant-a'])
+      );
     });
 
     it('encrypts short-TTL cross-request PII cache entries', async () => {
@@ -563,54 +644,7 @@ describe('KV Utilities', () => {
         '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       env.OBJECT_ENCRYPTION_KEY_VERSION = '7';
       env.PII_CACHE_TTL = '120';
-      const coreAdapter = {
-        query: vi.fn().mockResolvedValue([]),
-        queryOne: vi.fn().mockResolvedValue({
-          id: 'user-1',
-          pii_status: 'active',
-          email_verified: 1,
-          phone_number_verified: 0,
-          updated_at: 123,
-        }),
-        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
-        transaction: vi.fn(),
-        batch: vi.fn(),
-        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
-        getType: vi.fn().mockReturnValue('mock'),
-        close: vi.fn(),
-      } as unknown as DatabaseAdapter;
-      const piiAdapter = {
-        query: vi.fn().mockResolvedValue([]),
-        queryOne: vi.fn().mockResolvedValue({
-          email: 'user@example.test',
-          name: 'User Example',
-          family_name: null,
-          given_name: null,
-          middle_name: null,
-          nickname: null,
-          preferred_username: null,
-          picture: null,
-          locale: null,
-          phone_number: null,
-          address_formatted: null,
-          address_street_address: null,
-          address_locality: null,
-          address_region: null,
-          address_postal_code: null,
-          address_country: null,
-          birthdate: null,
-          gender: null,
-          profile: null,
-          website: null,
-          zoneinfo: null,
-        }),
-        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
-        transaction: vi.fn(),
-        batch: vi.fn(),
-        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
-        getType: vi.fn().mockReturnValue('mock'),
-        close: vi.fn(),
-      } as unknown as DatabaseAdapter;
+      const { coreAdapter, piiAdapter } = createCanonicalUserAdapters();
 
       const first = await getCachedUser(env, 'tenant-a', 'user-1', {
         coreDb: coreAdapter,
@@ -634,60 +668,14 @@ describe('KV Utilities', () => {
         keyVersion: 7,
         keyState: 'current',
       });
-      expect(coreAdapter.queryOne).toHaveBeenCalledTimes(1);
+      expect(coreAdapter.queryOne).toHaveBeenCalled();
       expect(piiAdapter.queryOne).toHaveBeenCalledTimes(1);
     });
 
     it('does not read or write cross-request PII cache when no_cross_request_pii mode is enabled', async () => {
       const userCacheKV = new MockKVNamespace();
       (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
-      const coreAdapter = {
-        query: vi.fn().mockResolvedValue([]),
-        queryOne: vi.fn().mockResolvedValue({
-          id: 'user-1',
-          email_verified: 1,
-          phone_number_verified: 0,
-          updated_at: 123,
-        }),
-        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
-        transaction: vi.fn(),
-        batch: vi.fn(),
-        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
-        getType: vi.fn().mockReturnValue('mock'),
-        close: vi.fn(),
-      } as unknown as DatabaseAdapter;
-      const piiAdapter = {
-        query: vi.fn().mockResolvedValue([]),
-        queryOne: vi.fn().mockResolvedValue({
-          email: 'user@example.test',
-          name: 'User Example',
-          family_name: null,
-          given_name: null,
-          middle_name: null,
-          nickname: null,
-          preferred_username: null,
-          picture: null,
-          locale: null,
-          phone_number: null,
-          address_formatted: null,
-          address_street_address: null,
-          address_locality: null,
-          address_region: null,
-          address_postal_code: null,
-          address_country: null,
-          birthdate: null,
-          gender: null,
-          profile: null,
-          website: null,
-          zoneinfo: null,
-        }),
-        execute: vi.fn().mockResolvedValue({ rowsAffected: 1, success: true }),
-        transaction: vi.fn(),
-        batch: vi.fn(),
-        isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
-        getType: vi.fn().mockReturnValue('mock'),
-        close: vi.fn(),
-      } as unknown as DatabaseAdapter;
+      const { coreAdapter, piiAdapter } = createCanonicalUserAdapters();
 
       const user = await getCachedUser(env, 'tenant-a', 'user-1', {
         coreDb: coreAdapter,
@@ -697,7 +685,7 @@ describe('KV Utilities', () => {
 
       expect(user?.email).toBe('user@example.test');
       expect(await userCacheKV.get(buildUserCacheKey('tenant-a', 'user-1'))).toBeNull();
-      expect(coreAdapter.queryOne).toHaveBeenCalledTimes(1);
+      expect(coreAdapter.queryOne).toHaveBeenCalled();
       expect(piiAdapter.queryOne).toHaveBeenCalledTimes(1);
     });
   });

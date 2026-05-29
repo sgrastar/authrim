@@ -31,7 +31,9 @@ describe('support operations registry and selector compiler', () => {
       ],
     });
 
-    expect(compiled.whereSql).toBe('(status = ? AND email_verified = ?)');
+    expect(compiled.whereSql).toContain("json_extract(metadata_json, '$.status') = ?");
+    expect(compiled.whereSql).toContain('EXISTS (SELECT 1 FROM contact_points');
+    expect(compiled.whereSql).toContain('= ?)');
     expect(compiled.params).toEqual(['active', 1]);
     expect(compiled.selectorHash).toMatch(/^sha256:/);
   });

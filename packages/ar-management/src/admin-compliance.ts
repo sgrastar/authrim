@@ -297,12 +297,10 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     );
 
     // 5. Get data retention status
-    // Note: Detailed deletion stats require PII DB access (users_pii_tombstone)
-    // Here we use users_core.pii_status as a proxy
     const retentionStats = await adapter.queryOne<{
       pending_deletions: number;
     }>(
-      "SELECT COUNT(*) as pending_deletions FROM users_core WHERE tenant_id = ? AND pii_status = 'deleted'",
+      "SELECT COUNT(*) as pending_deletions FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'deleted'",
       [tenantId]
     );
     // Note: last_cleanup would require PII DB access, set to null for now
@@ -699,7 +697,7 @@ export async function adminComplianceAccessReviewsCreateHandler(c: Context<{ Bin
       case 'all_users':
         {
           const result = await adapter.queryOne<{ count: number }>(
-            'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1',
+            "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active'",
             [tenantId]
           );
           totalItems = result?.count ?? 0;
@@ -709,8 +707,8 @@ export async function adminComplianceAccessReviewsCreateHandler(c: Context<{ Bin
         if (scope_value) {
           const result = await adapter.queryOne<{ count: number }>(
             `SELECT COUNT(*) as count FROM user_roles ur
-             JOIN users_core u ON ur.user_id = u.id
-             WHERE u.tenant_id = ? AND ur.tenant_id = ? AND ur.role_id = ?`,
+             JOIN identity_accounts u ON ur.user_id = u.legacy_user_id
+             WHERE u.tenant_id = ? AND u.lifecycle_state = 'active' AND ur.tenant_id = ? AND ur.role_id = ?`,
             [tenantId, tenantId, scope_value]
           );
           totalItems = result?.count ?? 0;
@@ -720,8 +718,8 @@ export async function adminComplianceAccessReviewsCreateHandler(c: Context<{ Bin
         if (scope_value) {
           const result = await adapter.queryOne<{ count: number }>(
             `SELECT COUNT(*) as count FROM subject_org_membership om
-             JOIN users_core u ON om.subject_id = u.id
-             WHERE u.tenant_id = ? AND om.org_id = ?`,
+             JOIN identity_accounts u ON om.subject_id = u.legacy_user_id
+             WHERE u.tenant_id = ? AND u.lifecycle_state = 'active' AND om.org_id = ?`,
             [tenantId, scope_value]
           );
           totalItems = result?.count ?? 0;

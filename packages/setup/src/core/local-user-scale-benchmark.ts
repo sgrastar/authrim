@@ -168,54 +168,101 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;
 
-CREATE TABLE IF NOT EXISTS users_core (
+CREATE TABLE IF NOT EXISTS identity_subjects (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
-  email_verified INTEGER NOT NULL DEFAULT 0,
-  phone_number_verified INTEGER NOT NULL DEFAULT 0,
-  email_domain_hash TEXT,
-  email_domain_hash_version INTEGER NOT NULL DEFAULT 1,
-  password_hash TEXT,
-  is_active INTEGER NOT NULL DEFAULT 1,
-  user_type TEXT NOT NULL DEFAULT 'end_user',
-  pii_partition TEXT NOT NULL DEFAULT 'default',
-  pii_status TEXT NOT NULL DEFAULT 'active',
-  status TEXT NOT NULL DEFAULT 'active',
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  last_login_at INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS users_pii (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  pii_class TEXT NOT NULL DEFAULT 'PROFILE',
-  email TEXT NOT NULL,
-  email_blind_index TEXT,
-  name TEXT,
-  given_name TEXT,
-  family_name TEXT,
-  phone_number TEXT,
-  declared_residence TEXT,
+  subject_type TEXT NOT NULL DEFAULT 'person',
+  primary_account_id TEXT,
+  display_label TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_core_tenant ON users_core(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_users_core_status ON users_core(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_users_core_type ON users_core(tenant_id, user_type);
-CREATE INDEX IF NOT EXISTS idx_users_core_pii_status ON users_core(pii_status);
-CREATE INDEX IF NOT EXISTS idx_users_core_email_domain ON users_core(email_domain_hash);
-CREATE INDEX IF NOT EXISTS idx_users_core_domain_hash
-  ON users_core(tenant_id, email_domain_hash, email_domain_hash_version);
-CREATE INDEX IF NOT EXISTS idx_users_core_tenant_active
-  ON users_core(tenant_id, is_active, created_at DESC);
+CREATE TABLE IF NOT EXISTS identity_accounts (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  account_type TEXT NOT NULL DEFAULT 'user',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  legacy_user_id TEXT,
+  primary_subject_id TEXT,
+  display_label TEXT,
+  metadata_json TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_pii_email
-  ON users_pii(tenant_id, email_blind_index);
-CREATE INDEX IF NOT EXISTS idx_users_pii_tenant
-  ON users_pii(tenant_id);
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  profile_type TEXT NOT NULL DEFAULT 'person',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contact_points (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  account_id TEXT,
+  contact_type TEXT NOT NULL,
+  purpose TEXT NOT NULL DEFAULT 'primary',
+  value_storage_ref TEXT,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  verification_state TEXT NOT NULL DEFAULT 'unverified',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_attribute_values (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  catalog_entry_id TEXT NOT NULL,
+  value_type TEXT NOT NULL,
+  value_json TEXT,
+  value_storage_ref TEXT,
+  value_hash TEXT,
+  classification TEXT NOT NULL DEFAULT 'internal',
+  purpose TEXT,
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS identity_sensitive_values (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  owner_type TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  value_key TEXT NOT NULL,
+  value_json TEXT,
+  value_hash TEXT,
+  classification TEXT NOT NULL DEFAULT 'sensitive',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_accounts_tenant_state
+  ON identity_accounts(tenant_id, lifecycle_state, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_identity_accounts_legacy_user
+  ON identity_accounts(tenant_id, legacy_user_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_subject
+  ON profiles(tenant_id, subject_id, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_profile_attribute_values_profile
+  ON profile_attribute_values(tenant_id, profile_id, catalog_entry_id, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_profile_attribute_values_hash
+  ON profile_attribute_values(tenant_id, catalog_entry_id, value_hash, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_contact_points_account
+  ON contact_points(tenant_id, account_id, contact_type, lifecycle_state);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_sensitive_values_owner
+  ON identity_sensitive_values(tenant_id, owner_type, owner_id, value_key);
+CREATE INDEX IF NOT EXISTS idx_identity_sensitive_values_hash
+  ON identity_sensitive_values(tenant_id, value_key, value_hash, lifecycle_state);
 `;
 }
 
@@ -232,49 +279,37 @@ function buildSeedSql(users: number, tenantCount: number, targetTenant: string):
   return `
 ${buildSchemaSql()}
 
-DELETE FROM users_core;
-DELETE FROM users_pii;
+DELETE FROM identity_subjects;
+DELETE FROM identity_accounts;
+DELETE FROM profiles;
+DELETE FROM contact_points;
+DELETE FROM profile_attribute_values;
+DELETE FROM identity_sensitive_values;
 
 WITH RECURSIVE seq(i) AS (
   SELECT 0
   UNION ALL
   SELECT i + 1 FROM seq WHERE i + 1 < ${users}
 )
-INSERT INTO users_core (
+INSERT INTO identity_subjects (
   id,
   tenant_id,
-  email_verified,
-  phone_number_verified,
-  email_domain_hash,
-  email_domain_hash_version,
-  password_hash,
-  is_active,
-  user_type,
-  pii_partition,
-  pii_status,
-  status,
   lifecycle_state,
+  subject_type,
+  primary_account_id,
+  display_label,
   created_at,
-  updated_at,
-  last_login_at
+  updated_at
 )
 SELECT
-  'usr_' || printf('%010d', i),
+  'subject:usr_' || printf('%010d', i),
   ${tenantSql},
-  i % 2,
-  CASE WHEN i % 13 = 0 THEN 1 ELSE 0 END,
-  'domain_hash_' || printf('%04d', i % 500),
-  1,
-  NULL,
-  CASE WHEN i % 997 = 0 THEN 0 ELSE 1 END,
-  'end_user',
-  CASE WHEN i % 5 = 0 THEN 'eu' WHEN i % 5 = 1 THEN 'us' ELSE 'default' END,
-  'active',
   CASE WHEN i % 997 = 0 THEN 'suspended' ELSE 'active' END,
-  'active',
+  'person',
+  'account:usr_' || printf('%010d', i),
+  'User ' || printf('%010d', i),
   1770000000000 - i,
-  1770000000000 - i,
-  CASE WHEN i % 3 = 0 THEN 1770000000000 - i ELSE NULL END
+  1770000000000 - i
 FROM seq;
 
 WITH RECURSIVE seq(i) AS (
@@ -282,31 +317,186 @@ WITH RECURSIVE seq(i) AS (
   UNION ALL
   SELECT i + 1 FROM seq WHERE i + 1 < ${users}
 )
-INSERT INTO users_pii (
+INSERT INTO identity_accounts (
   id,
   tenant_id,
-  pii_class,
-  email,
-  email_blind_index,
-  name,
-  given_name,
-  family_name,
-  phone_number,
-  declared_residence,
+  account_type,
+  lifecycle_state,
+  legacy_user_id,
+  primary_subject_id,
+  display_label,
+  metadata_json,
   created_at,
   updated_at
 )
 SELECT
-  'usr_' || printf('%010d', i),
+  'account:usr_' || printf('%010d', i),
   ${tenantSql},
-  'PROFILE',
-  'user' || printf('%010d', i) || '@example' || printf('%03d', i % 500) || '.edu',
-  'email_blind_' || printf('%010d', i),
+  'user',
+  CASE WHEN i % 997 = 0 THEN 'suspended' ELSE 'active' END,
+  'usr_' || printf('%010d', i),
+  'subject:usr_' || printf('%010d', i),
   'User ' || printf('%010d', i),
-  'User',
-  printf('%010d', i),
-  '+1555' || printf('%010d', i % 1000000000),
-  CASE WHEN i % 5 = 0 THEN 'EU' WHEN i % 5 = 1 THEN 'US' ELSE 'JP' END,
+  json_object(
+    'status', CASE WHEN i % 997 = 0 THEN 'suspended' ELSE 'active' END,
+    'last_login_at', CASE WHEN i % 3 = 0 THEN 1770000000000 - i ELSE NULL END
+  ),
+  1770000000000 - i,
+  1770000000000 - i
+FROM seq;
+
+WITH RECURSIVE seq(i) AS (
+  SELECT 0
+  UNION ALL
+  SELECT i + 1 FROM seq WHERE i + 1 < ${users}
+)
+INSERT INTO profiles (
+  id,
+  tenant_id,
+  subject_id,
+  profile_type,
+  lifecycle_state,
+  created_at,
+  updated_at
+)
+SELECT
+  'profile:usr_' || printf('%010d', i),
+  ${tenantSql},
+  'subject:usr_' || printf('%010d', i),
+  'person',
+  CASE WHEN i % 997 = 0 THEN 'suspended' ELSE 'active' END,
+  1770000000000 - i,
+  1770000000000 - i
+FROM seq;
+
+WITH RECURSIVE seq(i) AS (
+  SELECT 0
+  UNION ALL
+  SELECT i + 1 FROM seq WHERE i + 1 < ${users}
+)
+INSERT INTO contact_points (
+  id,
+  tenant_id,
+  subject_id,
+  account_id,
+  contact_type,
+  purpose,
+  value_storage_ref,
+  is_primary,
+  verification_state,
+  lifecycle_state,
+  created_at,
+  updated_at
+)
+SELECT
+  'contact:usr_' || printf('%010d', i) || ':email',
+  ${tenantSql},
+  'subject:usr_' || printf('%010d', i),
+  'account:usr_' || printf('%010d', i),
+  'email',
+  'primary',
+  'canonical-sensitive://' || ${tenantSql} || '/usr_' || printf('%010d', i) || '/email',
+  1,
+  CASE WHEN i % 2 = 0 THEN 'verified' ELSE 'unverified' END,
+  CASE WHEN i % 997 = 0 THEN 'suspended' ELSE 'active' END,
+  1770000000000 - i,
+  1770000000000 - i
+FROM seq;
+
+WITH RECURSIVE seq(i) AS (
+  SELECT 0
+  UNION ALL
+  SELECT i + 1 FROM seq WHERE i + 1 < ${users}
+)
+INSERT INTO profile_attribute_values (
+  id,
+  tenant_id,
+  profile_id,
+  catalog_entry_id,
+  value_type,
+  value_json,
+  value_hash,
+  classification,
+  purpose,
+  lifecycle_state,
+  created_at,
+  updated_at
+)
+SELECT
+  'profile-attribute:usr_' || printf('%010d', i) || ':email_domain_hash',
+  ${tenantSql},
+  'profile:usr_' || printf('%010d', i),
+  'field.canonical.email_domain_hash',
+  'string',
+  json_quote('domain_hash_' || printf('%04d', i % 500)),
+  'domain_hash_' || printf('%04d', i % 500),
+  'internal',
+  'tenant_discovery',
+  CASE WHEN i % 997 = 0 THEN 'suspended' ELSE 'active' END,
+  1770000000000 - i,
+  1770000000000 - i
+FROM seq;
+
+WITH RECURSIVE seq(i) AS (
+  SELECT 0
+  UNION ALL
+  SELECT i + 1 FROM seq WHERE i + 1 < ${users}
+)
+INSERT INTO identity_sensitive_values (
+  id,
+  tenant_id,
+  owner_type,
+  owner_id,
+  value_key,
+  value_json,
+  value_hash,
+  classification,
+  lifecycle_state,
+  created_at,
+  updated_at
+)
+SELECT
+  'sensitive:usr_' || printf('%010d', i) || ':email',
+  ${tenantSql},
+  'runtime_user',
+  'usr_' || printf('%010d', i),
+  'email',
+  json_quote('user' || printf('%010d', i) || '@example' || printf('%03d', i % 500) || '.edu'),
+  'email_blind_' || printf('%010d', i),
+  'sensitive',
+  CASE WHEN i % 997 = 0 THEN 'deleted' ELSE 'active' END,
+  1770000000000 - i,
+  1770000000000 - i
+FROM seq;
+
+WITH RECURSIVE seq(i) AS (
+  SELECT 0
+  UNION ALL
+  SELECT i + 1 FROM seq WHERE i + 1 < ${users}
+)
+INSERT INTO identity_sensitive_values (
+  id,
+  tenant_id,
+  owner_type,
+  owner_id,
+  value_key,
+  value_json,
+  value_hash,
+  classification,
+  lifecycle_state,
+  created_at,
+  updated_at
+)
+SELECT
+  'sensitive:usr_' || printf('%010d', i) || ':name',
+  ${tenantSql},
+  'runtime_user',
+  'usr_' || printf('%010d', i),
+  'name',
+  json_quote('User ' || printf('%010d', i)),
+  NULL,
+  'sensitive',
+  CASE WHEN i % 997 = 0 THEN 'deleted' ELSE 'active' END,
   1770000000000 - i,
   1770000000000 - i
 FROM seq;
@@ -326,55 +516,58 @@ function selectQueries(plan: LocalUserScaleBenchmarkPlan): Array<{ name: string;
     adminList: [
       {
         name: 'admin_core_count_active',
-        sql: `SELECT COUNT(*) FROM users_core WHERE tenant_id = ${tenant} AND is_active = 1`,
+        sql: `SELECT COUNT(*) FROM identity_accounts WHERE tenant_id = ${tenant} AND lifecycle_state = 'active' AND legacy_user_id IS NOT NULL`,
       },
       {
         name: 'admin_core_first_page',
         sql:
           `SELECT COUNT(*) FROM (` +
-          `SELECT id FROM users_core WHERE tenant_id = ${tenant} AND is_active = 1 ` +
+          `SELECT legacy_user_id FROM identity_accounts WHERE tenant_id = ${tenant} AND lifecycle_state = 'active' AND legacy_user_id IS NOT NULL ` +
           `ORDER BY created_at DESC LIMIT 50 OFFSET 0)`,
       },
       {
         name: 'admin_core_deep_page',
         sql:
           `SELECT COUNT(*) FROM (` +
-          `SELECT id FROM users_core WHERE tenant_id = ${tenant} AND is_active = 1 ` +
+          `SELECT legacy_user_id FROM identity_accounts WHERE tenant_id = ${tenant} AND lifecycle_state = 'active' AND legacy_user_id IS NOT NULL ` +
           `ORDER BY created_at DESC LIMIT 50 OFFSET ${deepOffset})`,
       },
       {
         name: 'admin_first_page_pii_hydrate',
         sql:
           `WITH core_page AS (` +
-          `SELECT id FROM users_core WHERE tenant_id = ${tenant} AND is_active = 1 ` +
+          `SELECT legacy_user_id AS id FROM identity_accounts WHERE tenant_id = ${tenant} AND lifecycle_state = 'active' AND legacy_user_id IS NOT NULL ` +
           `ORDER BY created_at DESC LIMIT 50 OFFSET 0) ` +
-          `SELECT COUNT(*) FROM users_pii WHERE tenant_id = ${tenant} ` +
-          `AND id IN (SELECT id FROM core_page)`,
+          `SELECT COUNT(*) FROM identity_sensitive_values WHERE tenant_id = ${tenant} ` +
+          `AND owner_type = 'runtime_user' AND owner_id IN (SELECT id FROM core_page)`,
       },
     ],
     piiSearch: [
       {
         name: 'pii_email_blind_index_lookup',
         sql:
-          `SELECT COUNT(*) FROM users_pii WHERE tenant_id = ${tenant} ` +
-          `AND email_blind_index = ${sqlLiteral(`email_blind_${String(firstUserIndex).padStart(10, '0')}`)}`,
+          `SELECT COUNT(*) FROM identity_sensitive_values WHERE tenant_id = ${tenant} ` +
+          `AND owner_type = 'runtime_user' AND value_key = 'email' ` +
+          `AND value_hash = ${sqlLiteral(`email_blind_${String(firstUserIndex).padStart(10, '0')}`)} ` +
+          `AND lifecycle_state = 'active'`,
       },
       {
         name: 'admin_pii_contains_search_current',
         sql:
           `SELECT COUNT(*) FROM (` +
-          `SELECT id FROM users_pii WHERE tenant_id = ${tenant} ` +
-          `AND (email LIKE ${sqlLiteral(rareSearch)} ESCAPE '\\' ` +
-          `OR name LIKE ${sqlLiteral(rareSearch)} ESCAPE '\\') LIMIT 1000)`,
+          `SELECT owner_id FROM identity_sensitive_values WHERE tenant_id = ${tenant} ` +
+          `AND owner_type = 'runtime_user' AND value_key IN ('email', 'name') ` +
+          `AND value_json LIKE ${sqlLiteral(rareSearch)} ESCAPE '\\' LIMIT 1000)`,
       },
     ],
     domainLookup: [
       {
         name: 'core_domain_hash_lookup',
         sql:
-          `SELECT COUNT(*) FROM users_core WHERE tenant_id = ${tenant} ` +
-          `AND email_domain_hash = ${sqlLiteral(`domain_hash_${String(firstUserIndex % 500).padStart(4, '0')}`)} ` +
-          `AND email_domain_hash_version = 1`,
+          `SELECT COUNT(*) FROM profile_attribute_values WHERE tenant_id = ${tenant} ` +
+          `AND catalog_entry_id = 'field.canonical.email_domain_hash' ` +
+          `AND value_hash = ${sqlLiteral(`domain_hash_${String(firstUserIndex % 500).padStart(4, '0')}`)} ` +
+          `AND lifecycle_state = 'active'`,
       },
     ],
   };

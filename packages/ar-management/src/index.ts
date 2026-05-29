@@ -658,6 +658,8 @@ import {
   adminIdentityMappingFederationMetadataDocumentCreateHandler,
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingFederationTrustSourceCreateHandler,
+  adminIdentityMappingFederationTrustSourceDeleteHandler,
+  adminIdentityMappingFederationTrustSourceUpdateHandler,
   adminIdentityMappingGroupCreateHandler,
   adminIdentityMappingGroupMembershipCreateHandler,
   adminIdentityMappingKeyAccessRecordHandler,
@@ -665,7 +667,6 @@ import {
   adminIdentityMappingKeyRegistryCreateHandler,
   adminIdentityMappingKeyRegistryRotateHandler,
   adminIdentityMappingLifecycleSignalRecordHandler,
-  adminIdentityMappingOrgDomainMappingMigrateHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
   adminIdentityMappingOperationalNotificationAcknowledgeHandler,
@@ -677,7 +678,6 @@ import {
   adminIdentityMappingReviewTaskGroupCreateHandler,
   adminIdentityMappingReviewTasksListHandler,
   adminIdentityMappingReviewTaskTransitionHandler,
-  adminIdentityMappingSamlFederationTrustProfileMigrateHandler,
   adminIdentityMappingSchemaReadinessHandler,
   adminIdentityMappingSourceAuthorityContractCreateHandler,
   adminIdentityMappingSourceAuthorityContractsListHandler,
@@ -2380,11 +2380,6 @@ app.post(
   adminIdentityMappingProvisioningAssignmentRuleEvaluateHandler
 );
 app.post(
-  '/api/admin/identity-mapping/org-domain-mappings/:mappingId/migrate-to-group',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingOrgDomainMappingMigrateHandler
-);
-app.post(
   '/api/admin/identity-mapping/lifecycle-signals',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingLifecycleSignalRecordHandler
@@ -2431,6 +2426,16 @@ app.get(
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourcesListHandler
 );
+app.put(
+  '/api/admin/identity-mapping/federation-trust-sources/:trustSourceId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingFederationTrustSourceUpdateHandler
+);
+app.delete(
+  '/api/admin/identity-mapping/federation-trust-sources/:trustSourceId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingFederationTrustSourceDeleteHandler
+);
 app.get(
   '/api/admin/identity-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
@@ -2440,11 +2445,6 @@ app.post(
   '/api/admin/identity-mapping/federation-metadata-documents',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingFederationMetadataDocumentCreateHandler
-);
-app.post(
-  '/api/admin/identity-mapping/saml-federation-trust-profiles/migrate',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingSamlFederationTrustProfileMigrateHandler
 );
 
 // =============================================================================

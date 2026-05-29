@@ -39,6 +39,7 @@ import {
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
   resolveCustomClaimRuntimeSourcesFromEnv,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import { seedDefaultClaimsForTenant } from './admin-tenants';
 
@@ -144,9 +145,6 @@ const VALID_OPERATION_STATUSES = new Set(['active', 'deleting', 'renaming', 'err
 
 /** Batch size for PII user data operations */
 const PII_BATCH_SIZE = 500;
-
-/** Lifecycle states the detector may safely rewrite during Phase 1 backfill. */
-const DETECTABLE_LIFECYCLE_STATES = ['active', 'incomplete', 'provisioning'] as const;
 
 // =============================================================================
 // Validation Helpers
@@ -745,15 +743,16 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
     const adapter = createAdapterFromContext(c);
     const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
     const previewLimit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
-    const lifecyclePlaceholders = DETECTABLE_LIFECYCLE_STATES.map(() => '?').join(', ');
     const userRows = await adapter.query<{
       id: string;
     }>(
-      `SELECT id
-       FROM users_core
-       WHERE tenant_id = ? AND is_active = 1 AND lifecycle_state IN (${lifecyclePlaceholders})
+      `SELECT legacy_user_id as id
+       FROM identity_accounts
+       WHERE tenant_id = ?
+         AND lifecycle_state = 'active'
+         AND legacy_user_id IS NOT NULL
        ORDER BY created_at DESC`,
-      [tenantId, ...DETECTABLE_LIFECYCLE_STATES]
+      [tenantId]
     );
 
     if (userRows.length === 0) {
@@ -787,28 +786,25 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
     const previewPiiMap = new Map<string, { email: string | null; name: string | null }>();
 
     if (previewUsers.length > 0 && storageSources.piiDb) {
-      const userIds = previewUsers.map((user) => user.userId);
-      const placeholders = userIds.map(() => '?').join(', ');
-      const piiRows = await ensureDatabaseAdapter(
-        storageSources.piiDb,
-        'custom-claims-required-violations-preview-pii'
-      ).query<{
-        id: string;
-        email: string | null;
-        name: string | null;
-      }>(
-        `SELECT id, email, name
-         FROM users_pii
-         WHERE tenant_id = ? AND id IN (${placeholders})`,
-        [tenantId, ...userIds]
+      const runtimeUsers = new CanonicalRuntimeUserStore({
+        coreAdapter: adapter,
+        piiAdapter: ensureDatabaseAdapter(
+          storageSources.piiDb,
+          'custom-claims-required-violations-preview-pii'
+        ),
+        tenantId,
+      });
+      await Promise.all(
+        previewUsers.map(async (user) => {
+          const runtimeUser = await runtimeUsers.findById(user.userId, { includeInactive: true });
+          if (runtimeUser) {
+            previewPiiMap.set(user.userId, {
+              email: runtimeUser.email,
+              name: runtimeUser.name,
+            });
+          }
+        })
       );
-
-      for (const row of piiRows) {
-        previewPiiMap.set(row.id, {
-          email: row.email ?? null,
-          name: row.name ?? null,
-        });
-      }
     }
 
     return c.json({

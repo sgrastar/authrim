@@ -5,7 +5,6 @@ import type {
   IdentitySubjectRow,
   ProfileAttributeValueRow,
   ProfileRow,
-  StructuredAttributeValueRow,
 } from './canonical-identity';
 
 export interface CanonicalRuntimeValueResolver {
@@ -21,7 +20,7 @@ export interface CanonicalRuntimeValueResolver {
   ): Promise<unknown>;
 }
 
-export type LegacyUsersPiiField =
+export type CanonicalSensitiveUserField =
   | 'email'
   | 'phone_number'
   | 'name'
@@ -43,12 +42,13 @@ export type LegacyUsersPiiField =
   | 'address_region'
   | 'address_postal_code'
   | 'address_country'
+  | 'address_json'
   | 'custom_attributes_json';
 
-export interface LegacyUsersPiiValueRefInput {
+export interface CanonicalSensitiveValueRefInput {
   tenantId: string;
   userId: string;
-  field: LegacyUsersPiiField;
+  field: CanonicalSensitiveUserField;
 }
 
 export interface CanonicalRuntimeUserProjection {
@@ -56,6 +56,8 @@ export interface CanonicalRuntimeUserProjection {
   tenant_id: string;
   subject_id: string;
   account_id: string;
+  account_type: string;
+  lifecycle_state: string;
   email: string | null;
   email_verified: number;
   name: string | null;
@@ -76,6 +78,7 @@ export interface CanonicalRuntimeUserProjection {
   address_json: string | null;
   password_hash: string | null;
   external_id: string | null;
+  last_login_at: number | null;
   active: number;
   custom_attributes_json: string | null;
   created_at: string;
@@ -145,8 +148,8 @@ const CUSTOM_ATTRIBUTES_CATALOG_IDS = new Set([
   'custom_attributes_json',
   'field.canonical.custom_attributes',
 ]);
-const LEGACY_USERS_PII_REF_SCHEME = 'legacy-users-pii:';
-const LEGACY_USERS_PII_FIELDS = new Set<string>([
+const CANONICAL_SENSITIVE_REF_SCHEME = 'canonical-sensitive:';
+const CANONICAL_SENSITIVE_FIELDS = new Set<string>([
   'email',
   'phone_number',
   'name',
@@ -168,21 +171,24 @@ const LEGACY_USERS_PII_FIELDS = new Set<string>([
   'address_region',
   'address_postal_code',
   'address_country',
+  'address_json',
   'custom_attributes_json',
 ]);
 
-export function encodeLegacyUsersPiiValueRef(input: LegacyUsersPiiValueRefInput): string {
-  if (!LEGACY_USERS_PII_FIELDS.has(input.field)) {
-    throw new Error('Unsupported legacy users_pii value ref field');
+export function encodeCanonicalSensitiveValueRef(input: CanonicalSensitiveValueRefInput): string {
+  if (!CANONICAL_SENSITIVE_FIELDS.has(input.field)) {
+    throw new Error('Unsupported canonical sensitive value ref field');
   }
-  return `legacy-users-pii://${encodeURIComponent(input.tenantId)}/${encodeURIComponent(
+  return `canonical-sensitive://${encodeURIComponent(input.tenantId)}/${encodeURIComponent(
     input.userId
   )}/${encodeURIComponent(input.field)}`;
 }
 
-export function decodeLegacyUsersPiiValueRef(valueStorageRef: string): LegacyUsersPiiValueRefInput {
+export function decodeCanonicalSensitiveValueRef(
+  valueStorageRef: string
+): CanonicalSensitiveValueRefInput {
   const parsed = new URL(valueStorageRef);
-  if (parsed.protocol !== LEGACY_USERS_PII_REF_SCHEME) {
+  if (parsed.protocol !== CANONICAL_SENSITIVE_REF_SCHEME) {
     throw new Error('Unsupported value storage ref scheme');
   }
   const [userId, field, ...extra] = parsed.pathname
@@ -190,15 +196,15 @@ export function decodeLegacyUsersPiiValueRef(valueStorageRef: string): LegacyUse
     .filter(Boolean)
     .map((part) => decodeURIComponent(part));
   if (!parsed.hostname || !userId || !field || extra.length > 0) {
-    throw new Error('Invalid legacy users_pii value ref');
+    throw new Error('Invalid canonical sensitive value value ref');
   }
-  if (!LEGACY_USERS_PII_FIELDS.has(field)) {
-    throw new Error('Unsupported legacy users_pii value ref field');
+  if (!CANONICAL_SENSITIVE_FIELDS.has(field)) {
+    throw new Error('Unsupported canonical sensitive value ref field');
   }
   return {
     tenantId: decodeURIComponent(parsed.hostname),
     userId,
-    field: field as LegacyUsersPiiField,
+    field: field as CanonicalSensitiveUserField,
   };
 }
 
@@ -322,7 +328,6 @@ export class CanonicalRuntimeUserProjectionRepository {
     const projection = this.emptyProjection(account, subject, profile);
     if (profile) {
       await this.applyProfileAttributes(projection, subject, account, profile);
-      await this.applyStructuredAddress(projection, profile);
     }
     await this.applyContactPoints(projection, subject, account);
     return projection;
@@ -333,11 +338,18 @@ export class CanonicalRuntimeUserProjectionRepository {
     subject: IdentitySubjectRow,
     profile: ProfileRow | null
   ): CanonicalRuntimeUserProjection {
+    const accountMetadata = parseJson(account.metadata_json);
+    const accountMetadataObject =
+      accountMetadata && typeof accountMetadata === 'object' && !Array.isArray(accountMetadata)
+        ? (accountMetadata as Record<string, unknown>)
+        : {};
     return {
       id: account.legacy_user_id ?? account.id,
       tenant_id: this.tenantId,
       subject_id: subject.id,
       account_id: account.id,
+      account_type: account.account_type,
+      lifecycle_state: account.lifecycle_state,
       email: null,
       email_verified: 0,
       name: subject.display_label ?? account.display_label,
@@ -356,8 +368,12 @@ export class CanonicalRuntimeUserProjectionRepository {
       phone_number: null,
       phone_number_verified: 0,
       address_json: null,
-      password_hash: null,
-      external_id: null,
+      password_hash: toStringOrNull(accountMetadataObject.password_hash),
+      external_id: toStringOrNull(accountMetadataObject.external_id),
+      last_login_at:
+        typeof accountMetadataObject.last_login_at === 'number'
+          ? accountMetadataObject.last_login_at
+          : null,
       active: account.lifecycle_state === 'active' && subject.lifecycle_state === 'active' ? 1 : 0,
       custom_attributes_json: null,
       created_at: unixToIso(account.created_at),
@@ -385,11 +401,14 @@ export class CanonicalRuntimeUserProjectionRepository {
       const field = PROFILE_ATTRIBUTE_TO_RUNTIME_FIELD[attribute.catalog_entry_id];
       if (field) {
         projection[field] = toStringOrNull(value);
+      } else if (ADDRESS_CATALOG_IDS.has(attribute.catalog_entry_id)) {
+        projection.address_json =
+          value == null ? null : typeof value === 'string' ? value : JSON.stringify(value);
       } else if (CUSTOM_ATTRIBUTES_CATALOG_IDS.has(attribute.catalog_entry_id)) {
         if (value && typeof value === 'object' && !Array.isArray(value)) {
           Object.assign(customAttributes, value);
         }
-      } else if (!ADDRESS_CATALOG_IDS.has(attribute.catalog_entry_id)) {
+      } else {
         customAttributes[attribute.catalog_entry_id] = value;
       }
     }
@@ -413,23 +432,6 @@ export class CanonicalRuntimeUserProjectionRepository {
       });
     }
     return parseJson(attribute.value_json);
-  }
-
-  private async applyStructuredAddress(
-    projection: CanonicalRuntimeUserProjection,
-    profile: ProfileRow
-  ): Promise<void> {
-    const rows = await this.adapter.query<StructuredAttributeValueRow>(
-      `SELECT *
-         FROM structured_attribute_values
-        WHERE owner_type = ? AND owner_id = ? AND tenant_id = ?${activeClause(false)}
-        ORDER BY created_at ASC`,
-      ['profile', profile.id, this.tenantId]
-    );
-    const address = rows.find((row) => ADDRESS_CATALOG_IDS.has(row.catalog_entry_id));
-    if (address) {
-      projection.address_json = address.canonical_json;
-    }
   }
 
   private async applyContactPoints(
@@ -472,18 +474,25 @@ export class CanonicalRuntimeUserProjectionRepository {
   }
 }
 
-export class LegacyUsersPiiValueResolver implements CanonicalRuntimeValueResolver {
-  constructor(private readonly piiAdapter: DatabaseAdapter) {}
+export class CanonicalSensitiveValueResolver implements CanonicalRuntimeValueResolver {
+  constructor(private readonly adapter: DatabaseAdapter) {}
 
   async resolveValue(valueStorageRef: string, context: { tenantId: string }): Promise<unknown> {
-    const ref = decodeLegacyUsersPiiValueRef(valueStorageRef);
+    const ref = decodeCanonicalSensitiveValueRef(valueStorageRef);
     if (ref.tenantId !== context.tenantId) {
-      throw new Error('legacy users_pii value ref tenant mismatch');
+      throw new Error('canonical sensitive value ref tenant mismatch');
     }
-    const row = await this.piiAdapter.queryOne<Record<string, unknown>>(
-      `SELECT ${ref.field} FROM users_pii WHERE id = ? AND tenant_id = ?`,
-      [ref.userId, ref.tenantId]
+    const row = await this.adapter.queryOne<{ value_json: string | null }>(
+      `SELECT value_json
+         FROM identity_sensitive_values
+        WHERE tenant_id = ?
+          AND owner_type = 'runtime_user'
+          AND owner_id = ?
+          AND value_key = ?
+          AND lifecycle_state = 'active'
+        LIMIT 1`,
+      [ref.tenantId, ref.userId, ref.field]
     );
-    return row?.[ref.field] ?? null;
+    return parseJson(row?.value_json);
   }
 }

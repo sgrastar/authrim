@@ -577,7 +577,7 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
     inspectStorageProfileTarget(
       config,
       check,
-      'storage profile builtin:storage:external-postgres / users_core',
+      'storage profile builtin:storage:external-postgres / identity core',
       {
         driver: 'postgres',
         connectionRef: 'core-primary',
@@ -586,7 +586,7 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
     inspectStorageProfileTarget(
       config,
       check,
-      'storage profile builtin:storage:external-postgres / users_pii',
+      'storage profile builtin:storage:external-postgres / identity PII',
       {
         driver: 'postgres',
         connectionRef: 'pii-primary',

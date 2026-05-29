@@ -3,10 +3,7 @@ import {
   type DatabaseAdapter,
   type Env,
   encryptObjectArtifact,
-  type UpdateUserCoreInput,
-  type UpdateUserPIIInput,
-  UserCoreRepository,
-  UserPIIRepository,
+  CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
   generateUserIdFromSettings,
   invalidateUserCache,
@@ -192,9 +189,8 @@ interface UserImportRuntime {
   tenantId: string;
   env: Env;
   coreAdapter: DatabaseAdapter;
-  userCoreRepo: UserCoreRepository;
   piiAdapter: DatabaseAdapter;
-  piiRepo: UserPIIRepository;
+  runtimeUsers: CanonicalRuntimeUserStore;
   customClaimSources: Awaited<ReturnType<typeof resolveCustomClaimRuntimeSourcesFromEnv>>;
 }
 
@@ -542,11 +538,20 @@ async function createUserImportRuntime(env: Env, tenantId: string): Promise<User
     tenantId,
     env,
     coreAdapter,
-    userCoreRepo: new UserCoreRepository(coreAdapter, tenantId),
     piiAdapter,
-    piiRepo: new UserPIIRepository(piiAdapter, tenantId),
+    runtimeUsers: new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId }),
     customClaimSources,
   };
+}
+
+function isImportedUserActive(input: Pick<ImportedUserRowInput, 'status' | 'lifecycle_state'>) {
+  if (input.lifecycle_state) {
+    return input.lifecycle_state === 'active';
+  }
+  if (input.status) {
+    return input.status === 'active';
+  }
+  return true;
 }
 
 async function createImportedUser(
@@ -579,43 +584,36 @@ async function createImportedUser(
 
   const userId = await generateUserIdFromSettings(runtime.env.AUTHRIM_CONFIG, runtime.tenantId);
 
-  await runtime.userCoreRepo.createUser({
-    id: userId,
-    tenant_id: runtime.tenantId,
-    email_verified: input.email_verified ?? false,
-    phone_number_verified: input.phone_number_verified ?? false,
-    user_type: input.user_type ?? 'end_user',
-    pii_partition: 'default',
-    pii_status: 'pending',
-    lifecycle_state: input.lifecycle_state as UpdateUserCoreInput['lifecycle_state'],
+  await runtime.runtimeUsers.syncUser({
+    userId,
+    email: input.email,
+    name: input.name ?? null,
+    active: isImportedUserActive(input),
+    emailVerified: input.email_verified ?? false,
+    phoneNumberVerified: input.phone_number_verified ?? false,
+    userType: input.user_type ?? 'end_user',
+    sourceRef: 'management:user-import',
+    piiFields: {
+      phone_number: input.phone_number !== undefined,
+      given_name: input.given_name !== undefined,
+      family_name: input.family_name !== undefined,
+      nickname: input.nickname !== undefined,
+      preferred_username: input.preferred_username !== undefined,
+      picture: input.picture !== undefined,
+    },
+    sensitiveValues: {
+      phone_number: input.phone_number ?? null,
+      given_name: input.given_name ?? null,
+      family_name: input.family_name ?? null,
+      nickname: input.nickname ?? null,
+      preferred_username: input.preferred_username ?? null,
+      picture: input.picture ?? null,
+    },
+    inlineProfileFields: {
+      ...(input.status ? { 'runtime.status': input.status } : {}),
+      ...(input.lifecycle_state ? { 'runtime.lifecycle_state': input.lifecycle_state } : {}),
+    },
   });
-
-  if (input.status) {
-    await runtime.userCoreRepo.update(userId, { status: input.status });
-  }
-
-  try {
-    await runtime.piiRepo.createPII(
-      {
-        id: userId,
-        tenant_id: runtime.tenantId,
-        pii_class: 'PROFILE',
-        email: input.email,
-        phone_number: input.phone_number ?? null,
-        name: input.name ?? null,
-        given_name: input.given_name ?? null,
-        family_name: input.family_name ?? null,
-        nickname: input.nickname ?? null,
-        preferred_username: input.preferred_username ?? null,
-        picture: input.picture ?? null,
-      },
-      runtime.piiAdapter
-    );
-    await runtime.userCoreRepo.updatePIIStatus(userId, 'active');
-  } catch (piiError) {
-    await runtime.userCoreRepo.updatePIIStatus(userId, 'failed');
-    throw piiError;
-  }
 
   try {
     await persistCustomClaimWrite({
@@ -642,14 +640,7 @@ async function createImportedUser(
         runtime.tenantId,
         userId,
       ]);
-      await runtime.piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-        userId,
-        runtime.tenantId,
-      ]);
-      await runtime.coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
-        userId,
-        runtime.tenantId,
-      ]);
+      await runtime.runtimeUsers.deleteUser(userId);
     } catch {
       // Best effort rollback only.
     }
@@ -669,8 +660,8 @@ async function updateImportedUser(
   input: ImportedUserRowInput,
   validateOnly: boolean
 ): Promise<ImportedUserRowResult> {
-  const userCore = await runtime.userCoreRepo.findById(userId);
-  if (!userCore) {
+  const existingUser = await runtime.runtimeUsers.findById(userId, { includeInactive: true });
+  if (!existingUser) {
     throw new Error(`User ${userId} not found`);
   }
 
@@ -690,41 +681,6 @@ async function updateImportedUser(
     throw new Error(detail);
   }
 
-  const coreUpdateData: UpdateUserCoreInput = {};
-  const piiUpdateData: UpdateUserPIIInput = {};
-
-  if (input.email_verified !== undefined) {
-    coreUpdateData.email_verified = input.email_verified;
-  }
-  if (input.phone_number_verified !== undefined) {
-    coreUpdateData.phone_number_verified = input.phone_number_verified;
-  }
-  if (input.user_type !== undefined) {
-    coreUpdateData.user_type = input.user_type;
-  }
-  if (input.status !== undefined) {
-    coreUpdateData.status = input.status;
-  }
-  if (input.lifecycle_state !== undefined) {
-    coreUpdateData.lifecycle_state =
-      input.lifecycle_state as UpdateUserCoreInput['lifecycle_state'];
-  }
-
-  const piiFields: Array<keyof UpdateUserPIIInput> = [
-    'name',
-    'given_name',
-    'family_name',
-    'nickname',
-    'preferred_username',
-    'picture',
-    'phone_number',
-  ];
-  for (const field of piiFields) {
-    if (field in input && input[field] !== undefined) {
-      piiUpdateData[field] = input[field] as never;
-    }
-  }
-
   if (validateOnly) {
     return {
       outcome: 'validated',
@@ -733,12 +689,43 @@ async function updateImportedUser(
     };
   }
 
-  if (Object.keys(coreUpdateData).length > 0) {
-    await runtime.userCoreRepo.update(userId, coreUpdateData);
-  }
-  if (Object.keys(piiUpdateData).length > 0) {
-    await runtime.piiRepo.updatePII(userId, piiUpdateData, runtime.piiAdapter);
-  }
+  await runtime.runtimeUsers.syncUser({
+    userId,
+    email: input.email,
+    name: input.name ?? existingUser.name,
+    active:
+      input.status !== undefined || input.lifecycle_state !== undefined
+        ? isImportedUserActive(input)
+        : existingUser.active === 1,
+    emailVerified: input.email_verified ?? Boolean(existingUser.email_verified),
+    phoneNumberVerified: input.phone_number_verified ?? Boolean(existingUser.phone_number_verified),
+    userType: input.user_type ?? undefined,
+    sourceRef: 'management:user-import',
+    piiFields: {
+      email: true,
+      name: input.name !== undefined,
+      phone_number: input.phone_number !== undefined,
+      given_name: input.given_name !== undefined,
+      family_name: input.family_name !== undefined,
+      nickname: input.nickname !== undefined,
+      preferred_username: input.preferred_username !== undefined,
+      picture: input.picture !== undefined,
+    },
+    sensitiveValues: {
+      email: input.email,
+      name: input.name,
+      phone_number: input.phone_number,
+      given_name: input.given_name,
+      family_name: input.family_name,
+      nickname: input.nickname,
+      preferred_username: input.preferred_username,
+      picture: input.picture,
+    },
+    inlineProfileFields: {
+      ...(input.status ? { 'runtime.status': input.status } : {}),
+      ...(input.lifecycle_state ? { 'runtime.lifecycle_state': input.lifecycle_state } : {}),
+    },
+  });
 
   const hasCustomFieldChanges =
     Object.keys(customFieldValidation.nonPiiValues).length > 0 ||
@@ -780,11 +767,7 @@ async function processImportedRow(
   options: UserImportJobOptions
 ): Promise<ImportedUserRowResult> {
   const input = normalizeImportRecord(record);
-  const existing = await runtime.piiRepo.findByTenantAndEmail(
-    runtime.tenantId,
-    input.email,
-    runtime.piiAdapter
-  );
+  const existing = await runtime.runtimeUsers.findByEmail(input.email, { includeInactive: true });
 
   if (existing) {
     if (options.on_duplicate === 'skip') {

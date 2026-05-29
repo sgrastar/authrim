@@ -162,7 +162,7 @@ export const TENANT_TABLES_TO_DELETE = [
   'token_claim_rules',
   // Refresh token sharding
   'refresh_token_shard_configs',
-  // Users (tenant-specific user data, not users_core which is shared)
+  // Users (tenant-specific user data, separate from shared canonical identity tables)
   'user_custom_fields',
   'user_token_families',
   'users',

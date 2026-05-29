@@ -2,7 +2,8 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
-  LegacyUsersPiiValueResolver,
+  CanonicalSensitiveValueResolver,
+  CanonicalRuntimeUserStore,
   validateResponseType,
   validateClientId,
   validateRedirectUri,
@@ -107,10 +108,6 @@ const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
 const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
 const HTTPS_REQUEST_URI_MAX_REDIRECTS = 5;
 
-function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
-  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
-}
-
 async function loadOIDCClaimsUser(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -119,24 +116,13 @@ async function loadOIDCClaimsUser(
 ): Promise<
   Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
 > {
-  if (isCanonicalIdentityRuntimeEnabled(c.env)) {
-    const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
-      piiCtx.coreAdapter,
-      tenantId,
-      new LegacyUsersPiiValueResolver(piiCtx.defaultPiiAdapter)
-    );
-    const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
-    if (projection) {
-      return canonicalProjectionToOIDCClaimsUser(projection);
-    }
-  }
-
-  return getCachedUser(c.env, tenantId, userId, {
-    coreDb: piiCtx.coreAdapter,
-    piiDb: piiCtx.defaultPiiAdapter,
-    cacheScope: piiCtx.userCacheScope,
-    piiCacheMode: piiCtx.piiCacheMode,
-  });
+  const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+    piiCtx.coreAdapter,
+    tenantId,
+    new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
+  );
+  const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+  return projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
 }
 
 function clampHandoffArtifactTtlSeconds(value: number): number {
@@ -4535,79 +4521,73 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   let userId: string;
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
 
   if (isCertificationTest) {
     // Use fixed test user for OIDC Conformance Tests
     userId = 'user-oidc-conformance-test';
     log.info('Using OIDC Conformance Test user', { action: 'login_test_user' });
 
-    // Verify test user exists in Core DB (should have been created during DCR)
-    const existingUser = await authCtx.repositories.userCore.findById(userId);
+    // Verify test user exists in canonical runtime tables (should be created during DCR).
+    const existingUser = await runtimeUsers.findById(userId, { includeInactive: true });
 
     if (!existingUser) {
       log.warn('Test user not found, creating it now', { action: 'login_test_user_create' });
 
-      // Step 1: Create user in Core DB with pii_status='pending'
-      await authCtx.repositories.userCore
-        .createUser({
-          id: userId,
-          tenant_id: tenantId,
-          email_verified: true,
-          phone_number_verified: true,
-          user_type: 'end_user',
-          pii_partition: tenantId,
-          pii_status: 'pending',
-        })
-        .catch((error: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to create test user in Core DB', {
-            action: 'login_test_user_core',
-            errorName: error instanceof Error ? error.name : 'Unknown error',
-          });
-        });
-
-      // Step 2: Insert into the configured PII store
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      await piiCtx.piiRepositories.userPII
-        .createPII({
-          id: userId,
-          tenant_id: tenantId,
-          pii_class: 'PROFILE',
+      await runtimeUsers
+        .syncUser({
+          userId,
           email: 'test@example.com',
           name: 'John Doe',
-          given_name: 'John',
-          family_name: 'Doe',
-          nickname: 'Johnny',
-          preferred_username: 'test',
-          picture: 'https://example.com/avatar.jpg',
-          website: 'https://example.com',
-          gender: 'male',
-          birthdate: '1990-01-01',
-          zoneinfo: 'America/New_York',
-          locale: 'en-US',
-          phone_number: '+1-555-0100',
-          address_formatted: '1234 Main St, Anytown, ST 12345, USA',
-          address_street_address: '1234 Main St',
-          address_locality: 'Anytown',
-          address_region: 'ST',
-          address_postal_code: '12345',
-          address_country: 'USA',
+          active: true,
+          emailVerified: true,
+          userType: 'end_user',
+          sourceRef: 'oidc_conformance',
+          piiFields: {
+            given_name: true,
+            family_name: true,
+            nickname: true,
+            preferred_username: true,
+            picture: true,
+            website: true,
+            gender: true,
+            birthdate: true,
+            zoneinfo: true,
+            locale: true,
+            phone_number: true,
+          },
+          sensitiveValues: {
+            given_name: 'John',
+            family_name: 'Doe',
+            nickname: 'Johnny',
+            preferred_username: 'test',
+            picture: 'https://example.com/avatar.jpg',
+            website: 'https://example.com',
+            gender: 'male',
+            birthdate: '1990-01-01',
+            zoneinfo: 'America/New_York',
+            locale: 'en-US',
+            phone_number: '+1-555-0100',
+          },
+          phoneNumberVerified: true,
+          addressJson: JSON.stringify({
+            formatted: '1234 Main St, Anytown, ST 12345, USA',
+            street_address: '1234 Main St',
+            locality: 'Anytown',
+            region: 'ST',
+            postal_code: '12345',
+            country: 'USA',
+          }),
         })
         .catch((error: unknown) => {
           // PII Protection: Don't log full error
-          log.error('Failed to create test user in PII store', {
-            action: 'login_test_user_pii',
-            errorName: error instanceof Error ? error.name : 'Unknown error',
-          });
-        });
-
-      // Step 3: Update pii_status to 'active'
-      await authCtx.repositories.userCore
-        .updatePIIStatus(userId, 'active')
-        .catch((error: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to update pii_status', {
-            action: 'login_pii_status_update',
+          log.error('Failed to create test user in canonical runtime store', {
+            action: 'login_test_user_canonical',
             errorName: error instanceof Error ? error.name : 'Unknown error',
           });
         });
@@ -4644,52 +4624,22 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     // Use the email from login form, or fall back to a dummy email
     const userEmail = loginUsername || `${userId}@example.com`;
 
-    // Step 1: Create user in Core DB with pii_status='pending'
-    await authCtx.repositories.userCore
-      .createUser({
-        id: userId,
-        tenant_id: tenantId,
-        email_verified: false,
-        user_type: 'end_user',
-        pii_partition: tenantId,
-        pii_status: 'pending',
+    await runtimeUsers
+      .syncUser({
+        userId,
+        email: userEmail,
+        active: true,
+        emailVerified: false,
+        userType: 'end_user',
+        sourceRef: 'oidc_stub_login',
       })
       .catch((error: unknown) => {
         // PII Protection: Don't log full error
-        log.error('Failed to create user in Core DB', {
-          action: 'login_user_core_create',
+        log.error('Failed to create stub user in canonical runtime store', {
+          action: 'login_user_canonical_create',
           errorName: error instanceof Error ? error.name : 'Unknown error',
         });
       });
-
-    // Step 2: Insert into the configured PII store
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    try {
-      await piiCtx.piiRepositories.userPII.createPII({
-        id: userId,
-        tenant_id: tenantId,
-        email: userEmail,
-      });
-
-      // Step 3: Update pii_status to 'active' (only on successful PII store write)
-      await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-    } catch (error: unknown) {
-      // PII Protection: Don't log full error
-      log.error('Failed to create user in PII store', {
-        action: 'login_user_pii_create',
-        errorName: error instanceof Error ? error.name : 'Unknown error',
-      });
-      // Update pii_status to 'failed' to indicate PII write failure
-      await authCtx.repositories.userCore
-        .updatePIIStatus(userId, 'failed')
-        .catch((statusError: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to update pii_status to failed', {
-            action: 'login_pii_status_failed',
-            errorName: statusError instanceof Error ? statusError.name : 'Unknown error',
-          });
-        });
-    }
   }
 
   // Calculate auth_time BEFORE creating session to ensure consistency

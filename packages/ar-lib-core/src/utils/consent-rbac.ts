@@ -18,6 +18,7 @@ import type {
 } from '../types/consent';
 import type { RelationshipType, PermissionLevel, OrganizationType, PlanType } from '../types/rbac';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
+import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
 
 // =============================================================================
 // Consent RBAC Data Retrieval
@@ -306,39 +307,34 @@ export async function getActingAsUserInfo(
     return null;
   }
 
-  // Get target user info (PII/Non-PII DB separation)
-  // Check Core DB for user existence
   const coreAdapter = ensureDatabaseAdapter(db, 'consent-rbac-acting-as-core');
-  const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-    [targetId, tenantId]
-  );
-
-  if (!userCore) {
+  if (!dbPII) {
+    const account = await coreAdapter.queryOne<{ legacy_user_id: string }>(
+      "SELECT legacy_user_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'",
+      [targetId, tenantId]
+    );
+    if (!account) return null;
+    return {
+      id: targetId,
+      name: undefined,
+      email: targetId,
+      relationship_type: validation.relationship_type,
+      permission_level: validation.permission_level,
+    };
+  }
+  const user = await new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter: ensureDatabaseAdapter(dbPII, 'consent-rbac-acting-as-pii'),
+    tenantId,
+  }).findById(targetId);
+  if (!user) {
     return null;
   }
 
-  // Fetch PII from PII DB if available
-  let email: string = targetId; // Fallback
-  let name: string | undefined = undefined;
-
-  if (dbPII) {
-    const piiAdapter = ensureDatabaseAdapter(dbPII, 'consent-rbac-acting-as-pii');
-    const userPII = await piiAdapter.queryOne<{ email: string; name: string | null }>(
-      'SELECT email, name FROM users_pii WHERE id = ? AND tenant_id = ?',
-      [targetId, tenantId]
-    );
-
-    if (userPII) {
-      email = userPII.email;
-      name = userPII.name ?? undefined;
-    }
-  }
-
   return {
-    id: userCore.id,
-    name,
-    email,
+    id: user.id,
+    name: user.name ?? undefined,
+    email: user.email ?? targetId,
     relationship_type: validation.relationship_type,
     permission_level: validation.permission_level,
   };
@@ -364,44 +360,34 @@ export async function getConsentUserInfo(
   dbPII?: DatabaseSource
 ): Promise<ConsentUserInfo | null> {
   const coreAdapter = ensureDatabaseAdapter(db, 'consent-user-core');
-  // Check Core DB for user existence
-  const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-    [subjectId, tenantId]
-  );
-
-  if (!userCore) {
+  if (!dbPII) {
+    const account = await coreAdapter.queryOne<{ legacy_user_id: string }>(
+      "SELECT legacy_user_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'",
+      [subjectId, tenantId]
+    );
+    return account
+      ? {
+          id: subjectId,
+          email: subjectId,
+          name: undefined,
+          picture: undefined,
+        }
+      : null;
+  }
+  const user = await new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter: ensureDatabaseAdapter(dbPII, 'consent-user-pii'),
+    tenantId,
+  }).findById(subjectId);
+  if (!user) {
     return null;
   }
 
-  // Fetch PII from PII DB if available
-  let email: string = subjectId; // Fallback
-  let name: string | undefined = undefined;
-  let picture: string | undefined = undefined;
-
-  if (dbPII) {
-    const piiAdapter = ensureDatabaseAdapter(dbPII, 'consent-user-pii');
-    const userPII = await piiAdapter.queryOne<{
-      email: string;
-      name: string | null;
-      picture: string | null;
-    }>('SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?', [
-      subjectId,
-      tenantId,
-    ]);
-
-    if (userPII) {
-      email = userPII.email;
-      name = userPII.name ?? undefined;
-      picture = userPII.picture ?? undefined;
-    }
-  }
-
   return {
-    id: userCore.id,
-    email,
-    name,
-    picture,
+    id: user.id,
+    email: user.email ?? subjectId,
+    name: user.name ?? undefined,
+    picture: user.picture ?? undefined,
   };
 }
 

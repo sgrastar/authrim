@@ -2254,7 +2254,11 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
     // Validate that all user_ids exist in tenant
     const userPlaceholders = options.user_ids.map(() => '?').join(',');
     const existingUsers = await adapter.query<{ id: string }>(
-      `SELECT id FROM users_core WHERE id IN (${userPlaceholders}) AND tenant_id = ?`,
+      `SELECT legacy_user_id as id
+         FROM identity_accounts
+        WHERE legacy_user_id IN (${userPlaceholders})
+          AND tenant_id = ?
+          AND lifecycle_state = 'active'`,
       [...options.user_ids, tenantId]
     );
 

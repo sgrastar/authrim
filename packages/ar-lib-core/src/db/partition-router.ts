@@ -7,7 +7,7 @@
  *
  * Architecture:
  * - Each partition maps to a separate DatabaseAdapter (D1, Postgres via Hyperdrive, etc.)
- * - users_core.pii_partition column tracks which partition contains user's PII
+ * - canonical runtime metadata tracks which partition contains user's PII
  * - New user partition is determined by trust hierarchy:
  *   1. Tenant policy (high trust)
  *   2. User-declared residence (high trust)
@@ -271,7 +271,7 @@ export class PIIPartitionRouter {
   /** Partition key → DatabaseAdapter mapping */
   private piiAdapters: Map<PartitionKey, DatabaseAdapter>;
 
-  /** Core database adapter (for users_core lookups) */
+  /** Core database adapter (for canonical account lookups) */
   private coreAdapter: DatabaseAdapter;
 
   /** KV namespace for settings */
@@ -280,7 +280,7 @@ export class PIIPartitionRouter {
   /**
    * Create a new PIIPartitionRouter.
    *
-   * @param coreAdapter - Adapter for D1_CORE (users_core table)
+   * @param coreAdapter - Adapter for D1_CORE (canonical identity tables)
    * @param defaultPiiAdapter - Default PII adapter (D1_PII)
    * @param kvNamespace - KV namespace for partition settings (optional)
    */
@@ -350,14 +350,12 @@ export class PIIPartitionRouter {
    *
    * @param tenantId - Tenant ID that owns the user
    * @param userId - User ID
-   * @returns Partition key from users_core.pii_partition
+   * @returns Partition key. Canonical runtime values currently use the default PII partition.
    */
   async resolvePartitionForUser(tenantId: string, userId: string): Promise<PartitionKey> {
-    const user = await this.coreAdapter.queryOne<{ pii_partition: string }>(
-      'SELECT pii_partition FROM users_core WHERE tenant_id = ? AND id = ?',
-      [tenantId, userId]
-    );
-    return user?.pii_partition ?? DEFAULT_PARTITION;
+    void tenantId;
+    void userId;
+    return DEFAULT_PARTITION;
   }
 
   /**
@@ -557,8 +555,8 @@ export class PIIPartitionRouter {
    */
   async getPartitionStats(tenantId?: string): Promise<Map<PartitionKey, number>> {
     const sql = tenantId
-      ? 'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_partition'
-      : 'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE is_active = 1 GROUP BY pii_partition';
+      ? "SELECT 'default' as pii_partition, COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active'"
+      : "SELECT 'default' as pii_partition, COUNT(*) as count FROM identity_accounts WHERE lifecycle_state = 'active'";
 
     const params = tenantId ? [tenantId] : [];
     const results = await this.coreAdapter.query<{ pii_partition: string; count: number }>(
