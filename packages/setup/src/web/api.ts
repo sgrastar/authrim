@@ -1230,13 +1230,33 @@ export function createApiRoutes(): Hono {
 
         addProgress(`Provisioning Cloudflare resources for ${env}...`);
 
-        if (storageProfileId || databaseConfig) {
+        if (
+          storageProfileId ||
+          databaseConfig ||
+          createQueues !== undefined ||
+          createR2 !== undefined
+        ) {
           const baseConfig = state.config ?? createDefaultConfig(env);
           state.config = AuthrimConfigSchema.parse({
             ...baseConfig,
             database: databaseConfig
               ? { ...baseConfig.database, ...databaseConfig }
               : baseConfig.database,
+            features: {
+              ...baseConfig.features,
+              queue: {
+                enabled:
+                  createQueues === undefined
+                    ? baseConfig.features?.queue?.enabled === true
+                    : createQueues === true,
+              },
+              r2: {
+                enabled:
+                  createR2 === undefined
+                    ? baseConfig.features?.r2?.enabled === true
+                    : createR2 === true,
+              },
+            },
             profiles: {
               ...baseConfig.profiles,
               defaults: {

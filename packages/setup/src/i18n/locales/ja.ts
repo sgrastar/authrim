@@ -466,7 +466,8 @@ const ja: Translations = {
 
   // Feature flags
   'features.title': '機能フラグ',
-  'features.queuePrompt': 'Cloudflare Queuesを有効にしますか？（監査ログ用）',
+  'features.queuePrompt':
+    'Cloudflare Queuesを有効にしますか？デフォルトは無効です。Freeプランの目安は約3,000配信メッセージ/日です。Authrimでは非同期audit fan-out、logging delivery retry、export build job、key rewrap retry jobなどで1 queued messageを使います。',
   'features.r2Prompt': 'Cloudflare R2を有効にしますか？（アバター用）',
   'features.queue': 'Queue:',
   'features.r2': 'R2:',
