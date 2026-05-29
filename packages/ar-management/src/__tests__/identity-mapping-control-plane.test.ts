@@ -13,6 +13,7 @@ import {
   adminIdentityMappingPolicyCreateHandler,
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingReviewTasksListHandler,
+  adminIdentityMappingSchemaReadinessHandler,
   IdentityMappingControlPlaneRepository,
 } from '../identity-mapping-control-plane';
 
@@ -1809,6 +1810,68 @@ describe('identity mapping control plane Admin API handlers', () => {
       ],
     });
     expect(adapter.queries[0].params).toEqual(['tenant_a', 'open', 5]);
+  });
+
+  it('lists schema readiness with gate state and schema presence from sqlite metadata', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        { name: 'mapping_policy_sets' },
+        { name: 'mapping_policy_versions' },
+        { name: 'mapping_rule_edges' },
+        { name: 'review_tasks' },
+        { name: 'attribute_release_consents' },
+      ],
+    });
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
+      await next();
+    });
+    app.get(
+      '/api/admin/identity-mapping/schema-readiness',
+      adminIdentityMappingSchemaReadinessHandler
+    );
+
+    const response = await app.request(
+      '/api/admin/identity-mapping/schema-readiness',
+      { headers: { 'X-Tenant-Id': 'tenant_a' } },
+      { DB_ADMIN: adapter } as unknown as Env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      rows: Array<{
+        id: string;
+        schemaObject?: string;
+        schemaPresent: boolean | null;
+        gateState: string;
+      }>;
+      summary: { blocked: number; deferred: number; total: number };
+    };
+    expect(body.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'UIM-SCH-016',
+          schemaObject: 'mapping_policy_sets',
+          schemaPresent: true,
+          gateState: 'pass',
+        }),
+        expect.objectContaining({
+          id: 'UIM-SCH-071',
+          schemaObject: 'federation_trust_sources',
+          schemaPresent: false,
+          gateState: 'blocked',
+        }),
+        expect.objectContaining({
+          id: 'UIM-SCH-086',
+          schemaPresent: null,
+          gateState: 'deferred',
+        }),
+      ])
+    );
+    expect(body.summary.total).toBeGreaterThan(10);
+    expect(body.summary.blocked).toBeGreaterThan(0);
+    expect(body.summary.deferred).toBeGreaterThan(0);
   });
 
   it('lists federation metadata documents through the Admin API response shape', async () => {

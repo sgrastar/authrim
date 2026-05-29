@@ -43,6 +43,9 @@ describe('identity mapping preview sample', () => {
 		expect(emailRule.legalBasis).toBe('consent');
 		expect(emailRule.consentMode).toBe('until_attributes_change');
 		expect(emailRule.attributeSetHash).toMatch(/^attrset_/);
+		expect(emailRule.releasePolicyVersion).toBe('release-policy-v1');
+		expect(emailRule.termsVersion).toBe('terms-current');
+		expect(emailRule.privacyPolicyVersion).toBe('privacy-current');
 		expect(departmentRule.consentStatus).toBe('not_required');
 		expect(JSON.stringify(emailRule)).not.toContain('person@example');
 	});

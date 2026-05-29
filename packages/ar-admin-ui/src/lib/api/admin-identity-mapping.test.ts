@@ -14,6 +14,8 @@ describe('adminIdentityMappingAPI', () => {
 						protocolSchemas: [],
 						externalSchemas: [],
 						templates: [],
+						rows: [],
+						summary: { total: 0, pass: 0, attention: 0, blocked: 0, deferred: 0 },
 						federationTrustSources: [],
 						federationMetadataDocuments: [],
 						reviewTasks: []
@@ -43,6 +45,7 @@ describe('adminIdentityMappingAPI', () => {
 		await adminIdentityMappingAPI.listProtocolSchemas();
 		await adminIdentityMappingAPI.listExternalSchemas();
 		await adminIdentityMappingAPI.listTemplates();
+		await adminIdentityMappingAPI.getSchemaReadiness();
 		await adminIdentityMappingAPI.listFederationTrustSources();
 		await adminIdentityMappingAPI.listFederationMetadataDocuments('trust/source 1');
 		await adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 25 });
@@ -66,6 +69,7 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/protocol-schemas',
 			'/api/admin/identity-mapping/external-schemas',
 			'/api/admin/identity-mapping/templates',
+			'/api/admin/identity-mapping/schema-readiness',
 			'/api/admin/identity-mapping/federation-trust-sources',
 			'/api/admin/identity-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
 			'/api/admin/identity-mapping/review-tasks?status=open&limit=25',
@@ -75,11 +79,11 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/activate',
 			'/api/admin/identity-mapping/review-tasks/review%20task%201/transition'
 		]);
-		expect(fetchMock.mock.calls[8][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[9][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[10][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[11][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[12][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[13][1]).toMatchObject({ method: 'POST' });
 	});
 
 	it('surfaces API error descriptions', async () => {

@@ -405,6 +405,10 @@
 			purpose: 'not configured',
 			attributeSetHash: 'not configured',
 			consentMode: 'not_applicable' as const,
+			releasePolicyVersion: 'not configured',
+			termsVersion: 'not configured',
+			privacyPolicyVersion: 'not configured',
+			denyReason: 'none',
 			runtime: 'graph preview',
 			conflict: 'sample policy decides precedence',
 			disclosure: 'redacted summary',
@@ -693,11 +697,27 @@
 					<span>Attribute set</span>
 					<strong>{rule.attributeSetHash}</strong>
 				</div>
-				<div class="control-row">
-					<span>Challenge mode</span>
-					<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
+					<div class="control-row">
+						<span>Challenge mode</span>
+						<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
+					</div>
+					<div class="control-row">
+						<span>Release policy</span>
+						<strong>{rule.releasePolicyVersion}</strong>
+					</div>
+					<div class="control-row">
+						<span>Terms</span>
+						<strong>{rule.termsVersion}</strong>
+					</div>
+					<div class="control-row">
+						<span>Privacy Policy</span>
+						<strong>{rule.privacyPolicyVersion}</strong>
+					</div>
+					<div class="control-row">
+						<span>Deny reason</span>
+						<strong>{rule.denyReason}</strong>
+					</div>
 				</div>
-			</div>
 
 			<div class="control-block">
 				<div class="control-row">

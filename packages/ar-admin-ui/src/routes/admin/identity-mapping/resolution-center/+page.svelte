@@ -101,8 +101,11 @@
 		isLoading = true;
 		loadError = null;
 		try {
-			const result = await adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 100 });
-			reviewTasks = result.reviewTasks;
+			const [openResult, inReviewResult] = await Promise.all([
+				adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 100 }),
+				adminIdentityMappingAPI.listReviewTasks({ status: 'in_review', limit: 100 })
+			]);
+			reviewTasks = dedupeReviewTasks([...openResult.reviewTasks, ...inReviewResult.reviewTasks]);
 		} catch (error) {
 			loadError = error instanceof Error ? error.message : 'Failed to load review tasks';
 		} finally {
@@ -186,6 +189,14 @@
 		if (status === 'in_review') return 'needs_approval';
 		if (status === 'open') return 'open';
 		return 'blocked';
+	}
+
+	function dedupeReviewTasks(tasks: IdentityMappingReviewTask[]): IdentityMappingReviewTask[] {
+		const byId: Record<string, IdentityMappingReviewTask> = {};
+		for (const task of tasks) {
+			byId[task.id] = task;
+		}
+		return Object.values(byId).sort((left, right) => right.priority - left.priority);
 	}
 
 	function getPayloadString(payload: Record<string, unknown>, key: string): string | null {

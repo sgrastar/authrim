@@ -678,6 +678,7 @@ import {
   adminIdentityMappingReviewTasksListHandler,
   adminIdentityMappingReviewTaskTransitionHandler,
   adminIdentityMappingSamlFederationTrustProfileMigrateHandler,
+  adminIdentityMappingSchemaReadinessHandler,
   adminIdentityMappingSourceAuthorityContractCreateHandler,
   adminIdentityMappingSourceAuthorityContractsListHandler,
   adminIdentityMappingSourceAuthorityEvaluateHandler,
@@ -2312,6 +2313,11 @@ app.post(
   '/api/admin/identity-mapping/source-authority-contracts/evaluate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceAuthorityEvaluateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/schema-readiness',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingSchemaReadinessHandler
 );
 app.get(
   '/api/admin/identity-mapping/review-tasks',

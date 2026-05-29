@@ -1,80 +1,47 @@
 <script lang="ts">
-	type ReadinessStatus =
-		| 'closed'
-		| 'tested'
-		| 'ui_connected'
-		| 'api_connected'
-		| 'deferred'
-		| 'blocked';
+	import { onMount } from 'svelte';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingSchemaReadinessRow,
+		type IdentityMappingSchemaReadinessSummary
+	} from '$lib/api/admin-identity-mapping';
 
-	interface ReadinessRow {
-		id: string;
-		area: string;
-		status: ReadinessStatus;
-		connection: string;
-		gate: string;
+	type GateFilter = IdentityMappingSchemaReadinessRow['gateState'] | 'all';
+
+	let rows = $state<IdentityMappingSchemaReadinessRow[]>([]);
+	let summary = $state<IdentityMappingSchemaReadinessSummary>({
+		total: 0,
+		pass: 0,
+		attention: 0,
+		blocked: 0,
+		deferred: 0
+	});
+	let activeStatus = $state<GateFilter>('all');
+	let loading = $state(true);
+	let errorMessage = $state<string | null>(null);
+
+	onMount(() => {
+		void loadSchemaReadiness();
+	});
+
+	async function loadSchemaReadiness() {
+		loading = true;
+		errorMessage = null;
+		try {
+			const result = await adminIdentityMappingAPI.getSchemaReadiness();
+			rows = result.rows;
+			summary = result.summary;
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Failed to load schema readiness';
+		} finally {
+			loading = false;
+		}
 	}
 
-	const rows: ReadinessRow[] = [
-		{
-			id: 'UIM-SCH-001',
-			area: 'Canonical identity subjects',
-			status: 'closed',
-			connection: 'Tier 1 canonical repository',
-			gate: 'Runtime readers use canonical storage'
-		},
-		{
-			id: 'UIM-SCH-024',
-			area: 'Mapping policy activations',
-			status: 'api_connected',
-			connection: 'PR12 operations view',
-			gate: 'Activation, rollback, and degraded status visible'
-		},
-		{
-			id: 'UIM-SCH-047',
-			area: 'Activation leases',
-			status: 'tested',
-			connection: 'Policy activation API',
-			gate: 'Concurrent activation has negative coverage'
-		},
-		{
-			id: 'UIM-SCH-068',
-			area: 'Lifecycle signal ledger',
-			status: 'tested',
-			connection: 'Implemented lifecycle signals',
-			gate: 'SSF/CAEP/RISC adapters remain deferred'
-		},
-		{
-			id: 'UIM-SCH-072',
-			area: 'Federation trust anchors',
-			status: 'api_connected',
-			connection: 'Federation Trust view',
-			gate: 'SAML trust sources and anchors are inspectable'
-		},
-		{
-			id: 'UIM-SCH-073',
-			area: 'Federation metadata documents',
-			status: 'ui_connected',
-			connection: 'Federation Trust metadata ledger',
-			gate: 'Documents and entity summaries are visible from the trust source detail'
-		},
-		{
-			id: 'UIM-SCH-086',
-			area: 'SSF/CAEP/RISC adapter',
-			status: 'deferred',
-			connection: 'adapter_deferred',
-			gate: 'No runtime endpoint exposure until resume criteria are met'
-		}
-	];
-
-	let activeStatus = $state<ReadinessStatus | 'all'>('all');
-
 	const visibleRows = $derived(
-		activeStatus === 'all' ? rows : rows.filter((row) => row.status === activeStatus)
+		activeStatus === 'all' ? rows : rows.filter((row) => row.gateState === activeStatus)
 	);
-	const blockedCount = $derived(rows.filter((row) => row.status === 'blocked').length);
-	const deferredCount = $derived(rows.filter((row) => row.status === 'deferred').length);
-	const statuses = $derived(['all', ...new Set(rows.map((row) => row.status))] as const);
+	const statuses = $derived(['all', ...new Set(rows.map((row) => row.gateState))] as const);
 </script>
 
 <svelte:head>
@@ -95,11 +62,19 @@
 		<div class="status-panel">
 			<div>
 				<span>Blocked</span>
-				<strong>{blockedCount}</strong>
+				<strong>{summary.blocked}</strong>
 			</div>
 			<div>
 				<span>Deferred</span>
-				<strong>{deferredCount}</strong>
+				<strong>{summary.deferred}</strong>
+			</div>
+			<div>
+				<span>Attention</span>
+				<strong>{summary.attention}</strong>
+			</div>
+			<div>
+				<span>Total</span>
+				<strong>{summary.total}</strong>
 			</div>
 		</div>
 	</div>
@@ -115,32 +90,52 @@
 					{status.replace('_', ' ')}
 				</button>
 			{/each}
+			<button type="button" onclick={loadSchemaReadiness} disabled={loading}>Refresh</button>
 		</div>
 
-		<div class="table-shell">
-			<table>
-				<thead>
-					<tr>
-						<th>Inventory ID</th>
-						<th>Area</th>
-						<th>Status</th>
-						<th>Connection</th>
-						<th>Gate</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each visibleRows as row (row.id)}
+		{#if loading}
+			<div class="empty-state">Loading schema-readiness inventory from the control plane.</div>
+		{:else if errorMessage}
+			<div class="empty-state">{errorMessage}</div>
+		{:else}
+			<div class="table-shell">
+				<table>
+					<thead>
 						<tr>
-							<td><strong>{row.id}</strong></td>
-							<td>{row.area}</td>
-							<td><span class="status status-{row.status}">{row.status}</span></td>
-							<td>{row.connection}</td>
-							<td>{row.gate}</td>
+							<th>Inventory ID</th>
+							<th>Area</th>
+							<th>Status</th>
+							<th>Gate State</th>
+							<th>Schema Object</th>
+							<th>Connection</th>
+							<th>Gate</th>
 						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+					</thead>
+					<tbody>
+						{#each visibleRows as row (row.id)}
+							<tr>
+								<td><strong>{row.id}</strong></td>
+								<td>{row.area}</td>
+								<td><span class="status status-{row.status}">{row.status}</span></td>
+								<td>
+									<span class="status status-{row.gateState}">{row.gateState}</span>
+								</td>
+								<td>
+									{#if row.schemaObject}
+										<code>{row.schemaObject}</code>
+										<small>{row.schemaPresent ? 'present' : 'missing'}</small>
+									{:else}
+										<span class="muted">service / adapter</span>
+									{/if}
+								</td>
+								<td>{row.expectedConnectionPr}</td>
+								<td>{row.gate}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
 	</section>
 </div>
 
@@ -229,6 +224,13 @@
 		padding: 16px;
 	}
 
+	.empty-state {
+		padding: 18px;
+		border: 1px dashed var(--border-color);
+		border-radius: 8px;
+		color: var(--text-secondary);
+	}
+
 	.filter-bar {
 		display: flex;
 		flex-wrap: wrap;
@@ -277,6 +279,22 @@
 		color: var(--text-primary);
 	}
 
+	td small {
+		display: block;
+		margin-top: 4px;
+		color: var(--text-muted);
+		font-size: 12px;
+	}
+
+	code {
+		color: var(--text-primary);
+		font-size: 12px;
+	}
+
+	.muted {
+		color: var(--text-muted);
+	}
+
 	.status {
 		display: inline-flex;
 		padding: 4px 8px;
@@ -288,15 +306,27 @@
 
 	.status-closed,
 	.status-tested,
-	.status-ui_connected,
-	.status-api_connected {
+	.status-api_connected,
+	.status-repo_connected,
+	.status-service_connected,
+	.status-pass {
 		color: #047857;
 		background: rgba(16, 185, 129, 0.14);
 	}
 
-	.status-deferred {
+	.status-deferred,
+	.status-reserved_planned,
+	.status-adapter_deferred {
 		color: #92400e;
 		background: rgba(245, 158, 11, 0.16);
+	}
+
+	.status-attention,
+	.status-schema_added,
+	.status-existing_to_migrate,
+	.status-breaking_planned {
+		color: #9a3412;
+		background: rgba(249, 115, 22, 0.16);
 	}
 
 	.status-blocked {

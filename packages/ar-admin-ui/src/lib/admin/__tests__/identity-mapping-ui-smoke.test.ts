@@ -41,6 +41,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('node-handle input');
 		expect(flowEditor).toContain('Consent status');
 		expect(flowEditor).toContain('Challenge mode');
+		expect(flowEditor).toContain('Release policy');
+		expect(flowEditor).toContain('Privacy Policy');
 		expect(flowEditor).toContain("role === 'source' && toNode.role === 'target'");
 		expect(flowEditor).toContain("role === 'target' && toNode.role === 'destination'");
 	});
@@ -58,6 +60,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(api).toContain('/api/admin/identity-mapping/protocol-schemas');
 		expect(api).toContain('/api/admin/identity-mapping/external-schemas');
 		expect(api).toContain('/api/admin/identity-mapping/templates');
+		expect(api).toContain('/api/admin/identity-mapping/schema-readiness');
 		expect(api).toContain('/rollback');
 		expect(api).toContain('/publish');
 		expect(api).toContain('/compile');
@@ -69,11 +72,24 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(profiles).toContain('listProtocolSchemas');
 		expect(profiles).toContain('listExternalSchemas');
 		expect(profiles).toContain('listTemplates');
+		expect(profiles).toContain('Destination Consent Settings');
+		expect(profiles).toContain('Tenant default');
+		expect(profiles).toContain('Client override');
 		expect(resolution).toContain('listReviewTasks');
+		expect(resolution).toContain("status: 'in_review'");
 		expect(resolution).toContain('transitionResolutionItem');
 		expect(federation).toContain('listFederationTrustSources');
 		expect(federation).toContain('listFederationMetadataDocuments');
 		expect(federation).toContain('listAggregatePreviewEntities');
+	});
+
+	it('loads schema readiness from the control-plane API instead of hardcoded rows', () => {
+		const readiness = readRoute('admin/identity-mapping/schema-readiness/+page.svelte');
+
+		expect(readiness).toContain('getSchemaReadiness');
+		expect(readiness).toContain('schemaPresent');
+		expect(readiness).toContain('gateState');
+		expect(readiness).not.toContain('const rows: ReadinessRow[]');
 	});
 
 	it('keeps operator naming separate from internal review task storage names', () => {

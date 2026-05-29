@@ -36,6 +36,10 @@ export interface RuleDetail {
 	purpose: string;
 	attributeSetHash: string;
 	consentMode: 'once' | 'every_time' | 'until_attributes_change' | 'not_applicable';
+	releasePolicyVersion: string;
+	termsVersion: string;
+	privacyPolicyVersion: string;
+	denyReason: string;
 	runtime: string;
 	conflict: string;
 	disclosure: string;
@@ -468,6 +472,10 @@ function ruleDetail(
 		purpose: field.meta.includes('pii') ? 'profile_release' : 'provisioning',
 		attributeSetHash: `attrset_${slug(field.targetId).slice(0, 18)}`,
 		consentMode: field.meta.includes('pii') ? 'until_attributes_change' : 'not_applicable',
+		releasePolicyVersion: 'release-policy-v1',
+		termsVersion: field.meta.includes('pii') ? 'terms-current' : 'not_required',
+		privacyPolicyVersion: field.meta.includes('pii') ? 'privacy-current' : 'not_required',
+		denyReason: field.meta.includes('regulated') ? 'purpose_not_allowed' : 'none',
 		runtime: 'column sample preview',
 		conflict: 'sample policy decides precedence',
 		disclosure: 'redacted summary',

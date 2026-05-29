@@ -105,6 +105,29 @@ export interface IdentityMappingReviewTaskFilters {
 	limit?: number;
 }
 
+export interface IdentityMappingSchemaReadinessRow {
+	id: string;
+	objectName: string;
+	area: string;
+	introducedPr: string;
+	expectedConnectionPr: string;
+	runtimePath: string;
+	status: string;
+	gate: string;
+	schemaObject?: string;
+	requiredForTier2Gate?: boolean;
+	schemaPresent: boolean | null;
+	gateState: 'pass' | 'attention' | 'blocked' | 'deferred';
+}
+
+export interface IdentityMappingSchemaReadinessSummary {
+	total: number;
+	pass: number;
+	attention: number;
+	blocked: number;
+	deferred: number;
+}
+
 export interface IdentityMappingCompilePolicyRequest {
 	catalogVersionId: string;
 	compatibilityRange?: string;
@@ -230,6 +253,16 @@ export const adminIdentityMappingAPI = {
 	async listTemplates(): Promise<{ templates: IdentityMappingTemplateSummary[] }> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/templates`);
 		return parseJson(response, 'Failed to load identity mapping templates');
+	},
+
+	async getSchemaReadiness(): Promise<{
+		rows: IdentityMappingSchemaReadinessRow[];
+		summary: IdentityMappingSchemaReadinessSummary;
+	}> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/schema-readiness`
+		);
+		return parseJson(response, 'Failed to load schema readiness inventory');
 	},
 
 	async listFederationTrustSources(): Promise<{
