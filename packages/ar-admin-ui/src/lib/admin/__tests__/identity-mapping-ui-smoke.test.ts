@@ -18,16 +18,19 @@ function readComponent(relativePath: string): string {
 }
 
 describe('identity mapping Admin UI smoke checks', () => {
-	it('keeps the Tier 2 identity mapping routes linked from the main page', () => {
+	it('keeps the identity mapping routes in the left navigation instead of bottom cards', () => {
 		const layout = readRoute('admin/+layout.svelte');
 		const page = readRoute('admin/identity-mapping/+page.svelte');
 
 		expect(layout).toContain('/admin/identity-mapping');
-		expect(page).toContain('/admin/identity-mapping/profiles');
-		expect(page).toContain('/admin/identity-mapping/operations');
-		expect(page).toContain('/admin/identity-mapping/resolution-center');
-		expect(page).toContain('/admin/identity-mapping/federation-trust');
-		expect(page).toContain('/admin/identity-mapping/schema-readiness');
+		expect(layout).toContain('/admin/identity-mapping/profiles');
+		expect(layout).toContain('/admin/identity-mapping/operations');
+		expect(layout).toContain('/admin/identity-mapping/resolution-center');
+		expect(layout).toContain('/admin/identity-mapping/federation-trust');
+		expect(layout).toContain('/admin/identity-mapping/schema-readiness');
+		expect(layout).toContain('/admin/identity-mapping/profiles#destination-consent');
+		expect(page).not.toContain('operations-grid');
+		expect(page).not.toContain('operation-card');
 	});
 
 	it('keeps the flow editor graph interaction affordances present', () => {
@@ -44,14 +47,23 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('Challenge mode');
 		expect(flowEditor).toContain('Release policy');
 		expect(flowEditor).toContain('Privacy Policy');
+		expect(flowEditor).toContain('Overview');
+		expect(flowEditor).toContain('Inbound mapping');
+		expect(flowEditor).toContain('Outbound release');
+		expect(flowEditor).toContain('view-inbound');
+		expect(flowEditor).toContain('view-outbound');
 		expect(flowEditor).toContain("role === 'source' && toNode.role === 'target'");
 		expect(flowEditor).toContain("role === 'target' && toNode.role === 'destination'");
 		expect(flowEditor).toContain('$props');
 		expect(flowEditor).not.toContain('mappingSamples');
 		expect(flowEditor).not.toContain('SAML Salesforce columns');
+		expect(flowEditor).not.toContain('Identity Mapping Control Plane');
+		expect(flowEditor).not.toContain('Authrim Admin');
+		expect(flowEditor).not.toContain('Theme');
 		expect(page).toContain('buildIdentityMappingFlowSamples');
 		expect(page).toContain('getSchemaReadiness');
 		expect(page).toContain('samples={flowSamples}');
+		expect(page).not.toContain('Tier 2 Operations');
 	});
 
 	it('wires operation, profile, resolution, and federation pages to their APIs', () => {

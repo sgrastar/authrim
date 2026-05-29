@@ -47,8 +47,7 @@
 	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
-	let viewMode = $state<'preview' | 'edit' | 'dryrun'>('preview');
-	let activeTheme = $state<'light' | 'dark'>('dark');
+	let viewMode = $state<'overview' | 'inbound' | 'outbound'>('overview');
 	let customCounter = $state(0);
 	let nodes = $state<MappingNode[]>([...emptySample.nodes]);
 	let edges = $state<MappingEdge[]>([...emptySample.edges]);
@@ -74,9 +73,17 @@
 		stackIndex: number;
 	}
 
-	const sourceNodes = $derived(nodes.filter((node) => node.role === 'source'));
-	const targetNodes = $derived(nodes.filter((node) => node.role === 'target'));
-	const destinationNodes = $derived(nodes.filter((node) => node.role === 'destination'));
+	const visibleNodes = $derived(
+		nodes.filter(
+			(node) =>
+				node.role === 'target' ||
+				(node.role === 'source' && viewMode !== 'outbound') ||
+				(node.role === 'destination' && viewMode !== 'inbound')
+		)
+	);
+	const sourceNodes = $derived(visibleNodes.filter((node) => node.role === 'source'));
+	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
+	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
 	const hasControlPlaneData = $derived(samples.length > 0);
 	const rule = $derived(sample.rules[activeRuleId] ?? fallbackRule());
 	const layout = $derived(buildLayout());
@@ -202,8 +209,16 @@
 
 		const width = Math.max(190, canvasWidth * 0.23);
 		const sourceLeft = 26;
-		const targetLeft = canvasWidth * 0.385;
-		const destinationLeft = Math.max(targetLeft + width + 90, canvasWidth - width - 26);
+		const targetLeft =
+			viewMode === 'outbound'
+				? 26
+				: viewMode === 'inbound'
+					? Math.max(sourceLeft + width + 110, canvasWidth - width - 26)
+					: canvasWidth * 0.385;
+		const destinationLeft =
+			viewMode === 'outbound'
+				? Math.max(targetLeft + width + 110, canvasWidth - width - 26)
+				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		const minHeight = Math.max(520, cursor + 36);
 		const orderedTargets = Object.fromEntries(
 			targetNodes.map((target) => [target.id, rowTops[target.id] ?? graphBaseTop])
@@ -479,60 +494,7 @@
 	}
 </script>
 
-<section class="mapping-shell" data-theme={activeTheme}>
-	<header class="mapping-topbar">
-		<div>
-			<p class="section-kicker">Authrim Admin</p>
-			<h1>Identity Mapping Control Plane</h1>
-		</div>
-		<div class="topbar-actions">
-			<div class="profile-select">
-				<label for="sourceProfile">Source profile</label>
-				<select
-					id="sourceProfile"
-					bind:value={selectedSampleId}
-					disabled={loading || samples.length === 0}
-				>
-					{#if samples.length === 0}
-						<option value={emptySample.id}>No profiles</option>
-					{:else}
-						{#each samples as option (option.id)}
-							<option value={option.id}>{option.title}</option>
-						{/each}
-					{/if}
-				</select>
-			</div>
-			<div class="mode-toggle" aria-label="View mode">
-				{#each ['preview', 'edit', 'dryrun'] as mode (mode)}
-					<button
-						class:active={viewMode === mode}
-						type="button"
-						onclick={() => (viewMode = mode as typeof viewMode)}
-					>
-						{mode === 'dryrun' ? 'Dry-run' : mode[0].toUpperCase() + mode.slice(1)}
-					</button>
-				{/each}
-			</div>
-			<div class="mode-toggle" aria-label="Theme">
-				<button
-					class:active={activeTheme === 'light'}
-					type="button"
-					onclick={() => (activeTheme = 'light')}
-				>
-					Light
-				</button>
-				<button
-					class:active={activeTheme === 'dark'}
-					type="button"
-					onclick={() => (activeTheme = 'dark')}
-				>
-					Dark
-				</button>
-			</div>
-			<button class="primary-action" type="button">Compile draft</button>
-		</div>
-	</header>
-
+<section class="mapping-shell">
 	<div class="workspace">
 		<section class="pane graph-pane" aria-label="Mapping graph">
 			<div class="graph-toolbar">
@@ -540,11 +502,54 @@
 					<p class="section-kicker">Policy draft</p>
 					<h2>{sample.title}</h2>
 				</div>
-				<div class="health-strip">
-					<span><strong>Snapshot</strong> {sample.snapshot}</span>
-					<span class="status-ok">{sample.status}</span>
-					<span class="status-warn">{sample.reviewGates}</span>
+				<div class="graph-actions">
+					<label class="source-profile-select" for="sourceProfile">
+						<span>Source profile</span>
+						<select
+							id="sourceProfile"
+							bind:value={selectedSampleId}
+							disabled={loading || samples.length === 0}
+						>
+							{#if samples.length === 0}
+								<option value={emptySample.id}>No profiles</option>
+							{:else}
+								{#each samples as option (option.id)}
+									<option value={option.id}>{option.title}</option>
+								{/each}
+							{/if}
+						</select>
+					</label>
+					<div class="mode-toggle" aria-label="Flow view mode">
+						<button
+							class:active={viewMode === 'overview'}
+							type="button"
+							onclick={() => (viewMode = 'overview')}
+						>
+							Overview
+						</button>
+						<button
+							class:active={viewMode === 'inbound'}
+							type="button"
+							onclick={() => (viewMode = 'inbound')}
+						>
+							Inbound mapping
+						</button>
+						<button
+							class:active={viewMode === 'outbound'}
+							type="button"
+							onclick={() => (viewMode = 'outbound')}
+						>
+							Outbound release
+						</button>
+					</div>
+					<button class="primary-action" type="button">Compile draft</button>
 				</div>
+			</div>
+
+			<div class="health-strip">
+				<span><strong>Snapshot</strong> {sample.snapshot}</span>
+				<span class="status-ok">{sample.status}</span>
+				<span class="status-warn">{sample.reviewGates}</span>
 			</div>
 
 			<div class="metric-row">
@@ -566,7 +571,11 @@
 				</div>
 			</div>
 
-			<div class="graph-canvas" bind:this={canvas} style={`height:${layout.height}px`}>
+			<div
+				class={`graph-canvas view-${viewMode}`}
+				bind:this={canvas}
+				style={`height:${layout.height}px`}
+			>
 				{#if loading || loadError || !hasControlPlaneData}
 					<div class="graph-empty-state">
 						<strong
@@ -585,30 +594,35 @@
 						>
 					</div>
 				{/if}
-				<div class="lane-label lane-inbound">
-					<span>Inbound adapter</span>
-					<select bind:value={inboundAdapter}>
-						{#each adapters as adapter (adapter)}
-							<option value={adapter}>{adapter}</option>
-						{/each}
-					</select>
-					<button class="mini-tool-button" type="button" onclick={() => addNode('source')}>+</button
-					>
-				</div>
+				{#if viewMode !== 'outbound'}
+					<div class="lane-label lane-inbound">
+						<span>Inbound adapter</span>
+						<select bind:value={inboundAdapter}>
+							{#each adapters as adapter (adapter)}
+								<option value={adapter}>{adapter}</option>
+							{/each}
+						</select>
+						<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
+							>+</button
+						>
+					</div>
+				{/if}
 				<div class="lane-label lane-canonical">
 					<span>Canonical targets</span>
 				</div>
-				<div class="lane-label lane-outbound">
-					<span>Outbound adapter</span>
-					<select bind:value={outboundAdapter}>
-						{#each adapters as adapter (adapter)}
-							<option value={adapter}>{adapter}</option>
-						{/each}
-					</select>
-					<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
-						>+</button
-					>
-				</div>
+				{#if viewMode !== 'inbound'}
+					<div class="lane-label lane-outbound">
+						<span>Outbound adapter</span>
+						<select bind:value={outboundAdapter}>
+							{#each adapters as adapter (adapter)}
+								<option value={adapter}>{adapter}</option>
+							{/each}
+						</select>
+						<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
+							>+</button
+						>
+					</div>
+				{/if}
 
 				<svg class="edge-layer" viewBox={`0 0 ${canvasWidth} ${layout.height}`} aria-hidden="true">
 					{#each graphEdges as edge (edge.id)}
@@ -820,11 +834,34 @@
 
 <style>
 	.mapping-shell {
-		--map-bg: rgb(6, 9, 15);
-		--map-surface: #0b111d;
-		--map-surface-muted: #080d16;
-		--map-canvas: rgb(6, 9, 15);
-		--map-line: #253143;
+		--map-bg: var(--bg-card);
+		--map-surface: var(--bg-card);
+		--map-surface-muted: var(--bg-subtle);
+		--map-canvas: color-mix(in srgb, var(--bg-card) 78%, var(--bg-page));
+		--map-line: var(--border-color);
+		--map-line-strong: color-mix(in srgb, var(--border-color) 70%, var(--text-muted));
+		--map-text: var(--text-primary);
+		--map-muted: var(--text-secondary);
+		--map-brand: var(--primary);
+		--map-teal: #0f766e;
+		--map-green: #15803d;
+		--map-amber: #b45309;
+		--map-red: #b91c1c;
+		--map-violet: #6d28d9;
+		--map-radius: 4px;
+		overflow: hidden;
+		border: 1px solid var(--map-line);
+		border-radius: 8px;
+		background: var(--map-bg);
+		color: var(--map-text);
+	}
+
+	:global([data-theme='dark']) .mapping-shell {
+		--map-bg: color-mix(in srgb, var(--bg-card) 76%, #030712);
+		--map-surface: color-mix(in srgb, var(--bg-card) 84%, #05070d);
+		--map-surface-muted: color-mix(in srgb, var(--bg-subtle) 70%, #060914);
+		--map-canvas: color-mix(in srgb, var(--bg-page) 34%, #05070d);
+		--map-line: color-mix(in srgb, var(--border-color) 60%, #344156);
 		--map-line-strong: #344156;
 		--map-text: #e5edf6;
 		--map-muted: #8ea0b7;
@@ -834,49 +871,16 @@
 		--map-amber: #fbbf24;
 		--map-red: #f87171;
 		--map-violet: #a78bfa;
-		--map-radius: 4px;
-		overflow: hidden;
-		border: 1px solid var(--map-line);
-		border-radius: 8px;
-		background: var(--map-bg);
-		color: var(--map-text);
 	}
 
-	.mapping-shell[data-theme='light'] {
-		--map-bg: #f3f5f7;
-		--map-surface: #ffffff;
-		--map-surface-muted: #f8fafc;
-		--map-canvas: #fbfcfe;
-		--map-line: #d9e0e8;
-		--map-line-strong: #bdc7d3;
-		--map-text: #1e2933;
-		--map-muted: #64748b;
-		--map-brand: #2563eb;
-		--map-teal: #0f766e;
-		--map-green: #15803d;
-		--map-amber: #b45309;
-		--map-red: #b91c1c;
-		--map-violet: #6d28d9;
-	}
-
-	.mapping-topbar,
-	.topbar-actions,
 	.graph-toolbar,
+	.graph-actions,
 	.pane-header,
 	.dryrun-header,
 	.diff-summary,
 	.control-row {
 		display: flex;
 		align-items: center;
-	}
-
-	.mapping-topbar {
-		min-height: 62px;
-		justify-content: space-between;
-		gap: 16px;
-		padding: 10px 14px;
-		border-bottom: 1px solid var(--map-line);
-		background: color-mix(in srgb, var(--map-bg) 92%, transparent);
 	}
 
 	.section-kicker {
@@ -888,16 +892,10 @@
 		text-transform: uppercase;
 	}
 
-	h1,
 	h2,
 	h3 {
 		margin: 0;
 		letter-spacing: 0;
-	}
-
-	h1 {
-		font-size: 20px;
-		line-height: 1.25;
 	}
 
 	h2 {
@@ -909,13 +907,12 @@
 		font-size: 14px;
 	}
 
-	.topbar-actions {
+	.graph-actions {
 		flex-wrap: wrap;
 		justify-content: flex-end;
 		gap: 10px;
 	}
 
-	.profile-select,
 	.mode-toggle {
 		min-height: 40px;
 		display: flex;
@@ -927,8 +924,13 @@
 		background: var(--map-surface-muted);
 	}
 
-	.profile-select label {
-		padding-left: 6px;
+	.source-profile-select {
+		display: grid;
+		gap: 4px;
+		min-width: 220px;
+	}
+
+	.source-profile-select span {
 		color: var(--map-muted);
 		font-size: 11px;
 		font-weight: 800;
@@ -1007,7 +1009,9 @@
 	.health-strip {
 		display: flex;
 		align-items: center;
+		justify-content: flex-end;
 		gap: 12px;
+		padding: 0 16px 14px;
 		color: var(--map-muted);
 		font-size: 12px;
 		font-weight: 700;
@@ -1112,6 +1116,19 @@
 	}
 
 	.lane-outbound {
+		right: 16px;
+	}
+
+	.graph-canvas.view-inbound .lane-canonical {
+		right: 16px;
+		left: auto;
+	}
+
+	.graph-canvas.view-outbound .lane-canonical {
+		left: 16px;
+	}
+
+	.graph-canvas.view-outbound .lane-outbound {
 		right: 16px;
 	}
 

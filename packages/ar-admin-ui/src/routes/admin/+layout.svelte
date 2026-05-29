@@ -86,10 +86,20 @@
 			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' }
 		],
 		identitySchema: [
-			{ path: '/admin/identity-mapping', label: 'Identity Mapping', icon: 'i-ph-graph' },
 			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
+		identityMapping: {
+			parent: { href: '/admin/identity-mapping', icon: 'i-ph-graph', label: 'Identity Mapping' },
+			children: [
+				{ href: '/admin/identity-mapping/profiles', label: 'Source & Destination Profiles' },
+				{ href: '/admin/identity-mapping/operations', label: 'Activation & Rollback' },
+				{ href: '/admin/identity-mapping/resolution-center', label: 'Mapping Resolution Center' },
+				{ href: '/admin/identity-mapping/federation-trust', label: 'Federation Trust' },
+				{ href: '/admin/identity-mapping/schema-readiness', label: 'Schema Readiness' },
+				{ href: '/admin/identity-mapping/profiles#destination-consent', label: 'Consent Preview' }
+			]
+		},
 		branding: [
 			{ path: '/admin/login-methods', label: 'Login Methods', icon: 'i-ph-sign-in' },
 			{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' },
@@ -169,6 +179,16 @@
 		...navClient.applications,
 		// Tenant
 		...navTenant.authentication,
+		{
+			path: navTenant.identityMapping.parent.href,
+			label: navTenant.identityMapping.parent.label,
+			icon: navTenant.identityMapping.parent.icon
+		},
+		...navTenant.identityMapping.children.map((c) => ({
+			path: c.href,
+			label: c.label,
+			icon: 'i-ph-arrow-right'
+		})),
 		...navTenant.identitySchema,
 		...navTenant.branding,
 		...navTenant.configuration,
@@ -439,6 +459,10 @@
 				{/each}
 
 				<NavGroupLabel label="Schema Settings" />
+				<NavItemGroup
+					parent={navTenant.identityMapping.parent}
+					children={navTenant.identityMapping.children}
+				/>
 				{#each navTenant.identitySchema as item (item.path)}
 					<NavItem
 						href={item.path}

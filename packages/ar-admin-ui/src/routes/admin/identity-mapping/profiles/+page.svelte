@@ -213,7 +213,11 @@
 	</section>
 
 	{#if selectedProfile && selectedConsentDraft}
-		<section class="consent-panel" aria-label="Destination attribute release consent settings">
+		<section
+			id="destination-consent"
+			class="consent-panel"
+			aria-label="Destination attribute release consent settings"
+		>
 			<div>
 				<p class="eyebrow">Destination Consent Settings</p>
 				<h2>{selectedProfile.displayName}</h2>
