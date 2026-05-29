@@ -175,36 +175,13 @@
 		);
 	}
 
-	function targetForSource(sourceId: string): string | null {
-		return (
-			edges.find(
-				(edge) => edge.from === sourceId && targetNodes.some((node) => node.id === edge.to)
-			)?.to ?? null
-		);
-	}
-
-	function targetForDestination(destinationId: string): string | null {
-		return (
-			edges.find(
-				(edge) => edge.to === destinationId && targetNodes.some((node) => node.id === edge.from)
-			)?.from ?? null
-		);
-	}
-
 	function buildLayout(): { nodes: LayoutNode[]; height: number } {
 		const rowTops: Record<string, number> = {};
 		let cursor = graphBaseTop;
 
 		for (const target of targetNodes) {
-			const sourceCount = sourceNodes.filter(
-				(node) => node.adapter === inboundAdapter && targetForSource(node.id) === target.id
-			).length;
-			const destinationCount = destinationNodes.filter(
-				(node) => node.adapter === outboundAdapter && targetForDestination(node.id) === target.id
-			).length;
-			const rowSpan = Math.max(1, sourceCount, destinationCount);
 			rowTops[target.id] = cursor;
-			cursor += rowSpan * graphStep + rowGap;
+			cursor += graphStep + rowGap;
 		}
 
 		const width = Math.max(190, canvasWidth * 0.23);
@@ -220,27 +197,16 @@
 				? Math.max(targetLeft + width + 110, canvasWidth - width - 26)
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		const minHeight = Math.max(520, cursor + 36);
-		const orderedTargets = Object.fromEntries(
-			targetNodes.map((target) => [target.id, rowTops[target.id] ?? graphBaseTop])
-		);
-
-		const groupOffsets: Record<string, number> = {};
-		function nextOffset(groupKey: string): number {
-			const current = groupOffsets[groupKey] ?? 0;
-			groupOffsets[groupKey] = current + 1;
-			return current;
-		}
+		let visibleSourceOffset = 0;
+		let hiddenSourceOffset = 0;
 
 		const sourceLayout = sourceNodes.map((node) => {
-			const targetId = targetForSource(node.id);
-			const groupKey = targetId ?? `fallback:${node.adapter}`;
 			const selected = node.adapter === inboundAdapter;
-			const visibleOffset = selected ? nextOffset(`source:${groupKey}`) : 0;
-			const hiddenOffset = selected ? 0 : nextOffset(`source-hidden:${groupKey}`) + 1;
-			const top = (targetId ? orderedTargets[targetId] : graphBaseTop) ?? graphBaseTop;
+			const visibleOffset = selected ? visibleSourceOffset++ : 0;
+			const hiddenOffset = selected ? 0 : ++hiddenSourceOffset;
 			return {
 				...node,
-				top: top + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
 				left: sourceLeft,
 				width,
 				height: nodeHeight,
@@ -259,16 +225,16 @@
 			stackIndex: 0
 		}));
 
+		let visibleDestinationOffset = 0;
+		let hiddenDestinationOffset = 0;
+
 		const destinationLayout = destinationNodes.map((node) => {
-			const targetId = targetForDestination(node.id);
-			const groupKey = targetId ?? `fallback:${node.adapter}`;
 			const selected = node.adapter === outboundAdapter;
-			const visibleOffset = selected ? nextOffset(`destination:${groupKey}`) : 0;
-			const hiddenOffset = selected ? 0 : nextOffset(`destination-hidden:${groupKey}`) + 1;
-			const top = (targetId ? orderedTargets[targetId] : graphBaseTop) ?? graphBaseTop;
+			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
+			const hiddenOffset = selected ? 0 : ++hiddenDestinationOffset;
 			return {
 				...node,
-				top: top + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
 				left: destinationLeft,
 				width,
 				height: nodeHeight,
