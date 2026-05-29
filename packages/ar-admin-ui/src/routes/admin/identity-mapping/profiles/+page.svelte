@@ -91,7 +91,6 @@
 	let activeKind = $state<ProfileKind | 'all'>('all');
 	let selectedProfileId = $state<string | null>(null);
 	let protocolSchemaOptions = $state<IdentityMappingProtocolSchemaSummary[]>([]);
-	let destinationProfiles = $state<IdentityMappingDestinationProfileSummary[]>([]);
 	let customScopes = $state<IdentityMappingOidcCustomScope[]>([]);
 	let customClaims = $state<IdentityMappingOidcCustomClaim[]>([]);
 	let consentDrafts = $state<Record<string, DestinationConsentSettingsDraft>>({});
@@ -209,7 +208,6 @@
 				adminIdentityMappingAPI.listOidcCustomClaims(),
 				adminIdentityMappingAPI.listTemplates()
 			]);
-			destinationProfiles = loadedDestinationProfiles.destinationProfiles;
 			customScopes = loadedCustomScopes.customScopes;
 			customClaims = loadedCustomClaims.customClaims;
 			protocolSchemaOptions = protocolSchemas.protocolSchemas;
