@@ -320,11 +320,38 @@
 		return `M ${from.x} ${from.y} C ${from.x + distance} ${from.y}, ${to.x - distance} ${to.y}, ${to.x} ${to.y}`;
 	}
 
+	function pointBetween(from: Point, to: Point, t: number): Point {
+		const dx = to.x - from.x;
+		const distance = dx > 0 ? Math.max(8, Math.min(80, dx * 0.45)) : 24;
+		const controlA = { x: from.x + distance, y: from.y };
+		const controlB = { x: to.x - distance, y: to.y };
+		const inverse = 1 - t;
+		return {
+			x:
+				inverse ** 3 * from.x +
+				3 * inverse ** 2 * t * controlA.x +
+				3 * inverse * t ** 2 * controlB.x +
+				t ** 3 * to.x,
+			y:
+				inverse ** 3 * from.y +
+				3 * inverse ** 2 * t * controlA.y +
+				3 * inverse * t ** 2 * controlB.y +
+				t ** 3 * to.y
+		};
+	}
+
 	function edgePath(edge: MappingEdge): string {
 		const fromNode = layoutNodeById(edge.from);
 		const toNode = layoutNodeById(edge.to);
 		if (!fromNode || !toNode) return '';
 		return pathBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'));
+	}
+
+	function edgeDeletePoint(edge: MappingEdge): Point | null {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return null;
+		return pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.84);
 	}
 
 	function edgeAccent(edge: MappingEdge): string {
@@ -728,6 +755,31 @@
 							style={`--edge-accent:${edgeAccent(edge)}`}
 							d={edgePath(edge)}
 						/>
+						{#if edge.id === selectedEdgeId}
+							{@const deletePoint = edgeDeletePoint(edge)}
+							{#if deletePoint}
+								<g
+									class="edge-delete-control"
+									transform={`translate(${deletePoint.x} ${deletePoint.y})`}
+									role="button"
+									tabindex="0"
+									aria-label="Delete selected mapping edge"
+									onclick={(event) => {
+										event.stopPropagation();
+										deleteSelectedEdge();
+									}}
+									onkeydown={(event) => {
+										if (event.key === 'Enter' || event.key === ' ') {
+											event.preventDefault();
+											deleteSelectedEdge();
+										}
+									}}
+								>
+									<circle r="9" />
+									<path d="M -3.5 -3.5 L 3.5 3.5 M 3.5 -3.5 L -3.5 3.5" />
+								</g>
+							{/if}
+						{/if}
 					{/each}
 					{#if dragState}
 						<path class="edge drag-edge" d={pathBetween(dragState.from, dragState.to)} />
@@ -1256,6 +1308,32 @@
 		stroke-width: 14;
 		cursor: pointer;
 		pointer-events: stroke;
+	}
+
+	.edge-delete-control {
+		color: var(--map-text);
+		cursor: pointer;
+		pointer-events: auto;
+	}
+
+	.edge-delete-control circle {
+		fill: var(--map-surface);
+		stroke: var(--edge-accent, var(--map-red));
+		stroke-width: 1.5;
+		filter: drop-shadow(0 3px 8px rgb(0 0 0 / 0.28));
+	}
+
+	.edge-delete-control path {
+		fill: none;
+		stroke: var(--map-red);
+		stroke-linecap: round;
+		stroke-width: 1.8;
+	}
+
+	.edge-delete-control:hover circle,
+	.edge-delete-control:focus-visible circle {
+		fill: color-mix(in srgb, var(--map-red) 12%, var(--map-surface));
+		stroke: var(--map-red);
 	}
 
 	.edge {
