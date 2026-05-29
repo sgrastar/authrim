@@ -136,6 +136,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   const baseDir = findAuthrimBaseDir(process.cwd());
   const { lock } = await loadLockFileAuto(baseDir, env);
   const knownD1Names = lock ? Object.values(lock.d1).map((entry) => entry.name) : [];
+  const knownQueueNames = lock?.queues ? Object.values(lock.queues).map((entry) => entry.name) : [];
 
   // Delete environment
   const result = await deleteEnvironment({
@@ -146,6 +147,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     deleteQueues,
     deleteR2,
     knownD1Names,
+    knownQueueNames,
     onProgress: (msg) => console.log(msg),
   });
 
