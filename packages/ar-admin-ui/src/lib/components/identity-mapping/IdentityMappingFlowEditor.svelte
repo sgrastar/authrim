@@ -1,0 +1,1431 @@
+<script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
+	import {
+		mappingSamples,
+		type MappingAdapter,
+		type MappingEdge,
+		type MappingNode
+	} from './sample-data';
+
+	const adapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
+	const initialSample = mappingSamples[0];
+	const nodeHeight = 30;
+	const targetHeight = 46;
+	const graphBaseTop = 48;
+	const graphStep = 50;
+	const rowGap = 12;
+
+	let canvas: HTMLDivElement;
+	let canvasWidth = $state(1000);
+	let sample = $state(initialSample);
+	let inboundAdapter = $state<MappingAdapter>(sample.inboundAdapter);
+	let outboundAdapter = $state<MappingAdapter>(sample.outboundAdapter);
+	let activeRuleId = $state(sample.activeRuleId);
+	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
+	let viewMode = $state<'preview' | 'edit' | 'dryrun'>('preview');
+	let activeTheme = $state<'light' | 'dark'>('dark');
+	let customCounter = $state(0);
+	let nodes = $state<MappingNode[]>([...sample.nodes]);
+	let edges = $state<MappingEdge[]>([...sample.edges]);
+	let hoverNodeId = $state<string | null>(null);
+	let selectedNodeId = $state<string | null>(
+		initialSample.nodes.find((node) => node.ruleId === initialSample.activeRuleId)?.id ?? null
+	);
+	let dragState = $state<{
+		fromNodeId: string;
+		from: Point;
+		to: Point;
+	} | null>(null);
+
+	interface Point {
+		x: number;
+		y: number;
+	}
+
+	interface LayoutNode extends MappingNode {
+		top: number;
+		left: number;
+		width: number;
+		height: number;
+		hidden: boolean;
+		stackIndex: number;
+	}
+
+	const sourceNodes = $derived(nodes.filter((node) => node.role === 'source'));
+	const targetNodes = $derived(nodes.filter((node) => node.role === 'target'));
+	const destinationNodes = $derived(nodes.filter((node) => node.role === 'destination'));
+	const rule = $derived(sample.rules[activeRuleId] ?? fallbackRule());
+	const layout = $derived(buildLayout());
+	const laidOutNodes = $derived(layout.nodes);
+	const graphEdges = $derived(edges.filter((edge) => nodeById(edge.from) && nodeById(edge.to)));
+	const selectedEdges = $derived(connectedEdgeIds(selectedNodeId));
+	const hoverEdges = $derived(connectedEdgeIds(hoverNodeId));
+
+	onMount(() => {
+		const resize = () => {
+			const rect = canvas?.getBoundingClientRect();
+			if (!rect) return;
+			canvasWidth = Math.max(720, rect.width);
+		};
+		resize();
+		const observer = new ResizeObserver(resize);
+		if (canvas) observer.observe(canvas);
+		window.addEventListener('resize', resize);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener('resize', resize);
+		};
+	});
+
+	onDestroy(() => {
+		window.removeEventListener('pointermove', handlePointerMove);
+		window.removeEventListener('pointerup', handlePointerUp);
+	});
+
+	function nodeById(id: string): MappingNode | undefined {
+		return nodes.find((node) => node.id === id);
+	}
+
+	function nodeForRule(ruleId: string): MappingNode | undefined {
+		return nodes.find((node) => node.ruleId === ruleId);
+	}
+
+	function layoutNodeById(id: string): LayoutNode | undefined {
+		return laidOutNodes.find((node) => node.id === id);
+	}
+
+	function selectRule(ruleId: string) {
+		activeRuleId = ruleId;
+		selectedNodeId = nodeForRule(ruleId)?.id ?? null;
+	}
+
+	function connectedEdgeIds(nodeId: string | null): Set<string> {
+		if (!nodeId) return new Set();
+		return new Set(
+			edges.filter((edge) => edge.from === nodeId || edge.to === nodeId).map((edge) => edge.id)
+		);
+	}
+
+	function connectedNodeIds(nodeId: string | null): Set<string> {
+		if (!nodeId) return new Set();
+		return new Set(
+			edges
+				.filter((edge) => edge.from === nodeId || edge.to === nodeId)
+				.flatMap((edge) => (edge.from === nodeId ? [edge.to] : [edge.from]))
+		);
+	}
+
+	function targetForSource(sourceId: string): string | null {
+		return (
+			edges.find(
+				(edge) => edge.from === sourceId && targetNodes.some((node) => node.id === edge.to)
+			)?.to ?? null
+		);
+	}
+
+	function targetForDestination(destinationId: string): string | null {
+		return (
+			edges.find(
+				(edge) => edge.to === destinationId && targetNodes.some((node) => node.id === edge.from)
+			)?.from ?? null
+		);
+	}
+
+	function buildLayout(): { nodes: LayoutNode[]; height: number } {
+		const rowTops: Record<string, number> = {};
+		let cursor = graphBaseTop;
+
+		for (const target of targetNodes) {
+			const sourceCount = sourceNodes.filter(
+				(node) => node.adapter === inboundAdapter && targetForSource(node.id) === target.id
+			).length;
+			const destinationCount = destinationNodes.filter(
+				(node) => node.adapter === outboundAdapter && targetForDestination(node.id) === target.id
+			).length;
+			const rowSpan = Math.max(1, sourceCount, destinationCount);
+			rowTops[target.id] = cursor;
+			cursor += rowSpan * graphStep + rowGap;
+		}
+
+		const width = Math.max(190, canvasWidth * 0.23);
+		const sourceLeft = 26;
+		const targetLeft = canvasWidth * 0.385;
+		const destinationLeft = Math.max(targetLeft + width + 90, canvasWidth - width - 26);
+		const minHeight = Math.max(520, cursor + 36);
+		const orderedTargets = Object.fromEntries(
+			targetNodes.map((target) => [target.id, rowTops[target.id] ?? graphBaseTop])
+		);
+
+		const groupOffsets: Record<string, number> = {};
+		function nextOffset(groupKey: string): number {
+			const current = groupOffsets[groupKey] ?? 0;
+			groupOffsets[groupKey] = current + 1;
+			return current;
+		}
+
+		const sourceLayout = sourceNodes.map((node) => {
+			const targetId = targetForSource(node.id);
+			const groupKey = targetId ?? `fallback:${node.adapter}`;
+			const selected = node.adapter === inboundAdapter;
+			const visibleOffset = selected ? nextOffset(`source:${groupKey}`) : 0;
+			const hiddenOffset = selected ? 0 : nextOffset(`source-hidden:${groupKey}`) + 1;
+			const top = (targetId ? orderedTargets[targetId] : cursor) ?? graphBaseTop;
+			return {
+				...node,
+				top: top + (selected ? visibleOffset * graphStep : 0),
+				left: sourceLeft,
+				width,
+				height: nodeHeight,
+				hidden: !selected,
+				stackIndex: hiddenOffset
+			};
+		});
+
+		const targetLayout = targetNodes.map((node) => ({
+			...node,
+			top: rowTops[node.id] ?? graphBaseTop,
+			left: targetLeft,
+			width,
+			height: targetHeight,
+			hidden: false,
+			stackIndex: 0
+		}));
+
+		const destinationLayout = destinationNodes.map((node) => {
+			const targetId = targetForDestination(node.id);
+			const groupKey = targetId ?? `fallback:${node.adapter}`;
+			const selected = node.adapter === outboundAdapter;
+			const visibleOffset = selected ? nextOffset(`destination:${groupKey}`) : 0;
+			const hiddenOffset = selected ? 0 : nextOffset(`destination-hidden:${groupKey}`) + 1;
+			const top = (targetId ? orderedTargets[targetId] : cursor) ?? graphBaseTop;
+			return {
+				...node,
+				top: top + (selected ? visibleOffset * graphStep : 0),
+				left: destinationLeft,
+				width,
+				height: nodeHeight,
+				hidden: !selected,
+				stackIndex: hiddenOffset
+			};
+		});
+
+		return {
+			nodes: [...sourceLayout, ...targetLayout, ...destinationLayout],
+			height: minHeight
+		};
+	}
+
+	function nodeStyle(node: LayoutNode): string {
+		const stackX = node.hidden ? 12 + node.stackIndex * 8 : 0;
+		const stackY = node.hidden ? 7 + node.stackIndex * 6 : 0;
+		const zIndex = node.hidden ? Math.max(1, 4 - node.stackIndex) : node.role === 'target' ? 3 : 5;
+		return [
+			`left:${node.left}px`,
+			`top:${node.top}px`,
+			`width:${node.width}px`,
+			`min-height:${node.height}px`,
+			`z-index:${zIndex}`,
+			`--stack-x:${stackX}px`,
+			`--stack-y:${stackY}px`,
+			`--stack-shadow-x:${22 + node.stackIndex * 8}px`,
+			`--stack-shadow-y:${14 + node.stackIndex * 6}px`
+		].join(';');
+	}
+
+	function edgePoint(node: LayoutNode, direction: 'from' | 'to'): Point {
+		return {
+			x: direction === 'from' ? node.left + node.width : node.left,
+			y: node.top + node.height / 2
+		};
+	}
+
+	function pathBetween(from: Point, to: Point): string {
+		const dx = to.x - from.x;
+		const distance = dx > 0 ? Math.max(8, Math.min(80, dx * 0.45)) : 24;
+		return `M ${from.x} ${from.y} C ${from.x + distance} ${from.y}, ${to.x - distance} ${to.y}, ${to.x} ${to.y}`;
+	}
+
+	function edgePath(edge: MappingEdge): string {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return '';
+		return pathBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'));
+	}
+
+	function edgeAccent(edge: MappingEdge): string {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		const adapter = fromNode?.role === 'target' ? toNode?.adapter : fromNode?.adapter;
+		if (adapter === 'SAML') return 'var(--map-violet)';
+		if (adapter === 'OIDC') return 'var(--map-amber)';
+		if (adapter === 'SCIM') return 'var(--map-brand)';
+		if (adapter === 'CSV') return 'var(--map-teal)';
+		return 'var(--map-brand)';
+	}
+
+	function edgeClasses(edge: MappingEdge): string {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		return [
+			'edge',
+			edge.outbound ? 'outbound-edge' : '',
+			edge.custom ? 'custom-edge' : '',
+			edge.id === activeRuleId ? 'active' : '',
+			hoverEdges.has(edge.id) ? 'edge-connected' : '',
+			selectedEdges.has(edge.id) ? 'edge-selected' : '',
+			fromNode?.hidden || toNode?.hidden ? 'edge-muted' : ''
+		]
+			.filter(Boolean)
+			.join(' ');
+	}
+
+	function nodeClasses(node: LayoutNode): string {
+		const selectedRelated = connectedNodeIds(selectedNodeId).has(node.id);
+		const hoverRelated = connectedNodeIds(hoverNodeId).has(node.id);
+		return [
+			'graph-node',
+			`${node.role}-node`,
+			node.hidden ? 'adapter-hidden' : '',
+			node.ruleId === activeRuleId ? 'active' : '',
+			node.id === selectedNodeId ? 'selection-origin' : '',
+			selectedRelated ? 'selection-related' : '',
+			node.id === hoverNodeId ? 'connection-origin' : '',
+			hoverRelated ? 'connection-related' : ''
+		]
+			.filter(Boolean)
+			.join(' ');
+	}
+
+	function isValidConnection(
+		fromNode: MappingNode | undefined,
+		toNode: MappingNode | undefined
+	): boolean {
+		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
+		return (
+			(fromNode.role === 'source' && toNode.role === 'target') ||
+			(fromNode.role === 'target' && toNode.role === 'destination')
+		);
+	}
+
+	function canvasPoint(event: PointerEvent): Point {
+		const rect = canvas.getBoundingClientRect();
+		return {
+			x: event.clientX - rect.left,
+			y: event.clientY - rect.top
+		};
+	}
+
+	function startConnectionDrag(event: PointerEvent, node: LayoutNode) {
+		if (node.hidden || node.role === 'destination') return;
+		event.preventDefault();
+		event.stopPropagation();
+		const from = edgePoint(node, 'from');
+		dragState = {
+			fromNodeId: node.id,
+			from,
+			to: canvasPoint(event)
+		};
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+	}
+
+	function handlePointerMove(event: PointerEvent) {
+		if (!dragState) return;
+		dragState = {
+			...dragState,
+			to: canvasPoint(event)
+		};
+	}
+
+	function handlePointerUp(event: PointerEvent) {
+		if (!dragState) return;
+		const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+		const handle = target?.closest?.('.node-handle.input') as HTMLElement | null;
+		const toNodeId = handle?.dataset.nodeId;
+		const fromNode = nodeById(dragState.fromNodeId);
+		const toNode = toNodeId ? nodeById(toNodeId) : undefined;
+		if (isValidConnection(fromNode, toNode) && toNodeId) {
+			addEdge(dragState.fromNodeId, toNodeId);
+		}
+		dragState = null;
+		window.removeEventListener('pointermove', handlePointerMove);
+		window.removeEventListener('pointerup', handlePointerUp);
+	}
+
+	function addEdge(from: string, to: string) {
+		if (edges.some((edge) => edge.from === from && edge.to === to)) return;
+		customCounter += 1;
+		edges = [
+			...edges,
+			{
+				id: `custom-edge-${customCounter}`,
+				from,
+				to,
+				outbound: nodeById(from)?.role === 'target',
+				custom: true
+			}
+		];
+	}
+
+	function addNode(role: 'source' | 'destination') {
+		customCounter += 1;
+		const adapter = role === 'source' ? inboundAdapter : outboundAdapter;
+		const node: MappingNode = {
+			id: `${role}-${adapter.toLowerCase()}-custom-${customCounter}`,
+			ruleId: `custom-${role}-${adapter.toLowerCase()}-${customCounter}`,
+			role,
+			adapter,
+			label: role === 'source' ? `custom_field_${customCounter}` : `${adapter} custom projection`,
+			caption: 'drag handle to connect'
+		};
+		nodes = [...nodes, node];
+		sample.rules[node.ruleId] = {
+			...fallbackRule(),
+			title: node.label,
+			source: role === 'source' ? `${adapter} adapter / ${node.label}` : 'Custom graph edge',
+			destination:
+				role === 'destination' ? `${adapter} adapter / ${node.label}` : 'Not connected yet',
+			trace: 'Custom draft node added. Drag a connection handle to attach it to canonical schema.'
+		};
+		selectRule(node.ruleId);
+	}
+
+	function fallbackRule() {
+		return {
+			title: 'Mapping node',
+			risk: 'medium' as const,
+			source: 'Selected graph node',
+			target: 'Connected canonical target',
+			destination: 'Connected destination',
+			transform: 'not configured',
+			validation: 'not configured',
+			release: 'not configured',
+			consentStatus: 'not_required' as const,
+			legalBasis: 'legitimate_interest' as const,
+			purpose: 'not configured',
+			attributeSetHash: 'not configured',
+			consentMode: 'not_applicable' as const,
+			runtime: 'graph preview',
+			conflict: 'sample policy decides precedence',
+			disclosure: 'redacted summary',
+			dryrunStatus: 'pending',
+			dryrunTone: 'warn' as const,
+			input: '[sample fixture]',
+			output: 'No mapping edge yet.',
+			trace: 'Select a mapping node to inspect rule behavior.',
+			review: '0 tasks',
+			replay: 'no',
+			diffSeverity: 'medium' as const,
+			diffTitle: 'Draft-only node',
+			diff: ['This node exists only in the local draft preview.']
+		};
+	}
+</script>
+
+<section class="mapping-shell" data-theme={activeTheme}>
+	<header class="mapping-topbar">
+		<div>
+			<p class="section-kicker">Authrim Admin</p>
+			<h1>Identity Mapping Control Plane</h1>
+		</div>
+		<div class="topbar-actions">
+			<div class="profile-select">
+				<label for="sourceProfile">Source profile</label>
+				<select id="sourceProfile" value={sample.id}>
+					<option value="saml-salesforce">SAML Salesforce columns</option>
+				</select>
+			</div>
+			<div class="mode-toggle" aria-label="View mode">
+				{#each ['preview', 'edit', 'dryrun'] as mode (mode)}
+					<button
+						class:active={viewMode === mode}
+						type="button"
+						onclick={() => (viewMode = mode as typeof viewMode)}
+					>
+						{mode === 'dryrun' ? 'Dry-run' : mode[0].toUpperCase() + mode.slice(1)}
+					</button>
+				{/each}
+			</div>
+			<div class="mode-toggle" aria-label="Theme">
+				<button
+					class:active={activeTheme === 'light'}
+					type="button"
+					onclick={() => (activeTheme = 'light')}
+				>
+					Light
+				</button>
+				<button
+					class:active={activeTheme === 'dark'}
+					type="button"
+					onclick={() => (activeTheme = 'dark')}
+				>
+					Dark
+				</button>
+			</div>
+			<button class="primary-action" type="button">Compile draft</button>
+		</div>
+	</header>
+
+	<div class="workspace">
+		<section class="pane graph-pane" aria-label="Mapping graph">
+			<div class="graph-toolbar">
+				<div>
+					<p class="section-kicker">Policy draft</p>
+					<h2>{sample.title}</h2>
+				</div>
+				<div class="health-strip">
+					<span><strong>Snapshot</strong> {sample.snapshot}</span>
+					<span class="status-ok">{sample.status}</span>
+					<span class="status-warn">{sample.reviewGates}</span>
+				</div>
+			</div>
+
+			<div class="metric-row">
+				<div class="metric">
+					<span>Mapped fields</span>
+					<strong>{sample.metrics[0]}</strong>
+				</div>
+				<div class="metric">
+					<span>Hot-path reads</span>
+					<strong>{sample.metrics[1]}</strong>
+				</div>
+				<div class="metric">
+					<span>Release denies</span>
+					<strong>{sample.metrics[2]}</strong>
+				</div>
+				<div class="metric">
+					<span>Catalog version</span>
+					<strong>{sample.metrics[3]}</strong>
+				</div>
+			</div>
+
+			<div class="graph-canvas" bind:this={canvas} style={`height:${layout.height}px`}>
+				<div class="lane-label lane-inbound">
+					<span>Inbound adapter</span>
+					<select bind:value={inboundAdapter}>
+						{#each adapters as adapter (adapter)}
+							<option value={adapter}>{adapter}</option>
+						{/each}
+					</select>
+					<button class="mini-tool-button" type="button" onclick={() => addNode('source')}>+</button
+					>
+				</div>
+				<div class="lane-label lane-canonical">
+					<span>Canonical targets</span>
+				</div>
+				<div class="lane-label lane-outbound">
+					<span>Outbound adapter</span>
+					<select bind:value={outboundAdapter}>
+						{#each adapters as adapter (adapter)}
+							<option value={adapter}>{adapter}</option>
+						{/each}
+					</select>
+					<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
+						>+</button
+					>
+				</div>
+
+				<svg class="edge-layer" viewBox={`0 0 ${canvasWidth} ${layout.height}`} aria-hidden="true">
+					{#each graphEdges as edge (edge.id)}
+						<path
+							class={edgeClasses(edge)}
+							style={`--edge-accent:${edgeAccent(edge)}`}
+							d={edgePath(edge)}
+						/>
+					{/each}
+					{#if dragState}
+						<path class="edge drag-edge" d={pathBetween(dragState.from, dragState.to)} />
+					{/if}
+				</svg>
+
+				{#each laidOutNodes as node (node.id)}
+					<button
+						class={nodeClasses(node)}
+						style={nodeStyle(node)}
+						type="button"
+						data-node-id={node.id}
+						data-adapter={node.adapter}
+						aria-hidden={node.hidden}
+						tabindex={node.hidden ? -1 : 0}
+						onclick={() => !node.hidden && selectRule(node.ruleId)}
+						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
+						onpointerout={() => (hoverNodeId = null)}
+					>
+						{#if node.role !== 'source'}
+							<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
+						{/if}
+						<span>{node.label}</span>
+						<small>{node.caption}</small>
+						{#if node.role === 'target'}
+							<span class="target-badge-row">
+								<span class="target-badges">
+									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
+								</span>
+								<span class="target-badges meta-badges">
+									{#if node.required}<span class="target-badge required">Required</span>{/if}
+									{#if node.privacy}
+										<span
+											class={`target-badge ${node.privacy.toLowerCase().replace(/[^a-z]+/g, '-')}`}
+										>
+											{node.privacy}
+										</span>
+									{/if}
+								</span>
+							</span>
+						{/if}
+						{#if node.role !== 'destination'}
+							<span
+								class="node-handle output"
+								data-node-id={node.id}
+								aria-hidden="true"
+								onpointerdown={(event) => startConnectionDrag(event, node)}
+							></span>
+						{/if}
+					</button>
+				{/each}
+			</div>
+		</section>
+
+		<aside class="pane right-pane" aria-label="Mapping inspector">
+			<div class="pane-header">
+				<div>
+					<p class="section-kicker">Inspector</p>
+					<h2>{rule.title}</h2>
+				</div>
+				<span class={`risk-badge risk-${rule.risk}`}>{rule.risk}</span>
+			</div>
+
+			<div class="tab-bar" role="tablist" aria-label="Inspector tabs">
+				<button
+					class:active={activeTab === 'rule'}
+					type="button"
+					onclick={() => (activeTab = 'rule')}
+				>
+					Rule
+				</button>
+				<button
+					class:active={activeTab === 'dryrun'}
+					type="button"
+					onclick={() => (activeTab = 'dryrun')}
+				>
+					Dry-run
+				</button>
+				<button
+					class:active={activeTab === 'diff'}
+					type="button"
+					onclick={() => (activeTab = 'diff')}
+				>
+					Diff
+				</button>
+			</div>
+
+			{#if activeTab === 'rule'}
+				<dl class="detail-list">
+					<div>
+						<dt>Source</dt>
+						<dd>{rule.source}</dd>
+					</div>
+					<div>
+						<dt>Target</dt>
+						<dd>{rule.target}</dd>
+					</div>
+					<div>
+						<dt>Destination</dt>
+						<dd>{rule.destination}</dd>
+					</div>
+					<div>
+						<dt>Transform</dt>
+						<dd>{rule.transform}</dd>
+					</div>
+					<div>
+						<dt>Validation</dt>
+						<dd>{rule.validation}</dd>
+					</div>
+					<div>
+						<dt>Release</dt>
+						<dd>{rule.release}</dd>
+					</div>
+				</dl>
+			{:else if activeTab === 'dryrun'}
+				<section class="dryrun-card">
+					<div class="dryrun-header">
+						<h3>Sample Evaluation</h3>
+						<span class={`dryrun-status ${rule.dryrunTone}`}>{rule.dryrunStatus}</span>
+					</div>
+					<div class="value-pair">
+						<span>Input</span>
+						<code>{rule.input}</code>
+					</div>
+					<div class="value-pair">
+						<span>Output</span>
+						<code>{rule.output}</code>
+					</div>
+					<p class="trace-box">{rule.trace}</p>
+				</section>
+			{:else}
+				<section class="diff-card">
+					<div class="diff-summary">
+						<h3>{rule.diffTitle}</h3>
+						<span class={`risk-badge risk-${rule.diffSeverity}`}>{rule.diffSeverity}</span>
+					</div>
+					<ul class="diff-list">
+						{#each rule.diff as item (item)}
+							<li>{item}</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+
+			<div class="control-block">
+				<div class="control-row">
+					<span>Consent status</span>
+					<strong>{rule.consentStatus.replaceAll('_', ' ')}</strong>
+				</div>
+				<div class="control-row">
+					<span>Legal basis</span>
+					<strong>{rule.legalBasis.replaceAll('_', ' ')}</strong>
+				</div>
+				<div class="control-row">
+					<span>Purpose</span>
+					<strong>{rule.purpose}</strong>
+				</div>
+				<div class="control-row">
+					<span>Attribute set</span>
+					<strong>{rule.attributeSetHash}</strong>
+				</div>
+				<div class="control-row">
+					<span>Challenge mode</span>
+					<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
+				</div>
+			</div>
+
+			<div class="control-block">
+				<div class="control-row">
+					<span>Runtime exposure</span>
+					<strong>{rule.runtime}</strong>
+				</div>
+				<div class="control-row">
+					<span>Conflict policy</span>
+					<strong>{rule.conflict}</strong>
+				</div>
+				<div class="control-row">
+					<span>Trace disclosure</span>
+					<strong>{rule.disclosure}</strong>
+				</div>
+			</div>
+		</aside>
+	</div>
+</section>
+
+<style>
+	.mapping-shell {
+		--map-bg: rgb(6, 9, 15);
+		--map-surface: #0b111d;
+		--map-surface-muted: #080d16;
+		--map-canvas: rgb(6, 9, 15);
+		--map-line: #253143;
+		--map-line-strong: #344156;
+		--map-text: #e5edf6;
+		--map-muted: #8ea0b7;
+		--map-brand: #60a5fa;
+		--map-teal: #2dd4bf;
+		--map-green: #4ade80;
+		--map-amber: #fbbf24;
+		--map-red: #f87171;
+		--map-violet: #a78bfa;
+		--map-radius: 4px;
+		overflow: hidden;
+		border: 1px solid var(--map-line);
+		border-radius: 8px;
+		background: var(--map-bg);
+		color: var(--map-text);
+	}
+
+	.mapping-shell[data-theme='light'] {
+		--map-bg: #f3f5f7;
+		--map-surface: #ffffff;
+		--map-surface-muted: #f8fafc;
+		--map-canvas: #fbfcfe;
+		--map-line: #d9e0e8;
+		--map-line-strong: #bdc7d3;
+		--map-text: #1e2933;
+		--map-muted: #64748b;
+		--map-brand: #2563eb;
+		--map-teal: #0f766e;
+		--map-green: #15803d;
+		--map-amber: #b45309;
+		--map-red: #b91c1c;
+		--map-violet: #6d28d9;
+	}
+
+	.mapping-topbar,
+	.topbar-actions,
+	.graph-toolbar,
+	.pane-header,
+	.dryrun-header,
+	.diff-summary,
+	.control-row {
+		display: flex;
+		align-items: center;
+	}
+
+	.mapping-topbar {
+		min-height: 62px;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 10px 14px;
+		border-bottom: 1px solid var(--map-line);
+		background: color-mix(in srgb, var(--map-bg) 92%, transparent);
+	}
+
+	.section-kicker {
+		margin: 0;
+		color: var(--map-muted);
+		font-size: 11px;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	h1,
+	h2,
+	h3 {
+		margin: 0;
+		letter-spacing: 0;
+	}
+
+	h1 {
+		font-size: 20px;
+		line-height: 1.25;
+	}
+
+	h2 {
+		font-size: 16px;
+		line-height: 1.3;
+	}
+
+	h3 {
+		font-size: 14px;
+	}
+
+	.topbar-actions {
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 10px;
+	}
+
+	.profile-select,
+	.mode-toggle {
+		min-height: 40px;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px;
+		border: 1px solid var(--map-line);
+		border-radius: var(--map-radius);
+		background: var(--map-surface-muted);
+	}
+
+	.profile-select label {
+		padding-left: 6px;
+		color: var(--map-muted);
+		font-size: 11px;
+		font-weight: 800;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+	}
+
+	select,
+	button {
+		font: inherit;
+	}
+
+	select {
+		height: 30px;
+		border: 1px solid var(--map-line);
+		border-radius: 4px;
+		color: var(--map-text);
+		background: var(--map-surface);
+		font-size: 12px;
+		font-weight: 700;
+	}
+
+	button {
+		cursor: pointer;
+	}
+
+	.mode-toggle button,
+	.primary-action {
+		height: 30px;
+		border: 0;
+		border-radius: 4px;
+		color: var(--map-muted);
+		background: transparent;
+		font-size: 12px;
+		font-weight: 800;
+	}
+
+	.mode-toggle button {
+		min-width: 72px;
+	}
+
+	.mode-toggle button.active {
+		color: var(--map-text);
+		background: var(--map-surface);
+		box-shadow: inset 0 0 0 1px var(--map-line);
+	}
+
+	.primary-action {
+		height: 40px;
+		padding: 0 16px;
+		color: #ffffff;
+		background: var(--map-brand);
+	}
+
+	.workspace {
+		display: grid;
+		grid-template-columns: minmax(720px, 1fr) minmax(300px, 360px);
+		gap: 14px;
+		padding: 14px;
+	}
+
+	.pane {
+		min-width: 0;
+		border: 1px solid var(--map-line);
+		border-radius: var(--map-radius);
+		background: var(--map-surface);
+	}
+
+	.graph-toolbar,
+	.pane-header {
+		justify-content: space-between;
+		gap: 12px;
+		padding: 14px 16px;
+	}
+
+	.health-strip {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		color: var(--map-muted);
+		font-size: 12px;
+		font-weight: 700;
+	}
+
+	.status-ok,
+	.status-warn,
+	.risk-badge,
+	.dryrun-status {
+		padding: 5px 10px;
+		border-radius: 999px;
+		font-size: 11px;
+		font-weight: 900;
+	}
+
+	.status-ok {
+		color: var(--map-green);
+		background: color-mix(in srgb, var(--map-green) 15%, transparent);
+	}
+
+	.status-warn {
+		color: var(--map-amber);
+		background: color-mix(in srgb, var(--map-amber) 15%, transparent);
+	}
+
+	.metric-row {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		border-top: 1px solid var(--map-line);
+		border-bottom: 1px solid var(--map-line);
+	}
+
+	.metric {
+		display: grid;
+		gap: 4px;
+		padding: 10px 16px;
+		border-right: 1px solid var(--map-line);
+	}
+
+	.metric:last-child {
+		border-right: 0;
+	}
+
+	.metric span,
+	.control-row span,
+	.value-pair span {
+		color: var(--map-muted);
+		font-size: 12px;
+	}
+
+	.metric strong {
+		font-size: 19px;
+	}
+
+	.graph-canvas {
+		position: relative;
+		overflow: hidden;
+		background: var(--map-canvas);
+	}
+
+	.lane-label {
+		position: absolute;
+		top: 12px;
+		z-index: 4;
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		color: var(--map-muted);
+		font-size: 11px;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.lane-inbound {
+		left: 16px;
+	}
+
+	.lane-canonical {
+		left: 38%;
+	}
+
+	.lane-outbound {
+		right: 16px;
+	}
+
+	.mini-tool-button {
+		height: 24px;
+		min-width: 24px;
+		padding: 0 7px;
+		border: 1px solid var(--map-line);
+		border-radius: 6px;
+		color: var(--map-text);
+		background: var(--map-surface);
+		font-size: 11px;
+		font-weight: 900;
+	}
+
+	.edge-layer {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		z-index: 1;
+		pointer-events: none;
+	}
+
+	.edge {
+		fill: none;
+		stroke: #5f7085;
+		stroke-width: 1.5;
+		opacity: 0.72;
+		transition:
+			opacity 180ms ease,
+			stroke 180ms ease,
+			stroke-width 180ms ease;
+	}
+
+	@keyframes edge-flow {
+		to {
+			stroke-dashoffset: -28;
+		}
+	}
+
+	@keyframes connection-pulse {
+		0%,
+		100% {
+			stroke-opacity: 0.72;
+		}
+
+		50% {
+			stroke-opacity: 1;
+		}
+	}
+
+	.edge-muted {
+		opacity: 0.1;
+	}
+
+	.edge.active {
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-width: 2.2;
+		opacity: 1;
+	}
+
+	.edge.edge-connected,
+	.edge.edge-selected {
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-dasharray: 6 6;
+		opacity: 1;
+		animation:
+			edge-flow 680ms linear infinite,
+			connection-pulse 1.2s ease-in-out infinite;
+	}
+
+	.edge.edge-connected {
+		stroke-width: 2.1;
+	}
+
+	.edge.edge-selected {
+		stroke-width: 2.7;
+	}
+
+	.outbound-edge {
+		stroke: #6f8198;
+		stroke-dasharray: 5 5;
+		opacity: 0.55;
+	}
+
+	.custom-edge,
+	.drag-edge {
+		stroke: var(--map-teal);
+		stroke-width: 2.6;
+		stroke-dasharray: 4 3;
+	}
+
+	.drag-edge {
+		stroke: var(--map-brand);
+		opacity: 0.82;
+		animation: edge-flow 620ms linear infinite;
+	}
+
+	.graph-node {
+		--node-accent: var(--map-brand);
+		position: absolute;
+		display: grid;
+		gap: 1px;
+		padding: 3px 8px;
+		border: 1px solid var(--map-line-strong);
+		border-radius: 3px;
+		color: var(--map-text);
+		background: var(--map-surface);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+		overflow: visible;
+		text-align: left;
+		transition:
+			opacity 180ms ease,
+			transform 220ms ease,
+			top 220ms ease,
+			border-color 180ms ease,
+			box-shadow 180ms ease;
+	}
+
+	.graph-node[data-adapter='SAML'] {
+		--node-accent: var(--map-violet);
+	}
+
+	.graph-node[data-adapter='OIDC'] {
+		--node-accent: var(--map-amber);
+	}
+
+	.graph-node[data-adapter='SCIM'] {
+		--node-accent: var(--map-brand);
+	}
+
+	.graph-node[data-adapter='CSV'] {
+		--node-accent: var(--map-teal);
+	}
+
+	.source-node,
+	.destination-node {
+		border-color: color-mix(in srgb, var(--node-accent) 72%, transparent);
+	}
+
+	.target-node {
+		padding-bottom: 18px;
+		border-color: rgba(96, 165, 250, 0.64);
+	}
+
+	.adapter-hidden {
+		opacity: 0.22;
+		filter: saturate(0.65);
+		transform: translate(var(--stack-x), var(--stack-y));
+	}
+
+	.adapter-hidden::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border: 1px solid var(--map-line-strong);
+		border-radius: inherit;
+		transform: translate(var(--stack-shadow-x), var(--stack-shadow-y));
+		opacity: 0.38;
+		pointer-events: none;
+	}
+
+	.graph-node span:not(.node-handle):not(.target-badge-row):not(.target-badge):not(.target-badges) {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 11.2px;
+		font-weight: 400;
+		line-height: 1.15;
+	}
+
+	.graph-node small {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 9.6px;
+		font-weight: 400;
+		line-height: 1.2;
+	}
+
+	.graph-node:hover,
+	.graph-node.active,
+	.graph-node.connection-origin,
+	.graph-node.selection-origin {
+		border-color: var(--node-accent);
+		box-shadow:
+			0 0 0 2px color-mix(in srgb, var(--node-accent) 20%, transparent),
+			0 4px 12px rgba(0, 0, 0, 0.28);
+	}
+
+	.graph-node.selection-origin,
+	.graph-node.active.selection-origin {
+		background: color-mix(in srgb, var(--node-accent) 42%, var(--map-surface));
+	}
+
+	.graph-node.connection-related,
+	.graph-node.selection-related {
+		border-color: color-mix(in srgb, var(--node-accent) 84%, transparent);
+		background: color-mix(in srgb, var(--node-accent) 18%, var(--map-surface));
+	}
+
+	.node-handle {
+		position: absolute;
+		top: 50%;
+		width: 9px;
+		height: 9px;
+		border: 2px solid var(--map-canvas);
+		border-radius: 999px;
+		background: #7f8ea3;
+		box-shadow: 0 0 0 1px rgba(213, 224, 238, 0.18);
+		cursor: crosshair;
+		transform: translateY(-50%);
+		z-index: 3;
+	}
+
+	.node-handle.output {
+		right: -5px;
+	}
+
+	.node-handle.input {
+		left: -5px;
+	}
+
+	.source-node .node-handle.output,
+	.destination-node .node-handle.input {
+		background: var(--node-accent);
+	}
+
+	.target-node .node-handle {
+		background: var(--map-brand);
+	}
+
+	.target-badge-row {
+		position: absolute;
+		left: 7px;
+		right: 7px;
+		bottom: 5px;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 3px;
+		pointer-events: none;
+	}
+
+	.target-badges {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+	}
+
+	.target-badge {
+		height: 9px;
+		padding: 0 3px;
+		border: 1px solid color-mix(in srgb, var(--map-brand) 36%, transparent);
+		border-radius: 2px;
+		color: var(--map-muted);
+		background: color-mix(in srgb, var(--map-surface-muted) 86%, transparent);
+		font-family:
+			ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+			monospace;
+		font-size: 7px;
+		font-weight: 700;
+		line-height: 8px;
+	}
+
+	.target-badge.required {
+		color: var(--map-amber);
+		border-color: color-mix(in srgb, var(--map-amber) 56%, transparent);
+	}
+
+	.target-badge.type {
+		color: var(--map-brand);
+		border-color: color-mix(in srgb, var(--map-brand) 52%, transparent);
+	}
+
+	.target-badge.pii {
+		color: var(--map-red);
+		border-color: color-mix(in srgb, var(--map-red) 52%, transparent);
+	}
+
+	.target-badge.non-pii {
+		color: var(--map-green);
+		border-color: color-mix(in srgb, var(--map-green) 52%, transparent);
+	}
+
+	.right-pane {
+		overflow: auto;
+	}
+
+	.tab-bar {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 4px;
+		margin: 14px 14px 0;
+		padding: 4px;
+		border: 1px solid var(--map-line);
+		border-radius: var(--map-radius);
+		background: var(--map-surface-muted);
+	}
+
+	.tab-bar button {
+		height: 32px;
+		border: 0;
+		border-radius: 4px;
+		color: var(--map-muted);
+		background: transparent;
+		font-size: 12px;
+		font-weight: 900;
+	}
+
+	.tab-bar button.active {
+		color: var(--map-text);
+		background: var(--map-surface);
+	}
+
+	.detail-list {
+		display: grid;
+		gap: 10px;
+		margin: 0;
+		padding: 14px;
+	}
+
+	.detail-list div,
+	.dryrun-card,
+	.diff-card,
+	.control-block {
+		border: 1px solid var(--map-line);
+		border-radius: var(--map-radius);
+		background: var(--map-surface-muted);
+	}
+
+	.detail-list div {
+		padding: 10px;
+	}
+
+	.detail-list dt {
+		margin-bottom: 4px;
+		color: var(--map-muted);
+		font-size: 11px;
+		font-weight: 900;
+		text-transform: uppercase;
+	}
+
+	.detail-list dd {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 700;
+		line-height: 1.4;
+	}
+
+	.dryrun-card,
+	.diff-card,
+	.control-block {
+		margin: 14px;
+		padding: 12px;
+	}
+
+	.value-pair {
+		display: grid;
+		gap: 5px;
+		margin-bottom: 10px;
+	}
+
+	code {
+		display: block;
+		padding: 10px;
+		border: 1px solid var(--map-line);
+		border-radius: 4px;
+		background: #0b1220;
+		color: var(--map-text);
+		font-family: SFMono-Regular, Consolas, monospace;
+		font-size: 12px;
+		white-space: normal;
+	}
+
+	.trace-box {
+		padding: 10px;
+		border-left: 3px solid var(--map-brand);
+		border-radius: 4px;
+		background: rgba(96, 165, 250, 0.12);
+		font-size: 13px;
+		line-height: 1.45;
+	}
+
+	.diff-list {
+		display: grid;
+		gap: 8px;
+		margin: 12px 0 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.diff-list li,
+	.control-row {
+		padding: 10px 12px;
+		border: 1px solid var(--map-line);
+		border-radius: var(--map-radius);
+		background: var(--map-surface);
+		font-size: 13px;
+		line-height: 1.45;
+	}
+
+	.control-block {
+		display: grid;
+		gap: 8px;
+	}
+
+	.control-row {
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.risk-low,
+	.dryrun-status.ok {
+		color: var(--map-green);
+		background: rgba(74, 222, 128, 0.12);
+	}
+
+	.risk-medium,
+	.dryrun-status.warn {
+		color: var(--map-amber);
+		background: rgba(251, 191, 36, 0.12);
+	}
+
+	.risk-high,
+	.dryrun-status.stop {
+		color: var(--map-red);
+		background: rgba(248, 113, 113, 0.12);
+	}
+
+	@media (max-width: 1180px) {
+		.workspace {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

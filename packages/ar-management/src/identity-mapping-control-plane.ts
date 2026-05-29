@@ -315,6 +315,13 @@ interface CreateReviewTaskRequest {
   dueAt?: number;
 }
 
+interface ListReviewTasksOptions {
+  status?: string;
+  taskType?: string;
+  assignedTo?: string;
+  limit?: number;
+}
+
 interface TransitionReviewTaskRequest {
   status: string;
   assignedTo?: string | null;
@@ -477,6 +484,25 @@ interface MigrateSamlFederationTrustProfileRequest {
   profileId: string;
   sourceKey?: string;
   activate?: boolean;
+}
+
+interface FederationMetadataDocumentListRow {
+  id: string;
+  trust_source_id: string;
+  document_type: string;
+  source_url: string | null;
+  document_hash: string;
+  document_ref: string | null;
+  fetched_at: number | null;
+  validated_at: number | null;
+  validation_state: string;
+  created_at: number;
+  updated_at: number;
+  entity_summary_id: string | null;
+  entity_id: string | null;
+  entity_role: string | null;
+  display_name: string | null;
+  summary_json: string | null;
 }
 
 const REVIEW_TASK_STATUSES = new Set([
@@ -1551,6 +1577,69 @@ export class IdentityMappingControlPlaneRepository {
       priority: input.priority ?? 0,
       payload: input.payload,
     };
+  }
+
+  async listReviewTasks(tenantId: string, options: ListReviewTasksOptions = {}) {
+    const where = ['tenant_id = ?'];
+    const params: Array<string | number> = [tenantId];
+
+    if (options.status) {
+      if (!REVIEW_TASK_STATUSES.has(options.status)) {
+        throw badRequest('status is not supported for review task filters');
+      }
+      where.push('status = ?');
+      params.push(options.status);
+    }
+    if (options.taskType) {
+      where.push('task_type = ?');
+      params.push(options.taskType);
+    }
+    if (options.assignedTo) {
+      where.push('assigned_to = ?');
+      params.push(options.assignedTo);
+    }
+
+    const limit = clampListLimit(options.limit, 50, 200);
+    params.push(limit);
+
+    const rows = await this.adapter.query<{
+      id: string;
+      tenant_id: string;
+      task_type: string;
+      subject_id: string | null;
+      account_id: string | null;
+      status: string;
+      priority: number;
+      assigned_to: string | null;
+      payload_json: string;
+      due_at: number | null;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT
+        id, tenant_id, task_type, subject_id, account_id, status, priority,
+        assigned_to, payload_json, due_at, created_at, updated_at
+      FROM review_tasks
+      WHERE ${where.join(' AND ')}
+      ORDER BY priority DESC, created_at ASC
+      LIMIT ?`,
+      params
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      taskType: row.task_type,
+      subjectId: row.subject_id,
+      accountId: row.account_id,
+      status: row.status,
+      priority: row.priority,
+      assignedTo: row.assigned_to,
+      payload: parseReviewTaskPayload(row.payload_json),
+      dueAt: row.due_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   async transitionReviewTask(
@@ -2846,6 +2935,96 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  async listFederationMetadataDocuments(tenantId: string, trustSourceId: string) {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    await this.ensureFederationTrustSource(tenantId, trustSourceId);
+
+    const rows = await this.adapter.query<FederationMetadataDocumentListRow>(
+      `SELECT
+        d.id,
+        d.trust_source_id,
+        d.document_type,
+        d.source_url,
+        d.document_hash,
+        d.document_ref,
+        d.fetched_at,
+        d.validated_at,
+        d.validation_state,
+        d.created_at,
+        d.updated_at,
+        e.id AS entity_summary_id,
+        e.entity_id,
+        e.entity_role,
+        e.display_name,
+        e.summary_json
+      FROM federation_metadata_documents d
+      LEFT JOIN federation_metadata_entity_summaries e
+        ON e.tenant_id = d.tenant_id
+       AND e.metadata_document_id = d.id
+      WHERE d.tenant_id = ? AND d.trust_source_id = ?
+      ORDER BY d.fetched_at DESC, d.created_at DESC, e.display_name ASC, e.entity_id ASC`,
+      [tenantId, trustSourceId]
+    );
+
+    const documents = new Map<
+      string,
+      {
+        id: string;
+        tenantId: string;
+        trustSourceId: string;
+        documentType: string;
+        sourceUrl: string | null;
+        documentHash: string;
+        documentRef: string | null;
+        fetchedAt: number | null;
+        validatedAt: number | null;
+        validationState: string;
+        createdAt: number;
+        updatedAt: number;
+        entitySummaries: Array<{
+          id: string;
+          entityId: string;
+          entityRole: string;
+          displayName: string | null;
+          summary: Record<string, unknown> | null;
+        }>;
+      }
+    >();
+
+    for (const row of rows) {
+      let document = documents.get(row.id);
+      if (!document) {
+        document = {
+          id: row.id,
+          tenantId,
+          trustSourceId: row.trust_source_id,
+          documentType: row.document_type,
+          sourceUrl: row.source_url,
+          documentHash: row.document_hash,
+          documentRef: row.document_ref,
+          fetchedAt: row.fetched_at,
+          validatedAt: row.validated_at,
+          validationState: row.validation_state,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          entitySummaries: [],
+        };
+        documents.set(row.id, document);
+      }
+      if (row.entity_summary_id && row.entity_id && row.entity_role) {
+        document.entitySummaries.push({
+          id: row.entity_summary_id,
+          entityId: row.entity_id,
+          entityRole: row.entity_role,
+          displayName: row.display_name,
+          summary: row.summary_json ? parseJsonObject(row.summary_json, {}) : null,
+        });
+      }
+    }
+
+    return [...documents.values()];
+  }
+
   async migrateSamlFederationTrustProfile(
     tenantId: string,
     input: MigrateSamlFederationTrustProfileRequest
@@ -3699,6 +3878,17 @@ export async function adminIdentityMappingSourceAuthorityEvaluateHandler(c: Admi
   );
 }
 
+export async function adminIdentityMappingReviewTasksListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    reviewTasks: await repository.listReviewTasks(tenantId, {
+      status: c.req.query('status'),
+      taskType: c.req.query('taskType'),
+      assignedTo: c.req.query('assignedTo'),
+      limit: parseOptionalInteger(c.req.query('limit')),
+    }),
+  }));
+}
+
 export async function adminIdentityMappingReviewTaskCreateHandler(c: AdminContext) {
   return handleMutation(c, 'review-task.create', async (repository, tenantId, body) =>
     repository.createReviewTask(tenantId, body as CreateReviewTaskRequest)
@@ -3857,6 +4047,15 @@ export async function adminIdentityMappingFederationTrustSourceCreateHandler(c: 
 export async function adminIdentityMappingFederationTrustSourcesListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     federationTrustSources: await repository.listFederationTrustSources(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingFederationMetadataDocumentsListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    federationMetadataDocuments: await repository.listFederationMetadataDocuments(
+      tenantId,
+      requiredParam(c, 'trustSourceId')
+    ),
   }));
 }
 
@@ -4068,6 +4267,25 @@ function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+function parseOptionalInteger(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function clampListLimit(value: number | undefined, defaultValue: number, maxValue: number): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return defaultValue;
+  }
+  return Math.max(1, Math.min(Math.trunc(value), maxValue));
+}
+
 function parseJsonObject(
   value: string,
   fallback: Record<string, unknown>
@@ -4078,6 +4296,12 @@ function parseJsonObject(
   } catch {
     return fallback;
   }
+}
+
+function parseReviewTaskPayload(value: string): Record<string, unknown> {
+  const payload = parseJsonObject(value, {});
+  assertNoReviewPayloadRawIdentifiers(payload, 'payload');
+  return payload;
 }
 
 function parseProvisioningAssignmentCondition(value: string): ProvisioningAssignmentCondition {

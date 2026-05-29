@@ -656,6 +656,7 @@ import {
   adminIdentityMappingPolicyVersionPublishHandler,
   adminIdentityMappingEntitlementGrantHandler,
   adminIdentityMappingFederationMetadataDocumentCreateHandler,
+  adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingFederationTrustSourceCreateHandler,
   adminIdentityMappingGroupCreateHandler,
   adminIdentityMappingGroupMembershipCreateHandler,
@@ -674,6 +675,7 @@ import {
   adminIdentityMappingProvisioningAssignmentRuleEvaluateHandler,
   adminIdentityMappingReviewTaskCreateHandler,
   adminIdentityMappingReviewTaskGroupCreateHandler,
+  adminIdentityMappingReviewTasksListHandler,
   adminIdentityMappingReviewTaskTransitionHandler,
   adminIdentityMappingSamlFederationTrustProfileMigrateHandler,
   adminIdentityMappingSourceAuthorityContractCreateHandler,
@@ -2311,6 +2313,11 @@ app.post(
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceAuthorityEvaluateHandler
 );
+app.get(
+  '/api/admin/identity-mapping/review-tasks',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingReviewTasksListHandler
+);
 app.post(
   '/api/admin/identity-mapping/review-tasks',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
@@ -2417,6 +2424,11 @@ app.get(
   '/api/admin/identity-mapping/federation-trust-sources',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourcesListHandler
+);
+app.get(
+  '/api/admin/identity-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingFederationMetadataDocumentsListHandler
 );
 app.post(
   '/api/admin/identity-mapping/federation-metadata-documents',
