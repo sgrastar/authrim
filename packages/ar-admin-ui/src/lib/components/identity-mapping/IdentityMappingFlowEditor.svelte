@@ -196,6 +196,18 @@
 		selectedNodeId = null;
 	}
 
+	function clearSelection() {
+		selectedEdgeId = null;
+		selectedNodeId = null;
+		hoverNodeId = null;
+	}
+
+	function handleClearSelectionKeyDown(event: KeyboardEvent) {
+		if (event.key !== 'Escape' && event.key !== 'Enter' && event.key !== ' ') return;
+		event.preventDefault();
+		clearSelection();
+	}
+
 	function connectedEdgeIds(nodeId: string | null): Set<string> {
 		if (!nodeId) return new Set();
 		return new Set(
@@ -732,6 +744,18 @@
 					viewBox={`0 0 ${canvasWidth} ${layout.height}`}
 					aria-label="Mapping edges"
 				>
+					<rect
+						class="edge-blank-hit"
+						x="0"
+						y="0"
+						width={canvasWidth}
+						height={layout.height}
+						role="button"
+						tabindex="0"
+						aria-label="Clear mapping selection"
+						onclick={clearSelection}
+						onkeydown={handleClearSelectionKeyDown}
+					/>
 					{#each graphEdges as edge (edge.id)}
 						<path
 							class="edge-hit"
@@ -795,7 +819,10 @@
 						data-adapter={node.adapter}
 						aria-hidden={node.hidden}
 						tabindex={node.hidden ? -1 : 0}
-						onclick={() => !node.hidden && selectRule(node.ruleId)}
+						onclick={(event) => {
+							event.stopPropagation();
+							if (!node.hidden) selectRule(node.ruleId);
+						}}
 						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
 						onpointerout={() => (hoverNodeId = null)}
 					>
@@ -998,6 +1025,12 @@
 		--map-red: #b91c1c;
 		--map-violet: #6d28d9;
 		--map-radius: 4px;
+		--map-edge-flow-distance: -28;
+		--map-edge-flow-speed: 680ms;
+		--map-edge-pulse-speed: 1.2s;
+		--map-drag-edge-flow-speed: 620ms;
+		--map-edge-dash-pattern: 6 6;
+		--map-drag-edge-dash-pattern: 4 3;
 		overflow: hidden;
 		border: 1px solid var(--map-line);
 		border-radius: 8px;
@@ -1310,6 +1343,12 @@
 		pointer-events: stroke;
 	}
 
+	.edge-blank-hit {
+		fill: transparent;
+		cursor: default;
+		pointer-events: all;
+	}
+
 	.edge-delete-control {
 		color: var(--map-text);
 		cursor: pointer;
@@ -1350,7 +1389,7 @@
 
 	@keyframes edge-flow {
 		to {
-			stroke-dashoffset: -28;
+			stroke-dashoffset: var(--map-edge-flow-distance);
 		}
 	}
 
@@ -1379,11 +1418,11 @@
 	.edge.edge-selected,
 	.edge.edge-picked {
 		stroke: var(--edge-accent, var(--map-brand));
-		stroke-dasharray: 6 6;
+		stroke-dasharray: var(--map-edge-dash-pattern);
 		opacity: 1;
 		animation:
-			edge-flow 680ms linear infinite,
-			connection-pulse 1.2s ease-in-out infinite;
+			edge-flow var(--map-edge-flow-speed) linear infinite,
+			connection-pulse var(--map-edge-pulse-speed) ease-in-out infinite;
 	}
 
 	.edge.edge-connected {
@@ -1403,21 +1442,20 @@
 
 	.outbound-edge {
 		stroke: #6f8198;
-		stroke-dasharray: 5 5;
 		opacity: 0.55;
 	}
 
-	.custom-edge,
-	.drag-edge {
+	.custom-edge {
 		stroke: var(--map-teal);
 		stroke-width: 2.6;
-		stroke-dasharray: 4 3;
 	}
 
 	.drag-edge {
 		stroke: var(--map-brand);
+		stroke-width: 2.6;
+		stroke-dasharray: var(--map-drag-edge-dash-pattern);
 		opacity: 0.82;
-		animation: edge-flow 620ms linear infinite;
+		animation: edge-flow var(--map-drag-edge-flow-speed) linear infinite;
 	}
 
 	.graph-node {
