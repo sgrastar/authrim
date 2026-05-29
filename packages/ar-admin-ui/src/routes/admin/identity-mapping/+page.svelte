@@ -21,6 +21,7 @@
 				policies,
 				catalogs,
 				sourceProfiles,
+				destinationProfiles,
 				protocolSchemas,
 				externalSchemas,
 				federationTrustSources,
@@ -29,6 +30,7 @@
 				adminIdentityMappingAPI.listPolicies(),
 				adminIdentityMappingAPI.listCatalogs(),
 				adminIdentityMappingAPI.listSourceProfiles(),
+				adminIdentityMappingAPI.listDestinationProfiles(),
 				adminIdentityMappingAPI.listProtocolSchemas(),
 				adminIdentityMappingAPI.listExternalSchemas(),
 				adminIdentityMappingAPI.listFederationTrustSources(),
@@ -40,6 +42,7 @@
 				catalogs: catalogs.catalogs.length,
 				profiles:
 					sourceProfiles.sourceProfiles.length +
+					destinationProfiles.destinationProfiles.length +
 					protocolSchemas.protocolSchemas.length +
 					externalSchemas.externalSchemas.length,
 				federationTrustSources: federationTrustSources.federationTrustSources.length
@@ -48,6 +51,7 @@
 				policies: policies.policies,
 				catalogs: catalogs.catalogs,
 				sourceProfiles: sourceProfiles.sourceProfiles,
+				destinationProfiles: destinationProfiles.destinationProfiles,
 				protocolSchemas: protocolSchemas.protocolSchemas,
 				externalSchemas: externalSchemas.externalSchemas,
 				schemaReadinessRows: schemaReadiness.rows

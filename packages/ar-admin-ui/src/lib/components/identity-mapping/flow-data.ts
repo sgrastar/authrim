@@ -1,5 +1,6 @@
 import type {
 	IdentityMappingCatalogSummary,
+	IdentityMappingDestinationProfileSummary,
 	IdentityMappingExternalSchemaSummary,
 	IdentityMappingPolicySummary,
 	IdentityMappingProtocolSchemaSummary,
@@ -19,6 +20,7 @@ interface IdentityMappingFlowInput {
 	policies: IdentityMappingPolicySummary[];
 	catalogs: IdentityMappingCatalogSummary[];
 	sourceProfiles: IdentityMappingSourceProfileSummary[];
+	destinationProfiles: IdentityMappingDestinationProfileSummary[];
 	protocolSchemas: IdentityMappingProtocolSchemaSummary[];
 	externalSchemas: IdentityMappingExternalSchemaSummary[];
 	schemaReadinessRows: IdentityMappingSchemaReadinessRow[];
@@ -54,7 +56,10 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 			.filter((schema) => isInboundProtocol(schema.protocol))
 			.map(protocolSchemaToSourceProfile)
 	];
-	const destinationProfiles = input.protocolSchemas.map(protocolSchemaToDestinationProfile);
+	const destinationProfiles = [
+		...input.destinationProfiles.map(destinationProfileToProfile),
+		...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
+	];
 	const canonicalTargets = buildCanonicalTargets(input.catalogs, input.schemaReadinessRows);
 
 	if (
@@ -168,6 +173,21 @@ function protocolSchemaToDestinationProfile(
 	};
 }
 
+function destinationProfileToProfile(
+	profile: IdentityMappingDestinationProfileSummary
+): ProfileSchema {
+	return {
+		id: `destination-profile-${profile.id}`,
+		title: profile.displayName,
+		source: `${profile.destinationType.toUpperCase()} / ${profile.profileKey}`,
+		adapter: adapterFrom(profile.destinationType),
+		direction: 'destination',
+		versionLabel: profile.version?.versionLabel ?? 'draft',
+		lifecycleState: profile.version?.lifecycleState ?? profile.lifecycleState,
+		schema: (profile.version?.schema as unknown as Record<string, unknown> | undefined) ?? null
+	};
+}
+
 function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): ProfileSchema {
 	return {
 		id: `external-source-${schema.id}`,
@@ -277,6 +297,8 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 		const key =
 			stringValue(item.name) ??
 			stringValue(item.key) ??
+			stringValue(item.claimName) ??
+			stringValue(item.columnName) ??
 			stringValue(item.headerName) ??
 			stringValue(item.id) ??
 			stringValue(item.stableColumnId);

@@ -313,6 +313,50 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     gate: 'parse API + expiry metadata + no raw sample persistence tests',
     schemaObject: 'source_profile_parse_drafts',
   },
+  {
+    id: 'UIM-SCH-092',
+    objectName: 'destination_profiles',
+    area: 'Destination profile registration',
+    introducedPr: 'destination profile PR',
+    expectedConnectionPr: 'Destination profile PR',
+    runtimePath: 'Source & Destination Profiles / Flow Editor selector',
+    status: 'api_connected',
+    gate: 'OIDC/CSV create/list API + Admin UI + tests',
+    schemaObject: 'destination_profiles',
+  },
+  {
+    id: 'UIM-SCH-093',
+    objectName: 'destination_profile_versions',
+    area: 'Versioned destination release contract summaries',
+    introducedPr: 'destination profile PR',
+    expectedConnectionPr: 'Destination profile PR',
+    runtimePath: 'OIDC/CSV draft/review/active lifecycle',
+    status: 'api_connected',
+    gate: 'version lifecycle API + release impact tests',
+    schemaObject: 'destination_profile_versions',
+  },
+  {
+    id: 'UIM-SCH-094',
+    objectName: 'oidc_custom_scope_registry',
+    area: 'OIDC custom scope registry',
+    introducedPr: 'destination profile PR',
+    expectedConnectionPr: 'Destination profile PR',
+    runtimePath: 'OIDC destination profile validation',
+    status: 'api_connected',
+    gate: 'registry API + over-release validation tests',
+    schemaObject: 'oidc_custom_scope_registry',
+  },
+  {
+    id: 'UIM-SCH-095',
+    objectName: 'oidc_custom_claim_registry',
+    area: 'OIDC custom claim registry',
+    introducedPr: 'destination profile PR',
+    expectedConnectionPr: 'Destination profile PR',
+    runtimePath: 'OIDC destination profile custom claim validation',
+    status: 'api_connected',
+    gate: 'registry API + reserved claim validation tests',
+    schemaObject: 'oidc_custom_claim_registry',
+  },
 ];
 
 interface MappingPolicySetRow {
@@ -433,6 +477,58 @@ interface SourceProfileParseDraftRow {
   updated_at: number;
 }
 
+interface DestinationProfileRow {
+  id: string;
+  tenant_id: string;
+  destination_type: string;
+  profile_key: string;
+  display_name: string;
+  owner_scope_type: string;
+  owner_scope_id: string | null;
+  base_profile_id: string | null;
+  lifecycle_state: string;
+  active_version_id: string | null;
+  created_at: number;
+  updated_at: number;
+  version_id: string | null;
+  version_label: string | null;
+  version_lifecycle_state: string | null;
+  schema_hash: string | null;
+  schema_json: string | null;
+  validation_summary_json: string | null;
+  warning_summary_json: string | null;
+  release_impact_json: string | null;
+}
+
+interface OidcCustomScopeRegistryRow {
+  id: string;
+  tenant_id: string;
+  owner_scope_type: string;
+  owner_scope_id: string | null;
+  scope_key: string;
+  display_name: string;
+  description: string | null;
+  allowed_claims_json: string;
+  lifecycle_state: string;
+  created_at: number;
+  updated_at: number;
+}
+
+interface OidcCustomClaimRegistryRow {
+  id: string;
+  tenant_id: string;
+  owner_scope_type: string;
+  owner_scope_id: string | null;
+  claim_name: string;
+  display_name: string;
+  value_type: string;
+  classification: string;
+  allowed_surfaces_json: string;
+  lifecycle_state: string;
+  created_at: number;
+  updated_at: number;
+}
+
 interface CompiledMappingSnapshotRow {
   id: string;
   tenant_id: string;
@@ -530,6 +626,38 @@ interface CreateSourceProfileRequest {
   parserOptions?: Record<string, unknown>;
   warningSummary?: Record<string, unknown>;
   sourceMetadata?: Record<string, unknown>;
+}
+
+interface CreateDestinationProfileRequest {
+  destinationType: 'oidc' | 'csv';
+  profileKey: string;
+  displayName: string;
+  ownerScopeType?: 'platform' | 'tenant' | 'client';
+  ownerScopeId?: string | null;
+  baseProfileId?: string | null;
+  versionLabel?: string;
+  schema: Record<string, unknown>;
+  warningSummary?: Record<string, unknown>;
+  releaseImpact?: Record<string, unknown>;
+}
+
+interface CreateOidcCustomScopeRequest {
+  ownerScopeType?: 'platform' | 'tenant';
+  ownerScopeId?: string | null;
+  scopeKey: string;
+  displayName: string;
+  description?: string | null;
+  allowedClaims: string[];
+}
+
+interface CreateOidcCustomClaimRequest {
+  ownerScopeType?: 'platform' | 'tenant';
+  ownerScopeId?: string | null;
+  claimName: string;
+  displayName: string;
+  valueType?: string;
+  classification?: string;
+  allowedSurfaces?: Array<'id_token' | 'userinfo'>;
 }
 
 interface PolicyVersionRuleInput {
@@ -899,6 +1027,77 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
 ]);
 const SOURCE_PROFILE_TYPES = new Set(['csv']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
+const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv']);
+const DESTINATION_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
+const PROFILE_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant', 'client']);
+const REGISTRY_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant']);
+const OIDC_SURFACES = new Set(['id_token', 'userinfo']);
+const OIDC_STANDARD_SCOPES = new Set([
+  'openid',
+  'profile',
+  'email',
+  'phone',
+  'address',
+  'offline_access',
+]);
+const OIDC_RESERVED_NON_PROFILE_CLAIMS = new Set([
+  'iss',
+  'aud',
+  'exp',
+  'iat',
+  'nbf',
+  'jti',
+  'nonce',
+  'at_hash',
+  'c_hash',
+  'azp',
+]);
+const OIDC_STANDARD_CLAIMS = new Set([
+  'sub',
+  'name',
+  'given_name',
+  'family_name',
+  'middle_name',
+  'nickname',
+  'preferred_username',
+  'profile',
+  'picture',
+  'website',
+  'email',
+  'email_verified',
+  'gender',
+  'birthdate',
+  'zoneinfo',
+  'locale',
+  'phone_number',
+  'phone_number_verified',
+  'address',
+  'updated_at',
+]);
+const OIDC_STANDARD_SCOPE_ALLOWED_CLAIMS = new Map<string, string[]>([
+  [
+    'profile',
+    [
+      'name',
+      'given_name',
+      'family_name',
+      'middle_name',
+      'nickname',
+      'preferred_username',
+      'profile',
+      'picture',
+      'website',
+      'gender',
+      'birthdate',
+      'zoneinfo',
+      'locale',
+      'updated_at',
+    ],
+  ],
+  ['email', ['email', 'email_verified']],
+  ['phone', ['phone_number', 'phone_number_verified']],
+  ['address', ['address']],
+]);
 const FEDERATION_TRUST_LIFECYCLE_STATES = new Set(['draft', 'active', 'retired']);
 const FEDERATION_METADATA_VALIDATION_STATES = new Set(['pending', 'valid', 'invalid', 'warning']);
 const KEY_ACCESS_TYPES = new Set([
@@ -1481,6 +1680,386 @@ export class IdentityMappingControlPlaneRepository {
             SET lifecycle_state = ?, active_version_id = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
         ['active', versionId, now, tenantId, profileId]
+      );
+    });
+    return { id: versionId, lifecycleState: 'active', activatedAt: now };
+  }
+
+  async createOidcCustomScope(tenantId: string, input: CreateOidcCustomScopeRequest) {
+    validateRequiredString(input.scopeKey, 'scopeKey');
+    validateRequiredString(input.displayName, 'displayName');
+    if (!Array.isArray(input.allowedClaims)) {
+      throw badRequest('allowedClaims must be an array');
+    }
+    const owner = normalizeRegistryOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
+    const now = this.now();
+    const id = createId('oidc_scope');
+    await this.adapter.execute(
+      `INSERT INTO oidc_custom_scope_registry (
+        id, tenant_id, owner_scope_type, owner_scope_id, scope_key, display_name,
+        description, allowed_claims_json, lifecycle_state, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        owner.tenantId,
+        owner.ownerScopeType,
+        owner.ownerScopeId,
+        input.scopeKey,
+        input.displayName,
+        input.description ?? null,
+        stableJson(input.allowedClaims.map(String).filter(Boolean)),
+        'active',
+        now,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId: owner.tenantId,
+      ownerScopeType: owner.ownerScopeType,
+      ownerScopeId: owner.ownerScopeId,
+      scopeKey: input.scopeKey,
+      displayName: input.displayName,
+      description: input.description ?? null,
+      allowedClaims: input.allowedClaims.map(String).filter(Boolean),
+      lifecycleState: 'active',
+    };
+  }
+
+  async listOidcCustomScopes(tenantId: string) {
+    const rows = await this.adapter.query<OidcCustomScopeRegistryRow>(
+      `SELECT *
+         FROM oidc_custom_scope_registry
+        WHERE tenant_id IN (?, ?)
+        ORDER BY owner_scope_type ASC, scope_key ASC`,
+      [tenantId, 'platform']
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      ownerScopeType: row.owner_scope_type,
+      ownerScopeId: row.owner_scope_id,
+      scopeKey: row.scope_key,
+      displayName: row.display_name,
+      description: row.description,
+      allowedClaims: JSON.parse(row.allowed_claims_json) as string[],
+      lifecycleState: row.lifecycle_state,
+    }));
+  }
+
+  async createOidcCustomClaim(tenantId: string, input: CreateOidcCustomClaimRequest) {
+    validateRequiredString(input.claimName, 'claimName');
+    validateRequiredString(input.displayName, 'displayName');
+    validateOidcClaimName(input.claimName);
+    if (OIDC_RESERVED_NON_PROFILE_CLAIMS.has(input.claimName)) {
+      throw badRequest('claimName is reserved by the OIDC token envelope');
+    }
+    const owner = normalizeRegistryOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
+    const now = this.now();
+    const surfaces = normalizeOidcSurfaces(input.allowedSurfaces ?? ['id_token', 'userinfo']);
+    const id = createId('oidc_claim');
+    await this.adapter.execute(
+      `INSERT INTO oidc_custom_claim_registry (
+        id, tenant_id, owner_scope_type, owner_scope_id, claim_name, display_name,
+        value_type, classification, allowed_surfaces_json, lifecycle_state, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        owner.tenantId,
+        owner.ownerScopeType,
+        owner.ownerScopeId,
+        input.claimName,
+        input.displayName,
+        input.valueType ?? 'string',
+        input.classification ?? 'internal',
+        stableJson(surfaces),
+        'active',
+        now,
+        now,
+      ]
+    );
+    return {
+      id,
+      tenantId: owner.tenantId,
+      ownerScopeType: owner.ownerScopeType,
+      ownerScopeId: owner.ownerScopeId,
+      claimName: input.claimName,
+      displayName: input.displayName,
+      valueType: input.valueType ?? 'string',
+      classification: input.classification ?? 'internal',
+      allowedSurfaces: surfaces,
+      lifecycleState: 'active',
+    };
+  }
+
+  async listOidcCustomClaims(tenantId: string) {
+    const rows = await this.adapter.query<OidcCustomClaimRegistryRow>(
+      `SELECT *
+         FROM oidc_custom_claim_registry
+        WHERE tenant_id IN (?, ?)
+        ORDER BY owner_scope_type ASC, claim_name ASC`,
+      [tenantId, 'platform']
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      ownerScopeType: row.owner_scope_type,
+      ownerScopeId: row.owner_scope_id,
+      claimName: row.claim_name,
+      displayName: row.display_name,
+      valueType: row.value_type,
+      classification: row.classification,
+      allowedSurfaces: JSON.parse(row.allowed_surfaces_json) as string[],
+      lifecycleState: row.lifecycle_state,
+    }));
+  }
+
+  async createDestinationProfile(tenantId: string, input: CreateDestinationProfileRequest) {
+    validateRequiredString(input.destinationType, 'destinationType');
+    validateRequiredString(input.profileKey, 'profileKey');
+    validateRequiredString(input.displayName, 'displayName');
+    if (!DESTINATION_PROFILE_TYPES.has(input.destinationType)) {
+      throw badRequest('destinationType must be oidc or csv');
+    }
+    if (!isRecord(input.schema)) {
+      throw badRequest('schema must be an object');
+    }
+    assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
+
+    const owner = normalizeProfileOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
+    const customScopes = await this.listOidcCustomScopes(tenantId);
+    const validation =
+      input.destinationType === 'oidc'
+        ? validateOidcDestinationProfileSchema(input.schema, customScopes)
+        : validateCsvDestinationProfileSchema(input.schema);
+    if (validation.errorCount > 0) {
+      throw badRequest(`destination profile schema is invalid: ${validation.errors.join('; ')}`);
+    }
+    const warningSummary = {
+      ...validation.warningSummary,
+      ...(isRecord(input.warningSummary) ? input.warningSummary : {}),
+    };
+    const releaseImpact = {
+      ...validation.releaseImpact,
+      ...(isRecord(input.releaseImpact) ? input.releaseImpact : {}),
+    };
+    const now = this.now();
+    const profileId = createId('destination_profile');
+    const versionId = createId('destination_profile_version');
+    const schemaHash = await hashStableJson(input.schema);
+
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO destination_profiles (
+          id, tenant_id, destination_type, profile_key, display_name, owner_scope_type,
+          owner_scope_id, base_profile_id, lifecycle_state, active_version_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          profileId,
+          owner.tenantId,
+          input.destinationType,
+          input.profileKey,
+          input.displayName,
+          owner.ownerScopeType,
+          owner.ownerScopeId,
+          input.baseProfileId ?? null,
+          'draft',
+          null,
+          now,
+          now,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO destination_profile_versions (
+          id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json,
+          validation_summary_json, warning_summary_json, release_impact_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          versionId,
+          owner.tenantId,
+          profileId,
+          input.versionLabel ?? 'v1',
+          'draft',
+          schemaHash,
+          stableJson(input.schema),
+          stableJson(validation),
+          stableJson(warningSummary),
+          stableJson(releaseImpact),
+          now,
+          now,
+        ]
+      );
+    });
+
+    return {
+      id: profileId,
+      tenantId: owner.tenantId,
+      destinationType: input.destinationType,
+      profileKey: input.profileKey,
+      displayName: input.displayName,
+      ownerScopeType: owner.ownerScopeType,
+      ownerScopeId: owner.ownerScopeId,
+      lifecycleState: 'draft',
+      version: {
+        id: versionId,
+        versionLabel: input.versionLabel ?? 'v1',
+        lifecycleState: 'draft',
+        schemaHash,
+        schema: input.schema,
+        validationSummary: validation,
+        warningSummary,
+        releaseImpact,
+      },
+    };
+  }
+
+  async listDestinationProfiles(tenantId: string) {
+    const rows = await this.adapter.query<DestinationProfileRow>(
+      `SELECT p.*,
+              v.id AS version_id,
+              v.version_label,
+              v.lifecycle_state AS version_lifecycle_state,
+              v.schema_hash,
+              v.schema_json,
+              v.validation_summary_json,
+              v.warning_summary_json,
+              v.release_impact_json
+         FROM destination_profiles p
+         LEFT JOIN destination_profile_versions v
+           ON v.id = COALESCE(
+             p.active_version_id,
+             (
+               SELECT latest.id
+                 FROM destination_profile_versions latest
+                WHERE latest.tenant_id = p.tenant_id
+                  AND latest.profile_id = p.id
+                ORDER BY latest.updated_at DESC
+                LIMIT 1
+             )
+           )
+        WHERE p.tenant_id IN (?, ?)
+        ORDER BY p.owner_scope_type ASC, p.updated_at DESC`,
+      [tenantId, 'platform']
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      destinationType: row.destination_type,
+      profileKey: row.profile_key,
+      displayName: row.display_name,
+      ownerScopeType: row.owner_scope_type,
+      ownerScopeId: row.owner_scope_id,
+      baseProfileId: row.base_profile_id,
+      lifecycleState: row.lifecycle_state,
+      activeVersionId: row.active_version_id,
+      version: row.version_id
+        ? {
+            id: row.version_id,
+            versionLabel: row.version_label,
+            lifecycleState: row.version_lifecycle_state,
+            schemaHash: row.schema_hash,
+            schema: row.schema_json ? (JSON.parse(row.schema_json) as Record<string, unknown>) : {},
+            validationSummary: row.validation_summary_json
+              ? (JSON.parse(row.validation_summary_json) as Record<string, unknown>)
+              : {},
+            warningSummary: row.warning_summary_json
+              ? (JSON.parse(row.warning_summary_json) as Record<string, unknown>)
+              : {},
+            releaseImpact: row.release_impact_json
+              ? (JSON.parse(row.release_impact_json) as Record<string, unknown>)
+              : {},
+          }
+        : null,
+    }));
+  }
+
+  async reviewDestinationProfileVersion(
+    tenantId: string,
+    profileId: string,
+    versionId: string,
+    allowPlatformScope = false
+  ) {
+    const row = await this.adapter.queryOne<{
+      tenant_id: string;
+      validation_summary_json: string;
+      warning_summary_json: string;
+      release_impact_json: string;
+      lifecycle_state: string;
+    }>(
+      `SELECT tenant_id, validation_summary_json, warning_summary_json, release_impact_json, lifecycle_state
+         FROM destination_profile_versions
+        WHERE profile_id = ? AND id = ?
+          AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
+      [profileId, versionId, tenantId, allowPlatformScope ? 1 : 0, 'platform']
+    );
+    if (!row) {
+      throw notFound('destination profile version not found');
+    }
+    if (!DESTINATION_PROFILE_VERSION_STATES.has(row.lifecycle_state)) {
+      throw badRequest('destination profile version lifecycle state is invalid');
+    }
+    const validationSummary = JSON.parse(row.validation_summary_json) as Record<string, unknown>;
+    const warningSummary = JSON.parse(row.warning_summary_json) as Record<string, unknown>;
+    const releaseImpact = JSON.parse(row.release_impact_json) as Record<string, unknown>;
+    if (getNumberProperty(validationSummary, 'errorCount') > 0) {
+      throw badRequest('destination profile validation errors must be resolved before review');
+    }
+    if (!isRecord(releaseImpact) || Object.keys(releaseImpact).length === 0) {
+      throw badRequest('release impact summary is required before review');
+    }
+    const blockingCount = getNumberProperty(warningSummary, 'blockingWarningCount');
+    const confirmedCount = getNumberProperty(warningSummary, 'confirmedBlockingWarningCount');
+    if (blockingCount > confirmedCount) {
+      throw badRequest('blocking destination release warnings must be confirmed before review');
+    }
+    const now = this.now();
+    await this.adapter.execute(
+      `UPDATE destination_profile_versions
+          SET lifecycle_state = ?, reviewed_at = ?, updated_at = ?
+        WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+      ['reviewed', now, now, row.tenant_id, profileId, versionId]
+    );
+    return { id: versionId, lifecycleState: 'reviewed', reviewedAt: now };
+  }
+
+  async activateDestinationProfileVersion(
+    tenantId: string,
+    profileId: string,
+    versionId: string,
+    allowPlatformScope = false
+  ) {
+    const row = await this.adapter.queryOne<{ tenant_id: string; lifecycle_state: string }>(
+      `SELECT tenant_id, lifecycle_state
+         FROM destination_profile_versions
+        WHERE profile_id = ? AND id = ?
+          AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
+      [profileId, versionId, tenantId, allowPlatformScope ? 1 : 0, 'platform']
+    );
+    if (!row) {
+      throw notFound('destination profile version not found');
+    }
+    if (row.lifecycle_state !== 'reviewed' && row.lifecycle_state !== 'active') {
+      throw badRequest('destination profile version must be reviewed before activation');
+    }
+    const now = this.now();
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `UPDATE destination_profile_versions
+            SET lifecycle_state = ?, updated_at = ?
+          WHERE tenant_id = ? AND profile_id = ? AND lifecycle_state = ?`,
+        ['reviewed', now, row.tenant_id, profileId, 'active']
+      );
+      await tx.execute(
+        `UPDATE destination_profile_versions
+            SET lifecycle_state = ?, activated_at = ?, updated_at = ?
+          WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+        ['active', now, now, row.tenant_id, profileId, versionId]
+      );
+      await tx.execute(
+        `UPDATE destination_profiles
+            SET lifecycle_state = ?, active_version_id = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        ['active', versionId, now, row.tenant_id, profileId]
       );
     });
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
@@ -4432,6 +5011,67 @@ export async function adminIdentityMappingSourceProfileActivateHandler(c: AdminC
   );
 }
 
+export async function adminIdentityMappingDestinationProfilesListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    destinationProfiles: await repository.listDestinationProfiles(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingDestinationProfileCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'destination-profile.create', async (repository, tenantId, body) => {
+    assertPlatformOwnerScopeAllowed(c, body);
+    return repository.createDestinationProfile(tenantId, body as CreateDestinationProfileRequest);
+  });
+}
+
+export async function adminIdentityMappingDestinationProfileReviewHandler(c: AdminContext) {
+  return handleMutation(c, 'destination-profile.review', async (repository, tenantId) =>
+    repository.reviewDestinationProfileVersion(
+      tenantId,
+      requiredParam(c, 'destinationProfileId'),
+      requiredParam(c, 'destinationProfileVersionId'),
+      hasPlatformOwnerScopeAuthority(c)
+    )
+  );
+}
+
+export async function adminIdentityMappingDestinationProfileActivateHandler(c: AdminContext) {
+  return handleMutation(c, 'destination-profile.activate', async (repository, tenantId) =>
+    repository.activateDestinationProfileVersion(
+      tenantId,
+      requiredParam(c, 'destinationProfileId'),
+      requiredParam(c, 'destinationProfileVersionId'),
+      hasPlatformOwnerScopeAuthority(c)
+    )
+  );
+}
+
+export async function adminIdentityMappingOidcCustomScopesListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    customScopes: await repository.listOidcCustomScopes(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingOidcCustomScopeCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'oidc-custom-scope.create', async (repository, tenantId, body) => {
+    assertPlatformOwnerScopeAllowed(c, body);
+    return repository.createOidcCustomScope(tenantId, body as CreateOidcCustomScopeRequest);
+  });
+}
+
+export async function adminIdentityMappingOidcCustomClaimsListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    customClaims: await repository.listOidcCustomClaims(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingOidcCustomClaimCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'oidc-custom-claim.create', async (repository, tenantId, body) => {
+    assertPlatformOwnerScopeAllowed(c, body);
+    return repository.createOidcCustomClaim(tenantId, body as CreateOidcCustomClaimRequest);
+  });
+}
+
 export async function adminIdentityMappingTemplatesListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     templates: await repository.listMappingTemplates(tenantId),
@@ -4777,6 +5417,37 @@ function createRepository(c: AdminContext): IdentityMappingControlPlaneRepositor
   );
 }
 
+function assertPlatformOwnerScopeAllowed(c: AdminContext, body: unknown): void {
+  if (!isRecord(body) || body.ownerScopeType !== 'platform') {
+    return;
+  }
+  if (hasPlatformOwnerScopeAuthority(c)) {
+    return;
+  }
+  throw forbidden('platform owner scope requires platform admin authority');
+}
+
+function hasPlatformOwnerScopeAuthority(c: AdminContext): boolean {
+  const auth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
+    | {
+        is_platform_admin?: boolean;
+        roles?: string[];
+        permissions?: string[];
+      }
+    | undefined;
+  const roles = auth?.roles ?? [];
+  const permissions = auth?.permissions ?? [];
+  if (
+    auth?.is_platform_admin === true ||
+    roles.includes('super_admin') ||
+    roles.includes('system_admin') ||
+    permissions.includes('*')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 async function readJsonBody(c: AdminContext): Promise<unknown> {
   try {
     const body = await c.req.json();
@@ -4883,6 +5554,237 @@ function getNumberProperty(value: Record<string, unknown>, key: string): number 
   return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : 0;
 }
 
+function normalizeProfileOwner(
+  tenantId: string,
+  ownerScopeType?: string,
+  ownerScopeId?: string | null
+) {
+  const normalizedOwnerScopeType = ownerScopeType ?? 'tenant';
+  if (!PROFILE_OWNER_SCOPE_TYPES.has(normalizedOwnerScopeType)) {
+    throw badRequest('ownerScopeType must be platform, tenant, or client');
+  }
+  return {
+    tenantId: normalizedOwnerScopeType === 'platform' ? 'platform' : tenantId,
+    ownerScopeType: normalizedOwnerScopeType,
+    ownerScopeId: normalizedOwnerScopeType === 'tenant' ? null : (ownerScopeId ?? null),
+  };
+}
+
+function normalizeRegistryOwner(
+  tenantId: string,
+  ownerScopeType?: string,
+  ownerScopeId?: string | null
+) {
+  const normalizedOwnerScopeType = ownerScopeType ?? 'tenant';
+  if (!REGISTRY_OWNER_SCOPE_TYPES.has(normalizedOwnerScopeType)) {
+    throw badRequest('ownerScopeType must be platform or tenant');
+  }
+  return {
+    tenantId: normalizedOwnerScopeType === 'platform' ? 'platform' : tenantId,
+    ownerScopeType: normalizedOwnerScopeType,
+    ownerScopeId: normalizedOwnerScopeType === 'tenant' ? null : (ownerScopeId ?? null),
+  };
+}
+
+function validateOidcClaimName(value: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_:.~-]{0,127}$/.test(value)) {
+    throw badRequest('claimName must be a valid OIDC claim name');
+  }
+}
+
+function normalizeOidcSurfaces(value: unknown[]): string[] {
+  const surfaces = value.map(String).filter((surface) => OIDC_SURFACES.has(surface));
+  if (surfaces.length === 0) {
+    throw badRequest('allowedSurfaces must include id_token or userinfo');
+  }
+  return Array.from(new Set(surfaces)).sort();
+}
+
+function validateOidcDestinationProfileSchema(
+  schema: Record<string, unknown>,
+  customScopes: Array<{ scopeKey: string; allowedClaims: string[] }>
+) {
+  const claims = Array.isArray(schema.claims)
+    ? schema.claims.filter(isRecord)
+    : ([] as Record<string, unknown>[]);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (schema.destinationType !== 'oidc') errors.push('destinationType must be oidc');
+  if (!claims.some((claim) => claim.claimName === 'sub')) {
+    errors.push('OIDC destination profile must include sub');
+  }
+
+  const claimNames = new Set<string>();
+  const customScopeClaims = new Map(
+    customScopes.map((scope) => [scope.scopeKey, scope.allowedClaims])
+  );
+  let piiClaimCount = 0;
+  let regulatedClaimCount = 0;
+  let blockingWarningCount = 0;
+  let overReleaseWarningCount = 0;
+  let claimsParameterClaimCount = 0;
+  let essentialClaimCount = 0;
+
+  for (const claim of claims) {
+    const claimName = String(claim.claimName ?? '');
+    if (!claimName) {
+      errors.push('claimName is required');
+      continue;
+    }
+    claimNames.add(claimName);
+    try {
+      validateOidcClaimName(claimName);
+    } catch {
+      errors.push(`${claimName} is not a valid OIDC claim name`);
+    }
+    if (OIDC_RESERVED_NON_PROFILE_CLAIMS.has(claimName)) {
+      errors.push(`${claimName} is reserved by the OIDC token envelope`);
+    }
+    const surfaces = Array.isArray(claim.surfaces) ? claim.surfaces.map(String) : [];
+    if (surfaces.length === 0 || surfaces.some((surface) => !OIDC_SURFACES.has(surface))) {
+      errors.push(`${claimName} must target id_token or userinfo`);
+    }
+    const requiredScopes = Array.isArray(claim.requiredScopes)
+      ? claim.requiredScopes.map(String).filter(Boolean)
+      : [];
+    for (const scope of requiredScopes) {
+      if (!OIDC_STANDARD_SCOPES.has(scope) && !customScopeClaims.has(scope)) {
+        warnings.push(`${claimName} references unknown custom scope ${scope}`);
+      }
+    }
+    const classification = String(claim.classification ?? 'internal');
+    if (classification === 'pii') piiClaimCount += 1;
+    if (classification === 'regulated') regulatedClaimCount += 1;
+    if (
+      (classification === 'pii' || classification === 'regulated') &&
+      requiredScopes.length === 0
+    ) {
+      blockingWarningCount += 1;
+      warnings.push(`${claimName} releases sensitive data without required scopes`);
+    }
+    if (isOverReleasedOidcClaim(claimName, requiredScopes, customScopeClaims)) {
+      overReleaseWarningCount += 1;
+      warnings.push(`${claimName} is not covered by its configured scopes`);
+    }
+  }
+
+  if (isRecord(schema.claimsParameter)) {
+    const claimsParameter = schema.claimsParameter;
+    for (const surface of ['id_token', 'userinfo']) {
+      const surfaceClaims = claimsParameter[surface];
+      if (!isRecord(surfaceClaims)) continue;
+      for (const [claimName, requestConfig] of Object.entries(surfaceClaims)) {
+        claimsParameterClaimCount += 1;
+        if (!claimNames.has(claimName)) {
+          errors.push(
+            `claimsParameter.${surface}.${claimName} must reference a defined profile claim`
+          );
+        }
+        if (isRecord(requestConfig) && requestConfig.essential === true) {
+          essentialClaimCount += 1;
+          warnings.push(`${claimName} uses OIDC claims essential syntax`);
+        }
+      }
+    }
+    if (claimsParameter.acr_values !== undefined || claimsParameter.acr !== undefined) {
+      warnings.push('claimsParameter includes acr constraints for dry-run trace');
+    }
+    if (claimsParameter.ui_locales !== undefined || claimsParameter.locale !== undefined) {
+      warnings.push('claimsParameter includes locale constraints for dry-run trace');
+    }
+  }
+
+  return {
+    errorCount: errors.length,
+    errors,
+    warningCount: warnings.length,
+    warnings,
+    warningSummary: {
+      warningCount: warnings.length,
+      blockingWarningCount,
+      overReleaseWarningCount,
+      essentialClaimCount,
+    },
+    releaseImpact: {
+      destinationType: 'oidc',
+      claimCount: claims.length,
+      claimsParameterClaimCount,
+      essentialClaimCount,
+      surfaces: ['id_token', 'userinfo'].filter((surface) =>
+        claims.some((claim) => Array.isArray(claim.surfaces) && claim.surfaces.includes(surface))
+      ),
+      piiClaimCount,
+      regulatedClaimCount,
+    },
+  };
+}
+
+function isOverReleasedOidcClaim(
+  claimName: string,
+  requiredScopes: string[],
+  customScopeClaims: Map<string, string[]>
+): boolean {
+  if (claimName === 'sub') return false;
+  if (!OIDC_STANDARD_CLAIMS.has(claimName)) {
+    return !requiredScopes.some((scope) => customScopeClaims.get(scope)?.includes(claimName));
+  }
+  if (requiredScopes.length === 0) return true;
+  for (const scope of requiredScopes) {
+    if (OIDC_STANDARD_SCOPE_ALLOWED_CLAIMS.get(scope)?.includes(claimName)) return false;
+  }
+  return !requiredScopes.some((scope) => customScopeClaims.get(scope)?.includes(claimName));
+}
+
+function validateCsvDestinationProfileSchema(schema: Record<string, unknown>) {
+  const columns = Array.isArray(schema.columns)
+    ? schema.columns.filter(isRecord)
+    : ([] as Record<string, unknown>[]);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (schema.destinationType !== 'csv') errors.push('destinationType must be csv');
+  if (columns.length === 0) errors.push('CSV destination profile must include columns');
+  const seenNames = new Set<string>();
+  let piiColumnCount = 0;
+  let regulatedColumnCount = 0;
+  let blockingWarningCount = 0;
+  for (const column of columns) {
+    const columnName = String(column.columnName ?? '');
+    if (!columnName) {
+      errors.push('columnName is required');
+      continue;
+    }
+    if (seenNames.has(columnName)) errors.push(`${columnName} appears more than once`);
+    seenNames.add(columnName);
+    const classification = String(column.classification ?? 'internal');
+    if (classification === 'pii') piiColumnCount += 1;
+    if (classification === 'regulated') regulatedColumnCount += 1;
+    if (
+      (classification === 'pii' || classification === 'regulated') &&
+      !isRecord(column.exportPolicy)
+    ) {
+      blockingWarningCount += 1;
+      warnings.push(`${columnName} releases sensitive data without export policy`);
+    }
+  }
+  return {
+    errorCount: errors.length,
+    errors,
+    warningCount: warnings.length,
+    warnings,
+    warningSummary: {
+      warningCount: warnings.length,
+      blockingWarningCount,
+    },
+    releaseImpact: {
+      destinationType: 'csv',
+      columnCount: columns.length,
+      encodingDefault: String(isRecord(schema.defaults) ? schema.defaults.encoding : 'utf-8'),
+      piiColumnCount,
+      regulatedColumnCount,
+    },
+  };
+}
+
 function requiredParam(c: AdminContext, name: string): string {
   const value = c.req.param(name);
   validateRequiredString(value, name);
@@ -4968,6 +5870,32 @@ function assertNoSourceProfileRawSamples(value: unknown, path: string): void {
       throw badRequest(`${path}.${key} is not allowed in source profile schema`);
     }
     assertNoSourceProfileRawSamples(item, `${path}.${key}`);
+  }
+}
+
+function assertNoDestinationProfileRawValues(value: unknown, path: string): void {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoDestinationProfileRawValues(item, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[_-]/g, '');
+    if (
+      normalized === 'samplevalues' ||
+      normalized === 'rawvalues' ||
+      normalized === 'rawclaims' ||
+      normalized === 'rawrows' ||
+      normalized === 'rawcsv'
+    ) {
+      throw badRequest(`${path}.${key} is not allowed in destination profile schema`);
+    }
+    assertNoDestinationProfileRawValues(item, `${path}.${key}`);
   }
 }
 
@@ -5155,6 +6083,10 @@ function badRequest(message: string): IdentityMappingControlPlaneError {
 
 function notFound(message: string): IdentityMappingControlPlaneError {
   return new IdentityMappingControlPlaneError(message, 404, 'not_found');
+}
+
+function forbidden(message: string): IdentityMappingControlPlaneError {
+  return new IdentityMappingControlPlaneError(message, 403, 'forbidden');
 }
 
 function conflict(message: string): IdentityMappingControlPlaneError {

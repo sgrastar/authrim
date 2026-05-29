@@ -15,6 +15,7 @@ describe('identity mapping flow data adapter', () => {
 			],
 			catalogs: [],
 			sourceProfiles: [],
+			destinationProfiles: [],
 			protocolSchemas: [
 				{
 					id: 'protocol_oidc',
@@ -72,6 +73,7 @@ describe('identity mapping flow data adapter', () => {
 			policies: [],
 			catalogs: [],
 			sourceProfiles: [],
+			destinationProfiles: [],
 			protocolSchemas: [],
 			externalSchemas: [],
 			schemaReadinessRows: [
@@ -136,6 +138,41 @@ describe('identity mapping flow data adapter', () => {
 					}
 				}
 			],
+			destinationProfiles: [
+				{
+					id: 'destination_profile_1',
+					tenantId: 'tenant_a',
+					destinationType: 'oidc',
+					profileKey: 'library_oidc',
+					displayName: 'Library OIDC',
+					ownerScopeType: 'tenant',
+					lifecycleState: 'active',
+					version: {
+						id: 'destination_version_1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							destinationType: 'oidc',
+							claims: [
+								{
+									claimName: 'sub',
+									label: 'Subject',
+									valueType: 'string',
+									classification: 'internal',
+									surfaces: ['id_token']
+								},
+								{
+									claimName: 'library_card',
+									label: 'Library card',
+									valueType: 'string',
+									classification: 'pii',
+									surfaces: ['userinfo']
+								}
+							]
+						}
+					}
+				}
+			],
 			protocolSchemas: [],
 			externalSchemas: [],
 			schemaReadinessRows: []
@@ -152,6 +189,11 @@ describe('identity mapping flow data adapter', () => {
 					label: 'Email',
 					privacy: 'PII',
 					required: true
+				}),
+				expect.objectContaining({
+					role: 'destination',
+					label: 'Library card',
+					privacy: 'PII'
 				})
 			])
 		);

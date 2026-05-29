@@ -648,6 +648,10 @@ import {
   adminIdentityMappingExternalSchemaImportHandler,
   adminIdentityMappingExternalSchemasListHandler,
   adminIdentityMappingCsvSourceProfileParseHandler,
+  adminIdentityMappingDestinationProfileActivateHandler,
+  adminIdentityMappingDestinationProfileCreateHandler,
+  adminIdentityMappingDestinationProfileReviewHandler,
+  adminIdentityMappingDestinationProfilesListHandler,
   adminIdentityMappingPoliciesListHandler,
   adminIdentityMappingPolicyCreateHandler,
   adminIdentityMappingPolicyRollbackHandler,
@@ -668,6 +672,10 @@ import {
   adminIdentityMappingKeyRegistryCreateHandler,
   adminIdentityMappingKeyRegistryRotateHandler,
   adminIdentityMappingLifecycleSignalRecordHandler,
+  adminIdentityMappingOidcCustomClaimCreateHandler,
+  adminIdentityMappingOidcCustomClaimsListHandler,
+  adminIdentityMappingOidcCustomScopeCreateHandler,
+  adminIdentityMappingOidcCustomScopesListHandler,
   adminIdentityMappingSourceProfileActivateHandler,
   adminIdentityMappingSourceProfileCreateHandler,
   adminIdentityMappingSourceProfileReviewHandler,
@@ -2283,6 +2291,46 @@ app.post(
   '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/activate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileActivateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/destination-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingDestinationProfilesListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/destination-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingDestinationProfileCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/review',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingDestinationProfileReviewHandler
+);
+app.post(
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/activate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingDestinationProfileActivateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/oidc/custom-scopes',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingOidcCustomScopesListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/oidc/custom-scopes',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingOidcCustomScopeCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/oidc/custom-claims',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingOidcCustomClaimsListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/oidc/custom-claims',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingOidcCustomClaimCreateHandler
 );
 app.get(
   '/api/admin/identity-mapping/templates',

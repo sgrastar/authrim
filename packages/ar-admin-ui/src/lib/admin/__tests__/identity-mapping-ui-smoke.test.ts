@@ -80,6 +80,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(api).toContain('/api/admin/identity-mapping/external-schemas');
 		expect(api).toContain('/api/admin/identity-mapping/source-profiles');
 		expect(api).toContain('/api/admin/identity-mapping/source-profiles/csv/parse');
+		expect(api).toContain('/api/admin/identity-mapping/destination-profiles');
+		expect(api).toContain('/api/admin/identity-mapping/oidc/custom-scopes');
+		expect(api).toContain('/api/admin/identity-mapping/oidc/custom-claims');
 		expect(api).toContain('/api/admin/identity-mapping/templates');
 		expect(api).toContain('/api/admin/identity-mapping/schema-readiness');
 		expect(api).toContain('/rollback');
@@ -93,8 +96,14 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(profiles).toContain('listProtocolSchemas');
 		expect(profiles).toContain('listExternalSchemas');
 		expect(profiles).toContain('listSourceProfiles');
+		expect(profiles).toContain('listDestinationProfiles');
+		expect(profiles).toContain('listOidcCustomScopes');
+		expect(profiles).toContain('listOidcCustomClaims');
 		expect(profiles).toContain('parseCsvSourceProfile');
 		expect(profiles).toContain('Save draft profile');
+		expect(profiles).toContain('Save destination draft');
+		expect(profiles).toContain('Save custom scope');
+		expect(profiles).toContain('Save custom claim');
 		expect(profiles).toContain('Manual columns');
 		expect(profiles).toContain('Shift_JIS');
 		expect(profiles).toContain('listTemplates');
