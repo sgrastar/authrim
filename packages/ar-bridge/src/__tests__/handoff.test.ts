@@ -12,6 +12,19 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
+  CanonicalRuntimeUserStore: class {
+    async findById(userId: string) {
+      const coreUser = await mocks.findUserById(userId);
+      if (!coreUser) return null;
+      const piiUser = await mocks.findUserPIIById(userId);
+      return {
+        id: userId,
+        email: piiUser?.email ?? null,
+        name: piiUser?.name ?? null,
+        email_verified: coreUser.email_verified ? 1 : 0,
+      };
+    }
+  },
   AR_ERROR_CODES: {
     VALIDATION_REQUIRED_FIELD: 'validation_required_field',
     RATE_LIMIT_EXCEEDED: 'rate_limit_exceeded',
@@ -42,6 +55,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   checkRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
   getTenantIdFromContext: vi.fn().mockReturnValue('tenant-123'),
   createAuthContextFromHono: vi.fn(() => ({
+    coreAdapter: {},
     repositories: {
       client: {
         findByClientId: mocks.findClientByClientId,
@@ -52,6 +66,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
     },
   })),
   createPIIContextFromHono: vi.fn(() => ({
+    defaultPiiAdapter: {},
     piiRepositories: {
       userPII: {
         findById: mocks.findUserPIIById,
