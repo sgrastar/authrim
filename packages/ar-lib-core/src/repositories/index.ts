@@ -10,20 +10,10 @@
  *
  * Usage:
  * ```typescript
- * import {
- *   UserCoreRepository,
- *   UserPIIRepository,
- *   TombstoneRepository,
- * } from '@authrim/ar-lib-core/repositories';
+ * import { CanonicalRuntimeUserStore, TombstoneRepository } from '@authrim/ar-lib-core/repositories';
  *
- * // Core operations (Non-PII)
- * const userCoreRepo = new UserCoreRepository(coreAdapter, tenantId);
- * const userCore = await userCoreRepo.findById(userId);
- *
- * // PII operations (requires PIIContext)
- * const piiAdapter = partitionRouter.getAdapterForPartition(userCore.pii_partition);
- * const userPIIRepo = new UserPIIRepository(piiAdapter, tenantId);
- * const userPII = await userPIIRepo.findByUserId(userId);
+ * const userStore = new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId });
+ * const user = await userStore.findById(userId);
  * ```
  */
 
@@ -45,12 +35,6 @@ export {
 // are exported from '../utils/id' via the main index.ts barrel export.
 // They are NOT re-exported here to avoid ESM ambiguous star export conflicts.
 export {
-  UserCoreRepository,
-  type UserCore,
-  type CreateUserCoreInput,
-  type UpdateUserCoreInput,
-  type UserCoreFilterOptions,
-  type CoreUserType,
   PasskeyRepository,
   type CreatePasskeyInput,
   type UpdatePasskeyInput,
@@ -84,11 +68,6 @@ export {
 
 // PII repositories
 export {
-  UserPIIRepository,
-  type UserPII,
-  type CreateUserPIIInput,
-  type UpdateUserPIIInput,
-  type OIDCUserInfo,
   TombstoneRepository,
   type Tombstone,
   type CreateTombstoneInput,
@@ -123,16 +102,19 @@ export {
 export {
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
+  CanonicalRuntimeUserStore,
   CanonicalRuntimeUserWriter,
-  LegacyUsersPiiValueResolver,
-  decodeLegacyUsersPiiValueRef,
-  encodeLegacyUsersPiiValueRef,
+  CanonicalSensitiveValueResolver,
+  decodeCanonicalSensitiveValueRef,
+  encodeCanonicalSensitiveValueRef,
   type AssuranceEvidenceRow,
   type AttributeClassification,
   type AttributeValueType,
   type CanonicalIdentityGraph,
   type CanonicalRuntimeUserProjection,
   type CanonicalRuntimeUserProjectionOptions,
+  type CanonicalRuntimeUserCreateInput,
+  type CanonicalRuntimeUserStoreOptions,
   type CanonicalRuntimeUserWriteInput,
   type CanonicalRuntimeUserWriteResult,
   type CanonicalRuntimeValueResolver,
@@ -164,8 +146,8 @@ export {
   type IdentitySubjectRow,
   type IdentitySubjectType,
   type JsonObject,
-  type LegacyUsersPiiField,
-  type LegacyUsersPiiValueRefInput,
+  type CanonicalSensitiveUserField,
+  type CanonicalSensitiveValueRefInput,
   type ProfileAttributeValueRow,
   type ProfileRow,
   type ProfileType,

@@ -146,9 +146,7 @@ describe('CustomClaimSchemaResolver', () => {
     };
     const piiDb = {
       ...mockPiiDb,
-      queryOne: vi
-        .fn()
-        .mockResolvedValue({ custom_attributes_json: JSON.stringify({ tax_id: 'TX-123' }) }),
+      queryOne: vi.fn().mockResolvedValue({ value_json: JSON.stringify({ tax_id: 'TX-123' }) }),
     };
 
     const resolver = createCustomClaimSchemaResolverFromSources({
@@ -168,10 +166,10 @@ describe('CustomClaimSchemaResolver', () => {
       'user-1',
       'dept',
     ]);
-    expect(piiDb.queryOne).toHaveBeenCalledWith(expect.stringContaining('users_pii'), [
-      'user-1',
-      'default',
-    ]);
+    expect(piiDb.queryOne).toHaveBeenCalledWith(
+      expect.stringContaining('identity_sensitive_values'),
+      ['default', 'user-1']
+    );
   });
 
   it('filters by userinfo target', async () => {
@@ -350,7 +348,7 @@ describe('CustomClaimSchemaResolver', () => {
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
     mockPiiDb.queryOne.mockResolvedValue({
-      custom_attributes_json: JSON.stringify({ ssn: '123' }),
+      value_json: JSON.stringify({ ssn: '123' }),
     });
 
     const resolver = createResolver();
@@ -446,7 +444,7 @@ describe('CustomClaimSchemaResolver', () => {
 
       // PII data
       mockPiiDb.queryOne.mockResolvedValue({
-        custom_attributes_json: JSON.stringify({ tax_id: 'TX-123' }),
+        value_json: JSON.stringify({ tax_id: 'TX-123' }),
       });
 
       const resolver = createResolver();

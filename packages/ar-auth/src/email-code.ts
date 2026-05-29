@@ -44,6 +44,7 @@ import {
   // Cookie Configuration
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
@@ -75,6 +76,19 @@ const OTP_SESSION_COOKIE = 'authrim_otp_session';
  */
 const MIN_RESPONSE_TIME_MS = 500;
 const JITTER_MS = 100; // Random jitter to prevent statistical analysis
+
+function createCanonicalRuntimeUserStore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): CanonicalRuntimeUserStore {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+}
 
 /**
  * Ensure constant-time execution
@@ -178,30 +192,18 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
-      // Check if user exists, if not create a new user via Repository
-      // PII/Non-PII DB separation: email lookup uses PII DB, user creation uses both DBs
-      const authCtx = createAuthContextFromHono(c, tenantId);
+      // Check if user exists, if not create a new canonical runtime user.
       let user: { id: string; email: string; name: string | null } | null = null;
+      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+      const normalizedEmail = email.toLowerCase();
 
-      // Search by email in the configured PII user store
-      {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
-          tenantId,
-          email.toLowerCase()
-        );
-
-        if (userPII) {
-          // Verify user is active in Core DB
-          const userCore = await authCtx.repositories.userCore.findById(userPII.id);
-          if (userCore && userCore.is_active) {
-            user = {
-              id: userPII.id,
-              email: userPII.email,
-              name: userPII.name || null,
-            };
-          }
-        }
+      const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
+      if (existingUser) {
+        user = {
+          id: existingUser.id,
+          email: existingUser.email ?? normalizedEmail,
+          name: existingUser.name || null,
+        };
       }
 
       if (!user) {
@@ -209,50 +211,30 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         const defaultName = name || null;
         const preferredUsername = email.split('@')[0];
 
-        // Step 1: Create user in Core DB with pii_status='pending'
-        await authCtx.repositories.userCore.createUser({
-          id: userId,
-          tenant_id: tenantId,
-          email_verified: false,
-          user_type: 'end_user',
-          pii_partition: tenantId,
-          pii_status: 'pending',
-        });
-
-        // Step 2: Create user in the configured PII store
-        const piiCtx = createPIIContextFromHono(c, tenantId);
         try {
-          await piiCtx.piiRepositories.userPII.createPII({
-            id: userId,
-            tenant_id: tenantId,
-            email: email.toLowerCase(),
+          await runtimeUsers.syncUser({
+            userId,
+            email: normalizedEmail,
             name: defaultName,
-            preferred_username: preferredUsername,
+            active: true,
+            emailVerified: false,
+            userType: 'end_user',
+            sourceRef: 'email_code',
+            customAttributesJson: JSON.stringify({
+              preferred_username: preferredUsername,
+            }),
           });
-
-          // Step 3: Update pii_status to 'active' (only on successful PII store write)
-          await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
         } catch (piiError: unknown) {
           // PII Protection: Don't log full error (may contain PII)
           log.error(
-            'Failed to create user in PII store',
-            { action: 'pii_create' },
+            'Failed to create canonical runtime user',
+            { action: 'runtime_user_create' },
             piiError instanceof Error ? piiError : undefined
           );
-          // Update pii_status to 'failed' to indicate PII write failure
-          await authCtx.repositories.userCore
-            .updatePIIStatus(userId, 'failed')
-            .catch((statusError: unknown) => {
-              log.error(
-                'Failed to update pii_status to failed',
-                { action: 'pii_status_update' },
-                statusError instanceof Error ? statusError : undefined
-              );
-            });
-          // Note: We continue with user creation - Core DB user exists, PII can be retried
+          return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
         }
 
-        user = { id: userId, email: email.toLowerCase(), name: defaultName || email.split('@')[0] };
+        user = { id: userId, email: normalizedEmail, name: defaultName || email.split('@')[0] };
       }
 
       // Generate OTP session ID for session binding
@@ -473,12 +455,10 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Parallel: Verify code hash AND fetch user details from both DBs (independent operations)
       const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
       const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
 
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-
-      const [isValidCode, userCore, userPII] = await Promise.all([
+      const [isValidCode, runtimeUser] = await Promise.all([
         verifyEmailCodeHash(
           code,
           email.toLowerCase(),
@@ -487,8 +467,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           challengeData.challenge,
           hmacSecret
         ),
-        authCtx.repositories.userCore.findById(challengeData.userId),
-        piiCtx.piiRepositories.userPII.findById(challengeData.userId),
+        runtimeUsers.findById(challengeData.userId, { includeInactive: true }),
       ]);
 
       if (!isValidCode) {
@@ -512,7 +491,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
-      if (!userCore || !userCore.is_active) {
+      if (!runtimeUser || runtimeUser.active !== 1) {
         // Publish auth.email_code.failed event (non-blocking)
         publishEvent(c, {
           type: AUTH_EVENTS.EMAIL_CODE_FAILED,
@@ -535,9 +514,9 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Merge Core and PII data
       const user = {
-        id: userCore.id,
-        email: userPII?.email || email.toLowerCase(),
-        name: userPII?.name || null,
+        id: runtimeUser.id,
+        email: runtimeUser.email || email.toLowerCase(),
+        name: runtimeUser.name || null,
       };
 
       const now = Date.now();
@@ -589,7 +568,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
             // 2. Attacker sends OTP to victim@example.com (existing user)
             // 3. Attacker obtains OTP via social engineering
             // 4. Without this check, attacker could claim victim's email
-            if (userCore.email_verified) {
+            if (runtimeUser.email_verified) {
               // Email is already verified by an existing user
               // Anonymous user cannot claim this email - they should login instead
               log.warn('Anonymous upgrade blocked: email already verified by existing user', {
@@ -651,14 +630,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      // Update user's email_verified and last_login_at in Core DB (fire-and-forget)
+      // Update user's email verification and last login in canonical runtime metadata.
       // This is non-critical for the login flow - session is already created
-      authCtx.coreAdapter
-        .execute(
-          'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-          [now, now, challengeData.userId, tenantId]
-        )
-        .catch((error) => {
+      runtimeUsers
+        .markEmailVerifiedAndTouchLastLogin(challengeData.userId, now)
+        .catch((error: unknown) => {
           // PII Protection: Don't log full error
           log.error(
             'Failed to update user login timestamp',

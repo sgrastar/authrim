@@ -173,6 +173,26 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('adminUi: adminUiEnabled');
   });
 
+  it('renders Cloudflare Queues as an explicit disabled-by-default setup choice', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="feature-queue-enabled"');
+    expect(html).toContain('Disabled by default');
+    expect(html).toContain('about 3,000 delivered messages/day');
+    expect(html).toContain('async audit fan-out');
+    expect(html).toContain('logging delivery retry');
+    expect(html).toContain('export build job');
+    expect(html).toContain('key rewrap retry job');
+    expect(html).toContain('queue: { enabled: false }');
+    expect(html).toContain('createQueues: config.features?.queue?.enabled === true');
+  });
+
   it('renders the keys saved panel with dark-mode styles and a copy button', () => {
     const html = getHtmlTemplate(
       'session-token',

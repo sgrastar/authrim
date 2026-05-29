@@ -10,7 +10,7 @@
  *
  * Fields:
  * - id: Record ID (UUID)
- * - user_id: Reference to users_core.id (logical FK)
+ * - user_id: Runtime user identifier resolved through identity_accounts.legacy_user_id
  * - provider_id: External IdP identifier
  * - provider_user_id: User ID from the external IdP
  * - provider_email: Email from external IdP

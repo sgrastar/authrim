@@ -1,7 +1,7 @@
 /**
  * Claim Value Caster
  *
- * Casts raw string values from user_custom_fields / users_pii
+ * Casts raw string values from user_custom_fields / canonical sensitive values
  * to the appropriate type based on the schema's field_type.
  */
 

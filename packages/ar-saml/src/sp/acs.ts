@@ -25,6 +25,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
   getChallengeStoreByChallengeId,
+  CanonicalRuntimeUserStore,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -1136,11 +1137,6 @@ interface SAMLLinkedIdentityRow {
   provider_user_id?: string;
 }
 
-interface SAMLActiveUserRow {
-  id: string;
-  email_verified?: number | string | boolean | null;
-}
-
 type SAMLIdentityResolutionFailureReason =
   | 'linked_identity_inactive_user'
   | 'linked_identity_email_conflict'
@@ -1151,6 +1147,7 @@ type SAMLIdentityResolutionFailureReason =
   | 'jit_disabled'
   | 'jit_policy_invalid'
   | 'missing_email'
+  | 'pii_database_unavailable'
   | 'custom_claim_validation_failed'
   | 'linked_identity_subject_conflict';
 
@@ -1233,6 +1230,17 @@ async function findOrCreateUser(
   const piiAdapter: DatabaseAdapter | null = userStoreSources.piiDb
     ? ensureDatabaseAdapter(userStoreSources.piiDb, 'saml-acs-pii')
     : null;
+  if (!piiAdapter) {
+    throw new SamlProvisioningError(
+      'SAML ACS canonical runtime user store requires a PII database',
+      'pii_database_unavailable'
+    );
+  }
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter,
+    tenantId,
+  });
   const linkedIdentityAdapter = piiAdapter ?? coreAdapter;
   const providerId = idpConfig.entityId;
   const providerUserKey = buildSAMLProviderUserKey(userInfo);
@@ -1246,7 +1254,7 @@ async function findOrCreateUser(
     providerUserKey
   );
   if (existingLink) {
-    const activeUser = await findActiveUser(coreAdapter, tenantId, existingLink.user_id);
+    const activeUser = await runtimeUsers.findById(existingLink.user_id);
     if (!activeUser) {
       throw new SamlProvisioningError(
         'SAML linked identity points to an inactive user',
@@ -1257,7 +1265,7 @@ async function findOrCreateUser(
     }
 
     if (normalizedEmail && piiAdapter) {
-      const emailUser = await findUserIdByEmail(piiAdapter, tenantId, normalizedEmail);
+      const emailUser = await runtimeUsers.findByEmail(normalizedEmail);
       if (emailUser && emailUser.id !== activeUser.id) {
         throw new SamlProvisioningError(
           'SAML linked identity email conflicts with another local user',
@@ -1283,10 +1291,7 @@ async function findOrCreateUser(
 
   // Try to find user by email (PII/Non-PII DB separation)
   if (normalizedEmail && piiAdapter) {
-    const existingUserPII = await piiAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-      [tenantId, normalizedEmail]
-    );
+    const existingUserPII = await runtimeUsers.findByEmail(normalizedEmail);
 
     if (existingUserPII) {
       if (jitEmailLinkingPolicy !== 'email_linking') {
@@ -1298,7 +1303,7 @@ async function findOrCreateUser(
         );
       }
 
-      const activeUser = await findActiveUser(coreAdapter, tenantId, existingUserPII.id);
+      const activeUser = await runtimeUsers.findById(existingUserPII.id);
       if (!activeUser) {
         throw new SamlProvisioningError(
           'SAML email matched an inactive user',
@@ -1386,9 +1391,8 @@ async function findOrCreateUser(
     );
   }
 
-  // Create new user (JIT provisioning - PII/Non-PII DB separation)
+  // Create new user (JIT provisioning - canonical graph + PII sensitive value store)
   const userId = crypto.randomUUID();
-  const now = Math.floor(Date.now() / 1000);
   if (!normalizedEmail && !idpConfig.allowSyntheticEmailFallback) {
     throw new SamlProvisioningError(
       'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled',
@@ -1396,29 +1400,15 @@ async function findOrCreateUser(
     );
   }
   const email = normalizedEmail || (await buildSyntheticSAMLEmail(providerUserKey));
-
-  // Step 1: Insert into users_core with pii_status='pending'
-  await coreAdapter.execute(
-    `INSERT INTO users_core (
-      id, tenant_id, email_verified, user_type, pii_partition, pii_status, lifecycle_state, created_at, updated_at
-     ) VALUES (?, ?, 1, 'end_user', ?, 'pending', 'provisioning', ?, ?)`,
-    [userId, tenantId, tenantId, now, now]
-  );
-
-  // Step 2: Insert into users_pii (if DB_PII is configured)
-  if (piiAdapter) {
-    await piiAdapter.execute(
-      `INSERT INTO users_pii (id, tenant_id, email, name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, tenantId, email, userInfo.name || null, now, now]
-    );
-
-    // Step 3: Update pii_status to 'active'
-    await coreAdapter.execute(
-      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
-      ['active', userId, tenantId]
-    );
-  }
+  await runtimeUsers.syncUser({
+    userId,
+    email,
+    name: userInfo.name || null,
+    active: true,
+    emailVerified: true,
+    userType: 'end_user',
+    sourceRef: `saml:${providerId}`,
+  });
 
   try {
     await persistCustomClaimWrite({
@@ -1457,6 +1447,7 @@ async function findOrCreateUser(
     await cleanupSAMLJitUser({
       coreAdapter,
       piiAdapter,
+      runtimeUsers,
       customClaimDb: customClaimSources.nonPiiDb,
       userId,
       tenantId,
@@ -1468,30 +1459,20 @@ async function findOrCreateUser(
 async function cleanupSAMLJitUser(params: {
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter | null;
+  runtimeUsers: CanonicalRuntimeUserStore;
   customClaimDb: Parameters<typeof ensureDatabaseAdapter>[0];
   userId: string;
   tenantId: string;
 }): Promise<void> {
   const operations: Array<Promise<unknown>> = [];
-  if (params.piiAdapter) {
-    operations.push(
-      params.piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-        params.userId,
-        params.tenantId,
-      ])
-    );
-  }
+  void params.coreAdapter;
+  void params.piiAdapter;
+  operations.push(params.runtimeUsers.deleteUser(params.userId));
   operations.push(
     ensureDatabaseAdapter(params.customClaimDb, 'saml-acs-custom-claim-cleanup').execute(
       'DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?',
       [params.userId, params.tenantId]
     )
-  );
-  operations.push(
-    params.coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
-      params.userId,
-      params.tenantId,
-    ])
   );
 
   await Promise.allSettled(operations);
@@ -1529,7 +1510,7 @@ function resolveJitEmailLinkingPolicy(
   );
 }
 
-function isTruthyDatabaseFlag(value: SAMLActiveUserRow['email_verified']): boolean {
+function isTruthyDatabaseFlag(value: number | string | boolean | null | undefined): boolean {
   return value === true || value === 1 || value === '1';
 }
 
@@ -1556,28 +1537,6 @@ async function findUserSAMLLinkedIdentityForProvider(
     `SELECT id, user_id, provider_user_id FROM linked_identities
      WHERE tenant_id = ? AND user_id = ? AND provider_id = ?`,
     [tenantId, userId, providerId]
-  );
-}
-
-async function findUserIdByEmail(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  email: string
-): Promise<{ id: string } | null> {
-  return adapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-    [tenantId, email]
-  );
-}
-
-async function findActiveUser(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string
-): Promise<SAMLActiveUserRow | null> {
-  return adapter.queryOne<SAMLActiveUserRow>(
-    'SELECT id, email_verified FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-    [userId, tenantId]
   );
 }
 

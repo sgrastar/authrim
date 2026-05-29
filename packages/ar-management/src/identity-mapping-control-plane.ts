@@ -226,15 +226,13 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   },
   {
     id: 'UIM-SCH-076',
-    objectName: 'saml_federation_trust_profiles migration',
-    area: 'Legacy SAML aggregate trust profile migration',
-    introducedPr: 'existing',
+    objectName: 'legacy SAML federation trust profile API removal',
+    area: 'Legacy SAML aggregate trust profile removal',
+    introducedPr: 'removed',
     expectedConnectionPr: 'SAML federation migration PR',
-    runtimePath: 'SAML aggregate metadata import / trust validation',
-    status: 'existing_to_migrate',
-    gate: 'migration + adapter + API/UI/tests',
-    schemaObject: 'saml_federation_trust_profiles',
-    requiredForTier2Gate: true,
+    runtimePath: 'SAML aggregate metadata import / trust validation uses federation_trust_sources',
+    status: 'closed',
+    gate: 'legacy table and API removed; normalized federation trust API is source of truth',
   },
   {
     id: 'UIM-SCH-083',
@@ -682,13 +680,6 @@ interface EvaluateProvisioningAssignmentRequest extends ProvisioningAssignmentCo
   dryRun?: boolean;
 }
 
-interface MigrateOrgDomainMappingRequest {
-  groupKey: string;
-  displayName: string;
-  description?: string;
-  priority?: number;
-}
-
 interface RecordLifecycleSignalRequest {
   sourceType: string;
   sourceId: string;
@@ -751,6 +742,8 @@ interface CreateFederationTrustSourceRequest {
   }>;
 }
 
+interface UpdateFederationTrustSourceRequest extends CreateFederationTrustSourceRequest {}
+
 interface RegisterFederationMetadataDocumentRequest {
   trustSourceId: string;
   documentType: string;
@@ -764,12 +757,6 @@ interface RegisterFederationMetadataDocumentRequest {
     displayName?: string | null;
     summary?: Record<string, unknown>;
   }>;
-}
-
-interface MigrateSamlFederationTrustProfileRequest {
-  profileId: string;
-  sourceKey?: string;
-  activate?: boolean;
 }
 
 interface FederationMetadataDocumentListRow {
@@ -2558,74 +2545,6 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
-  async migrateOrgDomainMappingToGroup(
-    tenantId: string,
-    mappingId: string,
-    input: MigrateOrgDomainMappingRequest
-  ) {
-    validateRequiredString(mappingId, 'mappingId');
-    validateRequiredString(input.groupKey, 'groupKey');
-    validateRequiredString(input.displayName, 'displayName');
-    const mapping = await this.adapter.queryOne<{
-      id: string;
-      domain_hash: string;
-      org_id: string;
-    }>('SELECT id, domain_hash, org_id FROM org_domain_mappings WHERE tenant_id = ? AND id = ?', [
-      tenantId,
-      mappingId,
-    ]);
-    if (!mapping) {
-      throw notFound('org domain mapping not found');
-    }
-
-    return this.adapter.transaction(async (tx) => {
-      const group = await this.upsertGroup(
-        tenantId,
-        {
-          groupKey: input.groupKey,
-          displayName: input.displayName,
-          description: input.description,
-          metadata: {
-            migratedFrom: 'org_domain_mappings',
-            legacyOrgId: mapping.org_id,
-          },
-        },
-        tx
-      );
-      const rule = await this.insertProvisioningAssignmentRule(
-        tenantId,
-        {
-          ruleType: 'domain_group_assignment',
-          targetType: 'group',
-          targetId: group.id,
-          condition: {
-            claims: {
-              domainHash: mapping.domain_hash,
-            },
-          },
-          priority: input.priority ?? 0,
-          lifecycleState: 'active',
-        },
-        tx
-      );
-      await tx.execute(
-        `UPDATE org_domain_mappings
-            SET group_id = ?,
-                provisioning_assignment_rule_id = ?,
-                org_to_group_migration_state = ?,
-                updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
-        [group.id, rule.id, 'migrated', this.now(), tenantId, mappingId]
-      );
-      return {
-        mappingId,
-        groupId: group.id,
-        provisioningAssignmentRuleId: rule.id,
-        migrationState: 'migrated',
-      };
-    });
-  }
-
   async recordExternalLifecycleSignal(tenantId: string, input: RecordLifecycleSignalRequest) {
     validateRequiredString(input.sourceType, 'sourceType');
     validateRequiredString(input.sourceId, 'sourceId');
@@ -3132,6 +3051,179 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  async updateFederationTrustSource(
+    tenantId: string,
+    trustSourceId: string,
+    input: UpdateFederationTrustSourceRequest
+  ) {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    validateRequiredString(input.sourceType, 'sourceType');
+    validateRequiredString(input.sourceKey, 'sourceKey');
+    validateRequiredString(input.displayName, 'displayName');
+    if (!FEDERATION_TRUST_SOURCE_TYPES.has(input.sourceType)) {
+      throw badRequest('sourceType is not supported for federation trust');
+    }
+    const lifecycleState = input.lifecycleState ?? 'draft';
+    if (!FEDERATION_TRUST_LIFECYCLE_STATES.has(lifecycleState)) {
+      throw badRequest('lifecycleState is not supported for federation trust sources');
+    }
+    if (input.protocolPayload) {
+      assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
+    }
+    if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
+      throw badRequest('anchors must be an array');
+    }
+    if (input.scopeBindings !== undefined && !Array.isArray(input.scopeBindings)) {
+      throw badRequest('scopeBindings must be an array');
+    }
+    await this.ensureFederationTrustSource(tenantId, trustSourceId);
+
+    const now = this.now();
+    const trustContext = {
+      sourceType: input.sourceType,
+      sourceKey: input.sourceKey,
+      displayName: input.displayName,
+      protocolPayload: input.protocolPayload ?? null,
+      anchors: input.anchors ?? [],
+      scopeBindings: input.scopeBindings ?? [],
+    };
+    const snapshotHash = await hashStableJson(trustContext);
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `UPDATE federation_trust_sources
+            SET source_type = ?,
+                source_key = ?,
+                display_name = ?,
+                lifecycle_state = ?,
+                protocol_payload_json = ?,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [
+          input.sourceType,
+          input.sourceKey,
+          input.displayName,
+          lifecycleState,
+          input.protocolPayload ? stableJson(input.protocolPayload) : null,
+          now,
+          tenantId,
+          trustSourceId,
+        ]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_scope_bindings WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      for (const anchor of input.anchors ?? []) {
+        validateRequiredString(anchor.anchorType, 'anchor.anchorType');
+        validateRequiredString(anchor.anchorHash, 'anchor.anchorHash');
+        await tx.execute(
+          `INSERT INTO federation_trust_anchors (
+            id, tenant_id, trust_source_id, anchor_type, anchor_hash, anchor_ref,
+            not_before, not_after, lifecycle_state, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            createId('federation_trust_anchor'),
+            tenantId,
+            trustSourceId,
+            anchor.anchorType,
+            anchor.anchorHash,
+            anchor.anchorRef ?? null,
+            anchor.notBefore ?? null,
+            anchor.notAfter ?? null,
+            'active',
+            now,
+            now,
+          ]
+        );
+      }
+      for (const binding of input.scopeBindings ?? []) {
+        validateRequiredString(binding.scopeType, 'scopeBinding.scopeType');
+        await tx.execute(
+          `INSERT INTO federation_trust_scope_bindings (
+            id, tenant_id, trust_source_id, scope_type, scope_id, priority,
+            lifecycle_state, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            createId('federation_trust_scope_binding'),
+            tenantId,
+            trustSourceId,
+            binding.scopeType,
+            binding.scopeId ?? null,
+            binding.priority ?? 0,
+            'active',
+            now,
+            now,
+          ]
+        );
+      }
+      await tx.execute(
+        `INSERT INTO federation_trust_context_snapshots (
+          id, tenant_id, trust_source_id, snapshot_hash, trust_context_json,
+          lifecycle_state, created_at, activated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('federation_trust_context_snapshot'),
+          tenantId,
+          trustSourceId,
+          snapshotHash,
+          stableJson(trustContext),
+          lifecycleState === 'active' ? 'active' : 'draft',
+          now,
+          lifecycleState === 'active' ? now : null,
+        ]
+      );
+    });
+
+    return {
+      id: trustSourceId,
+      tenantId,
+      sourceType: input.sourceType,
+      sourceKey: input.sourceKey,
+      lifecycleState,
+      snapshotHash,
+    };
+  }
+
+  async deleteFederationTrustSource(tenantId: string, trustSourceId: string) {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    await this.ensureFederationTrustSource(tenantId, trustSourceId);
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_scope_bindings WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_context_snapshots WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_metadata_validation_events WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_metadata_entity_summaries WHERE tenant_id = ? AND metadata_document_id IN (SELECT id FROM federation_metadata_documents WHERE tenant_id = ? AND trust_source_id = ?)',
+        [tenantId, tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_metadata_documents WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute('DELETE FROM federation_trust_sources WHERE tenant_id = ? AND id = ?', [
+        tenantId,
+        trustSourceId,
+      ]);
+    });
+    return { success: true };
+  }
+
   async listFederationTrustSources(tenantId: string) {
     const rows = await this.adapter.query<{
       id: string;
@@ -3336,173 +3428,6 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     return [...documents.values()];
-  }
-
-  async migrateSamlFederationTrustProfile(
-    tenantId: string,
-    input: MigrateSamlFederationTrustProfileRequest
-  ) {
-    validateRequiredString(input.profileId, 'profileId');
-    const row = await this.adapter.queryOne<{
-      id: string;
-      tenant_id: string;
-      name: string;
-      description: string | null;
-      metadata_url_patterns_json: string;
-      certificates_json: string;
-      policy: string | null;
-      enabled: number;
-      federation_trust_source_id: string | null;
-      normalized_migration_state: string | null;
-      created_at: number;
-      updated_at: number;
-    }>(
-      `SELECT id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
-              policy, enabled, federation_trust_source_id, normalized_migration_state,
-              created_at, updated_at
-         FROM saml_federation_trust_profiles
-        WHERE tenant_id = ? AND id = ?`,
-      [tenantId, input.profileId]
-    );
-    if (!row) {
-      throw notFound('SAML federation trust profile not found');
-    }
-    if (row.federation_trust_source_id && row.normalized_migration_state === 'migrated') {
-      return {
-        profileId: row.id,
-        trustSourceId: row.federation_trust_source_id,
-        migrationState: 'migrated',
-        idempotent: true,
-      };
-    }
-
-    const metadataUrlPatterns = parseJsonStringArray(row.metadata_url_patterns_json);
-    const certificates = parseJsonRecords(row.certificates_json);
-    if (metadataUrlPatterns.length === 0 || certificates.length === 0) {
-      throw badRequest('legacy SAML federation trust profile is not migration-ready');
-    }
-    const now = this.now();
-    const trustSourceId = createId('federation_trust_source');
-    const sourceKey = input.sourceKey ?? `legacy-saml-profile:${row.id}`;
-    const trustContext = {
-      protocol: 'saml',
-      legacyProfileId: row.id,
-      policy: normalizeSamlFederationPolicy(row.policy),
-      enabled: row.enabled === 1,
-      metadataUrlPatterns,
-      anchorHashes: certificates.map((certificate) => readCertificateFingerprint(certificate)),
-    };
-    const snapshotHash = await hashStableJson(trustContext);
-    await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `INSERT INTO federation_trust_sources (
-          id, tenant_id, source_type, source_key, display_name, lifecycle_state,
-          protocol_payload_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          trustSourceId,
-          tenantId,
-          'saml_aggregate',
-          sourceKey,
-          row.name,
-          input.activate === false || row.enabled !== 1 ? 'draft' : 'active',
-          stableJson({
-            legacyProfileId: row.id,
-            description: row.description,
-            metadataUrlPatterns,
-            policy: normalizeSamlFederationPolicy(row.policy),
-            certificates,
-          }),
-          now,
-          now,
-        ]
-      );
-      for (const certificate of certificates) {
-        const anchorHash = readCertificateFingerprint(certificate);
-        await tx.execute(
-          `INSERT INTO federation_trust_anchors (
-            id, tenant_id, trust_source_id, anchor_type, anchor_hash, anchor_ref,
-            not_before, not_after, lifecycle_state, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            createId('federation_trust_anchor'),
-            tenantId,
-            trustSourceId,
-            'x509_sha256',
-            anchorHash,
-            readOptionalString(certificate.id) ?? null,
-            null,
-            null,
-            'active',
-            now,
-            now,
-          ]
-        );
-      }
-      await tx.execute(
-        `INSERT INTO federation_trust_context_snapshots (
-          id, tenant_id, trust_source_id, snapshot_hash, trust_context_json,
-          lifecycle_state, created_at, activated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          createId('federation_trust_context_snapshot'),
-          tenantId,
-          trustSourceId,
-          snapshotHash,
-          stableJson(trustContext),
-          input.activate === false || row.enabled !== 1 ? 'draft' : 'active',
-          now,
-          input.activate === false || row.enabled !== 1 ? null : now,
-        ]
-      );
-      await tx.execute(
-        `INSERT INTO federation_trust_scope_bindings (
-          id, tenant_id, trust_source_id, scope_type, scope_id, priority,
-          lifecycle_state, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          createId('federation_trust_scope_binding'),
-          tenantId,
-          trustSourceId,
-          'tenant',
-          tenantId,
-          0,
-          'active',
-          now,
-          now,
-        ]
-      );
-      await tx.execute(
-        `UPDATE saml_federation_trust_profiles
-            SET federation_trust_source_id = ?,
-                normalized_migration_state = ?,
-                updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
-        [trustSourceId, 'migrated', now, tenantId, row.id]
-      );
-      await tx.execute(
-        `INSERT INTO federation_metadata_validation_events (
-          id, tenant_id, trust_source_id, metadata_document_id, validation_state,
-          reason_codes_json, trace_ref, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          createId('federation_metadata_validation_event'),
-          tenantId,
-          trustSourceId,
-          null,
-          'valid',
-          stableJson(['federation.saml_legacy_profile.migrated']),
-          `saml-federation-trust-profile:${row.id}`,
-          now,
-        ]
-      );
-    });
-    return {
-      profileId: row.id,
-      trustSourceId,
-      migrationState: 'migrated',
-      snapshotHash,
-    };
   }
 
   private async recordKeyAccessEvent(
@@ -4307,16 +4232,6 @@ export async function adminIdentityMappingProvisioningAssignmentRuleEvaluateHand
   );
 }
 
-export async function adminIdentityMappingOrgDomainMappingMigrateHandler(c: AdminContext) {
-  return handleMutation(c, 'org-domain-mapping.migrate', async (repository, tenantId, body) =>
-    repository.migrateOrgDomainMappingToGroup(
-      tenantId,
-      requiredParam(c, 'mappingId'),
-      body as MigrateOrgDomainMappingRequest
-    )
-  );
-}
-
 export async function adminIdentityMappingLifecycleSignalRecordHandler(c: AdminContext) {
   return handleMutation(c, 'lifecycle-signal.record', async (repository, tenantId, body) =>
     repository.recordExternalLifecycleSignal(tenantId, body as RecordLifecycleSignalRequest)
@@ -4367,6 +4282,22 @@ export async function adminIdentityMappingFederationTrustSourcesListHandler(c: A
   }));
 }
 
+export async function adminIdentityMappingFederationTrustSourceUpdateHandler(c: AdminContext) {
+  return handleMutation(c, 'federation-trust-source.update', async (repository, tenantId, body) =>
+    repository.updateFederationTrustSource(
+      tenantId,
+      requiredParam(c, 'trustSourceId'),
+      body as UpdateFederationTrustSourceRequest
+    )
+  );
+}
+
+export async function adminIdentityMappingFederationTrustSourceDeleteHandler(c: AdminContext) {
+  return handleMutation(c, 'federation-trust-source.delete', async (repository, tenantId) =>
+    repository.deleteFederationTrustSource(tenantId, requiredParam(c, 'trustSourceId'))
+  );
+}
+
 export async function adminIdentityMappingFederationMetadataDocumentsListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     federationMetadataDocuments: await repository.listFederationMetadataDocuments(
@@ -4384,20 +4315,6 @@ export async function adminIdentityMappingFederationMetadataDocumentCreateHandle
       repository.registerFederationMetadataDocument(
         tenantId,
         body as RegisterFederationMetadataDocumentRequest
-      )
-  );
-}
-
-export async function adminIdentityMappingSamlFederationTrustProfileMigrateHandler(
-  c: AdminContext
-) {
-  return handleMutation(
-    c,
-    'saml-federation-trust-profile.migrate',
-    async (repository, tenantId, body) =>
-      repository.migrateSamlFederationTrustProfile(
-        tenantId,
-        body as MigrateSamlFederationTrustProfileRequest
       )
   );
 }
@@ -4670,26 +4587,6 @@ function parseJsonArray(value: string | null): string[] {
   }
 }
 
-function parseJsonStringArray(value: string): string[] {
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string')
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseJsonRecords(value: string): Array<Record<string, unknown>> {
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
-  } catch {
-    return [];
-  }
-}
-
 function assertSafeMaterialRef(materialRef: string): void {
   const normalized = materialRef.trim().toLowerCase();
   if (!normalized.includes('://') && !normalized.startsWith('wrangler-secret:')) {
@@ -4712,22 +4609,6 @@ function assertSafeMaterialBackend(backendType: string): void {
   if (normalized === 'inline' || normalized === 'localfile' || normalized === 'plaintext') {
     throw badRequest('backendType must reference an external key material backend');
   }
-}
-
-function normalizeSamlFederationPolicy(value: string | null): 'strict' | 'warn' | 'disabled' {
-  return value === 'strict' || value === 'disabled' ? value : 'warn';
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function readCertificateFingerprint(certificate: Record<string, unknown>): string {
-  const fingerprint = readOptionalString(certificate.fingerprintSha256);
-  if (fingerprint) {
-    return fingerprint;
-  }
-  throw badRequest('legacy SAML federation trust certificate is missing a fingerprint');
 }
 
 async function hashStableJson(value: unknown): Promise<string> {

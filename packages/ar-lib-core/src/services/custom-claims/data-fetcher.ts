@@ -3,7 +3,7 @@
  *
  * Fetches user custom field values from both PII and non-PII databases.
  * - Non-PII: user_custom_fields table (D1_CORE)
- * - PII: users_pii.custom_attributes_json (D1_PII)
+ * - PII: identity_sensitive_values.value_json (D1_PII)
  */
 
 import type { DatabaseAdapter, DatabaseSource } from '../../db';
@@ -74,12 +74,23 @@ export class UserCustomDataFetcher {
     // Fetch PII data
     if (piiKeys.length > 0 && this.piiAdapter) {
       try {
-        const row = await this.piiAdapter.queryOne<{ custom_attributes_json: string | null }>(
-          'SELECT custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?',
-          [userId, tenantId]
+        const row = await this.piiAdapter.queryOne<{ value_json: string | null }>(
+          `SELECT value_json
+             FROM identity_sensitive_values
+            WHERE tenant_id = ?
+              AND owner_type = 'runtime_user'
+              AND owner_id = ?
+              AND value_key = 'custom_attributes_json'
+              AND lifecycle_state = 'active'
+            LIMIT 1`,
+          [tenantId, userId]
         );
-        if (row?.custom_attributes_json) {
-          const attrs = JSON.parse(row.custom_attributes_json) as Record<string, unknown>;
+        if (row?.value_json) {
+          const parsed = JSON.parse(row.value_json);
+          const attrs =
+            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+              ? (parsed as Record<string, unknown>)
+              : {};
           const piiKeySet = new Set(piiKeys);
           for (const [key, value] of Object.entries(attrs)) {
             if (piiKeySet.has(key) && value !== null && value !== undefined) {

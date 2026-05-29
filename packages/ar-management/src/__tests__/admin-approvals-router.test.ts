@@ -130,6 +130,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
       piiCacheMode: 'merged',
     })),
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        if (userId !== 'user-42' && userId !== 'user-1') {
+          return null;
+        }
+        return {
+          id: userId,
+          tenant_id: 'tenant-a',
+          lifecycle_state: 'active',
+          active: true,
+          email: 'owner@example.com',
+          email_verified: true,
+          phone_number: null,
+          phone_number_verified: false,
+        };
+      }
+    },
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getTenantSettings: mockGetTenantSettings,
     ApprovalRequestRepository: vi.fn(function MockApprovalRequestRepository() {

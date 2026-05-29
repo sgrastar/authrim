@@ -39,6 +39,7 @@ import {
   invalidateTenantProfileCache,
   // Write-Through KV Cache (Phase 3)
   readResponseTextWithLimit,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import {
   logSanitizedError,
@@ -86,6 +87,99 @@ function emptyAuditLogListResponse(page: number, limit: number) {
       totalPages: 0,
     },
   };
+}
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function findCanonicalRuntimeUser(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  options?: { includeInactive?: boolean }
+) {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  }).findById(userId, options);
+}
+
+async function getCanonicalAccountStatus(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string
+): Promise<{ id: string; lifecycle_state: string; status: string } | null> {
+  const account = await adapter.queryOne<{
+    id: string;
+    lifecycle_state: string;
+    metadata_json: string | null;
+  }>(
+    'SELECT id, lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
+    [userId, tenantId]
+  );
+  if (!account) return null;
+  const metadata = parseJsonObject(account.metadata_json);
+  return {
+    id: account.id,
+    lifecycle_state: account.lifecycle_state,
+    status:
+      typeof metadata.status === 'string'
+        ? metadata.status
+        : account.lifecycle_state === 'active'
+          ? 'active'
+          : account.lifecycle_state,
+  };
+}
+
+async function updateCanonicalAccountStatus(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  status: string,
+  metadataPatch: Record<string, unknown> = {}
+) {
+  const lifecycleState = status === 'active' ? 'active' : status;
+  const now = Date.now();
+  const account = await adapter.queryOne<{ id: string; primary_subject_id: string | null }>(
+    'SELECT id, primary_subject_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
+    [userId, tenantId]
+  );
+  if (!account) return false;
+  await adapter.execute(
+    `UPDATE identity_accounts
+        SET lifecycle_state = ?,
+            metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?),
+            updated_at = ?
+      WHERE id = ? AND tenant_id = ?`,
+    [lifecycleState, status, now, account.id, tenantId]
+  );
+  for (const [key, value] of Object.entries(metadataPatch)) {
+    await adapter.execute(
+      `UPDATE identity_accounts
+          SET metadata_json = json_set(COALESCE(metadata_json, '{}'), ?, ?), updated_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [`$.${key}`, value, now, account.id, tenantId]
+    );
+  }
+  if (account.primary_subject_id) {
+    await adapter.execute(
+      'UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [lifecycleState, now, account.primary_subject_id, tenantId]
+    );
+  }
+  return true;
 }
 
 async function auditHotTableExists(
@@ -533,12 +627,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
 
     const adapter = getCoreAdapter(c, tenantId);
 
-    // Get current user state (verify tenant ownership)
-    // Note: Using users_core for PII-separated architecture
-    const user = await adapter.queryOne<{ id: string; tenant_id: string; status: string }>(
-      'SELECT id, tenant_id, status FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
+    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -548,11 +637,10 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     const nowTs = Math.floor(Date.now() / 1000);
     const expiresAt = body.duration_hours ? nowTs + body.duration_hours * 3600 : null;
 
-    // Update user status in users_core (PII-separated architecture)
-    await adapter.execute(
-      'UPDATE users_core SET status = ?, suspended_at = ?, suspended_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      ['suspended', nowTs, expiresAt, nowTs, userId, tenantId]
-    );
+    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'suspended', {
+      suspended_at: nowTs,
+      suspended_until: expiresAt,
+    });
 
     // Token/Session Revocation Strategy (Authrim Architecture):
     // =========================================================
@@ -718,12 +806,7 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
 
     const adapter = getCoreAdapter(c, tenantId);
 
-    // Get current user state (verify tenant ownership)
-    // Note: Using users_core for PII-separated architecture
-    const user = await adapter.queryOne<{ id: string; tenant_id: string; status: string }>(
-      'SELECT id, tenant_id, status FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
+    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -732,11 +815,10 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     const previousStatus = user.status ?? 'active';
     const nowTs = Math.floor(Date.now() / 1000);
 
-    // Update user status in users_core (PII-separated architecture)
-    await adapter.execute(
-      'UPDATE users_core SET status = ?, locked_at = ?, locked_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      ['locked', nowTs, unlockAtTs, nowTs, userId, tenantId]
-    );
+    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'locked', {
+      locked_at: nowTs,
+      locked_until: unlockAtTs,
+    });
 
     // Token/Session Revocation Strategy (Authrim Architecture):
     // Same as suspend - user status-based token invalidation via introspection.
@@ -894,16 +976,7 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     const adapter = getCoreAdapter(c, tenantId);
 
     // Get current user state (verify tenant ownership)
-    const user = await adapter.queryOne<{
-      id: string;
-      tenant_id: string;
-      status: string;
-      suspended_at: number | null;
-      locked_at: number | null;
-    }>(
-      'SELECT id, tenant_id, status, suspended_at, locked_at FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
+    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -934,18 +1007,12 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     const previousStatus = user.status;
     const nowTs = Math.floor(Date.now() / 1000);
 
-    // Update user status to active and clear suspension/lock timestamps
-    await adapter.execute(
-      `UPDATE users_core SET
-        status = ?,
-        suspended_at = NULL,
-        suspended_until = NULL,
-        locked_at = NULL,
-        locked_until = NULL,
-        updated_at = ?
-      WHERE id = ? AND tenant_id = ?`,
-      ['active', nowTs, userId, tenantId]
-    );
+    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'active', {
+      suspended_at: null,
+      suspended_until: null,
+      locked_at: null,
+      locked_until: null,
+    });
 
     // Write audit log (reason_code only, not reason_detail for privacy)
     await createAuditLogFromContext(c, 'user.activate', 'user', userId, {
@@ -1093,15 +1160,19 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = createAuthContextFromHono(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
 
-    // Get current user state (verify tenant ownership and check if already deleted)
-    const user = await authCtx.repositories.userCore.findById(userId);
+    const runtimeUsers = new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      tenantId,
+    });
+    const user = await runtimeUsers.findById(userId, { includeInactive: true });
 
-    if (!user || user.tenant_id !== tenantId) {
+    if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check if already anonymized
-    if (!user.is_active && user.pii_status === 'deleted') {
+    if (!user.active && user.lifecycle_state === 'deleted') {
       return c.json({
         user_id: userId,
         already_anonymized: true,
@@ -1150,22 +1221,20 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     let retentionUntil = nowTs + 90 * 24 * 60 * 60;
     let tombstoneId: string | null = null;
 
-    if (hasPIIDatabase(c) && user.pii_status !== 'none') {
+    if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(user.pii_partition);
       const existingTombstone = await piiCtx.piiRepositories.tombstone.findByUserId(
         tenantId,
         userId,
-        piiAdapter
+        piiCtx.defaultPiiAdapter
       );
-      const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
 
       if (!existingTombstone) {
         const tombstone = await piiCtx.piiRepositories.tombstone.createTombstone(
           {
             id: userId,
             tenant_id: tenantId,
-            email_blind_index: userPII?.email_blind_index ?? null,
+            email_blind_index: null,
             deleted_by: deletedBy,
             deletion_reason: body.reason_code,
             retention_days: 90,
@@ -1175,7 +1244,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
               user_id_hash: userIdHash,
             },
           },
-          piiAdapter
+          piiCtx.defaultPiiAdapter
         );
         tombstoneId = tombstone.id;
         retentionUntil = tombstone.retention_until;
@@ -1183,10 +1252,16 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
         tombstoneId = existingTombstone.id;
         retentionUntil = existingTombstone.retention_until;
       }
-
-      await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
-      await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(tenantId, userId, piiAdapter);
-      await piiCtx.piiRepositories.identifier.deleteByUserId(tenantId, userId, piiAdapter);
+      await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(
+        tenantId,
+        userId,
+        piiCtx.defaultPiiAdapter
+      );
+      await piiCtx.piiRepositories.identifier.deleteByUserId(
+        tenantId,
+        userId,
+        piiCtx.defaultPiiAdapter
+      );
     }
 
     const sessions = await authCtx.repositories.session.findByUserId(userId);
@@ -1203,12 +1278,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       ),
     ]);
 
-    await authCtx.repositories.userCore.update(userId, {
-      is_active: false,
-      pii_status: 'deleted',
-      status: 'locked',
-      lifecycle_state: 'deprovisioned',
-    });
+    await runtimeUsers.deleteUser(userId);
 
     // Step 6: Write audit log (user_id_hash only, no original ID)
     await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
@@ -1585,39 +1655,16 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
       const resolvedUserId = entry.anonymizedUserId
         ? (userIdMap.get(entry.anonymizedUserId) ?? null)
         : null;
-      const coreAdapter = getCoreAdapter(c, tenantId);
       let user = null;
 
       if (resolvedUserId) {
-        const userCore = await coreAdapter.queryOne<{ id: string }>(
-          'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-          [resolvedUserId, tenantId]
-        );
-
-        if (userCore && hasPIIDatabase(c)) {
-          const piiCtx = createPIIContextFromHono(c, getTenantIdFromContext(c));
-          const piiAdapter = piiCtx.defaultPiiAdapter;
-          const userPII = await piiAdapter.queryOne<{
-            email: string | null;
-            name: string | null;
-            picture: string | null;
-          }>('SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?', [
-            resolvedUserId,
-            tenantId,
-          ]);
-
+        const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId);
+        if (runtimeUser) {
           user = {
-            id: userCore.id,
-            email: userPII?.email ?? null,
-            name: userPII?.name ?? null,
-            picture: userPII?.picture ?? null,
-          };
-        } else if (userCore) {
-          user = {
-            id: userCore.id,
-            email: null,
-            name: null,
-            picture: null,
+            id: runtimeUser.id,
+            email: runtimeUser.email,
+            name: runtimeUser.name,
+            picture: runtimeUser.picture,
           };
         }
       }
@@ -1789,37 +1836,14 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
       };
     }
 
-    // Get user information if user_id exists (from both Core and PII DBs)
     if (resolvedUserId) {
-      const userCore = await coreAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-        [resolvedUserId, tenantId]
-      );
-
-      if (userCore && hasPIIDatabase(c)) {
-        const piiCtx = createPIIContextFromHono(c, getTenantIdFromContext(c));
-        const piiAdapter = piiCtx.defaultPiiAdapter;
-        const userPII = await piiAdapter.queryOne<{
-          email: string | null;
-          name: string | null;
-          picture: string | null;
-        }>('SELECT email, name, picture FROM users_pii WHERE id = ? AND tenant_id = ?', [
-          resolvedUserId,
-          tenantId,
-        ]);
-
+      const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId);
+      if (runtimeUser) {
         user = {
-          id: userCore.id,
-          email: userPII?.email ?? null,
-          name: userPII?.name ?? null,
-          picture: userPII?.picture ?? null,
-        };
-      } else if (userCore) {
-        user = {
-          id: userCore.id,
-          email: null,
-          name: null,
-          picture: null,
+          id: runtimeUser.id,
+          email: runtimeUser.email,
+          name: runtimeUser.name,
+          picture: runtimeUser.picture,
         };
       }
     }
@@ -2435,17 +2459,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Verify user exists in Core DB
-    const userCore = await authCtx.coreAdapter.queryOne<{
-      id: string;
-      pii_partition: string | null;
-      is_active: number;
-    }>('SELECT id, pii_partition, is_active FROM users_core WHERE id = ? AND tenant_id = ?', [
-      user_id,
-      tenantId,
-    ]);
-
-    if (!userCore || !userCore.is_active) {
+    const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, user_id);
+    if (!runtimeUser) {
       return c.json(
         {
           error: 'not_found',
@@ -2455,19 +2470,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Get user PII for session metadata via adapter
-    let userEmail: string | null = null;
-    let userName: string | null = null;
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition ?? 'default');
-      const userPII = await piiAdapter.queryOne<{ email: string | null; name: string | null }>(
-        'SELECT email, name FROM users_pii WHERE id = ? AND tenant_id = ?',
-        [user_id, tenantId]
-      );
-      userEmail = userPII?.email ?? null;
-      userName = userPII?.name ?? null;
-    }
+    const userEmail = runtimeUser.email;
+    const userName = runtimeUser.name;
 
     // Create session in SessionStore DO (sharded) via RPC
     const now = Date.now();
@@ -2637,24 +2641,25 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Check if user exists by searching PII DB for email
     const tenantId = getTenantIdFromContext(c);
     const piiCtx = createPIIContextFromHono(c, tenantId);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId,
+    });
     let userId: string | null = null;
     let userEmail: string | null = null;
     let userName: string | null = null;
 
-    if (hasPIIDatabase(c)) {
-      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
-        tenantId,
-        email.toLowerCase()
-      );
-
-      if (userPII) {
-        userId = userPII.id;
-        userEmail = userPII.email;
-        userName = userPII.name;
-      }
+    const existingUser = await runtimeUsers.findByEmail(email.toLowerCase(), {
+      includeInactive: true,
+    });
+    if (existingUser) {
+      userId = existingUser.id;
+      userEmail = existingUser.email;
+      userName = existingUser.name;
     }
 
     // create_user option: if false, don't create new user (for benchmarks with pre-seeded users)
@@ -2671,38 +2676,24 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      const authCtx = createAuthContextFromHono(c, tenantId);
       const preferredUsername = email.split('@')[0];
 
-      // Create user in Core DB with pii_status='pending'
-      const newUser = await authCtx.repositories.userCore.createUser({
-        tenant_id: tenantId,
-        email_verified: false,
-        phone_number_verified: false,
-        password_hash: null,
-        is_active: true,
-        user_type: 'end_user',
-        pii_partition: 'default',
-        pii_status: 'pending',
-      });
-      userId = newUser.id;
-
-      // Create PII record if available
-      if (hasPIIDatabase(c)) {
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: userId,
-          tenant_id: tenantId,
-          pii_class: 'PROFILE',
-          email: email.toLowerCase(),
+      userId = generateId();
+      await runtimeUsers.syncUser({
+        userId,
+        email: email.toLowerCase(),
+        active: true,
+        emailVerified: false,
+        phoneNumberVerified: false,
+        userType: 'end_user',
+        sourceRef: 'admin:test-email-code',
+        piiFields: {
+          preferred_username: true,
+        },
+        sensitiveValues: {
           preferred_username: preferredUsername,
-        });
-
-        // Update pii_status to 'active'
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-      } else {
-        // No PII DB - mark as 'none'
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'none');
-      }
+        },
+      });
 
       userEmail = email.toLowerCase();
       userName = preferredUsername;
@@ -2796,9 +2787,10 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Check if user exists
-    const userCore = await authCtx.repositories.userCore.findById(userId);
-    if (!userCore) {
+    const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
+      includeInactive: true,
+    });
+    if (!runtimeUser) {
       return c.json(
         {
           error: 'not_found',
@@ -3162,13 +3154,7 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     const coreAdapter = getCoreAdapter(c, tenantId);
     const auditAdapter = context.adapter;
 
-    // Verify user exists and belongs to tenant
-    const user = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
-
-    if (!user) {
+    if (!(await findCanonicalRuntimeUser(c, tenantId, userId, { includeInactive: true }))) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'user', id: userId },
       });
@@ -3361,25 +3347,16 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
 
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Get user with email from PII database
-    const userCore = await authCtx.repositories.userCore.findById(userId);
-
-    if (!userCore || userCore.tenant_id !== tenantId) {
+    const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
+      includeInactive: true,
+    });
+    if (!runtimeUser) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'user', id: userId },
       });
     }
 
-    // Get email from PII database
-    let userEmail: string | null = null;
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userPii = await piiCtx.defaultPiiAdapter.queryOne<{ email: string }>(
-        'SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?',
-        [userId, tenantId]
-      );
-      userEmail = userPii?.email ?? null;
-    }
+    const userEmail = runtimeUser.email;
 
     if (!userEmail) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {

@@ -30,6 +30,7 @@ import {
   type ValidatedCustomClaimWriteResult,
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import {
   ExternalIdPError,
@@ -390,28 +391,16 @@ async function findUserByEmail(
   email: string,
   tenantId: string
 ): Promise<ExistingUser | null> {
-  // Search by email in PII DB
   const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
   if (!piiAdapter) return null;
-  const userPII = await piiAdapter.queryOne<{ id: string; email: string }>(
-    'SELECT id, email FROM users_pii WHERE tenant_id = ? AND email = ?',
-    [tenantId, email.toLowerCase()]
-  );
-
-  if (!userPII) return null;
-
-  // Verify user is active and get email_verified from Core DB
-  const userCore = await coreAdapter.queryOne<{ id: string; email_verified: number }>(
-    'SELECT id, email_verified FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-    [userPII.id, tenantId]
-  );
-
-  if (!userCore) return null;
+  const runtimeUsers = new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId });
+  const user = await runtimeUsers.findByEmail(email.toLowerCase());
+  if (!user) return null;
 
   return {
-    id: userCore.id,
-    email: userPII.email,
-    email_verified: userCore.email_verified === 1,
+    id: user.id,
+    email: user.email ?? email.toLowerCase(),
+    email_verified: user.email_verified === 1,
   };
 }
 
@@ -545,47 +534,43 @@ async function createUserFromExternalIdentity(
   await validateProvisionedCustomClaims(env, params.tenantId, {});
 
   const id = crypto.randomUUID();
-  const now = Math.floor(Date.now() / 1000);
 
   // Generate a placeholder email if not provided
   const email = params.email || `${id}@external.authrim.local`;
 
   const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, params.tenantId);
-
-  // Step 1: Insert into users_core with pii_status='pending'
-  await coreAdapter.execute(
-    `INSERT INTO users_core (
-      id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
-    ) VALUES (?, ?, ?, 'end_user', ?, 'pending', ?, ?)`,
-    [id, params.tenantId, params.emailVerified ? 1 : 0, params.tenantId, now, now]
-  );
-
-  // Step 2: Insert into the configured PII store
-  if (piiAdapter) {
-    await piiAdapter.execute(
-      `INSERT INTO users_pii (
-        id, tenant_id, email, name, given_name, family_name, picture, locale, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        params.tenantId,
-        email.toLowerCase(),
-        params.name || null,
-        params.givenName || null,
-        params.familyName || null,
-        params.picture || null,
-        params.locale || null,
-        now,
-        now,
-      ]
-    );
-
-    // Step 3: Update pii_status to 'active'
-    await coreAdapter.execute(
-      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
-      ['active', id, params.tenantId]
+  if (!piiAdapter) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED,
+      'Canonical runtime user creation requires a PII database.'
     );
   }
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter,
+    tenantId: params.tenantId,
+  });
+  await runtimeUsers.syncUser({
+    userId: id,
+    email: email.toLowerCase(),
+    name: params.name || null,
+    active: true,
+    emailVerified: params.emailVerified,
+    userType: 'end_user',
+    sourceRef: `external-idp:${params.identityProviderId}`,
+    piiFields: {
+      given_name: params.givenName !== undefined,
+      family_name: params.familyName !== undefined,
+      picture: params.picture !== undefined,
+      locale: params.locale !== undefined,
+    },
+    sensitiveValues: {
+      given_name: params.givenName ?? null,
+      family_name: params.familyName ?? null,
+      picture: params.picture ?? null,
+      locale: params.locale ?? null,
+    },
+  });
 
   return { id };
 }
@@ -695,6 +680,17 @@ async function createUserWithJITProvisioning(
     env,
     params.tenantId
   );
+  if (!piiAdapter) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED,
+      'Canonical runtime user creation requires a PII database.'
+    );
+  }
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter,
+    tenantId: params.tenantId,
+  });
   const customClaimValidation = await validateProvisionedCustomClaims(
     env,
     params.tenantId,
@@ -712,7 +708,6 @@ async function createUserWithJITProvisioning(
   };
 
   const id = crypto.randomUUID();
-  const now = Math.floor(Date.now() / 1000);
   const email = params.email || `${id}@external.authrim.local`;
 
   // Step 1: Generate email_domain_hash
@@ -736,50 +731,31 @@ async function createUserWithJITProvisioning(
     }
   }
 
-  // Step 2: Create user in Core DB
-  await coreAdapter.execute(
-    `INSERT INTO users_core (
-      id, tenant_id, email_verified, email_domain_hash, email_domain_hash_version,
-      user_type, pii_partition, pii_status, lifecycle_state, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'end_user', ?, 'pending', 'provisioning', ?, ?)`,
-    [
-      id,
-      params.tenantId,
-      params.emailVerified ? 1 : 0,
-      emailDomainHash || null,
-      emailDomainHashVersion || null,
-      params.tenantId,
-      now,
-      now,
-    ]
-  );
-
-  // Step 3: Create user in PII DB
-  if (piiAdapter) {
-    await piiAdapter.execute(
-      `INSERT INTO users_pii (
-        id, tenant_id, email, name, given_name, family_name, picture, locale, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        params.tenantId,
-        email.toLowerCase(),
-        params.name || null,
-        params.givenName || null,
-        params.familyName || null,
-        params.picture || null,
-        params.locale || null,
-        now,
-        now,
-      ]
-    );
-
-    // Update pii_status to 'active'
-    await coreAdapter.execute(
-      'UPDATE users_core SET pii_status = ? WHERE id = ? AND tenant_id = ?',
-      ['active', id, params.tenantId]
-    );
-  }
+  await runtimeUsers.syncUser({
+    userId: id,
+    email: email.toLowerCase(),
+    name: params.name || null,
+    active: true,
+    emailVerified: params.emailVerified,
+    userType: 'end_user',
+    sourceRef: `external-idp:${params.identityProviderId}`,
+    piiFields: {
+      given_name: params.givenName !== undefined,
+      family_name: params.familyName !== undefined,
+      picture: params.picture !== undefined,
+      locale: params.locale !== undefined,
+    },
+    sensitiveValues: {
+      given_name: params.givenName ?? null,
+      family_name: params.familyName ?? null,
+      picture: params.picture ?? null,
+      locale: params.locale ?? null,
+    },
+    inlineProfileFields: {
+      ...(emailDomainHash ? { email_domain_hash: emailDomainHash } : {}),
+      ...(emailDomainHashVersion ? { email_domain_hash_version: emailDomainHashVersion } : {}),
+    },
+  });
 
   result.userId = id;
 
@@ -793,22 +769,13 @@ async function createUserWithJITProvisioning(
     });
   } catch (persistError) {
     try {
-      if (piiAdapter) {
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-          id,
-          params.tenantId,
-        ]);
-      }
+      await runtimeUsers.deleteUser(id);
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
         'identity-stitching-custom-claim-cleanup'
       ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
         params.tenantId,
         id,
-      ]);
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
-        id,
-        params.tenantId,
       ]);
     } catch (cleanupError) {
       const log = createLogger().module('IDENTITY-STITCHING');
@@ -849,22 +816,13 @@ async function createUserWithJITProvisioning(
 
     // Clean up: delete the user we just created
     try {
-      if (piiAdapter) {
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-          id,
-          params.tenantId,
-        ]);
-      }
+      await runtimeUsers.deleteUser(id);
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
         'identity-stitching-policy-cleanup'
       ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
         params.tenantId,
         id,
-      ]);
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
-        id,
-        params.tenantId,
       ]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
@@ -935,22 +893,13 @@ async function createUserWithJITProvisioning(
 
     // Clean up
     try {
-      if (piiAdapter) {
-        await piiAdapter.execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [
-          id,
-          params.tenantId,
-        ]);
-      }
+      await runtimeUsers.deleteUser(id);
       await ensureDatabaseAdapter(
         customClaimSources.nonPiiDb,
         'identity-stitching-org-cleanup'
       ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
         params.tenantId,
         id,
-      ]);
-      await coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
-        id,
-        params.tenantId,
       ]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)

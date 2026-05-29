@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CanonicalRuntimeUserProjectionRepository,
-  LegacyUsersPiiValueResolver,
-  decodeLegacyUsersPiiValueRef,
-  encodeLegacyUsersPiiValueRef,
+  CanonicalSensitiveValueResolver,
+  decodeCanonicalSensitiveValueRef,
+  encodeCanonicalSensitiveValueRef,
   type CanonicalRuntimeValueResolver,
 } from '../identity';
 import { MockDatabaseAdapter } from './mock-adapter';
@@ -33,6 +33,10 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
           'pii://tenant-a/email/user-1': 'person@example.test',
           'pii://tenant-a/phone/user-1': '+819012345678',
           'pii://tenant-a/name/user-1': 'Example Person',
+          'pii://tenant-a/address/user-1': {
+            formatted: '1-1 Chiyoda',
+            country: 'JP',
+          },
         };
         return values[valueStorageRef] ?? null;
       },
@@ -97,24 +101,28 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     });
   });
 
-  it('encodes and resolves legacy users_pii storage refs through an explicit resolver', async () => {
+  it('encodes and resolves canonical sensitive value storage refs through an explicit resolver', async () => {
     const piiAdapter = new MockDatabaseAdapter();
-    piiAdapter.initTable('users_pii', 'id');
-    piiAdapter.seed('users_pii', [
+    piiAdapter.initTable('identity_sensitive_values', 'id');
+    piiAdapter.seed('identity_sensitive_values', [
       {
-        id: 'user-1',
+        id: 'sensitive-value:user-1:email',
         tenant_id: 'tenant-a',
-        email: 'resolved@example.test',
+        owner_type: 'runtime_user',
+        owner_id: 'user-1',
+        value_key: 'email',
+        value_json: JSON.stringify('resolved@example.test'),
+        lifecycle_state: 'active',
       },
     ]);
-    const ref = encodeLegacyUsersPiiValueRef({
+    const ref = encodeCanonicalSensitiveValueRef({
       tenantId: 'tenant-a',
       userId: 'user-1',
       field: 'email',
     });
-    const resolver = new LegacyUsersPiiValueResolver(piiAdapter);
+    const resolver = new CanonicalSensitiveValueResolver(piiAdapter);
 
-    expect(decodeLegacyUsersPiiValueRef(ref)).toEqual({
+    expect(decodeCanonicalSensitiveValueRef(ref)).toEqual({
       tenantId: 'tenant-a',
       userId: 'user-1',
       field: 'email',
@@ -258,23 +266,22 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
         updated_at: 1_700_000_003,
         deleted_at: null,
       },
-    ]);
-    adapter.seed('structured_attribute_values', [
       {
-        id: 'structured-address',
+        id: 'profile-attribute-address',
         tenant_id: 'tenant-a',
-        owner_type: 'profile',
-        owner_id: 'profile-1',
+        profile_id: 'profile-1',
         catalog_entry_id: 'field.canonical.address',
-        canonical_json: JSON.stringify({
-          formatted: '1-1 Chiyoda',
-          country: 'JP',
-        }),
-        projected_index_json: null,
-        classification: 'confidential',
+        value_type: 'reference',
+        value_json: null,
+        value_storage_ref: 'pii://tenant-a/address/user-1',
+        value_hash: 'hash-address',
+        classification: 'sensitive',
+        purpose: 'profile',
+        is_primary: 0,
+        display_order: 4,
         lifecycle_state: 'active',
-        created_at: 1_700_000_000,
-        updated_at: 1_700_000_000,
+        created_at: 1_700_000_004,
+        updated_at: 1_700_000_004,
         deleted_at: null,
       },
     ]);

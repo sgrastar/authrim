@@ -2124,6 +2124,19 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log('');
   console.log(chalk.blue('━━━ ' + t('features.title') + ' ━━━'));
   console.log('');
+  const queueHelpText = getLocale().startsWith('ja')
+    ? [
+        'Cloudflare Queuesは任意機能で、デフォルトは無効です。',
+        'Workers Freeの目安は約3,000配信メッセージ/日です。1 queued messageは通常write + read + delete operationsを消費します。',
+        'Authrimでは非同期audit fan-out、logging delivery retry、export build job、key rewrap retry jobなどで1 queued messageを使います。',
+      ]
+    : [
+        'Cloudflare Queues are optional and disabled by default.',
+        'Workers Free includes roughly 3,000 delivered messages/day because one queued message usually costs write + read + delete operations.',
+        'Authrim uses one queued message for events such as async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
+      ];
+  queueHelpText.forEach((line) => console.log(chalk.gray(line)));
+  console.log('');
 
   const enableQueue = await confirm({
     message: t('features.queuePrompt'),
@@ -3473,7 +3486,8 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   console.log('');
 
   const queueEnabled = await confirm({
-    message: 'Enable Cloudflare Queues? (for audit logs and logging delivery)',
+    message:
+      'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
     default: config.features.queue?.enabled || false,
   });
 
@@ -3570,13 +3584,13 @@ async function configureRequiredHyperdriveReferences(
     await ensureHyperdriveReference(config, {
       refKey: 'core-primary',
       driver: 'postgres',
-      label: 'Storage users_core/custom_claims/registration_fields',
+      label: 'Storage identity core/custom claims/registration fields',
       suggestedBinding: 'HYPERDRIVE_CORE_PRIMARY',
     });
     await ensureHyperdriveReference(config, {
       refKey: 'pii-primary',
       driver: 'postgres',
-      label: 'Storage users_pii/custom_pii',
+      label: 'Storage identity PII/custom PII',
       suggestedBinding: 'HYPERDRIVE_PII_PRIMARY',
     });
   }

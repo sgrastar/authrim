@@ -5,7 +5,7 @@ import {
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
-  LegacyUsersPiiValueResolver,
+  CanonicalSensitiveValueResolver,
   type CanonicalRuntimeValueResolver,
 } from '../identity';
 import { MockDatabaseAdapter } from './mock-adapter';
@@ -42,8 +42,11 @@ function percentile(values: number[], percentileRank: number): number {
 describe('canonical runtime cutover hardening', () => {
   it('keeps SCIM/Admin writes and SAML/OIDC-style reads on the same canonical graph', async () => {
     const adapter = createCanonicalAdapter();
+    const piiAdapter = new MockDatabaseAdapter();
+    piiAdapter.initTable('identity_sensitive_values', 'id');
     const writer = new CanonicalRuntimeUserWriter(
-      new CanonicalIdentityRepository(adapter, 'tenant-a')
+      new CanonicalIdentityRepository(adapter, 'tenant-a'),
+      piiAdapter
     );
     await writer.createFromRuntimeUser({
       userId: 'user-1',
@@ -61,14 +64,19 @@ describe('canonical runtime cutover hardening', () => {
         name: true,
         preferred_username: true,
       },
+      sensitiveValues: {
+        email: 'person@example.test',
+        name: 'Example Person',
+        preferred_username: 'person',
+      },
     });
 
     const valueResolver: CanonicalRuntimeValueResolver = {
       async resolveValue(valueStorageRef) {
         const values: Record<string, unknown> = {
-          'legacy-users-pii://tenant-a/user-1/email': 'person@example.test',
-          'legacy-users-pii://tenant-a/user-1/name': 'Example Person',
-          'legacy-users-pii://tenant-a/user-1/preferred_username': 'person',
+          'canonical-sensitive://tenant-a/user-1/email': 'person@example.test',
+          'canonical-sensitive://tenant-a/user-1/name': 'Example Person',
+          'canonical-sensitive://tenant-a/user-1/preferred_username': 'person',
         };
         return values[valueStorageRef] ?? null;
       },
@@ -113,25 +121,29 @@ describe('canonical runtime cutover hardening', () => {
 
   it('rejects malformed or cross-tenant legacy PII refs before querying PII storage', async () => {
     const piiAdapter = new MockDatabaseAdapter();
-    piiAdapter.initTable('users_pii', 'id');
-    piiAdapter.seed('users_pii', [
+    piiAdapter.initTable('identity_sensitive_values', 'id');
+    piiAdapter.seed('identity_sensitive_values', [
       {
-        id: 'user-1',
+        id: 'sensitive-value:user-1:email',
         tenant_id: 'tenant-a',
-        email: 'person@example.test',
+        owner_type: 'runtime_user',
+        owner_id: 'user-1',
+        value_key: 'email',
+        value_json: JSON.stringify('person@example.test'),
+        lifecycle_state: 'active',
       },
     ]);
-    const resolver = new LegacyUsersPiiValueResolver(piiAdapter);
+    const resolver = new CanonicalSensitiveValueResolver(piiAdapter);
 
     await expect(
-      resolver.resolveValue('legacy-users-pii://tenant-a/user-1/email%2Cpassword_hash', {
+      resolver.resolveValue('canonical-sensitive://tenant-a/user-1/email%2Cpassword_hash', {
         tenantId: 'tenant-a',
         subjectId: 'subject:user-1',
         accountId: 'account:user-1',
       })
-    ).rejects.toThrow(/Unsupported legacy users_pii value ref field/);
+    ).rejects.toThrow(/Unsupported canonical sensitive value ref field/);
     await expect(
-      resolver.resolveValue('legacy-users-pii://tenant-b/user-1/email', {
+      resolver.resolveValue('canonical-sensitive://tenant-b/user-1/email', {
         tenantId: 'tenant-a',
         subjectId: 'subject:user-1',
         accountId: 'account:user-1',
@@ -143,8 +155,11 @@ describe('canonical runtime cutover hardening', () => {
 
   it('reports a hot-path projection smoke budget for p95 latency and read-count', async () => {
     const adapter = createCanonicalAdapter();
+    const piiAdapter = new MockDatabaseAdapter();
+    piiAdapter.initTable('identity_sensitive_values', 'id');
     const writer = new CanonicalRuntimeUserWriter(
-      new CanonicalIdentityRepository(adapter, 'tenant-a')
+      new CanonicalIdentityRepository(adapter, 'tenant-a'),
+      piiAdapter
     );
     await writer.createFromRuntimeUser({
       userId: 'user-1',

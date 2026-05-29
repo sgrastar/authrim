@@ -79,8 +79,8 @@ describe('storage-admin', () => {
     const piiAdapter = createMockAdapter();
     vi.mocked(piiAdapter.query)
       .mockResolvedValueOnce([
-        { id: 'user-1', custom_attributes_json: '{"old_key":"value"}' },
-        { id: 'user-2', custom_attributes_json: '{bad-json' },
+        { owner_id: 'user-1', value_json: '{"old_key":"value"}' },
+        { owner_id: 'user-2', value_json: '{bad-json' },
       ])
       .mockResolvedValueOnce([]);
 
@@ -101,8 +101,13 @@ describe('storage-admin', () => {
       failedUsers: 1,
     });
     expect(piiAdapter.execute).toHaveBeenCalledWith(
-      'UPDATE users_pii SET custom_attributes_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [JSON.stringify({ new_key: 'value' }), 123, 'user-1', 'tenant-1']
+      `UPDATE identity_sensitive_values
+                SET value_json = ?, updated_at = ?
+              WHERE tenant_id = ?
+                AND owner_type = 'runtime_user'
+                AND owner_id = ?
+                AND value_key = 'custom_attributes_json'`,
+      [JSON.stringify({ new_key: 'value' }), 123, 'tenant-1', 'user-1']
     );
   });
 });

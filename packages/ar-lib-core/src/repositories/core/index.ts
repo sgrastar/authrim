@@ -6,7 +6,6 @@
  * without personal information.
  *
  * Included repositories:
- * - UserCoreRepository: Core user data (pii_partition, pii_status, etc.)
  * - ClientRepository: OAuth 2.0 / OIDC clients
  * - SessionRepository: User sessions with expiration handling
  * - PasskeyRepository: WebAuthn credentials
@@ -15,16 +14,6 @@
  * Future additions:
  * - OrganizationRepository: Multi-tenant organizations
  */
-
-export {
-  UserCoreRepository,
-  type UserCore,
-  type CreateUserCoreInput,
-  type UpdateUserCoreInput,
-  type UserCoreFilterOptions,
-  type CoreUserType,
-  type UserStatus,
-} from './user-core';
 
 export {
   ClientRepository,

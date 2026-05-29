@@ -64,21 +64,145 @@ describe('SAML user-store helpers', () => {
     });
   });
 
-  it('finds active users by email from the runtime-resolved pii store', async () => {
+  function createCanonicalCoreAdapter(
+    tenantId: string,
+    userId: string,
+    options: { emailRef?: string; nameRef?: string; customAttributesJson?: string | null } = {}
+  ): DatabaseAdapter {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1')) {
-          expect(params).toEqual(['user-1', 'tenant-a']);
-          return { id: 'user-1' };
+        if (sql.includes('FROM identity_accounts')) {
+          expect(params).toEqual([userId, tenantId]);
+          return {
+            id: `account:${userId}`,
+            tenant_id: tenantId,
+            account_type: 'user',
+            lifecycle_state: 'active',
+            legacy_user_id: userId,
+            primary_subject_id: `subject:${userId}`,
+            display_label: null,
+            metadata_json: null,
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_010,
+            deleted_at: null,
+          };
+        }
+        if (sql.includes('FROM identity_subjects')) {
+          expect(params).toEqual([`subject:${userId}`, tenantId]);
+          return {
+            id: `subject:${userId}`,
+            tenant_id: tenantId,
+            subject_type: 'person',
+            lifecycle_state: 'active',
+            display_label: null,
+            primary_account_id: `account:${userId}`,
+            risk_tier: null,
+            assurance_level: null,
+            metadata_json: null,
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_010,
+            deleted_at: null,
+          };
+        }
+        if (sql.includes('FROM profiles')) {
+          return {
+            id: `profile:${userId}`,
+            tenant_id: tenantId,
+            subject_id: `subject:${userId}`,
+            profile_type: 'person',
+            lifecycle_state: 'active',
+            locale: null,
+            zoneinfo: null,
+            display_name_ref: null,
+            metadata_json: null,
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_000,
+            deleted_at: null,
+          };
         }
         return null;
       },
+      query: (sql) => {
+        if (sql.includes('FROM profile_attribute_values')) {
+          const rows = [];
+          if (options.nameRef) {
+            rows.push({
+              id: `profile-attribute:${userId}:name`,
+              tenant_id: tenantId,
+              profile_id: `profile:${userId}`,
+              catalog_entry_id: 'field.canonical.name',
+              value_type: 'reference',
+              value_json: null,
+              value_storage_ref: options.nameRef,
+              value_hash: null,
+              classification: 'sensitive',
+              purpose: 'profile',
+              is_primary: 1,
+              display_order: 0,
+              lifecycle_state: 'active',
+              created_at: 1_700_000_000,
+              updated_at: 1_700_000_000,
+              deleted_at: null,
+            });
+          }
+          if (options.customAttributesJson) {
+            rows.push({
+              id: `profile-attribute:${userId}:custom_attributes`,
+              tenant_id: tenantId,
+              profile_id: `profile:${userId}`,
+              catalog_entry_id: 'field.canonical.custom_attributes',
+              value_type: 'reference',
+              value_json: null,
+              value_storage_ref: `canonical-sensitive://${tenantId}/${userId}/custom_attributes_json`,
+              value_hash: null,
+              classification: 'sensitive',
+              purpose: 'profile',
+              is_primary: 0,
+              display_order: 1,
+              lifecycle_state: 'active',
+              created_at: 1_700_000_001,
+              updated_at: 1_700_000_001,
+              deleted_at: null,
+            });
+          }
+          return rows;
+        }
+        if (sql.includes('FROM contact_points')) {
+          return options.emailRef
+            ? [
+                {
+                  id: `contact:${userId}:email`,
+                  tenant_id: tenantId,
+                  subject_id: `subject:${userId}`,
+                  account_id: `account:${userId}`,
+                  contact_type: 'email',
+                  purpose: 'primary',
+                  normalized_hash: 'hash-email',
+                  value_storage_ref: options.emailRef,
+                  display_label: null,
+                  is_primary: 1,
+                  verification_state: 'verified',
+                  lifecycle_state: 'active',
+                  created_at: 1_700_000_000,
+                  updated_at: 1_700_000_000,
+                  deleted_at: null,
+                },
+              ]
+            : [];
+        }
+        return [];
+      },
     });
+    return coreAdapter;
+  }
+
+  it('finds active users by email from canonical sensitive PII storage', async () => {
+    const coreAdapter = createCanonicalCoreAdapter('tenant-a', 'user-1');
     const piiAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('FROM users_pii WHERE tenant_id = ? AND email = ?')) {
-          expect(params).toEqual(['tenant-a', 'user@example.com']);
-          return { id: 'user-1' };
+        if (sql.includes('FROM identity_sensitive_values')) {
+          expect(params).toEqual(['tenant-a', JSON.stringify('user@example.com')]);
+          return { owner_id: 'user-1' };
         }
         return null;
       },
@@ -100,12 +224,15 @@ describe('SAML user-store helpers', () => {
     ).resolves.toEqual({ id: 'user-1' });
   });
 
-  it('reads NameID email from the runtime-resolved pii store', async () => {
+  it('reads NameID email from canonical projection and PII sensitive storage', async () => {
+    const coreAdapter = createCanonicalCoreAdapter('tenant-b', 'user-2', {
+      emailRef: 'canonical-sensitive://tenant-b/user-2/email',
+    });
     const piiAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['user-2', 'tenant-b']);
-          return { email: 'nameid@example.com' };
+        if (sql.includes('FROM identity_sensitive_values')) {
+          expect(params).toEqual(['tenant-b', 'user-2', 'email']);
+          return { value_json: JSON.stringify('nameid@example.com') };
         }
         return null;
       },
@@ -118,7 +245,7 @@ describe('SAML user-store helpers', () => {
         label: 'Single DB',
         slices: {},
       },
-      coreDb: createMockAdapter(),
+      coreDb: coreAdapter,
       piiDb: piiAdapter,
     });
 
@@ -127,32 +254,28 @@ describe('SAML user-store helpers', () => {
     );
   });
 
-  it('returns complete SAML user info from runtime-resolved core and pii stores', async () => {
-    const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1')) {
-          expect(params).toEqual(['user-3', 'tenant-c']);
-          return { id: 'user-3' };
-        }
-        return null;
-      },
+  it('returns complete SAML user info from canonical projection stores', async () => {
+    const coreAdapter = createCanonicalCoreAdapter('tenant-c', 'user-3', {
+      emailRef: 'canonical-sensitive://tenant-c/user-3/email',
+      nameRef: 'canonical-sensitive://tenant-c/user-3/name',
+      customAttributesJson: JSON.stringify({
+        libraryMemberId: 'member-a',
+        piiEntitlement: ['premium'],
+      }),
     });
     const piiAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (
-          sql.includes(
-            'SELECT email, name, custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?'
-          )
-        ) {
-          expect(params).toEqual(['user-3', 'tenant-c']);
-          return {
-            email: 'full@example.com',
-            name: 'Full User',
+        if (sql.includes('FROM identity_sensitive_values')) {
+          const [, , field] = params;
+          const values: Record<string, string> = {
+            email: JSON.stringify('full@example.com'),
+            name: JSON.stringify('Full User'),
             custom_attributes_json: JSON.stringify({
               libraryMemberId: 'member-a',
               piiEntitlement: ['premium'],
             }),
           };
+          return { value_json: values[field as string] ?? null };
         }
         return null;
       },
@@ -272,7 +395,7 @@ describe('SAML user-store helpers', () => {
               catalog_entry_id: 'field.canonical.name',
               value_type: 'reference',
               value_json: null,
-              value_storage_ref: 'legacy-users-pii://tenant-d/user-4/name',
+              value_storage_ref: 'canonical-sensitive://tenant-d/user-4/name',
               value_hash: null,
               classification: 'sensitive',
               purpose: 'profile',
@@ -313,7 +436,7 @@ describe('SAML user-store helpers', () => {
               contact_type: 'email',
               purpose: 'primary',
               normalized_hash: 'hash-email',
-              value_storage_ref: 'legacy-users-pii://tenant-d/user-4/email',
+              value_storage_ref: 'canonical-sensitive://tenant-d/user-4/email',
               display_label: null,
               is_primary: 1,
               verification_state: 'verified',
@@ -329,13 +452,13 @@ describe('SAML user-store helpers', () => {
     });
     const piiAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['user-4', 'tenant-d']);
-          return { email: 'canonical@example.com' };
-        }
-        if (sql.includes('SELECT name FROM users_pii WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['user-4', 'tenant-d']);
-          return { name: 'Canonical User' };
+        if (sql.includes('FROM identity_sensitive_values')) {
+          const [, , field] = params;
+          const values: Record<string, string> = {
+            email: JSON.stringify('canonical@example.com'),
+            name: JSON.stringify('Canonical User'),
+          };
+          return { value_json: values[field as string] ?? null };
         }
         return null;
       },
@@ -352,13 +475,7 @@ describe('SAML user-store helpers', () => {
       piiDb: piiAdapter,
     });
 
-    await expect(
-      getSamlUserInfoById(
-        { DB: {}, ENABLE_CANONICAL_IDENTITY_RUNTIME: 'true' } as Env,
-        'tenant-d',
-        'user-4'
-      )
-    ).resolves.toEqual({
+    await expect(getSamlUserInfoById({ DB: {} } as Env, 'tenant-d', 'user-4')).resolves.toEqual({
       id: 'user-4',
       email: 'canonical@example.com',
       name: 'Canonical User',

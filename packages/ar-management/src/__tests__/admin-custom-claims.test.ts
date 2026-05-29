@@ -212,6 +212,20 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }),
     getRequiredCustomClaimViolationStatuses: (...args: unknown[]) =>
       mockGetRequiredCustomClaimViolationStatuses(...args),
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        const rows = await mockPiiQuery('CANONICAL_RUNTIME_USER_PREVIEW', userId);
+        const row = Array.isArray(rows) ? rows[0] : null;
+        if (!row) {
+          return null;
+        }
+        return {
+          id: userId,
+          email: row.email ?? null,
+          name: row.name ?? null,
+        };
+      }
+    },
   };
 });
 

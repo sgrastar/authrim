@@ -16,7 +16,7 @@
  * app.get('/userinfo', async (c) => {
  *   // Requires requestContextMiddleware, or pass an explicit tenant ID.
  *   const ctx = createPIIContextFromHono(c);
- *   const userPII = await ctx.piiRepositories.userPII.findByUserId(userId);
+ *   // Runtime users are materialized through CanonicalRuntimeUserStore.
  * });
  * ```
  *

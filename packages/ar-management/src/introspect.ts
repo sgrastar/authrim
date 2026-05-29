@@ -503,15 +503,22 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // ========== User Status Check (suspended/locked users) ==========
   // RFC 7009: Tokens for suspended/locked users should be inactive
   // This ensures access tokens are immediately invalidated when a user is suspended
-  // Note: Using users_core for PII-separated architecture
   if (sub) {
     try {
-      const user = await authCtx.coreAdapter.queryOne<{ status: string }>(
-        'SELECT status FROM users_core WHERE id = ? AND tenant_id = ?',
+      const user = await authCtx.coreAdapter.queryOne<{
+        lifecycle_state: string;
+        metadata_json: string | null;
+      }>(
+        'SELECT lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
         [sub, tenantId]
       );
       // Return inactive if user is suspended or locked
-      if (user && (user.status === 'suspended' || user.status === 'locked')) {
+      const metadata = user?.metadata_json ? JSON.parse(user.metadata_json) : {};
+      const status = typeof metadata.status === 'string' ? metadata.status : null;
+      if (
+        user &&
+        (user.lifecycle_state !== 'active' || status === 'suspended' || status === 'locked')
+      ) {
         return c.json<IntrospectionResponse>({
           active: false,
         });

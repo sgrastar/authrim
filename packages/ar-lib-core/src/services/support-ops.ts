@@ -31,6 +31,7 @@ export interface SupportOpsSqlResourceDescriptor extends Omit<
 > {
   table: string;
   idColumn: string;
+  activeWhereSql: string;
   fields: Record<string, SupportOpsSqlFieldDescriptor>;
 }
 
@@ -47,14 +48,15 @@ const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
   displayName: 'Users',
   minCount: 10,
   maxSnapshotCount: 10_000,
-  table: 'users_core',
-  idColumn: 'id',
+  table: 'identity_accounts',
+  idColumn: 'legacy_user_id',
+  activeWhereSql: "lifecycle_state = 'active' AND legacy_user_id IS NOT NULL",
   fields: {
     status: {
-      column: 'status',
+      column: "json_extract(metadata_json, '$.status')",
       type: 'enum',
       filterable: true,
-      aggregatable: true,
+      aggregatable: false,
       sensitive: false,
       operators: DEFAULT_OPERATORS.enum,
       values: ['active', 'suspended', 'locked'],
@@ -78,30 +80,32 @@ const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
       ],
     },
     email_verified: {
-      column: 'email_verified',
+      column:
+        "(EXISTS (SELECT 1 FROM contact_points cp WHERE cp.tenant_id = identity_accounts.tenant_id AND cp.account_id = identity_accounts.id AND cp.contact_type = 'email' AND cp.verification_state = 'verified' AND cp.lifecycle_state = 'active'))",
       type: 'boolean',
       filterable: true,
-      aggregatable: true,
+      aggregatable: false,
       sensitive: false,
       operators: DEFAULT_OPERATORS.boolean,
     },
     pii_status: {
-      column: 'pii_status',
+      column:
+        "(CASE WHEN EXISTS (SELECT 1 FROM identity_sensitive_values isv WHERE isv.tenant_id = identity_accounts.tenant_id AND isv.owner_type = 'runtime_user' AND isv.owner_id = identity_accounts.legacy_user_id AND isv.lifecycle_state = 'active') THEN 'active' ELSE 'none' END)",
       type: 'enum',
       filterable: true,
-      aggregatable: true,
+      aggregatable: false,
       sensitive: false,
       operators: DEFAULT_OPERATORS.enum,
-      values: ['none', 'pending', 'active', 'failed', 'deleted'],
+      values: ['none', 'active'],
     },
     user_type: {
-      column: 'user_type',
+      column: 'account_type',
       type: 'enum',
       filterable: true,
       aggregatable: true,
       sensitive: false,
       operators: DEFAULT_OPERATORS.enum,
-      values: ['end_user', 'admin', 'm2m'],
+      values: ['user', 'admin', 'service_account', 'anonymous'],
     },
     created_at: {
       column: 'created_at',

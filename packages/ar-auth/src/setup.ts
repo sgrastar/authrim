@@ -118,10 +118,6 @@ const moduleLogger = createLogger().module('SETUP');
 // Create Hono app for setup routes
 export const setupApp = new Hono<{ Bindings: Env }>();
 
-function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
-  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
-}
-
 /**
  * Generate a cryptographically secure random string
  */
@@ -346,22 +342,15 @@ async function rollbackUserCreation(
 
     // Fallback to legacy DB
     const authCtx = createAuthContextFromHono(c, tenantId);
-
-    if (isCanonicalIdentityRuntimeEnabled(c.env)) {
-      const writer = new CanonicalRuntimeUserWriter(
-        new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId)
-      );
-      await writer.deleteRuntimeUser(userId);
-    }
-
-    // Delete from users_core
-    await authCtx.repositories.userCore.delete(userId);
-
-    // Delete from the configured PII user store
     const piiCtx = createPIIContextFromHono(c, tenantId);
-    await piiCtx.piiRepositories.userPII.delete(userId);
 
-    moduleLogger.info('User rollback completed (legacy)', {
+    const writer = new CanonicalRuntimeUserWriter(
+      new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId),
+      piiCtx.defaultPiiAdapter
+    );
+    await writer.deleteRuntimeUser(userId);
+
+    moduleLogger.info('User rollback completed (canonical runtime)', {
       action: 'rollback_completed',
       userId: userId.substring(0, 8) + '...',
       database: 'DB_CORE',
@@ -592,52 +581,36 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       // Set email as verified for initial admin
       await adminUserRepo.setEmailVerified(userId);
     } else {
-      // Fallback to legacy DB (users_core + users_pii)
+      // Fallback to canonical runtime user store when DB_ADMIN is unavailable.
       const authCtx = createAuthContextFromHono(c, tenantId);
-
-      // Create user in users_core (non-PII)
-      // Note: user_type is 'end_user' | 'admin' | 'm2m' - admin for initial setup
-      await authCtx.repositories.userCore.createUser({
-        id: userId,
-        tenant_id: tenantId,
-        email_verified: true, // Admin email is trusted
-        user_type: 'admin',
-        pii_partition: tenantId,
-        pii_status: 'pending',
-      });
-      createdUserId = userId;
-
-      // Create user in the configured PII store
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const preferredUsername = email.split('@')[0];
-      await piiCtx.piiRepositories.userPII.createPII({
-        id: userId,
-        tenant_id: tenantId,
-        email: email.toLowerCase(),
-        name: name || null,
-        preferred_username: preferredUsername,
-      });
 
-      if (isCanonicalIdentityRuntimeEnabled(c.env)) {
-        const writer = new CanonicalRuntimeUserWriter(
-          new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId)
-        );
-        await writer.createFromRuntimeUser({
-          userId,
-          tenantId,
-          active: true,
-          emailVerified: true,
-          phoneNumberVerified: false,
-          userType: 'admin',
-          displayName: name || email.toLowerCase(),
-          sourceRef: 'setup:/api/admin-init-setup/initialize',
-          piiFields: {
-            email: true,
-            name: true,
-            preferred_username: true,
-          },
-        });
-      }
+      const writer = new CanonicalRuntimeUserWriter(
+        new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId),
+        piiCtx.defaultPiiAdapter
+      );
+      await writer.createFromRuntimeUser({
+        userId,
+        tenantId,
+        active: true,
+        emailVerified: true,
+        phoneNumberVerified: false,
+        userType: 'admin',
+        displayName: name || email.toLowerCase(),
+        sourceRef: 'setup:/api/admin-init-setup/initialize',
+        piiFields: {
+          email: true,
+          name: true,
+          preferred_username: true,
+        },
+        sensitiveValues: {
+          email: email.toLowerCase(),
+          name: name || null,
+          preferred_username: preferredUsername,
+        },
+      });
+      createdUserId = userId;
     }
 
     // Assign super_admin role

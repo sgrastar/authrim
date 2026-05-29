@@ -61,6 +61,26 @@ export interface IdentityMappingFederationTrustSourceSummary {
 	updatedAt?: number;
 }
 
+export interface IdentityMappingFederationTrustSourceRequest {
+	sourceType: 'saml_aggregate' | 'saml_metadata' | 'saml_federation';
+	sourceKey: string;
+	displayName: string;
+	lifecycleState?: 'draft' | 'active' | 'retired';
+	protocolPayload?: Record<string, unknown>;
+	anchors?: Array<{
+		anchorType: string;
+		anchorHash: string;
+		anchorRef?: string | null;
+		notBefore?: number | null;
+		notAfter?: number | null;
+	}>;
+	scopeBindings?: Array<{
+		scopeType: string;
+		scopeId?: string | null;
+		priority?: number;
+	}>;
+}
+
 export interface IdentityMappingFederationMetadataDocument {
 	id: string;
 	tenantId: string;
@@ -272,6 +292,43 @@ export const adminIdentityMappingAPI = {
 			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`
 		);
 		return parseJson(response, 'Failed to load federation trust sources');
+	},
+
+	async createFederationTrustSource(
+		request: IdentityMappingFederationTrustSourceRequest
+	): Promise<IdentityMappingFederationTrustSourceSummary> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create federation trust source');
+	},
+
+	async updateFederationTrustSource(
+		trustSourceId: string,
+		request: IdentityMappingFederationTrustSourceRequest
+	): Promise<IdentityMappingFederationTrustSourceSummary> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to update federation trust source');
+	},
+
+	async deleteFederationTrustSource(trustSourceId: string): Promise<{ success: boolean }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
+			{ method: 'DELETE' }
+		);
+		return parseJson(response, 'Failed to delete federation trust source');
 	},
 
 	async listFederationMetadataDocuments(

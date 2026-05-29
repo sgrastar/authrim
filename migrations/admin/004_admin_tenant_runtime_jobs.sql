@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Authrim Admin Baseline: Tenant Runtime and Jobs
--- Consolidated for fresh Authrim installs from admin/017_external_token_refresh_runs.sql, admin/018_tenant_database_registry.sql, admin/019_tenant_database_stats.sql, admin/020_tenant_discovery_and_runtime_registry.sql, admin/021_internal_notification_events.sql, admin/022_tenant_database_migration_jobs.sql, admin/023_admin_jobs.sql, admin/024_tenant_database_slots.sql, admin/025_saml_federation_trust_profiles.sql.
+-- Consolidated for fresh Authrim installs from admin/017_external_token_refresh_runs.sql, admin/018_tenant_database_registry.sql, admin/019_tenant_database_stats.sql, admin/020_tenant_discovery_and_runtime_registry.sql, admin/021_internal_notification_events.sql, admin/022_tenant_database_migration_jobs.sql, admin/023_admin_jobs.sql, admin/024_tenant_database_slots.sql.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -636,30 +636,3 @@ CREATE INDEX IF NOT EXISTS idx_tenant_database_slot_audit_tenant
 
 CREATE INDEX IF NOT EXISTS idx_tenant_database_slot_audit_slot
   ON tenant_database_slot_audit_events(slot_id, created_at);
-
--- -----------------------------------------------------------------------------
--- Source: admin/025_saml_federation_trust_profiles.sql
--- -----------------------------------------------------------------------------
-
--- Tenant-level SAML federation metadata trust profiles.
--- Stored in the control-plane/admin database so trust anchors can be configured before
--- tenant-owned provider storage is provisioned.
-
-CREATE TABLE IF NOT EXISTS saml_federation_trust_profiles (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT,
-  metadata_url_patterns_json TEXT NOT NULL,
-  certificates_json TEXT NOT NULL,
-  policy TEXT CHECK (policy IN ('strict', 'warn', 'disabled')),
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_saml_federation_trust_profiles_tenant
-  ON saml_federation_trust_profiles(tenant_id, enabled, name);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_saml_federation_trust_profiles_tenant_name
-  ON saml_federation_trust_profiles(tenant_id, name);

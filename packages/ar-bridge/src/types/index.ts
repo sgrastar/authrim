@@ -325,6 +325,11 @@ export const ExternalIdPErrorCode = {
   CALLBACK_FAILED: 'callback_failed',
 
   /**
+   * Internal error while creating or materializing a local account.
+   */
+  ACCOUNT_CREATION_FAILED: 'account_creation_failed',
+
+  /**
    * Identity stitching would auto-link, but email is not verified on Authrim side.
    * User should verify their email first.
    */

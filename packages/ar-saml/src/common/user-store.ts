@@ -2,7 +2,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   ensureDatabaseAdapter,
   CanonicalRuntimeUserProjectionRepository,
-  LegacyUsersPiiValueResolver,
+  CanonicalSensitiveValueResolver,
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveUserStoreRuntimeSourcesFromEnv,
   type DatabaseAdapter,
@@ -24,23 +24,19 @@ async function resolveUserStoreAdapters(
   };
 }
 
-function isCanonicalIdentityRuntimeEnabled(env: Env): boolean {
-  return env.ENABLE_CANONICAL_IDENTITY_RUNTIME?.toLowerCase() === 'true';
-}
-
 function createCanonicalProjectionRepository(
-  env: Env,
+  _env: Env,
   tenantId: string,
   coreAdapter: DatabaseAdapter,
   piiAdapter: DatabaseAdapter | null
 ): CanonicalRuntimeUserProjectionRepository | null {
-  if (!isCanonicalIdentityRuntimeEnabled(env) || !piiAdapter) {
+  if (!piiAdapter) {
     return null;
   }
   return new CanonicalRuntimeUserProjectionRepository(
     coreAdapter,
     tenantId,
-    new LegacyUsersPiiValueResolver(piiAdapter)
+    new CanonicalSensitiveValueResolver(piiAdapter)
   );
 }
 
@@ -50,24 +46,33 @@ export async function findActiveSamlUserByEmail(
   email: string
 ): Promise<{ id: string } | null> {
   const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
-  if (!piiAdapter) {
+  const projectionRepository = createCanonicalProjectionRepository(
+    env,
+    tenantId,
+    coreAdapter,
+    piiAdapter
+  );
+  if (!piiAdapter || !projectionRepository) {
     return null;
   }
 
-  const userPII = await piiAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
-    [tenantId, email]
+  const sensitiveEmail = await piiAdapter.queryOne<{ owner_id: string }>(
+    `SELECT owner_id
+       FROM identity_sensitive_values
+      WHERE tenant_id = ?
+        AND owner_type = 'runtime_user'
+        AND value_key = 'email'
+        AND value_json = ?
+        AND lifecycle_state = 'active'
+      LIMIT 1`,
+    [tenantId, JSON.stringify(email)]
   );
-  if (!userPII) {
+  if (!sensitiveEmail) {
     return null;
   }
 
-  const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-    [userPII.id, tenantId]
-  );
-
-  return userCore ? { id: userCore.id } : null;
+  const projection = await projectionRepository.findByLegacyUserId(sensitiveEmail.owner_id);
+  return projection?.active ? { id: projection.id } : null;
 }
 
 export async function getSamlUserNameIdById(
@@ -85,16 +90,7 @@ export async function getSamlUserNameIdById(
   if (canonicalProjection) {
     return canonicalProjection.email;
   }
-
-  if (!piiAdapter) {
-    return null;
-  }
-
-  const userPII = await piiAdapter.queryOne<{ email: string }>(
-    'SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?',
-    [userId, tenantId]
-  );
-  return userPII?.email ?? null;
+  return null;
 }
 
 export async function getSamlUserInfoById(
@@ -118,36 +114,7 @@ export async function getSamlUserInfoById(
       customFields: parseCustomFields(canonicalProjection.custom_attributes_json),
     };
   }
-
-  const userCore = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-    [userId, tenantId]
-  );
-
-  if (!userCore || !piiAdapter) {
-    return null;
-  }
-
-  const userPII = await piiAdapter.queryOne<{
-    email: string;
-    name: string | null;
-    custom_attributes_json: string | null;
-  }>('SELECT email, name, custom_attributes_json FROM users_pii WHERE id = ? AND tenant_id = ?', [
-    userId,
-    tenantId,
-  ]);
-
-  if (!userPII?.email) {
-    return null;
-  }
-
-  return {
-    id: userCore.id,
-    email: userPII.email,
-    name: userPII.name ?? undefined,
-    customClaims: await getNonPiiCustomClaims(env, tenantId, userId),
-    customFields: parseCustomFields(userPII.custom_attributes_json),
-  };
+  return null;
 }
 
 async function getNonPiiCustomClaims(

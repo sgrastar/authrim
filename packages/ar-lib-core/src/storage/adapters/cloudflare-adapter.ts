@@ -13,6 +13,11 @@
  * - Other keys → KV storage (fallback)
  */
 
+import type { DatabaseAdapter, ExecuteResult } from '../../db/adapter';
+import {
+  CanonicalRuntimeUserStore,
+  type CanonicalRuntimeUserProjection,
+} from '../../repositories/identity';
 import type {
   IStorageAdapter,
   IUserStore,
@@ -63,6 +68,69 @@ type SessionStoreRpcStub = {
   invalidateSessionRpc(sessionId: string): Promise<boolean>;
   extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null>;
 };
+
+function toExecuteResult(result: D1Result): ExecuteResult {
+  return {
+    rowsAffected: result.meta?.changes ?? 0,
+    lastInsertRowid: result.meta?.last_row_id,
+    success: result.success,
+    durationMs: result.meta?.duration,
+  };
+}
+
+function toNumberTimestamp(value: string | number | null | undefined): number {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (!value) {
+    return Date.now();
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function parseAddress(value: string | null): User['address'] {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as User['address'])
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function toRuntimeUser(projection: CanonicalRuntimeUserProjection): User {
+  return {
+    id: projection.id,
+    email: projection.email ?? '',
+    email_verified: projection.email_verified === 1,
+    password_hash: projection.password_hash ?? undefined,
+    name: projection.name ?? undefined,
+    family_name: projection.family_name ?? undefined,
+    given_name: projection.given_name ?? undefined,
+    middle_name: projection.middle_name ?? undefined,
+    nickname: projection.nickname ?? undefined,
+    preferred_username: projection.preferred_username ?? undefined,
+    profile: projection.profile ?? undefined,
+    picture: projection.picture ?? undefined,
+    website: projection.website ?? undefined,
+    gender: projection.gender ?? undefined,
+    birthdate: projection.birthdate ?? undefined,
+    zoneinfo: projection.zoneinfo ?? undefined,
+    locale: projection.locale ?? undefined,
+    phone_number: projection.phone_number ?? undefined,
+    phone_number_verified: projection.phone_number_verified === 1,
+    address: parseAddress(projection.address_json),
+    created_at: toNumberTimestamp(projection.created_at),
+    updated_at: toNumberTimestamp(projection.updated_at),
+    last_login_at: projection.last_login_at ?? undefined,
+    is_active: projection.active === 1,
+  };
+}
 
 /**
  * CloudflareStorageAdapter
@@ -559,381 +627,196 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   }
 }
 
-/**
- * UserStore implementation (D1-based with PII/Non-PII DB separation)
- *
- * Users are stored in two separate databases:
- * - users_core (DB): Non-PII data (id, email_verified, is_active, etc.)
- * - users_pii (DB_PII): PII data (email, name, phone, address, etc.)
- *
- * This separation enables:
- * - GDPR/CCPA compliance (PII can be stored in regional DBs)
- * - Fine-grained access control (PII requires explicit access)
- * - Audit-friendly data classification
- */
 export class UserStore implements IUserStore {
   constructor(private adapter: CloudflareStorageAdapter) {}
 
-  /**
-   * Get user by ID
-   *
-   * Queries both users_core (DB) and users_pii (DB_PII) and merges the results.
-   */
-  async get(userId: string): Promise<User | null> {
-    const tenantId = this.adapter.getConfiguredTenantId();
-
-    // Query both databases in parallel
-    const [coreResults, piiResults] = await Promise.all([
-      this.adapter.query<UserCoreRow>(
-        'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE tenant_id = ? AND id = ?',
-        [tenantId, userId]
-      ),
-      this.adapter.queryPII<UserPIIRow>(
-        `SELECT id, email, name, given_name, family_name, middle_name, nickname, preferred_username,
-                profile, picture, website, gender, birthdate, zoneinfo, locale, phone_number,
-                address_formatted, address_street_address, address_locality, address_region,
-                address_postal_code, address_country
-         FROM users_pii WHERE tenant_id = ? AND id = ?`,
-        [tenantId, userId]
-      ),
-    ]);
-
-    const core = coreResults[0];
-    const pii = piiResults[0];
-
-    if (!core) return null;
-
-    return this.mergeUserData(core, pii);
+  private createCoreAdapter(): DatabaseAdapter {
+    const adapter = {
+      query: <T>(sql: string, params?: unknown[]) => this.adapter.query<T>(sql, params),
+      queryOne: async <T>(sql: string, params?: unknown[]) => {
+        const rows = await this.adapter.query<T>(sql, params);
+        return rows[0] ?? null;
+      },
+      execute: async (sql: string, params?: unknown[]) =>
+        toExecuteResult(await this.adapter.execute(sql, params)),
+      transaction: async <T>(fn: (tx: DatabaseAdapter) => Promise<T>) =>
+        fn(this.createCoreAdapter()),
+    };
+    return adapter as unknown as DatabaseAdapter;
   }
 
-  /**
-   * Get user by email
-   *
-   * Queries users_pii first (since email is stored there), then fetches users_core.
-   */
+  private createPiiAdapter(): DatabaseAdapter {
+    const adapter = {
+      query: <T>(sql: string, params?: unknown[]) => this.adapter.queryPII<T>(sql, params ?? []),
+      queryOne: async <T>(sql: string, params?: unknown[]) => {
+        const rows = await this.adapter.queryPII<T>(sql, params ?? []);
+        return rows[0] ?? null;
+      },
+      execute: async (sql: string, params?: unknown[]) =>
+        toExecuteResult(await this.adapter.executePII(sql, params ?? [])),
+    };
+    return adapter as unknown as DatabaseAdapter;
+  }
+
+  private createCanonicalStore(): CanonicalRuntimeUserStore {
+    return new CanonicalRuntimeUserStore({
+      coreAdapter: this.createCoreAdapter(),
+      piiAdapter: this.createPiiAdapter(),
+      tenantId: this.adapter.getConfiguredTenantId(),
+    });
+  }
+
+  async get(userId: string): Promise<User | null> {
+    const projection = await this.createCanonicalStore().findById(userId);
+    return projection ? toRuntimeUser(projection) : null;
+  }
+
   async getByEmail(
     email: string,
-    tenantId = this.adapter.getConfiguredTenantId()
+    _tenantId = this.adapter.getConfiguredTenantId()
   ): Promise<User | null> {
-    // Use tenant_id + email for idx_users_pii_email composite index
-
-    // First find user in PII DB by email
-    const piiResults = await this.adapter.queryPII<UserPIIRow>(
-      `SELECT id, email, name, given_name, family_name, middle_name, nickname, preferred_username,
-              profile, picture, website, gender, birthdate, zoneinfo, locale, phone_number,
-              address_formatted, address_street_address, address_locality, address_region,
-              address_postal_code, address_country
-       FROM users_pii WHERE tenant_id = ? AND email = ?`,
-      [tenantId, email]
-    );
-
-    const pii = piiResults[0];
-    if (!pii) return null;
-
-    // Then fetch core data by ID
-    const coreResults = await this.adapter.query<UserCoreRow>(
-      'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE tenant_id = ? AND id = ?',
-      [tenantId, pii.id]
-    );
-
-    const core = coreResults[0];
-    if (!core) return null;
-
-    return this.mergeUserData(core, pii);
+    const projection = await this.createCanonicalStore().findByEmail(email);
+    return projection ? toRuntimeUser(projection) : null;
   }
 
-  /**
-   * Create a new user
-   *
-   * Inserts into both users_core (DB) and users_pii (DB_PII).
-   */
   async create(
     user: Partial<User> & { tenant_id?: string; pii_partition?: string }
   ): Promise<User> {
     const id = crypto.randomUUID();
-    const now = Date.now(); // Store in milliseconds
-    const tenantId = user.tenant_id ?? this.adapter.getConfiguredTenantId();
-    const piiPartition = user.pii_partition ?? tenantId;
-
-    const newUser: User = {
-      id,
-      email: user.email!,
-      email_verified: user.email_verified || false,
-      name: user.name,
-      family_name: user.family_name,
-      given_name: user.given_name,
-      middle_name: user.middle_name,
-      nickname: user.nickname,
-      preferred_username: user.preferred_username,
-      profile: user.profile,
-      picture: user.picture,
-      website: user.website,
-      gender: user.gender,
-      birthdate: user.birthdate,
-      zoneinfo: user.zoneinfo,
-      locale: user.locale,
-      phone_number: user.phone_number,
-      phone_number_verified: user.phone_number_verified,
-      address: user.address,
-      created_at: now,
-      updated_at: now,
-      last_login_at: user.last_login_at,
-      mfa_enabled: user.mfa_enabled,
-      mfa_secret: user.mfa_secret,
-      is_active: user.is_active !== undefined ? user.is_active : true,
-      is_locked: user.is_locked,
-      failed_login_attempts: user.failed_login_attempts,
-    };
-
-    // Insert into users_core (DB) - non-PII data
-    await this.adapter.execute(
-      `INSERT INTO users_core (
-        id, tenant_id, email_verified, phone_number_verified, password_hash,
-        is_active, pii_partition, pii_status, created_at, updated_at, last_login_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        newUser.id,
-        tenantId,
-        newUser.email_verified ? 1 : 0,
-        newUser.phone_number_verified ? 1 : 0,
-        user.password_hash || null,
-        newUser.is_active ? 1 : 0,
-        piiPartition,
-        'active', // pii_status
-        newUser.created_at,
-        newUser.updated_at,
-        newUser.last_login_at || null,
-      ]
-    );
-
-    // Insert into users_pii (DB_PII) - PII data
-    await this.adapter.executePII(
-      `INSERT INTO users_pii (
-        id, tenant_id, email, name, given_name, family_name, middle_name, nickname,
-        preferred_username, profile, picture, website, gender, birthdate, zoneinfo, locale,
-        phone_number, address_formatted, address_street_address, address_locality,
-        address_region, address_postal_code, address_country, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        newUser.id,
-        tenantId,
-        newUser.email,
-        newUser.name || null,
-        newUser.given_name || null,
-        newUser.family_name || null,
-        newUser.middle_name || null,
-        newUser.nickname || null,
-        newUser.preferred_username || null,
-        newUser.profile || null,
-        newUser.picture || null,
-        newUser.website || null,
-        newUser.gender || null,
-        newUser.birthdate || null,
-        newUser.zoneinfo || null,
-        newUser.locale || null,
-        newUser.phone_number || null,
-        newUser.address?.formatted || null,
-        newUser.address?.street_address || null,
-        newUser.address?.locality || null,
-        newUser.address?.region || null,
-        newUser.address?.postal_code || null,
-        newUser.address?.country || null,
-        newUser.created_at,
-        newUser.updated_at,
-      ]
-    );
-
-    return newUser;
+    await this.createCanonicalStore().syncUser({
+      userId: id,
+      email: user.email ?? null,
+      name: user.name ?? null,
+      active: user.is_active ?? true,
+      emailVerified: user.email_verified ?? false,
+      phoneNumberVerified: user.phone_number_verified ?? false,
+      userType: 'end_user',
+      passwordHash: user.password_hash ?? null,
+      piiFields: {
+        email: user.email !== undefined && user.email !== null,
+        name: user.name !== undefined && user.name !== null,
+        given_name: user.given_name !== undefined && user.given_name !== null,
+        family_name: user.family_name !== undefined && user.family_name !== null,
+        middle_name: user.middle_name !== undefined && user.middle_name !== null,
+        nickname: user.nickname !== undefined && user.nickname !== null,
+        preferred_username:
+          user.preferred_username !== undefined && user.preferred_username !== null,
+        profile: user.profile !== undefined && user.profile !== null,
+        picture: user.picture !== undefined && user.picture !== null,
+        website: user.website !== undefined && user.website !== null,
+        gender: user.gender !== undefined && user.gender !== null,
+        birthdate: user.birthdate !== undefined && user.birthdate !== null,
+        zoneinfo: user.zoneinfo !== undefined && user.zoneinfo !== null,
+        locale: user.locale !== undefined && user.locale !== null,
+        phone_number: user.phone_number !== undefined && user.phone_number !== null,
+      },
+      sensitiveValues: {
+        email: user.email ?? undefined,
+        name: user.name ?? undefined,
+        given_name: user.given_name ?? undefined,
+        family_name: user.family_name ?? undefined,
+        middle_name: user.middle_name ?? undefined,
+        nickname: user.nickname ?? undefined,
+        preferred_username: user.preferred_username ?? undefined,
+        profile: user.profile ?? undefined,
+        picture: user.picture ?? undefined,
+        website: user.website ?? undefined,
+        gender: user.gender ?? undefined,
+        birthdate: user.birthdate ?? undefined,
+        zoneinfo: user.zoneinfo ?? undefined,
+        locale: user.locale ?? undefined,
+        phone_number: user.phone_number ?? undefined,
+      },
+      addressJson: user.address ? JSON.stringify(user.address) : undefined,
+      metadata: {
+        ...(user.mfa_enabled !== undefined ? { mfa_enabled: user.mfa_enabled } : {}),
+        ...(user.mfa_secret !== undefined ? { mfa_secret: user.mfa_secret } : {}),
+        ...(user.is_locked !== undefined ? { is_locked: user.is_locked } : {}),
+        ...(user.locked_until !== undefined ? { locked_until: user.locked_until } : {}),
+        ...(user.failed_login_attempts !== undefined
+          ? { failed_login_attempts: user.failed_login_attempts }
+          : {}),
+      },
+    });
+    const created = await this.get(id);
+    if (!created) {
+      throw new Error(`Failed to create canonical runtime user: ${id}`);
+    }
+    return created;
   }
 
-  /**
-   * Update an existing user
-   *
-   * Updates both users_core (DB) and users_pii (DB_PII).
-   */
   async update(userId: string, updates: Partial<User>): Promise<User> {
-    const tenantId = this.adapter.getConfiguredTenantId();
     const existing = await this.get(userId);
     if (!existing) {
       throw new Error(`User not found: ${userId}`);
     }
 
-    const updated: User = {
-      ...existing,
-      ...updates,
-      id: userId, // Prevent changing ID
-      updated_at: Date.now(), // Store in milliseconds
-    };
-
-    // Update users_core (DB) - non-PII data
-    await this.adapter.execute(
-      `UPDATE users_core SET
-        email_verified = ?, phone_number_verified = ?, password_hash = ?,
-        is_active = ?, updated_at = ?, last_login_at = ?
-      WHERE tenant_id = ? AND id = ?`,
-      [
-        updated.email_verified ? 1 : 0,
-        updated.phone_number_verified ? 1 : 0,
-        updates.password_hash ?? existing.password_hash ?? null,
-        updated.is_active ? 1 : 0,
-        updated.updated_at,
-        updated.last_login_at || null,
-        tenantId,
-        userId,
-      ]
-    );
-
-    // Update users_pii (DB_PII) - PII data
-    await this.adapter.executePII(
-      `UPDATE users_pii SET
-        email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
-        nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
-        gender = ?, birthdate = ?, zoneinfo = ?, locale = ?, phone_number = ?,
-        address_formatted = ?, address_street_address = ?, address_locality = ?,
-        address_region = ?, address_postal_code = ?, address_country = ?, updated_at = ?
-      WHERE tenant_id = ? AND id = ?`,
-      [
-        updated.email,
-        updated.name || null,
-        updated.given_name || null,
-        updated.family_name || null,
-        updated.middle_name || null,
-        updated.nickname || null,
-        updated.preferred_username || null,
-        updated.profile || null,
-        updated.picture || null,
-        updated.website || null,
-        updated.gender || null,
-        updated.birthdate || null,
-        updated.zoneinfo || null,
-        updated.locale || null,
-        updated.phone_number || null,
-        updated.address?.formatted || null,
-        updated.address?.street_address || null,
-        updated.address?.locality || null,
-        updated.address?.region || null,
-        updated.address?.postal_code || null,
-        updated.address?.country || null,
-        updated.updated_at,
-        tenantId,
-        userId,
-      ]
-    );
-
+    await this.createCanonicalStore().syncUser({
+      userId,
+      email: updates.email ?? existing.email,
+      name: updates.name ?? existing.name ?? null,
+      active: updates.is_active ?? existing.is_active,
+      emailVerified: updates.email_verified ?? existing.email_verified,
+      phoneNumberVerified: updates.phone_number_verified ?? existing.phone_number_verified,
+      userType: 'end_user',
+      passwordHash: updates.password_hash ?? existing.password_hash ?? null,
+      piiFields: {
+        email: updates.email !== undefined,
+        name: updates.name !== undefined,
+        given_name: updates.given_name !== undefined,
+        family_name: updates.family_name !== undefined,
+        middle_name: updates.middle_name !== undefined,
+        nickname: updates.nickname !== undefined,
+        preferred_username: updates.preferred_username !== undefined,
+        profile: updates.profile !== undefined,
+        picture: updates.picture !== undefined,
+        website: updates.website !== undefined,
+        gender: updates.gender !== undefined,
+        birthdate: updates.birthdate !== undefined,
+        zoneinfo: updates.zoneinfo !== undefined,
+        locale: updates.locale !== undefined,
+        phone_number: updates.phone_number !== undefined,
+      },
+      sensitiveValues: {
+        ...(updates.email !== undefined ? { email: updates.email } : {}),
+        ...(updates.name !== undefined ? { name: updates.name } : {}),
+        ...(updates.given_name !== undefined ? { given_name: updates.given_name } : {}),
+        ...(updates.family_name !== undefined ? { family_name: updates.family_name } : {}),
+        ...(updates.middle_name !== undefined ? { middle_name: updates.middle_name } : {}),
+        ...(updates.nickname !== undefined ? { nickname: updates.nickname } : {}),
+        ...(updates.preferred_username !== undefined
+          ? { preferred_username: updates.preferred_username }
+          : {}),
+        ...(updates.profile !== undefined ? { profile: updates.profile } : {}),
+        ...(updates.picture !== undefined ? { picture: updates.picture } : {}),
+        ...(updates.website !== undefined ? { website: updates.website } : {}),
+        ...(updates.gender !== undefined ? { gender: updates.gender } : {}),
+        ...(updates.birthdate !== undefined ? { birthdate: updates.birthdate } : {}),
+        ...(updates.zoneinfo !== undefined ? { zoneinfo: updates.zoneinfo } : {}),
+        ...(updates.locale !== undefined ? { locale: updates.locale } : {}),
+        ...(updates.phone_number !== undefined ? { phone_number: updates.phone_number } : {}),
+      },
+      addressJson: updates.address !== undefined ? JSON.stringify(updates.address) : undefined,
+      metadata: {
+        ...(updates.mfa_enabled !== undefined ? { mfa_enabled: updates.mfa_enabled } : {}),
+        ...(updates.mfa_secret !== undefined ? { mfa_secret: updates.mfa_secret } : {}),
+        ...(updates.is_locked !== undefined ? { is_locked: updates.is_locked } : {}),
+        ...(updates.locked_until !== undefined ? { locked_until: updates.locked_until } : {}),
+        ...(updates.failed_login_attempts !== undefined
+          ? { failed_login_attempts: updates.failed_login_attempts }
+          : {}),
+      },
+    });
+    const updated = await this.get(userId);
+    if (!updated) {
+      throw new Error(`Failed to update canonical runtime user: ${userId}`);
+    }
     return updated;
   }
 
-  /**
-   * Delete a user (soft delete)
-   *
-   * Sets is_active = 0 in users_core instead of physically deleting.
-   * For GDPR Art.17 compliance, use the Admin API's PII deletion endpoint.
-   */
   async delete(userId: string): Promise<void> {
-    const tenantId = this.adapter.getConfiguredTenantId();
-
-    // Soft delete: set is_active = 0
-    await this.adapter.execute(
-      'UPDATE users_core SET is_active = 0, updated_at = ? WHERE tenant_id = ? AND id = ?',
-      [Date.now(), tenantId, userId]
-    );
+    await this.createCanonicalStore().deleteUser(userId);
   }
-
-  // =============================================================================
-  // Helper Methods
-  // =============================================================================
-
-  /**
-   * Merge users_core and users_pii data into a single User object
-   */
-  private mergeUserData(core: UserCoreRow, pii?: UserPIIRow): User {
-    const address =
-      pii?.address_formatted ||
-      pii?.address_street_address ||
-      pii?.address_locality ||
-      pii?.address_region ||
-      pii?.address_postal_code ||
-      pii?.address_country
-        ? {
-            formatted: pii.address_formatted || undefined,
-            street_address: pii.address_street_address || undefined,
-            locality: pii.address_locality || undefined,
-            region: pii.address_region || undefined,
-            postal_code: pii.address_postal_code || undefined,
-            country: pii.address_country || undefined,
-          }
-        : undefined;
-
-    return {
-      id: core.id,
-      email: pii?.email || '', // Fallback if PII not found
-      email_verified: core.email_verified === 1,
-      password_hash: core.password_hash || undefined,
-      name: pii?.name || undefined,
-      family_name: pii?.family_name || undefined,
-      given_name: pii?.given_name || undefined,
-      middle_name: pii?.middle_name || undefined,
-      nickname: pii?.nickname || undefined,
-      preferred_username: pii?.preferred_username || undefined,
-      profile: pii?.profile || undefined,
-      picture: pii?.picture || undefined,
-      website: pii?.website || undefined,
-      gender: pii?.gender || undefined,
-      birthdate: pii?.birthdate || undefined,
-      zoneinfo: pii?.zoneinfo || undefined,
-      locale: pii?.locale || undefined,
-      phone_number: pii?.phone_number || undefined,
-      phone_number_verified: core.phone_number_verified === 1,
-      address,
-      created_at: core.created_at,
-      updated_at: core.updated_at,
-      last_login_at: core.last_login_at || undefined,
-      is_active: core.is_active === 1,
-    };
-  }
-}
-
-// =============================================================================
-// Internal Types for DB Rows
-// =============================================================================
-
-/** Row type for users_core table */
-interface UserCoreRow {
-  id: string;
-  tenant_id: string;
-  email_verified: number; // 0 or 1
-  phone_number_verified: number; // 0 or 1
-  password_hash: string | null;
-  is_active: number; // 0 or 1
-  created_at: number;
-  updated_at: number;
-  last_login_at: number | null;
-}
-
-/** Row type for users_pii table */
-interface UserPIIRow {
-  id: string;
-  email: string;
-  name: string | null;
-  given_name: string | null;
-  family_name: string | null;
-  middle_name: string | null;
-  nickname: string | null;
-  preferred_username: string | null;
-  profile: string | null;
-  picture: string | null;
-  website: string | null;
-  gender: string | null;
-  birthdate: string | null;
-  zoneinfo: string | null;
-  locale: string | null;
-  phone_number: string | null;
-  address_formatted: string | null;
-  address_street_address: string | null;
-  address_locality: string | null;
-  address_region: string | null;
-  address_postal_code: string | null;
-  address_country: string | null;
 }
 
 /**

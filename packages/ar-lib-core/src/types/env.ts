@@ -51,8 +51,8 @@ export interface EmailServiceBinding {
  */
 export interface Env {
   // D1 Databases
-  DB: D1Database; // Core DB (non-PII data: users_core, sessions, passkeys, clients, roles)
-  DB_PII: D1Database; // PII DB (personal information: users_pii, linked_identities, subject_identifiers)
+  DB: D1Database; // Core DB (non-PII data: canonical identity graph, sessions, passkeys, clients, roles)
+  DB_PII: D1Database; // PII DB (personal information: canonical sensitive values, linked identities, subject identifiers)
   DB_ADMIN: D1Database; // Admin DB (admin_users, admin_roles, admin_sessions, admin_audit_log, admin_ip_allowlist)
   LOGGING_INDEX_DB?: D1Database; // Optional tenant-local hot chunk index DB binding
 

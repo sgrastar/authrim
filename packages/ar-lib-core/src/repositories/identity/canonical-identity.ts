@@ -577,9 +577,8 @@ function activeClause(includeInactive: boolean | undefined, tableAlias?: string)
 /**
  * Canonical identity repository for the unified identity schema.
  *
- * This repository intentionally does not replace users_core/users_pii runtime access.
- * It provides the storage contract that later cutover PRs can wire into SCIM writes
- * and SAML/OIDC readers together, avoiding an interim split-brain runtime path.
+ * Runtime protocol code should use CanonicalRuntimeUserStore so graph rows remain in the
+ * core database and sensitive values remain in the PII database.
  */
 export class CanonicalIdentityRepository {
   private readonly tenantId: string;
@@ -741,17 +740,41 @@ export class CanonicalIdentityRepository {
     input: {
       lifecycleState: IdentityLifecycleState;
       displayLabel?: string | null;
+      metadata?: JsonObject | null;
     }
   ): Promise<boolean> {
     const now = getCurrentTimestamp();
     const deletedAt =
       input.lifecycleState === 'deleted' || input.lifecycleState === 'deleting' ? now : null;
-    const result = await this.adapter.execute(
-      `UPDATE identity_accounts
-          SET lifecycle_state = ?, display_label = ?, updated_at = ?, deleted_at = ?
-        WHERE id = ? AND tenant_id = ?`,
-      [input.lifecycleState, input.displayLabel ?? null, now, deletedAt, accountId, this.tenantId]
-    );
+    const hasMetadata = Object.prototype.hasOwnProperty.call(input, 'metadata');
+    const result = hasMetadata
+      ? await this.adapter.execute(
+          `UPDATE identity_accounts
+              SET lifecycle_state = ?, display_label = ?, metadata_json = ?, updated_at = ?, deleted_at = ?
+            WHERE id = ? AND tenant_id = ?`,
+          [
+            input.lifecycleState,
+            input.displayLabel ?? null,
+            encodeJson(input.metadata),
+            now,
+            deletedAt,
+            accountId,
+            this.tenantId,
+          ]
+        )
+      : await this.adapter.execute(
+          `UPDATE identity_accounts
+              SET lifecycle_state = ?, display_label = ?, updated_at = ?, deleted_at = ?
+            WHERE id = ? AND tenant_id = ?`,
+          [
+            input.lifecycleState,
+            input.displayLabel ?? null,
+            now,
+            deletedAt,
+            accountId,
+            this.tenantId,
+          ]
+        );
     return result.rowsAffected > 0;
   }
 

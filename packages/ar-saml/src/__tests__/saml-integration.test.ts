@@ -31,6 +31,10 @@ const {
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
   mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockRuntimeUsersById,
+  mockRuntimeUsersByEmail,
+  mockRuntimeSyncUser,
+  mockRuntimeDeleteUser,
   mockGetSigningKey,
   mockGetSigningCertificate,
   mockGetSPConfig,
@@ -44,6 +48,10 @@ const {
     missingRequiredFields: [],
   }),
   mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+  mockRuntimeUsersById: new Map<string, any>(),
+  mockRuntimeUsersByEmail: new Map<string, any>(),
+  mockRuntimeSyncUser: vi.fn(),
+  mockRuntimeDeleteUser: vi.fn(),
   mockGetSigningKey: vi.fn().mockResolvedValue({
     kid: 'mock-kid',
     privateKeyPem: 'mock-key',
@@ -103,6 +111,45 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     syncUserLifecycleState: mockSyncUserLifecycleState,
     createAuditLog: mockCreateAuditLog,
     resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        return mockRuntimeUsersById.get(userId) ?? null;
+      }
+
+      async findByEmail(email: string) {
+        return mockRuntimeUsersByEmail.get(email.toLowerCase()) ?? null;
+      }
+
+      async syncUser(input: any) {
+        mockRuntimeSyncUser(input);
+        const user = {
+          id: input.userId,
+          email: input.email,
+          name: input.name ?? null,
+          active: input.active,
+          lifecycle_state: input.active ? 'active' : 'deleted',
+          email_verified: input.emailVerified,
+        };
+        mockRuntimeUsersById.set(input.userId, user);
+        if (input.email) {
+          mockRuntimeUsersByEmail.set(String(input.email).toLowerCase(), user);
+        }
+        return user;
+      }
+
+      async deleteUser(userId: string) {
+        mockRuntimeDeleteUser(userId);
+        const current = mockRuntimeUsersById.get(userId);
+        if (current) {
+          mockRuntimeUsersById.set(userId, {
+            ...current,
+            active: false,
+            lifecycle_state: 'deleted',
+          });
+        }
+        return true;
+      }
+    },
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
       storageProfile: {
         id: 'builtin:storage:standard',
@@ -365,6 +412,10 @@ describe('SAML Integration', () => {
       lifecycleState: 'active',
       missingRequiredFields: [],
     });
+    mockRuntimeUsersById.clear();
+    mockRuntimeUsersByEmail.clear();
+    mockRuntimeSyncUser.mockReset();
+    mockRuntimeDeleteUser.mockReset();
     mockCreateAuditLog.mockReset().mockResolvedValue(undefined);
     mockGetSigningKey.mockReset().mockResolvedValue({
       kid: 'mock-kid',
@@ -412,6 +463,15 @@ describe('SAML Integration', () => {
       email: 'user@example.com',
       name: 'Test User',
     });
+    mockRuntimeUsersById.set('user-001', {
+      id: 'user-001',
+      email: 'user@example.com',
+      name: 'Test User',
+      active: true,
+      lifecycle_state: 'active',
+      email_verified: true,
+    });
+    mockRuntimeUsersByEmail.set('user@example.com', mockRuntimeUsersById.get('user-001'));
 
     // Mock IdP config
     mockGetIdPConfigByEntityId.mockImplementation(
@@ -1175,19 +1235,29 @@ describe('SAML Integration', () => {
       );
 
       expect(res.status).toBe(302);
-      const usersPiiInsert = piiAdapter.execute.mock.calls.find(([sql]) =>
-        String(sql).includes('INSERT INTO users_pii')
+      const syncUserInput = mockRuntimeSyncUser.mock.calls.find(
+        ([input]) => input.sourceRef === 'saml:https://idp.example.com'
+      )?.[0];
+      expect(syncUserInput).toEqual(
+        expect.objectContaining({
+          email: expect.stringMatching(/^saml-[0-9a-f]{32}@saml\.local$/),
+          emailVerified: true,
+        })
       );
-      expect(usersPiiInsert).toBeTruthy();
-      const insertedEmail = usersPiiInsert?.[1][2];
-      expect(insertedEmail).toMatch(/^saml-[0-9a-f]{32}@saml\.local$/);
-      expect(insertedEmail).not.toContain('person');
-      expect(insertedEmail).not.toContain('example.com');
+      expect(syncUserInput.email).not.toContain('person');
+      expect(syncUserInput.email).not.toContain('example.com');
     });
 
     it('should resolve existing SAML linked identity before email or JIT provisioning', async () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
       const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-123')}`;
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
       const coreAdapter = createMockAdapter({
         queryOne: (sql, params) => {
           if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
@@ -1235,6 +1305,15 @@ describe('SAML Integration', () => {
     it('should create a SAML linked identity when verified email matches a provisioned user', async () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
       const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-456')}`;
+      const scimUser = {
+        id: 'scim-user-001',
+        email: 'scim@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-001', scimUser);
+      mockRuntimeUsersByEmail.set('scim@example.com', scimUser);
       const coreAdapter = createMockAdapter({
         queryOne: (sql, params) => {
           if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
@@ -1306,6 +1385,15 @@ describe('SAML Integration', () => {
         },
       });
       const coreAdapter = createMockAdapter();
+      const scimUser = {
+        id: 'scim-user-001',
+        email: 'scim@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-001', scimUser);
+      mockRuntimeUsersByEmail.set('scim@example.com', scimUser);
       const piiAdapter = createMockAdapter({
         queryOne: (sql) => {
           if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
@@ -1356,6 +1444,15 @@ describe('SAML Integration', () => {
     });
 
     it('should fail closed when email matches a local user with unverified email', async () => {
+      const scimUser = {
+        id: 'scim-user-002',
+        email: 'unverified@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: false,
+      };
+      mockRuntimeUsersById.set('scim-user-002', scimUser);
+      mockRuntimeUsersByEmail.set('unverified@example.com', scimUser);
       const coreAdapter = createMockAdapter({
         queryOne: (sql) => {
           if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
@@ -1401,6 +1498,20 @@ describe('SAML Integration', () => {
     it('should fail closed when an existing SAML link email conflicts with another user', async () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
       const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-conflict')}`;
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      mockRuntimeUsersByEmail.set('other-user@example.com', {
+        id: 'different-user-001',
+        email: 'other-user@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
       const coreAdapter = createMockAdapter({
         queryOne: (sql) => {
           if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
@@ -1452,6 +1563,15 @@ describe('SAML Integration', () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
       const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-new-link')}`;
       const previousProviderUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-old-link')}`;
+      const scimUser = {
+        id: 'scim-user-003',
+        email: 'scim-user-003@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-003', scimUser);
+      mockRuntimeUsersByEmail.set('scim-user-003@example.com', scimUser);
       const coreAdapter = createMockAdapter({
         queryOne: (sql) => {
           if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
@@ -1510,6 +1630,15 @@ describe('SAML Integration', () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
       const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-race')}`;
       let lookupCount = 0;
+      const scimUser = {
+        id: 'scim-user-004',
+        email: 'scim-user-004@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-004', scimUser);
+      mockRuntimeUsersByEmail.set('scim-user-004@example.com', scimUser);
       const coreAdapter = createMockAdapter({
         queryOne: (sql) => {
           if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
@@ -1589,17 +1718,15 @@ describe('SAML Integration', () => {
       );
 
       expect(res.status).toBe(500);
-      expect(coreAdapter.execute).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO users_core'),
-        expect.anything()
+      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'sync-fail@example.com',
+          sourceRef: 'saml:https://idp.example.com',
+        })
       );
-      expect(piiAdapter.execute).toHaveBeenCalledWith(
-        'DELETE FROM users_pii WHERE id = ? AND tenant_id = ?',
-        expect.any(Array)
-      );
-      expect(coreAdapter.execute).toHaveBeenCalledWith(
-        'DELETE FROM users_core WHERE id = ? AND tenant_id = ?',
-        expect.any(Array)
+      expect(mockRuntimeDeleteUser).toHaveBeenCalledWith(expect.any(String));
+      expect(mockRuntimeDeleteUser.mock.calls[0]?.[0]).toBe(
+        mockRuntimeSyncUser.mock.calls[0]?.[0]?.userId
       );
       expect(piiAdapter.execute).not.toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO linked_identities'),
@@ -1726,9 +1853,12 @@ describe('SAML Integration', () => {
       );
 
       expect(res.status).toBe(302);
-      expect(coreAdapter.execute).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO users_core'),
-        expect.anything()
+      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'new-user@example.com',
+          emailVerified: true,
+          sourceRef: 'saml:https://idp.example.com',
+        })
       );
       expect(piiAdapter.execute).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO linked_identities'),

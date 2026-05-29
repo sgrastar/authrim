@@ -18,8 +18,8 @@
  *
  * // Handler that needs PII data
  * export async function handleUserInfo(ctx: PIIContext, c: Context) {
- *   const userCore = await ctx.repositories.userCore.findById(userId);
- *   const userPII = await ctx.piiRepositories.userPII.findByUserId(userId);
+ *   const piiAdapter = ctx.getPiiAdapter('default');
+ *   // Use CanonicalRuntimeUserStore for runtime user materialization.
  * }
  * ```
  *
@@ -34,7 +34,6 @@ import type { DatabaseAdapter } from '../db/adapter';
 import type { PIIPartitionRouter, PartitionKey } from '../db/partition-router';
 import type { UserCacheScope, UserPiiCacheMode } from '../utils/kv';
 import type {
-  UserCoreRepository,
   ClientRepository,
   SessionRepository,
   PasskeyRepository,
@@ -42,7 +41,6 @@ import type {
   SessionClientRepository,
 } from '../repositories/core';
 import type {
-  UserPIIRepository,
   TombstoneRepository,
   SubjectIdentifierRepository,
   LinkedIdentityRepository,
@@ -57,9 +55,6 @@ import type {
  * Core repositories (Non-PII data in the configured core user store)
  */
 export interface CoreRepositories {
-  /** User core data (pii_partition, pii_status, password_hash, etc.) */
-  userCore: UserCoreRepository;
-
   /** OAuth 2.0 / OIDC clients */
   client: ClientRepository;
 
@@ -83,9 +78,6 @@ export interface CoreRepositories {
  * PII repositories (Personal information in the configured PII user store)
  */
 export interface PIIRepositories {
-  /** User PII data (email, name, address, etc.) */
-  userPII: UserPIIRepository;
-
   /** GDPR deletion tracking */
   tombstone: TombstoneRepository;
 
@@ -215,11 +207,6 @@ export type AuthHandler<T = Response> = (ctx: AuthContext, c: HonoContext) => Pr
 /**
  * Handler function type for routes that need PII.
  *
- * @example
- * const handleUserInfo: PIIHandler = async (ctx, c) => {
- *   const userPII = await ctx.piiRepositories.userPII.findByUserId(userId);
- *   // ...
- * };
  */
 export type PIIHandler<T = Response> = (ctx: PIIContext, c: HonoContext) => Promise<T>;
 

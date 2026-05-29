@@ -12,6 +12,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        if (userId !== 'user_123') return null;
+        return {
+          id: 'user_123',
+          active: 1,
+          account_type: 'user',
+          email: 'user@example.com',
+          name: 'Example User',
+          email_verified: 1,
+          phone_number_verified: 0,
+          created_at: new Date(1700000000000).toISOString(),
+          updated_at: new Date(1700000000000).toISOString(),
+          last_login_at: null,
+        };
+      }
+    },
     getChallengeStoreByChallengeId: vi.fn(async () => challengeStore),
     getSessionStoreForNewSession: vi.fn(async () => ({
       stub: sessionStore,

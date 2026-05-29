@@ -3793,8 +3793,26 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
     </div>
 
-    <!-- Step 4: Email Provider Configuration -->
+    <!-- Step 4: Optional Features and Email Provider Configuration -->
     <div id="section-email" class="card hidden">
+      <h2 class="card-title" data-i18n="features.title">Feature Flags</h2>
+
+      <div class="component-card" style="margin-bottom: 1.5rem;">
+        <label class="checkbox-item" style="margin: 0; padding: 0; border: none; background: transparent;">
+          <input type="checkbox" id="feature-queue-enabled">
+          <strong>Cloudflare Queues</strong>
+        </label>
+        <p style="margin: 0.25rem 0 0.5rem 0; font-size: 0.85rem; color: var(--text-muted);">
+          Optional queue-backed delivery for async audit fan-out and logging operations. Disabled by default.
+        </p>
+        <div class="hint-box" style="margin-top: 0.75rem;">
+          Workers Free can use Queues, but the practical allowance is about 3,000 delivered messages/day.
+          Authrim typically uses one queued message for an async audit fan-out item, a logging delivery retry,
+          an export build job, or a key rewrap retry job. Each delivered message usually consumes write, read,
+          and delete operations; retries consume more.
+        </div>
+      </div>
+
       <h2 class="card-title" data-i18n="web.email.title">📧 Email Provider</h2>
 
       <p style="margin-bottom: 1rem; color: var(--text-muted);" data-i18n="web.email.introDesc">
@@ -3920,6 +3938,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div class="resource-category">
             <strong data-i18n="web.provision.kvNamespaces">KV Namespaces:</strong>
             <ul id="preview-kv"></ul>
+          </div>
+          <div class="resource-category" id="preview-queues-category">
+            <strong>Queues:</strong>
+            <ul id="preview-queues"></ul>
           </div>
           <div class="resource-category">
             <strong data-i18n="web.provision.cryptoKeys">Cryptographic Keys:</strong>
@@ -5425,6 +5447,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function resetDatabaseAndEmailForm() {
       setSelectedStorageProfileId('builtin:storage:shared-d1');
+      document.getElementById('feature-queue-enabled').checked = false;
 
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
         input.checked = input.value === 'auto';
@@ -5764,6 +5787,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         policy: true,
       };
       const profiles = loadedConfig.profiles || buildProfilesConfig('builtin:storage:shared-d1');
+      const features = {
+        queue: { enabled: loadedConfig.features?.queue?.enabled === true },
+        r2: { enabled: loadedConfig.features?.r2?.enabled !== false },
+        email: loadedConfig.features?.email || { provider: 'none' },
+      };
 
       // Build internal config
       config = {
@@ -5774,6 +5802,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         tenant,
         components,
         profiles,
+        features,
       };
 
       // Set form values
@@ -5796,6 +5825,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       setTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots || 3);
       document.getElementById('comp-login-ui').checked = config.components.loginUi !== false;
       document.getElementById('comp-admin-ui').checked = config.components.adminUi !== false;
+      document.getElementById('feature-queue-enabled').checked =
+        config.features?.queue?.enabled === true;
       updateComponentOptionUi();
 
       // Restore domain check UI if custom domain is set
@@ -6724,6 +6755,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           bridge: true, // Standard component
           policy: true, // Standard component
         },
+        features: {
+          queue: { enabled: false },
+          r2: { enabled: true },
+          email: { provider: 'none' },
+        },
         profiles: buildProfilesConfig('builtin:storage:shared-d1'),
       };
 
@@ -6835,6 +6871,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     document.getElementById('btn-continue-email').addEventListener('click', async () => {
       const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
       const btn = document.getElementById('btn-continue-email');
+      const queueEnabled = document.getElementById('feature-queue-enabled').checked === true;
+      config.features = {
+        ...(config.features || {}),
+        queue: { enabled: queueEnabled },
+        r2: config.features?.r2 || { enabled: true },
+        email: config.features?.email || { provider: 'none' },
+      };
 
       if (choice === 'cloudflare' || choice === 'resend') {
         // Validate and store email configuration
@@ -6895,6 +6938,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             fromName: fromName || undefined,
             configured: true,
           };
+          config.features.email = {
+            ...config.email,
+          };
 	        } catch (error) {
 	          alert(t('web.email.saveConfigFailed') + ': ' + error.message);
 	          btn.disabled = false;
@@ -6907,6 +6953,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       } else {
         // Configure later - no email provider
         config.email = {
+          provider: 'none',
+        };
+        config.features.email = {
           provider: 'none',
         };
       }
@@ -7061,6 +7110,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           body: {
             env: config.env,
             databaseConfig: config.database,
+            createQueues: config.features?.queue?.enabled === true,
             createR2: true,
             storageProfileId: config.profiles?.defaults?.storage || 'builtin:storage:shared-d1',
           },
@@ -7529,6 +7579,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           env + '-STATE_STORE',
           env + '-CONSENT_CACHE'
         ],
+        queues: [
+          env + '-audit-queue',
+          env + '-logging-delivery-critical-queue',
+          env + '-logging-delivery-queue',
+          env + '-logging-delivery-bulk-queue'
+        ],
         keys: [
           keysDir + '/private.pem (RSA Private Key)',
           keysDir + '/public.jwk.json (JWK Public Key)',
@@ -7568,10 +7624,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const d1List = document.getElementById('preview-d1');
       const kvList = document.getElementById('preview-kv');
+      const queueList = document.getElementById('preview-queues');
+      const queueCategory = document.getElementById('preview-queues-category');
       const keysList = document.getElementById('preview-keys');
 
       d1List.innerHTML = '';
       kvList.innerHTML = '';
+      queueList.innerHTML = '';
       keysList.innerHTML = '';
 
       // Get region info from config
@@ -7601,6 +7660,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         li.textContent = name;
         kvList.appendChild(li);
       });
+
+      const queueEnabled = config.features?.queue?.enabled === true;
+      queueCategory.style.display = queueEnabled ? 'block' : 'none';
+      if (queueEnabled) {
+        resources.queues.forEach(name => {
+          const li = document.createElement('li');
+          li.textContent = name;
+          queueList.appendChild(li);
+        });
+      }
 
       resources.keys.forEach(name => {
         const li = document.createElement('li');
@@ -7717,6 +7786,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         },
         profiles: config.profiles || buildProfilesConfig('builtin:storage:shared-d1'),
         features: {
+          queue: {
+            enabled: config.features?.queue?.enabled === true,
+          },
+          r2: {
+            enabled: config.features?.r2?.enabled !== false,
+          },
           email: {
             provider: config.email?.provider || 'none',
             fromAddress: config.email?.fromAddress || undefined,

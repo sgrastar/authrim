@@ -716,7 +716,7 @@ async function processSupportOpsSnapshotJob(
       const rows = await coreAdapter.query<SupportOpsTargetSnapshotRow>(
         `SELECT ${resource.idColumn} as target_id, ${blockExpression} as block_reason
            FROM ${resource.table}
-          WHERE tenant_id = ? AND is_active = 1 AND ${compiled.whereSql}
+          WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
             AND ${cutoffExpression}
             AND ${resource.idColumn} > ?
             AND NOT EXISTS (
@@ -923,7 +923,7 @@ supportOpsRouter.post('/aggregate', async (c) => {
     const rows = await authCtx.coreAdapter.query<Record<string, unknown>>(
       `SELECT ${selectColumns.join(', ')}, COUNT(*) as count
          FROM ${resource.table}
-        WHERE tenant_id = ? AND is_active = 1 AND ${compiled.whereSql}
+        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
         GROUP BY ${selectColumns.join(', ')}
         ORDER BY count DESC
         LIMIT 100`,
@@ -1017,14 +1017,14 @@ supportOpsRouter.post('/cohorts/preview', async (c) => {
     const matched = await authCtx.coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(*) as count
          FROM ${resource.table}
-        WHERE tenant_id = ? AND is_active = 1 AND ${compiled.whereSql}`,
+        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}`,
       [tenantId, ...compiled.params]
     );
     const blockExpression = buildBlockExpression(body.intent?.action);
     const actionable = await authCtx.coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(*) as count
          FROM ${resource.table}
-        WHERE tenant_id = ? AND is_active = 1 AND ${compiled.whereSql}
+        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
           AND (${blockExpression}) IS NULL`,
       [tenantId, ...compiled.params]
     );
@@ -1033,7 +1033,7 @@ supportOpsRouter.post('/cohorts/preview', async (c) => {
          FROM (
            SELECT ${blockExpression} as block_reason
              FROM ${resource.table}
-            WHERE tenant_id = ? AND is_active = 1 AND ${compiled.whereSql}
+            WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
          )
         WHERE block_reason IS NOT NULL
         GROUP BY block_reason
@@ -1116,7 +1116,7 @@ supportOpsRouter.post('/cohorts', async (c) => {
     const matched = await authCtx.coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(*) as count
          FROM ${resource.table}
-        WHERE tenant_id = ? AND is_active = 1 AND ${compiled.whereSql}
+        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
           AND ${cutoffExpression}`,
       [tenantId, ...compiled.params, snapshotCutoff, snapshotCutoff]
     );
@@ -1244,7 +1244,7 @@ supportOpsRouter.post('/cohorts', async (c) => {
     const targetRows = await authCtx.coreAdapter.query<SupportOpsTargetSnapshotRow>(
       `SELECT ${resource.idColumn} as target_id, ${blockExpression} as block_reason
          FROM ${resource.table}
-        WHERE tenant_id = ? AND is_active = 1 AND ${compiled.whereSql}
+        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
           AND ${cutoffExpression}`,
       [tenantId, ...compiled.params, snapshotCutoff, snapshotCutoff]
     );
@@ -1785,17 +1785,34 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
 
   try {
     const updateResult = await authCtx.coreAdapter.execute(
-      `UPDATE users_core
-          SET status = 'suspended', suspended_at = ?, suspended_until = NULL, updated_at = ?
+      `UPDATE identity_accounts
+          SET lifecycle_state = 'suspended',
+              metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', 'suspended', '$.suspended_at', ?),
+              updated_at = ?
         WHERE tenant_id = ?
-          AND id IN (
+          AND legacy_user_id IN (
             SELECT target_id
               FROM support_operation_cohort_targets
              WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
           )
-          AND status = 'active'
-          AND lifecycle_state != 'deprovisioned'`,
+          AND lifecycle_state = 'active'`,
       [Math.floor(now / 1000), now, tenantId, tenantId, action.cohort_id]
+    );
+    await authCtx.coreAdapter.execute(
+      `UPDATE identity_subjects
+          SET lifecycle_state = 'suspended', updated_at = ?
+        WHERE tenant_id = ?
+          AND id IN (
+            SELECT primary_subject_id
+              FROM identity_accounts
+             WHERE tenant_id = ?
+               AND legacy_user_id IN (
+                 SELECT target_id
+                   FROM support_operation_cohort_targets
+                  WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
+               )
+          )`,
+      [now, tenantId, tenantId, tenantId, action.cohort_id]
     );
     const succeededCount = updateResult.rowsAffected ?? 0;
     const failedCount = Math.max(0, action.actionable_count - succeededCount);

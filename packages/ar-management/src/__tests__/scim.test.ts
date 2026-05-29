@@ -17,6 +17,10 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 
+const canonicalRuntimeState = vi.hoisted(() => ({
+  users: new Map<string, any>(),
+}));
+
 // Mock scim-auth middleware at module level (now from @authrim/ar-lib-scim package)
 vi.mock('@authrim/ar-lib-scim', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-scim')>();
@@ -98,6 +102,79 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', () => ({
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  const toProjection = (user: any) => ({
+    id: user.id,
+    tenant_id: user.tenant_id || 'default',
+    subject_id: `subject:${user.id}`,
+    account_id: `account:${user.id}`,
+    account_type: 'user',
+    lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+    email: user.email ?? null,
+    email_verified: user.email_verified ?? 0,
+    name: user.name ?? null,
+    given_name: user.given_name ?? null,
+    family_name: user.family_name ?? null,
+    middle_name: user.middle_name ?? null,
+    nickname: user.nickname ?? null,
+    preferred_username: user.preferred_username ?? null,
+    profile: user.profile ?? null,
+    picture: user.picture ?? null,
+    website: user.website ?? null,
+    gender: user.gender ?? null,
+    birthdate: user.birthdate ?? null,
+    zoneinfo: user.zoneinfo ?? null,
+    locale: user.locale ?? null,
+    phone_number: user.phone_number ?? null,
+    phone_number_verified: user.phone_number_verified ?? 0,
+    address_json: user.address_json ?? null,
+    password_hash: user.password_hash ?? null,
+    external_id: user.external_id ?? null,
+    last_login_at: user.last_login_at ?? null,
+    active: user.active === 0 ? 0 : 1,
+    custom_attributes_json: user.custom_attributes_json ?? null,
+    created_at:
+      typeof user.created_at === 'number'
+        ? new Date(user.created_at * 1000).toISOString()
+        : user.created_at,
+    updated_at:
+      typeof user.updated_at === 'number'
+        ? new Date(user.updated_at * 1000).toISOString()
+        : user.updated_at,
+  });
+  const applyRuntimeUserInput = (input: any) => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const existing = canonicalRuntimeState.users.get(input.userId) ?? {};
+    canonicalRuntimeState.users.set(input.userId, {
+      ...existing,
+      id: input.userId,
+      tenant_id: input.tenantId,
+      email: input.sensitiveValues?.email ?? existing.email ?? null,
+      email_verified: input.emailVerified ? 1 : 0,
+      phone_number: input.sensitiveValues?.phone_number ?? existing.phone_number ?? null,
+      phone_number_verified: input.phoneNumberVerified ? 1 : 0,
+      name: input.sensitiveValues?.name ?? existing.name ?? null,
+      given_name: input.sensitiveValues?.given_name ?? existing.given_name ?? null,
+      family_name: input.sensitiveValues?.family_name ?? existing.family_name ?? null,
+      middle_name: input.sensitiveValues?.middle_name ?? existing.middle_name ?? null,
+      nickname: input.sensitiveValues?.nickname ?? existing.nickname ?? null,
+      preferred_username:
+        input.sensitiveValues?.preferred_username ?? existing.preferred_username ?? null,
+      profile: input.sensitiveValues?.profile ?? existing.profile ?? null,
+      picture: input.sensitiveValues?.picture ?? existing.picture ?? null,
+      website: input.sensitiveValues?.website ?? existing.website ?? null,
+      gender: input.sensitiveValues?.gender ?? existing.gender ?? null,
+      birthdate: input.sensitiveValues?.birthdate ?? existing.birthdate ?? null,
+      zoneinfo: input.sensitiveValues?.zoneinfo ?? input.zoneinfo ?? existing.zoneinfo ?? null,
+      locale: input.sensitiveValues?.locale ?? input.locale ?? existing.locale ?? null,
+      address_json: input.addressJson ?? existing.address_json ?? null,
+      custom_attributes_json: input.customAttributesJson ?? existing.custom_attributes_json ?? null,
+      password_hash: input.passwordHash ?? existing.password_hash ?? null,
+      external_id: input.externalId ?? existing.external_id ?? null,
+      active: input.active === false ? 0 : 1,
+      created_at: existing.created_at ?? nowSeconds,
+      updated_at: nowSeconds,
+    });
+  };
   return {
     ...actual,
     invalidateUserCache: vi.fn().mockResolvedValue(undefined),
@@ -118,6 +195,38 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       nonPiiDb: env.DB,
       piiDb: env.DB_PII ?? null,
     })),
+    CanonicalRuntimeUserProjectionRepository: class {
+      async findByLegacyUserId(legacyUserId: string, options?: { includeInactive?: boolean }) {
+        const user = canonicalRuntimeState.users.get(legacyUserId);
+        if (!user || (!options?.includeInactive && user.active === 0)) {
+          return null;
+        }
+        return toProjection(user);
+      }
+    },
+    CanonicalRuntimeUserWriter: class {
+      async createFromRuntimeUser(input: any) {
+        applyRuntimeUserInput(input);
+        return { created: true, graph: null, profileAttributeCount: 0, contactPointCount: 0 };
+      }
+
+      async syncFromRuntimeUser(input: any) {
+        applyRuntimeUserInput(input);
+        return { created: false, graph: null, profileAttributeCount: 0, contactPointCount: 0 };
+      }
+
+      async deleteRuntimeUser(userId: string) {
+        const user = canonicalRuntimeState.users.get(userId);
+        if (!user) {
+          return false;
+        }
+        user.active = 0;
+        user.updated_at = Math.floor(Date.now() / 1000);
+        return true;
+      }
+    },
+    CanonicalSensitiveValueResolver: class {},
+    CanonicalIdentityRepository: class {},
   };
 });
 
@@ -164,6 +273,7 @@ describe('SCIM 2.0 Endpoints', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUsers = new Map();
+    canonicalRuntimeState.users = mockUsers;
     mockGroups = new Map();
     mockUserRoles = new Map();
     mockCustomClaimSchemas = [];
@@ -216,6 +326,27 @@ describe('SCIM 2.0 Endpoints', () => {
           return {
             bind: vi.fn().mockImplementation((...args: any[]) => ({
               first: vi.fn().mockImplementation(async () => {
+                if (sql.includes('FROM identity_accounts')) {
+                  const userId = sql.includes('legacy_user_id = ?') ? args[0] : args[0];
+                  const user = mockUsers.get(userId);
+                  if (!user) return null;
+                  return {
+                    id: `account:${user.id}`,
+                    tenant_id: user.tenant_id || 'default',
+                    account_type: 'user',
+                    lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                    legacy_user_id: user.id,
+                    primary_subject_id: `subject:${user.id}`,
+                    display_label: null,
+                    metadata_json: JSON.stringify({
+                      external_id: user.external_id ?? null,
+                      password_hash: user.password_hash ?? null,
+                    }),
+                    created_at: user.created_at,
+                    updated_at: user.updated_at,
+                    deleted_at: null,
+                  };
+                }
                 // Handle SELECT queries for users_core (PII/Non-PII separation)
                 if (sql.includes('FROM users_core WHERE id = ?')) {
                   const user = mockUsers.get(args[0]);
@@ -251,6 +382,29 @@ describe('SCIM 2.0 Endpoints', () => {
                 return null;
               }),
               all: vi.fn().mockImplementation(async () => {
+                if (sql.includes('FROM identity_accounts')) {
+                  const results = Array.from(mockUsers.values())
+                    .filter(
+                      (user) => !sql.includes("lifecycle_state = 'active'") || user.active !== 0
+                    )
+                    .map((user) => ({
+                      id: `account:${user.id}`,
+                      tenant_id: user.tenant_id || 'default',
+                      account_type: 'user',
+                      lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                      legacy_user_id: user.id,
+                      primary_subject_id: `subject:${user.id}`,
+                      display_label: null,
+                      metadata_json: JSON.stringify({
+                        external_id: user.external_id ?? null,
+                        password_hash: user.password_hash ?? null,
+                      }),
+                      created_at: user.created_at,
+                      updated_at: user.updated_at,
+                      deleted_at: null,
+                    }));
+                  return { results };
+                }
                 // Handle SELECT queries for users_core list (PII/Non-PII separation)
                 if (sql.includes('FROM users_core')) {
                   const results = Array.from(mockUsers.values()).map((user) => ({
@@ -297,6 +451,22 @@ describe('SCIM 2.0 Endpoints', () => {
                 return { results: [] };
               }),
               run: vi.fn().mockImplementation(async () => {
+                if (sql.includes('UPDATE identity_accounts SET')) {
+                  const userId = sql.includes('legacy_user_id IN')
+                    ? args[args.length - 1]
+                    : String(args[2] || '').replace(/^account:/, '');
+                  const user = mockUsers.get(userId);
+                  if (user) {
+                    if (args[0] === 'suspended' || args[0] === 'deleted') {
+                      user.active = 0;
+                    }
+                    if (args[0] === 'active') {
+                      user.active = 1;
+                    }
+                    user.updated_at = Math.floor(Date.now() / 1000);
+                  }
+                  return { success: true };
+                }
                 // Handle INSERT into users_core (PII/Non-PII separation)
                 if (sql.includes('INSERT INTO users_core')) {
                   // bind() order:
@@ -400,6 +570,25 @@ describe('SCIM 2.0 Endpoints', () => {
           return {
             bind: vi.fn().mockImplementation((...args: any[]) => ({
               first: vi.fn().mockImplementation(async () => {
+                if (sql.includes('FROM identity_sensitive_values')) {
+                  const valueKey = sql.includes("value_key = 'email'") ? 'email' : args[2];
+                  if (valueKey === 'email' && sql.includes('value_json = ?')) {
+                    const email = JSON.parse(args[1]);
+                    for (const user of mockUsers.values()) {
+                      if (user.email === email && user.active !== 0) {
+                        return { id: user.id };
+                      }
+                    }
+                    return null;
+                  }
+                  const ownerId = args[1];
+                  const user = mockUsers.get(ownerId);
+                  if (!user || user.active === 0) {
+                    return null;
+                  }
+                  const value = user[valueKey];
+                  return { value_json: value === undefined ? null : JSON.stringify(value) };
+                }
                 // Handle SELECT queries for PII data
                 if (
                   sql.includes(
@@ -452,6 +641,9 @@ describe('SCIM 2.0 Endpoints', () => {
                 return null;
               }),
               all: vi.fn().mockImplementation(async () => {
+                if (sql.includes('FROM identity_sensitive_values')) {
+                  return { results: [] };
+                }
                 // Handle bulk SELECT for PII data
                 if (sql.includes('SELECT') && sql.includes('FROM users_pii WHERE id IN')) {
                   const results = args
@@ -476,6 +668,25 @@ describe('SCIM 2.0 Endpoints', () => {
                 return { results: [] };
               }),
               run: vi.fn().mockImplementation(async () => {
+                if (sql.includes('INSERT INTO identity_sensitive_values')) {
+                  const userId = args[3];
+                  const valueKey = args[4];
+                  const user = mockUsers.get(userId);
+                  if (user) {
+                    user[valueKey] = JSON.parse(args[5]);
+                  }
+                  return { success: true };
+                }
+                if (sql.includes('UPDATE identity_sensitive_values SET lifecycle_state')) {
+                  const userId = args[3];
+                  if (!args[4]) {
+                    const user = mockUsers.get(userId);
+                    if (user && args[0] !== 'active') {
+                      user.active = 0;
+                    }
+                  }
+                  return { success: true };
+                }
                 // Handle INSERT/UPDATE/DELETE for PII
                 if (sql.includes('INSERT INTO users_pii')) {
                   // bind() order for INSERT INTO users_pii:

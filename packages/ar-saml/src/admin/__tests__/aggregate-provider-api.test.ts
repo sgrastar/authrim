@@ -2,8 +2,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   handleCreateProvider,
-  handleCreateFederationTrustProfile,
-  handleDeleteFederationTrustProfile,
   handleGetAggregateBatchStatus,
   handleListAggregatePreviewEntities,
   handlePreviewMetadata,
@@ -325,54 +323,6 @@ describe('SAML aggregate provider API', () => {
     expect(adminAdapter.query).toHaveBeenCalledWith(
       expect.stringContaining('FROM federation_trust_sources'),
       ['tenant-a']
-    );
-  });
-
-  it('replaces legacy federation trust profile writes with normalized trust sources', async () => {
-    const adminAdapter = createMockAdapter();
-
-    const response = await handleCreateFederationTrustProfile(
-      createContext({
-        body: {
-          name: 'Normalized Federation',
-          metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
-          certificates: [{ certificate: expiredCertificate }],
-          policy: 'warn',
-          enabled: true,
-        },
-        env: { DB_ADMIN: adminAdapter as never },
-      })
-    );
-
-    expect(response.status).toBe(201);
-    expect(adminAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO federation_trust_sources'),
-      expect.any(Array)
-    );
-    expect(adminAdapter.execute).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO saml_federation_trust_profiles'),
-      expect.any(Array)
-    );
-  });
-
-  it('deletes normalized and legacy federation trust rows through the compatibility endpoint', async () => {
-    const adminAdapter = createMockAdapter();
-
-    const response = await handleDeleteFederationTrustProfile(
-      createContext({
-        params: { id: 'trust-source-1' },
-        env: { DB_ADMIN: adminAdapter as never },
-      })
-    );
-
-    expect(response.status).toBe(200);
-    expect(adminAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('DELETE FROM federation_trust_sources'),
-      ['tenant-a', 'trust-source-1']
-    );
-    expect(adminAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('DELETE FROM saml_federation_trust_profiles'),
-      ['tenant-a', 'trust-source-1']
     );
   });
 

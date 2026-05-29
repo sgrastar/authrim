@@ -133,23 +133,27 @@ export async function getRequiredCustomClaimViolationStatuses(
     if (piiKeys.length > 0 && piiAdapter) {
       const userPlaceholders = userIdBatch.map(() => '?').join(', ');
       const rows = await piiAdapter.query<{
-        id: string;
-        custom_attributes_json: string | null;
+        owner_id: string;
+        value_json: string | null;
       }>(
-        `SELECT id, custom_attributes_json
-         FROM users_pii
-         WHERE tenant_id = ? AND id IN (${userPlaceholders})`,
+        `SELECT owner_id, value_json
+           FROM identity_sensitive_values
+          WHERE tenant_id = ?
+            AND owner_type = 'runtime_user'
+            AND owner_id IN (${userPlaceholders})
+            AND value_key = 'custom_attributes_json'
+            AND lifecycle_state = 'active'`,
         [tenantId, ...userIdBatch]
       );
 
       for (const row of rows) {
-        if (!row.custom_attributes_json) {
+        if (!row.value_json) {
           continue;
         }
 
         try {
-          const parsed = JSON.parse(row.custom_attributes_json) as Record<string, unknown>;
-          const userValues = userValueMap.get(row.id);
+          const parsed = JSON.parse(row.value_json) as Record<string, unknown>;
+          const userValues = userValueMap.get(row.owner_id);
           if (!userValues) {
             continue;
           }

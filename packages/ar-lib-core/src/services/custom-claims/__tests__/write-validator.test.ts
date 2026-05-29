@@ -113,18 +113,18 @@ function createMockPiiDb(state: { userCustomAttributes: Map<string, Record<strin
   return {
     query: vi.fn(async () => []),
     queryOne: vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('SELECT custom_attributes_json FROM users_pii')) {
-        const [userId] = params ?? [];
+      if (sql.includes('FROM identity_sensitive_values')) {
+        const [_tenantId, userId] = params ?? [];
         const attrs = state.userCustomAttributes.get(String(userId));
         return {
-          custom_attributes_json: attrs ? JSON.stringify(attrs) : null,
+          value_json: attrs ? JSON.stringify(attrs) : null,
         };
       }
       return null;
     }),
     execute: vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('UPDATE users_pii SET custom_attributes_json = ?')) {
-        const [serialized, _updatedAt, userId] = params ?? [];
+      if (sql.includes('INSERT INTO identity_sensitive_values')) {
+        const [_id, _tenantId, userId, serialized] = params ?? [];
         state.userCustomAttributes.set(String(userId), JSON.parse(String(serialized)));
         return { success: true, rowsAffected: 1 };
       }

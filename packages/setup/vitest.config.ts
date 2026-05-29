@@ -7,7 +7,7 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     fileParallelism: false,
     coverage: {
-      reporter: ['text', 'html'],
+      reporter: ['text', 'json-summary', 'json', 'html'],
       exclude: ['node_modules', 'dist', '**/*.test.ts'],
     },
   },

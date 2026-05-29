@@ -17,6 +17,18 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createAuthContextFromHono: mocked.createAuthContextFromHono,
     createPIIContextFromHono: mocked.createPIIContextFromHono,
     hasPIIDatabase: mocked.hasPIIDatabase,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        if (userId !== 'user-1') {
+          return null;
+        }
+        return {
+          id: 'user-1',
+          email: 'member@example.com',
+          name: 'Member User',
+        };
+      }
+    },
   };
 });
 
@@ -163,10 +175,6 @@ describe('admin-rbac schema alignment', () => {
   it('uses subject_org_membership and membership_type to resolve organization permissions', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT id FROM users_core WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['user-1', 'default']);
-          return { id: 'user-1' };
-        }
         return null;
       },
       query: (sql, params) => {
@@ -200,6 +208,8 @@ describe('admin-rbac schema alignment', () => {
     });
 
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
 
     const c = createMockContext({
       params: { id: 'user-1' },
@@ -293,10 +303,6 @@ describe('admin-rbac schema alignment', () => {
           expect(params).toEqual(['org-1', 'default']);
           return { id: 'org-1' };
         }
-        if (sql.includes('SELECT id FROM users_core WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['user-1', 'default']);
-          return { id: 'user-1' };
-        }
         if (sql.includes('SELECT subject_id FROM subject_org_membership')) {
           expect(params).toEqual(['default', 'org-1', 'user-1']);
           return null;
@@ -306,6 +312,8 @@ describe('admin-rbac schema alignment', () => {
     });
 
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
 
     const c = createMockContext({
       params: { id: 'org-1' },

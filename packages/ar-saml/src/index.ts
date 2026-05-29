@@ -70,10 +70,6 @@ import {
   handlePreviewMetadata,
   handleImportMetadata,
   handleRefreshMetadata,
-  handleListFederationTrustProfiles,
-  handleCreateFederationTrustProfile,
-  handleUpdateFederationTrustProfile,
-  handleDeleteFederationTrustProfile,
   handlePreviewFederationTrustCertificate,
   handleListAggregatePreviewEntities,
   handleStartAggregateBatchCreate,
@@ -253,11 +249,6 @@ app.post(
 );
 app.get('/api/admin/saml-metadata/batches/:batchId', handleGetAggregateBatchStatus);
 app.post('/api/admin/saml-metadata/certificate-preview', handlePreviewFederationTrustCertificate);
-
-app.get('/api/admin/saml-federation-trust-profiles', handleListFederationTrustProfiles);
-app.post('/api/admin/saml-federation-trust-profiles', handleCreateFederationTrustProfile);
-app.put('/api/admin/saml-federation-trust-profiles/:id', handleUpdateFederationTrustProfile);
-app.delete('/api/admin/saml-federation-trust-profiles/:id', handleDeleteFederationTrustProfile);
 
 /**
  * Import Metadata
