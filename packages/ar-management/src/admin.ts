@@ -174,12 +174,10 @@ async function updateCanonicalAccountStatus(
     );
   }
   if (account.primary_subject_id) {
-    await adapter.execute('UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?', [
-      lifecycleState,
-      now,
-      account.primary_subject_id,
-      tenantId,
-    ]);
+    await adapter.execute(
+      'UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+      [lifecycleState, now, account.primary_subject_id, tenantId]
+    );
   }
   return true;
 }

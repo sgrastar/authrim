@@ -221,8 +221,7 @@ function createMockAdapter(
                   contact_type: 'phone',
                   purpose: 'primary',
                   normalized_hash: 'phone',
-                  value_storage_ref:
-                    'canonical-sensitive://tenant-claims/user-claims/phone_number',
+                  value_storage_ref: 'canonical-sensitive://tenant-claims/user-claims/phone_number',
                   is_primary: 1,
                   verification_state: 'unverified',
                   lifecycle_state: 'active',

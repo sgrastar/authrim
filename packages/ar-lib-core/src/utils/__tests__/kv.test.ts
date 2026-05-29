@@ -469,11 +469,11 @@ describe('KV Utilities', () => {
           if (sql.includes('FROM profile_attribute_values')) return [];
           if (sql.includes('FROM contact_points')) {
             return [
-                {
-                  account_id: `account:${userId}`,
-                  contact_type: 'email',
-                  verification_state: 'verified',
-                  value_storage_ref: `canonical-sensitive://tenant-a/${userId}/email`,
+              {
+                account_id: `account:${userId}`,
+                contact_type: 'email',
+                verification_state: 'verified',
+                value_storage_ref: `canonical-sensitive://tenant-a/${userId}/email`,
               },
             ];
           }

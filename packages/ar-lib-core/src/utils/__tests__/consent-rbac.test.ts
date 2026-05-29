@@ -105,7 +105,11 @@ function createMockDB(queryResults: Record<string, unknown>) {
             }
           : null;
       } else if (sql.includes('FROM profile_attribute_values')) {
-        const subject = String((queryResults['userCore'] as { id?: string } | undefined)?.id ?? (queryResults['user'] as { id?: string } | undefined)?.id ?? 'user-123');
+        const subject = String(
+          (queryResults['userCore'] as { id?: string } | undefined)?.id ??
+            (queryResults['user'] as { id?: string } | undefined)?.id ??
+            'user-123'
+        );
         result = {
           results: ['name', 'picture'].map((field) => ({
             id: `attr:${subject}:${field}`,

@@ -1,10 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type {
-  Env,
-  IntrospectionResponse,
-  DelegatedWriteAudit,
-} from '@authrim/ar-lib-core';
+import type { Env, IntrospectionResponse, DelegatedWriteAudit } from '@authrim/ar-lib-core';
 import {
   buildRequestIssuerUrl,
   consumeStepUpReceipt,
@@ -413,7 +409,9 @@ function normalizeAddressUpdate(value: unknown): Partial<CustomerProfileUpdateIn
   return update;
 }
 
-function normalizeCustomerProfileUpdateInput(input: unknown): CustomerProfileUpdateInput | Response {
+function normalizeCustomerProfileUpdateInput(
+  input: unknown
+): CustomerProfileUpdateInput | Response {
   if (!isRecord(input)) {
     return invalidDelegatedWriteRequest('input must be an object', 'input');
   }

@@ -61,7 +61,8 @@ const TENANT_D1_CAPABILITIES: StorageProfileCapabilityStatusEntry[] = [
     label: 'User core and PII store resolution',
     state: 'supported',
     criticality: 'user_critical',
-    detail: 'Request context resolves canonical identity core and PII storage through the tenant DB registry.',
+    detail:
+      'Request context resolves canonical identity core and PII storage through the tenant DB registry.',
   },
   {
     id: 'tenant_database_health_and_stats',

@@ -13,10 +13,7 @@
  * - Other keys → KV storage (fallback)
  */
 
-import type {
-  DatabaseAdapter,
-  ExecuteResult,
-} from '../../db/adapter';
+import type { DatabaseAdapter, ExecuteResult } from '../../db/adapter';
 import {
   CanonicalRuntimeUserStore,
   type CanonicalRuntimeUserProjection,
