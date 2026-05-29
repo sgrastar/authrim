@@ -20,6 +20,7 @@
 			const [
 				policies,
 				catalogs,
+				sourceProfiles,
 				protocolSchemas,
 				externalSchemas,
 				federationTrustSources,
@@ -27,6 +28,7 @@
 			] = await Promise.all([
 				adminIdentityMappingAPI.listPolicies(),
 				adminIdentityMappingAPI.listCatalogs(),
+				adminIdentityMappingAPI.listSourceProfiles(),
 				adminIdentityMappingAPI.listProtocolSchemas(),
 				adminIdentityMappingAPI.listExternalSchemas(),
 				adminIdentityMappingAPI.listFederationTrustSources(),
@@ -36,12 +38,16 @@
 			summary = {
 				policies: policies.policies.length,
 				catalogs: catalogs.catalogs.length,
-				profiles: protocolSchemas.protocolSchemas.length + externalSchemas.externalSchemas.length,
+				profiles:
+					sourceProfiles.sourceProfiles.length +
+					protocolSchemas.protocolSchemas.length +
+					externalSchemas.externalSchemas.length,
 				federationTrustSources: federationTrustSources.federationTrustSources.length
 			};
 			flowSamples = buildIdentityMappingFlowSamples({
 				policies: policies.policies,
 				catalogs: catalogs.catalogs,
+				sourceProfiles: sourceProfiles.sourceProfiles,
 				protocolSchemas: protocolSchemas.protocolSchemas,
 				externalSchemas: externalSchemas.externalSchemas,
 				schemaReadinessRows: schemaReadiness.rows

@@ -60,4 +60,20 @@ describe('executeD1Migration retry handling', () => {
     expect(result.error).toContain('missing_table');
     expect(vi.mocked(execa)).toHaveBeenCalledTimes(1);
   });
+
+  it('does not mark duplicate column errors as successfully applied', async () => {
+    const migrationPath = join(root, '001_duplicate_column.sql');
+    writeFileSync(migrationPath, 'ALTER TABLE users_pii_tombstone ADD COLUMN created_at INTEGER;');
+    vi.mocked(execa).mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'duplicate column name: created_at: SQLITE_ERROR',
+    } as never);
+
+    const result = await executeD1Migration('test-db', migrationPath);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('duplicate column name');
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(1);
+  });
 });

@@ -647,6 +647,7 @@ import {
   adminIdentityMappingCatalogsListHandler,
   adminIdentityMappingExternalSchemaImportHandler,
   adminIdentityMappingExternalSchemasListHandler,
+  adminIdentityMappingCsvSourceProfileParseHandler,
   adminIdentityMappingPoliciesListHandler,
   adminIdentityMappingPolicyCreateHandler,
   adminIdentityMappingPolicyRollbackHandler,
@@ -667,6 +668,10 @@ import {
   adminIdentityMappingKeyRegistryCreateHandler,
   adminIdentityMappingKeyRegistryRotateHandler,
   adminIdentityMappingLifecycleSignalRecordHandler,
+  adminIdentityMappingSourceProfileActivateHandler,
+  adminIdentityMappingSourceProfileCreateHandler,
+  adminIdentityMappingSourceProfileReviewHandler,
+  adminIdentityMappingSourceProfilesListHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
   adminIdentityMappingOperationalNotificationAcknowledgeHandler,
@@ -2253,6 +2258,31 @@ app.post(
   '/api/admin/identity-mapping/external-schemas',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingExternalSchemaImportHandler
+);
+app.get(
+  '/api/admin/identity-mapping/source-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingSourceProfilesListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/source-profiles/csv/parse',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingCsvSourceProfileParseHandler
+);
+app.post(
+  '/api/admin/identity-mapping/source-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSourceProfileCreateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/review',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSourceProfileReviewHandler
+);
+app.post(
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/activate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSourceProfileActivateHandler
 );
 app.get(
   '/api/admin/identity-mapping/templates',

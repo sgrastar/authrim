@@ -3,7 +3,8 @@ import type {
 	IdentityMappingExternalSchemaSummary,
 	IdentityMappingPolicySummary,
 	IdentityMappingProtocolSchemaSummary,
-	IdentityMappingSchemaReadinessRow
+	IdentityMappingSchemaReadinessRow,
+	IdentityMappingSourceProfileSummary
 } from '$lib/api/admin-identity-mapping';
 import type {
 	MappingAdapter,
@@ -17,6 +18,7 @@ import type {
 interface IdentityMappingFlowInput {
 	policies: IdentityMappingPolicySummary[];
 	catalogs: IdentityMappingCatalogSummary[];
+	sourceProfiles: IdentityMappingSourceProfileSummary[];
 	protocolSchemas: IdentityMappingProtocolSchemaSummary[];
 	externalSchemas: IdentityMappingExternalSchemaSummary[];
 	schemaReadinessRows: IdentityMappingSchemaReadinessRow[];
@@ -46,6 +48,7 @@ const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
 
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
 	const sourceProfiles = [
+		...input.sourceProfiles.map(sourceProfileToProfile),
 		...input.externalSchemas.map(externalSchemaToProfile),
 		...input.protocolSchemas
 			.filter((schema) => isInboundProtocol(schema.protocol))
@@ -119,6 +122,19 @@ function buildSample(
 		nodes,
 		edges: [] satisfies MappingEdge[],
 		rules
+	};
+}
+
+function sourceProfileToProfile(profile: IdentityMappingSourceProfileSummary): ProfileSchema {
+	return {
+		id: `source-profile-${profile.id}`,
+		title: profile.displayName,
+		source: `${profile.sourceType.toUpperCase()} / ${profile.profileKey}`,
+		adapter: adapterFrom(profile.sourceType),
+		direction: 'source',
+		versionLabel: profile.version?.versionLabel ?? 'draft',
+		lifecycleState: profile.version?.lifecycleState ?? profile.lifecycleState,
+		schema: (profile.version?.schema as unknown as Record<string, unknown> | undefined) ?? null
 	};
 }
 
@@ -258,13 +274,18 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 			return [{ key: item, label: item, caption: 'schema field', required: required.has(item) }];
 		}
 		if (!isRecord(item)) return [];
-		const key = stringValue(item.name) ?? stringValue(item.key) ?? stringValue(item.id);
+		const key =
+			stringValue(item.name) ??
+			stringValue(item.key) ??
+			stringValue(item.headerName) ??
+			stringValue(item.id) ??
+			stringValue(item.stableColumnId);
 		if (!key) return [];
 		const type = stringValue(item.type) ?? stringValue(item.valueType);
 		return [
 			{
 				key,
-				label: key,
+				label: stringValue(item.label) ?? key,
 				caption: stringValue(item.description) ?? type ?? 'schema field',
 				type,
 				required: required.has(key) || item.required === true,

@@ -78,6 +78,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(api).toContain('/metadata-documents');
 		expect(api).toContain('/api/admin/identity-mapping/protocol-schemas');
 		expect(api).toContain('/api/admin/identity-mapping/external-schemas');
+		expect(api).toContain('/api/admin/identity-mapping/source-profiles');
+		expect(api).toContain('/api/admin/identity-mapping/source-profiles/csv/parse');
 		expect(api).toContain('/api/admin/identity-mapping/templates');
 		expect(api).toContain('/api/admin/identity-mapping/schema-readiness');
 		expect(api).toContain('/rollback');
@@ -90,6 +92,11 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(operations).toContain('runPolicyOperation');
 		expect(profiles).toContain('listProtocolSchemas');
 		expect(profiles).toContain('listExternalSchemas');
+		expect(profiles).toContain('listSourceProfiles');
+		expect(profiles).toContain('parseCsvSourceProfile');
+		expect(profiles).toContain('Save draft profile');
+		expect(profiles).toContain('Manual columns');
+		expect(profiles).toContain('Shift_JIS');
 		expect(profiles).toContain('listTemplates');
 		expect(profiles).toContain('Destination Consent Settings');
 		expect(profiles).toContain('Tenant default');

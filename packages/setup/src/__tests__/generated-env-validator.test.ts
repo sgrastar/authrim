@@ -229,6 +229,50 @@ async function writeGeneratedEnvironment(
   return { root, env };
 }
 
+function mockLiveRuntimeSchema(
+  env: string,
+  options?: { missingPiiTables?: string[]; legacyUserCustomFieldsFk?: boolean }
+) {
+  const schemaTablesByDatabase = new Map<string, string[]>([
+    [
+      `${env}-authrim-core-db`,
+      [
+        'users_core',
+        'identity_subjects',
+        'identity_accounts',
+        'profiles',
+        'contact_points',
+        'custom_claim_schemas',
+        'user_custom_fields',
+      ],
+    ],
+    [
+      `${env}-authrim-pii-db`,
+      ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'].filter(
+        (table) => !(options?.missingPiiTables ?? []).includes(table)
+      ),
+    ],
+    [`${env}-authrim-admin-db`, ['admin_users', 'admin_machine_principals', 'mapping_policy_sets']],
+  ]);
+
+  queryD1RowsMock.mockImplementation((dbName: string, sql: string) => {
+    if (sql.includes("sqlite_master WHERE type = 'table'")) {
+      return Promise.resolve((schemaTablesByDatabase.get(dbName) ?? []).map((name) => ({ name })));
+    }
+    if (sql.includes('PRAGMA foreign_key_list(user_custom_fields)')) {
+      return Promise.resolve(
+        options?.legacyUserCustomFieldsFk
+          ? [{ table: 'users_core', from: 'user_id', to: 'id' }]
+          : []
+      );
+    }
+    if (sql.includes('SELECT COUNT(*) AS count FROM tenant_database_slots')) {
+      return Promise.resolve([{ count: 3 }]);
+    }
+    return Promise.resolve([]);
+  });
+}
+
 describe('validateGeneratedEnvironment', () => {
   beforeEach(() => {
     listD1DatabasesMock.mockReset();
@@ -376,6 +420,7 @@ describe('validateGeneratedEnvironment', () => {
 
   it('passes live Cloudflare validation when lock D1 and R2 resources exist', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    mockLiveRuntimeSchema(env);
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
       { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
@@ -395,11 +440,14 @@ describe('validateGeneratedEnvironment', () => {
     expect(result.ok).toBe(true);
     expect(result.checks.find((check) => check.id === 'live-cloudflare-d1')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-cloudflare-r2')?.status).toBe('pass');
-    expect(queryD1RowsMock).not.toHaveBeenCalled();
+    expect(result.checks.find((check) => check.id === 'live-runtime-d1-schema')?.status).toBe(
+      'pass'
+    );
   });
 
   it('fails live Cloudflare validation when a recorded R2 bucket is missing', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    mockLiveRuntimeSchema(env);
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
       { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
@@ -417,11 +465,66 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
+  it('fails live Cloudflare validation when runtime schema tables are missing', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    mockLiveRuntimeSchema(env, { missingPiiTables: ['identity_sensitive_values'] });
+    listD1DatabasesMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
+      { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
+      { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+    ]);
+    listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-avatars` },
+      { name: `${env}-diagnostic-logs` },
+      { name: `${env}-audit-archive` },
+      { name: `${env}-import-artifacts` },
+      { name: `${env}-export-artifacts` },
+      { name: `${env}-sensitive-details` },
+    ]);
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
+    const schemaCheck = result.checks.find((check) => check.id === 'live-runtime-d1-schema');
+
+    expect(result.ok).toBe(false);
+    expect(schemaCheck?.status).toBe('fail');
+    expect(schemaCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('missing PII runtime schema table(s)')])
+    );
+  });
+
+  it('fails live Cloudflare validation when custom fields still reference users_core', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    mockLiveRuntimeSchema(env, { legacyUserCustomFieldsFk: true });
+    listD1DatabasesMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
+      { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
+      { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+    ]);
+    listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-avatars` },
+      { name: `${env}-diagnostic-logs` },
+      { name: `${env}-audit-archive` },
+      { name: `${env}-import-artifacts` },
+      { name: `${env}-export-artifacts` },
+      { name: `${env}-sensitive-details` },
+    ]);
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
+    const schemaCheck = result.checks.find((check) => check.id === 'live-runtime-d1-schema');
+
+    expect(result.ok).toBe(false);
+    expect(schemaCheck?.status).toBe('fail');
+    expect(schemaCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('references legacy users_core(id)')])
+    );
+  });
+
   it('checks live tenant D1 slot count against DB_ADMIN for tenant-d1 environments', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
       tenantD1StorageDefault: true,
       withTenantD1Slots: true,
     });
+    mockLiveRuntimeSchema(env);
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
       { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
@@ -441,7 +544,6 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
     ]);
-    queryD1RowsMock.mockResolvedValueOnce([{ count: 3 }]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
     const slotCheck = result.checks.find((check) => check.id === 'live-tenant-d1-slots');
@@ -451,7 +553,7 @@ describe('validateGeneratedEnvironment', () => {
     expect(slotCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('tenant_database_slots count: 3/3')])
     );
-    expect(queryD1RowsMock).toHaveBeenCalledWith(
+    expect(queryD1RowsMock).toHaveBeenLastCalledWith(
       `${env}-authrim-admin-db`,
       'SELECT COUNT(*) AS count FROM tenant_database_slots;'
     );

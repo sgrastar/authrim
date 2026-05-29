@@ -1777,11 +1777,6 @@ export async function executeD1Migration(
   sqlFilePath: string,
   onProgress?: (message: string) => void
 ): Promise<{ success: boolean; error?: string }> {
-  const isAlreadyAppliedError = (message: string): boolean =>
-    message.includes('already exists') ||
-    message.includes('duplicate column name') ||
-    message.includes('UNIQUE constraint');
-
   const isTransientD1MigrationError = (message: string): boolean => {
     const normalized = message.toLowerCase();
     return (
@@ -1825,11 +1820,6 @@ export async function executeD1Migration(
           return { success: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (isAlreadyAppliedError(message)) {
-            onProgress?.('  ⚠️ Migration already applied (skipped)');
-            return { success: true };
-          }
-
           const canRetry =
             attempt < D1_MIGRATION_MAX_ATTEMPTS && isTransientD1MigrationError(message);
           if (!canRetry) {
@@ -1852,11 +1842,6 @@ export async function executeD1Migration(
     return { success: false, error: 'D1 migration retry loop exited unexpectedly' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // Ignore "already exists" errors - migration may have been partially applied
-    if (isAlreadyAppliedError(message)) {
-      onProgress?.('  ⚠️ Migration already applied (skipped)');
-      return { success: true };
-    }
     return { success: false, error: message };
   }
 }

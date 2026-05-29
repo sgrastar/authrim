@@ -14,6 +14,7 @@ describe('identity mapping flow data adapter', () => {
 				}
 			],
 			catalogs: [],
+			sourceProfiles: [],
 			protocolSchemas: [
 				{
 					id: 'protocol_oidc',
@@ -70,6 +71,7 @@ describe('identity mapping flow data adapter', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [],
 			catalogs: [],
+			sourceProfiles: [],
 			protocolSchemas: [],
 			externalSchemas: [],
 			schemaReadinessRows: [
@@ -97,6 +99,59 @@ describe('identity mapping flow data adapter', () => {
 				expect.objectContaining({
 					role: 'target',
 					label: 'contact_points'
+				})
+			])
+		);
+	});
+
+	it('prefers registered source profiles in Flow Editor samples', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			sourceProfiles: [
+				{
+					id: 'source_profile_1',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'workday_csv',
+					displayName: 'Workday CSV',
+					lifecycleState: 'active',
+					version: {
+						id: 'version_1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.email.1',
+									headerName: 'Email',
+									label: 'Email',
+									valueType: 'email',
+									required: true,
+									classification: 'pii'
+								}
+							]
+						}
+					}
+				}
+			],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		expect(samples[0]).toMatchObject({
+			title: 'Workday CSV',
+			inboundAdapter: 'CSV'
+		});
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'source',
+					label: 'Email',
+					privacy: 'PII',
+					required: true
 				})
 			])
 		);

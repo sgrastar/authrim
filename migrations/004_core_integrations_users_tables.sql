@@ -71,8 +71,7 @@ CREATE TABLE "user_custom_fields" (
   field_type TEXT,
   searchable INTEGER DEFAULT 1,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  PRIMARY KEY (tenant_id, user_id, field_name),
-  FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
+  PRIMARY KEY (tenant_id, user_id, field_name)
 );
 
 CREATE INDEX idx_user_custom_fields_search ON user_custom_fields(tenant_id, field_name, field_value);

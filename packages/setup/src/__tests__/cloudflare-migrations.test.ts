@@ -348,6 +348,13 @@ ${insertOAuthClientSql('tenant-b', 'shared-mobile', 'Tenant B Mobile')}
             )
           ).toBe('1');
         }
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM pragma_foreign_key_list('user_custom_fields') WHERE "table" = 'users_core';`
+          )
+        ).toBe('0');
 
         expect(() =>
           runSqlite(
@@ -455,6 +462,36 @@ INSERT INTO oauth_clients (
         expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_installations;')).toBe(
           '0'
         );
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
+    'applies the consolidated PII baseline in SQLite',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-pii-migration-'));
+      const dbPath = join(tempDir, 'test.db');
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activePiiMigrationFiles());
+
+        for (const tableName of ['users_pii', 'users_pii_tombstone', 'identity_sensitive_values']) {
+          expect(
+            readSqlite(
+              sqlite3Path,
+              dbPath,
+              `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '${tableName}';`
+            )
+          ).toBe('1');
+        }
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
