@@ -66,6 +66,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('isValidConnectionForReconnect');
 		expect(flowEditor).toContain('isTypeCompatible');
 		expect(flowEditor).toContain('isTargetInputFull');
+		expect(flowEditor).toContain("fromNode.role !== 'source' && fromNode.role !== 'transform'");
+		expect(flowEditor).toContain("edgeFromRole === 'source' || edgeFromRole === 'transform'");
+		expect(flowEditor).toContain('!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)');
 		expect(flowEditor).toContain('targetInputCardinality');
 		expect(flowEditor).toContain('normalizeNodeType');
 		expect(flowEditor).toContain('drag-reject-marker');

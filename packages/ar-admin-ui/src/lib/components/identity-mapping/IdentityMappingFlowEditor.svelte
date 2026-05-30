@@ -686,10 +686,20 @@
 		return edges.some((edge) => edge.from === fromNodeId && edge.to === toNodeId);
 	}
 
-	function isTargetInputFull(fromNode: MappingNode, toNode: MappingNode): boolean {
-		if (fromNode.role !== 'source' || toNode.role !== 'target') return false;
+	function isTargetInputFull(
+		fromNode: MappingNode,
+		toNode: MappingNode,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
+	): boolean {
+		if (fromNode.role !== 'source' && fromNode.role !== 'transform') return false;
+		if (toNode.role !== 'target') return false;
 		if (targetInputCardinality(toNode) !== 'one') return false;
-		return edges.some((edge) => edge.to === toNode.id && nodeById(edge.from)?.role === 'source');
+		return [...edges, ...extraEdges].some((edge) => {
+			if (ignoredEdgeIds.has(edge.id) || edge.to !== toNode.id) return false;
+			const edgeFromRole = nodeById(edge.from)?.role;
+			return edgeFromRole === 'source' || edgeFromRole === 'transform';
+		});
 	}
 
 	function targetInputCardinality(node: MappingNode): 'one' | 'many' {
@@ -850,6 +860,7 @@
 
 	function addEdge(from: string, to: string) {
 		if (!editable) return;
+		if (!isValidConnection(nodeById(from), nodeById(to))) return;
 		if (edges.some((edge) => edge.from === from && edge.to === to)) return;
 		customCounter += 1;
 		const edge = {
@@ -940,7 +951,16 @@
 			for (const outEdge of outgoing) {
 				const fromNode = nodeById(inEdge.from);
 				const toNode = nodeById(outEdge.to);
-				if (!isValidConnectionForReconnect(fromNode, toNode)) continue;
+				if (
+					!isValidConnectionForReconnect(
+						fromNode,
+						toNode,
+						new Set([inEdge.id, outEdge.id]),
+						reconnectedEdges
+					)
+				) {
+					continue;
+				}
 				if (
 					edges.some((edge) => edge.from === inEdge.from && edge.to === outEdge.to) ||
 					reconnectedEdges.some((edge) => edge.from === inEdge.from && edge.to === outEdge.to)
@@ -979,13 +999,19 @@
 
 	function isValidConnectionForReconnect(
 		fromNode: MappingNode | undefined,
-		toNode: MappingNode | undefined
+		toNode: MappingNode | undefined,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
 	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
 		const validDirection =
 			(fromNode.role === 'source' && toNode.role === 'target') ||
 			(fromNode.role === 'target' && toNode.role === 'destination');
-		return validDirection && isTypeCompatible(fromNode, toNode);
+		return (
+			validDirection &&
+			isTypeCompatible(fromNode, toNode) &&
+			!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)
+		);
 	}
 
 	function handleGlobalKeyDown(event: KeyboardEvent) {
