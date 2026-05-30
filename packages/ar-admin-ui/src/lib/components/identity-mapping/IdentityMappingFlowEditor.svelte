@@ -337,19 +337,19 @@
 		}
 
 		const width = Math.max(190, canvasWidth * 0.23);
-		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.12) : 26;
+		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
 		const targetLeft =
 			viewMode === 'outbound'
-				? Math.max(26, canvasWidth * 0.2)
+				? Math.max(26, canvasWidth * 0.12)
 				: viewMode === 'inbound'
 					? Math.min(
 							canvasWidth - width - 26,
-							Math.max(sourceLeft + width + 90, canvasWidth * 0.58)
+							Math.max(sourceLeft + width + 100, canvasWidth * 0.66)
 						)
 					: canvasWidth * 0.385;
 		const destinationLeft =
 			viewMode === 'outbound'
-				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 90, canvasWidth * 0.62))
+				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		const minHeight = Math.max(520, cursor + 36);
 		let visibleSourceOffset = 0;
