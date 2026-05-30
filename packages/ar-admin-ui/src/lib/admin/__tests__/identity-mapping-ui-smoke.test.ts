@@ -55,6 +55,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('canInsertTransformNode');
 		expect(flowEditor).toContain('edgeDeletePoint');
 		expect(flowEditor).toContain('edgeInsertPoint');
+		expect(flowEditor).toContain('deleteTransformNode');
+		expect(flowEditor).toContain('transform-delete-control');
+		expect(flowEditor).toContain('isValidConnectionForReconnect');
 		expect(flowEditor).toContain('isTypeCompatible');
 		expect(flowEditor).toContain('isTargetInputFull');
 		expect(flowEditor).toContain('targetInputCardinality');

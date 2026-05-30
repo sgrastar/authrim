@@ -333,18 +333,35 @@
 
 	function connectedEdgeIds(nodeId: string | null): Set<string> {
 		if (!nodeId) return new Set();
-		return new Set(
-			edges.filter((edge) => edge.from === nodeId || edge.to === nodeId).map((edge) => edge.id)
-		);
+		return connectedGraph(nodeId).edgeIds;
 	}
 
 	function connectedNodeIds(nodeId: string | null): Set<string> {
 		if (!nodeId) return new Set();
-		return new Set(
-			edges
-				.filter((edge) => edge.from === nodeId || edge.to === nodeId)
-				.flatMap((edge) => (edge.from === nodeId ? [edge.to] : [edge.from]))
-		);
+		return connectedGraph(nodeId).nodeIds;
+	}
+
+	function connectedGraph(nodeId: string): { nodeIds: Set<string>; edgeIds: Set<string> } {
+		const nodeIds: string[] = [];
+		const edgeIds: string[] = [];
+		const visited = [nodeId];
+		const queue = [nodeId];
+
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			for (const edge of edges) {
+				if (edge.from !== current && edge.to !== current) continue;
+				if (!edgeIds.includes(edge.id)) edgeIds.push(edge.id);
+				const next = edge.from === current ? edge.to : edge.from;
+				if (visited.includes(next)) continue;
+				visited.push(next);
+				nodeIds.push(next);
+				queue.push(next);
+			}
+		}
+
+		return { nodeIds: new Set(nodeIds), edgeIds: new Set(edgeIds) };
 	}
 
 	function destinationProfileOptionsForSample(candidate: MappingSample) {
@@ -475,6 +492,10 @@
 			`--stack-shadow-x:${22 + node.stackIndex * 8}px`,
 			`--stack-shadow-y:${14 + node.stackIndex * 6}px`
 		].join(';');
+	}
+
+	function transformDeleteStyle(node: LayoutNode): string {
+		return [`left:${node.left + node.width - 8}px`, `top:${node.top - 8}px`].join(';');
 	}
 
 	function edgePoint(node: LayoutNode, direction: 'from' | 'to'): Point {
@@ -865,8 +886,72 @@
 		hasUnsavedDraftChanges = true;
 	}
 
+	function deleteTransformNode(nodeId: string) {
+		if (!editable) return;
+		const transformNode = nodeById(nodeId);
+		if (transformNode?.role !== 'transform') return;
+		const incoming = edges.filter((edge) => edge.to === nodeId);
+		const outgoing = edges.filter((edge) => edge.from === nodeId);
+		const reconnectedEdges: MappingEdge[] = [];
+
+		for (const inEdge of incoming) {
+			for (const outEdge of outgoing) {
+				const fromNode = nodeById(inEdge.from);
+				const toNode = nodeById(outEdge.to);
+				if (!isValidConnectionForReconnect(fromNode, toNode)) continue;
+				if (
+					edges.some((edge) => edge.from === inEdge.from && edge.to === outEdge.to) ||
+					reconnectedEdges.some((edge) => edge.from === inEdge.from && edge.to === outEdge.to)
+				) {
+					continue;
+				}
+				customCounter += 1;
+				reconnectedEdges.push({
+					id: `transform-reconnect-${customCounter}`,
+					from: inEdge.from,
+					to: outEdge.to,
+					outbound: outEdge.outbound || inEdge.outbound,
+					custom: true
+				});
+			}
+		}
+
+		nodes = nodes.filter((node) => node.id !== nodeId);
+		edges = [
+			...edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId),
+			...reconnectedEdges
+		];
+		if (selectedNodeId === nodeId) {
+			selectedNodeId = null;
+			activeRuleId = sample.activeRuleId;
+		}
+		selectedEdgeId = null;
+		hoverNodeId = null;
+		hasUnsavedDraftChanges = true;
+	}
+
+	function deleteSelectedTransformNode() {
+		if (!selectedNodeId) return;
+		deleteTransformNode(selectedNodeId);
+	}
+
+	function isValidConnectionForReconnect(
+		fromNode: MappingNode | undefined,
+		toNode: MappingNode | undefined
+	): boolean {
+		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
+		const validDirection =
+			(fromNode.role === 'source' && toNode.role === 'target') ||
+			(fromNode.role === 'target' && toNode.role === 'destination');
+		return validDirection && isTypeCompatible(fromNode, toNode);
+	}
+
 	function handleGlobalKeyDown(event: KeyboardEvent) {
-		if (!editable || !selectedEdgeId || (event.key !== 'Backspace' && event.key !== 'Delete')) {
+		if (
+			!editable ||
+			(!selectedEdgeId && nodeById(selectedNodeId ?? '')?.role !== 'transform') ||
+			(event.key !== 'Backspace' && event.key !== 'Delete')
+		) {
 			return;
 		}
 		const target = event.target as HTMLElement | null;
@@ -877,7 +962,11 @@
 			return;
 		}
 		event.preventDefault();
-		deleteSelectedEdge();
+		if (selectedEdgeId) {
+			deleteSelectedEdge();
+		} else {
+			deleteSelectedTransformNode();
+		}
 	}
 
 	function selectSample(event: Event) {
@@ -1309,6 +1398,20 @@
 							></span>
 						{/if}
 					</button>
+					{#if editable && node.role === 'transform' && node.id === selectedNodeId && !node.hidden}
+						<button
+							class="transform-delete-control"
+							style={transformDeleteStyle(node)}
+							type="button"
+							aria-label={`Delete ${node.label}`}
+							onclick={(event) => {
+								event.stopPropagation();
+								deleteTransformNode(node.id);
+							}}
+						>
+							<span aria-hidden="true">×</span>
+						</button>
+					{/if}
 				{/each}
 			</div>
 		</section>
@@ -2031,6 +2134,37 @@
 		text-align: center;
 	}
 
+	.transform-delete-control {
+		position: absolute;
+		z-index: 8;
+		display: grid;
+		place-items: center;
+		width: 16px;
+		height: 16px;
+		padding: 0;
+		border: 1px solid color-mix(in srgb, var(--map-red) 72%, transparent);
+		border-radius: 999px;
+		color: var(--map-red);
+		background: var(--map-surface);
+		box-shadow:
+			0 0 0 2px color-mix(in srgb, var(--map-red) 12%, transparent),
+			0 6px 14px rgb(0 0 0 / 0.3);
+		font-size: 12px;
+		font-weight: 900;
+		line-height: 1;
+	}
+
+	.transform-delete-control:hover,
+	.transform-delete-control:focus-visible {
+		background: color-mix(in srgb, var(--map-red) 12%, var(--map-surface));
+		outline: none;
+	}
+
+	.transform-delete-control span {
+		display: block;
+		transform: translateY(-0.5px);
+	}
+
 	.target-node.cardinality-one .node-handle.input {
 		box-shadow:
 			0 0 0 1px rgba(213, 224, 238, 0.18),
@@ -2112,6 +2246,11 @@
 	.graph-node.selection-related {
 		border-color: color-mix(in srgb, var(--node-accent) 84%, transparent);
 		background: color-mix(in srgb, var(--node-accent) 18%, var(--map-surface));
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--node-accent) 58%, transparent),
+			0 0 0 3px color-mix(in srgb, var(--node-accent) 10%, transparent),
+			0 0 18px 1px color-mix(in srgb, var(--node-accent) 28%, transparent),
+			0 8px 18px rgba(0, 0, 0, 0.26);
 	}
 
 	.node-handle {
