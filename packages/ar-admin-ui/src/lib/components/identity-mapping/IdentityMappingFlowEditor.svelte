@@ -121,7 +121,27 @@
 				(node.role === 'destination' && viewMode !== 'inbound')
 		)
 	);
-	const sourceNodes = $derived(visibleNodes.filter((node) => node.role === 'source'));
+	const overviewLayerSourceNodes = $derived(
+		viewMode === 'overview'
+			? samples
+					.filter((candidate: MappingSample) => candidate.id !== sample.id)
+					.flatMap((candidate: MappingSample) =>
+						candidate.nodes
+							.filter((node: MappingNode) => node.role === 'source')
+							.map((node: MappingNode) => ({
+								...node,
+								id: `overview-layer-${candidate.id}-${node.id}`,
+								ruleId: `overview-layer-${candidate.id}-${node.ruleId}`,
+								profileId: candidate.id,
+								profileTitle: candidate.title
+							}))
+					)
+			: []
+	);
+	const sourceNodes = $derived([
+		...visibleNodes.filter((node) => node.role === 'source'),
+		...overviewLayerSourceNodes
+	]);
 	const transformNodes = $derived(visibleNodes.filter((node) => node.role === 'transform'));
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
@@ -408,17 +428,20 @@
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		const minHeight = Math.max(520, cursor + 36);
 		let visibleSourceOffset = 0;
-		let hiddenSourceOffset = 0;
+		const hiddenSourceRowOffsets: Record<string, number> = {};
 
 		const sourceLayout = sourceNodes.map((node) => {
 			const selected = node.profileId
 				? node.profileId === sample.id
 				: node.adapter === inboundAdapter;
+			const profileKey = node.profileId ?? node.adapter ?? 'source';
 			const visibleOffset = selected ? visibleSourceOffset++ : 0;
-			const hiddenOffset = selected ? 0 : ++hiddenSourceOffset;
+			const hiddenRowOffset = hiddenSourceRowOffsets[profileKey] ?? 0;
+			hiddenSourceRowOffsets[profileKey] = hiddenRowOffset + 1;
+			const hiddenOffset = selected ? 0 : sourceProfileStackIndex(profileKey);
 			return {
 				...node,
-				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset : hiddenRowOffset) * graphStep,
 				left: sourceLeft,
 				width,
 				height: nodeHeight,
@@ -448,17 +471,20 @@
 		}));
 
 		let visibleDestinationOffset = 0;
-		let hiddenDestinationOffset = 0;
+		const hiddenDestinationRowOffsets: Record<string, number> = {};
 
 		const destinationLayout = destinationNodes.map((node) => {
 			const selected = node.profileId
 				? node.profileId === selectedDestinationProfileId
 				: node.adapter === outboundAdapter;
+			const profileKey = node.profileId ?? node.adapter ?? 'destination';
 			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
-			const hiddenOffset = selected ? 0 : ++hiddenDestinationOffset;
+			const hiddenRowOffset = hiddenDestinationRowOffsets[profileKey] ?? 0;
+			hiddenDestinationRowOffsets[profileKey] = hiddenRowOffset + 1;
+			const hiddenOffset = selected ? 0 : destinationProfileStackIndex(profileKey);
 			return {
 				...node,
-				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset : hiddenRowOffset) * graphStep,
 				left: destinationLeft,
 				width,
 				height: nodeHeight,
@@ -475,6 +501,22 @@
 				...laidOut.filter((node) => !node.hidden).map((node) => node.top + node.height + 36)
 			)
 		};
+	}
+
+	function sourceProfileStackIndex(profileId: string): number {
+		const hiddenIds = sourceProfileOptions
+			.map((option) => option.id)
+			.filter((id) => id !== sample.id);
+		const index = hiddenIds.indexOf(profileId);
+		return index >= 0 ? index + 1 : 1;
+	}
+
+	function destinationProfileStackIndex(profileId: string): number {
+		const hiddenIds = destinationProfileOptions
+			.map((option) => option.id)
+			.filter((id) => id !== selectedDestinationProfileId);
+		const index = hiddenIds.indexOf(profileId);
+		return index >= 0 ? index + 1 : 1;
 	}
 
 	function nodeStyle(node: LayoutNode): string {
@@ -2188,6 +2230,7 @@
 		opacity: 0.22;
 		filter: saturate(0.65);
 		transform: translate(var(--stack-x), var(--stack-y));
+		pointer-events: none;
 	}
 
 	.adapter-hidden::before {
