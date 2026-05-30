@@ -2742,7 +2742,7 @@
 	.target-node.cardinality-many .node-handle.input {
 		box-shadow:
 			0 0 0 1px rgba(213, 224, 238, 0.18),
-			0 0 0 4px color-mix(in srgb, var(--map-brand) 14%, transparent);
+			inset 0 0 0 2px var(--map-canvas);
 	}
 
 	.adapter-hidden {
