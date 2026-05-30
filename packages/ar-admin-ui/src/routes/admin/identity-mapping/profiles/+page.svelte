@@ -122,6 +122,7 @@
 	let destinationProtocolSchemaRef = $state('');
 	let destinationBlockingWarningsConfirmed = $state(false);
 	let savingDestination = $state(false);
+	let deletingProfileId = $state<string | null>(null);
 	let oidcClaimsParameterJson = $state('');
 	let oidcClaims = $state<OidcClaimDraft[]>([
 		createOidcClaimDraft(
@@ -514,6 +515,37 @@
 				error instanceof Error
 					? error.message
 					: 'Failed to activate identity mapping destination profile';
+		}
+	}
+
+	async function deleteProfile(profile: ProfileItem) {
+		if (profile.kind !== 'inbound' && profile.kind !== 'outbound') return;
+		const profileId = profile.sourceProfileId ?? profile.destinationProfileId;
+		if (!profileId) return;
+		const confirmed = window.confirm(
+			`Delete ${profile.displayName}? This removes the profile and its versions. Existing draft graph references may need to be reconnected.`
+		);
+		if (!confirmed) return;
+		deletingProfileId = profile.id;
+		createMessage = null;
+		try {
+			if (profile.sourceProfileId) {
+				await adminIdentityMappingAPI.deleteSourceProfile(profile.sourceProfileId);
+			} else if (profile.destinationProfileId) {
+				await adminIdentityMappingAPI.deleteDestinationProfile(profile.destinationProfileId);
+			}
+			if (selectedProfileId === profile.id) {
+				selectedProfileId = null;
+			}
+			consentDrafts = Object.fromEntries(
+				Object.entries(consentDrafts).filter(([key]) => key !== profile.id)
+			);
+			createMessage = `Deleted ${profile.displayName}.`;
+			await loadProfiles();
+		} catch (error) {
+			createMessage = error instanceof Error ? error.message : 'Failed to delete profile';
+		} finally {
+			deletingProfileId = null;
 		}
 	}
 
@@ -1736,6 +1768,18 @@
 								>
 							</div>
 						{/if}
+						{#if profile.sourceProfileId || profile.destinationProfileId}
+							<div class="profile-actions danger-actions">
+								<button
+									type="button"
+									class="danger-button"
+									disabled={deletingProfileId === profile.id}
+									onclick={() => deleteProfile(profile)}
+								>
+									{deletingProfileId === profile.id ? 'Deleting...' : 'Delete'}
+								</button>
+							</div>
+						{/if}
 					</article>
 				{/each}
 			</div>
@@ -1907,6 +1951,21 @@
 	.profile-actions {
 		align-items: center;
 		justify-content: flex-start;
+	}
+
+	.danger-actions {
+		margin-top: 4px;
+	}
+
+	.danger-button {
+		border-color: color-mix(in srgb, var(--color-danger, #dc2626) 45%, var(--border-color));
+		color: var(--color-danger, #dc2626);
+	}
+
+	.danger-button:hover:not(:disabled),
+	.danger-button:focus-visible:not(:disabled) {
+		border-color: var(--color-danger, #dc2626);
+		background: color-mix(in srgb, var(--color-danger, #dc2626) 10%, transparent);
 	}
 
 	.back-link,

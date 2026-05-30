@@ -169,6 +169,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(api).toContain('/api/admin/identity-mapping/source-profiles');
 		expect(api).toContain('/api/admin/identity-mapping/source-profiles/csv/parse');
 		expect(api).toContain('/api/admin/identity-mapping/destination-profiles');
+		expect(api).toContain('deleteSourceProfile');
+		expect(api).toContain('deleteDestinationProfile');
 		expect(api).toContain('/api/admin/identity-mapping/oidc/custom-scopes');
 		expect(api).toContain('/api/admin/identity-mapping/oidc/custom-claims');
 		expect(api).toContain('/api/admin/identity-mapping/templates');
@@ -190,6 +192,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(profiles).toContain('parseCsvSourceProfile');
 		expect(profiles).toContain('Save draft profile');
 		expect(profiles).toContain('Save destination draft');
+		expect(profiles).toContain('deleteProfile');
+		expect(profiles).toContain('Delete');
 		expect(profiles).toContain('Save custom scope');
 		expect(profiles).toContain('Save custom claim');
 		expect(profiles).toContain('Manual columns');

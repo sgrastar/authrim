@@ -650,6 +650,7 @@ import {
   adminIdentityMappingCsvSourceProfileParseHandler,
   adminIdentityMappingDestinationProfileActivateHandler,
   adminIdentityMappingDestinationProfileCreateHandler,
+  adminIdentityMappingDestinationProfileDeleteHandler,
   adminIdentityMappingDestinationProfileReviewHandler,
   adminIdentityMappingDestinationProfilesListHandler,
   adminIdentityMappingPoliciesListHandler,
@@ -678,6 +679,7 @@ import {
   adminIdentityMappingOidcCustomScopesListHandler,
   adminIdentityMappingSourceProfileActivateHandler,
   adminIdentityMappingSourceProfileCreateHandler,
+  adminIdentityMappingSourceProfileDeleteHandler,
   adminIdentityMappingSourceProfileReviewHandler,
   adminIdentityMappingSourceProfilesListHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
@@ -2292,6 +2294,11 @@ app.post(
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileActivateHandler
 );
+app.delete(
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSourceProfileDeleteHandler
+);
 app.get(
   '/api/admin/identity-mapping/destination-profiles',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
@@ -2311,6 +2318,11 @@ app.post(
   '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/activate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingDestinationProfileActivateHandler
+);
+app.delete(
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingDestinationProfileDeleteHandler
 );
 app.get(
   '/api/admin/identity-mapping/oidc/custom-scopes',

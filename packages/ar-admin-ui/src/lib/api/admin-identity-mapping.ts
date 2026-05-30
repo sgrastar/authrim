@@ -587,6 +587,18 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to activate identity mapping source profile');
 	},
 
+	async deleteSourceProfile(sourceProfileId: string): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}`,
+			{
+				method: 'DELETE',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
+		);
+		return parseJson(response, 'Failed to delete identity mapping source profile');
+	},
+
 	async listDestinationProfiles(): Promise<{
 		destinationProfiles: IdentityMappingDestinationProfileSummary[];
 	}> {
@@ -638,6 +650,18 @@ export const adminIdentityMappingAPI = {
 			}
 		);
 		return parseJson(response, 'Failed to activate identity mapping destination profile');
+	},
+
+	async deleteDestinationProfile(destinationProfileId: string): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}`,
+			{
+				method: 'DELETE',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
+		);
+		return parseJson(response, 'Failed to delete identity mapping destination profile');
 	},
 
 	async listOidcCustomScopes(): Promise<{ customScopes: IdentityMappingOidcCustomScope[] }> {

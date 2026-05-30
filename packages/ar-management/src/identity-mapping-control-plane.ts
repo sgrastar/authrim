@@ -1783,6 +1783,28 @@ export class IdentityMappingControlPlaneRepository {
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
   }
 
+  async deleteSourceProfile(tenantId: string, profileId: string) {
+    validateRequiredString(profileId, 'profileId');
+    const existing = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id FROM source_profiles WHERE tenant_id = ? AND id = ?`,
+      [tenantId, profileId]
+    );
+    if (!existing) {
+      throw notFound('source profile not found');
+    }
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute('DELETE FROM source_profile_versions WHERE tenant_id = ? AND profile_id = ?', [
+        tenantId,
+        profileId,
+      ]);
+      await tx.execute('DELETE FROM source_profiles WHERE tenant_id = ? AND id = ?', [
+        tenantId,
+        profileId,
+      ]);
+    });
+    return { id: profileId, deleted: true };
+  }
+
   async createOidcCustomScope(tenantId: string, input: CreateOidcCustomScopeRequest) {
     validateRequiredString(input.scopeKey, 'scopeKey');
     validateRequiredString(input.displayName, 'displayName');
@@ -2161,6 +2183,35 @@ export class IdentityMappingControlPlaneRepository {
       );
     });
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
+  }
+
+  async deleteDestinationProfile(
+    tenantId: string,
+    profileId: string,
+    allowPlatformScope = false
+  ) {
+    validateRequiredString(profileId, 'profileId');
+    const existing = await this.adapter.queryOne<{ id: string; tenant_id: string }>(
+      `SELECT id, tenant_id
+         FROM destination_profiles
+        WHERE id = ?
+          AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
+      [profileId, tenantId, allowPlatformScope ? 1 : 0, 'platform']
+    );
+    if (!existing) {
+      throw notFound('destination profile not found');
+    }
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        'DELETE FROM destination_profile_versions WHERE tenant_id = ? AND profile_id = ?',
+        [existing.tenant_id, profileId]
+      );
+      await tx.execute('DELETE FROM destination_profiles WHERE tenant_id = ? AND id = ?', [
+        existing.tenant_id,
+        profileId,
+      ]);
+    });
+    return { id: profileId, deleted: true };
   }
 
   async createMappingTemplate(tenantId: string, input: CreateMappingTemplateRequest) {
@@ -5109,6 +5160,12 @@ export async function adminIdentityMappingSourceProfileActivateHandler(c: AdminC
   );
 }
 
+export async function adminIdentityMappingSourceProfileDeleteHandler(c: AdminContext) {
+  return handleMutation(c, 'source-profile.delete', async (repository, tenantId) =>
+    repository.deleteSourceProfile(tenantId, requiredParam(c, 'sourceProfileId'))
+  );
+}
+
 export async function adminIdentityMappingDestinationProfilesListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     destinationProfiles: await repository.listDestinationProfiles(tenantId),
@@ -5139,6 +5196,16 @@ export async function adminIdentityMappingDestinationProfileActivateHandler(c: A
       tenantId,
       requiredParam(c, 'destinationProfileId'),
       requiredParam(c, 'destinationProfileVersionId'),
+      hasPlatformOwnerScopeAuthority(c)
+    )
+  );
+}
+
+export async function adminIdentityMappingDestinationProfileDeleteHandler(c: AdminContext) {
+  return handleMutation(c, 'destination-profile.delete', async (repository, tenantId) =>
+    repository.deleteDestinationProfile(
+      tenantId,
+      requiredParam(c, 'destinationProfileId'),
       hasPlatformOwnerScopeAuthority(c)
     )
   );

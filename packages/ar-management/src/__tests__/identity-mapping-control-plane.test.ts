@@ -280,6 +280,36 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
     });
     expect(adapter.executes).toHaveLength(0);
   });
+
+  it('deletes source profiles and their versions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'source_profile_1' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const deleted = await repository.deleteSourceProfile('tenant_a', 'source_profile_1');
+
+    expect(deleted).toEqual({ id: 'source_profile_1', deleted: true });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('DELETE FROM source_profile_versions'),
+      expect.stringContaining('DELETE FROM source_profiles'),
+    ]);
+    expect(adapter.executes[0].params).toEqual(['tenant_a', 'source_profile_1']);
+    expect(adapter.executes[1].params).toEqual(['tenant_a', 'source_profile_1']);
+  });
+
+  it('rejects deleting missing source profiles', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [null],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(repository.deleteSourceProfile('tenant_a', 'missing')).rejects.toMatchObject({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
 });
 
 describe('IdentityMappingControlPlaneRepository destination profiles', () => {
@@ -489,6 +519,53 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect.stringContaining('INSERT INTO destination_profiles'),
       expect.stringContaining('INSERT INTO destination_profile_versions'),
     ]);
+  });
+
+  it('deletes destination profiles and their versions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'destination_profile_1', tenant_id: 'tenant_a' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const deleted = await repository.deleteDestinationProfile(
+      'tenant_a',
+      'destination_profile_1'
+    );
+
+    expect(deleted).toEqual({ id: 'destination_profile_1', deleted: true });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('DELETE FROM destination_profile_versions'),
+      expect.stringContaining('DELETE FROM destination_profiles'),
+    ]);
+    expect(adapter.executes[0].params).toEqual(['tenant_a', 'destination_profile_1']);
+    expect(adapter.executes[1].params).toEqual(['tenant_a', 'destination_profile_1']);
+  });
+
+  it('can delete platform destination profiles when platform scope is allowed', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'platform_destination_profile_1', tenant_id: 'platform' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.deleteDestinationProfile('tenant_a', 'platform_destination_profile_1', true);
+
+    expect(adapter.executes[0].params).toEqual(['platform', 'platform_destination_profile_1']);
+    expect(adapter.executes[1].params).toEqual(['platform', 'platform_destination_profile_1']);
+  });
+
+  it('rejects deleting missing destination profiles', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [null],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.deleteDestinationProfile('tenant_a', 'missing')
+    ).rejects.toMatchObject({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 });
 
