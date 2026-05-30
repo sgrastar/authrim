@@ -1057,6 +1057,7 @@
 			transform: 'not configured',
 			validation: 'not configured',
 			release: 'not configured',
+			storageTarget: 'not configured',
 			consentStatus: 'not_required' as const,
 			legalBasis: 'legitimate_interest' as const,
 			purpose: 'not configured',
@@ -1365,7 +1366,9 @@
 							<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
 						{/if}
 						<span>{node.label}</span>
-						<small>{node.caption}</small>
+						{#if node.caption}
+							<small>{node.caption}</small>
+						{/if}
 						{#if node.role === 'target'}
 							<span class="target-badge-row">
 								<span class="target-badges">
@@ -1474,6 +1477,10 @@
 					<div>
 						<dt>Release</dt>
 						<dd>{rule.release}</dd>
+					</div>
+					<div>
+						<dt>Storage</dt>
+						<dd>{rule.storageTarget ?? 'not configured'}</dd>
 					</div>
 				</dl>
 			{:else if activeTab === 'dryrun'}

@@ -47,150 +47,51 @@ interface ExtractedField {
 }
 
 const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
-const defaultCanonicalTargets: MappingNode[] = [
-	{
-		id: 'canonical-subject-identifier',
-		ruleId: 'canonical-subject-identifier',
-		role: 'target',
-		label: 'Subject identifier',
-		caption: 'identity_accounts.subject_id',
-		type: 'stable identifier',
-		inputCardinality: 'one',
-		privacy: 'non-PII',
-		required: true
-	},
-	{
-		id: 'canonical-email',
-		ruleId: 'canonical-email',
-		role: 'target',
-		label: 'Email',
-		caption: 'contact_points.value_storage_ref / contact_type=email',
-		type: 'email',
-		inputCardinality: 'one',
-		privacy: 'PII',
-		required: true
-	},
-	{
-		id: 'canonical-phone',
-		ruleId: 'canonical-phone',
-		role: 'target',
-		label: 'Phone',
-		caption: 'contact_points.value_storage_ref / contact_type=phone',
-		type: 'phone',
-		inputCardinality: 'one',
-		privacy: 'PII'
-	},
-	{
-		id: 'canonical-mobile-phone',
-		ruleId: 'canonical-mobile-phone',
-		role: 'target',
-		label: 'Mobile phone',
-		caption: 'contact_points.value_storage_ref / contact_type=mobile',
-		type: 'phone',
-		inputCardinality: 'one',
-		privacy: 'PII'
-	},
-	{
-		id: 'canonical-given-name',
-		ruleId: 'canonical-given-name',
-		role: 'target',
-		label: 'Given name',
-		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=given_name',
-		type: 'text',
-		inputCardinality: 'one',
-		privacy: 'PII'
-	},
-	{
-		id: 'canonical-family-name',
-		ruleId: 'canonical-family-name',
-		role: 'target',
-		label: 'Family name',
-		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=family_name',
-		type: 'text',
-		inputCardinality: 'one',
-		privacy: 'PII'
-	},
-	{
-		id: 'canonical-display-name',
-		ruleId: 'canonical-display-name',
-		role: 'target',
-		label: 'Display name',
-		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=display_name',
-		type: 'text',
-		inputCardinality: 'one',
-		privacy: 'PII'
-	},
-	{
-		id: 'canonical-address',
-		ruleId: 'canonical-address',
-		role: 'target',
-		label: 'Address',
-		caption: 'contact_points.value_storage_ref / contact_type=address',
-		type: 'json',
-		inputCardinality: 'many',
-		privacy: 'PII'
-	},
-	{
-		id: 'canonical-locale',
-		ruleId: 'canonical-locale',
-		role: 'target',
-		label: 'Locale',
-		caption: 'profile_attribute_values.value_json / catalog_entry_id=locale',
-		type: 'locale',
-		inputCardinality: 'one',
-		privacy: 'non-PII'
-	},
-	{
-		id: 'canonical-timezone',
-		ruleId: 'canonical-timezone',
-		role: 'target',
-		label: 'Timezone',
-		caption: 'profile_attribute_values.value_json / catalog_entry_id=timezone',
-		type: 'text',
-		inputCardinality: 'one',
-		privacy: 'non-PII'
-	},
-	{
-		id: 'canonical-group-membership',
-		ruleId: 'canonical-group-membership',
-		role: 'target',
-		label: 'Group membership',
-		caption: 'group_memberships.group_id',
-		type: 'multi-value',
-		inputCardinality: 'many',
-		privacy: 'non-PII'
-	},
-	{
-		id: 'canonical-entitlements',
-		ruleId: 'canonical-entitlements',
-		role: 'target',
-		label: 'Entitlements',
-		caption: 'entitlement_grants.entitlement_id',
-		type: 'multi-value',
-		inputCardinality: 'many',
-		privacy: 'non-PII'
-	},
-	{
-		id: 'canonical-linked-identity',
-		ruleId: 'canonical-linked-identity',
-		role: 'target',
-		label: 'Linked identity',
-		caption: 'linked_identities.provider_subject',
-		type: 'identifier',
-		inputCardinality: 'one',
-		privacy: 'non-PII'
-	},
-	{
-		id: 'canonical-lifecycle-state',
-		ruleId: 'canonical-lifecycle-state',
-		role: 'target',
-		label: 'Lifecycle state',
-		caption: 'identity_accounts.lifecycle_state',
-		type: 'enum',
-		inputCardinality: 'one',
-		privacy: 'non-PII'
-	}
-];
+const defaultCanonicalTargetDefinitions = [
+	['field.canonical.subject_id', 'Subject Identifier', 'string', 'single', 'internal'],
+	['field.canonical.name', 'Full Name', 'string', 'single', 'pii'],
+	['field.canonical.given_name', 'First Name', 'string', 'single', 'pii'],
+	['field.canonical.family_name', 'Last Name', 'string', 'single', 'pii'],
+	['field.canonical.middle_name', 'Middle Name', 'string', 'single', 'pii'],
+	['field.canonical.nickname', 'Nickname', 'string', 'single', 'pii'],
+	['field.canonical.preferred_username', 'Preferred Username', 'string', 'single', 'internal'],
+	['field.canonical.profile', 'Profile URL', 'string', 'single', 'internal'],
+	['field.canonical.picture', 'Picture URL', 'string', 'single', 'pii'],
+	['field.canonical.website', 'Website', 'string', 'single', 'internal'],
+	['field.canonical.birthdate', 'Birthdate', 'date', 'single', 'pii'],
+	['field.canonical.zoneinfo', 'Time Zone', 'string', 'single', 'internal'],
+	['field.canonical.locale', 'Locale', 'string', 'single', 'internal'],
+	['field.canonical.updated_at', 'Last Updated', 'number', 'single', 'internal'],
+	['field.canonical.email', 'Email', 'string', 'single', 'pii'],
+	['field.canonical.email_verified', 'Email Verified', 'boolean', 'single', 'internal'],
+	['field.canonical.phone_number', 'Phone Number', 'string', 'single', 'pii'],
+	['field.canonical.phone_number_verified', 'Phone Number Verified', 'boolean', 'single', 'internal'],
+	['field.canonical.address', 'Address', 'json', 'multi', 'pii'],
+	['field.canonical.address_formatted', 'Address (Formatted)', 'string', 'single', 'pii'],
+	['field.canonical.address_street_address', 'Street Address', 'string', 'single', 'pii'],
+	['field.canonical.address_locality', 'City / Locality', 'string', 'single', 'pii'],
+	['field.canonical.address_region', 'Region', 'string', 'single', 'pii'],
+	['field.canonical.address_postal_code', 'Postal Code', 'string', 'single', 'pii'],
+	['field.canonical.address_country', 'Country', 'string', 'single', 'pii'],
+	['field.canonical.group_membership', 'Group Membership', 'array', 'multi', 'internal'],
+	['field.canonical.entitlements', 'Entitlements', 'array', 'multi', 'internal'],
+	['field.canonical.linked_identity', 'Linked Identity', 'string', 'single', 'internal'],
+	['field.canonical.lifecycle_state', 'Lifecycle State', 'string', 'single', 'internal']
+] as const;
+
+const defaultCanonicalTargets: MappingNode[] = defaultCanonicalTargetDefinitions.map(
+	([stableFieldId, label, valueType, cardinality, classification]) =>
+		canonicalTargetNode({
+			id: stableFieldId,
+			stableFieldId,
+			path: stableFieldId.replace(/^field\.canonical\./, ''),
+			label,
+			valueType,
+			cardinality,
+			classification,
+			storageTarget: friendlyStorageTarget(stableFieldId, valueType)
+		})
+);
 
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
 	const sourceProfiles = [
@@ -348,14 +249,51 @@ function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): 
 function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): MappingNode[] {
 	const activeCatalog =
 		catalogs.find((catalog) => catalog.lifecycleState === 'active') ?? catalogs[0];
-	const catalogCaption = activeCatalog
-		? `${activeCatalog.catalogKey} / ${activeCatalog.versionLabel ?? 'built-in canonical defaults'}`
-		: 'Authrim built-in canonical defaults';
+	const catalogEntries = activeCatalog?.entries ?? [];
+	if (catalogEntries.length > 0) {
+		return catalogEntries
+			.filter((entry) => entry.targetTaxonomy !== 'outbound-only' && entry.targetTaxonomy !== 'review-only')
+			.map((entry) =>
+				canonicalTargetNode({
+					id: entry.id,
+					stableFieldId: entry.stableFieldId,
+					path: entry.path,
+					label: labelForCatalogEntry(entry.path),
+					valueType: entry.valueType,
+					cardinality: entry.cardinality,
+					classification: entry.classification,
+					storageTarget: friendlyStorageTarget(entry.stableFieldId, entry.valueType)
+				})
+			);
+	}
 
 	return defaultCanonicalTargets.map((target) => ({
-		...target,
-		caption: `${target.caption} / ${catalogCaption}`
+		...target
 	}));
+}
+
+function canonicalTargetNode(input: {
+	id: string;
+	stableFieldId: string;
+	path: string;
+	label: string;
+	valueType: string;
+	cardinality: string;
+	classification: string;
+	storageTarget: string;
+}): MappingNode {
+	return {
+		id: `canonical-${slug(input.id)}`,
+		ruleId: `canonical-${slug(input.id)}`,
+		role: 'target',
+		label: input.label,
+		caption: '',
+		type: displayValueType(input.valueType),
+		storageTarget: input.storageTarget,
+		inputCardinality: input.cardinality === 'multi' ? 'many' : 'one',
+		privacy: privacyFrom(input.classification),
+		required: isRequiredCanonicalTarget(input.stableFieldId)
+	};
 }
 
 function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'): MappingNode[] {
@@ -380,7 +318,7 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 		profileTitle: profile.title,
 		label: field.label,
 		caption: field.caption,
-		type: field.type,
+		type: displayValueType(field.type),
 		privacy: field.privacy,
 		required: field.required
 	}));
@@ -484,6 +422,7 @@ function ruleForNode(node: MappingNode): RuleDetail {
 		transform: 'not configured',
 		validation: node.required ? 'required by loaded schema' : 'loaded from control-plane schema',
 		release: 'not configured',
+		storageTarget: node.storageTarget,
 		consentStatus: isPii ? 'required' : 'not_required',
 		legalBasis: isPii ? 'consent' : 'legitimate_interest',
 		purpose: node.role === 'destination' ? 'attribute_release' : 'identity_mapping',
@@ -517,6 +456,86 @@ function displayName(value: string | undefined, fallback: string): string {
 	return value?.trim() || fallback;
 }
 
+function labelForCatalogEntry(path: string): string {
+	const knownLabels: Record<string, string> = {
+		name: 'Full Name',
+		given_name: 'First Name',
+		family_name: 'Last Name',
+		middle_name: 'Middle Name',
+		nickname: 'Nickname',
+		preferred_username: 'Preferred Username',
+		profile: 'Profile URL',
+		picture: 'Picture URL',
+		website: 'Website',
+		birthdate: 'Birthdate',
+		zoneinfo: 'Time Zone',
+		locale: 'Locale',
+		updated_at: 'Last Updated',
+		email: 'Email',
+		email_verified: 'Email Verified',
+		phone_number: 'Phone Number',
+		phone_number_verified: 'Phone Number Verified',
+		address: 'Address',
+		address_formatted: 'Address (Formatted)',
+		address_street_address: 'Street Address',
+		address_locality: 'City / Locality',
+		address_region: 'Region',
+		address_postal_code: 'Postal Code',
+		address_country: 'Country',
+		group_membership: 'Group Membership',
+		entitlements: 'Entitlements',
+		linked_identity: 'Linked Identity',
+		lifecycle_state: 'Lifecycle State',
+		subject_id: 'Subject Identifier'
+	};
+	const key = path.split('.').at(-1) ?? path;
+	return knownLabels[key] ?? titleCase(key);
+}
+
+function displayValueType(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const normalized = value.toLowerCase();
+	if (['string', 'text', 'email', 'phone', 'url', 'uri', 'identifier', 'locale'].includes(normalized)) {
+		return 'String';
+	}
+	if (['date', 'datetime', 'timestamp'].includes(normalized)) return 'Date';
+	if (['boolean', 'bool'].includes(normalized)) return 'Boolean';
+	if (['number', 'integer', 'int', 'float', 'double'].includes(normalized)) return 'Number';
+	if (['json', 'object'].includes(normalized)) return 'JSON';
+	if (['array', 'list', 'multi-value', 'multivalue'].includes(normalized)) return 'Array';
+	if (normalized === 'enum') return 'String';
+	return titleCase(value);
+}
+
+function friendlyStorageTarget(stableFieldId: string, valueType: string): string {
+	const normalizedId = stableFieldId.toLowerCase();
+	if (normalizedId.includes('subject_id') || normalizedId.includes('lifecycle_state')) {
+		return 'Account identity';
+	}
+	if (
+		normalizedId.includes('email') ||
+		normalizedId.includes('phone') ||
+		normalizedId.includes('address')
+	) {
+		return 'Contact method';
+	}
+	if (normalizedId.includes('group')) return 'Group assignment';
+	if (normalizedId.includes('entitlement')) return 'Entitlement assignment';
+	if (displayValueType(valueType) === 'JSON') return 'Structured profile attribute';
+	return 'Profile attribute';
+}
+
+function isRequiredCanonicalTarget(stableFieldId: string): boolean {
+	return ['field.canonical.subject_id', 'field.canonical.email'].includes(stableFieldId);
+}
+
+function titleCase(value: string): string {
+	return value
+		.replace(/[_./-]+/g, ' ')
+		.trim()
+		.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function adapterFrom(value: string): MappingAdapter {
 	const normalized = value.toLowerCase();
 	return defaultAdapters.find((adapter) => normalized.includes(adapter.toLowerCase())) ?? 'CSV';
@@ -539,6 +558,8 @@ function privacyFrom(value: string): MappingNode['privacy'] {
 		return 'PII';
 	}
 	if (
+		normalized.includes('internal') ||
+		normalized.includes('non-pii') ||
 		normalized.includes('group') ||
 		normalized.includes('policy') ||
 		normalized.includes('lifecycle') ||

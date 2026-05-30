@@ -130,6 +130,54 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
     });
     expect(adapter.executes).toHaveLength(0);
   });
+
+  it('lists catalog entries with catalog summaries', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'catalog_1',
+          tenant_id: 'tenant_a',
+          catalog_key: 'default',
+          display_name: 'Default Catalog',
+          lifecycle_state: 'active',
+          version_id: 'version_1',
+          version_label: 'v1',
+          bundle_hash: 'hash_1',
+          entry_id: 'entry_1',
+          stable_field_id: 'field.canonical.email',
+          namespace: 'authrim.profile',
+          path: 'email',
+          target_taxonomy: 'canonical',
+          value_type: 'string',
+          cardinality: 'single',
+          classification: 'pii',
+          aliases_json: '[{"namespace":"oidc","path":"email"}]',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const catalogs = await repository.listCatalogs('tenant_a');
+
+    expect(catalogs).toEqual([
+      expect.objectContaining({
+        id: 'catalog_1',
+        entries: [
+          {
+            id: 'entry_1',
+            stableFieldId: 'field.canonical.email',
+            namespace: 'authrim.profile',
+            path: 'email',
+            targetTaxonomy: 'canonical',
+            valueType: 'string',
+            cardinality: 'single',
+            classification: 'pii',
+            aliases: [{ namespace: 'oidc', path: 'email' }],
+          },
+        ],
+      }),
+    ]);
+  });
 });
 
 describe('IdentityMappingControlPlaneRepository source profiles', () => {

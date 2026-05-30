@@ -59,18 +59,18 @@ describe('identity mapping flow data adapter', () => {
 		const csvSample = samples.find((sample) => sample.title === 'employee-columns');
 		expect(csvSample).toBeDefined();
 		expect(csvSample?.nodes.some((node) => node.label === 'employee_id')).toBe(true);
-		expect(csvSample?.nodes.some((node) => node.label === 'Subject identifier')).toBe(true);
+		expect(csvSample?.nodes.some((node) => node.label === 'Subject Identifier')).toBe(true);
 		expect(csvSample?.nodes.some((node) => node.label === 'Email')).toBe(true);
 		expect(csvSample?.nodes).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
 					role: 'target',
-					label: 'Subject identifier',
+					label: 'Subject Identifier',
 					inputCardinality: 'one'
 				}),
 				expect.objectContaining({
 					role: 'target',
-					label: 'Group membership',
+					label: 'Group Membership',
 					inputCardinality: 'many'
 				})
 			])
@@ -119,7 +119,69 @@ describe('identity mapping flow data adapter', () => {
 				}),
 				expect.objectContaining({
 					role: 'target',
-					label: 'Group membership'
+					label: 'Group Membership'
+				})
+			])
+		);
+	});
+
+	it('uses field catalog entries as canonical target nodes when catalogs are available', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [
+				{
+					id: 'catalog_1',
+					tenantId: 'tenant_a',
+					catalogKey: 'default',
+					displayName: 'Default Catalog',
+					versionLabel: 'v1',
+					lifecycleState: 'active',
+					entries: [
+						{
+							id: 'entry_given_name',
+							stableFieldId: 'field.canonical.given_name',
+							namespace: 'authrim.profile',
+							path: 'given_name',
+							targetTaxonomy: 'canonical',
+							valueType: 'string',
+							cardinality: 'single',
+							classification: 'pii'
+						},
+						{
+							id: 'entry_groups',
+							stableFieldId: 'field.canonical.group_membership',
+							namespace: 'authrim.profile',
+							path: 'group_membership',
+							targetTaxonomy: 'canonical',
+							valueType: 'array',
+							cardinality: 'multi',
+							classification: 'internal'
+						}
+					]
+				}
+			],
+			sourceProfiles: [],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'target',
+					label: 'First Name',
+					caption: '',
+					type: 'String',
+					storageTarget: 'Profile attribute'
+				}),
+				expect.objectContaining({
+					role: 'target',
+					label: 'Group Membership',
+					type: 'Array',
+					inputCardinality: 'many',
+					privacy: 'non-PII'
 				})
 			])
 		);

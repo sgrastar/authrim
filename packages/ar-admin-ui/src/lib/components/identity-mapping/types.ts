@@ -12,6 +12,7 @@ export interface MappingNode {
 	label: string;
 	caption: string;
 	type?: string;
+	storageTarget?: string;
 	inputCardinality?: 'one' | 'many';
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;
@@ -38,6 +39,7 @@ export interface RuleDetail {
 	transform: string;
 	validation: string;
 	release: string;
+	storageTarget?: string;
 	consentStatus: 'not_required' | 'required' | 'granted' | 'version_upgrade_required';
 	legalBasis: 'consent' | 'legal_obligation' | 'contract' | 'legitimate_interest';
 	purpose: string;

@@ -19,6 +19,19 @@ export interface IdentityMappingCatalogSummary {
 	versionLabel?: string | null;
 	lifecycleState: string;
 	bundleHash?: string | null;
+	entries?: IdentityMappingCatalogEntrySummary[];
+}
+
+export interface IdentityMappingCatalogEntrySummary {
+	id: string;
+	stableFieldId: string;
+	namespace: string;
+	path: string;
+	targetTaxonomy: string;
+	valueType: string;
+	cardinality: 'single' | 'multi' | string;
+	classification: string;
+	aliases?: Array<{ namespace: string; path: string }>;
 }
 
 export interface IdentityMappingProtocolSchemaSummary {

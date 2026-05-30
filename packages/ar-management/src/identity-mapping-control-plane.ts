@@ -404,8 +404,18 @@ interface FieldCatalogListRow {
   catalog_key: string;
   display_name: string;
   lifecycle_state: LifecycleState;
+  version_id: string | null;
   version_label: string | null;
   bundle_hash: string | null;
+  entry_id: string | null;
+  stable_field_id: string | null;
+  namespace: string | null;
+  path: string | null;
+  target_taxonomy: string | null;
+  value_type: string | null;
+  cardinality: string | null;
+  classification: string | null;
+  aliases_json: string | null;
 }
 
 interface ProtocolSchemaCatalogRow {
@@ -1288,22 +1298,81 @@ export class IdentityMappingControlPlaneRepository {
 
   async listCatalogs(tenantId: string) {
     const rows = await this.adapter.query<FieldCatalogListRow>(
-      `SELECT c.*, v.version_label, v.bundle_hash
+      `SELECT
+          c.*,
+          v.id AS version_id,
+          v.version_label,
+          v.bundle_hash,
+          e.id AS entry_id,
+          e.stable_field_id,
+          e.namespace,
+          e.path,
+          e.target_taxonomy,
+          e.value_type,
+          e.cardinality,
+          e.classification,
+          e.aliases_json
          FROM field_catalogs c
          LEFT JOIN field_catalog_versions v ON v.catalog_id = c.id
+         LEFT JOIN field_catalog_entries e ON e.catalog_version_id = v.id
         WHERE c.tenant_id = ?
-        ORDER BY c.updated_at DESC`,
+        ORDER BY c.updated_at DESC, e.stable_field_id ASC`,
       [tenantId]
     );
-    return rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenant_id,
-      catalogKey: row.catalog_key,
-      displayName: row.display_name,
-      lifecycleState: row.lifecycle_state,
-      versionLabel: row.version_label,
-      bundleHash: row.bundle_hash,
-    }));
+    const catalogs = new Map<
+      string,
+      {
+        id: string;
+        tenantId: string;
+        catalogKey: string;
+        displayName: string;
+        lifecycleState: LifecycleState;
+        versionLabel: string | null;
+        bundleHash: string | null;
+        entries: Array<{
+          id: string;
+          stableFieldId: string;
+          namespace: string;
+          path: string;
+          targetTaxonomy: string;
+          valueType: string;
+          cardinality: string;
+          classification: string;
+          aliases: Array<{ namespace: string; path: string }>;
+        }>;
+      }
+    >();
+
+    for (const row of rows) {
+      const catalog =
+        catalogs.get(row.id) ??
+        {
+          id: row.id,
+          tenantId: row.tenant_id,
+          catalogKey: row.catalog_key,
+          displayName: row.display_name,
+          lifecycleState: row.lifecycle_state,
+          versionLabel: row.version_label,
+          bundleHash: row.bundle_hash,
+          entries: [],
+        };
+      if (row.entry_id && row.stable_field_id && row.namespace && row.path) {
+        catalog.entries.push({
+          id: row.entry_id,
+          stableFieldId: row.stable_field_id,
+          namespace: row.namespace,
+          path: row.path,
+          targetTaxonomy: row.target_taxonomy ?? 'canonical',
+          valueType: row.value_type ?? 'string',
+          cardinality: row.cardinality ?? 'single',
+          classification: row.classification ?? 'internal',
+          aliases: parseCatalogAliases(row.aliases_json),
+        });
+      }
+      catalogs.set(row.id, catalog);
+    }
+
+    return Array.from(catalogs.values());
   }
 
   async createProtocolSchema(tenantId: string, input: CreateProtocolSchemaRequest) {
@@ -6014,6 +6083,26 @@ function parseJsonArray(value: string | null): string[] {
     return Array.isArray(parsed)
       ? parsed.filter((item): item is string => typeof item === 'string')
       : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseCatalogAliases(value: string | null): Array<{ namespace: string; path: string }> {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((item) => {
+      if (!isRecord(item) || typeof item.namespace !== 'string' || typeof item.path !== 'string') {
+        return [];
+      }
+      return [{ namespace: item.namespace, path: item.path }];
+    });
   } catch {
     return [];
   }
