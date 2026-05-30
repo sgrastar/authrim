@@ -251,7 +251,7 @@
 		nodes = [...next.nodes];
 		edges = [...next.edges];
 		selectedEdgeId = null;
-		selectedNodeId = next.nodes.find((node) => node.ruleId === next.activeRuleId)?.id ?? null;
+		selectedNodeId = null;
 		hasUnsavedDraftChanges = false;
 	}
 
@@ -501,7 +501,7 @@
 		const point = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
 		return {
 			x: point.x,
-			y: point.y - 14
+			y: point.y
 		};
 	}
 
@@ -552,7 +552,7 @@
 			`${node.role}-node`,
 			node.role === 'target' ? `cardinality-${targetInputCardinality(node)}` : '',
 			node.hidden ? 'adapter-hidden' : '',
-			node.ruleId === activeRuleId ? 'active' : '',
+			node.id === selectedNodeId ? 'active' : '',
 			node.id === selectedNodeId ? 'selection-origin' : '',
 			dragState?.validTarget === false && dragState.targetNodeId === node.id
 				? 'connection-rejected'
@@ -1147,6 +1147,7 @@
 								<g
 									class="edge-insert-control"
 									transform={`translate(${insertPoint.x} ${insertPoint.y})`}
+									style={`--edge-accent:${edgeAccent(edge)}`}
 									role="button"
 									tabindex="0"
 									aria-label="Insert transform node on selected mapping edge"
@@ -1161,7 +1162,7 @@
 										}
 									}}
 								>
-									<circle r="10" />
+									<rect x="-9" y="-9" width="18" height="18" rx="3" />
 									<path d="M -4 0 H 4 M 0 -4 V 4" />
 								</g>
 							{/if}
@@ -1807,7 +1808,7 @@
 		stroke: var(--map-red);
 	}
 
-	.edge-insert-control circle {
+	.edge-insert-control rect {
 		fill: var(--map-surface);
 		stroke: var(--edge-accent, var(--map-brand));
 		stroke-width: 1.5;
@@ -1823,8 +1824,8 @@
 		stroke-width: 2;
 	}
 
-	.edge-insert-control:hover circle,
-	.edge-insert-control:focus-visible circle {
+	.edge-insert-control:hover rect,
+	.edge-insert-control:focus-visible rect {
 		fill: color-mix(in srgb, var(--edge-accent, var(--map-brand)) 16%, var(--map-surface));
 	}
 
