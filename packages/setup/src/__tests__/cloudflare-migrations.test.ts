@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  buildDefaultCanonicalCatalogSeedSql,
   buildRecordMigrationSql,
   buildRuntimeProfileSeedSql,
   listD1MigrationSqlFiles,
@@ -149,6 +150,56 @@ describe('buildRuntimeProfileSeedSql', () => {
     expect(sql).toContain('"type":"http"');
     expect(sql).toContain('UPDATE profile_registry');
     expect(sql).toContain('WHERE NOT EXISTS');
+  });
+});
+
+describe('buildDefaultCanonicalCatalogSeedSql', () => {
+  it('builds idempotent SQL for the default canonical field catalog', () => {
+    const sql = buildDefaultCanonicalCatalogSeedSql(createDefaultConfig('dev'));
+
+    expect(sql).toContain('INSERT INTO field_catalogs');
+    expect(sql).toContain('INSERT INTO field_catalog_versions');
+    expect(sql).toContain('INSERT INTO field_catalog_entries');
+    expect(sql).toContain("'authrim.default_canonical'");
+    expect(sql).toContain("'field.canonical.given_name'");
+    expect(sql).toContain('ui_group_key');
+    expect(sql).toContain("'name'");
+    expect(sql).toContain('examples_json');
+    expect(sql).toContain('John Doe');
+    expect(sql).toContain('WHERE NOT EXISTS');
+    expect(sql).not.toContain('INSERT OR IGNORE');
+  });
+
+  it('applies the default canonical field catalog seed in SQLite', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) {
+      return;
+    }
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-canonical-catalog-seed-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, activeAdminMigrationFiles());
+      runSqlite(sqlite3Path, dbPath, buildDefaultCanonicalCatalogSeedSql(createDefaultConfig('dev')));
+
+      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalogs;')).toBe('1');
+      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalog_versions;')).toBe(
+        '1'
+      );
+      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalog_entries;')).toBe(
+        '27'
+      );
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT ui_group_label FROM field_catalog_entries WHERE stable_field_id = 'field.canonical.given_name';"
+        )
+      ).toBe('Name');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -74,6 +74,11 @@ const catalogEntry = {
   valueType: 'string',
   cardinality: 'single' as const,
   classification: 'pii' as const,
+  uiGroupKey: 'contact',
+  uiGroupLabel: 'Contact',
+  uiGroupOrder: 20,
+  uiFieldOrder: 10,
+  examples: ['john@example.com'],
 };
 
 describe('IdentityMappingControlPlaneRepository catalog operations', () => {
@@ -104,6 +109,9 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       expect.stringContaining('INSERT INTO field_catalog_entries'),
       expect.stringContaining('INSERT INTO custom_field_catalog_entries'),
     ]);
+    expect(adapter.executes[2].params).toEqual(
+      expect.arrayContaining(['contact', 'Contact', 20, 10, '["john@example.com"]'])
+    );
   });
 
   it('rejects custom fields that shadow built-in catalog fields', async () => {
@@ -152,6 +160,11 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
           cardinality: 'single',
           classification: 'pii',
           aliases_json: '[{"namespace":"oidc","path":"email"}]',
+          ui_group_key: 'contact',
+          ui_group_label: 'Contact',
+          ui_group_order: 20,
+          ui_field_order: 10,
+          examples_json: '["john@example.com"]',
         },
       ],
     });
@@ -173,6 +186,11 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
             cardinality: 'single',
             classification: 'pii',
             aliases: [{ namespace: 'oidc', path: 'email' }],
+            uiGroupKey: 'contact',
+            uiGroupLabel: 'Contact',
+            uiGroupOrder: 20,
+            uiFieldOrder: 10,
+            examples: ['john@example.com'],
           },
         ],
       }),

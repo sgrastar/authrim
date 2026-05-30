@@ -2285,6 +2285,12 @@ export interface RuntimeProfileSeedResult {
   error?: string;
 }
 
+export interface DefaultCanonicalCatalogSeedResult {
+  success: boolean;
+  seededCount: number;
+  error?: string;
+}
+
 /**
  * Ensure the configured initial tenant exists in the core D1 database.
  *
@@ -2497,6 +2503,362 @@ type SeededRuntimeProfile = {
   payload: Record<string, unknown>;
 };
 
+type DefaultCanonicalCatalogEntrySeed = {
+  stableFieldId: string;
+  path: string;
+  valueType: string;
+  cardinality: 'single' | 'multi';
+  classification: 'internal' | 'pii';
+  groupKey: string;
+  groupLabel: string;
+  groupOrder: number;
+  fieldOrder: number;
+  examples: unknown[];
+};
+
+const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
+const DEFAULT_CANONICAL_CATALOG_VERSION_ID = 'system_default_canonical_catalog_v1';
+const DEFAULT_CANONICAL_CATALOG_KEY = 'authrim.default_canonical';
+const DEFAULT_CANONICAL_CATALOG_VERSION_LABEL = '2026-05-30';
+const DEFAULT_CANONICAL_CATALOG_BUNDLE_HASH =
+  '0000000000000000000000000000000000000000000000000000000000000001';
+
+const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
+  {
+    stableFieldId: 'field.canonical.name',
+    path: 'name',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'name',
+    groupLabel: 'Name',
+    groupOrder: 10,
+    fieldOrder: 10,
+    examples: ['John Doe', '山田 太郎', '김민준'],
+  },
+  {
+    stableFieldId: 'field.canonical.given_name',
+    path: 'given_name',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'name',
+    groupLabel: 'Name',
+    groupOrder: 10,
+    fieldOrder: 20,
+    examples: ['John', '太郎', '민준'],
+  },
+  {
+    stableFieldId: 'field.canonical.family_name',
+    path: 'family_name',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'name',
+    groupLabel: 'Name',
+    groupOrder: 10,
+    fieldOrder: 30,
+    examples: ['Doe', '山田', '김'],
+  },
+  {
+    stableFieldId: 'field.canonical.middle_name',
+    path: 'middle_name',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'name',
+    groupLabel: 'Name',
+    groupOrder: 10,
+    fieldOrder: 40,
+    examples: ['Quincy'],
+  },
+  {
+    stableFieldId: 'field.canonical.nickname',
+    path: 'nickname',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'name',
+    groupLabel: 'Name',
+    groupOrder: 10,
+    fieldOrder: 50,
+    examples: ['Johnny', 'たろう'],
+  },
+  {
+    stableFieldId: 'field.canonical.preferred_username',
+    path: 'preferred_username',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'name',
+    groupLabel: 'Name',
+    groupOrder: 10,
+    fieldOrder: 60,
+    examples: ['jdoe', 'taro.yamada'],
+  },
+  {
+    stableFieldId: 'field.canonical.email',
+    path: 'email',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'contact',
+    groupLabel: 'Contact',
+    groupOrder: 20,
+    fieldOrder: 10,
+    examples: ['john@example.edu'],
+  },
+  {
+    stableFieldId: 'field.canonical.email_verified',
+    path: 'email_verified',
+    valueType: 'boolean',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'contact',
+    groupLabel: 'Contact',
+    groupOrder: 20,
+    fieldOrder: 20,
+    examples: [true],
+  },
+  {
+    stableFieldId: 'field.canonical.phone_number',
+    path: 'phone_number',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'contact',
+    groupLabel: 'Contact',
+    groupOrder: 20,
+    fieldOrder: 30,
+    examples: ['+1 415 555 0100'],
+  },
+  {
+    stableFieldId: 'field.canonical.phone_number_verified',
+    path: 'phone_number_verified',
+    valueType: 'boolean',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'contact',
+    groupLabel: 'Contact',
+    groupOrder: 20,
+    fieldOrder: 40,
+    examples: [false],
+  },
+  {
+    stableFieldId: 'field.canonical.address',
+    path: 'address',
+    valueType: 'json',
+    cardinality: 'multi',
+    classification: 'pii',
+    groupKey: 'address',
+    groupLabel: 'Address',
+    groupOrder: 30,
+    fieldOrder: 10,
+    examples: [
+      {
+        formatted: '1-1 Chiyoda, Chiyoda-ku, Tokyo 100-8111, JP',
+        streetAddress: '1-1 Chiyoda',
+        locality: 'Chiyoda-ku',
+        region: 'Tokyo',
+        postalCode: '100-8111',
+        country: 'JP',
+      },
+    ],
+  },
+  {
+    stableFieldId: 'field.canonical.address_street_address',
+    path: 'address_street_address',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'address',
+    groupLabel: 'Address',
+    groupOrder: 30,
+    fieldOrder: 20,
+    examples: ['1-1 Chiyoda'],
+  },
+  {
+    stableFieldId: 'field.canonical.address_locality',
+    path: 'address_locality',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'address',
+    groupLabel: 'Address',
+    groupOrder: 30,
+    fieldOrder: 30,
+    examples: ['Chiyoda-ku'],
+  },
+  {
+    stableFieldId: 'field.canonical.address_region',
+    path: 'address_region',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'address',
+    groupLabel: 'Address',
+    groupOrder: 30,
+    fieldOrder: 40,
+    examples: ['Tokyo'],
+  },
+  {
+    stableFieldId: 'field.canonical.address_postal_code',
+    path: 'address_postal_code',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'address',
+    groupLabel: 'Address',
+    groupOrder: 30,
+    fieldOrder: 50,
+    examples: ['100-8111'],
+  },
+  {
+    stableFieldId: 'field.canonical.address_country',
+    path: 'address_country',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'address',
+    groupLabel: 'Address',
+    groupOrder: 30,
+    fieldOrder: 60,
+    examples: ['JP'],
+  },
+  {
+    stableFieldId: 'field.canonical.profile',
+    path: 'profile',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'profile',
+    groupLabel: 'Profile',
+    groupOrder: 40,
+    fieldOrder: 10,
+    examples: ['https://example.edu/users/jdoe'],
+  },
+  {
+    stableFieldId: 'field.canonical.picture',
+    path: 'picture',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'profile',
+    groupLabel: 'Profile',
+    groupOrder: 40,
+    fieldOrder: 20,
+    examples: ['https://example.edu/users/jdoe/photo.jpg'],
+  },
+  {
+    stableFieldId: 'field.canonical.website',
+    path: 'website',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'profile',
+    groupLabel: 'Profile',
+    groupOrder: 40,
+    fieldOrder: 30,
+    examples: ['https://jdoe.example.edu'],
+  },
+  {
+    stableFieldId: 'field.canonical.birthdate',
+    path: 'birthdate',
+    valueType: 'date',
+    cardinality: 'single',
+    classification: 'pii',
+    groupKey: 'profile',
+    groupLabel: 'Profile',
+    groupOrder: 40,
+    fieldOrder: 40,
+    examples: ['1990-04-12'],
+  },
+  {
+    stableFieldId: 'field.canonical.zoneinfo',
+    path: 'zoneinfo',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'profile',
+    groupLabel: 'Profile',
+    groupOrder: 40,
+    fieldOrder: 50,
+    examples: ['Asia/Tokyo'],
+  },
+  {
+    stableFieldId: 'field.canonical.locale',
+    path: 'locale',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'profile',
+    groupLabel: 'Profile',
+    groupOrder: 40,
+    fieldOrder: 60,
+    examples: ['ja-JP'],
+  },
+  {
+    stableFieldId: 'field.canonical.group_membership',
+    path: 'group_membership',
+    valueType: 'array',
+    cardinality: 'multi',
+    classification: 'internal',
+    groupKey: 'access',
+    groupLabel: 'Access',
+    groupOrder: 50,
+    fieldOrder: 10,
+    examples: ['library-staff', 'researcher'],
+  },
+  {
+    stableFieldId: 'field.canonical.entitlements',
+    path: 'entitlements',
+    valueType: 'array',
+    cardinality: 'multi',
+    classification: 'internal',
+    groupKey: 'access',
+    groupLabel: 'Access',
+    groupOrder: 50,
+    fieldOrder: 20,
+    examples: ['publisher:journal:read'],
+  },
+  {
+    stableFieldId: 'field.canonical.subject_id',
+    path: 'subject_id',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'identity',
+    groupLabel: 'Identity',
+    groupOrder: 60,
+    fieldOrder: 10,
+    examples: ['user_01HZY9G3V3W0M7K9D2B1N6A8CQ'],
+  },
+  {
+    stableFieldId: 'field.canonical.linked_identity',
+    path: 'linked_identity',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'identity',
+    groupLabel: 'Identity',
+    groupOrder: 60,
+    fieldOrder: 20,
+    examples: ['saml:urn:example:idp:00u123'],
+  },
+  {
+    stableFieldId: 'field.canonical.lifecycle_state',
+    path: 'lifecycle_state',
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'internal',
+    groupKey: 'identity',
+    groupLabel: 'Identity',
+    groupOrder: 60,
+    fieldOrder: 30,
+    examples: ['active'],
+  },
+];
+
 function collectSeededRuntimeProfiles(config: AuthrimConfig): SeededRuntimeProfile[] {
   const seeded: SeededRuntimeProfile[] = [];
   for (const profile of config.profiles?.seed?.storage ?? []) {
@@ -2563,6 +2925,151 @@ WHERE NOT EXISTS (
 );`.trim();
     })
     .join('\n\n');
+}
+
+function defaultCanonicalCatalogEntryId(stableFieldId: string): string {
+  return `system_${stableFieldId.replace(/^field\.canonical\./, 'canonical_').replace(/[^a-zA-Z0-9_]/g, '_')}`;
+}
+
+export function buildDefaultCanonicalCatalogSeedSql(config: AuthrimConfig): string {
+  const tenantId = config.tenant?.name?.trim() || 'default';
+  const tenantSql = sqlString(tenantId);
+  const catalogIdSql = sqlString(DEFAULT_CANONICAL_CATALOG_ID);
+  const versionIdSql = sqlString(DEFAULT_CANONICAL_CATALOG_VERSION_ID);
+  const catalogKeySql = sqlString(DEFAULT_CANONICAL_CATALOG_KEY);
+  const nowSql = "CAST(strftime('%s','now') AS INTEGER) * 1000";
+
+  const catalogSql = `
+UPDATE field_catalogs
+SET display_name = 'Authrim Default Canonical Catalog',
+    lifecycle_state = 'active',
+    updated_at = ${nowSql}
+WHERE tenant_id = ${tenantSql}
+  AND catalog_key = ${catalogKeySql};
+
+INSERT INTO field_catalogs (
+  id, tenant_id, catalog_key, display_name, lifecycle_state, created_at, updated_at
+)
+SELECT ${catalogIdSql}, ${tenantSql}, ${catalogKeySql}, 'Authrim Default Canonical Catalog',
+       'active', ${nowSql}, ${nowSql}
+WHERE NOT EXISTS (
+  SELECT 1 FROM field_catalogs
+  WHERE tenant_id = ${tenantSql}
+    AND catalog_key = ${catalogKeySql}
+);
+
+UPDATE field_catalog_versions
+SET bundle_hash = ${sqlString(DEFAULT_CANONICAL_CATALOG_BUNDLE_HASH)},
+    compatibility_range = '*',
+    lifecycle_state = 'active',
+    updated_at = ${nowSql}
+WHERE tenant_id = ${tenantSql}
+  AND id = ${versionIdSql};
+
+INSERT INTO field_catalog_versions (
+  id, tenant_id, catalog_id, version_label, bundle_hash, compatibility_range,
+  lifecycle_state, created_at, updated_at
+)
+SELECT ${versionIdSql}, ${tenantSql}, c.id, ${sqlString(DEFAULT_CANONICAL_CATALOG_VERSION_LABEL)},
+       ${sqlString(DEFAULT_CANONICAL_CATALOG_BUNDLE_HASH)}, '*', 'active', ${nowSql}, ${nowSql}
+FROM field_catalogs c
+WHERE c.tenant_id = ${tenantSql}
+  AND c.catalog_key = ${catalogKeySql}
+  AND NOT EXISTS (
+    SELECT 1 FROM field_catalog_versions
+    WHERE tenant_id = ${tenantSql}
+      AND id = ${versionIdSql}
+  );`.trim();
+
+  const entrySql = DEFAULT_CANONICAL_CATALOG_ENTRIES.map((entry) => {
+    const idSql = sqlString(defaultCanonicalCatalogEntryId(entry.stableFieldId));
+    const stableFieldIdSql = sqlString(entry.stableFieldId);
+    const namespaceSql = sqlString('authrim.canonical');
+    const pathSql = sqlString(entry.path);
+    const valueTypeSql = sqlString(entry.valueType);
+    const cardinalitySql = sqlString(entry.cardinality);
+    const classificationSql = sqlString(entry.classification);
+    const groupKeySql = sqlString(entry.groupKey);
+    const groupLabelSql = sqlString(entry.groupLabel);
+    const aliasesSql = sqlString('[]');
+    const validationSql = sqlString('{}');
+    const examplesSql = sqlString(JSON.stringify(entry.examples));
+
+    return `
+UPDATE field_catalog_entries
+SET namespace = ${namespaceSql},
+    path = ${pathSql},
+    target_taxonomy = 'canonical',
+    value_type = ${valueTypeSql},
+    cardinality = ${cardinalitySql},
+    classification = ${classificationSql},
+    aliases_json = ${aliasesSql},
+    validation_json = ${validationSql},
+    ui_group_key = ${groupKeySql},
+    ui_group_label = ${groupLabelSql},
+    ui_group_order = ${entry.groupOrder},
+    ui_field_order = ${entry.fieldOrder},
+    examples_json = ${examplesSql},
+    updated_at = ${nowSql}
+WHERE tenant_id = ${tenantSql}
+  AND catalog_version_id = ${versionIdSql}
+  AND stable_field_id = ${stableFieldIdSql};
+
+INSERT INTO field_catalog_entries (
+  id, tenant_id, catalog_version_id, stable_field_id, namespace, path, target_taxonomy,
+  value_type, cardinality, classification, aliases_json, validation_json,
+  ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json,
+  created_at, updated_at
+)
+SELECT ${idSql}, ${tenantSql}, ${versionIdSql}, ${stableFieldIdSql}, ${namespaceSql}, ${pathSql},
+       'canonical', ${valueTypeSql}, ${cardinalitySql}, ${classificationSql}, ${aliasesSql},
+       ${validationSql}, ${groupKeySql}, ${groupLabelSql}, ${entry.groupOrder}, ${entry.fieldOrder},
+       ${examplesSql}, ${nowSql}, ${nowSql}
+WHERE NOT EXISTS (
+  SELECT 1 FROM field_catalog_entries
+  WHERE tenant_id = ${tenantSql}
+    AND catalog_version_id = ${versionIdSql}
+    AND stable_field_id = ${stableFieldIdSql}
+);`.trim();
+  }).join('\n\n');
+
+  return `${catalogSql}\n\n${entrySql}`;
+}
+
+export async function seedDefaultCanonicalCatalog(
+  env: string,
+  config: AuthrimConfig,
+  onProgress?: (message: string) => void
+): Promise<DefaultCanonicalCatalogSeedResult> {
+  const dbName = getD1DatabaseName(env, 'admin-db');
+  const sql = buildDefaultCanonicalCatalogSeedSql(config);
+
+  try {
+    onProgress?.(`🔧 Seeding default canonical field catalog into ${dbName}...`);
+    const { stdout, stderr } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      sql,
+    ]);
+
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Default canonical field catalog seed failed: ${errorDetail}`);
+      return { success: false, seededCount: 0, error: errorDetail };
+    }
+
+    onProgress?.(`  ✅ Default canonical field catalog ready (${DEFAULT_CANONICAL_CATALOG_ENTRIES.length} fields)`);
+    return { success: true, seededCount: DEFAULT_CANONICAL_CATALOG_ENTRIES.length };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    onProgress?.(`  ❌ Default canonical field catalog seed failed: ${message}`);
+    return { success: false, seededCount: 0, error: message };
+  }
 }
 
 export async function seedRuntimeProfiles(

@@ -13,6 +13,11 @@ export interface MappingNode {
 	caption: string;
 	type?: string;
 	storageTarget?: string;
+	uiGroupKey?: string | null;
+	uiGroupLabel?: string | null;
+	uiGroupOrder?: number;
+	uiFieldOrder?: number;
+	examples?: unknown[];
 	inputCardinality?: 'one' | 'many';
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;

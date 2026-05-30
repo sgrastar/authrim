@@ -253,6 +253,12 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 	if (catalogEntries.length > 0) {
 		return catalogEntries
 			.filter((entry) => entry.targetTaxonomy !== 'outbound-only' && entry.targetTaxonomy !== 'review-only')
+			.sort(
+				(a, b) =>
+					(a.uiGroupOrder ?? 0) - (b.uiGroupOrder ?? 0) ||
+					(a.uiFieldOrder ?? 0) - (b.uiFieldOrder ?? 0) ||
+					a.stableFieldId.localeCompare(b.stableFieldId)
+			)
 			.map((entry) =>
 				canonicalTargetNode({
 					id: entry.id,
@@ -262,7 +268,12 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 					valueType: entry.valueType,
 					cardinality: entry.cardinality,
 					classification: entry.classification,
-					storageTarget: friendlyStorageTarget(entry.stableFieldId, entry.valueType)
+					storageTarget: friendlyStorageTarget(entry.stableFieldId, entry.valueType),
+					uiGroupKey: entry.uiGroupKey,
+					uiGroupLabel: entry.uiGroupLabel,
+					uiGroupOrder: entry.uiGroupOrder,
+					uiFieldOrder: entry.uiFieldOrder,
+					examples: entry.examples
 				})
 			);
 	}
@@ -281,6 +292,11 @@ function canonicalTargetNode(input: {
 	cardinality: string;
 	classification: string;
 	storageTarget: string;
+	uiGroupKey?: string | null;
+	uiGroupLabel?: string | null;
+	uiGroupOrder?: number;
+	uiFieldOrder?: number;
+	examples?: unknown[];
 }): MappingNode {
 	return {
 		id: `canonical-${slug(input.id)}`,
@@ -290,6 +306,11 @@ function canonicalTargetNode(input: {
 		caption: '',
 		type: displayValueType(input.valueType),
 		storageTarget: input.storageTarget,
+		uiGroupKey: input.uiGroupKey,
+		uiGroupLabel: input.uiGroupLabel,
+		uiGroupOrder: input.uiGroupOrder,
+		uiFieldOrder: input.uiFieldOrder,
+		examples: input.examples,
 		inputCardinality: input.cardinality === 'multi' ? 'many' : 'one',
 		privacy: privacyFrom(input.classification),
 		required: isRequiredCanonicalTarget(input.stableFieldId)

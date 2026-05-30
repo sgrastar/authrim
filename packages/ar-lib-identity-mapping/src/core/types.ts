@@ -141,6 +141,11 @@ export interface FieldCatalogEntry {
   valueType: string;
   cardinality: Cardinality;
   classification: RedactionClassification;
+  uiGroupKey?: string;
+  uiGroupLabel?: string;
+  uiGroupOrder?: number;
+  uiFieldOrder?: number;
+  examples?: unknown[];
 }
 
 export interface FieldCatalogBundle {

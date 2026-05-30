@@ -32,6 +32,11 @@ export interface IdentityMappingCatalogEntrySummary {
 	cardinality: 'single' | 'multi' | string;
 	classification: string;
 	aliases?: Array<{ namespace: string; path: string }>;
+	uiGroupKey?: string | null;
+	uiGroupLabel?: string | null;
+	uiGroupOrder?: number;
+	uiFieldOrder?: number;
+	examples?: unknown[];
 }
 
 export interface IdentityMappingProtocolSchemaSummary {

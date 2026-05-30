@@ -23,14 +23,20 @@ describe('identity mapping Admin UI smoke checks', () => {
 		const page = readRoute('admin/identity-mapping/+page.svelte');
 
 		expect(layout).toContain('/admin/identity-mapping');
+		expect(layout).toContain('Source & Destination');
+		expect(layout).toContain('Mapping Rules');
+		expect(layout).toContain('Activation & Rollback');
+		expect(layout).toContain('Resolution Center');
 		expect(layout).toContain('/admin/identity-mapping/edit');
-		expect(layout).toContain('/admin/identity-mapping/overview');
 		expect(layout).toContain('/admin/identity-mapping/profiles');
 		expect(layout).toContain('/admin/identity-mapping/operations');
 		expect(layout).toContain('/admin/identity-mapping/resolution-center');
-		expect(layout).toContain('/admin/identity-mapping/federation-trust');
-		expect(layout).toContain('/admin/identity-mapping/schema-readiness');
-		expect(layout).toContain('/admin/identity-mapping/profiles#destination-consent');
+		expect(layout).not.toContain('/admin/identity-mapping/overview');
+		expect(layout).not.toContain('/admin/identity-mapping/federation-trust');
+		expect(layout).not.toContain('/admin/identity-mapping/schema-readiness');
+		expect(layout).not.toContain('/admin/identity-mapping/profiles#destination-consent');
+		expect(page).toContain("editorAllowedViewModes={['overview']}");
+		expect(page).toContain('editorEditable={false}');
 		expect(page).not.toContain('operations-grid');
 		expect(page).not.toContain('operation-card');
 	});

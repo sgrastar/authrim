@@ -416,6 +416,11 @@ interface FieldCatalogListRow {
   cardinality: string | null;
   classification: string | null;
   aliases_json: string | null;
+  ui_group_key: string | null;
+  ui_group_label: string | null;
+  ui_group_order: number | null;
+  ui_field_order: number | null;
+  examples_json: string | null;
 }
 
 interface ProtocolSchemaCatalogRow {
@@ -1238,8 +1243,10 @@ export class IdentityMappingControlPlaneRepository {
         await tx.execute(
           `INSERT INTO field_catalog_entries (
             id, tenant_id, catalog_version_id, stable_field_id, namespace, path, target_taxonomy,
-            value_type, cardinality, classification, aliases_json, validation_json, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            value_type, cardinality, classification, aliases_json, validation_json,
+            ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             createId('catalog_entry'),
             tenantId,
@@ -1253,6 +1260,11 @@ export class IdentityMappingControlPlaneRepository {
             entry.classification,
             stableJson(entry.aliases ?? []),
             stableJson({}),
+            entry.uiGroupKey ?? null,
+            entry.uiGroupLabel ?? null,
+            entry.uiGroupOrder ?? 0,
+            entry.uiFieldOrder ?? 0,
+            entry.examples ? stableJson(entry.examples) : null,
             now,
             now,
           ]
@@ -1311,12 +1323,17 @@ export class IdentityMappingControlPlaneRepository {
           e.value_type,
           e.cardinality,
           e.classification,
-          e.aliases_json
+          e.aliases_json,
+          e.ui_group_key,
+          e.ui_group_label,
+          e.ui_group_order,
+          e.ui_field_order,
+          e.examples_json
          FROM field_catalogs c
          LEFT JOIN field_catalog_versions v ON v.catalog_id = c.id
          LEFT JOIN field_catalog_entries e ON e.catalog_version_id = v.id
         WHERE c.tenant_id = ?
-        ORDER BY c.updated_at DESC, e.stable_field_id ASC`,
+        ORDER BY c.updated_at DESC, e.ui_group_order ASC, e.ui_field_order ASC, e.stable_field_id ASC`,
       [tenantId]
     );
     const catalogs = new Map<
@@ -1339,6 +1356,11 @@ export class IdentityMappingControlPlaneRepository {
           cardinality: string;
           classification: string;
           aliases: Array<{ namespace: string; path: string }>;
+          uiGroupKey: string | null;
+          uiGroupLabel: string | null;
+          uiGroupOrder: number;
+          uiFieldOrder: number;
+          examples: unknown[];
         }>;
       }
     >();
@@ -1367,6 +1389,11 @@ export class IdentityMappingControlPlaneRepository {
           cardinality: row.cardinality ?? 'single',
           classification: row.classification ?? 'internal',
           aliases: parseCatalogAliases(row.aliases_json),
+          uiGroupKey: row.ui_group_key,
+          uiGroupLabel: row.ui_group_label,
+          uiGroupOrder: row.ui_group_order ?? 0,
+          uiFieldOrder: row.ui_field_order ?? 0,
+          examples: parseJsonUnknownArray(row.examples_json),
         });
       }
       catalogs.set(row.id, catalog);
@@ -6083,6 +6110,18 @@ function parseJsonArray(value: string | null): string[] {
     return Array.isArray(parsed)
       ? parsed.filter((item): item is string => typeof item === 'string')
       : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonUnknownArray(value: string | null): unknown[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }

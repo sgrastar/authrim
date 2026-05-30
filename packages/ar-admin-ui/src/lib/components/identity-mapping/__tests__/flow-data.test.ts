@@ -145,7 +145,12 @@ describe('identity mapping flow data adapter', () => {
 							targetTaxonomy: 'canonical',
 							valueType: 'string',
 							cardinality: 'single',
-							classification: 'pii'
+							classification: 'pii',
+							uiGroupKey: 'name',
+							uiGroupLabel: 'Name',
+							uiGroupOrder: 10,
+							uiFieldOrder: 20,
+							examples: ['John Doe']
 						},
 						{
 							id: 'entry_groups',
@@ -174,7 +179,10 @@ describe('identity mapping flow data adapter', () => {
 					label: 'First Name',
 					caption: '',
 					type: 'String',
-					storageTarget: 'Profile attribute'
+					storageTarget: 'Profile attribute',
+					uiGroupKey: 'name',
+					uiGroupLabel: 'Name',
+					examples: ['John Doe']
 				}),
 				expect.objectContaining({
 					role: 'target',

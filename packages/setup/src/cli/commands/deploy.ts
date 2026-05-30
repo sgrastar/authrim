@@ -42,6 +42,7 @@ import {
   cleanupSetupMachineAccessInD1,
   ensureSetupMachineAccessInD1,
   ensureInitialTenantInD1,
+  seedDefaultCanonicalCatalog,
   seedRuntimeProfiles,
   getWorkersSubdomain,
   ensureWildcardDnsForMultiTenant,
@@ -1003,6 +1004,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   let setupMachineAccessSuccess = true;
   let setupMachineAccessCleanupDone = false;
   let adminUiBffMachineAccessSuccess = true;
+  let defaultCanonicalCatalogSeedSuccess = true;
   let runtimeProfileSeedSuccess = true;
   let uiWorkersSuccess = true;
   const cleanupEphemeralSetupMachineAccess = async (): Promise<void> => {
@@ -1125,6 +1127,23 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
         }
 
+        const catalogSeedSpinner = ora('Seeding default canonical field catalog...').start();
+        const catalogSeedResult = await seedDefaultCanonicalCatalog(env, config, (msg) => {
+          catalogSeedSpinner.text = msg;
+        });
+
+        if (catalogSeedResult.success) {
+          catalogSeedSpinner.succeed(
+            `Default canonical field catalog ready (${catalogSeedResult.seededCount} fields)`
+          );
+        } else {
+          catalogSeedSpinner.fail('Default canonical field catalog seed failed');
+          if (catalogSeedResult.error) {
+            console.log(chalk.red(`  ${catalogSeedResult.error}`));
+          }
+          defaultCanonicalCatalogSeedSuccess = false;
+        }
+
         const profileSeedSpinner = ora('Seeding runtime profiles...').start();
         const profileSeedResult = await seedRuntimeProfiles(env, config, (msg) => {
           profileSeedSpinner.text = msg;
@@ -1194,6 +1213,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     initialAdminRolesSuccess &&
     setupMachineAccessSuccess &&
     adminUiBffMachineAccessSuccess &&
+    defaultCanonicalCatalogSeedSuccess &&
     runtimeProfileSeedSuccess;
 
   const shouldConfigureDownstreamIntrospectionClient =
@@ -1381,6 +1401,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     migrationsSuccess &&
     initialTenantSuccess &&
     initialAdminRolesSuccess &&
+    defaultCanonicalCatalogSeedSuccess &&
     runtimeProfileSeedSuccess &&
     uiWorkersSuccess
   ) {
@@ -1394,6 +1415,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   } else if (summary.failedCount === 0 && !initialAdminRolesSuccess) {
     console.log(
       chalk.yellow('⚠️  All components deployed, but initial admin role bootstrap failed.\n')
+    );
+  } else if (summary.failedCount === 0 && !defaultCanonicalCatalogSeedSuccess) {
+    console.log(
+      chalk.yellow('⚠️  All components deployed, but default canonical catalog seed failed.\n')
     );
   } else if (summary.failedCount === 0 && !runtimeProfileSeedSuccess) {
     console.log(chalk.yellow('⚠️  All components deployed, but runtime profile seed failed.\n'));
