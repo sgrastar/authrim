@@ -115,23 +115,7 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		return [];
 	}
 
-	const profiles =
-		sourceProfiles.length > 0
-			? sourceProfiles
-			: [
-					{
-						id: 'schema-readiness-inventory',
-						title: 'Schema readiness inventory',
-						source: 'schema-readiness',
-						adapter: 'CSV' as const,
-						direction: 'source' as const,
-						versionLabel: 'current',
-						lifecycleState: 'readiness',
-						schema: null
-					}
-				];
-
-	return profiles.map((sourceProfile) =>
+	return sourceProfiles.map((sourceProfile) =>
 		buildSample(sourceProfile, destinationProfiles, canonicalTargets, input.policies.length)
 	);
 }

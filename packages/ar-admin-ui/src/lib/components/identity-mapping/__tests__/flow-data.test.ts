@@ -14,7 +14,36 @@ describe('identity mapping flow data adapter', () => {
 				}
 			],
 			catalogs: [],
-			sourceProfiles: [],
+			sourceProfiles: [
+				{
+					id: 'source_csv',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'people_csv',
+					displayName: 'People CSV',
+					lifecycleState: 'active',
+					version: {
+						id: 'source_csv_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schemaHash: 'hash',
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.given_name',
+									headerName: 'First Name',
+									label: 'First Name',
+									valueType: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						},
+						warningSummary: {}
+					}
+				}
+			],
 			destinationProfiles: [],
 			protocolSchemas: [
 				{
@@ -83,7 +112,7 @@ describe('identity mapping flow data adapter', () => {
 		expect(JSON.stringify(samples)).not.toContain('sample policy preview only');
 	});
 
-	it('shows built-in canonical targets when no source profiles are registered yet', () => {
+	it('does not create a fake source profile when no source profiles are registered yet', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [],
 			catalogs: [],
@@ -109,20 +138,7 @@ describe('identity mapping flow data adapter', () => {
 			]
 		});
 
-		expect(samples).toHaveLength(1);
-		expect(samples[0].id).toBe('schema-readiness-inventory');
-		expect(samples[0].nodes).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					role: 'target',
-					label: 'Email'
-				}),
-				expect.objectContaining({
-					role: 'target',
-					label: 'Group Membership'
-				})
-			])
-		);
+		expect(samples).toEqual([]);
 	});
 
 	it('uses field catalog entries as canonical target nodes when catalogs are available', () => {
@@ -165,7 +181,36 @@ describe('identity mapping flow data adapter', () => {
 					]
 				}
 			],
-			sourceProfiles: [],
+			sourceProfiles: [
+				{
+					id: 'source_csv',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'people_csv',
+					displayName: 'People CSV',
+					lifecycleState: 'active',
+					version: {
+						id: 'source_csv_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schemaHash: 'hash',
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.given_name',
+									headerName: 'First Name',
+									label: 'First Name',
+									valueType: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						},
+						warningSummary: {}
+					}
+				}
+			],
 			destinationProfiles: [],
 			protocolSchemas: [],
 			externalSchemas: [],
