@@ -376,6 +376,8 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 		ruleId: `${role}-${slug(profile.id)}-${slug(field.key)}`,
 		role,
 		adapter: profile.adapter,
+		profileId: profile.id,
+		profileTitle: profile.title,
 		label: field.label,
 		caption: field.caption,
 		type: field.type,

@@ -86,6 +86,11 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('allowedViewModes');
 		expect(flowEditor).toContain('initialViewMode');
 		expect(flowEditor).toContain('editable');
+		expect(flowEditor).toContain('showMetrics');
+		expect(flowEditor).toContain('showToolbarSourceProfile');
+		expect(flowEditor).toContain('selectedProfileId');
+		expect(flowEditor).toContain('Inbound profile');
+		expect(flowEditor).toContain('Outbound profile');
 		expect(flowEditor).toContain('view-inbound');
 		expect(flowEditor).toContain('view-outbound');
 		expect(flowEditor).toContain("role === 'source' && toNode.role === 'target'");
@@ -100,12 +105,17 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(pageShell).toContain('buildIdentityMappingFlowSamples');
 		expect(pageShell).toContain('getSchemaReadiness');
 		expect(pageShell).toContain('samples={flowSamples}');
+		expect(pageShell).toContain('profile-mode-control');
+		expect(pageShell).toContain('selectedEditorProfileId');
 		expect(editPage).toContain('pageTitle="Edit"');
 		expect(editPage).toContain("editorAllowedViewModes={['inbound', 'outbound']}");
 		expect(editPage).toContain('editorInitialViewMode="inbound"');
+		expect(editPage).toContain('showProfileModeControl');
+		expect(editPage).toContain('showEditorMetrics={false}');
 		expect(overviewPage).toContain('pageTitle="Overview"');
 		expect(overviewPage).toContain("editorAllowedViewModes={['overview']}");
 		expect(overviewPage).toContain('editorEditable={false}');
+		expect(overviewPage).toContain('showEditorMetrics={false}');
 		expect(page).not.toContain('Tier 2 Operations');
 	});
 

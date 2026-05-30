@@ -9,4 +9,7 @@
 	editorAllowedViewModes={['overview']}
 	editorInitialViewMode="overview"
 	editorEditable={false}
+	showEditorToolbarSourceProfile={false}
+	showEditorToolbarModeToggle={false}
+	showEditorMetrics={false}
 />

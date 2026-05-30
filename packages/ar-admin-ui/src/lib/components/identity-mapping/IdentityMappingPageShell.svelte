@@ -13,7 +13,11 @@
 		headTitle = pageTitle,
 		editorAllowedViewModes = ['overview', 'inbound', 'outbound'],
 		editorInitialViewMode = 'overview',
-		editorEditable = true
+		editorEditable = true,
+		showEditorToolbarSourceProfile = true,
+		showEditorToolbarModeToggle = true,
+		showEditorMetrics = true,
+		showProfileModeControl = false
 	} = $props<{
 		pageTitle?: string;
 		pageDescription?: string;
@@ -21,17 +25,74 @@
 		editorAllowedViewModes?: ViewMode[];
 		editorInitialViewMode?: ViewMode;
 		editorEditable?: boolean;
+		showEditorToolbarSourceProfile?: boolean;
+		showEditorToolbarModeToggle?: boolean;
+		showEditorMetrics?: boolean;
+		showProfileModeControl?: boolean;
 	}>();
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
 	let flowSamples = $state<MappingSample[]>([]);
+	let editMode = $state<Extract<ViewMode, 'inbound' | 'outbound'>>('inbound');
+	let selectedInboundProfileId = $state<string | null>(null);
+	let selectedOutboundProfileId = $state<string | null>(null);
 	let summary = $state({
 		policies: 0,
 		catalogs: 0,
 		profiles: 0,
 		federationTrustSources: 0
 	});
+	const sourceProfileOptions = $derived(
+		flowSamples.map((sample) => ({
+			id: sample.id,
+			title: sample.title
+		}))
+	);
+	const destinationProfileOptions = $derived(destinationProfileOptionsFromSamples(flowSamples));
+	const selectedEditorProfileId = $derived(
+		editMode === 'inbound' ? selectedInboundProfileId : selectedOutboundProfileId
+	);
+
+	$effect(() => {
+		if (!selectedInboundProfileId && sourceProfileOptions.length > 0) {
+			selectedInboundProfileId = sourceProfileOptions[0].id;
+		}
+		if (!selectedOutboundProfileId && destinationProfileOptions.length > 0) {
+			selectedOutboundProfileId =
+				destinationProfileOptions.find((option) => option.adapter === 'OIDC')?.id ??
+				destinationProfileOptions[0].id;
+		}
+	});
+
+	function destinationProfileOptionsFromSamples(samples: MappingSample[]) {
+		const seen: string[] = [];
+		return samples.flatMap((sample) =>
+			sample.nodes
+				.filter((node) => node.role === 'destination')
+				.flatMap((node) => {
+					const id = node.profileId ?? node.adapter ?? node.id;
+					if (seen.includes(id)) return [];
+					seen.push(id);
+					return [
+						{
+							id,
+							title: node.profileTitle ?? `${node.adapter ?? 'Destination'} profile`,
+							adapter: node.adapter
+						}
+					];
+				})
+		);
+	}
+
+	function selectEditProfile(event: Event) {
+		const value = (event.currentTarget as HTMLSelectElement).value || null;
+		if (editMode === 'inbound') {
+			selectedInboundProfileId = value;
+		} else {
+			selectedOutboundProfileId = value;
+		}
+	}
 
 	onMount(async () => {
 		try {
@@ -93,6 +154,40 @@
 			<p class="summary">
 				{pageDescription}
 			</p>
+			{#if showProfileModeControl}
+				<div class="profile-mode-control" aria-label="Mapping edit profile selector">
+					<div class="profile-mode-radio" role="radiogroup" aria-label="Mapping direction">
+						<label>
+							<input type="radio" name="mappingEditMode" value="inbound" bind:group={editMode} />
+							<span>Inbound</span>
+						</label>
+						<label>
+							<input type="radio" name="mappingEditMode" value="outbound" bind:group={editMode} />
+							<span>Outbound</span>
+						</label>
+					</div>
+					<select
+						aria-label={editMode === 'inbound'
+							? 'Inbound source profile'
+							: 'Outbound destination profile'}
+						value={selectedEditorProfileId ?? ''}
+						onchange={selectEditProfile}
+					>
+						<option value="" disabled>
+							{editMode === 'inbound' ? 'Select source profile' : 'Select destination profile'}
+						</option>
+						{#if editMode === 'inbound'}
+							{#each sourceProfileOptions as option (option.id)}
+								<option value={option.id}>{option.title}</option>
+							{/each}
+						{:else}
+							{#each destinationProfileOptions as option (option.id)}
+								<option value={option.id}>{option.title}</option>
+							{/each}
+						{/if}
+					</select>
+				</div>
+			{/if}
 		</div>
 		<div class="status-panel">
 			<span class="status-dot"></span>
@@ -125,6 +220,11 @@
 		allowedViewModes={editorAllowedViewModes}
 		initialViewMode={editorInitialViewMode}
 		editable={editorEditable}
+		showToolbarSourceProfile={showEditorToolbarSourceProfile}
+		showToolbarModeToggle={showEditorToolbarModeToggle}
+		showMetrics={showEditorMetrics}
+		selectedViewMode={showProfileModeControl ? editMode : null}
+		selectedProfileId={showProfileModeControl ? selectedEditorProfileId : null}
 	/>
 </div>
 
@@ -154,6 +254,56 @@
 		color: var(--text-secondary);
 		font-size: 14px;
 		line-height: 1.5;
+	}
+
+	.profile-mode-control {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-top: 14px;
+	}
+
+	.profile-mode-radio {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 4px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-card);
+	}
+
+	.profile-mode-radio label {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 30px;
+		padding: 0 10px;
+		border-radius: 6px;
+		color: var(--text-secondary);
+		font-size: 13px;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.profile-mode-radio label:has(input:checked) {
+		color: var(--text-primary);
+		background: var(--bg-hover);
+	}
+
+	.profile-mode-radio input {
+		margin: 0;
+	}
+
+	.profile-mode-control select {
+		min-width: 260px;
+		height: 40px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		color: var(--text-primary);
+		background: var(--bg-card);
+		font-size: 13px;
+		font-weight: 700;
 	}
 
 	.status-panel {

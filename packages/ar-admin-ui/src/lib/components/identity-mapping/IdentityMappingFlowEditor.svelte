@@ -16,7 +16,12 @@
 		loadError = null,
 		allowedViewModes = ['overview', 'inbound', 'outbound'],
 		initialViewMode = 'overview',
-		editable = true
+		editable = true,
+		showToolbarSourceProfile = true,
+		showToolbarModeToggle = true,
+		showMetrics = true,
+		selectedViewMode = null,
+		selectedProfileId = null
 	} = $props<{
 		samples?: MappingSample[];
 		loading?: boolean;
@@ -24,9 +29,13 @@
 		allowedViewModes?: ViewMode[];
 		initialViewMode?: ViewMode;
 		editable?: boolean;
+		showToolbarSourceProfile?: boolean;
+		showToolbarModeToggle?: boolean;
+		showMetrics?: boolean;
+		selectedViewMode?: ViewMode | null;
+		selectedProfileId?: string | null;
 	}>();
 
-	const adapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
 	const emptySample: MappingSample = {
 		id: 'empty-control-plane',
 		title: 'No control-plane schemas loaded',
@@ -54,6 +63,7 @@
 	let activeSampleRef: MappingSample | null = null;
 	let inboundAdapter = $state<MappingAdapter>(emptySample.inboundAdapter);
 	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
+	let selectedDestinationProfileId = $state<string | null>(null);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
 	let viewMode = $state<ViewMode>('overview');
@@ -104,6 +114,16 @@
 	const sourceNodes = $derived(visibleNodes.filter((node) => node.role === 'source'));
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
+	const sourceProfileOptions = $derived(
+		((samples.length > 0 ? samples : [sample]) as MappingSample[]).map(
+			(candidate: MappingSample) => ({
+				id: candidate.id,
+				title: candidate.title,
+				adapter: candidate.inboundAdapter
+			})
+		)
+	);
+	const destinationProfileOptions = $derived(destinationProfileOptionsForSample(sample));
 	const hasControlPlaneData = $derived(samples.length > 0);
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
@@ -130,9 +150,23 @@
 		if (!enabledViewModes.includes(viewMode)) {
 			viewMode = enabledViewModes[0];
 		}
+		if (
+			selectedViewMode &&
+			enabledViewModes.includes(selectedViewMode) &&
+			viewMode !== selectedViewMode
+		) {
+			viewMode = selectedViewMode;
+		}
 	});
 
 	$effect(() => {
+		if (
+			selectedViewMode === 'inbound' &&
+			selectedProfileId &&
+			selectedProfileId !== selectedSampleId
+		) {
+			selectedSampleId = selectedProfileId;
+		}
 		const next =
 			(samples as MappingSample[]).find(
 				(candidate: MappingSample) => candidate.id === selectedSampleId
@@ -141,6 +175,21 @@
 			emptySample;
 		if (activeSampleRef !== next) {
 			activateSample(next);
+		}
+	});
+
+	$effect(() => {
+		if (selectedViewMode === 'outbound' && selectedProfileId) {
+			selectedDestinationProfileId = selectedProfileId;
+		}
+		const hasSelectedDestination = destinationProfileOptions.some(
+			(option) => option.id === selectedDestinationProfileId
+		);
+		if (!hasSelectedDestination) {
+			selectedDestinationProfileId =
+				destinationProfileOptions.find((option) => option.adapter === 'OIDC')?.id ??
+				destinationProfileOptions[0]?.id ??
+				null;
 		}
 	});
 
@@ -190,6 +239,10 @@
 		selectedSampleId = next.id;
 		inboundAdapter = next.inboundAdapter;
 		outboundAdapter = next.outboundAdapter;
+		selectedDestinationProfileId =
+			destinationProfileOptionsForSample(next).find((option) => option.adapter === 'OIDC')?.id ??
+			destinationProfileOptionsForSample(next)[0]?.id ??
+			null;
 		activeRuleId = next.activeRuleId;
 		nodes = [...next.nodes];
 		edges = [...next.edges];
@@ -256,6 +309,24 @@
 		);
 	}
 
+	function destinationProfileOptionsForSample(candidate: MappingSample) {
+		const seen: string[] = [];
+		return candidate.nodes
+			.filter((node) => node.role === 'destination')
+			.flatMap((node) => {
+				const id = node.profileId ?? node.adapter ?? node.id;
+				if (seen.includes(id)) return [];
+				seen.push(id);
+				return [
+					{
+						id,
+						title: node.profileTitle ?? `${node.adapter ?? 'Destination'} profile`,
+						adapter: node.adapter ?? 'CSV'
+					}
+				];
+			});
+	}
+
 	function buildLayout(): { nodes: LayoutNode[]; height: number } {
 		const rowTops: Record<string, number> = {};
 		let cursor = graphBaseTop;
@@ -266,23 +337,28 @@
 		}
 
 		const width = Math.max(190, canvasWidth * 0.23);
-		const sourceLeft = 26;
+		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.12) : 26;
 		const targetLeft =
 			viewMode === 'outbound'
-				? 26
+				? Math.max(26, canvasWidth * 0.2)
 				: viewMode === 'inbound'
-					? Math.max(sourceLeft + width + 110, canvasWidth - width - 26)
+					? Math.min(
+							canvasWidth - width - 26,
+							Math.max(sourceLeft + width + 90, canvasWidth * 0.58)
+						)
 					: canvasWidth * 0.385;
 		const destinationLeft =
 			viewMode === 'outbound'
-				? Math.max(targetLeft + width + 110, canvasWidth - width - 26)
+				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 90, canvasWidth * 0.62))
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		const minHeight = Math.max(520, cursor + 36);
 		let visibleSourceOffset = 0;
 		let hiddenSourceOffset = 0;
 
 		const sourceLayout = sourceNodes.map((node) => {
-			const selected = node.adapter === inboundAdapter;
+			const selected = node.profileId
+				? node.profileId === sample.id
+				: node.adapter === inboundAdapter;
 			const visibleOffset = selected ? visibleSourceOffset++ : 0;
 			const hiddenOffset = selected ? 0 : ++hiddenSourceOffset;
 			return {
@@ -310,7 +386,9 @@
 		let hiddenDestinationOffset = 0;
 
 		const destinationLayout = destinationNodes.map((node) => {
-			const selected = node.adapter === outboundAdapter;
+			const selected = node.profileId
+				? node.profileId === selectedDestinationProfileId
+				: node.adapter === outboundAdapter;
 			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
 			const hiddenOffset = selected ? 0 : ++hiddenDestinationOffset;
 			return {
@@ -686,6 +764,14 @@
 		selectedSampleId = nextId;
 	}
 
+	function selectDestinationProfile(event: Event) {
+		const select = event.currentTarget as HTMLSelectElement;
+		selectedDestinationProfileId = select.value;
+		outboundAdapter =
+			destinationProfileOptions.find((option) => option.id === selectedDestinationProfileId)
+				?.adapter ?? outboundAdapter;
+	}
+
 	function addNode(role: 'source' | 'destination') {
 		if (!editable) return;
 		customCounter += 1;
@@ -787,38 +873,42 @@
 					<h2>{sample.title}</h2>
 				</div>
 				<div class="graph-actions">
-					<label class="source-profile-select" for="sourceProfile">
-						<span>Source profile</span>
-						<select
-							id="sourceProfile"
-							value={selectedSampleId ?? emptySample.id}
-							disabled={loading || samples.length === 0}
-							onchange={selectSample}
-						>
-							{#if samples.length === 0}
-								<option value={emptySample.id}>No profiles</option>
-							{:else}
-								{#each samples as option (option.id)}
-									<option value={option.id}>{option.title}</option>
-								{/each}
-							{/if}
-						</select>
-					</label>
-					<div class="mode-toggle" aria-label="Flow view mode">
-						{#each enabledViewModes as mode (mode)}
-							<button
-								class:active={viewMode === mode}
-								type="button"
-								onclick={() => (viewMode = mode)}
+					{#if showToolbarSourceProfile}
+						<label class="source-profile-select" for="sourceProfile">
+							<span>Source profile</span>
+							<select
+								id="sourceProfile"
+								value={selectedSampleId ?? emptySample.id}
+								disabled={loading || samples.length === 0}
+								onchange={selectSample}
 							>
-								{mode === 'overview'
-									? 'Overview'
-									: mode === 'inbound'
-										? 'Inbound mapping'
-										: 'Outbound release'}
-							</button>
-						{/each}
-					</div>
+								{#if samples.length === 0}
+									<option value={emptySample.id}>No profiles</option>
+								{:else}
+									{#each samples as option (option.id)}
+										<option value={option.id}>{option.title}</option>
+									{/each}
+								{/if}
+							</select>
+						</label>
+					{/if}
+					{#if showToolbarModeToggle}
+						<div class="mode-toggle" aria-label="Flow view mode">
+							{#each enabledViewModes as mode (mode)}
+								<button
+									class:active={viewMode === mode}
+									type="button"
+									onclick={() => (viewMode = mode)}
+								>
+									{mode === 'overview'
+										? 'Overview'
+										: mode === 'inbound'
+											? 'Inbound mapping'
+											: 'Outbound release'}
+								</button>
+							{/each}
+						</div>
+					{/if}
 					<button class="primary-action" type="button">Compile draft</button>
 				</div>
 			</div>
@@ -829,24 +919,26 @@
 				<span class="status-warn">{sample.reviewGates}</span>
 			</div>
 
-			<div class="metric-row">
-				<div class="metric">
-					<span>Mapped fields</span>
-					<strong>{sample.metrics[0]}</strong>
+			{#if showMetrics}
+				<div class="metric-row">
+					<div class="metric">
+						<span>Mapped fields</span>
+						<strong>{sample.metrics[0]}</strong>
+					</div>
+					<div class="metric">
+						<span>Hot-path reads</span>
+						<strong>{sample.metrics[1]}</strong>
+					</div>
+					<div class="metric">
+						<span>Release denies</span>
+						<strong>{sample.metrics[2]}</strong>
+					</div>
+					<div class="metric">
+						<span>Catalog version</span>
+						<strong>{sample.metrics[3]}</strong>
+					</div>
 				</div>
-				<div class="metric">
-					<span>Hot-path reads</span>
-					<strong>{sample.metrics[1]}</strong>
-				</div>
-				<div class="metric">
-					<span>Release denies</span>
-					<strong>{sample.metrics[2]}</strong>
-				</div>
-				<div class="metric">
-					<span>Catalog version</span>
-					<strong>{sample.metrics[3]}</strong>
-				</div>
-			</div>
+			{/if}
 
 			<div
 				class={`graph-canvas view-${viewMode}`}
@@ -873,10 +965,14 @@
 				{/if}
 				{#if viewMode !== 'outbound'}
 					<div class="lane-label lane-inbound">
-						<span>Inbound adapter</span>
-						<select bind:value={inboundAdapter}>
-							{#each adapters as adapter (adapter)}
-								<option value={adapter}>{adapter}</option>
+						<span>Inbound profile</span>
+						<select
+							value={selectedSampleId ?? emptySample.id}
+							disabled={sourceProfileOptions.length === 0}
+							onchange={selectSample}
+						>
+							{#each sourceProfileOptions as option (option.id)}
+								<option value={option.id}>{option.title}</option>
 							{/each}
 						</select>
 						{#if editable}
@@ -891,10 +987,14 @@
 				</div>
 				{#if viewMode !== 'inbound'}
 					<div class="lane-label lane-outbound">
-						<span>Outbound adapter</span>
-						<select bind:value={outboundAdapter}>
-							{#each adapters as adapter (adapter)}
-								<option value={adapter}>{adapter}</option>
+						<span>Outbound profile</span>
+						<select
+							value={selectedDestinationProfileId ?? ''}
+							disabled={destinationProfileOptions.length === 0}
+							onchange={selectDestinationProfile}
+						>
+							{#each destinationProfileOptions as option (option.id)}
+								<option value={option.id}>{option.title}</option>
 							{/each}
 						</select>
 						{#if editable}
@@ -1010,7 +1110,7 @@
 						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
 						onpointerout={() => (hoverNodeId = null)}
 					>
-						{#if node.role !== 'source'}
+						{#if node.role === 'destination' || (node.role === 'target' && viewMode !== 'outbound')}
 							<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
 						{/if}
 						<span>{node.label}</span>
@@ -1038,7 +1138,7 @@
 								</span>
 							</span>
 						{/if}
-						{#if editable && node.role !== 'destination'}
+						{#if editable && (node.role === 'source' || (node.role === 'target' && viewMode !== 'inbound'))}
 							<span
 								class="node-handle output"
 								data-node-id={node.id}
@@ -1469,7 +1569,8 @@
 		position: absolute;
 		top: 12px;
 		z-index: 4;
-		display: flex;
+		display: grid;
+		grid-template-columns: auto auto;
 		align-items: center;
 		gap: 7px;
 		color: var(--map-muted);
@@ -1477,6 +1578,10 @@
 		font-weight: 800;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
+	}
+
+	.lane-label > span {
+		grid-column: 1 / -1;
 	}
 
 	.lane-inbound {

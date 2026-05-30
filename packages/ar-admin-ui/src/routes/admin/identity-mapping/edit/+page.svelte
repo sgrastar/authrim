@@ -8,4 +8,8 @@
 	pageDescription="Edit inbound mappings and outbound release projections against registered source and destination profiles."
 	editorAllowedViewModes={['inbound', 'outbound']}
 	editorInitialViewMode="inbound"
+	showEditorToolbarSourceProfile={false}
+	showEditorToolbarModeToggle={false}
+	showEditorMetrics={false}
+	showProfileModeControl
 />

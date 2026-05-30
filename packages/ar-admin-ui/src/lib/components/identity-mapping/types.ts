@@ -7,6 +7,8 @@ export interface MappingNode {
 	ruleId: string;
 	role: NodeRole;
 	adapter?: MappingAdapter;
+	profileId?: string;
+	profileTitle?: string;
 	label: string;
 	caption: string;
 	type?: string;

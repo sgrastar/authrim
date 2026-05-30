@@ -206,12 +206,16 @@ describe('identity mapping flow data adapter', () => {
 				expect.objectContaining({
 					role: 'source',
 					label: 'Email',
+					profileId: 'source-profile-source_profile_1',
+					profileTitle: 'Workday CSV',
 					privacy: 'PII',
 					required: true
 				}),
 				expect.objectContaining({
 					role: 'destination',
 					label: 'Library card',
+					profileId: 'destination-profile-destination_profile_1',
+					profileTitle: 'Library OIDC',
 					privacy: 'PII'
 				})
 			])
