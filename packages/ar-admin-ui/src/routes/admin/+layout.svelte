@@ -89,6 +89,12 @@
 			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' },
 			{ path: '/admin/identity-mapping', label: 'Identity Mapping', icon: 'i-ph-graph' },
+			{ path: '/admin/identity-mapping/edit', label: 'Mapping Edit', icon: 'i-ph-pencil-line' },
+			{
+				path: '/admin/identity-mapping/overview',
+				label: 'Mapping Overview',
+				icon: 'i-ph-eye'
+			},
 			{
 				path: '/admin/identity-mapping/profiles',
 				label: 'Source & Destination Profiles',

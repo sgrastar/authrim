@@ -23,6 +23,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		const page = readRoute('admin/identity-mapping/+page.svelte');
 
 		expect(layout).toContain('/admin/identity-mapping');
+		expect(layout).toContain('/admin/identity-mapping/edit');
+		expect(layout).toContain('/admin/identity-mapping/overview');
 		expect(layout).toContain('/admin/identity-mapping/profiles');
 		expect(layout).toContain('/admin/identity-mapping/operations');
 		expect(layout).toContain('/admin/identity-mapping/resolution-center');
