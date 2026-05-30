@@ -5,10 +5,102 @@
 		type MappingAdapter,
 		type MappingEdge,
 		type MappingNode,
-		type MappingSample
+		type MappingSample,
+		type TransformOperation
 	} from './types';
 
 	type ViewMode = 'overview' | 'inbound' | 'outbound';
+	type TransformParameterSchema =
+		| {
+				name: 'mode';
+				label: string;
+				kind: 'enum';
+				required: true;
+				options: Array<{ value: string; label: string }>;
+		  }
+		| {
+				name: 'delimiter';
+				label: string;
+				kind: 'string';
+				required: false;
+				placeholder: string;
+		  };
+	type TransformOperationSchema = {
+		operation: TransformOperation;
+		label: string;
+		description: string;
+		parameters: TransformParameterSchema[];
+	};
+
+	const transformOperationSchemas: TransformOperationSchema[] = [
+		{
+			operation: 'copy',
+			label: 'Copy',
+			description: 'Pass the first input value through unchanged.',
+			parameters: []
+		},
+		{
+			operation: 'trim',
+			label: 'Trim',
+			description: 'Remove leading and trailing whitespace from the first input value.',
+			parameters: []
+		},
+		{
+			operation: 'normalize',
+			label: 'Normalize',
+			description: 'Normalize Unicode or collapse repeated whitespace before validation.',
+			parameters: [
+				{
+					name: 'mode',
+					label: 'Mode',
+					kind: 'enum',
+					required: true,
+					options: [
+						{ value: 'whitespace', label: 'Whitespace' },
+						{ value: 'unicode', label: 'Unicode NFKC' }
+					]
+				}
+			]
+		},
+		{
+			operation: 'case',
+			label: 'Case',
+			description: 'Convert string case before writing to the target.',
+			parameters: [
+				{
+					name: 'mode',
+					label: 'Mode',
+					kind: 'enum',
+					required: true,
+					options: [
+						{ value: 'lower', label: 'Lowercase' },
+						{ value: 'upper', label: 'Uppercase' },
+						{ value: 'title', label: 'Title case' }
+					]
+				}
+			]
+		},
+		{
+			operation: 'concat',
+			label: 'Concat',
+			description: 'Join all connected input values into one string.',
+			parameters: [
+				{
+					name: 'delimiter',
+					label: 'Delimiter',
+					kind: 'string',
+					required: false,
+					placeholder: 'space, comma, or custom text'
+				}
+			]
+		},
+		{
+			operation: 'fallback',
+			label: 'Fallback',
+			description: 'Use the first non-empty connected input value.',
+			parameters: []
+		}
+	];
 
 	const {
 		samples = [],
@@ -172,6 +264,10 @@
 	const rule = $derived(
 		selectedEdge ? edgeInspectorRule(selectedEdge) : (sample.rules[activeRuleId] ?? fallbackRule())
 	);
+	const selectedTransformNode = $derived.by(() => {
+		const selected = selectedNodeId ? nodeById(selectedNodeId) : undefined;
+		return selected?.role === 'transform' ? selected : null;
+	});
 
 	$effect(() => {
 		if (!viewModeInitialized) {
@@ -730,6 +826,7 @@
 	function normalizeNodeType(type: string | undefined): string | null {
 		const normalized = type?.toLowerCase().trim();
 		if (!normalized) return null;
+		if (normalized === 'transform') return null;
 		if (['string', 'text', 'name'].some((needle) => normalized.includes(needle))) return 'text';
 		if (normalized.includes('email') || normalized.includes('mail')) return 'email';
 		if (
@@ -885,13 +982,16 @@
 		const insertPoint = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
 		const nodeId = `transform-node-${customCounter}`;
 		const ruleId = `transform-rule-${customCounter}`;
+		const operation: TransformOperation = 'copy';
+		const parameters = defaultTransformParameters(operation);
 		const transformNode: MappingNode = {
 			id: nodeId,
 			ruleId,
 			role: 'transform',
 			label: `Transform ${customCounter}`,
-			caption: 'normalize / transform',
-			type: 'transform',
+			caption: transformCaption(operation, parameters),
+			transformOperation: operation,
+			transformParameters: parameters,
 			privacy: 'Other',
 			layoutPosition: {
 				x: insertPoint.x - transformWidth / 2,
@@ -922,7 +1022,7 @@
 			source: 'Inserted on selected mapping edge',
 			target: 'Transform node',
 			destination: 'Continues to the original edge target',
-			transform: 'not configured',
+			transform: transformSummary(operation, parameters),
 			validation: 'draft transform node inserted',
 			trace: 'This transform node was inserted into an existing mapping edge.'
 		};
@@ -1082,6 +1182,135 @@
 			trace: 'Custom draft node added. Drag a connection handle to attach it to canonical schema.'
 		};
 		selectRule(node.ruleId);
+	}
+
+	function transformSchema(operation: TransformOperation): TransformOperationSchema {
+		return (
+			transformOperationSchemas.find((schema) => schema.operation === operation) ??
+			transformOperationSchemas[0]
+		);
+	}
+
+	function transformOperation(value: string): TransformOperation {
+		return transformOperationSchemas.some((schema) => schema.operation === value)
+			? (value as TransformOperation)
+			: 'copy';
+	}
+
+	function activeTransformOperation(node: MappingNode): TransformOperation {
+		return transformOperation(node.transformOperation ?? 'copy');
+	}
+
+	function activeTransformSchema(node: MappingNode): TransformOperationSchema {
+		return transformSchema(activeTransformOperation(node));
+	}
+
+	function defaultTransformParameters(operation: TransformOperation): Record<string, string> {
+		if (operation === 'normalize') return { mode: 'whitespace' };
+		if (operation === 'case') return { mode: 'lower' };
+		if (operation === 'concat') return { delimiter: ' ' };
+		return {};
+	}
+
+	function sanitizeTransformParameters(
+		operation: TransformOperation,
+		parameters: Record<string, string> = {}
+	): Record<string, string> {
+		const schema = transformSchema(operation);
+		const defaults = defaultTransformParameters(operation);
+		const sanitized: Record<string, string> = {};
+		for (const parameter of schema.parameters) {
+			const value = parameters[parameter.name] ?? defaults[parameter.name] ?? '';
+			if (parameter.kind === 'enum') {
+				sanitized[parameter.name] = parameter.options.some((option) => option.value === value)
+					? value
+					: parameter.options[0]?.value ?? '';
+			} else {
+				sanitized[parameter.name] = value;
+			}
+		}
+		return sanitized;
+	}
+
+	function transformSummary(
+		operation: TransformOperation,
+		parameters: Record<string, string> = {}
+	): string {
+		const schema = transformSchema(operation);
+		const entries = schema.parameters
+			.map((parameter) => {
+				const value = parameters[parameter.name];
+				return value ? `${parameter.name}=${JSON.stringify(value)}` : null;
+			})
+			.filter(Boolean);
+		return entries.length > 0 ? `${operation}(${entries.join(', ')})` : operation;
+	}
+
+	function transformCaption(
+		operation: TransformOperation,
+		parameters: Record<string, string> = {}
+	): string {
+		const schema = transformSchema(operation);
+		if (schema.parameters.length === 0) return schema.label.toLowerCase();
+		const values = schema.parameters
+			.map((parameter) => parameters[parameter.name])
+			.filter((value) => value && value.length > 0);
+		return [schema.label.toLowerCase(), ...values].join(' / ');
+	}
+
+	function updateRuleDetail(ruleId: string, patch: Partial<ReturnType<typeof fallbackRule>>) {
+		sample = {
+			...sample,
+			rules: {
+				...sample.rules,
+				[ruleId]: {
+					...(sample.rules[ruleId] ?? fallbackRule()),
+					...patch
+				}
+			}
+		};
+	}
+
+	function updateTransformNode(
+		nodeId: string,
+		operation: TransformOperation,
+		parameters: Record<string, string>
+	) {
+		if (!editable) return;
+		const sanitized = sanitizeTransformParameters(operation, parameters);
+		let ruleId: string | null = null;
+		nodes = nodes.map((node) => {
+			if (node.id !== nodeId || node.role !== 'transform') return node;
+			ruleId = node.ruleId;
+			return {
+				...node,
+				transformOperation: operation,
+				transformParameters: sanitized,
+				caption: transformCaption(operation, sanitized)
+			};
+		});
+		if (ruleId) {
+			updateRuleDetail(ruleId, {
+				transform: transformSummary(operation, sanitized),
+				validation: 'draft transform configured; compile validation pending',
+				output: `Transform output preview pending for ${transformSummary(operation, sanitized)}.`,
+				trace: 'Transform configuration is stored on the draft node and will be persisted as a mapping transform step.'
+			});
+		}
+		hasUnsavedDraftChanges = true;
+	}
+
+	function updateTransformOperation(node: MappingNode, value: string) {
+		const operation = transformOperation(value);
+		updateTransformNode(node.id, operation, defaultTransformParameters(operation));
+	}
+
+	function updateTransformParameter(node: MappingNode, parameterName: string, value: string) {
+		const operation = activeTransformOperation(node);
+		updateTransformNode(node.id, operation, {
+			...sanitizeTransformParameters(operation, node.transformParameters),
+			[parameterName]: value
+		});
 	}
 
 	function edgeInspectorRule(edge: MappingEdge) {
@@ -1521,6 +1750,80 @@
 			</div>
 
 			{#if activeTab === 'rule'}
+				{#if selectedTransformNode}
+					{@const schema = activeTransformSchema(selectedTransformNode)}
+					<section class="transform-config-card" aria-label="Transform configuration">
+						<div class="transform-config-header">
+							<div>
+								<p class="section-kicker">Transform step</p>
+								<h3>{schema.label}</h3>
+							</div>
+							<span class="transform-operation-pill">{activeTransformOperation(selectedTransformNode)}</span>
+						</div>
+						<label class="inspector-field" for={`transform-operation-${selectedTransformNode.id}`}>
+							<span>Operation</span>
+							<select
+								id={`transform-operation-${selectedTransformNode.id}`}
+								value={activeTransformOperation(selectedTransformNode)}
+								disabled={!editable}
+								onchange={(event) =>
+									updateTransformOperation(
+										selectedTransformNode,
+										(event.currentTarget as HTMLSelectElement).value
+									)}
+							>
+								{#each transformOperationSchemas as option (option.operation)}
+									<option value={option.operation}>{option.label}</option>
+								{/each}
+							</select>
+						</label>
+						<p class="transform-description">{schema.description}</p>
+						{#each schema.parameters as parameter (parameter.name)}
+							<label class="inspector-field" for={`transform-${selectedTransformNode.id}-${parameter.name}`}>
+								<span>
+									{parameter.label}
+									{#if parameter.required}<em>Required</em>{/if}
+								</span>
+								{#if parameter.kind === 'enum'}
+									<select
+										id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+										value={sanitizeTransformParameters(
+											activeTransformOperation(selectedTransformNode),
+											selectedTransformNode.transformParameters
+										)[parameter.name]}
+										disabled={!editable}
+										onchange={(event) =>
+											updateTransformParameter(
+												selectedTransformNode,
+												parameter.name,
+												(event.currentTarget as HTMLSelectElement).value
+											)}
+									>
+										{#each parameter.options as option (option.value)}
+											<option value={option.value}>{option.label}</option>
+										{/each}
+									</select>
+								{:else}
+									<input
+										id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+										value={sanitizeTransformParameters(
+											activeTransformOperation(selectedTransformNode),
+											selectedTransformNode.transformParameters
+										)[parameter.name]}
+										placeholder={parameter.placeholder}
+										disabled={!editable}
+										oninput={(event) =>
+											updateTransformParameter(
+												selectedTransformNode,
+												parameter.name,
+												(event.currentTarget as HTMLInputElement).value
+											)}
+									/>
+								{/if}
+							</label>
+						{/each}
+					</section>
+				{/if}
 				<dl class="detail-list">
 					<div>
 						<dt>Source</dt>
@@ -1751,11 +2054,13 @@
 	}
 
 	select,
+	input,
 	button {
 		font: inherit;
 	}
 
-	select {
+	select,
+	input {
 		height: 30px;
 		border: 1px solid var(--map-line);
 		border-radius: 4px;
@@ -1763,6 +2068,10 @@
 		background: var(--map-surface);
 		font-size: 12px;
 		font-weight: 700;
+	}
+
+	input {
+		padding: 0 8px;
 	}
 
 	button {
@@ -2463,6 +2772,71 @@
 		gap: 10px;
 		margin: 0;
 		padding: 14px;
+	}
+
+	.transform-config-card {
+		display: grid;
+		gap: 12px;
+		margin: 14px 14px 0;
+		padding: 12px;
+		border: 1px solid color-mix(in srgb, var(--map-green) 48%, var(--map-line));
+		border-radius: var(--map-radius);
+		background: color-mix(in srgb, var(--map-green) 7%, var(--map-surface-muted));
+		box-shadow: 0 0 0 1px color-mix(in srgb, var(--map-green) 16%, transparent);
+	}
+
+	.transform-config-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 10px;
+	}
+
+	.transform-config-header h3 {
+		margin: 2px 0 0;
+		font-size: 14px;
+	}
+
+	.transform-operation-pill {
+		padding: 3px 8px;
+		border: 1px solid color-mix(in srgb, var(--map-green) 50%, transparent);
+		border-radius: 999px;
+		color: var(--map-green);
+		background: color-mix(in srgb, var(--map-green) 11%, transparent);
+		font-size: 11px;
+		font-weight: 900;
+	}
+
+	.transform-description {
+		margin: 0;
+		color: var(--map-muted);
+		font-size: 12px;
+		line-height: 1.45;
+	}
+
+	.inspector-field {
+		display: grid;
+		gap: 6px;
+	}
+
+	.inspector-field > span {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		color: var(--map-muted);
+		font-size: 11px;
+		font-weight: 900;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.inspector-field em {
+		color: var(--map-amber);
+		font-style: normal;
+		font-size: 10px;
+		letter-spacing: 0;
+		text-transform: none;
 	}
 
 	.detail-list div,

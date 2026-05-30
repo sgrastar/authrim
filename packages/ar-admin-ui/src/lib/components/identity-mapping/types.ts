@@ -1,6 +1,7 @@
 export type MappingAdapter = 'CSV' | 'SAML' | 'OIDC' | 'SCIM';
 export type MappingRisk = 'low' | 'medium' | 'high';
 export type NodeRole = 'source' | 'transform' | 'target' | 'destination';
+export type TransformOperation = 'copy' | 'concat' | 'fallback' | 'normalize' | 'case' | 'trim';
 
 export interface MappingNode {
 	id: string;
@@ -21,6 +22,8 @@ export interface MappingNode {
 	inputCardinality?: 'one' | 'many';
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;
+	transformOperation?: TransformOperation;
+	transformParameters?: Record<string, string>;
 	layoutPosition?: {
 		x: number;
 		y: number;
