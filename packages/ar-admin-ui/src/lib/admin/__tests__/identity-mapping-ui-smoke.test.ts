@@ -50,7 +50,11 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('edge-hit');
 		expect(flowEditor).toContain('.edge-hit:focus-visible');
 		expect(flowEditor).toContain('edge-delete-control');
+		expect(flowEditor).toContain('edge-insert-control');
+		expect(flowEditor).toContain('addTransformNode');
+		expect(flowEditor).toContain('canInsertTransformNode');
 		expect(flowEditor).toContain('edgeDeletePoint');
+		expect(flowEditor).toContain('edgeInsertPoint');
 		expect(flowEditor).toContain('isTypeCompatible');
 		expect(flowEditor).toContain('isTargetInputFull');
 		expect(flowEditor).toContain('targetInputCardinality');
@@ -76,6 +80,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('--node-glow');
 		expect(flowEditor).toContain('cardinality-one');
 		expect(flowEditor).toContain('cardinality-many');
+		expect(flowEditor).toContain('transform-node');
 		expect(flowEditor).toContain('Consent status');
 		expect(flowEditor).toContain('Challenge mode');
 		expect(flowEditor).toContain('Release policy');

@@ -52,6 +52,8 @@
 	};
 	const nodeHeight = 30;
 	const targetHeight = 46;
+	const transformWidth = 168;
+	const transformHeight = 38;
 	const graphBaseTop = 48;
 	const graphStep = 50;
 	const rowGap = 12;
@@ -107,11 +109,13 @@
 		nodes.filter(
 			(node) =>
 				node.role === 'target' ||
+				node.role === 'transform' ||
 				(node.role === 'source' && viewMode !== 'outbound') ||
 				(node.role === 'destination' && viewMode !== 'inbound')
 		)
 	);
 	const sourceNodes = $derived(visibleNodes.filter((node) => node.role === 'source'));
+	const transformNodes = $derived(visibleNodes.filter((node) => node.role === 'transform'));
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
 	const sourceProfileOptions = $derived(
@@ -382,6 +386,16 @@
 			stackIndex: 0
 		}));
 
+		const transformLayout = transformNodes.map((node) => ({
+			...node,
+			top: node.layoutPosition?.y ?? graphBaseTop,
+			left: node.layoutPosition?.x ?? (sourceLeft + targetLeft + width) / 2 - transformWidth / 2,
+			width: transformWidth,
+			height: transformHeight,
+			hidden: false,
+			stackIndex: 0
+		}));
+
 		let visibleDestinationOffset = 0;
 		let hiddenDestinationOffset = 0;
 
@@ -402,7 +416,7 @@
 			};
 		});
 
-		const laidOut = [...sourceLayout, ...targetLayout, ...destinationLayout];
+		const laidOut = [...sourceLayout, ...transformLayout, ...targetLayout, ...destinationLayout];
 		return {
 			nodes: laidOut,
 			height: Math.max(
@@ -480,6 +494,28 @@
 		};
 	}
 
+	function edgeInsertPoint(edge: MappingEdge): Point | null {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return null;
+		const point = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
+		return {
+			x: point.x,
+			y: point.y - 14
+		};
+	}
+
+	function canInsertTransformNode(edge: MappingEdge): boolean {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		if (!fromNode || !toNode) return false;
+		if (fromNode.role === 'transform' || toNode.role === 'transform') return false;
+		return (
+			(fromNode.role === 'source' && toNode.role === 'target') ||
+			(fromNode.role === 'target' && toNode.role === 'destination')
+		);
+	}
+
 	function edgeAccent(edge: MappingEdge): string {
 		const fromNode = nodeById(edge.from);
 		const toNode = nodeById(edge.to);
@@ -536,7 +572,11 @@
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
 		const validDirection =
 			(fromNode.role === 'source' && toNode.role === 'target') ||
-			(fromNode.role === 'target' && toNode.role === 'destination');
+			(fromNode.role === 'source' && toNode.role === 'transform') ||
+			(fromNode.role === 'transform' && toNode.role === 'target') ||
+			(fromNode.role === 'target' && toNode.role === 'destination') ||
+			(fromNode.role === 'target' && toNode.role === 'transform') ||
+			(fromNode.role === 'transform' && toNode.role === 'destination');
 		return (
 			validDirection &&
 			isTypeCompatible(fromNode, toNode) &&
@@ -725,6 +765,62 @@
 		edges = [...edges, edge];
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
+		hasUnsavedDraftChanges = true;
+	}
+
+	function addTransformNode(edge: MappingEdge) {
+		if (!editable || !canInsertTransformNode(edge)) return;
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return;
+		customCounter += 1;
+		const insertPoint = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
+		const nodeId = `transform-node-${customCounter}`;
+		const ruleId = `transform-rule-${customCounter}`;
+		const transformNode: MappingNode = {
+			id: nodeId,
+			ruleId,
+			role: 'transform',
+			label: `Transform ${customCounter}`,
+			caption: 'normalize / transform',
+			type: 'transform',
+			privacy: 'Other',
+			layoutPosition: {
+				x: insertPoint.x - transformWidth / 2,
+				y: insertPoint.y - transformHeight / 2
+			}
+		};
+		nodes = [...nodes, transformNode];
+		edges = [
+			...edges.filter((candidate) => candidate.id !== edge.id),
+			{
+				id: `${edge.id}-in-${customCounter}`,
+				from: edge.from,
+				to: nodeId,
+				outbound: edge.outbound,
+				custom: true
+			},
+			{
+				id: `${edge.id}-out-${customCounter}`,
+				from: nodeId,
+				to: edge.to,
+				outbound: edge.outbound,
+				custom: true
+			}
+		];
+		sample.rules[ruleId] = {
+			...fallbackRule(),
+			title: transformNode.label,
+			source: 'Inserted on selected mapping edge',
+			target: 'Transform node',
+			destination: 'Continues to the original edge target',
+			transform: 'not configured',
+			validation: 'draft transform node inserted',
+			trace: 'This transform node was inserted into an existing mapping edge.'
+		};
+		activeRuleId = ruleId;
+		selectedNodeId = nodeId;
+		selectedEdgeId = null;
 		hasUnsavedDraftChanges = true;
 	}
 
@@ -1045,6 +1141,31 @@
 							style={`--edge-accent:${edgeAccent(edge)}`}
 							d={edgePath(edge)}
 						/>
+						{#if editable && selectedEdges.has(edge.id) && canInsertTransformNode(edge)}
+							{@const insertPoint = edgeInsertPoint(edge)}
+							{#if insertPoint}
+								<g
+									class="edge-insert-control"
+									transform={`translate(${insertPoint.x} ${insertPoint.y})`}
+									role="button"
+									tabindex="0"
+									aria-label="Insert transform node on selected mapping edge"
+									onclick={(event) => {
+										event.stopPropagation();
+										addTransformNode(edge);
+									}}
+									onkeydown={(event) => {
+										if (event.key === 'Enter' || event.key === ' ') {
+											event.preventDefault();
+											addTransformNode(edge);
+										}
+									}}
+								>
+									<circle r="10" />
+									<path d="M -4 0 H 4 M 0 -4 V 4" />
+								</g>
+							{/if}
+						{/if}
 						{#if editable && edge.id === selectedEdgeId}
 							{@const deletePoint = edgeDeletePoint(edge)}
 							{#if deletePoint}
@@ -1110,7 +1231,7 @@
 						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
 						onpointerout={() => (hoverNodeId = null)}
 					>
-						{#if node.role === 'destination' || (node.role === 'target' && viewMode !== 'outbound')}
+						{#if node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'outbound')}
 							<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
 						{/if}
 						<span>{node.label}</span>
@@ -1138,7 +1259,7 @@
 								</span>
 							</span>
 						{/if}
-						{#if editable && (node.role === 'source' || (node.role === 'target' && viewMode !== 'inbound'))}
+						{#if editable && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
 							<span
 								class="node-handle output"
 								data-node-id={node.id}
@@ -1658,6 +1779,12 @@
 		pointer-events: auto;
 	}
 
+	.edge-insert-control {
+		color: var(--map-text);
+		cursor: pointer;
+		pointer-events: auto;
+	}
+
 	.edge-delete-control circle {
 		fill: var(--map-surface);
 		stroke: var(--edge-accent, var(--map-red));
@@ -1678,6 +1805,27 @@
 	.edge-delete-control:focus-visible circle {
 		fill: color-mix(in srgb, var(--map-red) 12%, var(--map-surface));
 		stroke: var(--map-red);
+	}
+
+	.edge-insert-control circle {
+		fill: var(--map-surface);
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-width: 1.5;
+		filter: drop-shadow(
+			0 0 10px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 32%, transparent)
+		);
+	}
+
+	.edge-insert-control path {
+		fill: none;
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-linecap: round;
+		stroke-width: 2;
+	}
+
+	.edge-insert-control:hover circle,
+	.edge-insert-control:focus-visible circle {
+		fill: color-mix(in srgb, var(--edge-accent, var(--map-brand)) 16%, var(--map-surface));
 	}
 
 	.edge {
@@ -1832,6 +1980,14 @@
 	.target-node {
 		padding-bottom: 20px;
 		border-color: rgba(96, 165, 250, 0.64);
+	}
+
+	.transform-node {
+		--node-accent: var(--map-green);
+		place-content: center;
+		border-color: color-mix(in srgb, var(--map-green) 74%, transparent);
+		background: color-mix(in srgb, var(--map-green) 14%, var(--map-surface));
+		text-align: center;
 	}
 
 	.target-node.cardinality-one .node-handle.input {

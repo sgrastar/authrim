@@ -1,6 +1,6 @@
 export type MappingAdapter = 'CSV' | 'SAML' | 'OIDC' | 'SCIM';
 export type MappingRisk = 'low' | 'medium' | 'high';
-export type NodeRole = 'source' | 'target' | 'destination';
+export type NodeRole = 'source' | 'transform' | 'target' | 'destination';
 
 export interface MappingNode {
 	id: string;
@@ -15,6 +15,10 @@ export interface MappingNode {
 	inputCardinality?: 'one' | 'many';
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;
+	layoutPosition?: {
+		x: number;
+		y: number;
+	};
 }
 
 export interface MappingEdge {
