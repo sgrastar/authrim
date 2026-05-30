@@ -40,6 +40,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('startConnectionDrag');
 		expect(flowEditor).toContain('drag-edge');
 		expect(flowEditor).toContain('edge-hit');
+		expect(flowEditor).toContain('.edge-hit:focus-visible');
 		expect(flowEditor).toContain('edge-delete-control');
 		expect(flowEditor).toContain('edgeDeletePoint');
 		expect(flowEditor).toContain('selectEdge');

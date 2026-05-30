@@ -1340,7 +1340,15 @@
 		stroke: transparent;
 		stroke-width: 14;
 		cursor: pointer;
+		outline: none;
 		pointer-events: stroke;
+	}
+
+	.edge-hit:focus,
+	.edge-hit:focus-visible,
+	.edge-delete-control:focus,
+	.edge-delete-control:focus-visible {
+		outline: none;
 	}
 
 	.edge-blank-hit {
