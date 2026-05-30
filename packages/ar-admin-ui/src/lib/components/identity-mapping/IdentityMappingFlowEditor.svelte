@@ -658,7 +658,7 @@
 	}
 
 	function targetInputCardinalityLabel(node: MappingNode): string {
-		return targetInputCardinality(node) === 'one' ? '(1)' : '(N)';
+		return targetInputCardinality(node) === 'one' ? '1' : 'N';
 	}
 
 	function isTypeCompatible(fromNode: MappingNode, toNode: MappingNode): boolean {
