@@ -72,6 +72,12 @@
 		validTarget: boolean | null;
 		targetNodeId: string | null;
 	} | null>(null);
+	let pendingConnectionStart: {
+		fromNodeId: string;
+		startClient: Point;
+		from: Point;
+	} | null = null;
+	let suppressNextNodeClickId: string | null = null;
 
 	interface Point {
 		x: number;
@@ -195,6 +201,8 @@
 	onDestroy(() => {
 		window.removeEventListener('pointermove', handlePointerMove);
 		window.removeEventListener('pointerup', handlePointerUp);
+		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.removeEventListener('pointerup', handleEasyConnectionPointerUp);
 	});
 
 	function nodeById(id: string): MappingNode | undefined {
@@ -503,7 +511,8 @@
 	function connectionTargetForPointer(event: PointerEvent): MappingNode | undefined {
 		const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
 		const handle = target?.closest?.('.node-handle.input') as HTMLElement | null;
-		const toNodeId = handle?.dataset.nodeId;
+		const nodeElement = target?.closest?.('.graph-node') as HTMLElement | null;
+		const toNodeId = handle?.dataset.nodeId ?? nodeElement?.dataset.nodeId;
 		return toNodeId ? nodeById(toNodeId) : undefined;
 	}
 
@@ -519,6 +528,7 @@
 		if (!editable || node.hidden || node.role === 'destination') return;
 		event.preventDefault();
 		event.stopPropagation();
+		pendingConnectionStart = null;
 		const from = edgePoint(node, 'from');
 		dragState = {
 			fromNodeId: node.id,
@@ -529,6 +539,47 @@
 		};
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', handlePointerUp);
+	}
+
+	function startEasyConnectionDrag(event: PointerEvent, node: LayoutNode) {
+		if (!editable || node.hidden || node.role === 'destination' || event.button !== 0) return;
+		if ((event.target as HTMLElement | null)?.closest('.node-handle')) return;
+		pendingConnectionStart = {
+			fromNodeId: node.id,
+			startClient: { x: event.clientX, y: event.clientY },
+			from: edgePoint(node, 'from')
+		};
+		window.addEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.addEventListener('pointerup', handleEasyConnectionPointerUp);
+	}
+
+	function handleEasyConnectionPointerMove(event: PointerEvent) {
+		if (!pendingConnectionStart) return;
+		const moved =
+			Math.abs(event.clientX - pendingConnectionStart.startClient.x) +
+			Math.abs(event.clientY - pendingConnectionStart.startClient.y);
+		if (moved < 6) return;
+		event.preventDefault();
+		dragState = {
+			fromNodeId: pendingConnectionStart.fromNodeId,
+			from: pendingConnectionStart.from,
+			to: canvasPoint(event),
+			validTarget: null,
+			targetNodeId: null
+		};
+		suppressNextNodeClickId = pendingConnectionStart.fromNodeId;
+		pendingConnectionStart = null;
+		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.removeEventListener('pointerup', handleEasyConnectionPointerUp);
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+		handlePointerMove(event);
+	}
+
+	function handleEasyConnectionPointerUp() {
+		pendingConnectionStart = null;
+		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.removeEventListener('pointerup', handleEasyConnectionPointerUp);
 	}
 
 	function handlePointerMove(event: PointerEvent) {
@@ -922,8 +973,13 @@
 						tabindex={node.hidden ? -1 : 0}
 						onclick={(event) => {
 							event.stopPropagation();
+							if (suppressNextNodeClickId === node.id) {
+								suppressNextNodeClickId = null;
+								return;
+							}
 							if (!node.hidden) selectRule(node.ruleId);
 						}}
+						onpointerdown={(event) => startEasyConnectionDrag(event, node)}
 						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
 						onpointerout={() => (hoverNodeId = null)}
 					>
@@ -1593,6 +1649,7 @@
 
 	.graph-node {
 		--node-accent: var(--map-brand);
+		--node-glow: color-mix(in srgb, var(--node-accent) 36%, transparent);
 		position: absolute;
 		display: grid;
 		gap: 1px;
@@ -1604,6 +1661,7 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
 		overflow: visible;
 		text-align: left;
+		cursor: pointer;
 		transition:
 			opacity 180ms ease,
 			transform 220ms ease,
@@ -1682,15 +1740,20 @@
 	.graph-node.connection-rejected {
 		border-color: var(--node-accent);
 		box-shadow:
-			0 0 0 2px color-mix(in srgb, var(--node-accent) 20%, transparent),
-			0 4px 12px rgba(0, 0, 0, 0.28);
+			0 0 0 1px color-mix(in srgb, var(--node-accent) 70%, transparent),
+			0 0 0 4px color-mix(in srgb, var(--node-accent) 14%, transparent),
+			0 0 22px 2px var(--node-glow),
+			0 8px 18px rgba(0, 0, 0, 0.3);
 	}
 
 	.graph-node.connection-rejected {
 		border-color: var(--map-red);
+		--node-glow: color-mix(in srgb, var(--map-red) 38%, transparent);
 		box-shadow:
-			0 0 0 2px color-mix(in srgb, var(--map-red) 26%, transparent),
-			0 4px 12px rgba(0, 0, 0, 0.28);
+			0 0 0 1px color-mix(in srgb, var(--map-red) 70%, transparent),
+			0 0 0 4px color-mix(in srgb, var(--map-red) 16%, transparent),
+			0 0 22px 2px var(--node-glow),
+			0 8px 18px rgba(0, 0, 0, 0.3);
 	}
 
 	.graph-node.selection-origin,

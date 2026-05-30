@@ -43,6 +43,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		const overviewPage = readRoute('admin/identity-mapping/overview/+page.svelte');
 
 		expect(flowEditor).toContain('startConnectionDrag');
+		expect(flowEditor).toContain('startEasyConnectionDrag');
+		expect(flowEditor).toContain('pendingConnectionStart');
+		expect(flowEditor).toContain('handleEasyConnectionPointerMove');
 		expect(flowEditor).toContain('drag-edge');
 		expect(flowEditor).toContain('edge-hit');
 		expect(flowEditor).toContain('.edge-hit:focus-visible');
@@ -68,6 +71,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('adapter-hidden');
 		expect(flowEditor).toContain('node-handle output');
 		expect(flowEditor).toContain('node-handle input');
+		expect(flowEditor).toContain('--node-glow');
 		expect(flowEditor).toContain('Consent status');
 		expect(flowEditor).toContain('Challenge mode');
 		expect(flowEditor).toContain('Release policy');
