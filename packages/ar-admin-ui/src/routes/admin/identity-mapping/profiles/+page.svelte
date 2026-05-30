@@ -268,7 +268,7 @@
 
 	function sourceProfileToProfile(profile: IdentityMappingSourceProfileSummary): ProfileItem {
 		return {
-			id: profile.id,
+			id: `source:${profile.id}`,
 			kind: 'inbound',
 			protocol: profile.sourceType.toUpperCase(),
 			displayName: profile.displayName,
@@ -284,7 +284,7 @@
 		profile: IdentityMappingDestinationProfileSummary
 	): ProfileItem {
 		return {
-			id: profile.id,
+			id: `destination:${profile.id}`,
 			kind: 'outbound',
 			protocol: profile.destinationType.toUpperCase(),
 			displayName: profile.displayName,
@@ -298,7 +298,7 @@
 
 	function protocolSchemaToProfile(schema: IdentityMappingProtocolSchemaSummary): ProfileItem {
 		return {
-			id: schema.id,
+			id: `protocol:${schema.id}`,
 			kind: ['saml', 'oidc'].includes(schema.protocol.toLowerCase()) ? 'outbound' : 'inbound',
 			protocol: schema.protocol,
 			displayName: schema.displayName ?? schema.schemaKey,
@@ -310,7 +310,7 @@
 
 	function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): ProfileItem {
 		return {
-			id: schema.id,
+			id: `external:${schema.id}`,
 			kind: 'inbound',
 			protocol: schema.sourceType,
 			displayName: schema.displayName ?? schema.schemaKey,
@@ -322,7 +322,7 @@
 
 	function templateToProfile(template: IdentityMappingTemplateSummary): ProfileItem {
 		return {
-			id: template.id,
+			id: `template:${template.id}`,
 			kind: 'template',
 			protocol: template.protocol,
 			displayName: template.displayName,

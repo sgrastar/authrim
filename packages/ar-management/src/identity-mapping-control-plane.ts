@@ -1570,6 +1570,16 @@ export class IdentityMappingControlPlaneRepository {
     if (!SOURCE_PROFILE_TYPES.has(input.sourceType)) {
       throw badRequest('sourceType must be csv');
     }
+    const duplicate = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM source_profiles
+        WHERE tenant_id = ?
+          AND profile_key = ?`,
+      [tenantId, input.profileKey]
+    );
+    if (duplicate) {
+      throw conflict('source profile key already exists');
+    }
     const now = this.now();
     const draft = input.parseDraftId
       ? await this.getSourceProfileParseDraft(tenantId, input.parseDraftId, now)
@@ -1947,6 +1957,25 @@ export class IdentityMappingControlPlaneRepository {
     assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
 
     const owner = normalizeProfileOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
+    const duplicate = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM destination_profiles
+        WHERE tenant_id = ?
+          AND owner_scope_type = ?
+          AND COALESCE(owner_scope_id, '') = COALESCE(?, '')
+          AND destination_type = ?
+          AND profile_key = ?`,
+      [
+        owner.tenantId,
+        owner.ownerScopeType,
+        owner.ownerScopeId,
+        input.destinationType,
+        input.profileKey,
+      ]
+    );
+    if (duplicate) {
+      throw conflict('destination profile key already exists for this owner scope');
+    }
     const customScopes = await this.listOidcCustomScopes(tenantId);
     const validation =
       input.destinationType === 'oidc'

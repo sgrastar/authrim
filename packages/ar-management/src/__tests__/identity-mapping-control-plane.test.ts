@@ -223,6 +223,7 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
   it('creates, reviews, and activates CSV source profile versions', async () => {
     const adapter = createAdapter({
       queryOneRows: [
+        null,
         {
           warning_summary_json: '{"blockingWarningCount":1,"confirmedBlockingWarningCount":1}',
           lifecycle_state: 'draft',
@@ -281,6 +282,29 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  it('rejects duplicate source profile keys before hitting database constraints', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'existing_source_profile' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createSourceProfile('tenant_a', {
+        sourceType: 'csv',
+        profileKey: 'workday_csv',
+        displayName: 'Workday CSV',
+        schema: {
+          sourceType: 'csv',
+          columns: [{ stableColumnId: 'csv.email.1', headerName: 'Email' }],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('deletes source profiles and their versions', async () => {
     const adapter = createAdapter({
       queryOneRows: [{ id: 'source_profile_1' }],
@@ -331,6 +355,7 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
         },
       ],
       queryOneRows: [
+        null,
         {
           tenant_id: 'tenant_a',
           validation_summary_json: '{"errorCount":0}',
@@ -519,6 +544,37 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect.stringContaining('INSERT INTO destination_profiles'),
       expect.stringContaining('INSERT INTO destination_profile_versions'),
     ]);
+  });
+
+  it('rejects duplicate destination profile keys before hitting database constraints', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'existing_destination_profile' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'csv',
+        profileKey: 'weekly_export',
+        displayName: 'Weekly export',
+        schema: {
+          destinationType: 'csv',
+          columns: [
+            {
+              columnName: 'email',
+              label: 'Email',
+              order: 1,
+              valueType: 'email',
+              classification: 'pii',
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('deletes destination profiles and their versions', async () => {
