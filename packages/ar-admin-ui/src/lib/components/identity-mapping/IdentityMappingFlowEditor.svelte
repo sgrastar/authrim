@@ -869,7 +869,7 @@
 						{#if dragState.validTarget === false}
 							<g
 								class="drag-reject-marker"
-								transform={`translate(${dragState.to.x} ${dragState.to.y})`}
+								transform={`translate(${dragState.to.x - 12} ${dragState.to.y - 12})`}
 								aria-hidden="true"
 							>
 								<circle r="8" />
@@ -903,6 +903,9 @@
 						{#if node.role === 'target'}
 							<span class="target-badge-row">
 								<span class="target-badges">
+									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
+								</span>
+								<span class="target-badges meta-badges">
 									{#if node.required}<span class="target-badge required">Required</span>{/if}
 									{#if node.privacy}
 										<span
@@ -911,9 +914,6 @@
 											{node.privacy}
 										</span>
 									{/if}
-								</span>
-								<span class="target-badges meta-badges">
-									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
 								</span>
 							</span>
 						{/if}
