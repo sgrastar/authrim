@@ -35,7 +35,10 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 	it('keeps the flow editor graph interaction affordances present', () => {
 		const flowEditor = readComponent('identity-mapping/IdentityMappingFlowEditor.svelte');
+		const pageShell = readComponent('identity-mapping/IdentityMappingPageShell.svelte');
 		const page = readRoute('admin/identity-mapping/+page.svelte');
+		const editPage = readRoute('admin/identity-mapping/edit/+page.svelte');
+		const overviewPage = readRoute('admin/identity-mapping/overview/+page.svelte');
 
 		expect(flowEditor).toContain('startConnectionDrag');
 		expect(flowEditor).toContain('drag-edge');
@@ -70,6 +73,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('Overview');
 		expect(flowEditor).toContain('Inbound mapping');
 		expect(flowEditor).toContain('Outbound release');
+		expect(flowEditor).toContain('allowedViewModes');
+		expect(flowEditor).toContain('initialViewMode');
+		expect(flowEditor).toContain('editable');
 		expect(flowEditor).toContain('view-inbound');
 		expect(flowEditor).toContain('view-outbound');
 		expect(flowEditor).toContain("role === 'source' && toNode.role === 'target'");
@@ -80,9 +86,16 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).not.toContain('Identity Mapping Control Plane');
 		expect(flowEditor).not.toContain('Authrim Admin');
 		expect(flowEditor).not.toContain('Theme');
-		expect(page).toContain('buildIdentityMappingFlowSamples');
-		expect(page).toContain('getSchemaReadiness');
-		expect(page).toContain('samples={flowSamples}');
+		expect(page).toContain('IdentityMappingPageShell');
+		expect(pageShell).toContain('buildIdentityMappingFlowSamples');
+		expect(pageShell).toContain('getSchemaReadiness');
+		expect(pageShell).toContain('samples={flowSamples}');
+		expect(editPage).toContain('pageTitle="Edit"');
+		expect(editPage).toContain("editorAllowedViewModes={['inbound', 'outbound']}");
+		expect(editPage).toContain('editorInitialViewMode="inbound"');
+		expect(overviewPage).toContain('pageTitle="Overview"');
+		expect(overviewPage).toContain("editorAllowedViewModes={['overview']}");
+		expect(overviewPage).toContain('editorEditable={false}');
 		expect(page).not.toContain('Tier 2 Operations');
 	});
 

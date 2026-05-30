@@ -8,14 +8,22 @@
 		type MappingSample
 	} from './types';
 
+	type ViewMode = 'overview' | 'inbound' | 'outbound';
+
 	const {
 		samples = [],
 		loading = false,
-		loadError = null
+		loadError = null,
+		allowedViewModes = ['overview', 'inbound', 'outbound'],
+		initialViewMode = 'overview',
+		editable = true
 	} = $props<{
 		samples?: MappingSample[];
 		loading?: boolean;
 		loadError?: string | null;
+		allowedViewModes?: ViewMode[];
+		initialViewMode?: ViewMode;
+		editable?: boolean;
 	}>();
 
 	const adapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
@@ -48,7 +56,8 @@
 	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
-	let viewMode = $state<'overview' | 'inbound' | 'outbound'>('overview');
+	let viewMode = $state<ViewMode>('overview');
+	let viewModeInitialized = false;
 	let customCounter = $state(0);
 	let nodes = $state<MappingNode[]>([...emptySample.nodes]);
 	let edges = $state<MappingEdge[]>([...emptySample.edges]);
@@ -100,9 +109,22 @@
 		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
 	);
 	const hoverEdges = $derived(connectedEdgeIds(hoverNodeId));
+	const enabledViewModes = $derived(
+		allowedViewModes.length > 0 ? allowedViewModes : (['overview'] satisfies ViewMode[])
+	);
 	const rule = $derived(
 		selectedEdge ? edgeInspectorRule(selectedEdge) : (sample.rules[activeRuleId] ?? fallbackRule())
 	);
+
+	$effect(() => {
+		if (!viewModeInitialized) {
+			viewMode = enabledViewModes.includes(initialViewMode) ? initialViewMode : enabledViewModes[0];
+			viewModeInitialized = true;
+		}
+		if (!enabledViewModes.includes(viewMode)) {
+			viewMode = enabledViewModes[0];
+		}
+	});
 
 	$effect(() => {
 		const next =
@@ -117,7 +139,7 @@
 	});
 
 	beforeNavigate((navigation) => {
-		if (!hasUnsavedDraftChanges) return;
+		if (!editable || !hasUnsavedDraftChanges) return;
 		const shouldLeave = window.confirm(
 			'You have unsaved mapping draft changes. Leave this page and discard them?'
 		);
@@ -135,7 +157,7 @@
 		resize();
 		const observer = new ResizeObserver(resize);
 		const beforeUnload = (event: BeforeUnloadEvent) => {
-			if (!hasUnsavedDraftChanges) return;
+			if (!editable || !hasUnsavedDraftChanges) return;
 			event.preventDefault();
 			event.returnValue = '';
 		};
@@ -494,7 +516,7 @@
 	}
 
 	function startConnectionDrag(event: PointerEvent, node: LayoutNode) {
-		if (node.hidden || node.role === 'destination') return;
+		if (!editable || node.hidden || node.role === 'destination') return;
 		event.preventDefault();
 		event.stopPropagation();
 		const from = edgePoint(node, 'from');
@@ -534,6 +556,7 @@
 	}
 
 	function addEdge(from: string, to: string) {
+		if (!editable) return;
 		if (edges.some((edge) => edge.from === from && edge.to === to)) return;
 		customCounter += 1;
 		const edge = {
@@ -550,14 +573,16 @@
 	}
 
 	function deleteSelectedEdge() {
-		if (!selectedEdgeId) return;
+		if (!editable || !selectedEdgeId) return;
 		edges = edges.filter((edge) => edge.id !== selectedEdgeId);
 		selectedEdgeId = null;
 		hasUnsavedDraftChanges = true;
 	}
 
 	function handleGlobalKeyDown(event: KeyboardEvent) {
-		if (!selectedEdgeId || (event.key !== 'Backspace' && event.key !== 'Delete')) return;
+		if (!editable || !selectedEdgeId || (event.key !== 'Backspace' && event.key !== 'Delete')) {
+			return;
+		}
 		const target = event.target as HTMLElement | null;
 		if (
 			target?.closest('input, textarea, select, [contenteditable="true"]') ||
@@ -584,6 +609,7 @@
 	}
 
 	function addNode(role: 'source' | 'destination') {
+		if (!editable) return;
 		customCounter += 1;
 		const adapter = role === 'source' ? inboundAdapter : outboundAdapter;
 		const node: MappingNode = {
@@ -701,27 +727,19 @@
 						</select>
 					</label>
 					<div class="mode-toggle" aria-label="Flow view mode">
-						<button
-							class:active={viewMode === 'overview'}
-							type="button"
-							onclick={() => (viewMode = 'overview')}
-						>
-							Overview
-						</button>
-						<button
-							class:active={viewMode === 'inbound'}
-							type="button"
-							onclick={() => (viewMode = 'inbound')}
-						>
-							Inbound mapping
-						</button>
-						<button
-							class:active={viewMode === 'outbound'}
-							type="button"
-							onclick={() => (viewMode = 'outbound')}
-						>
-							Outbound release
-						</button>
+						{#each enabledViewModes as mode (mode)}
+							<button
+								class:active={viewMode === mode}
+								type="button"
+								onclick={() => (viewMode = mode)}
+							>
+								{mode === 'overview'
+									? 'Overview'
+									: mode === 'inbound'
+										? 'Inbound mapping'
+										: 'Outbound release'}
+							</button>
+						{/each}
 					</div>
 					<button class="primary-action" type="button">Compile draft</button>
 				</div>
@@ -783,9 +801,11 @@
 								<option value={adapter}>{adapter}</option>
 							{/each}
 						</select>
-						<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
-							>+</button
-						>
+						{#if editable}
+							<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
+								>+</button
+							>
+						{/if}
 					</div>
 				{/if}
 				<div class="lane-label lane-canonical">
@@ -799,9 +819,11 @@
 								<option value={adapter}>{adapter}</option>
 							{/each}
 						</select>
-						<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
-							>+</button
-						>
+						{#if editable}
+							<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
+								>+</button
+							>
+						{/if}
 					</div>
 				{/if}
 
@@ -845,7 +867,7 @@
 							style={`--edge-accent:${edgeAccent(edge)}`}
 							d={edgePath(edge)}
 						/>
-						{#if edge.id === selectedEdgeId}
+						{#if editable && edge.id === selectedEdgeId}
 							{@const deletePoint = edgeDeletePoint(edge)}
 							{#if deletePoint}
 								<g
@@ -871,7 +893,7 @@
 							{/if}
 						{/if}
 					{/each}
-					{#if dragState}
+					{#if editable && dragState}
 						<path
 							class={`edge drag-edge ${dragState.validTarget === false ? 'drag-edge-invalid' : ''}`}
 							d={pathBetween(dragState.from, dragState.to)}
@@ -927,7 +949,7 @@
 								</span>
 							</span>
 						{/if}
-						{#if node.role !== 'destination'}
+						{#if editable && node.role !== 'destination'}
 							<span
 								class="node-handle output"
 								data-node-id={node.id}
