@@ -61,6 +61,7 @@
 		from: Point;
 		to: Point;
 		validTarget: boolean | null;
+		targetNodeId: string | null;
 	} | null>(null);
 
 	interface Point {
@@ -404,6 +405,9 @@
 			node.hidden ? 'adapter-hidden' : '',
 			node.ruleId === activeRuleId ? 'active' : '',
 			node.id === selectedNodeId ? 'selection-origin' : '',
+			dragState?.validTarget === false && dragState.targetNodeId === node.id
+				? 'connection-rejected'
+				: '',
 			selectedRelated ? 'selection-related' : '',
 			node.id === hoverNodeId ? 'connection-origin' : '',
 			hoverRelated ? 'connection-related' : ''
@@ -494,7 +498,8 @@
 			fromNodeId: node.id,
 			from,
 			to: canvasPoint(event),
-			validTarget: null
+			validTarget: null,
+			targetNodeId: null
 		};
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', handlePointerUp);
@@ -507,7 +512,8 @@
 		dragState = {
 			...dragState,
 			to: canvasPoint(event),
-			validTarget: toNode ? isValidConnection(fromNode, toNode) : null
+			validTarget: toNode ? isValidConnection(fromNode, toNode) : null,
+			targetNodeId: toNode?.id ?? null
 		};
 	}
 
@@ -1646,10 +1652,18 @@
 	.graph-node:hover,
 	.graph-node.active,
 	.graph-node.connection-origin,
-	.graph-node.selection-origin {
+	.graph-node.selection-origin,
+	.graph-node.connection-rejected {
 		border-color: var(--node-accent);
 		box-shadow:
 			0 0 0 2px color-mix(in srgb, var(--node-accent) 20%, transparent),
+			0 4px 12px rgba(0, 0, 0, 0.28);
+	}
+
+	.graph-node.connection-rejected {
+		border-color: var(--map-red);
+		box-shadow:
+			0 0 0 2px color-mix(in srgb, var(--map-red) 26%, transparent),
 			0 4px 12px rgba(0, 0, 0, 0.28);
 	}
 
