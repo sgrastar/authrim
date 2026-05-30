@@ -432,6 +432,10 @@
 
 	async function activateSourceProfile(profile: ProfileItem) {
 		if (!profile.sourceProfileId || !profile.sourceProfileVersionId) return;
+		if (profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active') {
+			createMessage = `Review ${profile.displayName} before activating it.`;
+			return;
+		}
 		try {
 			await adminIdentityMappingAPI.activateSourceProfileVersion(
 				profile.sourceProfileId,
@@ -503,6 +507,10 @@
 
 	async function activateDestinationProfile(profile: ProfileItem) {
 		if (!profile.destinationProfileId || !profile.destinationProfileVersionId) return;
+		if (profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active') {
+			createMessage = `Review ${profile.displayName} before activating it.`;
+			return;
+		}
 		try {
 			await adminIdentityMappingAPI.activateDestinationProfileVersion(
 				profile.destinationProfileId,
@@ -1753,7 +1761,13 @@
 						{#if profile.sourceProfileId && profile.sourceProfileVersionId}
 							<div class="profile-actions">
 								<button type="button" onclick={() => reviewSourceProfile(profile)}>Review</button>
-								<button type="button" onclick={() => activateSourceProfile(profile)}
+								<button
+									type="button"
+									disabled={profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active'}
+									title={profile.lifecycleState === 'draft'
+										? 'Review this profile before activation.'
+										: undefined}
+									onclick={() => activateSourceProfile(profile)}
 									>Activate</button
 								>
 							</div>
@@ -1763,7 +1777,13 @@
 								<button type="button" onclick={() => reviewDestinationProfile(profile)}
 									>Review</button
 								>
-								<button type="button" onclick={() => activateDestinationProfile(profile)}
+								<button
+									type="button"
+									disabled={profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active'}
+									title={profile.lifecycleState === 'draft'
+										? 'Review this profile before activation.'
+										: undefined}
+									onclick={() => activateDestinationProfile(profile)}
 									>Activate</button
 								>
 							</div>

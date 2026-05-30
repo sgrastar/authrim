@@ -314,19 +314,22 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 					}
 				];
 
-	return extractedFields.slice(0, 24).map((field) => ({
-		id: `${role}-${slug(profile.id)}-${slug(field.key)}`,
-		ruleId: `${role}-${slug(profile.id)}-${slug(field.key)}`,
-		role,
-		adapter: profile.adapter,
-		profileId: profile.id,
-		profileTitle: profile.title,
-		label: field.label,
-		caption: field.caption,
-		type: displayValueType(field.type),
-		privacy: field.privacy,
-		required: field.required
-	}));
+	return extractedFields.slice(0, 24).map((field, index) => {
+		const nodeKey = `${role}-${slug(profile.id)}-${slug(field.key, `field-${index + 1}`)}-${index}`;
+		return {
+			id: nodeKey,
+			ruleId: nodeKey,
+			role,
+			adapter: profile.adapter,
+			profileId: profile.id,
+			profileTitle: profile.title,
+			label: field.label,
+			caption: field.caption,
+			type: displayValueType(field.type),
+			privacy: field.privacy,
+			required: field.required
+		};
+	});
 }
 
 function extractSchemaFields(
@@ -575,12 +578,23 @@ function privacyFrom(value: string): MappingNode['privacy'] {
 	return 'Other';
 }
 
-function slug(input: string): string {
-	return input
+function slug(input: string, fallback = 'item'): string {
+	const normalized = input
 		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
+		.normalize('NFKC')
+		.replace(/[^\p{L}\p{N}]+/gu, '-')
 		.replace(/^-|-$/g, '')
 		.slice(0, 80);
+	if (normalized) return normalized;
+	return `${fallback}-${shortHash(input)}`;
+}
+
+function shortHash(input: string): string {
+	let hash = 0;
+	for (const char of input) {
+		hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
+	}
+	return hash.toString(36);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -336,4 +336,77 @@ describe('identity mapping flow data adapter', () => {
 			])
 		);
 	});
+
+	it('keeps source node ids unique for Japanese CSV headers', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			sourceProfiles: [
+				{
+					id: 'source_library_patrons_ja',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'library_patrons_ja',
+					displayName: 'Library patrons JA',
+					lifecycleState: 'active',
+					version: {
+						id: 'source_library_patrons_ja_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schemaHash: 'hash',
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.利用者id',
+									headerName: '利用者ID',
+									label: '利用者ID',
+									valueType: 'string',
+									required: false,
+									classification: 'internal'
+								},
+								{
+									stableColumnId: 'csv.メール',
+									headerName: 'メール',
+									label: 'メール',
+									valueType: 'email',
+									required: false,
+									classification: 'pii'
+								},
+								{
+									stableColumnId: 'csv.姓',
+									headerName: '姓',
+									label: '姓',
+									valueType: 'string',
+									required: false,
+									classification: 'pii'
+								},
+								{
+									stableColumnId: 'csv.名',
+									headerName: '名',
+									label: '名',
+									valueType: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						},
+						warningSummary: {}
+					}
+				}
+			],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		const sourceNodeIds = samples[0].nodes
+			.filter((node) => node.role === 'source')
+			.map((node) => node.id);
+
+		expect(new Set(sourceNodeIds).size).toBe(sourceNodeIds.length);
+		expect(sourceNodeIds.some((id) => id.includes('利用者id'))).toBe(true);
+		expect(sourceNodeIds.some((id) => id.includes('メール'))).toBe(true);
+	});
 });
