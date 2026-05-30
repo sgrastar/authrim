@@ -20,8 +20,11 @@
 		showToolbarSourceProfile = true,
 		showToolbarModeToggle = true,
 		showMetrics = true,
+		showLaneProfileSelectors = true,
 		selectedViewMode = null,
-		selectedProfileId = null
+		selectedProfileId = null,
+		draftResetKey = 0,
+		onDraftDirtyChange = null
 	} = $props<{
 		samples?: MappingSample[];
 		loading?: boolean;
@@ -32,8 +35,11 @@
 		showToolbarSourceProfile?: boolean;
 		showToolbarModeToggle?: boolean;
 		showMetrics?: boolean;
+		showLaneProfileSelectors?: boolean;
 		selectedViewMode?: ViewMode | null;
 		selectedProfileId?: string | null;
+		draftResetKey?: number;
+		onDraftDirtyChange?: ((dirty: boolean) => void) | null;
 	}>();
 
 	const emptySample: MappingSample = {
@@ -54,7 +60,7 @@
 	const targetHeight = 46;
 	const transformWidth = 168;
 	const transformHeight = 38;
-	const graphBaseTop = 48;
+	const graphBaseTop = $derived(showLaneProfileSelectors ? 76 : 48);
 	const graphStep = 50;
 	const rowGap = 12;
 
@@ -77,6 +83,7 @@
 	let selectedNodeId = $state<string | null>(null);
 	let selectedEdgeId = $state<string | null>(null);
 	let hasUnsavedDraftChanges = $state(false);
+	let activeDraftResetKey = $state<number | null>(null);
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
@@ -197,6 +204,20 @@
 		}
 	});
 
+	$effect(() => {
+		if (activeDraftResetKey === null) {
+			activeDraftResetKey = draftResetKey;
+			return;
+		}
+		if (activeDraftResetKey === draftResetKey) return;
+		activeDraftResetKey = draftResetKey;
+		resetDraftFromCurrentSample();
+	});
+
+	$effect(() => {
+		onDraftDirtyChange?.(hasUnsavedDraftChanges);
+	});
+
 	beforeNavigate((navigation) => {
 		if (!editable || !hasUnsavedDraftChanges) return;
 		const shouldLeave = window.confirm(
@@ -252,6 +273,19 @@
 		edges = [...next.edges];
 		selectedEdgeId = null;
 		selectedNodeId = null;
+		hasUnsavedDraftChanges = false;
+	}
+
+	function resetDraftFromCurrentSample() {
+		nodes = [...sample.nodes];
+		edges = [...sample.edges];
+		activeRuleId = sample.activeRuleId;
+		selectedEdgeId = null;
+		selectedNodeId = null;
+		hoverNodeId = null;
+		dragState = null;
+		pendingConnectionStart = null;
+		suppressNextNodeClickId = null;
 		hasUnsavedDraftChanges = false;
 	}
 
@@ -1062,19 +1096,21 @@
 				{#if viewMode !== 'outbound'}
 					<div class="lane-label lane-inbound">
 						<span>Inbound profile</span>
-						<select
-							value={selectedSampleId ?? emptySample.id}
-							disabled={sourceProfileOptions.length === 0}
-							onchange={selectSample}
-						>
-							{#each sourceProfileOptions as option (option.id)}
-								<option value={option.id}>{option.title}</option>
-							{/each}
-						</select>
-						{#if editable}
-							<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
-								>+</button
+						{#if showLaneProfileSelectors}
+							<select
+								value={selectedSampleId ?? emptySample.id}
+								disabled={sourceProfileOptions.length === 0}
+								onchange={selectSample}
 							>
+								{#each sourceProfileOptions as option (option.id)}
+									<option value={option.id}>{option.title}</option>
+								{/each}
+							</select>
+							{#if editable}
+								<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
+									>+</button
+								>
+							{/if}
 						{/if}
 					</div>
 				{/if}
@@ -1084,19 +1120,23 @@
 				{#if viewMode !== 'inbound'}
 					<div class="lane-label lane-outbound">
 						<span>Outbound profile</span>
-						<select
-							value={selectedDestinationProfileId ?? ''}
-							disabled={destinationProfileOptions.length === 0}
-							onchange={selectDestinationProfile}
-						>
-							{#each destinationProfileOptions as option (option.id)}
-								<option value={option.id}>{option.title}</option>
-							{/each}
-						</select>
-						{#if editable}
-							<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
-								>+</button
+						{#if showLaneProfileSelectors}
+							<select
+								value={selectedDestinationProfileId ?? ''}
+								disabled={destinationProfileOptions.length === 0}
+								onchange={selectDestinationProfile}
 							>
+								{#each destinationProfileOptions as option (option.id)}
+									<option value={option.id}>{option.title}</option>
+								{/each}
+							</select>
+							{#if editable}
+								<button
+									class="mini-tool-button"
+									type="button"
+									onclick={() => addNode('destination')}>+</button
+								>
+							{/if}
 						{/if}
 					</div>
 				{/if}

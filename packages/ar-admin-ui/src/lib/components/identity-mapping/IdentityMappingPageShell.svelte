@@ -37,6 +37,8 @@
 	let editMode = $state<Extract<ViewMode, 'inbound' | 'outbound'>>('inbound');
 	let selectedInboundProfileId = $state<string | null>(null);
 	let selectedOutboundProfileId = $state<string | null>(null);
+	let editorDraftResetKey = $state(0);
+	let editorHasUnsavedDraftChanges = $state(false);
 	let summary = $state({
 		policies: 0,
 		catalogs: 0,
@@ -86,12 +88,36 @@
 	}
 
 	function selectEditProfile(event: Event) {
-		const value = (event.currentTarget as HTMLSelectElement).value || null;
+		const select = event.currentTarget as HTMLSelectElement;
+		const value = select.value || null;
+		if (value === selectedEditorProfileId) return;
+		if (!confirmDiscardEditorDraft()) {
+			select.value = selectedEditorProfileId ?? '';
+			return;
+		}
 		if (editMode === 'inbound') {
 			selectedInboundProfileId = value;
 		} else {
 			selectedOutboundProfileId = value;
 		}
+		resetEditorDraft();
+	}
+
+	function selectEditMode(nextMode: Extract<ViewMode, 'inbound' | 'outbound'>) {
+		if (nextMode === editMode) return;
+		if (!confirmDiscardEditorDraft()) return;
+		editMode = nextMode;
+		resetEditorDraft();
+	}
+
+	function confirmDiscardEditorDraft(): boolean {
+		if (!editorHasUnsavedDraftChanges) return true;
+		return window.confirm('You have unsaved mapping draft changes. Discard them and switch view?');
+	}
+
+	function resetEditorDraft() {
+		editorDraftResetKey += 1;
+		editorHasUnsavedDraftChanges = false;
 	}
 
 	onMount(async () => {
@@ -158,11 +184,23 @@
 				<div class="profile-mode-control" aria-label="Mapping edit profile selector">
 					<div class="profile-mode-radio" role="radiogroup" aria-label="Mapping direction">
 						<label>
-							<input type="radio" name="mappingEditMode" value="inbound" bind:group={editMode} />
+							<input
+								type="radio"
+								name="mappingEditMode"
+								value="inbound"
+								checked={editMode === 'inbound'}
+								onchange={() => selectEditMode('inbound')}
+							/>
 							<span>Inbound</span>
 						</label>
 						<label>
-							<input type="radio" name="mappingEditMode" value="outbound" bind:group={editMode} />
+							<input
+								type="radio"
+								name="mappingEditMode"
+								value="outbound"
+								checked={editMode === 'outbound'}
+								onchange={() => selectEditMode('outbound')}
+							/>
 							<span>Outbound</span>
 						</label>
 					</div>
@@ -223,8 +261,11 @@
 		showToolbarSourceProfile={showEditorToolbarSourceProfile}
 		showToolbarModeToggle={showEditorToolbarModeToggle}
 		showMetrics={showEditorMetrics}
+		showLaneProfileSelectors={!showProfileModeControl}
 		selectedViewMode={showProfileModeControl ? editMode : null}
 		selectedProfileId={showProfileModeControl ? selectedEditorProfileId : null}
+		draftResetKey={editorDraftResetKey}
+		onDraftDirtyChange={(dirty) => (editorHasUnsavedDraftChanges = dirty)}
 	/>
 </div>
 
