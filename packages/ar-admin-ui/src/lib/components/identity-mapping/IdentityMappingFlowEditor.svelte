@@ -1368,6 +1368,7 @@
 		stroke: var(--edge-accent, var(--map-red));
 		stroke-width: 1.5;
 		filter: drop-shadow(0 3px 8px rgb(0 0 0 / 0.28));
+		transform: scale(0.75);
 	}
 
 	.edge-delete-control path {
@@ -1375,6 +1376,7 @@
 		stroke: var(--map-red);
 		stroke-linecap: round;
 		stroke-width: 1.8;
+		transform: scale(0.75);
 	}
 
 	.edge-delete-control:hover circle,
