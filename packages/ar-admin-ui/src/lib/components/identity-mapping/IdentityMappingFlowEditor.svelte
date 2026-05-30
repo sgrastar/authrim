@@ -1100,8 +1100,8 @@
 		--map-red: #b91c1c;
 		--map-violet: #6d28d9;
 		--map-radius: 4px;
-		--map-edge-flow-distance: -28;
-		--map-edge-flow-speed: 680ms;
+		--map-edge-flow-distance: -24;
+		--map-edge-flow-speed: 720ms;
 		--map-edge-pulse-speed: 1.2s;
 		--map-drag-edge-flow-speed: 620ms;
 		--map-edge-dash-pattern: 6 6;
