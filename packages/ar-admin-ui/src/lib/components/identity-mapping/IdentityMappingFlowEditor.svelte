@@ -365,7 +365,11 @@
 		const fromNode = layoutNodeById(edge.from);
 		const toNode = layoutNodeById(edge.to);
 		if (!fromNode || !toNode) return null;
-		return pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.92);
+		const point = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.92);
+		return {
+			x: point.x,
+			y: point.y - 12
+		};
 	}
 
 	function edgeAccent(edge: MappingEdge): string {
