@@ -154,6 +154,20 @@ describe('identity mapping flow data adapter', () => {
 					lifecycleState: 'active',
 					entries: [
 						{
+							id: 'entry_subject_id',
+							stableFieldId: 'field.canonical.subject_id',
+							namespace: 'authrim.profile',
+							path: 'subject_id',
+							targetTaxonomy: 'canonical',
+							valueType: 'string',
+							cardinality: 'single',
+							classification: 'internal',
+							uiGroupKey: 'identity',
+							uiGroupLabel: 'Identity',
+							uiGroupOrder: 90,
+							uiFieldOrder: 10
+						},
+						{
 							id: 'entry_given_name',
 							stableFieldId: 'field.canonical.given_name',
 							namespace: 'authrim.profile',
@@ -217,6 +231,13 @@ describe('identity mapping flow data adapter', () => {
 			schemaReadinessRows: []
 		});
 
+		const targetNodes = samples[0].nodes.filter((node) => node.role === 'target');
+		expect(targetNodes[0]).toEqual(
+			expect.objectContaining({
+				label: 'Subject Identifier',
+				storageTarget: 'Account identity'
+			})
+		);
 		expect(samples[0].nodes).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({

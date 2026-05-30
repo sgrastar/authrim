@@ -239,6 +239,8 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 			.filter((entry) => entry.targetTaxonomy !== 'outbound-only' && entry.targetTaxonomy !== 'review-only')
 			.sort(
 				(a, b) =>
+					canonicalTargetSortPriority(a.stableFieldId) -
+						canonicalTargetSortPriority(b.stableFieldId) ||
 					(a.uiGroupOrder ?? 0) - (b.uiGroupOrder ?? 0) ||
 					(a.uiFieldOrder ?? 0) - (b.uiFieldOrder ?? 0) ||
 					a.stableFieldId.localeCompare(b.stableFieldId)
@@ -265,6 +267,10 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 	return defaultCanonicalTargets.map((target) => ({
 		...target
 	}));
+}
+
+function canonicalTargetSortPriority(stableFieldId: string): number {
+	return stableFieldId === 'field.canonical.subject_id' ? -1 : 0;
 }
 
 function canonicalTargetNode(input: {
