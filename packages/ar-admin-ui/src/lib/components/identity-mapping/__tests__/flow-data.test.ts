@@ -235,7 +235,8 @@ describe('identity mapping flow data adapter', () => {
 		expect(targetNodes[0]).toEqual(
 			expect.objectContaining({
 				label: 'Subject Identifier',
-				storageTarget: 'Account identity'
+				storageTarget: 'Account identity',
+				locked: true
 			})
 		);
 		expect(samples[0].nodes).toEqual(

@@ -85,6 +85,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain("edgeFromRole === 'source' || edgeFromRole === 'transform'");
 		expect(flowEditor).toContain('!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)');
 		expect(flowEditor).toContain('targetInputCardinality');
+		expect(flowEditor).toContain('locked-node');
+		expect(flowEditor).toContain('node-lock-icon');
+		expect(flowEditor).toContain('fromNode.locked || toNode.locked');
 		expect(flowEditor).toContain('normalizeNodeType');
 		expect(flowEditor).toContain('drag-reject-marker');
 		expect(flowEditor).toContain('drag-edge-invalid');

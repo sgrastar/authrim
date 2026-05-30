@@ -20,6 +20,7 @@ export interface MappingNode {
 	uiFieldOrder?: number;
 	examples?: unknown[];
 	inputCardinality?: 'one' | 'many';
+	locked?: boolean;
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;
 	transformOperation?: TransformOperation;

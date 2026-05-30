@@ -756,6 +756,7 @@
 			'graph-node',
 			`${node.role}-node`,
 			node.role === 'target' ? `cardinality-${targetInputCardinality(node)}` : '',
+			node.locked ? 'locked-node' : '',
 			node.hidden ? 'adapter-hidden' : '',
 			node.id === selectedNodeId ? 'active' : '',
 			node.id === selectedNodeId ? 'selection-origin' : '',
@@ -775,6 +776,7 @@
 		toNode: MappingNode | undefined
 	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
+		if (fromNode.locked || toNode.locked) return false;
 		const validDirection =
 			(fromNode.role === 'source' && toNode.role === 'target') ||
 			(fromNode.role === 'source' && toNode.role === 'transform') ||
@@ -886,7 +888,7 @@
 	}
 
 	function startConnectionDrag(event: PointerEvent, node: LayoutNode) {
-		if (!editable || node.hidden || node.role === 'destination') return;
+		if (!editable || node.hidden || node.locked || node.role === 'destination') return;
 		event.preventDefault();
 		event.stopPropagation();
 		pendingConnectionStart = null;
@@ -903,7 +905,8 @@
 	}
 
 	function startEasyConnectionDrag(event: PointerEvent, node: LayoutNode) {
-		if (!editable || node.hidden || node.role === 'destination' || event.button !== 0) return;
+		if (!editable || node.hidden || node.locked || node.role === 'destination' || event.button !== 0)
+			return;
 		if ((event.target as HTMLElement | null)?.closest('.node-handle')) return;
 		pendingConnectionStart = {
 			fromNodeId: node.id,
@@ -1116,6 +1119,7 @@
 		extraEdges: MappingEdge[] = []
 	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
+		if (fromNode.locked || toNode.locked) return false;
 		const validDirection =
 			(fromNode.role === 'source' && toNode.role === 'target') ||
 			(fromNode.role === 'target' && toNode.role === 'destination');
@@ -1336,7 +1340,8 @@
 			profileTitle: node.profileTitle,
 			valueType: node.type,
 			storageTarget: node.storageTarget,
-			uiGroupKey: node.uiGroupKey
+			uiGroupKey: node.uiGroupKey,
+			locked: node.locked
 		};
 	}
 
@@ -1820,8 +1825,15 @@
 						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
 						onpointerout={() => (hoverNodeId = null)}
 					>
-						{#if node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'outbound')}
+						{#if !node.locked && (node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'outbound'))}
 							<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
+						{/if}
+						{#if node.locked}
+							<span
+								class="node-lock-icon"
+								aria-hidden="true"
+								title="Managed by subject identifier strategy"
+							></span>
 						{/if}
 						<span>{node.label}</span>
 						{#if node.caption}
@@ -1850,7 +1862,7 @@
 								</span>
 							</span>
 						{/if}
-						{#if editable && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
+						{#if editable && !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
 							<span
 								class="node-handle output"
 								data-node-id={node.id}
@@ -2820,6 +2832,45 @@
 			0 0 0 3px color-mix(in srgb, var(--node-accent) 10%, transparent),
 			0 0 18px 1px color-mix(in srgb, var(--node-accent) 28%, transparent),
 			0 8px 18px rgba(0, 0, 0, 0.26);
+	}
+
+	.graph-node.locked-node {
+		cursor: default;
+	}
+
+	.node-lock-icon {
+		position: absolute;
+		top: 5px;
+		right: 6px;
+		width: 10px;
+		height: 9px;
+		border: 1.5px solid var(--map-muted);
+		border-radius: 2px;
+		opacity: 0.86;
+		pointer-events: none;
+	}
+
+	.node-lock-icon::before {
+		content: '';
+		position: absolute;
+		left: 1px;
+		top: -6px;
+		width: 5px;
+		height: 6px;
+		border: 1.5px solid var(--map-muted);
+		border-bottom: 0;
+		border-radius: 5px 5px 0 0;
+	}
+
+	.node-lock-icon::after {
+		content: '';
+		position: absolute;
+		left: 3px;
+		top: 2px;
+		width: 2px;
+		height: 3px;
+		border-radius: 999px;
+		background: var(--map-muted);
 	}
 
 	.node-handle {
