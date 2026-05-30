@@ -10,6 +10,7 @@ export interface MappingNode {
 	label: string;
 	caption: string;
 	type?: string;
+	inputCardinality?: 'one' | 'many';
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;
 }

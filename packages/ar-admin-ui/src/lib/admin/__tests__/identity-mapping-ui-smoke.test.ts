@@ -52,6 +52,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('edge-delete-control');
 		expect(flowEditor).toContain('edgeDeletePoint');
 		expect(flowEditor).toContain('isTypeCompatible');
+		expect(flowEditor).toContain('isTargetInputFull');
+		expect(flowEditor).toContain('targetInputCardinality');
 		expect(flowEditor).toContain('normalizeNodeType');
 		expect(flowEditor).toContain('drag-reject-marker');
 		expect(flowEditor).toContain('drag-edge-invalid');
@@ -72,6 +74,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('node-handle output');
 		expect(flowEditor).toContain('node-handle input');
 		expect(flowEditor).toContain('--node-glow');
+		expect(flowEditor).toContain('cardinality-one');
+		expect(flowEditor).toContain('cardinality-many');
 		expect(flowEditor).toContain('Consent status');
 		expect(flowEditor).toContain('Challenge mode');
 		expect(flowEditor).toContain('Release policy');

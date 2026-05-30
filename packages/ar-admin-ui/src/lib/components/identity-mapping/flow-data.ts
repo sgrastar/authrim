@@ -55,6 +55,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Subject identifier',
 		caption: 'identity_accounts.subject_id',
 		type: 'stable identifier',
+		inputCardinality: 'one',
 		privacy: 'non-PII',
 		required: true
 	},
@@ -65,6 +66,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Email',
 		caption: 'contact_points.value_storage_ref / contact_type=email',
 		type: 'email',
+		inputCardinality: 'one',
 		privacy: 'PII',
 		required: true
 	},
@@ -75,6 +77,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Phone',
 		caption: 'contact_points.value_storage_ref / contact_type=phone',
 		type: 'phone',
+		inputCardinality: 'one',
 		privacy: 'PII'
 	},
 	{
@@ -84,6 +87,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Mobile phone',
 		caption: 'contact_points.value_storage_ref / contact_type=mobile',
 		type: 'phone',
+		inputCardinality: 'one',
 		privacy: 'PII'
 	},
 	{
@@ -93,6 +97,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Given name',
 		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=given_name',
 		type: 'text',
+		inputCardinality: 'one',
 		privacy: 'PII'
 	},
 	{
@@ -102,6 +107,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Family name',
 		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=family_name',
 		type: 'text',
+		inputCardinality: 'one',
 		privacy: 'PII'
 	},
 	{
@@ -111,6 +117,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Display name',
 		caption: 'profile_attribute_values.value_storage_ref / catalog_entry_id=display_name',
 		type: 'text',
+		inputCardinality: 'one',
 		privacy: 'PII'
 	},
 	{
@@ -120,6 +127,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Address',
 		caption: 'contact_points.value_storage_ref / contact_type=address',
 		type: 'json',
+		inputCardinality: 'many',
 		privacy: 'PII'
 	},
 	{
@@ -129,6 +137,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Locale',
 		caption: 'profile_attribute_values.value_json / catalog_entry_id=locale',
 		type: 'locale',
+		inputCardinality: 'one',
 		privacy: 'non-PII'
 	},
 	{
@@ -138,6 +147,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Timezone',
 		caption: 'profile_attribute_values.value_json / catalog_entry_id=timezone',
 		type: 'text',
+		inputCardinality: 'one',
 		privacy: 'non-PII'
 	},
 	{
@@ -147,6 +157,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Group membership',
 		caption: 'group_memberships.group_id',
 		type: 'multi-value',
+		inputCardinality: 'many',
 		privacy: 'non-PII'
 	},
 	{
@@ -156,6 +167,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Entitlements',
 		caption: 'entitlement_grants.entitlement_id',
 		type: 'multi-value',
+		inputCardinality: 'many',
 		privacy: 'non-PII'
 	},
 	{
@@ -165,6 +177,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Linked identity',
 		caption: 'linked_identities.provider_subject',
 		type: 'identifier',
+		inputCardinality: 'one',
 		privacy: 'non-PII'
 	},
 	{
@@ -174,6 +187,7 @@ const defaultCanonicalTargets: MappingNode[] = [
 		label: 'Lifecycle state',
 		caption: 'identity_accounts.lifecycle_state',
 		type: 'enum',
+		inputCardinality: 'one',
 		privacy: 'non-PII'
 	}
 ];

@@ -61,6 +61,20 @@ describe('identity mapping flow data adapter', () => {
 		expect(csvSample?.nodes.some((node) => node.label === 'employee_id')).toBe(true);
 		expect(csvSample?.nodes.some((node) => node.label === 'Subject identifier')).toBe(true);
 		expect(csvSample?.nodes.some((node) => node.label === 'Email')).toBe(true);
+		expect(csvSample?.nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'target',
+					label: 'Subject identifier',
+					inputCardinality: 'one'
+				}),
+				expect.objectContaining({
+					role: 'target',
+					label: 'Group membership',
+					inputCardinality: 'many'
+				})
+			])
+		);
 		expect(
 			csvSample?.nodes.some((node) => node.label === 'email' && node.role === 'destination')
 		).toBe(true);

@@ -436,6 +436,7 @@
 		return [
 			'graph-node',
 			`${node.role}-node`,
+			node.role === 'target' ? `cardinality-${targetInputCardinality(node)}` : '',
 			node.hidden ? 'adapter-hidden' : '',
 			node.ruleId === activeRuleId ? 'active' : '',
 			node.id === selectedNodeId ? 'selection-origin' : '',
@@ -458,7 +459,33 @@
 		const validDirection =
 			(fromNode.role === 'source' && toNode.role === 'target') ||
 			(fromNode.role === 'target' && toNode.role === 'destination');
-		return validDirection && isTypeCompatible(fromNode, toNode);
+		return (
+			validDirection &&
+			isTypeCompatible(fromNode, toNode) &&
+			!isDuplicateConnection(fromNode.id, toNode.id) &&
+			!isTargetInputFull(fromNode, toNode)
+		);
+	}
+
+	function isDuplicateConnection(fromNodeId: string, toNodeId: string): boolean {
+		return edges.some((edge) => edge.from === fromNodeId && edge.to === toNodeId);
+	}
+
+	function isTargetInputFull(fromNode: MappingNode, toNode: MappingNode): boolean {
+		if (fromNode.role !== 'source' || toNode.role !== 'target') return false;
+		if (targetInputCardinality(toNode) !== 'one') return false;
+		return edges.some((edge) => edge.to === toNode.id && nodeById(edge.from)?.role === 'source');
+	}
+
+	function targetInputCardinality(node: MappingNode): 'one' | 'many' {
+		if (node.role !== 'target') return 'many';
+		return (
+			node.inputCardinality ?? (normalizeNodeType(node.type) === 'multi-value' ? 'many' : 'one')
+		);
+	}
+
+	function targetInputCardinalityLabel(node: MappingNode): string {
+		return targetInputCardinality(node) === 'one' ? '(1)' : '(N)';
 	}
 
 	function isTypeCompatible(fromNode: MappingNode, toNode: MappingNode): boolean {
@@ -992,6 +1019,12 @@
 							<span class="target-badge-row">
 								<span class="target-badges">
 									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
+									<span
+										class={`target-badge cardinality cardinality-${targetInputCardinality(node)}`}
+										aria-label={`Accepts ${targetInputCardinality(node) === 'one' ? 'one input' : 'multiple inputs'}`}
+									>
+										{targetInputCardinalityLabel(node)}
+									</span>
 								</span>
 								<span class="target-badges meta-badges">
 									{#if node.required}<span class="target-badge required">Required</span>{/if}
@@ -1696,6 +1729,18 @@
 		border-color: rgba(96, 165, 250, 0.64);
 	}
 
+	.target-node.cardinality-one .node-handle.input {
+		box-shadow:
+			0 0 0 1px rgba(213, 224, 238, 0.18),
+			inset 0 0 0 2px var(--map-canvas);
+	}
+
+	.target-node.cardinality-many .node-handle.input {
+		box-shadow:
+			0 0 0 1px rgba(213, 224, 238, 0.18),
+			0 0 0 4px color-mix(in srgb, var(--map-brand) 14%, transparent);
+	}
+
 	.adapter-hidden {
 		opacity: 0.22;
 		filter: saturate(0.65);
@@ -1839,6 +1884,21 @@
 	.target-badge.type {
 		color: var(--map-brand);
 		border-color: color-mix(in srgb, var(--map-brand) 52%, transparent);
+	}
+
+	.target-badge.cardinality {
+		min-width: 20px;
+		text-align: center;
+	}
+
+	.target-badge.cardinality-one {
+		color: var(--map-muted);
+		border-color: color-mix(in srgb, var(--map-muted) 42%, transparent);
+	}
+
+	.target-badge.cardinality-many {
+		color: var(--map-teal);
+		border-color: color-mix(in srgb, var(--map-teal) 54%, transparent);
 	}
 
 	.target-badge.pii {
