@@ -60,6 +60,7 @@
 		fromNodeId: string;
 		from: Point;
 		to: Point;
+		validTarget: boolean | null;
 	} | null>(null);
 
 	interface Point {
@@ -363,7 +364,7 @@
 		const fromNode = layoutNodeById(edge.from);
 		const toNode = layoutNodeById(edge.to);
 		if (!fromNode || !toNode) return null;
-		return pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.84);
+		return pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.92);
 	}
 
 	function edgeAccent(edge: MappingEdge): string {
@@ -416,10 +417,64 @@
 		toNode: MappingNode | undefined
 	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
-		return (
+		const validDirection =
 			(fromNode.role === 'source' && toNode.role === 'target') ||
-			(fromNode.role === 'target' && toNode.role === 'destination')
-		);
+			(fromNode.role === 'target' && toNode.role === 'destination');
+		return validDirection && isTypeCompatible(fromNode, toNode);
+	}
+
+	function isTypeCompatible(fromNode: MappingNode, toNode: MappingNode): boolean {
+		const fromType = normalizeNodeType(fromNode.type);
+		const toType = normalizeNodeType(toNode.type);
+		if (!fromType || !toType) return true;
+		if (fromType === toType) return true;
+		if (toType === 'text')
+			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale'].includes(fromType);
+		if (fromType === 'text') return ['text', 'identifier', 'enum', 'locale'].includes(toType);
+		if (toType === 'identifier') return ['identifier', 'text'].includes(fromType);
+		if (toType === 'multi-value') return fromType === 'multi-value';
+		if (toType === 'json') return fromType === 'json';
+		return false;
+	}
+
+	function normalizeNodeType(type: string | undefined): string | null {
+		const normalized = type?.toLowerCase().trim();
+		if (!normalized) return null;
+		if (['string', 'text', 'name'].some((needle) => normalized.includes(needle))) return 'text';
+		if (normalized.includes('email') || normalized.includes('mail')) return 'email';
+		if (
+			normalized.includes('phone') ||
+			normalized.includes('tel') ||
+			normalized.includes('mobile')
+		) {
+			return 'phone';
+		}
+		if (normalized.includes('stable identifier') || normalized.includes('identifier'))
+			return 'identifier';
+		if (
+			normalized.includes('multi') ||
+			normalized.includes('array') ||
+			normalized.includes('list')
+		) {
+			return 'multi-value';
+		}
+		if (normalized.includes('json') || normalized.includes('object')) return 'json';
+		if (
+			normalized.includes('enum') ||
+			normalized.includes('boolean') ||
+			normalized.includes('number')
+		) {
+			return 'enum';
+		}
+		if (normalized.includes('locale') || normalized.includes('timezone')) return 'locale';
+		return normalized;
+	}
+
+	function connectionTargetForPointer(event: PointerEvent): MappingNode | undefined {
+		const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+		const handle = target?.closest?.('.node-handle.input') as HTMLElement | null;
+		const toNodeId = handle?.dataset.nodeId;
+		return toNodeId ? nodeById(toNodeId) : undefined;
 	}
 
 	function canvasPoint(event: PointerEvent): Point {
@@ -438,7 +493,8 @@
 		dragState = {
 			fromNodeId: node.id,
 			from,
-			to: canvasPoint(event)
+			to: canvasPoint(event),
+			validTarget: null
 		};
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', handlePointerUp);
@@ -446,21 +502,21 @@
 
 	function handlePointerMove(event: PointerEvent) {
 		if (!dragState) return;
+		const fromNode = nodeById(dragState.fromNodeId);
+		const toNode = connectionTargetForPointer(event);
 		dragState = {
 			...dragState,
-			to: canvasPoint(event)
+			to: canvasPoint(event),
+			validTarget: toNode ? isValidConnection(fromNode, toNode) : null
 		};
 	}
 
 	function handlePointerUp(event: PointerEvent) {
 		if (!dragState) return;
-		const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-		const handle = target?.closest?.('.node-handle.input') as HTMLElement | null;
-		const toNodeId = handle?.dataset.nodeId;
 		const fromNode = nodeById(dragState.fromNodeId);
-		const toNode = toNodeId ? nodeById(toNodeId) : undefined;
-		if (isValidConnection(fromNode, toNode) && toNodeId) {
-			addEdge(dragState.fromNodeId, toNodeId);
+		const toNode = connectionTargetForPointer(event);
+		if (isValidConnection(fromNode, toNode) && toNode) {
+			addEdge(dragState.fromNodeId, toNode.id);
 		}
 		dragState = null;
 		window.removeEventListener('pointermove', handlePointerMove);
@@ -806,7 +862,20 @@
 						{/if}
 					{/each}
 					{#if dragState}
-						<path class="edge drag-edge" d={pathBetween(dragState.from, dragState.to)} />
+						<path
+							class={`edge drag-edge ${dragState.validTarget === false ? 'drag-edge-invalid' : ''}`}
+							d={pathBetween(dragState.from, dragState.to)}
+						/>
+						{#if dragState.validTarget === false}
+							<g
+								class="drag-reject-marker"
+								transform={`translate(${dragState.to.x} ${dragState.to.y})`}
+								aria-hidden="true"
+							>
+								<circle r="8" />
+								<path d="M -3 -3 L 3 3 M 3 -3 L -3 3" />
+							</g>
+						{/if}
 					{/if}
 				</svg>
 
@@ -834,9 +903,6 @@
 						{#if node.role === 'target'}
 							<span class="target-badge-row">
 								<span class="target-badges">
-									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
-								</span>
-								<span class="target-badges meta-badges">
 									{#if node.required}<span class="target-badge required">Required</span>{/if}
 									{#if node.privacy}
 										<span
@@ -845,6 +911,9 @@
 											{node.privacy}
 										</span>
 									{/if}
+								</span>
+								<span class="target-badges meta-badges">
+									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
 								</span>
 							</span>
 						{/if}
@@ -1466,6 +1535,28 @@
 		stroke-dasharray: var(--map-drag-edge-dash-pattern);
 		opacity: 0.82;
 		animation: edge-flow var(--map-drag-edge-flow-speed) linear infinite;
+	}
+
+	.drag-edge-invalid {
+		stroke: var(--map-red);
+	}
+
+	.drag-reject-marker {
+		pointer-events: none;
+	}
+
+	.drag-reject-marker circle {
+		fill: var(--map-surface);
+		stroke: var(--map-red);
+		stroke-width: 1.6;
+		filter: drop-shadow(0 3px 8px rgb(0 0 0 / 0.28));
+	}
+
+	.drag-reject-marker path {
+		fill: none;
+		stroke: var(--map-red);
+		stroke-linecap: round;
+		stroke-width: 1.8;
 	}
 
 	.graph-node {
