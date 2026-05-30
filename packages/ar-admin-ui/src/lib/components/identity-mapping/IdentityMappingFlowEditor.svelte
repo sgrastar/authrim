@@ -3,6 +3,8 @@
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		type MappingAdapter,
+		type MappingDraftPayload,
+		type MappingDraftRuleInput,
 		type MappingEdge,
 		type MappingNode,
 		type MappingSample,
@@ -116,7 +118,8 @@
 		selectedViewMode = null,
 		selectedProfileId = null,
 		draftResetKey = 0,
-		onDraftDirtyChange = null
+		onDraftDirtyChange = null,
+		onCompileDraft = null
 	} = $props<{
 		samples?: MappingSample[];
 		loading?: boolean;
@@ -132,6 +135,7 @@
 		selectedProfileId?: string | null;
 		draftResetKey?: number;
 		onDraftDirtyChange?: ((dirty: boolean) => void) | null;
+		onCompileDraft?: ((draft: MappingDraftPayload) => Promise<void> | void) | null;
 	}>();
 
 	const emptySample: MappingSample = {
@@ -176,6 +180,8 @@
 	let selectedEdgeId = $state<string | null>(null);
 	let hasUnsavedDraftChanges = $state(false);
 	let activeDraftResetKey = $state<number | null>(null);
+	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let draftSubmitMessage = $state<string | null>(null);
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
@@ -439,6 +445,12 @@
 		selectedEdgeId = null;
 		selectedNodeId = null;
 		hoverNodeId = null;
+	}
+
+	function markDraftDirty() {
+		hasUnsavedDraftChanges = true;
+		draftSubmitStatus = 'idle';
+		draftSubmitMessage = null;
 	}
 
 	function handleClearSelectionKeyDown(event: KeyboardEvent) {
@@ -970,7 +982,7 @@
 		edges = [...edges, edge];
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
 	}
 
 	function addTransformNode(edge: MappingEdge) {
@@ -1029,14 +1041,14 @@
 		activeRuleId = ruleId;
 		selectedNodeId = nodeId;
 		selectedEdgeId = null;
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
 	}
 
 	function deleteSelectedEdge() {
 		if (!editable || !selectedEdgeId) return;
 		edges = edges.filter((edge) => edge.id !== selectedEdgeId);
 		selectedEdgeId = null;
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
 	}
 
 	function deleteTransformNode(nodeId: string) {
@@ -1089,7 +1101,7 @@
 		}
 		selectedEdgeId = null;
 		hoverNodeId = null;
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
 	}
 
 	function deleteSelectedTransformNode() {
@@ -1172,7 +1184,7 @@
 			caption: 'drag handle to connect'
 		};
 		nodes = [...nodes, node];
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
 		sample.rules[node.ruleId] = {
 			...fallbackRule(),
 			title: node.label,
@@ -1297,7 +1309,7 @@
 				trace: 'Transform configuration is stored on the draft node and will be persisted as a mapping transform step.'
 			});
 		}
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
 	}
 
 	function updateTransformOperation(node: MappingNode, value: string) {
@@ -1311,6 +1323,145 @@
 			...sanitizeTransformParameters(operation, node.transformParameters),
 			[parameterName]: value
 		});
+	}
+
+	function nodeFieldRef(node: MappingNode): Record<string, unknown> {
+		return {
+			nodeId: node.id,
+			role: node.role,
+			label: node.label,
+			path: node.caption || node.label,
+			adapter: node.adapter,
+			profileId: node.profileId,
+			profileTitle: node.profileTitle,
+			valueType: node.type,
+			storageTarget: node.storageTarget,
+			uiGroupKey: node.uiGroupKey
+		};
+	}
+
+	function stableRuleKey(parts: string[]): string {
+		return parts
+			.join('.')
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '')
+			.slice(0, 96);
+	}
+
+	function directDraftRule(edge: MappingEdge, fromNode: MappingNode, toNode: MappingNode) {
+		const edgeKind = fromNode.role === 'target' ? 'outbound_release' : 'inbound_mapping';
+		return {
+			ruleKey: stableRuleKey(['ui', sample.id, edge.id, fromNode.id, toNode.id]),
+			ruleKind: edgeKind,
+			action: 'map',
+			priority: 0,
+			metadata: {
+				source: 'admin_ui_flow_editor',
+				viewMode
+			},
+			edges: [
+				{
+					sourceRef: nodeFieldRef(fromNode),
+					targetRef: nodeFieldRef(toNode),
+					edgeKind: 'direct'
+				}
+			]
+		} satisfies MappingDraftRuleInput;
+	}
+
+	function transformDraftRules(transformNode: MappingNode): MappingDraftRuleInput[] {
+		const incoming = edges.filter((edge) => edge.to === transformNode.id);
+		const outgoing = edges.filter((edge) => edge.from === transformNode.id);
+		const operation = activeTransformOperation(transformNode);
+		const parameters = sanitizeTransformParameters(operation, transformNode.transformParameters);
+		return outgoing.flatMap((outEdge) => {
+			const toNode = nodeById(outEdge.to);
+			if (!toNode) return [];
+			const inputNodes = incoming
+				.map((edge) => nodeById(edge.from))
+				.filter((node): node is MappingNode => Boolean(node));
+			if (inputNodes.length === 0) return [];
+			const edgeKind = toNode.role === 'destination' ? 'outbound_transform' : 'inbound_transform';
+			return [
+				{
+					ruleKey: stableRuleKey(['ui', sample.id, transformNode.id, toNode.id]),
+					ruleKind: edgeKind,
+					action: 'map',
+					priority: 0,
+					metadata: {
+						source: 'admin_ui_flow_editor',
+						viewMode,
+						transformNodeId: transformNode.id
+					},
+					edges: inputNodes.map((fromNode) => ({
+						sourceRef: nodeFieldRef(fromNode),
+						targetRef: nodeFieldRef(toNode),
+						edgeKind: 'transform_input'
+					})),
+					transforms: [
+						{
+							edgeIndex: 0,
+							operation,
+							parameters
+						}
+					]
+				}
+			];
+		});
+	}
+
+	function buildDraftPayload(): MappingDraftPayload {
+		const transformIds = new Set(nodes.filter((node) => node.role === 'transform').map((node) => node.id));
+		const directRules = edges.flatMap((edge) => {
+			if (transformIds.has(edge.from) || transformIds.has(edge.to)) return [];
+			const fromNode = nodeById(edge.from);
+			const toNode = nodeById(edge.to);
+			if (!fromNode || !toNode) return [];
+			return [directDraftRule(edge, fromNode, toNode)];
+		});
+		const transformRules = nodes
+			.filter((node) => node.role === 'transform')
+			.flatMap((node) => transformDraftRules(node));
+		return {
+			versionLabel: `ui-draft-${new Date().toISOString()}`,
+			compatibilityRange: '>=0.2.0',
+			rules: [...directRules, ...transformRules],
+			metadata: {
+				sampleId: sample.id,
+				sampleTitle: sample.title,
+				viewMode,
+				edgeCount: edges.length,
+				transformCount: transformRules.length
+			}
+		};
+	}
+
+	async function submitDraftForCompile() {
+		if (!editable || draftSubmitStatus === 'saving') return;
+		const draft = buildDraftPayload();
+		if (draft.rules.length === 0) {
+			draftSubmitStatus = 'error';
+			draftSubmitMessage = 'Connect at least one mapping edge before compiling a draft.';
+			return;
+		}
+		if (!onCompileDraft) {
+			draftSubmitStatus = 'error';
+			draftSubmitMessage = 'Compile draft is not connected on this page.';
+			return;
+		}
+		draftSubmitStatus = 'saving';
+		draftSubmitMessage = 'Saving draft policy version...';
+		try {
+			await onCompileDraft(draft);
+			draftSubmitStatus = 'saved';
+			draftSubmitMessage = 'Draft policy version saved and compiled.';
+			hasUnsavedDraftChanges = false;
+			onDraftDirtyChange?.(false);
+		} catch (error) {
+			draftSubmitStatus = 'error';
+			draftSubmitMessage = error instanceof Error ? error.message : 'Failed to compile mapping draft.';
+		}
 	}
 
 	function edgeInspectorRule(edge: MappingEdge) {
@@ -1426,9 +1577,19 @@
 							{/each}
 						</div>
 					{/if}
-					<button class="primary-action" type="button">Compile draft</button>
+					<button
+						class="primary-action"
+						type="button"
+						disabled={!editable || draftSubmitStatus === 'saving'}
+						onclick={submitDraftForCompile}
+					>
+						{draftSubmitStatus === 'saving' ? 'Compiling...' : 'Compile draft'}
+					</button>
 				</div>
 			</div>
+			{#if draftSubmitMessage}
+				<p class={`draft-submit-message ${draftSubmitStatus}`}>{draftSubmitMessage}</p>
+			{/if}
 
 			<div class="health-strip">
 				<span><strong>Snapshot</strong> {sample.snapshot}</span>
@@ -2104,6 +2265,29 @@
 		padding: 0 16px;
 		color: #ffffff;
 		background: var(--map-brand);
+	}
+
+	.primary-action:disabled {
+		cursor: progress;
+		opacity: 0.66;
+	}
+
+	.draft-submit-message {
+		margin: 0;
+		padding: 9px 16px;
+		border-top: 1px solid var(--map-line);
+		color: var(--map-muted);
+		background: var(--map-surface-muted);
+		font-size: 12px;
+		font-weight: 700;
+	}
+
+	.draft-submit-message.saved {
+		color: var(--map-green);
+	}
+
+	.draft-submit-message.error {
+		color: var(--map-red);
 	}
 
 	.workspace {

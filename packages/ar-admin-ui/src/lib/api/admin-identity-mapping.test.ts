@@ -93,6 +93,22 @@ describe('adminIdentityMappingAPI', () => {
 		await adminIdentityMappingAPI.listFederationTrustSources();
 		await adminIdentityMappingAPI.listFederationMetadataDocuments('trust/source 1');
 		await adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 25 });
+		await adminIdentityMappingAPI.createPolicy({
+			policyKey: 'ui_draft',
+			displayName: 'UI Draft'
+		});
+		await adminIdentityMappingAPI.createPolicyVersion('policy set 1', {
+			versionLabel: 'ui-draft',
+			rules: [
+				{
+					ruleKey: 'email',
+					ruleKind: 'inbound_mapping',
+					action: 'map',
+					edges: [{ sourceRef: { path: 'Email' }, targetRef: { path: 'email' } }],
+					transforms: [{ edgeIndex: 0, operation: 'trim' }]
+				}
+			]
+		});
 		await adminIdentityMappingAPI.rollbackPolicy('policy set 1');
 		await adminIdentityMappingAPI.publishPolicyVersion('policy set 1', 'version 1');
 		await adminIdentityMappingAPI.compilePolicyVersion('policy set 1', 'version 1', {
@@ -130,6 +146,8 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/federation-trust-sources',
 			'/api/admin/identity-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
 			'/api/admin/identity-mapping/review-tasks?status=open&limit=25',
+			'/api/admin/identity-mapping/policies',
+			'/api/admin/identity-mapping/policies/policy%20set%201/versions',
 			'/api/admin/identity-mapping/policies/policy%20set%201/rollback',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/publish',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/compile',
@@ -150,6 +168,8 @@ describe('adminIdentityMappingAPI', () => {
 		expect(fetchMock.mock.calls[24][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[25][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[26][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[27][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[28][1]).toMatchObject({ method: 'POST' });
 	});
 
 	it('surfaces API error descriptions', async () => {

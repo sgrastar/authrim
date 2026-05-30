@@ -86,3 +86,39 @@ export interface MappingSample {
 	edges: MappingEdge[];
 	rules: Record<string, RuleDetail>;
 }
+
+export interface MappingDraftEdgeInput {
+	sourceRef: Record<string, unknown>;
+	targetRef: Record<string, unknown>;
+	edgeKind?: string;
+}
+
+export interface MappingDraftTransformInput {
+	edgeIndex?: number;
+	operation: TransformOperation;
+	parameters?: Record<string, unknown>;
+}
+
+export interface MappingDraftRuleInput {
+	ruleKey: string;
+	ruleKind: string;
+	action: string;
+	priority?: number;
+	scope?: Record<string, unknown>;
+	metadata?: Record<string, unknown>;
+	edges?: MappingDraftEdgeInput[];
+	transforms?: MappingDraftTransformInput[];
+}
+
+export interface MappingDraftPayload {
+	versionLabel: string;
+	compatibilityRange?: string;
+	rules: MappingDraftRuleInput[];
+	metadata: {
+		sampleId: string;
+		sampleTitle: string;
+		viewMode: 'overview' | 'inbound' | 'outbound';
+		edgeCount: number;
+		transformCount: number;
+	};
+}

@@ -66,6 +66,10 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('transformOperationSchemas');
 		expect(flowEditor).toContain('updateTransformOperation');
 		expect(flowEditor).toContain('updateTransformParameter');
+		expect(flowEditor).toContain('buildDraftPayload');
+		expect(flowEditor).toContain('submitDraftForCompile');
+		expect(flowEditor).toContain('onCompileDraft');
+		expect(flowEditor).toContain('transform_input');
 		expect(flowEditor).toContain('Transform step');
 		expect(flowEditor).toContain('Operation');
 		expect(flowEditor).toContain('copy');
@@ -131,6 +135,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).not.toContain('Theme');
 		expect(page).toContain('IdentityMappingPageShell');
 		expect(pageShell).toContain('buildIdentityMappingFlowSamples');
+		expect(pageShell).toContain('compileEditorDraft');
+		expect(pageShell).toContain('createPolicyVersion');
+		expect(pageShell).toContain('compilePolicyVersion');
 		expect(pageShell).toContain('getSchemaReadiness');
 		expect(pageShell).toContain('samples={flowSamples}');
 		expect(pageShell).toContain('profile-mode-control');

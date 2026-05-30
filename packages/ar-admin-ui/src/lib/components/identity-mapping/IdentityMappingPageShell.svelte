@@ -3,7 +3,14 @@
 	import { adminIdentityMappingAPI } from '$lib/api/admin-identity-mapping';
 	import IdentityMappingFlowEditor from '$lib/components/identity-mapping/IdentityMappingFlowEditor.svelte';
 	import { buildIdentityMappingFlowSamples } from '$lib/components/identity-mapping/flow-data';
-	import type { MappingSample } from '$lib/components/identity-mapping/types';
+	import type {
+		MappingDraftPayload,
+		MappingSample
+	} from '$lib/components/identity-mapping/types';
+	import type {
+		IdentityMappingCatalogSummary,
+		IdentityMappingPolicySummary
+	} from '$lib/api/admin-identity-mapping';
 
 	type ViewMode = 'overview' | 'inbound' | 'outbound';
 
@@ -34,6 +41,8 @@
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
 	let flowSamples = $state<MappingSample[]>([]);
+	let policySummaries = $state<IdentityMappingPolicySummary[]>([]);
+	let catalogSummaries = $state<IdentityMappingCatalogSummary[]>([]);
 	let editMode = $state<Extract<ViewMode, 'inbound' | 'outbound'>>('inbound');
 	let selectedInboundProfileId = $state<string | null>(null);
 	let selectedOutboundProfileId = $state<string | null>(null);
@@ -120,6 +129,36 @@
 		editorHasUnsavedDraftChanges = false;
 	}
 
+	async function compileEditorDraft(draft: MappingDraftPayload) {
+		const catalogVersionId = catalogSummaries.find((catalog) => catalog.versionId)?.versionId;
+		if (!catalogVersionId) {
+			throw new Error('No canonical catalog version is available for compile.');
+		}
+		let policy = policySummaries[0];
+		if (!policy) {
+			const createdPolicy = await adminIdentityMappingAPI.createPolicy({
+				policyKey: 'identity-mapping-ui-draft',
+				displayName: 'Identity Mapping UI Draft',
+				description: 'Draft policy set created from the Admin UI Flow Editor.'
+			});
+			policy = createdPolicy.result;
+			policySummaries = [policy];
+		}
+		const version = await adminIdentityMappingAPI.createPolicyVersion(policy.id, {
+			versionLabel: draft.versionLabel,
+			compatibilityRange: draft.compatibilityRange,
+			rules: draft.rules
+		});
+		await adminIdentityMappingAPI.compilePolicyVersion(policy.id, version.result.id, {
+			catalogVersionId,
+			metadata: {
+				source: 'admin_ui_flow_editor',
+				...draft.metadata
+			}
+		});
+		editorHasUnsavedDraftChanges = false;
+	}
+
 	onMount(async () => {
 		try {
 			const [
@@ -152,6 +191,8 @@
 					externalSchemas.externalSchemas.length,
 				federationTrustSources: federationTrustSources.federationTrustSources.length
 			};
+			policySummaries = policies.policies;
+			catalogSummaries = catalogs.catalogs;
 			flowSamples = buildIdentityMappingFlowSamples({
 				policies: policies.policies,
 				catalogs: catalogs.catalogs,
@@ -266,6 +307,7 @@
 		selectedProfileId={showProfileModeControl ? selectedEditorProfileId : null}
 		draftResetKey={editorDraftResetKey}
 		onDraftDirtyChange={(dirty) => (editorHasUnsavedDraftChanges = dirty)}
+		onCompileDraft={compileEditorDraft}
 	/>
 </div>
 

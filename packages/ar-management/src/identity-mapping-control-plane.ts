@@ -1344,6 +1344,7 @@ export class IdentityMappingControlPlaneRepository {
         catalogKey: string;
         displayName: string;
         lifecycleState: LifecycleState;
+        versionId: string | null;
         versionLabel: string | null;
         bundleHash: string | null;
         entries: Array<{
@@ -1374,6 +1375,7 @@ export class IdentityMappingControlPlaneRepository {
           catalogKey: row.catalog_key,
           displayName: row.display_name,
           lifecycleState: row.lifecycle_state,
+          versionId: row.version_id,
           versionLabel: row.version_label,
           bundleHash: row.bundle_hash,
           entries: [],

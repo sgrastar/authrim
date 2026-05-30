@@ -16,6 +16,7 @@ export interface IdentityMappingCatalogSummary {
 	tenantId: string;
 	catalogKey: string;
 	displayName: string;
+	versionId?: string | null;
 	versionLabel?: string | null;
 	lifecycleState: string;
 	bundleHash?: string | null;
@@ -333,6 +334,39 @@ export interface IdentityMappingSchemaReadinessSummary {
 	deferred: number;
 }
 
+export interface IdentityMappingPolicyCreateRequest {
+	policyKey: string;
+	displayName: string;
+	description?: string | null;
+	ownerScopeType?: 'platform' | 'tenant' | 'client';
+	ownerScopeId?: string | null;
+}
+
+export interface IdentityMappingPolicyVersionCreateRequest {
+	versionLabel: string;
+	compatibilityRange?: string;
+	authorId?: string;
+	rules: Array<{
+		ruleKey: string;
+		ruleKind: string;
+		action: string;
+		priority?: number;
+		scope?: Record<string, unknown>;
+		condition?: Record<string, unknown>;
+		metadata?: Record<string, unknown>;
+		edges?: Array<{
+			sourceRef: Record<string, unknown>;
+			targetRef: Record<string, unknown>;
+			edgeKind?: string;
+		}>;
+		transforms?: Array<{
+			edgeIndex?: number;
+			operation: string;
+			parameters?: Record<string, unknown>;
+		}>;
+	}>;
+}
+
 export interface IdentityMappingCompilePolicyRequest {
 	catalogVersionId: string;
 	compatibilityRange?: string;
@@ -386,6 +420,34 @@ export const adminIdentityMappingAPI = {
 	async listPolicies(): Promise<{ policies: IdentityMappingPolicySummary[] }> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/policies`);
 		return parseJson(response, 'Failed to load identity mapping policies');
+	},
+
+	async createPolicy(
+		request: IdentityMappingPolicyCreateRequest
+	): Promise<{ result: IdentityMappingPolicySummary }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/policies`, {
+			method: 'POST',
+			headers: mutationHeaders(),
+			body: JSON.stringify(request)
+		});
+		return parseJson(response, 'Failed to create identity mapping policy');
+	},
+
+	async createPolicyVersion(
+		policySetId: string,
+		request: IdentityMappingPolicyVersionCreateRequest
+	): Promise<{
+		result: { id: string; tenantId: string; policySetId: string; lifecycleState: string };
+	}> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create identity mapping policy version');
 	},
 
 	async rollbackPolicy(policySetId: string): Promise<Record<string, unknown>> {
