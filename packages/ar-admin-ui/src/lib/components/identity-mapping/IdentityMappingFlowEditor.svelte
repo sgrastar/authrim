@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		type MappingAdapter,
@@ -7,14 +8,22 @@
 		type MappingSample
 	} from './types';
 
+	type ViewMode = 'overview' | 'inbound' | 'outbound';
+
 	const {
 		samples = [],
 		loading = false,
-		loadError = null
+		loadError = null,
+		allowedViewModes = ['overview', 'inbound', 'outbound'],
+		initialViewMode = 'overview',
+		editable = true
 	} = $props<{
 		samples?: MappingSample[];
 		loading?: boolean;
 		loadError?: string | null;
+		allowedViewModes?: ViewMode[];
+		initialViewMode?: ViewMode;
+		editable?: boolean;
 	}>();
 
 	const adapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
@@ -42,22 +51,33 @@
 	let canvasWidth = $state(1000);
 	let sample = $state(emptySample);
 	let selectedSampleId = $state<string | null>(null);
-	let activeSampleRef = $state<MappingSample | null>(null);
+	let activeSampleRef: MappingSample | null = null;
 	let inboundAdapter = $state<MappingAdapter>(emptySample.inboundAdapter);
 	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
-	let viewMode = $state<'overview' | 'inbound' | 'outbound'>('overview');
+	let viewMode = $state<ViewMode>('overview');
+	let viewModeInitialized = false;
 	let customCounter = $state(0);
 	let nodes = $state<MappingNode[]>([...emptySample.nodes]);
 	let edges = $state<MappingEdge[]>([...emptySample.edges]);
 	let hoverNodeId = $state<string | null>(null);
 	let selectedNodeId = $state<string | null>(null);
+	let selectedEdgeId = $state<string | null>(null);
+	let hasUnsavedDraftChanges = $state(false);
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
 		to: Point;
+		validTarget: boolean | null;
+		targetNodeId: string | null;
 	} | null>(null);
+	let pendingConnectionStart: {
+		fromNodeId: string;
+		startClient: Point;
+		from: Point;
+	} | null = null;
+	let suppressNextNodeClickId: string | null = null;
 
 	interface Point {
 		x: number;
@@ -85,12 +105,32 @@
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
 	const hasControlPlaneData = $derived(samples.length > 0);
-	const rule = $derived(sample.rules[activeRuleId] ?? fallbackRule());
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
 	const graphEdges = $derived(edges.filter((edge) => nodeById(edge.from) && nodeById(edge.to)));
-	const selectedEdges = $derived(connectedEdgeIds(selectedNodeId));
+	const selectedEdge = $derived(
+		selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) : null
+	);
+	const selectedEdges = $derived(
+		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
+	);
 	const hoverEdges = $derived(connectedEdgeIds(hoverNodeId));
+	const enabledViewModes = $derived(
+		allowedViewModes.length > 0 ? allowedViewModes : (['overview'] satisfies ViewMode[])
+	);
+	const rule = $derived(
+		selectedEdge ? edgeInspectorRule(selectedEdge) : (sample.rules[activeRuleId] ?? fallbackRule())
+	);
+
+	$effect(() => {
+		if (!viewModeInitialized) {
+			viewMode = enabledViewModes.includes(initialViewMode) ? initialViewMode : enabledViewModes[0];
+			viewModeInitialized = true;
+		}
+		if (!enabledViewModes.includes(viewMode)) {
+			viewMode = enabledViewModes[0];
+		}
+	});
 
 	$effect(() => {
 		const next =
@@ -104,6 +144,16 @@
 		}
 	});
 
+	beforeNavigate((navigation) => {
+		if (!editable || !hasUnsavedDraftChanges) return;
+		const shouldLeave = window.confirm(
+			'You have unsaved mapping draft changes. Leave this page and discard them?'
+		);
+		if (!shouldLeave) {
+			navigation.cancel();
+		}
+	});
+
 	onMount(() => {
 		const resize = () => {
 			const rect = canvas?.getBoundingClientRect();
@@ -112,11 +162,20 @@
 		};
 		resize();
 		const observer = new ResizeObserver(resize);
+		const beforeUnload = (event: BeforeUnloadEvent) => {
+			if (!editable || !hasUnsavedDraftChanges) return;
+			event.preventDefault();
+			event.returnValue = '';
+		};
 		if (canvas) observer.observe(canvas);
 		window.addEventListener('resize', resize);
+		window.addEventListener('keydown', handleGlobalKeyDown);
+		window.addEventListener('beforeunload', beforeUnload);
 		return () => {
 			observer.disconnect();
 			window.removeEventListener('resize', resize);
+			window.removeEventListener('keydown', handleGlobalKeyDown);
+			window.removeEventListener('beforeunload', beforeUnload);
 		};
 	});
 
@@ -134,12 +193,16 @@
 		activeRuleId = next.activeRuleId;
 		nodes = [...next.nodes];
 		edges = [...next.edges];
+		selectedEdgeId = null;
 		selectedNodeId = next.nodes.find((node) => node.ruleId === next.activeRuleId)?.id ?? null;
+		hasUnsavedDraftChanges = false;
 	}
 
 	onDestroy(() => {
 		window.removeEventListener('pointermove', handlePointerMove);
 		window.removeEventListener('pointerup', handlePointerUp);
+		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.removeEventListener('pointerup', handleEasyConnectionPointerUp);
 	});
 
 	function nodeById(id: string): MappingNode | undefined {
@@ -156,7 +219,25 @@
 
 	function selectRule(ruleId: string) {
 		activeRuleId = ruleId;
+		selectedEdgeId = null;
 		selectedNodeId = nodeForRule(ruleId)?.id ?? null;
+	}
+
+	function selectEdge(edge: MappingEdge) {
+		selectedEdgeId = edge.id;
+		selectedNodeId = null;
+	}
+
+	function clearSelection() {
+		selectedEdgeId = null;
+		selectedNodeId = null;
+		hoverNodeId = null;
+	}
+
+	function handleClearSelectionKeyDown(event: KeyboardEvent) {
+		if (event.key !== 'Escape' && event.key !== 'Enter' && event.key !== ' ') return;
+		event.preventDefault();
+		clearSelection();
 	}
 
 	function connectedEdgeIds(nodeId: string | null): Set<string> {
@@ -175,36 +256,13 @@
 		);
 	}
 
-	function targetForSource(sourceId: string): string | null {
-		return (
-			edges.find(
-				(edge) => edge.from === sourceId && targetNodes.some((node) => node.id === edge.to)
-			)?.to ?? null
-		);
-	}
-
-	function targetForDestination(destinationId: string): string | null {
-		return (
-			edges.find(
-				(edge) => edge.to === destinationId && targetNodes.some((node) => node.id === edge.from)
-			)?.from ?? null
-		);
-	}
-
 	function buildLayout(): { nodes: LayoutNode[]; height: number } {
 		const rowTops: Record<string, number> = {};
 		let cursor = graphBaseTop;
 
 		for (const target of targetNodes) {
-			const sourceCount = sourceNodes.filter(
-				(node) => node.adapter === inboundAdapter && targetForSource(node.id) === target.id
-			).length;
-			const destinationCount = destinationNodes.filter(
-				(node) => node.adapter === outboundAdapter && targetForDestination(node.id) === target.id
-			).length;
-			const rowSpan = Math.max(1, sourceCount, destinationCount);
 			rowTops[target.id] = cursor;
-			cursor += rowSpan * graphStep + rowGap;
+			cursor += graphStep + rowGap;
 		}
 
 		const width = Math.max(190, canvasWidth * 0.23);
@@ -220,27 +278,16 @@
 				? Math.max(targetLeft + width + 110, canvasWidth - width - 26)
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		const minHeight = Math.max(520, cursor + 36);
-		const orderedTargets = Object.fromEntries(
-			targetNodes.map((target) => [target.id, rowTops[target.id] ?? graphBaseTop])
-		);
-
-		const groupOffsets: Record<string, number> = {};
-		function nextOffset(groupKey: string): number {
-			const current = groupOffsets[groupKey] ?? 0;
-			groupOffsets[groupKey] = current + 1;
-			return current;
-		}
+		let visibleSourceOffset = 0;
+		let hiddenSourceOffset = 0;
 
 		const sourceLayout = sourceNodes.map((node) => {
-			const targetId = targetForSource(node.id);
-			const groupKey = targetId ?? `fallback:${node.adapter}`;
 			const selected = node.adapter === inboundAdapter;
-			const visibleOffset = selected ? nextOffset(`source:${groupKey}`) : 0;
-			const hiddenOffset = selected ? 0 : nextOffset(`source-hidden:${groupKey}`) + 1;
-			const top = (targetId ? orderedTargets[targetId] : cursor) ?? graphBaseTop;
+			const visibleOffset = selected ? visibleSourceOffset++ : 0;
+			const hiddenOffset = selected ? 0 : ++hiddenSourceOffset;
 			return {
 				...node,
-				top: top + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
 				left: sourceLeft,
 				width,
 				height: nodeHeight,
@@ -259,16 +306,16 @@
 			stackIndex: 0
 		}));
 
+		let visibleDestinationOffset = 0;
+		let hiddenDestinationOffset = 0;
+
 		const destinationLayout = destinationNodes.map((node) => {
-			const targetId = targetForDestination(node.id);
-			const groupKey = targetId ?? `fallback:${node.adapter}`;
 			const selected = node.adapter === outboundAdapter;
-			const visibleOffset = selected ? nextOffset(`destination:${groupKey}`) : 0;
-			const hiddenOffset = selected ? 0 : nextOffset(`destination-hidden:${groupKey}`) + 1;
-			const top = (targetId ? orderedTargets[targetId] : cursor) ?? graphBaseTop;
+			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
+			const hiddenOffset = selected ? 0 : ++hiddenDestinationOffset;
 			return {
 				...node,
-				top: top + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
 				left: destinationLeft,
 				width,
 				height: nodeHeight,
@@ -277,9 +324,13 @@
 			};
 		});
 
+		const laidOut = [...sourceLayout, ...targetLayout, ...destinationLayout];
 		return {
-			nodes: [...sourceLayout, ...targetLayout, ...destinationLayout],
-			height: minHeight
+			nodes: laidOut,
+			height: Math.max(
+				minHeight,
+				...laidOut.filter((node) => !node.hidden).map((node) => node.top + node.height + 36)
+			)
 		};
 	}
 
@@ -313,11 +364,42 @@
 		return `M ${from.x} ${from.y} C ${from.x + distance} ${from.y}, ${to.x - distance} ${to.y}, ${to.x} ${to.y}`;
 	}
 
+	function pointBetween(from: Point, to: Point, t: number): Point {
+		const dx = to.x - from.x;
+		const distance = dx > 0 ? Math.max(8, Math.min(80, dx * 0.45)) : 24;
+		const controlA = { x: from.x + distance, y: from.y };
+		const controlB = { x: to.x - distance, y: to.y };
+		const inverse = 1 - t;
+		return {
+			x:
+				inverse ** 3 * from.x +
+				3 * inverse ** 2 * t * controlA.x +
+				3 * inverse * t ** 2 * controlB.x +
+				t ** 3 * to.x,
+			y:
+				inverse ** 3 * from.y +
+				3 * inverse ** 2 * t * controlA.y +
+				3 * inverse * t ** 2 * controlB.y +
+				t ** 3 * to.y
+		};
+	}
+
 	function edgePath(edge: MappingEdge): string {
 		const fromNode = layoutNodeById(edge.from);
 		const toNode = layoutNodeById(edge.to);
 		if (!fromNode || !toNode) return '';
 		return pathBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'));
+	}
+
+	function edgeDeletePoint(edge: MappingEdge): Point | null {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return null;
+		const point = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.92);
+		return {
+			x: point.x,
+			y: point.y - 12
+		};
 	}
 
 	function edgeAccent(edge: MappingEdge): string {
@@ -339,6 +421,7 @@
 			edge.outbound ? 'outbound-edge' : '',
 			edge.custom ? 'custom-edge' : '',
 			edge.id === activeRuleId ? 'active' : '',
+			edge.id === selectedEdgeId ? 'edge-picked' : '',
 			hoverEdges.has(edge.id) ? 'edge-connected' : '',
 			selectedEdges.has(edge.id) ? 'edge-selected' : '',
 			fromNode?.hidden || toNode?.hidden ? 'edge-muted' : ''
@@ -353,9 +436,13 @@
 		return [
 			'graph-node',
 			`${node.role}-node`,
+			node.role === 'target' ? `cardinality-${targetInputCardinality(node)}` : '',
 			node.hidden ? 'adapter-hidden' : '',
 			node.ruleId === activeRuleId ? 'active' : '',
 			node.id === selectedNodeId ? 'selection-origin' : '',
+			dragState?.validTarget === false && dragState.targetNodeId === node.id
+				? 'connection-rejected'
+				: '',
 			selectedRelated ? 'selection-related' : '',
 			node.id === hoverNodeId ? 'connection-origin' : '',
 			hoverRelated ? 'connection-related' : ''
@@ -369,10 +456,91 @@
 		toNode: MappingNode | undefined
 	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
-		return (
+		const validDirection =
 			(fromNode.role === 'source' && toNode.role === 'target') ||
-			(fromNode.role === 'target' && toNode.role === 'destination')
+			(fromNode.role === 'target' && toNode.role === 'destination');
+		return (
+			validDirection &&
+			isTypeCompatible(fromNode, toNode) &&
+			!isDuplicateConnection(fromNode.id, toNode.id) &&
+			!isTargetInputFull(fromNode, toNode)
 		);
+	}
+
+	function isDuplicateConnection(fromNodeId: string, toNodeId: string): boolean {
+		return edges.some((edge) => edge.from === fromNodeId && edge.to === toNodeId);
+	}
+
+	function isTargetInputFull(fromNode: MappingNode, toNode: MappingNode): boolean {
+		if (fromNode.role !== 'source' || toNode.role !== 'target') return false;
+		if (targetInputCardinality(toNode) !== 'one') return false;
+		return edges.some((edge) => edge.to === toNode.id && nodeById(edge.from)?.role === 'source');
+	}
+
+	function targetInputCardinality(node: MappingNode): 'one' | 'many' {
+		if (node.role !== 'target') return 'many';
+		return (
+			node.inputCardinality ?? (normalizeNodeType(node.type) === 'multi-value' ? 'many' : 'one')
+		);
+	}
+
+	function targetInputCardinalityLabel(node: MappingNode): string {
+		return targetInputCardinality(node) === 'one' ? '(1)' : '(N)';
+	}
+
+	function isTypeCompatible(fromNode: MappingNode, toNode: MappingNode): boolean {
+		const fromType = normalizeNodeType(fromNode.type);
+		const toType = normalizeNodeType(toNode.type);
+		if (!fromType || !toType) return true;
+		if (fromType === toType) return true;
+		if (toType === 'text')
+			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale'].includes(fromType);
+		if (fromType === 'text') return ['text', 'identifier', 'enum', 'locale'].includes(toType);
+		if (toType === 'identifier') return ['identifier', 'text'].includes(fromType);
+		if (toType === 'multi-value') return fromType === 'multi-value';
+		if (toType === 'json') return fromType === 'json';
+		return false;
+	}
+
+	function normalizeNodeType(type: string | undefined): string | null {
+		const normalized = type?.toLowerCase().trim();
+		if (!normalized) return null;
+		if (['string', 'text', 'name'].some((needle) => normalized.includes(needle))) return 'text';
+		if (normalized.includes('email') || normalized.includes('mail')) return 'email';
+		if (
+			normalized.includes('phone') ||
+			normalized.includes('tel') ||
+			normalized.includes('mobile')
+		) {
+			return 'phone';
+		}
+		if (normalized.includes('stable identifier') || normalized.includes('identifier'))
+			return 'identifier';
+		if (
+			normalized.includes('multi') ||
+			normalized.includes('array') ||
+			normalized.includes('list')
+		) {
+			return 'multi-value';
+		}
+		if (normalized.includes('json') || normalized.includes('object')) return 'json';
+		if (
+			normalized.includes('enum') ||
+			normalized.includes('boolean') ||
+			normalized.includes('number')
+		) {
+			return 'enum';
+		}
+		if (normalized.includes('locale') || normalized.includes('timezone')) return 'locale';
+		return normalized;
+	}
+
+	function connectionTargetForPointer(event: PointerEvent): MappingNode | undefined {
+		const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+		const handle = target?.closest?.('.node-handle.input') as HTMLElement | null;
+		const nodeElement = target?.closest?.('.graph-node') as HTMLElement | null;
+		const toNodeId = handle?.dataset.nodeId ?? nodeElement?.dataset.nodeId;
+		return toNodeId ? nodeById(toNodeId) : undefined;
 	}
 
 	function canvasPoint(event: PointerEvent): Point {
@@ -384,36 +552,81 @@
 	}
 
 	function startConnectionDrag(event: PointerEvent, node: LayoutNode) {
-		if (node.hidden || node.role === 'destination') return;
+		if (!editable || node.hidden || node.role === 'destination') return;
 		event.preventDefault();
 		event.stopPropagation();
+		pendingConnectionStart = null;
 		const from = edgePoint(node, 'from');
 		dragState = {
 			fromNodeId: node.id,
 			from,
-			to: canvasPoint(event)
+			to: canvasPoint(event),
+			validTarget: null,
+			targetNodeId: null
 		};
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', handlePointerUp);
 	}
 
+	function startEasyConnectionDrag(event: PointerEvent, node: LayoutNode) {
+		if (!editable || node.hidden || node.role === 'destination' || event.button !== 0) return;
+		if ((event.target as HTMLElement | null)?.closest('.node-handle')) return;
+		pendingConnectionStart = {
+			fromNodeId: node.id,
+			startClient: { x: event.clientX, y: event.clientY },
+			from: edgePoint(node, 'from')
+		};
+		window.addEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.addEventListener('pointerup', handleEasyConnectionPointerUp);
+	}
+
+	function handleEasyConnectionPointerMove(event: PointerEvent) {
+		if (!pendingConnectionStart) return;
+		const moved =
+			Math.abs(event.clientX - pendingConnectionStart.startClient.x) +
+			Math.abs(event.clientY - pendingConnectionStart.startClient.y);
+		if (moved < 6) return;
+		event.preventDefault();
+		dragState = {
+			fromNodeId: pendingConnectionStart.fromNodeId,
+			from: pendingConnectionStart.from,
+			to: canvasPoint(event),
+			validTarget: null,
+			targetNodeId: null
+		};
+		suppressNextNodeClickId = pendingConnectionStart.fromNodeId;
+		pendingConnectionStart = null;
+		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.removeEventListener('pointerup', handleEasyConnectionPointerUp);
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+		handlePointerMove(event);
+	}
+
+	function handleEasyConnectionPointerUp() {
+		pendingConnectionStart = null;
+		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
+		window.removeEventListener('pointerup', handleEasyConnectionPointerUp);
+	}
+
 	function handlePointerMove(event: PointerEvent) {
 		if (!dragState) return;
+		const fromNode = nodeById(dragState.fromNodeId);
+		const toNode = connectionTargetForPointer(event);
 		dragState = {
 			...dragState,
-			to: canvasPoint(event)
+			to: canvasPoint(event),
+			validTarget: toNode ? isValidConnection(fromNode, toNode) : null,
+			targetNodeId: toNode?.id ?? null
 		};
 	}
 
 	function handlePointerUp(event: PointerEvent) {
 		if (!dragState) return;
-		const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-		const handle = target?.closest?.('.node-handle.input') as HTMLElement | null;
-		const toNodeId = handle?.dataset.nodeId;
 		const fromNode = nodeById(dragState.fromNodeId);
-		const toNode = toNodeId ? nodeById(toNodeId) : undefined;
-		if (isValidConnection(fromNode, toNode) && toNodeId) {
-			addEdge(dragState.fromNodeId, toNodeId);
+		const toNode = connectionTargetForPointer(event);
+		if (isValidConnection(fromNode, toNode) && toNode) {
+			addEdge(dragState.fromNodeId, toNode.id);
 		}
 		dragState = null;
 		window.removeEventListener('pointermove', handlePointerMove);
@@ -421,21 +634,60 @@
 	}
 
 	function addEdge(from: string, to: string) {
+		if (!editable) return;
 		if (edges.some((edge) => edge.from === from && edge.to === to)) return;
 		customCounter += 1;
-		edges = [
-			...edges,
-			{
-				id: `custom-edge-${customCounter}`,
-				from,
-				to,
-				outbound: nodeById(from)?.role === 'target',
-				custom: true
-			}
-		];
+		const edge = {
+			id: `custom-edge-${customCounter}`,
+			from,
+			to,
+			outbound: nodeById(from)?.role === 'target',
+			custom: true
+		};
+		edges = [...edges, edge];
+		selectedEdgeId = edge.id;
+		selectedNodeId = null;
+		hasUnsavedDraftChanges = true;
+	}
+
+	function deleteSelectedEdge() {
+		if (!editable || !selectedEdgeId) return;
+		edges = edges.filter((edge) => edge.id !== selectedEdgeId);
+		selectedEdgeId = null;
+		hasUnsavedDraftChanges = true;
+	}
+
+	function handleGlobalKeyDown(event: KeyboardEvent) {
+		if (!editable || !selectedEdgeId || (event.key !== 'Backspace' && event.key !== 'Delete')) {
+			return;
+		}
+		const target = event.target as HTMLElement | null;
+		if (
+			target?.closest('input, textarea, select, [contenteditable="true"]') ||
+			target?.isContentEditable
+		) {
+			return;
+		}
+		event.preventDefault();
+		deleteSelectedEdge();
+	}
+
+	function selectSample(event: Event) {
+		const select = event.currentTarget as HTMLSelectElement;
+		const nextId = select.value;
+		if (nextId === selectedSampleId) return;
+		if (
+			hasUnsavedDraftChanges &&
+			!window.confirm('You have unsaved mapping draft changes. Switch profiles and discard them?')
+		) {
+			select.value = selectedSampleId ?? emptySample.id;
+			return;
+		}
+		selectedSampleId = nextId;
 	}
 
 	function addNode(role: 'source' | 'destination') {
+		if (!editable) return;
 		customCounter += 1;
 		const adapter = role === 'source' ? inboundAdapter : outboundAdapter;
 		const node: MappingNode = {
@@ -447,6 +699,7 @@
 			caption: 'drag handle to connect'
 		};
 		nodes = [...nodes, node];
+		hasUnsavedDraftChanges = true;
 		sample.rules[node.ruleId] = {
 			...fallbackRule(),
 			title: node.label,
@@ -456,6 +709,37 @@
 			trace: 'Custom draft node added. Drag a connection handle to attach it to canonical schema.'
 		};
 		selectRule(node.ruleId);
+	}
+
+	function edgeInspectorRule(edge: MappingEdge) {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		const base = sample.rules[fromNode?.ruleId ?? toNode?.ruleId ?? activeRuleId] ?? fallbackRule();
+		const source =
+			fromNode?.role === 'source'
+				? `${fromNode.adapter} / ${fromNode.label}`
+				: (base.source ?? 'Not connected');
+		const target =
+			fromNode?.role === 'target'
+				? fromNode.label
+				: toNode?.role === 'target'
+					? toNode.label
+					: (base.target ?? 'No canonical target selected');
+		const destination =
+			toNode?.role === 'destination'
+				? `${toNode.adapter} / ${toNode.label}`
+				: (base.destination ?? 'Not connected');
+		return {
+			...base,
+			title: `${fromNode?.label ?? 'Mapping edge'} -> ${toNode?.label ?? 'Target'}`,
+			source,
+			target,
+			destination,
+			validation: edge.custom
+				? 'draft edge selected; Backspace/Delete removes it'
+				: 'loaded edge selected; Backspace/Delete removes it from this draft',
+			trace: 'Selected edge. Press Backspace or Delete to remove this connection from the draft.'
+		};
 	}
 
 	function fallbackRule() {
@@ -507,8 +791,9 @@
 						<span>Source profile</span>
 						<select
 							id="sourceProfile"
-							bind:value={selectedSampleId}
+							value={selectedSampleId ?? emptySample.id}
 							disabled={loading || samples.length === 0}
+							onchange={selectSample}
 						>
 							{#if samples.length === 0}
 								<option value={emptySample.id}>No profiles</option>
@@ -520,27 +805,19 @@
 						</select>
 					</label>
 					<div class="mode-toggle" aria-label="Flow view mode">
-						<button
-							class:active={viewMode === 'overview'}
-							type="button"
-							onclick={() => (viewMode = 'overview')}
-						>
-							Overview
-						</button>
-						<button
-							class:active={viewMode === 'inbound'}
-							type="button"
-							onclick={() => (viewMode = 'inbound')}
-						>
-							Inbound mapping
-						</button>
-						<button
-							class:active={viewMode === 'outbound'}
-							type="button"
-							onclick={() => (viewMode = 'outbound')}
-						>
-							Outbound release
-						</button>
+						{#each enabledViewModes as mode (mode)}
+							<button
+								class:active={viewMode === mode}
+								type="button"
+								onclick={() => (viewMode = mode)}
+							>
+								{mode === 'overview'
+									? 'Overview'
+									: mode === 'inbound'
+										? 'Inbound mapping'
+										: 'Outbound release'}
+							</button>
+						{/each}
 					</div>
 					<button class="primary-action" type="button">Compile draft</button>
 				</div>
@@ -602,9 +879,11 @@
 								<option value={adapter}>{adapter}</option>
 							{/each}
 						</select>
-						<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
-							>+</button
-						>
+						{#if editable}
+							<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
+								>+</button
+							>
+						{/if}
 					</div>
 				{/if}
 				<div class="lane-label lane-canonical">
@@ -618,22 +897,95 @@
 								<option value={adapter}>{adapter}</option>
 							{/each}
 						</select>
-						<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
-							>+</button
-						>
+						{#if editable}
+							<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
+								>+</button
+							>
+						{/if}
 					</div>
 				{/if}
 
-				<svg class="edge-layer" viewBox={`0 0 ${canvasWidth} ${layout.height}`} aria-hidden="true">
+				<svg
+					class="edge-layer"
+					viewBox={`0 0 ${canvasWidth} ${layout.height}`}
+					aria-label="Mapping edges"
+				>
+					<rect
+						class="edge-blank-hit"
+						x="0"
+						y="0"
+						width={canvasWidth}
+						height={layout.height}
+						role="button"
+						tabindex="0"
+						aria-label="Clear mapping selection"
+						onclick={clearSelection}
+						onkeydown={handleClearSelectionKeyDown}
+					/>
 					{#each graphEdges as edge (edge.id)}
+						<path
+							class="edge-hit"
+							d={edgePath(edge)}
+							role="button"
+							tabindex="0"
+							aria-label={`Select mapping edge ${nodeById(edge.from)?.label ?? edge.from} to ${nodeById(edge.to)?.label ?? edge.to}`}
+							onclick={(event) => {
+								event.stopPropagation();
+								selectEdge(edge);
+							}}
+							onkeydown={(event) => {
+								if (event.key === 'Enter' || event.key === ' ') {
+									event.preventDefault();
+									selectEdge(edge);
+								}
+							}}
+						/>
 						<path
 							class={edgeClasses(edge)}
 							style={`--edge-accent:${edgeAccent(edge)}`}
 							d={edgePath(edge)}
 						/>
+						{#if editable && edge.id === selectedEdgeId}
+							{@const deletePoint = edgeDeletePoint(edge)}
+							{#if deletePoint}
+								<g
+									class="edge-delete-control"
+									transform={`translate(${deletePoint.x} ${deletePoint.y})`}
+									role="button"
+									tabindex="0"
+									aria-label="Delete selected mapping edge"
+									onclick={(event) => {
+										event.stopPropagation();
+										deleteSelectedEdge();
+									}}
+									onkeydown={(event) => {
+										if (event.key === 'Enter' || event.key === ' ') {
+											event.preventDefault();
+											deleteSelectedEdge();
+										}
+									}}
+								>
+									<circle r="9" />
+									<path d="M -3.5 -3.5 L 3.5 3.5 M 3.5 -3.5 L -3.5 3.5" />
+								</g>
+							{/if}
+						{/if}
 					{/each}
-					{#if dragState}
-						<path class="edge drag-edge" d={pathBetween(dragState.from, dragState.to)} />
+					{#if editable && dragState}
+						<path
+							class={`edge drag-edge ${dragState.validTarget === false ? 'drag-edge-invalid' : ''}`}
+							d={pathBetween(dragState.from, dragState.to)}
+						/>
+						{#if dragState.validTarget === false}
+							<g
+								class="drag-reject-marker"
+								transform={`translate(${dragState.to.x - 12} ${dragState.to.y - 12})`}
+								aria-hidden="true"
+							>
+								<circle r="8" />
+								<path d="M -3 -3 L 3 3 M 3 -3 L -3 3" />
+							</g>
+						{/if}
 					{/if}
 				</svg>
 
@@ -646,7 +998,15 @@
 						data-adapter={node.adapter}
 						aria-hidden={node.hidden}
 						tabindex={node.hidden ? -1 : 0}
-						onclick={() => !node.hidden && selectRule(node.ruleId)}
+						onclick={(event) => {
+							event.stopPropagation();
+							if (suppressNextNodeClickId === node.id) {
+								suppressNextNodeClickId = null;
+								return;
+							}
+							if (!node.hidden) selectRule(node.ruleId);
+						}}
+						onpointerdown={(event) => startEasyConnectionDrag(event, node)}
 						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
 						onpointerout={() => (hoverNodeId = null)}
 					>
@@ -659,6 +1019,12 @@
 							<span class="target-badge-row">
 								<span class="target-badges">
 									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
+									<span
+										class={`target-badge cardinality cardinality-${targetInputCardinality(node)}`}
+										aria-label={`Accepts ${targetInputCardinality(node) === 'one' ? 'one input' : 'multiple inputs'}`}
+									>
+										{targetInputCardinalityLabel(node)}
+									</span>
 								</span>
 								<span class="target-badges meta-badges">
 									{#if node.required}<span class="target-badge required">Required</span>{/if}
@@ -672,7 +1038,7 @@
 								</span>
 							</span>
 						{/if}
-						{#if node.role !== 'destination'}
+						{#if editable && node.role !== 'destination'}
 							<span
 								class="node-handle output"
 								data-node-id={node.id}
@@ -849,6 +1215,12 @@
 		--map-red: #b91c1c;
 		--map-violet: #6d28d9;
 		--map-radius: 4px;
+		--map-edge-flow-distance: -24;
+		--map-edge-flow-speed: 720ms;
+		--map-edge-pulse-speed: 1.2s;
+		--map-drag-edge-flow-speed: 620ms;
+		--map-edge-dash-pattern: 6 6;
+		--map-drag-edge-dash-pattern: 4 3;
 		overflow: hidden;
 		border: 1px solid var(--map-line);
 		border-radius: 8px;
@@ -1150,7 +1522,57 @@
 		width: 100%;
 		height: 100%;
 		z-index: 1;
-		pointer-events: none;
+		pointer-events: auto;
+	}
+
+	.edge-hit {
+		fill: none;
+		stroke: transparent;
+		stroke-width: 14;
+		cursor: pointer;
+		outline: none;
+		pointer-events: stroke;
+	}
+
+	.edge-hit:focus,
+	.edge-hit:focus-visible,
+	.edge-delete-control:focus,
+	.edge-delete-control:focus-visible {
+		outline: none;
+	}
+
+	.edge-blank-hit {
+		fill: transparent;
+		cursor: default;
+		pointer-events: all;
+	}
+
+	.edge-delete-control {
+		color: var(--map-text);
+		cursor: pointer;
+		pointer-events: auto;
+	}
+
+	.edge-delete-control circle {
+		fill: var(--map-surface);
+		stroke: var(--edge-accent, var(--map-red));
+		stroke-width: 1.5;
+		filter: drop-shadow(0 3px 8px rgb(0 0 0 / 0.28));
+		transform: scale(0.75);
+	}
+
+	.edge-delete-control path {
+		fill: none;
+		stroke: var(--map-red);
+		stroke-linecap: round;
+		stroke-width: 1.8;
+		transform: scale(0.75);
+	}
+
+	.edge-delete-control:hover circle,
+	.edge-delete-control:focus-visible circle {
+		fill: color-mix(in srgb, var(--map-red) 12%, var(--map-surface));
+		stroke: var(--map-red);
 	}
 
 	.edge {
@@ -1158,6 +1580,7 @@
 		stroke: #5f7085;
 		stroke-width: 1.5;
 		opacity: 0.72;
+		pointer-events: none;
 		transition:
 			opacity 180ms ease,
 			stroke 180ms ease,
@@ -1166,7 +1589,7 @@
 
 	@keyframes edge-flow {
 		to {
-			stroke-dashoffset: -28;
+			stroke-dashoffset: var(--map-edge-flow-distance);
 		}
 	}
 
@@ -1192,13 +1615,14 @@
 	}
 
 	.edge.edge-connected,
-	.edge.edge-selected {
+	.edge.edge-selected,
+	.edge.edge-picked {
 		stroke: var(--edge-accent, var(--map-brand));
-		stroke-dasharray: 6 6;
+		stroke-dasharray: var(--map-edge-dash-pattern);
 		opacity: 1;
 		animation:
-			edge-flow 680ms linear infinite,
-			connection-pulse 1.2s ease-in-out infinite;
+			edge-flow var(--map-edge-flow-speed) linear infinite,
+			connection-pulse var(--map-edge-pulse-speed) ease-in-out infinite;
 	}
 
 	.edge.edge-connected {
@@ -1209,27 +1633,56 @@
 		stroke-width: 2.7;
 	}
 
+	.edge.edge-picked {
+		stroke-width: 3;
+		filter: drop-shadow(
+			0 0 4px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 56%, transparent)
+		);
+	}
+
 	.outbound-edge {
 		stroke: #6f8198;
-		stroke-dasharray: 5 5;
 		opacity: 0.55;
 	}
 
-	.custom-edge,
-	.drag-edge {
+	.custom-edge {
 		stroke: var(--map-teal);
 		stroke-width: 2.6;
-		stroke-dasharray: 4 3;
 	}
 
 	.drag-edge {
 		stroke: var(--map-brand);
+		stroke-width: 2.6;
+		stroke-dasharray: var(--map-drag-edge-dash-pattern);
 		opacity: 0.82;
-		animation: edge-flow 620ms linear infinite;
+		animation: edge-flow var(--map-drag-edge-flow-speed) linear infinite;
+	}
+
+	.drag-edge-invalid {
+		stroke: var(--map-red);
+	}
+
+	.drag-reject-marker {
+		pointer-events: none;
+	}
+
+	.drag-reject-marker circle {
+		fill: var(--map-surface);
+		stroke: var(--map-red);
+		stroke-width: 1.6;
+		filter: drop-shadow(0 3px 8px rgb(0 0 0 / 0.28));
+	}
+
+	.drag-reject-marker path {
+		fill: none;
+		stroke: var(--map-red);
+		stroke-linecap: round;
+		stroke-width: 1.8;
 	}
 
 	.graph-node {
 		--node-accent: var(--map-brand);
+		--node-glow: color-mix(in srgb, var(--node-accent) 36%, transparent);
 		position: absolute;
 		display: grid;
 		gap: 1px;
@@ -1241,6 +1694,7 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
 		overflow: visible;
 		text-align: left;
+		cursor: pointer;
 		transition:
 			opacity 180ms ease,
 			transform 220ms ease,
@@ -1271,8 +1725,20 @@
 	}
 
 	.target-node {
-		padding-bottom: 18px;
+		padding-bottom: 20px;
 		border-color: rgba(96, 165, 250, 0.64);
+	}
+
+	.target-node.cardinality-one .node-handle.input {
+		box-shadow:
+			0 0 0 1px rgba(213, 224, 238, 0.18),
+			inset 0 0 0 2px var(--map-canvas);
+	}
+
+	.target-node.cardinality-many .node-handle.input {
+		box-shadow:
+			0 0 0 1px rgba(213, 224, 238, 0.18),
+			0 0 0 4px color-mix(in srgb, var(--map-brand) 14%, transparent);
 	}
 
 	.adapter-hidden {
@@ -1315,11 +1781,24 @@
 	.graph-node:hover,
 	.graph-node.active,
 	.graph-node.connection-origin,
-	.graph-node.selection-origin {
+	.graph-node.selection-origin,
+	.graph-node.connection-rejected {
 		border-color: var(--node-accent);
 		box-shadow:
-			0 0 0 2px color-mix(in srgb, var(--node-accent) 20%, transparent),
-			0 4px 12px rgba(0, 0, 0, 0.28);
+			0 0 0 1px color-mix(in srgb, var(--node-accent) 70%, transparent),
+			0 0 0 4px color-mix(in srgb, var(--node-accent) 14%, transparent),
+			0 0 22px 2px var(--node-glow),
+			0 8px 18px rgba(0, 0, 0, 0.3);
+	}
+
+	.graph-node.connection-rejected {
+		border-color: var(--map-red);
+		--node-glow: color-mix(in srgb, var(--map-red) 38%, transparent);
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--map-red) 70%, transparent),
+			0 0 0 4px color-mix(in srgb, var(--map-red) 16%, transparent),
+			0 0 22px 2px var(--node-glow),
+			0 8px 18px rgba(0, 0, 0, 0.3);
 	}
 
 	.graph-node.selection-origin,
@@ -1368,7 +1847,7 @@
 		position: absolute;
 		left: 7px;
 		right: 7px;
-		bottom: 5px;
+		bottom: 6px;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -1383,8 +1862,8 @@
 	}
 
 	.target-badge {
-		height: 9px;
-		padding: 0 3px;
+		height: 11px;
+		padding: 0 4px;
 		border: 1px solid color-mix(in srgb, var(--map-brand) 36%, transparent);
 		border-radius: 2px;
 		color: var(--map-muted);
@@ -1392,9 +1871,9 @@
 		font-family:
 			ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
 			monospace;
-		font-size: 7px;
+		font-size: 8px;
 		font-weight: 700;
-		line-height: 8px;
+		line-height: 10px;
 	}
 
 	.target-badge.required {
@@ -1405,6 +1884,21 @@
 	.target-badge.type {
 		color: var(--map-brand);
 		border-color: color-mix(in srgb, var(--map-brand) 52%, transparent);
+	}
+
+	.target-badge.cardinality {
+		min-width: 20px;
+		text-align: center;
+	}
+
+	.target-badge.cardinality-one {
+		color: var(--map-muted);
+		border-color: color-mix(in srgb, var(--map-muted) 42%, transparent);
+	}
+
+	.target-badge.cardinality-many {
+		color: var(--map-teal);
+		border-color: color-mix(in srgb, var(--map-teal) 54%, transparent);
 	}
 
 	.target-badge.pii {

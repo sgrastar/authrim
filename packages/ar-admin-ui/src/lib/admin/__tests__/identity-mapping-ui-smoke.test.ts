@@ -23,6 +23,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		const page = readRoute('admin/identity-mapping/+page.svelte');
 
 		expect(layout).toContain('/admin/identity-mapping');
+		expect(layout).toContain('/admin/identity-mapping/edit');
+		expect(layout).toContain('/admin/identity-mapping/overview');
 		expect(layout).toContain('/admin/identity-mapping/profiles');
 		expect(layout).toContain('/admin/identity-mapping/operations');
 		expect(layout).toContain('/admin/identity-mapping/resolution-center');
@@ -35,14 +37,45 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 	it('keeps the flow editor graph interaction affordances present', () => {
 		const flowEditor = readComponent('identity-mapping/IdentityMappingFlowEditor.svelte');
+		const pageShell = readComponent('identity-mapping/IdentityMappingPageShell.svelte');
 		const page = readRoute('admin/identity-mapping/+page.svelte');
+		const editPage = readRoute('admin/identity-mapping/edit/+page.svelte');
+		const overviewPage = readRoute('admin/identity-mapping/overview/+page.svelte');
 
 		expect(flowEditor).toContain('startConnectionDrag');
+		expect(flowEditor).toContain('startEasyConnectionDrag');
+		expect(flowEditor).toContain('pendingConnectionStart');
+		expect(flowEditor).toContain('handleEasyConnectionPointerMove');
 		expect(flowEditor).toContain('drag-edge');
+		expect(flowEditor).toContain('edge-hit');
+		expect(flowEditor).toContain('.edge-hit:focus-visible');
+		expect(flowEditor).toContain('edge-delete-control');
+		expect(flowEditor).toContain('edgeDeletePoint');
+		expect(flowEditor).toContain('isTypeCompatible');
+		expect(flowEditor).toContain('isTargetInputFull');
+		expect(flowEditor).toContain('targetInputCardinality');
+		expect(flowEditor).toContain('normalizeNodeType');
+		expect(flowEditor).toContain('drag-reject-marker');
+		expect(flowEditor).toContain('drag-edge-invalid');
+		expect(flowEditor).toContain('connection-rejected');
+		expect(flowEditor).toContain('selectEdge');
+		expect(flowEditor).toContain('clearSelection');
+		expect(flowEditor).toContain('edge-blank-hit');
+		expect(flowEditor).toContain('handleClearSelectionKeyDown');
+		expect(flowEditor).toContain('deleteSelectedEdge');
+		expect(flowEditor).toContain('handleGlobalKeyDown');
+		expect(flowEditor).toContain('beforeNavigate');
+		expect(flowEditor).toContain('beforeunload');
+		expect(flowEditor).toContain('hasUnsavedDraftChanges');
+		expect(flowEditor).toContain('--map-edge-flow-speed');
+		expect(flowEditor).toContain('--map-drag-edge-flow-speed');
 		expect(flowEditor).toContain('edge-selected');
 		expect(flowEditor).toContain('adapter-hidden');
 		expect(flowEditor).toContain('node-handle output');
 		expect(flowEditor).toContain('node-handle input');
+		expect(flowEditor).toContain('--node-glow');
+		expect(flowEditor).toContain('cardinality-one');
+		expect(flowEditor).toContain('cardinality-many');
 		expect(flowEditor).toContain('Consent status');
 		expect(flowEditor).toContain('Challenge mode');
 		expect(flowEditor).toContain('Release policy');
@@ -50,6 +83,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('Overview');
 		expect(flowEditor).toContain('Inbound mapping');
 		expect(flowEditor).toContain('Outbound release');
+		expect(flowEditor).toContain('allowedViewModes');
+		expect(flowEditor).toContain('initialViewMode');
+		expect(flowEditor).toContain('editable');
 		expect(flowEditor).toContain('view-inbound');
 		expect(flowEditor).toContain('view-outbound');
 		expect(flowEditor).toContain("role === 'source' && toNode.role === 'target'");
@@ -60,9 +96,16 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).not.toContain('Identity Mapping Control Plane');
 		expect(flowEditor).not.toContain('Authrim Admin');
 		expect(flowEditor).not.toContain('Theme');
-		expect(page).toContain('buildIdentityMappingFlowSamples');
-		expect(page).toContain('getSchemaReadiness');
-		expect(page).toContain('samples={flowSamples}');
+		expect(page).toContain('IdentityMappingPageShell');
+		expect(pageShell).toContain('buildIdentityMappingFlowSamples');
+		expect(pageShell).toContain('getSchemaReadiness');
+		expect(pageShell).toContain('samples={flowSamples}');
+		expect(editPage).toContain('pageTitle="Edit"');
+		expect(editPage).toContain("editorAllowedViewModes={['inbound', 'outbound']}");
+		expect(editPage).toContain('editorInitialViewMode="inbound"');
+		expect(overviewPage).toContain('pageTitle="Overview"');
+		expect(overviewPage).toContain("editorAllowedViewModes={['overview']}");
+		expect(overviewPage).toContain('editorEditable={false}');
 		expect(page).not.toContain('Tier 2 Operations');
 	});
 
@@ -80,6 +123,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(api).toContain('/api/admin/identity-mapping/external-schemas');
 		expect(api).toContain('/api/admin/identity-mapping/source-profiles');
 		expect(api).toContain('/api/admin/identity-mapping/source-profiles/csv/parse');
+		expect(api).toContain('/api/admin/identity-mapping/destination-profiles');
+		expect(api).toContain('/api/admin/identity-mapping/oidc/custom-scopes');
+		expect(api).toContain('/api/admin/identity-mapping/oidc/custom-claims');
 		expect(api).toContain('/api/admin/identity-mapping/templates');
 		expect(api).toContain('/api/admin/identity-mapping/schema-readiness');
 		expect(api).toContain('/rollback');
@@ -93,8 +139,14 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(profiles).toContain('listProtocolSchemas');
 		expect(profiles).toContain('listExternalSchemas');
 		expect(profiles).toContain('listSourceProfiles');
+		expect(profiles).toContain('listDestinationProfiles');
+		expect(profiles).toContain('listOidcCustomScopes');
+		expect(profiles).toContain('listOidcCustomClaims');
 		expect(profiles).toContain('parseCsvSourceProfile');
 		expect(profiles).toContain('Save draft profile');
+		expect(profiles).toContain('Save destination draft');
+		expect(profiles).toContain('Save custom scope');
+		expect(profiles).toContain('Save custom claim');
 		expect(profiles).toContain('Manual columns');
 		expect(profiles).toContain('Shift_JIS');
 		expect(profiles).toContain('listTemplates');

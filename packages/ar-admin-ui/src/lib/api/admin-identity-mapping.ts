@@ -90,6 +90,93 @@ export interface IdentityMappingSourceProfileSummary {
 	} | null;
 }
 
+export type IdentityMappingDestinationType = 'oidc' | 'csv';
+export type IdentityMappingProfileOwnerScope = 'platform' | 'tenant' | 'client';
+export type IdentityMappingRegistryOwnerScope = 'platform' | 'tenant';
+export type IdentityMappingOidcSurface = 'id_token' | 'userinfo';
+
+export interface IdentityMappingDestinationProfileVersion {
+	id: string;
+	versionLabel?: string | null;
+	lifecycleState?: string | null;
+	schemaHash?: string | null;
+	schema?: Record<string, unknown>;
+	validationSummary?: Record<string, unknown>;
+	warningSummary?: Record<string, unknown>;
+	releaseImpact?: Record<string, unknown>;
+}
+
+export interface IdentityMappingDestinationProfileSummary {
+	id: string;
+	tenantId: string;
+	destinationType: IdentityMappingDestinationType;
+	profileKey: string;
+	displayName: string;
+	ownerScopeType: IdentityMappingProfileOwnerScope;
+	ownerScopeId?: string | null;
+	baseProfileId?: string | null;
+	lifecycleState: string;
+	activeVersionId?: string | null;
+	version?: IdentityMappingDestinationProfileVersion | null;
+}
+
+export interface IdentityMappingDestinationProfileCreateRequest {
+	destinationType: IdentityMappingDestinationType;
+	profileKey: string;
+	displayName: string;
+	versionLabel?: string;
+	ownerScopeType?: IdentityMappingProfileOwnerScope;
+	ownerScopeId?: string | null;
+	baseProfileId?: string | null;
+	schema: Record<string, unknown>;
+	warningSummary?: Record<string, unknown>;
+	releaseImpact?: Record<string, unknown>;
+}
+
+export interface IdentityMappingOidcCustomScope {
+	id: string;
+	tenantId: string;
+	ownerScopeType: IdentityMappingRegistryOwnerScope;
+	ownerScopeId?: string | null;
+	scopeKey: string;
+	displayName: string;
+	description?: string | null;
+	allowedClaims: string[];
+	lifecycleState: string;
+}
+
+export interface IdentityMappingOidcCustomScopeCreateRequest {
+	scopeKey: string;
+	displayName: string;
+	description?: string | null;
+	ownerScopeType?: IdentityMappingRegistryOwnerScope;
+	ownerScopeId?: string | null;
+	allowedClaims: string[];
+}
+
+export interface IdentityMappingOidcCustomClaim {
+	id: string;
+	tenantId: string;
+	ownerScopeType: IdentityMappingRegistryOwnerScope;
+	ownerScopeId?: string | null;
+	claimName: string;
+	displayName: string;
+	valueType: string;
+	classification: string;
+	allowedSurfaces: IdentityMappingOidcSurface[];
+	lifecycleState: string;
+}
+
+export interface IdentityMappingOidcCustomClaimCreateRequest {
+	claimName: string;
+	displayName: string;
+	valueType?: string;
+	classification?: string;
+	ownerScopeType?: IdentityMappingRegistryOwnerScope;
+	ownerScopeId?: string | null;
+	allowedSurfaces?: IdentityMappingOidcSurface[];
+}
+
 export interface IdentityMappingCsvParseRequest {
 	contentBase64: string;
 	encoding?: string;
@@ -418,6 +505,101 @@ export const adminIdentityMappingAPI = {
 			}
 		);
 		return parseJson(response, 'Failed to activate identity mapping source profile');
+	},
+
+	async listDestinationProfiles(): Promise<{
+		destinationProfiles: IdentityMappingDestinationProfileSummary[];
+	}> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles`
+		);
+		return parseJson(response, 'Failed to load identity mapping destination profiles');
+	},
+
+	async createDestinationProfile(
+		request: IdentityMappingDestinationProfileCreateRequest
+	): Promise<{ result: IdentityMappingDestinationProfileSummary }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create identity mapping destination profile');
+	},
+
+	async reviewDestinationProfileVersion(
+		destinationProfileId: string,
+		destinationProfileVersionId: string
+	): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}/versions/${encodeURIComponent(destinationProfileVersionId)}/review`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
+		);
+		return parseJson(response, 'Failed to review identity mapping destination profile');
+	},
+
+	async activateDestinationProfileVersion(
+		destinationProfileId: string,
+		destinationProfileVersionId: string
+	): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}/versions/${encodeURIComponent(destinationProfileVersionId)}/activate`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
+		);
+		return parseJson(response, 'Failed to activate identity mapping destination profile');
+	},
+
+	async listOidcCustomScopes(): Promise<{ customScopes: IdentityMappingOidcCustomScope[] }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-scopes`
+		);
+		return parseJson(response, 'Failed to load OIDC custom scopes');
+	},
+
+	async createOidcCustomScope(
+		request: IdentityMappingOidcCustomScopeCreateRequest
+	): Promise<{ result: IdentityMappingOidcCustomScope }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-scopes`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create OIDC custom scope');
+	},
+
+	async listOidcCustomClaims(): Promise<{ customClaims: IdentityMappingOidcCustomClaim[] }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-claims`
+		);
+		return parseJson(response, 'Failed to load OIDC custom claims');
+	},
+
+	async createOidcCustomClaim(
+		request: IdentityMappingOidcCustomClaimCreateRequest
+	): Promise<{ result: IdentityMappingOidcCustomClaim }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-claims`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create OIDC custom claim');
 	},
 
 	async listTemplates(): Promise<{ templates: IdentityMappingTemplateSummary[] }> {

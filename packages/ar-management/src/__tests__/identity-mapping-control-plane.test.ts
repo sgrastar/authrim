@@ -216,6 +216,216 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
   });
 });
 
+describe('IdentityMappingControlPlaneRepository destination profiles', () => {
+  it('creates OIDC custom registries and validates destination profile release contracts', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'scope_library',
+          tenant_id: 'tenant_a',
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          scope_key: 'library',
+          display_name: 'Library',
+          description: null,
+          allowed_claims_json: '["library_card"]',
+          lifecycle_state: 'active',
+          created_at: 1000,
+          updated_at: 1000,
+        },
+      ],
+      queryOneRows: [
+        {
+          tenant_id: 'tenant_a',
+          validation_summary_json: '{"errorCount":0}',
+          warning_summary_json: '{"blockingWarningCount":1,"confirmedBlockingWarningCount":1}',
+          release_impact_json: '{"claimCount":2}',
+          lifecycle_state: 'draft',
+        },
+        {
+          tenant_id: 'tenant_a',
+          lifecycle_state: 'reviewed',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.createOidcCustomScope('tenant_a', {
+      scopeKey: 'library',
+      displayName: 'Library',
+      allowedClaims: ['library_card'],
+    });
+    await repository.createOidcCustomClaim('tenant_a', {
+      claimName: 'library_card',
+      displayName: 'Library card',
+      classification: 'pii',
+      allowedSurfaces: ['userinfo'],
+    });
+    const created = await repository.createDestinationProfile('tenant_a', {
+      destinationType: 'oidc',
+      profileKey: 'library_oidc',
+      displayName: 'Library OIDC',
+      schema: {
+        destinationType: 'oidc',
+        subjectContract: { required: true, strategySource: 'tenant_default_with_client_override' },
+        claimsParameter: {
+          userinfo: {
+            library_card: { essential: true },
+          },
+          acr_values: ['urn:authrim:loa:2'],
+        },
+        claims: [
+          {
+            claimName: 'sub',
+            valueType: 'string',
+            classification: 'internal',
+            surfaces: ['id_token', 'userinfo'],
+            requiredScopes: ['openid'],
+          },
+          {
+            claimName: 'library_card',
+            valueType: 'string',
+            classification: 'pii',
+            surfaces: ['userinfo'],
+            requiredScopes: ['library'],
+          },
+        ],
+      },
+      warningSummary: {
+        blockingWarningCount: 1,
+        confirmedBlockingWarningCount: 1,
+      },
+    });
+
+    await repository.reviewDestinationProfileVersion('tenant_a', created.id, created.version.id);
+    await repository.activateDestinationProfileVersion('tenant_a', created.id, created.version.id);
+
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO oidc_custom_scope_registry'),
+      expect.stringContaining('INSERT INTO oidc_custom_claim_registry'),
+      expect.stringContaining('INSERT INTO destination_profiles'),
+      expect.stringContaining('INSERT INTO destination_profile_versions'),
+      expect.stringContaining('UPDATE destination_profile_versions'),
+      expect.stringContaining('UPDATE destination_profile_versions'),
+      expect.stringContaining('UPDATE destination_profile_versions'),
+      expect.stringContaining('UPDATE destination_profiles'),
+    ]);
+    expect(created.version.releaseImpact).toMatchObject({
+      destinationType: 'oidc',
+      claimCount: 2,
+      claimsParameterClaimCount: 1,
+      essentialClaimCount: 1,
+      piiClaimCount: 1,
+    });
+  });
+
+  it('rejects OIDC destination profiles without sub', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'oidc',
+        profileKey: 'bad_oidc',
+        displayName: 'Bad OIDC',
+        schema: {
+          destinationType: 'oidc',
+          claims: [
+            {
+              claimName: 'email',
+              classification: 'pii',
+              surfaces: ['userinfo'],
+              requiredScopes: ['email'],
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+
+  it('rejects OIDC claims parameter entries that are not defined by the destination profile', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'oidc',
+        profileKey: 'bad_claims_parameter',
+        displayName: 'Bad claims parameter',
+        schema: {
+          destinationType: 'oidc',
+          claimsParameter: {
+            userinfo: {
+              unknown_claim: { essential: true },
+            },
+          },
+          claims: [
+            {
+              claimName: 'sub',
+              classification: 'internal',
+              surfaces: ['id_token'],
+              requiredScopes: ['openid'],
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+
+  it('creates CSV destination profile versions with formatter and null handling policy', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const created = await repository.createDestinationProfile('tenant_a', {
+      destinationType: 'csv',
+      profileKey: 'weekly_export',
+      displayName: 'Weekly export',
+      schema: {
+        destinationType: 'csv',
+        defaults: {
+          encoding: 'utf-8-bom',
+          includeHeader: true,
+          nullHandling: 'empty',
+          requiredMissingPolicy: 'review',
+        },
+        columns: [
+          {
+            columnName: 'email',
+            label: 'Email',
+            order: 1,
+            valueType: 'email',
+            classification: 'pii',
+            required: true,
+            formatter: { operation: 'lower' },
+            nullHandling: 'empty',
+            requiredMissingPolicy: 'review',
+            exportPolicy: { legalBasis: 'consent', purpose: 'library_export' },
+          },
+        ],
+      },
+      warningSummary: {
+        blockingWarningCount: 0,
+      },
+    });
+
+    expect(created.version.releaseImpact).toMatchObject({
+      destinationType: 'csv',
+      columnCount: 1,
+      piiColumnCount: 1,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO destination_profiles'),
+      expect.stringContaining('INSERT INTO destination_profile_versions'),
+    ]);
+  });
+});
+
 describe('IdentityMappingControlPlaneRepository policy activation', () => {
   it('compiles a load-time verified snapshot with dependency graph hash', async () => {
     const adapter = createAdapter({

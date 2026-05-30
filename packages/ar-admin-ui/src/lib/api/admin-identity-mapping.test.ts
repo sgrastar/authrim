@@ -14,6 +14,9 @@ describe('adminIdentityMappingAPI', () => {
 						protocolSchemas: [],
 						externalSchemas: [],
 						sourceProfiles: [],
+						destinationProfiles: [],
+						customScopes: [],
+						customClaims: [],
 						templates: [],
 						rows: [],
 						summary: { total: 0, pass: 0, attention: 0, blocked: 0, deferred: 0 },
@@ -46,6 +49,7 @@ describe('adminIdentityMappingAPI', () => {
 		await adminIdentityMappingAPI.listProtocolSchemas();
 		await adminIdentityMappingAPI.listExternalSchemas();
 		await adminIdentityMappingAPI.listSourceProfiles();
+		await adminIdentityMappingAPI.listDestinationProfiles();
 		await adminIdentityMappingAPI.parseCsvSourceProfile({
 			contentBase64: 'RW1haWwKYWxpY2VAZXhhbXBsZS50ZXN0',
 			encoding: 'utf-8'
@@ -58,6 +62,32 @@ describe('adminIdentityMappingAPI', () => {
 		});
 		await adminIdentityMappingAPI.reviewSourceProfileVersion('source profile 1', 'version 1');
 		await adminIdentityMappingAPI.activateSourceProfileVersion('source profile 1', 'version 1');
+		await adminIdentityMappingAPI.createDestinationProfile({
+			destinationType: 'oidc',
+			profileKey: 'library_oidc',
+			displayName: 'Library OIDC',
+			schema: { destinationType: 'oidc', claims: [{ claimName: 'sub', surfaces: ['id_token'] }] }
+		});
+		await adminIdentityMappingAPI.reviewDestinationProfileVersion(
+			'destination profile 1',
+			'version 1'
+		);
+		await adminIdentityMappingAPI.activateDestinationProfileVersion(
+			'destination profile 1',
+			'version 1'
+		);
+		await adminIdentityMappingAPI.listOidcCustomScopes();
+		await adminIdentityMappingAPI.createOidcCustomScope({
+			scopeKey: 'library',
+			displayName: 'Library',
+			allowedClaims: ['library_card']
+		});
+		await adminIdentityMappingAPI.listOidcCustomClaims();
+		await adminIdentityMappingAPI.createOidcCustomClaim({
+			claimName: 'library_card',
+			displayName: 'Library card',
+			allowedSurfaces: ['userinfo']
+		});
 		await adminIdentityMappingAPI.listTemplates();
 		await adminIdentityMappingAPI.getSchemaReadiness();
 		await adminIdentityMappingAPI.listFederationTrustSources();
@@ -83,10 +113,18 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/protocol-schemas',
 			'/api/admin/identity-mapping/external-schemas',
 			'/api/admin/identity-mapping/source-profiles',
+			'/api/admin/identity-mapping/destination-profiles',
 			'/api/admin/identity-mapping/source-profiles/csv/parse',
 			'/api/admin/identity-mapping/source-profiles',
 			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/review',
 			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/activate',
+			'/api/admin/identity-mapping/destination-profiles',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
+			'/api/admin/identity-mapping/oidc/custom-scopes',
+			'/api/admin/identity-mapping/oidc/custom-scopes',
+			'/api/admin/identity-mapping/oidc/custom-claims',
+			'/api/admin/identity-mapping/oidc/custom-claims',
 			'/api/admin/identity-mapping/templates',
 			'/api/admin/identity-mapping/schema-readiness',
 			'/api/admin/identity-mapping/federation-trust-sources',
@@ -98,15 +136,20 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/activate',
 			'/api/admin/identity-mapping/review-tasks/review%20task%201/transition'
 		]);
-		expect(fetchMock.mock.calls[5][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[6][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[7][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[8][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[9][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[10][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[11][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[12][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[14][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[15][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[16][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[17][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[18][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[22][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[23][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[24][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[25][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[26][1]).toMatchObject({ method: 'POST' });
 	});
 
 	it('surfaces API error descriptions', async () => {
