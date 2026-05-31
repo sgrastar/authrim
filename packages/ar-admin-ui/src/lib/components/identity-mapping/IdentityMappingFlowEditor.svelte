@@ -866,6 +866,7 @@
 			node.id === hoverNodeId ||
 			connectedNodeIds(selectedNodeId).has(node.id) ||
 			connectedNodeIds(hoverNodeId).has(node.id) ||
+			invalidEdgeTargetNodeIds.has(node.id) ||
 			(dragState?.validTarget === false && dragState.targetNodeId === node.id);
 		const zIndex = node.hidden
 			? Math.max(1, 4 - node.stackIndex)
@@ -3497,6 +3498,7 @@
 	.graph-node.connection-rejected {
 		border-color: var(--map-red);
 		--node-glow: color-mix(in srgb, var(--map-red) 38%, transparent);
+		background: color-mix(in srgb, var(--map-red) 16%, var(--map-surface));
 		box-shadow:
 			0 0 0 1px color-mix(in srgb, var(--map-red) 70%, transparent),
 			0 0 0 4px color-mix(in srgb, var(--map-red) 16%, transparent),
@@ -3535,12 +3537,18 @@
 	}
 
 	.target-grouped-node.connection-rejected {
+		background: color-mix(in srgb, var(--map-red) 16%, var(--map-surface));
 		outline: 2px solid color-mix(in srgb, var(--map-red) 88%, transparent);
 		outline-offset: -2px;
 		box-shadow:
 			inset 0 0 0 1px color-mix(in srgb, var(--map-red) 44%, transparent),
 			0 0 0 2px color-mix(in srgb, var(--map-red) 16%, transparent),
 			0 0 18px 1px color-mix(in srgb, var(--map-red) 30%, transparent);
+	}
+
+	.target-grouped-node.connection-rejected::after {
+		z-index: 3;
+		background: color-mix(in srgb, var(--map-red) 76%, var(--map-line));
 	}
 
 	.graph-node.locked-node {
