@@ -85,6 +85,11 @@ export interface CustomClaimSchema {
 	registration_required?: number;
 	registration_order?: number;
 	registration_placeholder?: string | null;
+	ui_group_key?: string | null;
+	ui_group_label?: string | null;
+	ui_group_order?: number;
+	ui_field_order?: number;
+	examples_json?: string | null;
 }
 
 /** Pagination info */
@@ -152,6 +157,48 @@ export interface CustomClaimSchemaInput {
 	registration_required?: boolean;
 	registration_order?: number;
 	registration_placeholder?: string | null;
+	ui_group_key?: string | null;
+	ui_group_label?: string | null;
+	ui_group_order?: number;
+	ui_field_order?: number;
+	examples_json?: unknown;
+}
+
+export interface CustomClaimPresetField {
+	field_key: string;
+	display_label: string;
+	field_type: FieldType;
+	is_pii: number;
+	is_searchable: number;
+	is_exportable: number;
+	display_order: number;
+	ui_group_key?: string | null;
+	ui_group_label?: string | null;
+	ui_group_order?: number;
+	ui_field_order?: number;
+	examples_json?: string | null;
+	scope: string;
+	description: string;
+}
+
+export interface CustomClaimPreset {
+	id: string;
+	label: string;
+	description: string;
+	fields: CustomClaimPresetField[];
+}
+
+export interface CustomClaimPresetListResponse {
+	presets: CustomClaimPreset[];
+	existing_field_keys: string[];
+}
+
+export interface ApplyCustomClaimPresetResponse {
+	preset_id: string;
+	created_count: number;
+	skipped_count: number;
+	created_field_keys: string[];
+	skipped_field_keys: string[];
 }
 
 // =============================================================================
@@ -209,6 +256,45 @@ export const adminCustomClaimsAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error_description || 'Failed to create custom claim schema');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * List schema presets that can be explicitly applied by an operator.
+	 */
+	async listPresets(): Promise<CustomClaimPresetListResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/presets`, {
+			method: 'GET',
+			credentials: 'include'
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to list custom claim presets');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Apply selected fields from a schema preset.
+	 */
+	async applyPreset(
+		presetId: string,
+		fieldKeys?: string[]
+	): Promise<ApplyCustomClaimPresetResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/custom-claims/presets/apply`, {
+			method: 'POST',
+			credentials: 'include',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ preset_id: presetId, field_keys: fieldKeys })
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || 'Failed to apply custom claim preset');
 		}
 
 		return response.json();

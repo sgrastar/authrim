@@ -97,7 +97,9 @@ export async function listCustomClaimSchemas<
     queryParams
   );
   const schemas = await adapter.query<TSchema>(
-    `SELECT * FROM custom_claim_schemas WHERE ${whereClause} ORDER BY display_order ASC, created_at ASC LIMIT ? OFFSET ?`,
+    `SELECT * FROM custom_claim_schemas WHERE ${whereClause}
+     ORDER BY ui_group_order ASC, ui_field_order ASC, display_order ASC, created_at ASC
+     LIMIT ? OFFSET ?`,
     [...queryParams, params.limit, params.offset]
   );
 

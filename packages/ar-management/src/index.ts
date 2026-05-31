@@ -207,6 +207,8 @@ import {
 import {
   adminCustomClaimsListHandler,
   adminCustomClaimCreateHandler,
+  adminCustomClaimPresetsListHandler,
+  adminCustomClaimPresetApplyHandler,
   adminCustomClaimsReservedNamesHandler,
   adminCustomClaimsStatsHandler,
   adminCustomClaimRequiredViolationsDetectHandler,
@@ -1819,6 +1821,8 @@ app.use(
 
 app.get('/api/admin/custom-claims', adminCustomClaimsListHandler);
 app.post('/api/admin/custom-claims', adminCustomClaimCreateHandler);
+app.get('/api/admin/custom-claims/presets', adminCustomClaimPresetsListHandler);
+app.post('/api/admin/custom-claims/presets/apply', adminCustomClaimPresetApplyHandler);
 app.get('/api/admin/custom-claims/reserved-names', adminCustomClaimsReservedNamesHandler);
 app.get('/api/admin/custom-claims/stats', adminCustomClaimsStatsHandler);
 app.post(

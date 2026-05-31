@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import {
 		adminCustomClaimsAPI,
+		type CustomClaimPreset,
 		type CustomClaimSchema,
 		type CustomClaimStats,
 		type FieldType,
@@ -31,6 +32,17 @@
 	let filterIsPii = $state<'' | '0' | '1'>('');
 	let filterIsActive = $state<'' | '0' | '1'>('');
 	let filterIsSystem = $state<'' | '0' | '1'>('');
+	let collapsedSchemaGroups = $state<string[]>([]);
+
+	// Preset dialog
+	let showPresetDialog = $state(false);
+	let loadingPresets = $state(false);
+	let applyingPreset = $state(false);
+	let presetError = $state('');
+	let presets = $state<CustomClaimPreset[]>([]);
+	let existingPresetFieldKeys = $state<string[]>([]);
+	let selectedPresetId = $state('');
+	let selectedPresetFieldKeys = $state<string[]>([]);
 
 	// Create dialog
 	let showCreateDialog = $state(false);
@@ -149,6 +161,68 @@
 		};
 		createError = '';
 		showCreateDialog = true;
+	}
+
+	async function openPresetDialog() {
+		showPresetDialog = true;
+		presetError = '';
+		loadingPresets = true;
+
+		try {
+			const response = await adminCustomClaimsAPI.listPresets();
+			presets = response.presets;
+			existingPresetFieldKeys = response.existing_field_keys;
+			selectedPresetId = response.presets[0]?.id ?? '';
+			selectMissingPresetFields();
+		} catch (err) {
+			console.error('Failed to load custom claim presets:', err);
+			presetError = err instanceof Error ? err.message : 'Failed to load presets';
+		} finally {
+			loadingPresets = false;
+		}
+	}
+
+	function currentPreset(): CustomClaimPreset | null {
+		return presets.find((preset) => preset.id === selectedPresetId) ?? null;
+	}
+
+	function selectMissingPresetFields() {
+		const preset = currentPreset();
+		if (!preset) {
+			selectedPresetFieldKeys = [];
+			return;
+		}
+		const existing = new Set(existingPresetFieldKeys);
+		selectedPresetFieldKeys = preset.fields
+			.filter((field) => !existing.has(field.field_key))
+			.map((field) => field.field_key);
+	}
+
+	function togglePresetField(fieldKey: string) {
+		selectedPresetFieldKeys = selectedPresetFieldKeys.includes(fieldKey)
+			? selectedPresetFieldKeys.filter((candidate) => candidate !== fieldKey)
+			: [...selectedPresetFieldKeys, fieldKey];
+	}
+
+	async function applyPreset() {
+		if (!selectedPresetId || selectedPresetFieldKeys.length === 0) {
+			presetError = 'Select at least one field to apply';
+			return;
+		}
+		applyingPreset = true;
+		presetError = '';
+
+		try {
+			await adminCustomClaimsAPI.applyPreset(selectedPresetId, selectedPresetFieldKeys);
+			showPresetDialog = false;
+			await loadSchemas();
+			await loadStats();
+		} catch (err) {
+			console.error('Failed to apply custom claim preset:', err);
+			presetError = err instanceof Error ? err.message : 'Failed to apply preset';
+		} finally {
+			applyingPreset = false;
+		}
 	}
 
 	async function submitCreate() {
@@ -323,6 +397,104 @@
 		return badges;
 	}
 
+	type SchemaGroup = {
+		key: string;
+		label: string;
+		order: number;
+		schemas: CustomClaimSchema[];
+	};
+
+	const schemaGroupLabels: Record<string, { label: string; order: number }> = {
+		identity: { label: 'Identity', order: 10 },
+		name: { label: 'Name', order: 20 },
+		contact: { label: 'Contact', order: 30 },
+		address: { label: 'Address', order: 40 },
+		profile: { label: 'Profile', order: 50 },
+		access: { label: 'Access', order: 60 },
+		custom: { label: 'Custom', order: 90 }
+	};
+
+	function schemaGroupKey(schema: CustomClaimSchema): string {
+		if (schema.ui_group_key) return schema.ui_group_key;
+		const key = schema.field_key.toLowerCase();
+		if (
+			['sub', 'subject', 'subject_id', 'user_id', 'external_id', 'linked_identity'].includes(key)
+		) {
+			return 'identity';
+		}
+		if (
+			[
+				'name',
+				'given_name',
+				'family_name',
+				'middle_name',
+				'nickname',
+				'preferred_username'
+			].includes(key)
+		) {
+			return 'name';
+		}
+		if (key === 'email' || key === 'email_verified' || key.startsWith('phone_number')) {
+			return 'contact';
+		}
+		if (key === 'address' || key.startsWith('address_')) {
+			return 'address';
+		}
+		if (
+			['profile', 'picture', 'website', 'birthdate', 'zoneinfo', 'locale', 'updated_at'].includes(
+				key
+			)
+		) {
+			return 'profile';
+		}
+		if (['groups', 'roles', 'entitlements', 'permissions', 'org', 'organization'].includes(key)) {
+			return 'access';
+		}
+		return schema.is_system ? 'profile' : 'custom';
+	}
+
+	const groupedSchemas = $derived.by<SchemaGroup[]>(() => {
+		const groups: SchemaGroup[] = [];
+		for (const schema of schemas) {
+			const key = schemaGroupKey(schema);
+			const definition = schemaGroupLabels[key] ?? schemaGroupLabels.custom;
+			const label = schema.ui_group_label || definition.label;
+			const order = schema.ui_group_order ?? definition.order;
+			let group = groups.find((candidate) => candidate.key === key);
+			if (!group) {
+				group = {
+					key,
+					label,
+					order,
+					schemas: []
+				};
+				groups.push(group);
+			}
+			group.schemas.push(schema);
+		}
+		return groups
+			.map((group) => ({
+				...group,
+				schemas: group.schemas.toSorted(
+					(a, b) =>
+						(a.ui_field_order ?? a.display_order) - (b.ui_field_order ?? b.display_order) ||
+						a.display_order - b.display_order ||
+						a.display_label.localeCompare(b.display_label)
+				)
+			}))
+			.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+	});
+
+	function isSchemaGroupCollapsed(key: string): boolean {
+		return collapsedSchemaGroups.includes(key);
+	}
+
+	function toggleSchemaGroup(key: string) {
+		collapsedSchemaGroups = isSchemaGroupCollapsed(key)
+			? collapsedSchemaGroups.filter((candidate) => candidate !== key)
+			: [...collapsedSchemaGroups, key];
+	}
+
 	onMount(() => {
 		loadSchemas();
 		loadStats();
@@ -360,6 +532,10 @@
 			</p>
 		</div>
 		<div class="page-actions">
+			<button class="btn btn-secondary" onclick={openPresetDialog}>
+				<i class="i-ph-list-plus"></i>
+				Add from Preset
+			</button>
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
 				Add Schema
@@ -408,9 +584,8 @@
 			<div>
 				<strong>System schema fields</strong>
 				<p>
-					Standard OIDC fields such as email, name, phone, and address are system schemas. If an
-					older tenant has not been seeded yet, the unfiltered list request repairs those system
-					schemas automatically.
+					Standard OIDC fields such as email, name, phone, and address are available as presets.
+					Apply only the groups this tenant needs; custom fields remain manually managed.
 				</p>
 			</div>
 		</div>
@@ -472,6 +647,7 @@
 		<div class="panel">
 			<div class="empty-state">
 				<p class="empty-state-description">No schemas found.</p>
+				<button class="btn btn-secondary" onclick={openPresetDialog}>Add from Preset</button>
 				<button class="btn btn-primary" onclick={openCreateDialog}>Add Schema</button>
 			</div>
 		</div>
@@ -490,78 +666,101 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each schemas as schema (schema.id)}
-						{@const statusInfo = getOperationStatusInfo(schema.operation_status)}
-						{@const tokenBadges = getTokenBadges(schema)}
-						<tr
-							class="cursor-pointer hover:bg-gray-50"
-							class:opacity-50={!schema.is_active}
-							onclick={() => goto(`/admin/custom-claims/${schema.id}`)}
-						>
-							<td>
-								<div class="flex items-center gap-2">
-									<code class="text-sm font-mono">{schema.field_key}</code>
-									{#if schema.is_system}
-										<span class="badge badge-neutral text-xs">System</span>
-									{/if}
-									{#if schema.claim_namespace}
-										<span class="badge badge-neutral text-xs" title={schema.claim_namespace}
-											>NS</span
-										>
-									{/if}
-								</div>
-							</td>
-							<td>{schema.display_label}</td>
-							<td>
-								<span class="badge badge-neutral">{getFieldTypeLabel(schema.field_type)}</span>
-							</td>
-							<td>
-								{#if schema.is_pii}
-									<span class="badge badge-warning">PII</span>
-								{:else}
-									<span class="badge badge-success">Non-PII</span>
-								{/if}
-							</td>
-							<td>
-								{#if tokenBadges.length > 0}
-									<div class="flex flex-wrap gap-1">
-										{#each tokenBadges as badge (badge)}
-											<span class="badge badge-info text-xs">{badge}</span>
-										{/each}
-									</div>
-								{:else}
-									<span class="text-gray-400">-</span>
-								{/if}
-							</td>
-							<td>
-								{#if schema.is_required}
-									<span class="badge badge-error">Required</span>
-								{:else}
-									<span class="text-gray-400">Optional</span>
-								{/if}
-							</td>
-							<td>
-								{#if schema.operation_status === 'error'}
-									<span class="badge badge-error">{statusInfo.label}</span>
-									<button
-										class="btn btn-secondary btn-xs ml-1"
-										onclick={(e) => {
-											e.stopPropagation();
-											retryOperation(schema);
-										}}
-										title="Retry failed operation"
-									>
-										<i class="i-ph-arrow-clockwise"></i>
-									</button>
-								{:else if schema.operation_status !== 'active'}
-									<span class="badge badge-warning">{statusInfo.label}</span>
-								{:else if !schema.is_active}
-									<span class="badge badge-neutral">Inactive</span>
-								{:else}
-									<span class="badge badge-success">Active</span>
-								{/if}
+					{#each groupedSchemas as group (group.key)}
+						<tr class="schema-group-row">
+							<td colspan="7">
+								<button
+									type="button"
+									class="schema-group-toggle"
+									aria-expanded={!isSchemaGroupCollapsed(group.key)}
+									onclick={() => toggleSchemaGroup(group.key)}
+								>
+									<span>{group.label}</span>
+									<span class="schema-group-count">{group.schemas.length}</span>
+									<i
+										class={isSchemaGroupCollapsed(group.key)
+											? 'i-ph-caret-right'
+											: 'i-ph-caret-down'}
+										aria-hidden="true"
+									></i>
+								</button>
 							</td>
 						</tr>
+						{#if !isSchemaGroupCollapsed(group.key)}
+							{#each group.schemas as schema (schema.id)}
+								{@const statusInfo = getOperationStatusInfo(schema.operation_status)}
+								{@const tokenBadges = getTokenBadges(schema)}
+								<tr
+									class="cursor-pointer hover:bg-gray-50"
+									class:opacity-50={!schema.is_active}
+									onclick={() => goto(`/admin/custom-claims/${schema.id}`)}
+								>
+									<td>
+										<div class="flex items-center gap-2">
+											<code class="text-sm font-mono">{schema.field_key}</code>
+											{#if schema.is_system}
+												<span class="badge badge-neutral text-xs">System</span>
+											{/if}
+											{#if schema.claim_namespace}
+												<span class="badge badge-neutral text-xs" title={schema.claim_namespace}
+													>NS</span
+												>
+											{/if}
+										</div>
+									</td>
+									<td>{schema.display_label}</td>
+									<td>
+										<span class="badge badge-neutral">{getFieldTypeLabel(schema.field_type)}</span>
+									</td>
+									<td>
+										{#if schema.is_pii}
+											<span class="badge badge-warning">PII</span>
+										{:else}
+											<span class="badge badge-success">Non-PII</span>
+										{/if}
+									</td>
+									<td>
+										{#if tokenBadges.length > 0}
+											<div class="flex flex-wrap gap-1">
+												{#each tokenBadges as badge (badge)}
+													<span class="badge badge-info text-xs">{badge}</span>
+												{/each}
+											</div>
+										{:else}
+											<span class="text-gray-400">-</span>
+										{/if}
+									</td>
+									<td>
+										{#if schema.is_required}
+											<span class="badge badge-error">Required</span>
+										{:else}
+											<span class="text-gray-400">Optional</span>
+										{/if}
+									</td>
+									<td>
+										{#if schema.operation_status === 'error'}
+											<span class="badge badge-error">{statusInfo.label}</span>
+											<button
+												class="btn btn-secondary btn-xs ml-1"
+												onclick={(e) => {
+													e.stopPropagation();
+													retryOperation(schema);
+												}}
+												title="Retry failed operation"
+											>
+												<i class="i-ph-arrow-clockwise"></i>
+											</button>
+										{:else if schema.operation_status !== 'active'}
+											<span class="badge badge-warning">{statusInfo.label}</span>
+										{:else if !schema.is_active}
+											<span class="badge badge-neutral">Inactive</span>
+										{:else}
+											<span class="badge badge-success">Active</span>
+										{/if}
+									</td>
+								</tr>
+							{/each}
+						{/if}
 					{/each}
 				</tbody>
 			</table>
@@ -591,6 +790,106 @@
 		{/if}
 	{/if}
 </div>
+
+<!-- Preset Modal -->
+<Modal
+	open={showPresetDialog}
+	onClose={() => {
+		showPresetDialog = false;
+		presetError = '';
+	}}
+	title="Add from Preset"
+	size="lg"
+>
+	{#if presetError}
+		<div class="alert alert-error alert-sm mb-4">{presetError}</div>
+	{/if}
+
+	{#if loadingPresets}
+		<div class="loading-state compact">
+			<i class="i-ph-circle-notch loading-spinner"></i>
+			<p>Loading presets...</p>
+		</div>
+	{:else if presets.length === 0}
+		<div class="empty-state">
+			<p class="empty-state-description">No presets are available.</p>
+		</div>
+	{:else}
+		<div class="form-group">
+			<label class="form-label" for="claim-preset">Preset</label>
+			<select
+				id="claim-preset"
+				class="form-select"
+				bind:value={selectedPresetId}
+				onchange={selectMissingPresetFields}
+			>
+				{#each presets as preset (preset.id)}
+					<option value={preset.id}>{preset.label}</option>
+				{/each}
+			</select>
+			{#if currentPreset()}
+				<p class="form-hint">{currentPreset()?.description}</p>
+			{/if}
+		</div>
+
+		{#if currentPreset()}
+			<div class="preset-field-list">
+				{#each currentPreset()?.fields ?? [] as field (field.field_key)}
+					{@const exists = existingPresetFieldKeys.includes(field.field_key)}
+					<label class="preset-field" class:disabled={exists}>
+						<input
+							type="checkbox"
+							disabled={exists}
+							checked={selectedPresetFieldKeys.includes(field.field_key)}
+							onchange={() => togglePresetField(field.field_key)}
+						/>
+						<span>
+							<strong>{field.display_label}</strong>
+							<code>{field.field_key}</code>
+							<small>{field.description}</small>
+						</span>
+						<span class="preset-field-meta">
+							<span class="badge badge-neutral">{getFieldTypeLabel(field.field_type)}</span>
+							{#if field.is_pii}
+								<span class="badge badge-warning">PII</span>
+							{:else}
+								<span class="badge badge-success">Non-PII</span>
+							{/if}
+							{#if exists}
+								<span class="badge badge-neutral">Exists</span>
+							{/if}
+						</span>
+					</label>
+				{/each}
+			</div>
+		{/if}
+
+		<div class="modal-actions">
+			<button
+				class="btn btn-secondary"
+				onclick={() => {
+					showPresetDialog = false;
+					presetError = '';
+				}}
+				disabled={applyingPreset}
+			>
+				Cancel
+			</button>
+			<button
+				class="btn btn-primary"
+				onclick={applyPreset}
+				disabled={applyingPreset || selectedPresetFieldKeys.length === 0}
+			>
+				{#if applyingPreset}
+					<i class="i-ph-circle-notch loading-spinner"></i>
+					Applying...
+				{:else}
+					Apply Selected Fields
+				{/if}
+			</button>
+		</div>
+	{/if}
+</Modal>
 
 <!-- Create Modal -->
 <Modal
@@ -917,6 +1216,60 @@
 		margin-top: 0.25rem;
 	}
 
+	.loading-state.compact {
+		min-height: 8rem;
+	}
+
+	.preset-field-list {
+		display: grid;
+		gap: 0.5rem;
+		max-height: min(58vh, 34rem);
+		overflow: auto;
+		padding-right: 0.25rem;
+	}
+
+	.preset-field {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		gap: 0.75rem;
+		align-items: center;
+		padding: 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+		cursor: pointer;
+	}
+
+	.preset-field.disabled {
+		opacity: 0.65;
+		cursor: not-allowed;
+	}
+
+	.preset-field strong,
+	.preset-field code,
+	.preset-field small {
+		display: block;
+	}
+
+	.preset-field code {
+		margin-top: 0.125rem;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+	}
+
+	.preset-field small {
+		margin-top: 0.25rem;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+	}
+
+	.preset-field-meta {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 0.375rem;
+	}
+
 	/* Compact row spacing for schema list */
 	:global(.schema-table td) {
 		padding: 6px 16px;
@@ -924,5 +1277,44 @@
 
 	:global(.schema-table th) {
 		padding: 8px 16px;
+	}
+
+	:global(.schema-table .schema-group-row td) {
+		padding: 0;
+		background: color-mix(in srgb, var(--bg-subtle) 92%, var(--bg-card));
+		border-top: 1px solid var(--border);
+		border-bottom: 1px solid var(--border);
+	}
+
+	.schema-group-toggle {
+		display: flex;
+		width: 100%;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 1rem;
+		border: 0;
+		color: var(--text-primary);
+		background: transparent;
+		font-size: 0.8125rem;
+		font-weight: 700;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.schema-group-toggle:hover,
+	.schema-group-toggle:focus-visible {
+		background: color-mix(in srgb, var(--primary) 6%, transparent);
+		outline: none;
+	}
+
+	.schema-group-count {
+		min-width: 1.5rem;
+		padding: 0.0625rem 0.375rem;
+		border-radius: 999px;
+		color: var(--primary);
+		background: color-mix(in srgb, var(--primary) 10%, transparent);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-align: center;
 	}
 </style>

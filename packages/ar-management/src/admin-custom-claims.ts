@@ -41,7 +41,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
-import { seedDefaultClaimsForTenant } from './admin-tenants';
+import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
 
 /**
  * Hono context type with admin auth variable
@@ -145,6 +145,9 @@ const VALID_OPERATION_STATUSES = new Set(['active', 'deleting', 'renaming', 'err
 
 /** Batch size for PII user data operations */
 const PII_BATCH_SIZE = 500;
+
+/** field group key pattern: lower-case symbolic key, max 64 chars */
+const UI_GROUP_KEY_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 
 // =============================================================================
 // Validation Helpers
@@ -286,6 +289,97 @@ function normalizeNamespace(
   return { valid: true, value: result };
 }
 
+function normalizeUiGroupMetadata(body: Record<string, unknown>):
+  | {
+      valid: true;
+      value: {
+        ui_group_key: string | null;
+        ui_group_label: string | null;
+        ui_group_order: number;
+        ui_field_order: number;
+        examples_json: string | null;
+      };
+    }
+  | { valid: false; field: string; reason: string } {
+  const rawGroupKey = body.ui_group_key;
+  const rawGroupLabel = body.ui_group_label;
+  const rawGroupOrder = body.ui_group_order;
+  const rawFieldOrder = body.ui_field_order;
+  const rawExamples = body.examples_json;
+
+  let uiGroupKey: string | null = null;
+  if (rawGroupKey !== undefined && rawGroupKey !== null) {
+    if (typeof rawGroupKey !== 'string' || !UI_GROUP_KEY_PATTERN.test(rawGroupKey)) {
+      return {
+        valid: false,
+        field: 'ui_group_key',
+        reason: 'ui_group_key must be lower-case and at most 64 characters',
+      };
+    }
+    uiGroupKey = rawGroupKey;
+  }
+
+  let uiGroupLabel: string | null = null;
+  if (rawGroupLabel !== undefined && rawGroupLabel !== null) {
+    if (typeof rawGroupLabel !== 'string' || rawGroupLabel.length > 100) {
+      return {
+        valid: false,
+        field: 'ui_group_label',
+        reason: 'ui_group_label must be a string of at most 100 characters',
+      };
+    }
+    uiGroupLabel = rawGroupLabel;
+  }
+
+  const uiGroupOrder =
+    typeof rawGroupOrder === 'number' && Number.isFinite(rawGroupOrder)
+      ? Math.trunc(rawGroupOrder)
+      : 90;
+  const uiFieldOrder =
+    typeof rawFieldOrder === 'number' && Number.isFinite(rawFieldOrder)
+      ? Math.trunc(rawFieldOrder)
+      : typeof body.display_order === 'number' && Number.isFinite(body.display_order)
+        ? Math.trunc(body.display_order)
+        : 100;
+
+  let examplesJson: string | null = null;
+  if (rawExamples !== undefined && rawExamples !== null) {
+    if (typeof rawExamples === 'string') {
+      try {
+        JSON.parse(rawExamples);
+      } catch {
+        return {
+          valid: false,
+          field: 'examples_json',
+          reason: 'examples_json must be valid JSON',
+        };
+      }
+      examplesJson = rawExamples;
+    } else {
+      try {
+        examplesJson = JSON.stringify(rawExamples);
+      } catch {
+        return {
+          valid: false,
+          field: 'examples_json',
+          reason: 'examples_json must be serializable JSON',
+        };
+      }
+    }
+  }
+
+  return {
+    valid: true,
+    value: {
+      ui_group_key: uiGroupKey,
+      ui_group_label: uiGroupLabel,
+      ui_group_order: uiGroupOrder,
+      ui_field_order: uiFieldOrder,
+      examples_json: examplesJson,
+    },
+  };
+}
+
 /**
  * Invalidate stats cache for a tenant
  */
@@ -315,6 +409,58 @@ async function invalidateSchemaCache(c: AdminContext, tenantId: string): Promise
   }
 }
 
+async function seedPresetCustomClaimSchemas(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  schemas: CustomClaimPresetField[]
+): Promise<number> {
+  const now = Math.floor(Date.now() / 1000);
+  let createdCount = 0;
+
+  for (const schema of schemas) {
+    const existing = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM custom_claim_schemas WHERE tenant_id = ? AND field_key = ?',
+      [tenantId, schema.field_key]
+    );
+    if (existing) {
+      continue;
+    }
+
+    await adapter.execute(
+      `INSERT INTO custom_claim_schemas (
+        id, tenant_id, field_key, active_field_key, display_label, field_type,
+        is_pii, is_required, is_active, is_system,
+        is_searchable, is_exportable, is_vc_claim,
+        include_in_id_token, include_in_userinfo, include_in_introspection,
+        scope_mode, display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order,
+        examples_json, schema_version, operation_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
+      [
+        generateId(),
+        tenantId,
+        schema.field_key,
+        schema.field_key,
+        schema.display_label,
+        schema.field_type,
+        schema.is_pii,
+        schema.is_searchable,
+        schema.is_exportable,
+        schema.display_order,
+        schema.ui_group_key,
+        schema.ui_group_label,
+        schema.ui_group_order,
+        schema.ui_field_order,
+        schema.examples_json,
+        now,
+        now,
+      ]
+    );
+    createdCount += 1;
+  }
+
+  return createdCount;
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -338,11 +484,7 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
     const isActive = c.req.query('is_active');
     const isSystem = c.req.query('is_system');
     const operationStatus = c.req.query('operation_status');
-    const hasFilters = Boolean(
-      search || fieldType || isPii || isActive || isSystem || operationStatus
-    );
-
-    let { schemas, total } = await listCustomClaimSchemas(adapter, {
+    const { schemas, total } = await listCustomClaimSchemas(adapter, {
       tenantId,
       search,
       fieldType: fieldType && VALID_FIELD_TYPES.includes(fieldType as FieldType) ? fieldType : null,
@@ -355,19 +497,6 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
       offset,
     });
 
-    if (!hasFilters && total === 0) {
-      await seedDefaultClaimsForTenant(tenantId, adapter, getLogger(asBaseContext(c)), {
-        throwOnError: true,
-      });
-      const seededResult = await listCustomClaimSchemas(adapter, {
-        tenantId,
-        limit,
-        offset,
-      });
-      schemas = seededResult.schemas;
-      total = seededResult.total;
-    }
-
     return c.json({
       schemas,
       pagination: {
@@ -379,6 +508,118 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
     });
   } catch (error) {
     console.error('Failed to list custom claim schemas:', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * GET /api/admin/custom-claims/presets
+ * List available schema presets and tenant-local existing field keys.
+ */
+export async function adminCustomClaimPresetsListHandler(c: AdminContext) {
+  try {
+    const adapter = createAdapterFromContext(c);
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const rows = await adapter.query<{ field_key: string }>(
+      'SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1',
+      [tenantId]
+    );
+
+    return c.json({
+      presets: CUSTOM_CLAIM_PRESETS,
+      existing_field_keys: rows.map((row) => row.field_key),
+    });
+  } catch (error) {
+    console.error('Failed to list custom claim presets:', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * POST /api/admin/custom-claims/presets/apply
+ * Apply selected preset fields as system schemas for the current tenant.
+ */
+export async function adminCustomClaimPresetApplyHandler(c: AdminContext) {
+  try {
+    const adapter = createAdapterFromContext(c);
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const body = await c.req.json().catch(() => ({}));
+    const presetId = typeof body.preset_id === 'string' ? body.preset_id : null;
+    const preset = presetId
+      ? CUSTOM_CLAIM_PRESETS.find((candidate) => candidate.id === presetId)
+      : null;
+
+    if (!preset) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'preset_id', reason: 'Unknown custom claim preset' },
+      });
+    }
+
+    const requestedFieldKeys =
+      Array.isArray(body.field_keys) &&
+      body.field_keys.every((value: unknown) => typeof value === 'string')
+        ? new Set<string>(body.field_keys)
+        : null;
+    const selectedFields = requestedFieldKeys
+      ? preset.fields.filter((field) => requestedFieldKeys.has(field.field_key))
+      : preset.fields;
+
+    if (requestedFieldKeys) {
+      const knownKeys = new Set(preset.fields.map((field) => field.field_key));
+      const unknownKeys = [...requestedFieldKeys].filter((fieldKey) => !knownKeys.has(fieldKey));
+      if (unknownKeys.length > 0) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: {
+            field: 'field_keys',
+            reason: `Unknown preset field keys: ${unknownKeys.join(', ')}`,
+          },
+        });
+      }
+    }
+
+    if (selectedFields.length === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'field_keys', reason: 'At least one preset field must be selected' },
+      });
+    }
+
+    const existingRows = await adapter.query<{ field_key: string }>(
+      'SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ?',
+      [tenantId]
+    );
+    const existingFieldKeys = new Set(existingRows.map((row) => row.field_key));
+    const createFields = selectedFields.filter((field) => !existingFieldKeys.has(field.field_key));
+    const skippedFieldKeys = selectedFields
+      .filter((field) => existingFieldKeys.has(field.field_key))
+      .map((field) => field.field_key);
+
+    const createdCount = await seedPresetCustomClaimSchemas(adapter, tenantId, createFields);
+
+    await invalidateStatsCache(c, tenantId);
+    await invalidateSchemaCache(c, tenantId);
+
+    await createAuditLogFromContext(
+      asBaseContext(c),
+      'custom_claim.preset_applied',
+      'custom_claim_schema',
+      preset.id,
+      {
+        preset_id: preset.id,
+        requested_field_keys: selectedFields.map((field) => field.field_key),
+        created_field_keys: createFields.map((field) => field.field_key),
+        skipped_field_keys: skippedFieldKeys,
+      }
+    );
+
+    return c.json({
+      preset_id: preset.id,
+      created_count: createdCount,
+      skipped_count: skippedFieldKeys.length,
+      created_field_keys: createFields.map((field) => field.field_key),
+      skipped_field_keys: skippedFieldKeys,
+    });
+  } catch (error) {
+    console.error('Failed to apply custom claim preset:', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -535,6 +776,13 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       claimNamespaceValue = nsResult.value;
     }
 
+    const uiMetadata = normalizeUiGroupMetadata(body);
+    if (!uiMetadata.valid) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: uiMetadata.field, reason: uiMetadata.reason },
+      });
+    }
+
     // Check for duplicate active field_key
     const existing = await findActiveCustomClaimSchemaByFieldKey(adapter, tenantId, field_key);
     if (existing) {
@@ -581,6 +829,7 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       registration_required: registrationRequired ? 1 : 0,
       registration_order: body.registration_order || 0,
       registration_placeholder: body.registration_placeholder || null,
+      ...uiMetadata.value,
     });
 
     // Fetch created schema
@@ -1061,6 +1310,44 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       body.registration_required = false;
     }
 
+    if (
+      body.ui_group_key !== undefined &&
+      body.ui_group_key !== null &&
+      (typeof body.ui_group_key !== 'string' || !UI_GROUP_KEY_PATTERN.test(body.ui_group_key))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'ui_group_key',
+          reason: 'ui_group_key must be lower-case and at most 64 characters',
+        },
+      });
+    }
+    if (
+      body.ui_group_label !== undefined &&
+      body.ui_group_label !== null &&
+      (typeof body.ui_group_label !== 'string' || body.ui_group_label.length > 100)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'ui_group_label',
+          reason: 'ui_group_label must be a string of at most 100 characters',
+        },
+      });
+    }
+    if (body.examples_json !== undefined && body.examples_json !== null) {
+      if (typeof body.examples_json === 'string') {
+        try {
+          JSON.parse(body.examples_json);
+        } catch {
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+            variables: { field: 'examples_json', reason: 'examples_json must be valid JSON' },
+          });
+        }
+      } else {
+        body.examples_json = JSON.stringify(body.examples_json);
+      }
+    }
+
     const now = Math.floor(Date.now() / 1000);
 
     // Build update fields
@@ -1086,6 +1373,11 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       registration_required: (v) => (v ? 1 : 0),
       registration_order: (v) => v,
       registration_placeholder: (v) => v || null,
+      ui_group_key: (v) => v || null,
+      ui_group_label: (v) => v || null,
+      ui_group_order: (v) => v,
+      ui_field_order: (v) => v,
+      examples_json: (v) => v || null,
     };
 
     for (const [key, transform] of Object.entries(updateableFields)) {

@@ -232,6 +232,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import {
   adminCustomClaimsListHandler,
   adminCustomClaimCreateHandler,
+  adminCustomClaimPresetsListHandler,
+  adminCustomClaimPresetApplyHandler,
   adminCustomClaimsReservedNamesHandler,
   adminCustomClaimsStatsHandler,
   adminCustomClaimRequiredViolationsDetectHandler,
@@ -433,6 +435,63 @@ describe('Custom Claims Admin API', () => {
       const { body } = await getResponseData(res);
 
       expect(body.pagination.limit).toBe(100);
+    });
+  });
+
+  describe('GET /api/admin/custom-claims/presets', () => {
+    it('should return presets and existing field keys', async () => {
+      mockDbQuery.mockResolvedValueOnce([{ field_key: 'email' }]);
+
+      const c = createMockContext({});
+      const res = await adminCustomClaimPresetsListHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(body.presets[0].id).toBe('oidc_standard');
+      expect(body.existing_field_keys).toEqual(['email']);
+    });
+  });
+
+  describe('POST /api/admin/custom-claims/presets/apply', () => {
+    it('should create missing selected preset fields and skip existing fields', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([{ field_key: 'email' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'existing-email' }]);
+      mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          preset_id: 'oidc_standard',
+          field_keys: ['name', 'email'],
+        },
+      });
+
+      const res = await adminCustomClaimPresetApplyHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(body.created_count).toBe(1);
+      expect(body.created_field_keys).toEqual(['name']);
+      expect(body.skipped_field_keys).toEqual(['email']);
+      expect(mockDbExecute.mock.calls[0][0]).toContain('INSERT INTO custom_claim_schemas');
+      expect(mockDbExecute.mock.calls[0][0]).toContain('ui_group_key');
+    });
+
+    it('should reject unknown preset field keys', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          preset_id: 'oidc_standard',
+          field_keys: ['unknown_claim'],
+        },
+      });
+
+      const res = await adminCustomClaimPresetApplyHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(400);
     });
   });
 
@@ -743,7 +802,16 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(201);
-      expect(mockDbExecute.mock.calls[0][1].slice(-5)).toEqual([0, 0, 0, null, 'employee_id']);
+      const insertSql = mockDbExecute.mock.calls[0][0] as string;
+      const insertParams = mockDbExecute.mock.calls[0][1] as unknown[];
+      const columns = insertSql
+        .slice(insertSql.indexOf('(') + 1, insertSql.indexOf(')'))
+        .split(',')
+        .map((column) => column.trim());
+      expect(insertParams[columns.indexOf('show_on_registration')]).toBe(0);
+      expect(insertParams[columns.indexOf('registration_required')]).toBe(0);
+      expect(insertParams[columns.indexOf('registration_order')]).toBe(0);
+      expect(insertParams[columns.indexOf('registration_placeholder')]).toBeNull();
     });
   });
 
