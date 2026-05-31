@@ -274,6 +274,7 @@
 	let nodes = $state<MappingNode[]>([...emptySample.nodes]);
 	let edges = $state<MappingEdge[]>([...emptySample.edges]);
 	let hoverNodeId = $state<string | null>(null);
+	let hoverTargetGroupKey = $state<string | null>(null);
 	let selectedNodeId = $state<string | null>(null);
 	let selectedEdgeId = $state<string | null>(null);
 	let collapsedTargetGroupKeys = $state<string[]>([]);
@@ -390,7 +391,9 @@
 	const selectedEdges = $derived(
 		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
 	);
-	const hoverEdges = $derived(connectedEdgeIds(hoverNodeId));
+	const hoverEdges = $derived(
+		new Set([...connectedEdgeIds(hoverNodeId), ...connectedTargetGroupEdgeIds(hoverTargetGroupKey)])
+	);
 	const enabledViewModes = $derived(
 		allowedViewModes.length > 0 ? allowedViewModes : (['overview'] satisfies ViewMode[])
 	);
@@ -576,6 +579,7 @@
 		selectedEdgeId = null;
 		selectedNodeId = null;
 		hoverNodeId = null;
+		hoverTargetGroupKey = null;
 	}
 
 	function markDraftDirty() {
@@ -593,6 +597,18 @@
 	function connectedEdgeIds(nodeId: string | null): Set<string> {
 		if (!nodeId) return new Set();
 		return connectedGraph(nodeId).edgeIds;
+	}
+
+	function connectedTargetGroupEdgeIds(groupKey: string | null): Set<string> {
+		if (!groupKey) return new Set();
+		const group = targetNodeGroups.find((candidate) => candidate.key === groupKey);
+		if (!group) return new Set();
+		return new Set(
+			group.nodes.flatMap((node) => {
+				const graph = connectedGraph(node.id);
+				return [...graph.edgeIds];
+			})
+		);
 	}
 
 	function connectedNodeIds(nodeId: string | null): Set<string> {
@@ -1940,7 +1956,7 @@
 				</div>
 				{#each layout.targetGroups as group (group.key)}
 					<button
-						class={`target-group-header ${group.collapsed ? 'collapsed' : ''}`}
+						class={`target-group-header ${group.collapsed ? 'collapsed' : ''} ${hoverTargetGroupKey === group.key ? 'group-hovered' : ''}`}
 						style={targetGroupStyle(group)}
 						type="button"
 						aria-expanded={!group.collapsed}
@@ -1949,6 +1965,8 @@
 							event.stopPropagation();
 							toggleTargetGroup(group.key);
 						}}
+						onpointerover={() => (hoverTargetGroupKey = group.key)}
+						onpointerout={() => (hoverTargetGroupKey = null)}
 					>
 						<span class="target-group-title">{group.label}</span>
 						<span class="target-group-count">{group.count}</span>
@@ -2766,12 +2784,14 @@
 	}
 
 	.target-group-header:hover,
-	.target-group-header:focus-visible {
+	.target-group-header:focus-visible,
+	.target-group-header.group-hovered {
 		border-color: var(--target-group-accent);
 		box-shadow:
-			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 64%, transparent),
-			0 0 18px color-mix(in srgb, var(--target-group-accent) 24%, transparent),
-			0 6px 14px rgb(0 0 0 / 0.24);
+			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 70%, transparent),
+			0 0 0 4px color-mix(in srgb, var(--target-group-accent) 14%, transparent),
+			0 0 22px 2px color-mix(in srgb, var(--target-group-accent) 36%, transparent),
+			0 8px 18px rgba(0, 0, 0, 0.3);
 		outline: none;
 	}
 
