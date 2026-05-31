@@ -381,7 +381,7 @@
 		edges.filter((edge) => {
 			const fromNode = layoutNodeById(edge.from);
 			const toNode = layoutNodeById(edge.to);
-			return fromNode && toNode && !fromNode.collapsed && !toNode.collapsed;
+			return fromNode && toNode && !fromNode.hidden && !toNode.hidden;
 		})
 	);
 	const selectedEdge = $derived(
@@ -555,6 +555,10 @@
 
 	function layoutNodeById(id: string): LayoutNode | undefined {
 		return laidOutNodes.find((node) => node.id === id);
+	}
+
+	function layoutTargetGroupByKey(key: string): LayoutTargetGroup | undefined {
+		return layout.targetGroups.find((group) => group.key === key);
 	}
 
 	function selectRule(ruleId: string) {
@@ -858,6 +862,15 @@
 	}
 
 	function edgePoint(node: LayoutNode, direction: 'from' | 'to'): Point {
+		if (node.role === 'target' && node.collapsed && node.targetGroupKey) {
+			const group = layoutTargetGroupByKey(node.targetGroupKey);
+			if (group) {
+				return {
+					x: direction === 'from' ? group.left + group.width : group.left,
+					y: group.top + group.height / 2
+				};
+			}
+		}
 		return {
 			x: direction === 'from' ? node.left + node.width : node.left,
 			y: node.top + node.height / 2
@@ -3201,6 +3214,29 @@
 			0 0 0 3px color-mix(in srgb, var(--node-accent) 10%, transparent),
 			0 0 18px 1px color-mix(in srgb, var(--node-accent) 28%, transparent),
 			0 8px 18px rgba(0, 0, 0, 0.26);
+	}
+
+	.target-grouped-node:hover,
+	.target-grouped-node.active,
+	.target-grouped-node.connection-origin,
+	.target-grouped-node.selection-origin,
+	.target-grouped-node.connection-related,
+	.target-grouped-node.selection-related {
+		outline: 2px solid color-mix(in srgb, var(--node-accent) 88%, transparent);
+		outline-offset: -2px;
+		box-shadow:
+			inset 0 0 0 1px color-mix(in srgb, var(--node-accent) 42%, transparent),
+			0 0 0 2px color-mix(in srgb, var(--node-accent) 16%, transparent),
+			0 0 18px 1px color-mix(in srgb, var(--node-accent) 28%, transparent);
+	}
+
+	.target-grouped-node.connection-rejected {
+		outline: 2px solid color-mix(in srgb, var(--map-red) 88%, transparent);
+		outline-offset: -2px;
+		box-shadow:
+			inset 0 0 0 1px color-mix(in srgb, var(--map-red) 44%, transparent),
+			0 0 0 2px color-mix(in srgb, var(--map-red) 16%, transparent),
+			0 0 18px 1px color-mix(in srgb, var(--map-red) 30%, transparent);
 	}
 
 	.graph-node.locked-node {
