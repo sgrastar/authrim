@@ -2806,6 +2806,11 @@
 		--map-red: #b91c1c;
 		--map-violet: #6d28d9;
 		--map-radius: 4px;
+		--map-target-surface: color-mix(in srgb, var(--map-brand) 2%, var(--map-surface));
+		--map-target-group-surface: color-mix(in srgb, var(--map-brand) 6%, var(--map-surface));
+		--map-target-group-active-surface: color-mix(in srgb, var(--map-brand) 9%, var(--map-surface));
+		--map-target-active-surface: color-mix(in srgb, var(--map-brand) 11%, var(--map-surface));
+		--map-target-related-surface: color-mix(in srgb, var(--map-brand) 7%, var(--map-surface));
 		--map-edge-flow-distance: -24;
 		--map-edge-flow-speed: 720ms;
 		--map-edge-pulse-speed: 1.2s;
@@ -2834,6 +2839,11 @@
 		--map-amber: #fbbf24;
 		--map-red: #f87171;
 		--map-violet: #a78bfa;
+		--map-target-surface: var(--map-surface);
+		--map-target-group-surface: color-mix(in srgb, var(--map-brand) 15%, var(--map-surface));
+		--map-target-group-active-surface: color-mix(in srgb, var(--map-brand) 15%, var(--map-surface));
+		--map-target-active-surface: color-mix(in srgb, var(--map-brand) 42%, var(--map-surface));
+		--map-target-related-surface: color-mix(in srgb, var(--map-brand) 18%, var(--map-surface));
 	}
 
 	.graph-toolbar,
@@ -3141,7 +3151,7 @@
 		border: 1px solid color-mix(in srgb, var(--target-group-accent) 70%, transparent);
 		border-radius: 5px 5px 0 0;
 		color: var(--map-text);
-		background: color-mix(in srgb, var(--target-group-accent) 15%, var(--map-surface));
+		background: var(--map-target-group-surface);
 		box-shadow:
 			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 8%, transparent),
 			0 4px 10px rgb(0 0 0 / 0.2);
@@ -3152,6 +3162,7 @@
 	.target-group-header:focus-visible,
 	.target-group-header.group-hovered {
 		border-color: var(--target-group-accent);
+		background: var(--map-target-group-active-surface);
 		box-shadow:
 			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 70%, transparent),
 			0 0 0 4px color-mix(in srgb, var(--target-group-accent) 14%, transparent),
@@ -3485,10 +3496,12 @@
 	.target-node {
 		padding-bottom: 20px;
 		border-color: rgba(96, 165, 250, 0.64);
+		background: var(--map-target-surface);
 	}
 
 	.target-grouped-node {
 		border-radius: 0;
+		background: var(--map-target-surface);
 		box-shadow: none;
 	}
 
@@ -3660,18 +3673,36 @@
 			0 8px 18px rgba(0, 0, 0, 0.26);
 	}
 
+	.target-node.connection-related,
+	.target-node.selection-related {
+		background: var(--map-target-related-surface);
+	}
+
+	.target-node.active,
+	.target-node.connection-origin,
+	.target-node.selection-origin {
+		background: var(--map-target-active-surface);
+	}
+
 	.target-grouped-node:hover,
 	.target-grouped-node.active,
 	.target-grouped-node.connection-origin,
 	.target-grouped-node.selection-origin,
 	.target-grouped-node.connection-related,
 	.target-grouped-node.selection-related {
+		background: var(--map-target-related-surface);
 		outline: 2px solid color-mix(in srgb, var(--node-accent) 88%, transparent);
 		outline-offset: -2px;
 		box-shadow:
 			inset 0 0 0 1px color-mix(in srgb, var(--node-accent) 42%, transparent),
 			0 0 0 2px color-mix(in srgb, var(--node-accent) 16%, transparent),
 			0 0 18px 1px color-mix(in srgb, var(--node-accent) 28%, transparent);
+	}
+
+	.target-grouped-node.active,
+	.target-grouped-node.connection-origin,
+	.target-grouped-node.selection-origin {
+		background: var(--map-target-active-surface);
 	}
 
 	.target-grouped-node.connection-rejected {
