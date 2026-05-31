@@ -119,6 +119,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('--node-glow');
 		expect(flowEditor).toContain('cardinality-one');
 		expect(flowEditor).toContain('cardinality-many');
+		expect(flowEditor).toContain('target-group-header');
+		expect(flowEditor).toContain('toggleTargetGroup');
+		expect(flowEditor).toContain('targetGroupPosition');
 		expect(flowEditor).toContain('transform-node');
 		expect(flowEditor).toContain('Consent status');
 		expect(flowEditor).toContain('Challenge mode');

@@ -254,7 +254,9 @@
 	const transformHeight = 38;
 	const graphBaseTop = $derived(showLaneProfileSelectors ? 76 : 48);
 	const graphStep = 50;
-	const rowGap = 12;
+	const targetGroupHeaderHeight = 28;
+	const targetGroupRowStep = targetHeight - 1;
+	const targetGroupGap = 10;
 
 	let canvas: HTMLDivElement;
 	let canvasWidth = $state(1000);
@@ -274,6 +276,7 @@
 	let hoverNodeId = $state<string | null>(null);
 	let selectedNodeId = $state<string | null>(null);
 	let selectedEdgeId = $state<string | null>(null);
+	let collapsedTargetGroupKeys = $state<string[]>([]);
 	let hasUnsavedDraftChanges = $state(false);
 	let activeDraftResetKey = $state<number | null>(null);
 	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -304,6 +307,26 @@
 		height: number;
 		hidden: boolean;
 		stackIndex: number;
+		collapsed?: boolean;
+		targetGroupKey?: string;
+		targetGroupPosition?: 'single' | 'first' | 'middle' | 'last';
+	}
+
+	interface TargetNodeGroup {
+		key: string;
+		label: string;
+		nodes: MappingNode[];
+	}
+
+	interface LayoutTargetGroup {
+		key: string;
+		label: string;
+		top: number;
+		left: number;
+		width: number;
+		height: number;
+		count: number;
+		collapsed: boolean;
 	}
 
 	const visibleNodes = $derived(
@@ -338,7 +361,8 @@
 	]);
 	const transformNodes = $derived(visibleNodes.filter((node) => node.role === 'transform'));
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
-	const groupedTargetNodes = $derived(groupNodesByUiGroup(targetNodes));
+	const targetNodeGroups = $derived(groupTargetNodes(targetNodes));
+	const groupedTargetNodes = $derived(targetNodeGroups.flatMap((group) => group.nodes));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
 	const sourceProfileOptions = $derived(
 		((samples.length > 0 ? samples : [sample]) as MappingSample[]).map(
@@ -353,7 +377,13 @@
 	const hasControlPlaneData = $derived(samples.length > 0);
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
-	const graphEdges = $derived(edges.filter((edge) => nodeById(edge.from) && nodeById(edge.to)));
+	const graphEdges = $derived(
+		edges.filter((edge) => {
+			const fromNode = layoutNodeById(edge.from);
+			const toNode = layoutNodeById(edge.to);
+			return fromNode && toNode && !fromNode.collapsed && !toNode.collapsed;
+		})
+	);
 	const selectedEdge = $derived(
 		selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) : null
 	);
@@ -607,32 +637,55 @@
 			});
 	}
 
-	function groupNodesByUiGroup(targets: MappingNode[]): MappingNode[] {
-		const groupKeys: string[] = [];
-		const grouped: Record<string, MappingNode[]> = {};
-		for (const node of targets) {
-			const key = node.uiGroupKey ?? node.uiGroupLabel ?? `ungrouped:${node.id}`;
-			if (!grouped[key]) {
-				groupKeys.push(key);
-				grouped[key] = [];
-			}
-			grouped[key].push(node);
-		}
-		return groupKeys.flatMap((key) => grouped[key]);
+	function targetGroupKey(node: MappingNode): string {
+		return node.uiGroupKey ?? node.uiGroupLabel ?? `ungrouped:${node.id}`;
 	}
 
-	function buildLayout(): { nodes: LayoutNode[]; height: number } {
-		const rowTops: Record<string, number> = {};
-		let cursor = graphBaseTop;
-		let previousGroupKey: string | null = null;
+	function targetGroupLabel(node: MappingNode): string {
+		return node.uiGroupLabel ?? node.uiGroupKey ?? 'Other';
+	}
 
-		for (const target of groupedTargetNodes) {
-			rowTops[target.id] = cursor;
-			const groupKey = target.uiGroupKey ?? target.uiGroupLabel ?? target.id;
-			const nextGap = previousGroupKey === groupKey ? 0 : rowGap;
-			cursor += graphStep + nextGap;
-			previousGroupKey = groupKey;
+	function groupTargetNodes(targets: MappingNode[]): TargetNodeGroup[] {
+		const groupKeys: string[] = [];
+		const grouped: Record<string, TargetNodeGroup> = {};
+		for (const node of targets) {
+			const key = targetGroupKey(node);
+			if (!grouped[key]) {
+				groupKeys.push(key);
+				grouped[key] = { key, label: targetGroupLabel(node), nodes: [] };
+			}
+			grouped[key].nodes.push(node);
 		}
+		return groupKeys
+			.map((key) => grouped[key])
+			.filter((group): group is TargetNodeGroup => Boolean(group));
+	}
+
+	function isTargetGroupCollapsed(key: string): boolean {
+		return collapsedTargetGroupKeys.includes(key);
+	}
+
+	function toggleTargetGroup(key: string) {
+		collapsedTargetGroupKeys = isTargetGroupCollapsed(key)
+			? collapsedTargetGroupKeys.filter((candidate) => candidate !== key)
+			: [...collapsedTargetGroupKeys, key];
+		clearSelection();
+	}
+
+	function targetGroupPosition(index: number, total: number): LayoutNode['targetGroupPosition'] {
+		if (total <= 1) return 'single';
+		if (index === 0) return 'first';
+		if (index === total - 1) return 'last';
+		return 'middle';
+	}
+
+	function buildLayout(): {
+		nodes: LayoutNode[];
+		targetGroups: LayoutTargetGroup[];
+		height: number;
+	} {
+		const rowTops: Record<string, number> = {};
+		const targetPositions: Record<string, LayoutNode['targetGroupPosition']> = {};
 
 		const width = Math.max(190, canvasWidth * 0.23);
 		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
@@ -649,6 +702,32 @@
 			viewMode === 'outbound'
 				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
+		let cursor = graphBaseTop;
+		const targetGroups: LayoutTargetGroup[] = [];
+
+		for (const group of targetNodeGroups) {
+			const collapsed = isTargetGroupCollapsed(group.key);
+			targetGroups.push({
+				key: group.key,
+				label: group.label,
+				top: cursor,
+				left: targetLeft,
+				width,
+				height: targetGroupHeaderHeight,
+				count: group.nodes.length,
+				collapsed
+			});
+			cursor += targetGroupHeaderHeight;
+			for (const [index, target] of group.nodes.entries()) {
+				rowTops[target.id] = cursor + index * targetGroupRowStep;
+				targetPositions[target.id] = targetGroupPosition(index, group.nodes.length);
+			}
+			if (!collapsed) {
+				cursor += group.nodes.length * targetGroupRowStep;
+			}
+			cursor += targetGroupGap;
+		}
+
 		const minHeight = Math.max(520, cursor + 36);
 		let visibleSourceOffset = 0;
 		const hiddenSourceRowOffsets: Record<string, number> = {};
@@ -680,7 +759,10 @@
 			width,
 			height: targetHeight,
 			hidden: false,
-			stackIndex: 0
+			stackIndex: 0,
+			collapsed: isTargetGroupCollapsed(targetGroupKey(node)),
+			targetGroupKey: targetGroupKey(node),
+			targetGroupPosition: targetPositions[node.id]
 		}));
 
 		const transformLayout = transformNodes.map((node) => ({
@@ -719,9 +801,12 @@
 		const laidOut = [...sourceLayout, ...transformLayout, ...targetLayout, ...destinationLayout];
 		return {
 			nodes: laidOut,
+			targetGroups,
 			height: Math.max(
 				minHeight,
-				...laidOut.filter((node) => !node.hidden).map((node) => node.top + node.height + 36)
+				...laidOut
+					.filter((node) => !node.hidden && !node.collapsed)
+					.map((node) => node.top + node.height + 36)
 			)
 		};
 	}
@@ -761,6 +846,15 @@
 
 	function transformDeleteStyle(node: LayoutNode): string {
 		return [`left:${node.left + node.width - 8}px`, `top:${node.top - 8}px`].join(';');
+	}
+
+	function targetGroupStyle(group: LayoutTargetGroup): string {
+		return [
+			`left:${group.left}px`,
+			`top:${group.top}px`,
+			`width:${group.width}px`,
+			`height:${group.height}px`
+		].join(';');
 	}
 
 	function edgePoint(node: LayoutNode, direction: 'from' | 'to'): Point {
@@ -871,8 +965,11 @@
 			'graph-node',
 			`${node.role}-node`,
 			node.role === 'target' ? `cardinality-${targetInputCardinality(node)}` : '',
+			node.role === 'target' && node.targetGroupKey ? 'target-grouped-node' : '',
+			node.targetGroupPosition ? `target-group-${node.targetGroupPosition}` : '',
 			node.locked ? 'locked-node' : '',
 			node.hidden ? 'adapter-hidden' : '',
+			node.collapsed ? 'collapsed-node' : '',
 			node.id === selectedNodeId ? 'active' : '',
 			node.id === selectedNodeId ? 'selection-origin' : '',
 			dragState?.validTarget === false && dragState.targetNodeId === node.id
@@ -1816,6 +1913,23 @@
 				<div class="lane-label lane-canonical">
 					<span>Canonical targets</span>
 				</div>
+				{#each layout.targetGroups as group (group.key)}
+					<button
+						class={`target-group-header ${group.collapsed ? 'collapsed' : ''}`}
+						style={targetGroupStyle(group)}
+						type="button"
+						aria-expanded={!group.collapsed}
+						aria-label={`${group.collapsed ? 'Expand' : 'Collapse'} ${group.label} target group`}
+						onclick={(event) => {
+							event.stopPropagation();
+							toggleTargetGroup(group.key);
+						}}
+					>
+						<span class="target-group-title">{group.label}</span>
+						<span class="target-group-count">{group.count}</span>
+						<span class="target-group-chevron" aria-hidden="true"></span>
+					</button>
+				{/each}
 				{#if viewMode !== 'inbound'}
 					<div class="lane-label lane-outbound">
 						<span>Outbound profile</span>
@@ -1951,73 +2065,75 @@
 				</svg>
 
 				{#each laidOutNodes as node (node.id)}
-					<button
-						class={nodeClasses(node)}
-						style={nodeStyle(node)}
-						type="button"
-						data-node-id={node.id}
-						data-adapter={node.adapter}
-						aria-hidden={node.hidden}
-						tabindex={node.hidden ? -1 : 0}
-						onclick={(event) => {
-							event.stopPropagation();
-							if (suppressNextNodeClickId === node.id) {
-								suppressNextNodeClickId = null;
-								return;
-							}
-							if (!node.hidden) selectRule(node.ruleId);
-						}}
-						onpointerdown={(event) => startEasyConnectionDrag(event, node)}
-						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
-						onpointerout={() => (hoverNodeId = null)}
-					>
-						{#if !node.locked && (node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'outbound'))}
-							<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
-						{/if}
-						{#if node.locked}
-							<span
-								class="node-lock-icon"
-								aria-hidden="true"
-								title="Managed by subject identifier strategy"
-							></span>
-						{/if}
-						<span>{node.label}</span>
-						{#if node.caption}
-							<small>{node.caption}</small>
-						{/if}
-						{#if node.role === 'target'}
-							<span class="target-badge-row">
-								<span class="target-badges">
-									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
-									<span
-										class={`target-badge cardinality cardinality-${targetInputCardinality(node)}`}
-										aria-label={`Accepts ${targetInputCardinality(node) === 'one' ? 'one input' : 'multiple inputs'}`}
-									>
-										{targetInputCardinalityLabel(node)}
+					{#if !node.collapsed}
+						<button
+							class={nodeClasses(node)}
+							style={nodeStyle(node)}
+							type="button"
+							data-node-id={node.id}
+							data-adapter={node.adapter}
+							aria-hidden={node.hidden}
+							tabindex={node.hidden ? -1 : 0}
+							onclick={(event) => {
+								event.stopPropagation();
+								if (suppressNextNodeClickId === node.id) {
+									suppressNextNodeClickId = null;
+									return;
+								}
+								if (!node.hidden) selectRule(node.ruleId);
+							}}
+							onpointerdown={(event) => startEasyConnectionDrag(event, node)}
+							onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
+							onpointerout={() => (hoverNodeId = null)}
+						>
+							{#if !node.locked && (node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'outbound'))}
+								<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
+							{/if}
+							{#if node.locked}
+								<span
+									class="node-lock-icon"
+									aria-hidden="true"
+									title="Managed by subject identifier strategy"
+								></span>
+							{/if}
+							<span>{node.label}</span>
+							{#if node.caption}
+								<small>{node.caption}</small>
+							{/if}
+							{#if node.role === 'target'}
+								<span class="target-badge-row">
+									<span class="target-badges">
+										{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
+										<span
+											class={`target-badge cardinality cardinality-${targetInputCardinality(node)}`}
+											aria-label={`Accepts ${targetInputCardinality(node) === 'one' ? 'one input' : 'multiple inputs'}`}
+										>
+											{targetInputCardinalityLabel(node)}
+										</span>
+									</span>
+									<span class="target-badges meta-badges">
+										{#if node.required}<span class="target-badge required">Required</span>{/if}
+										{#if node.privacy}
+											<span
+												class={`target-badge ${node.privacy.toLowerCase().replace(/[^a-z]+/g, '-')}`}
+											>
+												{node.privacy}
+											</span>
+										{/if}
 									</span>
 								</span>
-								<span class="target-badges meta-badges">
-									{#if node.required}<span class="target-badge required">Required</span>{/if}
-									{#if node.privacy}
-										<span
-											class={`target-badge ${node.privacy.toLowerCase().replace(/[^a-z]+/g, '-')}`}
-										>
-											{node.privacy}
-										</span>
-									{/if}
-								</span>
-							</span>
-						{/if}
-						{#if editable && !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
-							<span
-								class="node-handle output"
-								data-node-id={node.id}
-								aria-hidden="true"
-								onpointerdown={(event) => startConnectionDrag(event, node)}
-							></span>
-						{/if}
-					</button>
-					{#if editable && node.role === 'transform' && node.id === selectedNodeId && !node.hidden}
+							{/if}
+							{#if editable && !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
+								<span
+									class="node-handle output"
+									data-node-id={node.id}
+									aria-hidden="true"
+									onpointerdown={(event) => startConnectionDrag(event, node)}
+								></span>
+							{/if}
+						</button>
+					{/if}
+					{#if editable && node.role === 'transform' && node.id === selectedNodeId && !node.hidden && !node.collapsed}
 						<button
 							class="transform-delete-control"
 							style={transformDeleteStyle(node)}
@@ -2605,6 +2721,76 @@
 		right: 16px;
 	}
 
+	.target-group-header {
+		--target-group-accent: var(--map-brand);
+		position: absolute;
+		z-index: 4;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto auto;
+		align-items: center;
+		gap: 7px;
+		padding: 0 8px;
+		border: 1px solid color-mix(in srgb, var(--target-group-accent) 70%, transparent);
+		border-radius: 5px 5px 0 0;
+		color: var(--map-text);
+		background: color-mix(in srgb, var(--target-group-accent) 15%, var(--map-surface));
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 8%, transparent),
+			0 4px 10px rgb(0 0 0 / 0.2);
+		text-align: left;
+	}
+
+	.target-group-header:hover,
+	.target-group-header:focus-visible {
+		border-color: var(--target-group-accent);
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 64%, transparent),
+			0 0 18px color-mix(in srgb, var(--target-group-accent) 24%, transparent),
+			0 6px 14px rgb(0 0 0 / 0.24);
+		outline: none;
+	}
+
+	.target-group-title {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 12px;
+		font-weight: 900;
+		letter-spacing: 0;
+	}
+
+	.target-group-count {
+		min-width: 18px;
+		height: 16px;
+		padding: 0 5px;
+		border-radius: 999px;
+		color: var(--map-brand);
+		background: color-mix(in srgb, var(--map-brand) 14%, transparent);
+		font-size: 10px;
+		font-weight: 900;
+		line-height: 16px;
+		text-align: center;
+	}
+
+	.target-group-chevron {
+		width: 7px;
+		height: 7px;
+		border-right: 2px solid currentColor;
+		border-bottom: 2px solid currentColor;
+		opacity: 0.72;
+		transform: translateY(-1px) rotate(45deg);
+		transition: transform 160ms ease;
+	}
+
+	.target-group-header.collapsed {
+		border-radius: 5px;
+	}
+
+	.target-group-header.collapsed .target-group-chevron {
+		transform: translateX(-1px) rotate(-45deg);
+	}
+
 	.mini-tool-button {
 		height: 24px;
 		min-width: 24px;
@@ -2855,6 +3041,38 @@
 	.target-node {
 		padding-bottom: 20px;
 		border-color: rgba(96, 165, 250, 0.64);
+	}
+
+	.target-grouped-node {
+		border-radius: 0;
+		box-shadow: none;
+	}
+
+	.target-grouped-node.target-group-single,
+	.target-grouped-node.target-group-last {
+		border-radius: 0 0 5px 5px;
+		box-shadow: 0 4px 10px rgb(0 0 0 / 0.16);
+	}
+
+	.target-grouped-node.target-group-first,
+	.target-grouped-node.target-group-middle,
+	.target-grouped-node.target-group-single {
+		border-bottom-color: color-mix(in srgb, var(--map-brand) 30%, var(--map-line));
+	}
+
+	.target-grouped-node.target-group-middle,
+	.target-grouped-node.target-group-last {
+		border-top-color: color-mix(in srgb, var(--map-brand) 22%, transparent);
+	}
+
+	.target-grouped-node:hover,
+	.target-grouped-node.active,
+	.target-grouped-node.connection-origin,
+	.target-grouped-node.selection-origin,
+	.target-grouped-node.connection-rejected,
+	.target-grouped-node.connection-related,
+	.target-grouped-node.selection-related {
+		z-index: 6;
 	}
 
 	.transform-node {
