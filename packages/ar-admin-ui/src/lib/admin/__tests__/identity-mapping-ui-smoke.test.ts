@@ -79,6 +79,10 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('case');
 		expect(flowEditor).toContain('trim');
 		expect(flowEditor).toContain('text_to_boolean');
+		expect(flowEditor).toContain('json_build');
+		expect(flowEditor).toContain('json_extract_text');
+		expect(flowEditor).toContain('json_extract_boolean');
+		expect(flowEditor).toContain('json_extract_integer');
 		expect(flowEditor).toContain("toType === 'boolean'");
 		expect(flowEditor).toContain("toType === 'json'");
 		expect(flowEditor).toContain('isValidConnectionForReconnect');
@@ -86,7 +90,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('isTargetInputFull');
 		expect(flowEditor).toContain("fromNode.role !== 'source' && fromNode.role !== 'transform'");
 		expect(flowEditor).toContain("edgeFromRole === 'source' || edgeFromRole === 'transform'");
-		expect(flowEditor).toContain('!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)');
+		expect(flowEditor).toContain(
+			'!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)'
+		);
 		expect(flowEditor).toContain('targetInputCardinality');
 		expect(flowEditor).toContain('locked-node');
 		expect(flowEditor).toContain('node-lock-icon');

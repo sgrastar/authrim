@@ -24,7 +24,7 @@
 				name: string;
 				label: string;
 				kind: 'string';
-				required: false;
+				required: boolean;
 				placeholder: string;
 		  };
 	type TransformOperationSchema = {
@@ -128,6 +128,73 @@
 					kind: 'string',
 					required: false,
 					placeholder: 'empty, null, none, n/a'
+				}
+			]
+		},
+		{
+			operation: 'json_build',
+			label: 'Build JSON',
+			description:
+				'Build a JSON object from one or more inputs, or parse a single JSON text input.',
+			parameters: [
+				{
+					name: 'keyMap',
+					label: 'Key map',
+					kind: 'string',
+					required: false,
+					placeholder: '{"source_column":"jsonKey"}'
+				},
+				{
+					name: 'nullHandling',
+					label: 'Null handling',
+					kind: 'enum',
+					required: true,
+					options: [
+						{ value: 'omit', label: 'Omit empty values' },
+						{ value: 'include_null', label: 'Include null values' }
+					]
+				}
+			]
+		},
+		{
+			operation: 'json_extract_text',
+			label: 'Extract text from JSON',
+			description: 'Read a JSON path and output text.',
+			parameters: [
+				{
+					name: 'path',
+					label: 'JSON path',
+					kind: 'string',
+					required: true,
+					placeholder: 'profile.name or emails[0].value'
+				}
+			]
+		},
+		{
+			operation: 'json_extract_boolean',
+			label: 'Extract boolean from JSON',
+			description: 'Read a JSON path and output true, false, or null.',
+			parameters: [
+				{
+					name: 'path',
+					label: 'JSON path',
+					kind: 'string',
+					required: true,
+					placeholder: 'active or flags.enabled'
+				}
+			]
+		},
+		{
+			operation: 'json_extract_integer',
+			label: 'Extract integer from JSON',
+			description: 'Read a JSON path and output an integer or null.',
+			parameters: [
+				{
+					name: 'path',
+					label: 'JSON path',
+					kind: 'string',
+					required: true,
+					placeholder: 'quota.limit or memberships[0].rank'
 				}
 			]
 		}
@@ -959,7 +1026,13 @@
 	}
 
 	function startEasyConnectionDrag(event: PointerEvent, node: LayoutNode) {
-		if (!editable || node.hidden || node.locked || node.role === 'destination' || event.button !== 0)
+		if (
+			!editable ||
+			node.hidden ||
+			node.locked ||
+			node.role === 'destination' ||
+			event.button !== 0
+		)
 			return;
 		if ((event.target as HTMLElement | null)?.closest('.node-handle')) return;
 		pendingConnectionStart = {
@@ -1286,6 +1359,14 @@
 				nullValues: 'null,none,n/a,unknown'
 			};
 		}
+		if (operation === 'json_build') return { keyMap: '', nullHandling: 'omit' };
+		if (
+			operation === 'json_extract_text' ||
+			operation === 'json_extract_boolean' ||
+			operation === 'json_extract_integer'
+		) {
+			return { path: '' };
+		}
 		return {};
 	}
 
@@ -1301,7 +1382,7 @@
 			if (parameter.kind === 'enum') {
 				sanitized[parameter.name] = parameter.options.some((option) => option.value === value)
 					? value
-					: parameter.options[0]?.value ?? '';
+					: (parameter.options[0]?.value ?? '');
 			} else {
 				sanitized[parameter.name] = value;
 			}
@@ -1371,7 +1452,8 @@
 				transform: transformSummary(operation, sanitized),
 				validation: 'draft transform configured; compile validation pending',
 				output: `Transform output preview pending for ${transformSummary(operation, sanitized)}.`,
-				trace: 'Transform configuration is stored on the draft node and will be persisted as a mapping transform step.'
+				trace:
+					'Transform configuration is stored on the draft node and will be persisted as a mapping transform step.'
 			});
 		}
 		markDraftDirty();
@@ -1478,7 +1560,9 @@
 	}
 
 	function buildDraftPayload(): MappingDraftPayload {
-		const transformIds = new Set(nodes.filter((node) => node.role === 'transform').map((node) => node.id));
+		const transformIds = new Set(
+			nodes.filter((node) => node.role === 'transform').map((node) => node.id)
+		);
 		const directRules = edges.flatMap((edge) => {
 			if (transformIds.has(edge.from) || transformIds.has(edge.to)) return [];
 			const fromNode = nodeById(edge.from);
@@ -1526,7 +1610,8 @@
 			onDraftDirtyChange?.(false);
 		} catch (error) {
 			draftSubmitStatus = 'error';
-			draftSubmitMessage = error instanceof Error ? error.message : 'Failed to compile mapping draft.';
+			draftSubmitMessage =
+				error instanceof Error ? error.message : 'Failed to compile mapping draft.';
 		}
 	}
 
@@ -1992,7 +2077,9 @@
 								<p class="section-kicker">Transform step</p>
 								<h3>{schema.label}</h3>
 							</div>
-							<span class="transform-operation-pill">{activeTransformOperation(selectedTransformNode)}</span>
+							<span class="transform-operation-pill"
+								>{activeTransformOperation(selectedTransformNode)}</span
+							>
 						</div>
 						<label class="inspector-field" for={`transform-operation-${selectedTransformNode.id}`}>
 							<span>Operation</span>
@@ -2013,7 +2100,10 @@
 						</label>
 						<p class="transform-description">{schema.description}</p>
 						{#each schema.parameters as parameter (parameter.name)}
-							<label class="inspector-field" for={`transform-${selectedTransformNode.id}-${parameter.name}`}>
+							<label
+								class="inspector-field"
+								for={`transform-${selectedTransformNode.id}-${parameter.name}`}
+							>
 								<span>
 									{parameter.label}
 									{#if parameter.required}<em>Required</em>{/if}

@@ -8,7 +8,11 @@ export type TransformOperation =
 	| 'normalize'
 	| 'case'
 	| 'trim'
-	| 'text_to_boolean';
+	| 'text_to_boolean'
+	| 'json_build'
+	| 'json_extract_text'
+	| 'json_extract_boolean'
+	| 'json_extract_integer';
 
 export interface MappingNode {
 	id: string;
