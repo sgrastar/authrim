@@ -1022,7 +1022,7 @@
 		const fromNode = nodeById(edge.from);
 		const toNode = nodeById(edge.to);
 		if (!fromNode || !toNode) return false;
-		return isConnectionTypeMismatch(fromNode, toNode);
+		return isConnectionTypeMismatch(fromNode, toNode) || isConnectionCardinalityMismatch(edge);
 	}
 
 	function nodeClasses(node: LayoutNode): string {
@@ -1096,9 +1096,68 @@
 	}
 
 	function isConnectionTypeMismatch(fromNode: MappingNode, toNode: MappingNode): boolean {
-		if (fromNode.role === 'transform' || toNode.role === 'transform') return false;
 		if (!isConnectionDirectionAllowed(fromNode, toNode)) return false;
+		if (toNode.role === 'transform') return !isTypeCompatibleWithTransformInput(fromNode, toNode);
+		if (fromNode.role === 'transform') return !isTransformOutputCompatible(fromNode, toNode);
 		return !isTypeCompatible(fromNode, toNode);
+	}
+
+	function isConnectionCardinalityMismatch(edge: MappingEdge): boolean {
+		const toNode = nodeById(edge.to);
+		if (!toNode) return false;
+		if (toNode.role === 'target' && targetInputCardinality(toNode) === 'one') {
+			const incoming = targetInputEdges(toNode);
+			return incoming.length > 1 && incoming.some((candidate) => candidate.id === edge.id);
+		}
+		if (toNode.role === 'transform' && transformInputCardinality(toNode) === 'one') {
+			const incoming = transformInputEdges(toNode);
+			return incoming.length > 1 && incoming.some((candidate) => candidate.id === edge.id);
+		}
+		return false;
+	}
+
+	function targetInputEdges(node: MappingNode): MappingEdge[] {
+		return edges.filter((edge) => {
+			if (edge.to !== node.id) return false;
+			const edgeFromRole = nodeById(edge.from)?.role;
+			return edgeFromRole === 'source' || edgeFromRole === 'transform';
+		});
+	}
+
+	function transformInputEdges(node: MappingNode): MappingEdge[] {
+		return edges.filter((edge) => edge.to === node.id && nodeById(edge.from));
+	}
+
+	function transformInputCardinality(node: MappingNode): 'one' | 'many' {
+		if (node.role !== 'transform') return 'many';
+		const operation = activeTransformOperation(node);
+		return operation === 'concat' || operation === 'fallback' || operation === 'json_build'
+			? 'many'
+			: 'one';
+	}
+
+	function isTypeCompatibleWithTransformInput(
+		fromNode: MappingNode,
+		transformNode: MappingNode
+	): boolean {
+		const fromType = effectiveNodeOutputType(fromNode);
+		if (!fromType) return true;
+		const operation = activeTransformOperation(transformNode);
+		if (operation === 'json_extract_text') return fromType === 'json';
+		if (operation === 'json_extract_boolean') return fromType === 'json';
+		if (operation === 'json_extract_integer') return fromType === 'json';
+		if (operation === 'text_to_boolean') {
+			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'boolean'].includes(
+				fromType
+			);
+		}
+		return true;
+	}
+
+	function isTransformOutputCompatible(transformNode: MappingNode, toNode: MappingNode): boolean {
+		const outputType = transformOutputType(transformNode);
+		if (!outputType) return true;
+		return isTypeCompatible({ ...transformNode, role: 'source', type: outputType }, toNode);
 	}
 
 	function isTargetInputFull(
@@ -1129,7 +1188,7 @@
 	}
 
 	function isTypeCompatible(fromNode: MappingNode, toNode: MappingNode): boolean {
-		const fromType = normalizeNodeType(fromNode.type);
+		const fromType = effectiveNodeOutputType(fromNode);
 		const toType = normalizeNodeType(toNode.type);
 		if (!fromType || !toType) return true;
 		if (fromType === toType) return true;
@@ -1143,6 +1202,29 @@
 		if (toType === 'multi-value') return fromType === 'multi-value';
 		if (toType === 'json') return fromType === 'json';
 		return false;
+	}
+
+	function effectiveNodeOutputType(node: MappingNode | undefined): string | null {
+		if (!node) return null;
+		if (node.role === 'transform') return transformOutputType(node);
+		return normalizeNodeType(node.type);
+	}
+
+	function transformOutputType(node: MappingNode): string | null {
+		const operation = activeTransformOperation(node);
+		if (operation === 'text_to_boolean' || operation === 'json_extract_boolean') return 'boolean';
+		if (operation === 'json_extract_integer') return 'number';
+		if (operation === 'json_extract_text' || operation === 'concat') return 'text';
+		if (operation === 'json_build') return 'json';
+		return firstTransformInputType(node);
+	}
+
+	function firstTransformInputType(node: MappingNode): string | null {
+		for (const edge of transformInputEdges(node)) {
+			const type = effectiveNodeOutputType(nodeById(edge.from));
+			if (type) return type;
+		}
+		return null;
 	}
 
 	function normalizeNodeType(type: string | undefined): string | null {
