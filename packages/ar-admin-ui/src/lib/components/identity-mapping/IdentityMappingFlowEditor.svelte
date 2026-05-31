@@ -242,6 +242,7 @@
 	]);
 	const transformNodes = $derived(visibleNodes.filter((node) => node.role === 'transform'));
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
+	const groupedTargetNodes = $derived(groupNodesByUiGroup(targetNodes));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
 	const sourceProfileOptions = $derived(
 		((samples.length > 0 ? samples : [sample]) as MappingSample[]).map(
@@ -510,13 +511,31 @@
 			});
 	}
 
+	function groupNodesByUiGroup(targets: MappingNode[]): MappingNode[] {
+		const groupKeys: string[] = [];
+		const grouped: Record<string, MappingNode[]> = {};
+		for (const node of targets) {
+			const key = node.uiGroupKey ?? node.uiGroupLabel ?? `ungrouped:${node.id}`;
+			if (!grouped[key]) {
+				groupKeys.push(key);
+				grouped[key] = [];
+			}
+			grouped[key].push(node);
+		}
+		return groupKeys.flatMap((key) => grouped[key]);
+	}
+
 	function buildLayout(): { nodes: LayoutNode[]; height: number } {
 		const rowTops: Record<string, number> = {};
 		let cursor = graphBaseTop;
+		let previousGroupKey: string | null = null;
 
-		for (const target of targetNodes) {
+		for (const target of groupedTargetNodes) {
 			rowTops[target.id] = cursor;
-			cursor += graphStep + rowGap;
+			const groupKey = target.uiGroupKey ?? target.uiGroupLabel ?? target.id;
+			const nextGap = previousGroupKey === groupKey ? 0 : rowGap;
+			cursor += graphStep + nextGap;
+			previousGroupKey = groupKey;
 		}
 
 		const width = Math.max(190, canvasWidth * 0.23);
@@ -558,7 +577,7 @@
 			};
 		});
 
-		const targetLayout = targetNodes.map((node) => ({
+		const targetLayout = groupedTargetNodes.map((node) => ({
 			...node,
 			top: rowTops[node.id] ?? graphBaseTop,
 			left: targetLeft,
@@ -2780,7 +2799,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-size: 11.2px;
+		font-size: 14px;
 		font-weight: 400;
 		line-height: 1.15;
 	}
