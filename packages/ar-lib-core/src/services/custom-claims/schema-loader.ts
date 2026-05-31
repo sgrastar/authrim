@@ -89,7 +89,7 @@ export class SchemaLoader {
     return this.adapter.query<CustomClaimSchema>(
       `SELECT * FROM custom_claim_schemas
        WHERE tenant_id = ? AND is_active = 1 AND operation_status = 'active'
-       ORDER BY display_order ASC`,
+       ORDER BY ui_group_order ASC, ui_field_order ASC, display_order ASC`,
       [tenantId]
     );
   }

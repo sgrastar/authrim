@@ -479,6 +479,11 @@ CREATE TABLE IF NOT EXISTS custom_claim_schemas (
   registration_required BOOLEAN NOT NULL DEFAULT FALSE,
   registration_order INTEGER NOT NULL DEFAULT 0,
   registration_placeholder TEXT,
+  ui_group_key TEXT,
+  ui_group_label TEXT,
+  ui_group_order INTEGER NOT NULL DEFAULT 0,
+  ui_field_order INTEGER NOT NULL DEFAULT 0,
+  examples_json JSONB,
   CONSTRAINT custom_claim_schemas_active_key UNIQUE(tenant_id, active_field_key),
   CONSTRAINT custom_claim_schemas_scope_mode_check CHECK (scope_mode IN ('all', 'any'))
 );

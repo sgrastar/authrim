@@ -311,13 +311,13 @@ describe('migration seed SQL portability', () => {
     expect(migrationsWithEpochHelpers.length).toBeGreaterThan(0);
   });
 
-  it('uses deterministic claim schema IDs instead of sqlite randomblob seeds', () => {
+  it('does not auto-seed OIDC custom claim schemas from core migrations', () => {
     const sql = readMigration('006_core_extended_operations.sql');
 
-    const claimSeedSql = sql.slice(sql.indexOf('Seed default OIDC claim schemas'));
-    expect(claimSeedSql).not.toContain('randomblob(');
-    expect(sql).toContain("'system_claim_' || t.id || '_name'");
-    expect(sql).toContain("'system_claim_' || t.id || '_address_country'");
+    expect(sql).not.toContain('Seed default OIDC claim schemas');
+    expect(sql).not.toContain('randomblob(');
+    expect(sql).not.toContain("'system_claim_' || t.id || '_name'");
+    expect(sql).not.toContain("'system_claim_' || t.id || '_address_country'");
   });
 
   it('removes partial indexes from migration assets in the current gate', () => {

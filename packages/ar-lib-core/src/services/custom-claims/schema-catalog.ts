@@ -30,6 +30,11 @@ export interface SeedCustomClaimSchemaInput {
   is_searchable: number;
   is_exportable: number;
   display_order: number;
+  ui_group_key?: string | null;
+  ui_group_label?: string | null;
+  ui_group_order?: number;
+  ui_field_order?: number;
+  examples_json?: string | null;
 }
 
 export interface SeedCustomClaimSchemasParams {
@@ -118,9 +123,10 @@ export async function seedCustomClaimSchemas({
         is_pii, is_required, is_active, is_system,
         is_searchable, is_exportable, is_vc_claim,
         include_in_id_token, include_in_userinfo, include_in_introspection,
-        scope_mode, display_order, schema_version, operation_status,
+        scope_mode, display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order,
+        examples_json, schema_version, operation_status,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, 1, 'active', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
       [
         idFactory(),
         tenantId,
@@ -132,6 +138,11 @@ export async function seedCustomClaimSchemas({
         schema.is_searchable,
         schema.is_exportable,
         schema.display_order,
+        schema.ui_group_key ?? null,
+        schema.ui_group_label ?? null,
+        schema.ui_group_order ?? 0,
+        schema.ui_field_order ?? schema.display_order,
+        schema.examples_json ?? null,
         now,
         now,
       ]
