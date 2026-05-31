@@ -7,6 +7,7 @@ export type CsvSourceProfileValueType =
   | 'phone'
   | 'number'
   | 'boolean'
+  | 'json'
   | 'date'
   | 'datetime';
 
@@ -349,12 +350,24 @@ function inferValueType(headerName: string, nonEmptyValues: string[]): CsvSource
   if (/phone|mobile|tel/i.test(headerName)) return 'phone';
   if (nonEmptyValues.every((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))) return 'email';
   if (nonEmptyValues.every((value) => /^(true|false|yes|no|0|1)$/i.test(value))) return 'boolean';
+  if (nonEmptyValues.every((value) => isJsonText(value))) return 'json';
   if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return 'number';
   if (nonEmptyValues.every((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))) return 'date';
   if (nonEmptyValues.every((value) => !Number.isNaN(Date.parse(value)) && /[tT:]/.test(value))) {
     return 'datetime';
   }
   return 'string';
+}
+
+function isJsonText(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function detectDelimiter(

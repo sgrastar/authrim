@@ -74,6 +74,11 @@ const catalogEntry = {
   valueType: 'string',
   cardinality: 'single' as const,
   classification: 'pii' as const,
+  uiGroupKey: 'contact',
+  uiGroupLabel: 'Contact',
+  uiGroupOrder: 20,
+  uiFieldOrder: 10,
+  examples: ['john@example.com'],
 };
 
 describe('IdentityMappingControlPlaneRepository catalog operations', () => {
@@ -104,6 +109,9 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       expect.stringContaining('INSERT INTO field_catalog_entries'),
       expect.stringContaining('INSERT INTO custom_field_catalog_entries'),
     ]);
+    expect(adapter.executes[2].params).toEqual(
+      expect.arrayContaining(['contact', 'Contact', 20, 10, '["john@example.com"]'])
+    );
   });
 
   it('rejects custom fields that shadow built-in catalog fields', async () => {
@@ -129,6 +137,64 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       code: 'invalid_request',
     });
     expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('lists catalog entries with catalog summaries', async () => {
+    const adapter = createAdapter({
+      queryRows: [
+        {
+          id: 'catalog_1',
+          tenant_id: 'tenant_a',
+          catalog_key: 'default',
+          display_name: 'Default Catalog',
+          lifecycle_state: 'active',
+          version_id: 'version_1',
+          version_label: 'v1',
+          bundle_hash: 'hash_1',
+          entry_id: 'entry_1',
+          stable_field_id: 'field.canonical.email',
+          namespace: 'authrim.profile',
+          path: 'email',
+          target_taxonomy: 'canonical',
+          value_type: 'string',
+          cardinality: 'single',
+          classification: 'pii',
+          aliases_json: '[{"namespace":"oidc","path":"email"}]',
+          ui_group_key: 'contact',
+          ui_group_label: 'Contact',
+          ui_group_order: 20,
+          ui_field_order: 10,
+          examples_json: '["john@example.com"]',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const catalogs = await repository.listCatalogs('tenant_a');
+
+    expect(catalogs).toEqual([
+      expect.objectContaining({
+        id: 'catalog_1',
+        entries: [
+          {
+            id: 'entry_1',
+            stableFieldId: 'field.canonical.email',
+            namespace: 'authrim.profile',
+            path: 'email',
+            targetTaxonomy: 'canonical',
+            valueType: 'string',
+            cardinality: 'single',
+            classification: 'pii',
+            aliases: [{ namespace: 'oidc', path: 'email' }],
+            uiGroupKey: 'contact',
+            uiGroupLabel: 'Contact',
+            uiGroupOrder: 20,
+            uiFieldOrder: 10,
+            examples: ['john@example.com'],
+          },
+        ],
+      }),
+    ]);
   });
 });
 
@@ -157,6 +223,7 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
   it('creates, reviews, and activates CSV source profile versions', async () => {
     const adapter = createAdapter({
       queryOneRows: [
+        null,
         {
           warning_summary_json: '{"blockingWarningCount":1,"confirmedBlockingWarningCount":1}',
           lifecycle_state: 'draft',
@@ -214,6 +281,59 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
     });
     expect(adapter.executes).toHaveLength(0);
   });
+
+  it('rejects duplicate source profile keys before hitting database constraints', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'existing_source_profile' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createSourceProfile('tenant_a', {
+        sourceType: 'csv',
+        profileKey: 'workday_csv',
+        displayName: 'Workday CSV',
+        schema: {
+          sourceType: 'csv',
+          columns: [{ stableColumnId: 'csv.email.1', headerName: 'Email' }],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('deletes source profiles and their versions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'source_profile_1' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const deleted = await repository.deleteSourceProfile('tenant_a', 'source_profile_1');
+
+    expect(deleted).toEqual({ id: 'source_profile_1', deleted: true });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('DELETE FROM source_profile_versions'),
+      expect.stringContaining('DELETE FROM source_profiles'),
+    ]);
+    expect(adapter.executes[0].params).toEqual(['tenant_a', 'source_profile_1']);
+    expect(adapter.executes[1].params).toEqual(['tenant_a', 'source_profile_1']);
+  });
+
+  it('rejects deleting missing source profiles', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [null],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(repository.deleteSourceProfile('tenant_a', 'missing')).rejects.toMatchObject({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
 });
 
 describe('IdentityMappingControlPlaneRepository destination profiles', () => {
@@ -235,6 +355,7 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
         },
       ],
       queryOneRows: [
+        null,
         {
           tenant_id: 'tenant_a',
           validation_summary_json: '{"errorCount":0}',
@@ -423,6 +544,79 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect.stringContaining('INSERT INTO destination_profiles'),
       expect.stringContaining('INSERT INTO destination_profile_versions'),
     ]);
+  });
+
+  it('rejects duplicate destination profile keys before hitting database constraints', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'existing_destination_profile' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'csv',
+        profileKey: 'weekly_export',
+        displayName: 'Weekly export',
+        schema: {
+          destinationType: 'csv',
+          columns: [
+            {
+              columnName: 'email',
+              label: 'Email',
+              order: 1,
+              valueType: 'email',
+              classification: 'pii',
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('deletes destination profiles and their versions', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'destination_profile_1', tenant_id: 'tenant_a' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const deleted = await repository.deleteDestinationProfile('tenant_a', 'destination_profile_1');
+
+    expect(deleted).toEqual({ id: 'destination_profile_1', deleted: true });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('DELETE FROM destination_profile_versions'),
+      expect.stringContaining('DELETE FROM destination_profiles'),
+    ]);
+    expect(adapter.executes[0].params).toEqual(['tenant_a', 'destination_profile_1']);
+    expect(adapter.executes[1].params).toEqual(['tenant_a', 'destination_profile_1']);
+  });
+
+  it('can delete platform destination profiles when platform scope is allowed', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'platform_destination_profile_1', tenant_id: 'platform' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.deleteDestinationProfile('tenant_a', 'platform_destination_profile_1', true);
+
+    expect(adapter.executes[0].params).toEqual(['platform', 'platform_destination_profile_1']);
+    expect(adapter.executes[1].params).toEqual(['platform', 'platform_destination_profile_1']);
+  });
+
+  it('rejects deleting missing destination profiles', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [null],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(repository.deleteDestinationProfile('tenant_a', 'missing')).rejects.toMatchObject({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 });
 

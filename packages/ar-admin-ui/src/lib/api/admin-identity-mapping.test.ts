@@ -62,6 +62,7 @@ describe('adminIdentityMappingAPI', () => {
 		});
 		await adminIdentityMappingAPI.reviewSourceProfileVersion('source profile 1', 'version 1');
 		await adminIdentityMappingAPI.activateSourceProfileVersion('source profile 1', 'version 1');
+		await adminIdentityMappingAPI.deleteSourceProfile('source profile 1');
 		await adminIdentityMappingAPI.createDestinationProfile({
 			destinationType: 'oidc',
 			profileKey: 'library_oidc',
@@ -76,6 +77,7 @@ describe('adminIdentityMappingAPI', () => {
 			'destination profile 1',
 			'version 1'
 		);
+		await adminIdentityMappingAPI.deleteDestinationProfile('destination profile 1');
 		await adminIdentityMappingAPI.listOidcCustomScopes();
 		await adminIdentityMappingAPI.createOidcCustomScope({
 			scopeKey: 'library',
@@ -93,6 +95,22 @@ describe('adminIdentityMappingAPI', () => {
 		await adminIdentityMappingAPI.listFederationTrustSources();
 		await adminIdentityMappingAPI.listFederationMetadataDocuments('trust/source 1');
 		await adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 25 });
+		await adminIdentityMappingAPI.createPolicy({
+			policyKey: 'ui_draft',
+			displayName: 'UI Draft'
+		});
+		await adminIdentityMappingAPI.createPolicyVersion('policy set 1', {
+			versionLabel: 'ui-draft',
+			rules: [
+				{
+					ruleKey: 'email',
+					ruleKind: 'inbound_mapping',
+					action: 'map',
+					edges: [{ sourceRef: { path: 'Email' }, targetRef: { path: 'email' } }],
+					transforms: [{ edgeIndex: 0, operation: 'trim' }]
+				}
+			]
+		});
 		await adminIdentityMappingAPI.rollbackPolicy('policy set 1');
 		await adminIdentityMappingAPI.publishPolicyVersion('policy set 1', 'version 1');
 		await adminIdentityMappingAPI.compilePolicyVersion('policy set 1', 'version 1', {
@@ -118,9 +136,11 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/source-profiles',
 			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/review',
 			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/activate',
+			'/api/admin/identity-mapping/source-profiles/source%20profile%201',
 			'/api/admin/identity-mapping/destination-profiles',
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
 			'/api/admin/identity-mapping/oidc/custom-scopes',
 			'/api/admin/identity-mapping/oidc/custom-scopes',
 			'/api/admin/identity-mapping/oidc/custom-claims',
@@ -130,6 +150,8 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/federation-trust-sources',
 			'/api/admin/identity-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
 			'/api/admin/identity-mapping/review-tasks?status=open&limit=25',
+			'/api/admin/identity-mapping/policies',
+			'/api/admin/identity-mapping/policies/policy%20set%201/versions',
 			'/api/admin/identity-mapping/policies/policy%20set%201/rollback',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/publish',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/compile',
@@ -140,16 +162,20 @@ describe('adminIdentityMappingAPI', () => {
 		expect(fetchMock.mock.calls[7][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[8][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[9][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[10][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[10][1]).toMatchObject({ method: 'DELETE' });
 		expect(fetchMock.mock.calls[11][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[12][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[14][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[13][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[14][1]).toMatchObject({ method: 'DELETE' });
 		expect(fetchMock.mock.calls[16][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[22][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[23][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[18][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[24][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[25][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[26][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[27][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[28][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[29][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[30][1]).toMatchObject({ method: 'POST' });
 	});
 
 	it('surfaces API error descriptions', async () => {

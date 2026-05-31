@@ -404,8 +404,23 @@ interface FieldCatalogListRow {
   catalog_key: string;
   display_name: string;
   lifecycle_state: LifecycleState;
+  version_id: string | null;
   version_label: string | null;
   bundle_hash: string | null;
+  entry_id: string | null;
+  stable_field_id: string | null;
+  namespace: string | null;
+  path: string | null;
+  target_taxonomy: string | null;
+  value_type: string | null;
+  cardinality: string | null;
+  classification: string | null;
+  aliases_json: string | null;
+  ui_group_key: string | null;
+  ui_group_label: string | null;
+  ui_group_order: number | null;
+  ui_field_order: number | null;
+  examples_json: string | null;
 }
 
 interface ProtocolSchemaCatalogRow {
@@ -1228,8 +1243,10 @@ export class IdentityMappingControlPlaneRepository {
         await tx.execute(
           `INSERT INTO field_catalog_entries (
             id, tenant_id, catalog_version_id, stable_field_id, namespace, path, target_taxonomy,
-            value_type, cardinality, classification, aliases_json, validation_json, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            value_type, cardinality, classification, aliases_json, validation_json,
+            ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             createId('catalog_entry'),
             tenantId,
@@ -1243,6 +1260,11 @@ export class IdentityMappingControlPlaneRepository {
             entry.classification,
             stableJson(entry.aliases ?? []),
             stableJson({}),
+            entry.uiGroupKey ?? null,
+            entry.uiGroupLabel ?? null,
+            entry.uiGroupOrder ?? 0,
+            entry.uiFieldOrder ?? 0,
+            entry.examples ? stableJson(entry.examples) : null,
             now,
             now,
           ]
@@ -1288,22 +1310,96 @@ export class IdentityMappingControlPlaneRepository {
 
   async listCatalogs(tenantId: string) {
     const rows = await this.adapter.query<FieldCatalogListRow>(
-      `SELECT c.*, v.version_label, v.bundle_hash
+      `SELECT
+          c.*,
+          v.id AS version_id,
+          v.version_label,
+          v.bundle_hash,
+          e.id AS entry_id,
+          e.stable_field_id,
+          e.namespace,
+          e.path,
+          e.target_taxonomy,
+          e.value_type,
+          e.cardinality,
+          e.classification,
+          e.aliases_json,
+          e.ui_group_key,
+          e.ui_group_label,
+          e.ui_group_order,
+          e.ui_field_order,
+          e.examples_json
          FROM field_catalogs c
          LEFT JOIN field_catalog_versions v ON v.catalog_id = c.id
+         LEFT JOIN field_catalog_entries e ON e.catalog_version_id = v.id
         WHERE c.tenant_id = ?
-        ORDER BY c.updated_at DESC`,
+        ORDER BY c.updated_at DESC, e.ui_group_order ASC, e.ui_field_order ASC, e.stable_field_id ASC`,
       [tenantId]
     );
-    return rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenant_id,
-      catalogKey: row.catalog_key,
-      displayName: row.display_name,
-      lifecycleState: row.lifecycle_state,
-      versionLabel: row.version_label,
-      bundleHash: row.bundle_hash,
-    }));
+    const catalogs = new Map<
+      string,
+      {
+        id: string;
+        tenantId: string;
+        catalogKey: string;
+        displayName: string;
+        lifecycleState: LifecycleState;
+        versionId: string | null;
+        versionLabel: string | null;
+        bundleHash: string | null;
+        entries: Array<{
+          id: string;
+          stableFieldId: string;
+          namespace: string;
+          path: string;
+          targetTaxonomy: string;
+          valueType: string;
+          cardinality: string;
+          classification: string;
+          aliases: Array<{ namespace: string; path: string }>;
+          uiGroupKey: string | null;
+          uiGroupLabel: string | null;
+          uiGroupOrder: number;
+          uiFieldOrder: number;
+          examples: unknown[];
+        }>;
+      }
+    >();
+
+    for (const row of rows) {
+      const catalog = catalogs.get(row.id) ?? {
+        id: row.id,
+        tenantId: row.tenant_id,
+        catalogKey: row.catalog_key,
+        displayName: row.display_name,
+        lifecycleState: row.lifecycle_state,
+        versionId: row.version_id,
+        versionLabel: row.version_label,
+        bundleHash: row.bundle_hash,
+        entries: [],
+      };
+      if (row.entry_id && row.stable_field_id && row.namespace && row.path) {
+        catalog.entries.push({
+          id: row.entry_id,
+          stableFieldId: row.stable_field_id,
+          namespace: row.namespace,
+          path: row.path,
+          targetTaxonomy: row.target_taxonomy ?? 'canonical',
+          valueType: row.value_type ?? 'string',
+          cardinality: row.cardinality ?? 'single',
+          classification: row.classification ?? 'internal',
+          aliases: parseCatalogAliases(row.aliases_json),
+          uiGroupKey: row.ui_group_key,
+          uiGroupLabel: row.ui_group_label,
+          uiGroupOrder: row.ui_group_order ?? 0,
+          uiFieldOrder: row.ui_field_order ?? 0,
+          examples: parseJsonUnknownArray(row.examples_json),
+        });
+      }
+      catalogs.set(row.id, catalog);
+    }
+
+    return Array.from(catalogs.values());
   }
 
   async createProtocolSchema(tenantId: string, input: CreateProtocolSchemaRequest) {
@@ -1471,6 +1567,16 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.displayName, 'displayName');
     if (!SOURCE_PROFILE_TYPES.has(input.sourceType)) {
       throw badRequest('sourceType must be csv');
+    }
+    const duplicate = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM source_profiles
+        WHERE tenant_id = ?
+          AND profile_key = ?`,
+      [tenantId, input.profileKey]
+    );
+    if (duplicate) {
+      throw conflict('source profile key already exists');
     }
     const now = this.now();
     const draft = input.parseDraftId
@@ -1685,6 +1791,28 @@ export class IdentityMappingControlPlaneRepository {
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
   }
 
+  async deleteSourceProfile(tenantId: string, profileId: string) {
+    validateRequiredString(profileId, 'profileId');
+    const existing = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id FROM source_profiles WHERE tenant_id = ? AND id = ?`,
+      [tenantId, profileId]
+    );
+    if (!existing) {
+      throw notFound('source profile not found');
+    }
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        'DELETE FROM source_profile_versions WHERE tenant_id = ? AND profile_id = ?',
+        [tenantId, profileId]
+      );
+      await tx.execute('DELETE FROM source_profiles WHERE tenant_id = ? AND id = ?', [
+        tenantId,
+        profileId,
+      ]);
+    });
+    return { id: profileId, deleted: true };
+  }
+
   async createOidcCustomScope(tenantId: string, input: CreateOidcCustomScopeRequest) {
     validateRequiredString(input.scopeKey, 'scopeKey');
     validateRequiredString(input.displayName, 'displayName');
@@ -1827,6 +1955,25 @@ export class IdentityMappingControlPlaneRepository {
     assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
 
     const owner = normalizeProfileOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
+    const duplicate = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM destination_profiles
+        WHERE tenant_id = ?
+          AND owner_scope_type = ?
+          AND COALESCE(owner_scope_id, '') = COALESCE(?, '')
+          AND destination_type = ?
+          AND profile_key = ?`,
+      [
+        owner.tenantId,
+        owner.ownerScopeType,
+        owner.ownerScopeId,
+        input.destinationType,
+        input.profileKey,
+      ]
+    );
+    if (duplicate) {
+      throw conflict('destination profile key already exists for this owner scope');
+    }
     const customScopes = await this.listOidcCustomScopes(tenantId);
     const validation =
       input.destinationType === 'oidc'
@@ -2063,6 +2210,31 @@ export class IdentityMappingControlPlaneRepository {
       );
     });
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
+  }
+
+  async deleteDestinationProfile(tenantId: string, profileId: string, allowPlatformScope = false) {
+    validateRequiredString(profileId, 'profileId');
+    const existing = await this.adapter.queryOne<{ id: string; tenant_id: string }>(
+      `SELECT id, tenant_id
+         FROM destination_profiles
+        WHERE id = ?
+          AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
+      [profileId, tenantId, allowPlatformScope ? 1 : 0, 'platform']
+    );
+    if (!existing) {
+      throw notFound('destination profile not found');
+    }
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        'DELETE FROM destination_profile_versions WHERE tenant_id = ? AND profile_id = ?',
+        [existing.tenant_id, profileId]
+      );
+      await tx.execute('DELETE FROM destination_profiles WHERE tenant_id = ? AND id = ?', [
+        existing.tenant_id,
+        profileId,
+      ]);
+    });
+    return { id: profileId, deleted: true };
   }
 
   async createMappingTemplate(tenantId: string, input: CreateMappingTemplateRequest) {
@@ -5011,6 +5183,12 @@ export async function adminIdentityMappingSourceProfileActivateHandler(c: AdminC
   );
 }
 
+export async function adminIdentityMappingSourceProfileDeleteHandler(c: AdminContext) {
+  return handleMutation(c, 'source-profile.delete', async (repository, tenantId) =>
+    repository.deleteSourceProfile(tenantId, requiredParam(c, 'sourceProfileId'))
+  );
+}
+
 export async function adminIdentityMappingDestinationProfilesListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     destinationProfiles: await repository.listDestinationProfiles(tenantId),
@@ -5041,6 +5219,16 @@ export async function adminIdentityMappingDestinationProfileActivateHandler(c: A
       tenantId,
       requiredParam(c, 'destinationProfileId'),
       requiredParam(c, 'destinationProfileVersionId'),
+      hasPlatformOwnerScopeAuthority(c)
+    )
+  );
+}
+
+export async function adminIdentityMappingDestinationProfileDeleteHandler(c: AdminContext) {
+  return handleMutation(c, 'destination-profile.delete', async (repository, tenantId) =>
+    repository.deleteDestinationProfile(
+      tenantId,
+      requiredParam(c, 'destinationProfileId'),
       hasPlatformOwnerScopeAuthority(c)
     )
   );
@@ -6014,6 +6202,38 @@ function parseJsonArray(value: string | null): string[] {
     return Array.isArray(parsed)
       ? parsed.filter((item): item is string => typeof item === 'string')
       : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonUnknownArray(value: string | null): unknown[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseCatalogAliases(value: string | null): Array<{ namespace: string; path: string }> {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((item) => {
+      if (!isRecord(item) || typeof item.namespace !== 'string' || typeof item.path !== 'string') {
+        return [];
+      }
+      return [{ namespace: item.namespace, path: item.path }];
+    });
   } catch {
     return [];
   }

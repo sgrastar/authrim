@@ -3,12 +3,202 @@
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		type MappingAdapter,
+		type MappingDraftPayload,
+		type MappingDraftRuleInput,
 		type MappingEdge,
 		type MappingNode,
-		type MappingSample
+		type MappingSample,
+		type TransformOperation
 	} from './types';
 
 	type ViewMode = 'overview' | 'inbound' | 'outbound';
+	type TransformParameterSchema =
+		| {
+				name: string;
+				label: string;
+				kind: 'enum';
+				required: true;
+				options: Array<{ value: string; label: string }>;
+		  }
+		| {
+				name: string;
+				label: string;
+				kind: 'string';
+				required: boolean;
+				placeholder: string;
+		  };
+	type TransformOperationSchema = {
+		operation: TransformOperation;
+		label: string;
+		description: string;
+		parameters: TransformParameterSchema[];
+	};
+
+	const transformOperationSchemas: TransformOperationSchema[] = [
+		{
+			operation: 'copy',
+			label: 'Copy',
+			description: 'Pass the first input value through unchanged.',
+			parameters: []
+		},
+		{
+			operation: 'trim',
+			label: 'Trim',
+			description: 'Remove leading and trailing whitespace from the first input value.',
+			parameters: []
+		},
+		{
+			operation: 'normalize',
+			label: 'Normalize',
+			description: 'Normalize Unicode or collapse repeated whitespace before validation.',
+			parameters: [
+				{
+					name: 'mode',
+					label: 'Mode',
+					kind: 'enum',
+					required: true,
+					options: [
+						{ value: 'whitespace', label: 'Whitespace' },
+						{ value: 'unicode', label: 'Unicode NFKC' }
+					]
+				}
+			]
+		},
+		{
+			operation: 'case',
+			label: 'Case',
+			description: 'Convert string case before writing to the target.',
+			parameters: [
+				{
+					name: 'mode',
+					label: 'Mode',
+					kind: 'enum',
+					required: true,
+					options: [
+						{ value: 'lower', label: 'Lowercase' },
+						{ value: 'upper', label: 'Uppercase' },
+						{ value: 'title', label: 'Title case' }
+					]
+				}
+			]
+		},
+		{
+			operation: 'concat',
+			label: 'Concat',
+			description: 'Join all connected input values into one string.',
+			parameters: [
+				{
+					name: 'delimiter',
+					label: 'Delimiter',
+					kind: 'string',
+					required: false,
+					placeholder: 'space, comma, or custom text'
+				}
+			]
+		},
+		{
+			operation: 'fallback',
+			label: 'Fallback',
+			description: 'Use the first non-empty connected input value.',
+			parameters: []
+		},
+		{
+			operation: 'text_to_boolean',
+			label: 'Text to boolean',
+			description:
+				'Convert configured text tokens to true, false, or null before writing to a boolean target.',
+			parameters: [
+				{
+					name: 'trueValues',
+					label: 'True values',
+					kind: 'string',
+					required: false,
+					placeholder: 'true, 1, yes, active'
+				},
+				{
+					name: 'falseValues',
+					label: 'False values',
+					kind: 'string',
+					required: false,
+					placeholder: 'false, 0, no, inactive'
+				},
+				{
+					name: 'nullValues',
+					label: 'Null values',
+					kind: 'string',
+					required: false,
+					placeholder: 'empty, null, none, n/a'
+				}
+			]
+		},
+		{
+			operation: 'json_build',
+			label: 'Build JSON',
+			description:
+				'Build a JSON object from one or more inputs, or parse a single JSON text input.',
+			parameters: [
+				{
+					name: 'keyMap',
+					label: 'Key map',
+					kind: 'string',
+					required: false,
+					placeholder: '{"source_column":"jsonKey"}'
+				},
+				{
+					name: 'nullHandling',
+					label: 'Null handling',
+					kind: 'enum',
+					required: true,
+					options: [
+						{ value: 'omit', label: 'Omit empty values' },
+						{ value: 'include_null', label: 'Include null values' }
+					]
+				}
+			]
+		},
+		{
+			operation: 'json_extract_text',
+			label: 'Extract text from JSON',
+			description: 'Read a JSON path and output text.',
+			parameters: [
+				{
+					name: 'path',
+					label: 'JSON path',
+					kind: 'string',
+					required: true,
+					placeholder: 'profile.name or emails[0].value'
+				}
+			]
+		},
+		{
+			operation: 'json_extract_boolean',
+			label: 'Extract boolean from JSON',
+			description: 'Read a JSON path and output true, false, or null.',
+			parameters: [
+				{
+					name: 'path',
+					label: 'JSON path',
+					kind: 'string',
+					required: true,
+					placeholder: 'active or flags.enabled'
+				}
+			]
+		},
+		{
+			operation: 'json_extract_integer',
+			label: 'Extract integer from JSON',
+			description: 'Read a JSON path and output an integer or null.',
+			parameters: [
+				{
+					name: 'path',
+					label: 'JSON path',
+					kind: 'string',
+					required: true,
+					placeholder: 'quota.limit or memberships[0].rank'
+				}
+			]
+		}
+	];
 
 	const {
 		samples = [],
@@ -16,7 +206,16 @@
 		loadError = null,
 		allowedViewModes = ['overview', 'inbound', 'outbound'],
 		initialViewMode = 'overview',
-		editable = true
+		editable = true,
+		showToolbarSourceProfile = true,
+		showToolbarModeToggle = true,
+		showMetrics = true,
+		showLaneProfileSelectors = true,
+		selectedViewMode = null,
+		selectedProfileId = null,
+		draftResetKey = 0,
+		onDraftDirtyChange = null,
+		onCompileDraft = null
 	} = $props<{
 		samples?: MappingSample[];
 		loading?: boolean;
@@ -24,9 +223,17 @@
 		allowedViewModes?: ViewMode[];
 		initialViewMode?: ViewMode;
 		editable?: boolean;
+		showToolbarSourceProfile?: boolean;
+		showToolbarModeToggle?: boolean;
+		showMetrics?: boolean;
+		showLaneProfileSelectors?: boolean;
+		selectedViewMode?: ViewMode | null;
+		selectedProfileId?: string | null;
+		draftResetKey?: number;
+		onDraftDirtyChange?: ((dirty: boolean) => void) | null;
+		onCompileDraft?: ((draft: MappingDraftPayload) => Promise<void> | void) | null;
 	}>();
 
-	const adapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
 	const emptySample: MappingSample = {
 		id: 'empty-control-plane',
 		title: 'No control-plane schemas loaded',
@@ -43,9 +250,13 @@
 	};
 	const nodeHeight = 30;
 	const targetHeight = 46;
-	const graphBaseTop = 48;
+	const transformWidth = 168;
+	const transformHeight = 38;
+	const graphBaseTop = $derived(showLaneProfileSelectors ? 76 : 48);
 	const graphStep = 50;
-	const rowGap = 12;
+	const targetGroupHeaderHeight = 28;
+	const targetGroupRowStep = targetHeight - 1;
+	const targetGroupGap = 10;
 
 	let canvas: HTMLDivElement;
 	let canvasWidth = $state(1000);
@@ -54,6 +265,7 @@
 	let activeSampleRef: MappingSample | null = null;
 	let inboundAdapter = $state<MappingAdapter>(emptySample.inboundAdapter);
 	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
+	let selectedDestinationProfileId = $state<string | null>(null);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
 	let viewMode = $state<ViewMode>('overview');
@@ -62,15 +274,24 @@
 	let nodes = $state<MappingNode[]>([...emptySample.nodes]);
 	let edges = $state<MappingEdge[]>([...emptySample.edges]);
 	let hoverNodeId = $state<string | null>(null);
+	let hoverEdgeId = $state<string | null>(null);
+	let hoverTargetGroupKey = $state<string | null>(null);
 	let selectedNodeId = $state<string | null>(null);
 	let selectedEdgeId = $state<string | null>(null);
+	let collapsedTargetGroupKeys = $state<string[]>([]);
 	let hasUnsavedDraftChanges = $state(false);
+	let activeDraftResetKey = $state<number | null>(null);
+	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let draftSubmitMessage = $state<string | null>(null);
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
 		to: Point;
 		validTarget: boolean | null;
 		targetNodeId: string | null;
+		reconnectEdgeId?: string;
+		reconnectSide?: 'source' | 'target';
+		fixedNodeId?: string;
 	} | null>(null);
 	let pendingConnectionStart: {
 		fromNodeId: string;
@@ -91,36 +312,119 @@
 		height: number;
 		hidden: boolean;
 		stackIndex: number;
+		collapsed?: boolean;
+		targetGroupKey?: string;
+		targetGroupPosition?: 'single' | 'first' | 'middle' | 'last';
+	}
+
+	interface TargetNodeGroup {
+		key: string;
+		label: string;
+		nodes: MappingNode[];
+	}
+
+	interface LayoutTargetGroup {
+		key: string;
+		label: string;
+		top: number;
+		left: number;
+		width: number;
+		height: number;
+		count: number;
+		collapsed: boolean;
 	}
 
 	const visibleNodes = $derived(
 		nodes.filter(
 			(node) =>
 				node.role === 'target' ||
+				node.role === 'transform' ||
 				(node.role === 'source' && viewMode !== 'outbound') ||
 				(node.role === 'destination' && viewMode !== 'inbound')
 		)
 	);
-	const sourceNodes = $derived(visibleNodes.filter((node) => node.role === 'source'));
+	const overviewLayerSourceNodes = $derived(
+		viewMode === 'overview'
+			? samples
+					.filter((candidate: MappingSample) => candidate.id !== sample.id)
+					.flatMap((candidate: MappingSample) =>
+						candidate.nodes
+							.filter((node: MappingNode) => node.role === 'source')
+							.map((node: MappingNode) => ({
+								...node,
+								id: `overview-layer-${candidate.id}-${node.id}`,
+								ruleId: `overview-layer-${candidate.id}-${node.ruleId}`,
+								profileId: candidate.id,
+								profileTitle: candidate.title
+							}))
+					)
+			: []
+	);
+	const sourceNodes = $derived([
+		...visibleNodes.filter((node) => node.role === 'source'),
+		...overviewLayerSourceNodes
+	]);
+	const transformNodes = $derived(visibleNodes.filter((node) => node.role === 'transform'));
 	const targetNodes = $derived(visibleNodes.filter((node) => node.role === 'target'));
+	const targetNodeGroups = $derived(groupTargetNodes(targetNodes));
+	const groupedTargetNodes = $derived(targetNodeGroups.flatMap((group) => group.nodes));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
+	const sourceProfileOptions = $derived(
+		((samples.length > 0 ? samples : [sample]) as MappingSample[]).map(
+			(candidate: MappingSample) => ({
+				id: candidate.id,
+				title: candidate.title,
+				adapter: candidate.inboundAdapter
+			})
+		)
+	);
+	const destinationProfileOptions = $derived(destinationProfileOptionsForSample(sample));
 	const hasControlPlaneData = $derived(samples.length > 0);
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
-	const graphEdges = $derived(edges.filter((edge) => nodeById(edge.from) && nodeById(edge.to)));
+	const graphEdges = $derived(
+		edges.filter((edge) => {
+			const fromNode = layoutNodeById(edge.from);
+			const toNode = layoutNodeById(edge.to);
+			return fromNode && toNode && !fromNode.hidden && !toNode.hidden;
+		})
+	);
 	const selectedEdge = $derived(
 		selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) : null
 	);
 	const selectedEdges = $derived(
 		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
 	);
-	const hoverEdges = $derived(connectedEdgeIds(hoverNodeId));
+	const hoverEdges = $derived(
+		new Set([...connectedEdgeIds(hoverNodeId), ...connectedTargetGroupEdgeIds(hoverTargetGroupKey)])
+	);
+	const activeTargetGroupKeys = $derived.by(() => {
+		const keys: string[] = [];
+		if (hoverTargetGroupKey) addTargetGroupKey(keys, hoverTargetGroupKey);
+		addConnectedTargetGroupKeys(hoverNodeId, keys);
+		addConnectedTargetGroupKeys(selectedNodeId, keys);
+		addEdgeTargetGroupKeys(hoverEdgeId, keys);
+		addEdgeTargetGroupKeys(selectedEdgeId, keys);
+		return keys;
+	});
+	const invalidEdgeTargetNodeIds = $derived(
+		new Set(
+			graphEdges
+				.filter((edge) => edgeHasTypeMismatch(edge))
+				.map((edge) => edge.to)
+				.filter(Boolean)
+		)
+	);
 	const enabledViewModes = $derived(
 		allowedViewModes.length > 0 ? allowedViewModes : (['overview'] satisfies ViewMode[])
 	);
 	const rule = $derived(
 		selectedEdge ? edgeInspectorRule(selectedEdge) : (sample.rules[activeRuleId] ?? fallbackRule())
 	);
+	const selectedTransformNode = $derived.by(() => {
+		const selected = selectedNodeId ? nodeById(selectedNodeId) : undefined;
+		return selected?.role === 'transform' ? selected : null;
+	});
 
 	$effect(() => {
 		if (!viewModeInitialized) {
@@ -130,9 +434,23 @@
 		if (!enabledViewModes.includes(viewMode)) {
 			viewMode = enabledViewModes[0];
 		}
+		if (
+			selectedViewMode &&
+			enabledViewModes.includes(selectedViewMode) &&
+			viewMode !== selectedViewMode
+		) {
+			viewMode = selectedViewMode;
+		}
 	});
 
 	$effect(() => {
+		if (
+			selectedViewMode === 'inbound' &&
+			selectedProfileId &&
+			selectedProfileId !== selectedSampleId
+		) {
+			selectedSampleId = selectedProfileId;
+		}
 		const next =
 			(samples as MappingSample[]).find(
 				(candidate: MappingSample) => candidate.id === selectedSampleId
@@ -142,6 +460,35 @@
 		if (activeSampleRef !== next) {
 			activateSample(next);
 		}
+	});
+
+	$effect(() => {
+		if (selectedViewMode === 'outbound' && selectedProfileId) {
+			selectedDestinationProfileId = selectedProfileId;
+		}
+		const hasSelectedDestination = destinationProfileOptions.some(
+			(option) => option.id === selectedDestinationProfileId
+		);
+		if (!hasSelectedDestination) {
+			selectedDestinationProfileId =
+				destinationProfileOptions.find((option) => option.adapter === 'OIDC')?.id ??
+				destinationProfileOptions[0]?.id ??
+				null;
+		}
+	});
+
+	$effect(() => {
+		if (activeDraftResetKey === null) {
+			activeDraftResetKey = draftResetKey;
+			return;
+		}
+		if (activeDraftResetKey === draftResetKey) return;
+		activeDraftResetKey = draftResetKey;
+		resetDraftFromCurrentSample();
+	});
+
+	$effect(() => {
+		onDraftDirtyChange?.(hasUnsavedDraftChanges);
 	});
 
 	beforeNavigate((navigation) => {
@@ -190,11 +537,28 @@
 		selectedSampleId = next.id;
 		inboundAdapter = next.inboundAdapter;
 		outboundAdapter = next.outboundAdapter;
+		selectedDestinationProfileId =
+			destinationProfileOptionsForSample(next).find((option) => option.adapter === 'OIDC')?.id ??
+			destinationProfileOptionsForSample(next)[0]?.id ??
+			null;
 		activeRuleId = next.activeRuleId;
 		nodes = [...next.nodes];
 		edges = [...next.edges];
 		selectedEdgeId = null;
-		selectedNodeId = next.nodes.find((node) => node.ruleId === next.activeRuleId)?.id ?? null;
+		selectedNodeId = null;
+		hasUnsavedDraftChanges = false;
+	}
+
+	function resetDraftFromCurrentSample() {
+		nodes = [...sample.nodes];
+		edges = [...sample.edges];
+		activeRuleId = sample.activeRuleId;
+		selectedEdgeId = null;
+		selectedNodeId = null;
+		hoverNodeId = null;
+		dragState = null;
+		pendingConnectionStart = null;
+		suppressNextNodeClickId = null;
 		hasUnsavedDraftChanges = false;
 	}
 
@@ -217,6 +581,10 @@
 		return laidOutNodes.find((node) => node.id === id);
 	}
 
+	function layoutTargetGroupByKey(key: string): LayoutTargetGroup | undefined {
+		return layout.targetGroups.find((group) => group.key === key);
+	}
+
 	function selectRule(ruleId: string) {
 		activeRuleId = ruleId;
 		selectedEdgeId = null;
@@ -232,6 +600,14 @@
 		selectedEdgeId = null;
 		selectedNodeId = null;
 		hoverNodeId = null;
+		hoverEdgeId = null;
+		hoverTargetGroupKey = null;
+	}
+
+	function markDraftDirty() {
+		hasUnsavedDraftChanges = true;
+		draftSubmitStatus = 'idle';
+		draftSubmitMessage = null;
 	}
 
 	function handleClearSelectionKeyDown(event: KeyboardEvent) {
@@ -242,52 +618,195 @@
 
 	function connectedEdgeIds(nodeId: string | null): Set<string> {
 		if (!nodeId) return new Set();
+		return connectedGraph(nodeId).edgeIds;
+	}
+
+	function connectedTargetGroupEdgeIds(groupKey: string | null): Set<string> {
+		if (!groupKey) return new Set();
+		const group = targetNodeGroups.find((candidate) => candidate.key === groupKey);
+		if (!group) return new Set();
 		return new Set(
-			edges.filter((edge) => edge.from === nodeId || edge.to === nodeId).map((edge) => edge.id)
+			group.nodes.flatMap((node) => {
+				const graph = connectedGraph(node.id);
+				return [...graph.edgeIds];
+			})
 		);
+	}
+
+	function addTargetGroupKey(keys: string[], key: string) {
+		if (!keys.includes(key)) keys.push(key);
+	}
+
+	function addConnectedTargetGroupKeys(nodeId: string | null, keys: string[]) {
+		if (!nodeId) return;
+		for (const connectedNodeId of [nodeId, ...connectedGraph(nodeId).nodeIds]) {
+			const node = nodeById(connectedNodeId);
+			if (node?.role !== 'target') continue;
+			addTargetGroupKey(keys, targetGroupKey(node));
+		}
+	}
+
+	function addEdgeTargetGroupKeys(edgeId: string | null, keys: string[]) {
+		if (!edgeId) return;
+		const edge = edges.find((candidate) => candidate.id === edgeId);
+		if (!edge) return;
+		addConnectedTargetGroupKeys(edge.from, keys);
+		addConnectedTargetGroupKeys(edge.to, keys);
 	}
 
 	function connectedNodeIds(nodeId: string | null): Set<string> {
 		if (!nodeId) return new Set();
-		return new Set(
-			edges
-				.filter((edge) => edge.from === nodeId || edge.to === nodeId)
-				.flatMap((edge) => (edge.from === nodeId ? [edge.to] : [edge.from]))
-		);
+		return connectedGraph(nodeId).nodeIds;
 	}
 
-	function buildLayout(): { nodes: LayoutNode[]; height: number } {
-		const rowTops: Record<string, number> = {};
-		let cursor = graphBaseTop;
+	function connectedGraph(nodeId: string): { nodeIds: Set<string>; edgeIds: Set<string> } {
+		const nodeIds: string[] = [];
+		const edgeIds: string[] = [];
+		const visited = [nodeId];
+		const queue = [nodeId];
 
-		for (const target of targetNodes) {
-			rowTops[target.id] = cursor;
-			cursor += graphStep + rowGap;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			for (const edge of edges) {
+				if (edge.from !== current && edge.to !== current) continue;
+				if (!edgeIds.includes(edge.id)) edgeIds.push(edge.id);
+				const next = edge.from === current ? edge.to : edge.from;
+				if (visited.includes(next)) continue;
+				visited.push(next);
+				nodeIds.push(next);
+				queue.push(next);
+			}
 		}
 
+		return { nodeIds: new Set(nodeIds), edgeIds: new Set(edgeIds) };
+	}
+
+	function destinationProfileOptionsForSample(candidate: MappingSample) {
+		const seen: string[] = [];
+		return candidate.nodes
+			.filter((node) => node.role === 'destination')
+			.flatMap((node) => {
+				const id = node.profileId ?? node.adapter ?? node.id;
+				if (seen.includes(id)) return [];
+				seen.push(id);
+				return [
+					{
+						id,
+						title: node.profileTitle ?? `${node.adapter ?? 'Destination'} profile`,
+						adapter: node.adapter ?? 'CSV'
+					}
+				];
+			});
+	}
+
+	function targetGroupKey(node: MappingNode): string {
+		return node.uiGroupKey ?? node.uiGroupLabel ?? `ungrouped:${node.id}`;
+	}
+
+	function targetGroupLabel(node: MappingNode): string {
+		return node.uiGroupLabel ?? node.uiGroupKey ?? 'Other';
+	}
+
+	function groupTargetNodes(targets: MappingNode[]): TargetNodeGroup[] {
+		const groupKeys: string[] = [];
+		const grouped: Record<string, TargetNodeGroup> = {};
+		for (const node of targets) {
+			const key = targetGroupKey(node);
+			if (!grouped[key]) {
+				groupKeys.push(key);
+				grouped[key] = { key, label: targetGroupLabel(node), nodes: [] };
+			}
+			grouped[key].nodes.push(node);
+		}
+		return groupKeys
+			.map((key) => grouped[key])
+			.filter((group): group is TargetNodeGroup => Boolean(group));
+	}
+
+	function isTargetGroupCollapsed(key: string): boolean {
+		return collapsedTargetGroupKeys.includes(key);
+	}
+
+	function toggleTargetGroup(key: string) {
+		collapsedTargetGroupKeys = isTargetGroupCollapsed(key)
+			? collapsedTargetGroupKeys.filter((candidate) => candidate !== key)
+			: [...collapsedTargetGroupKeys, key];
+		clearSelection();
+	}
+
+	function targetGroupPosition(index: number, total: number): LayoutNode['targetGroupPosition'] {
+		if (total <= 1) return 'single';
+		if (index === 0) return 'first';
+		if (index === total - 1) return 'last';
+		return 'middle';
+	}
+
+	function buildLayout(): {
+		nodes: LayoutNode[];
+		targetGroups: LayoutTargetGroup[];
+		height: number;
+	} {
+		const rowTops: Record<string, number> = {};
+		const targetPositions: Record<string, LayoutNode['targetGroupPosition']> = {};
+
 		const width = Math.max(190, canvasWidth * 0.23);
-		const sourceLeft = 26;
+		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
 		const targetLeft =
 			viewMode === 'outbound'
-				? 26
+				? Math.max(26, canvasWidth * 0.12)
 				: viewMode === 'inbound'
-					? Math.max(sourceLeft + width + 110, canvasWidth - width - 26)
+					? Math.min(
+							canvasWidth - width - 26,
+							Math.max(sourceLeft + width + 100, canvasWidth * 0.66)
+						)
 					: canvasWidth * 0.385;
 		const destinationLeft =
 			viewMode === 'outbound'
-				? Math.max(targetLeft + width + 110, canvasWidth - width - 26)
+				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
+		let cursor = graphBaseTop;
+		const targetGroups: LayoutTargetGroup[] = [];
+
+		for (const group of targetNodeGroups) {
+			const collapsed = isTargetGroupCollapsed(group.key);
+			targetGroups.push({
+				key: group.key,
+				label: group.label,
+				top: cursor,
+				left: targetLeft,
+				width,
+				height: targetGroupHeaderHeight,
+				count: group.nodes.length,
+				collapsed
+			});
+			cursor += targetGroupHeaderHeight;
+			for (const [index, target] of group.nodes.entries()) {
+				rowTops[target.id] = cursor + index * targetGroupRowStep;
+				targetPositions[target.id] = targetGroupPosition(index, group.nodes.length);
+			}
+			if (!collapsed) {
+				cursor += group.nodes.length * targetGroupRowStep;
+			}
+			cursor += targetGroupGap;
+		}
+
 		const minHeight = Math.max(520, cursor + 36);
 		let visibleSourceOffset = 0;
-		let hiddenSourceOffset = 0;
+		const hiddenSourceRowOffsets: Record<string, number> = {};
 
 		const sourceLayout = sourceNodes.map((node) => {
-			const selected = node.adapter === inboundAdapter;
+			const selected = node.profileId
+				? node.profileId === sample.id
+				: node.adapter === inboundAdapter;
+			const profileKey = node.profileId ?? node.adapter ?? 'source';
 			const visibleOffset = selected ? visibleSourceOffset++ : 0;
-			const hiddenOffset = selected ? 0 : ++hiddenSourceOffset;
+			const hiddenRowOffset = hiddenSourceRowOffsets[profileKey] ?? 0;
+			hiddenSourceRowOffsets[profileKey] = hiddenRowOffset + 1;
+			const hiddenOffset = selected ? 0 : sourceProfileStackIndex(profileKey);
 			return {
 				...node,
-				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset : hiddenRowOffset) * graphStep,
 				left: sourceLeft,
 				width,
 				height: nodeHeight,
@@ -296,26 +815,44 @@
 			};
 		});
 
-		const targetLayout = targetNodes.map((node) => ({
+		const targetLayout = groupedTargetNodes.map((node) => ({
 			...node,
 			top: rowTops[node.id] ?? graphBaseTop,
 			left: targetLeft,
 			width,
 			height: targetHeight,
 			hidden: false,
+			stackIndex: 0,
+			collapsed: isTargetGroupCollapsed(targetGroupKey(node)),
+			targetGroupKey: targetGroupKey(node),
+			targetGroupPosition: targetPositions[node.id]
+		}));
+
+		const transformLayout = transformNodes.map((node) => ({
+			...node,
+			top: node.layoutPosition?.y ?? graphBaseTop,
+			left: node.layoutPosition?.x ?? (sourceLeft + targetLeft + width) / 2 - transformWidth / 2,
+			width: transformWidth,
+			height: transformHeight,
+			hidden: false,
 			stackIndex: 0
 		}));
 
 		let visibleDestinationOffset = 0;
-		let hiddenDestinationOffset = 0;
+		const hiddenDestinationRowOffsets: Record<string, number> = {};
 
 		const destinationLayout = destinationNodes.map((node) => {
-			const selected = node.adapter === outboundAdapter;
+			const selected = node.profileId
+				? node.profileId === selectedDestinationProfileId
+				: node.adapter === outboundAdapter;
+			const profileKey = node.profileId ?? node.adapter ?? 'destination';
 			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
-			const hiddenOffset = selected ? 0 : ++hiddenDestinationOffset;
+			const hiddenRowOffset = hiddenDestinationRowOffsets[profileKey] ?? 0;
+			hiddenDestinationRowOffsets[profileKey] = hiddenRowOffset + 1;
+			const hiddenOffset = selected ? 0 : destinationProfileStackIndex(profileKey);
 			return {
 				...node,
-				top: graphBaseTop + (selected ? visibleOffset * graphStep : 0),
+				top: graphBaseTop + (selected ? visibleOffset : hiddenRowOffset) * graphStep,
 				left: destinationLeft,
 				width,
 				height: nodeHeight,
@@ -324,20 +861,52 @@
 			};
 		});
 
-		const laidOut = [...sourceLayout, ...targetLayout, ...destinationLayout];
+		const laidOut = [...sourceLayout, ...transformLayout, ...targetLayout, ...destinationLayout];
 		return {
 			nodes: laidOut,
+			targetGroups,
 			height: Math.max(
 				minHeight,
-				...laidOut.filter((node) => !node.hidden).map((node) => node.top + node.height + 36)
+				...laidOut
+					.filter((node) => !node.hidden && !node.collapsed)
+					.map((node) => node.top + node.height + 36)
 			)
 		};
+	}
+
+	function sourceProfileStackIndex(profileId: string): number {
+		const hiddenIds = sourceProfileOptions
+			.map((option) => option.id)
+			.filter((id) => id !== sample.id);
+		const index = hiddenIds.indexOf(profileId);
+		return index >= 0 ? index + 1 : 1;
+	}
+
+	function destinationProfileStackIndex(profileId: string): number {
+		const hiddenIds = destinationProfileOptions
+			.map((option) => option.id)
+			.filter((id) => id !== selectedDestinationProfileId);
+		const index = hiddenIds.indexOf(profileId);
+		return index >= 0 ? index + 1 : 1;
 	}
 
 	function nodeStyle(node: LayoutNode): string {
 		const stackX = node.hidden ? 12 + node.stackIndex * 8 : 0;
 		const stackY = node.hidden ? 7 + node.stackIndex * 6 : 0;
-		const zIndex = node.hidden ? Math.max(1, 4 - node.stackIndex) : node.role === 'target' ? 3 : 5;
+		const interactive =
+			node.id === selectedNodeId ||
+			node.id === hoverNodeId ||
+			connectedNodeIds(selectedNodeId).has(node.id) ||
+			connectedNodeIds(hoverNodeId).has(node.id) ||
+			invalidEdgeTargetNodeIds.has(node.id) ||
+			(dragState?.validTarget === false && dragState.targetNodeId === node.id);
+		const zIndex = node.hidden
+			? Math.max(1, 4 - node.stackIndex)
+			: interactive
+				? 8
+				: node.role === 'target'
+					? 3
+					: 5;
 		return [
 			`left:${node.left}px`,
 			`top:${node.top}px`,
@@ -351,7 +920,29 @@
 		].join(';');
 	}
 
+	function transformDeleteStyle(node: LayoutNode): string {
+		return [`left:${node.left + node.width - 8}px`, `top:${node.top - 8}px`].join(';');
+	}
+
+	function targetGroupStyle(group: LayoutTargetGroup): string {
+		return [
+			`left:${group.left}px`,
+			`top:${group.top}px`,
+			`width:${group.width}px`,
+			`height:${group.height}px`
+		].join(';');
+	}
+
 	function edgePoint(node: LayoutNode, direction: 'from' | 'to'): Point {
+		if (node.role === 'target' && node.collapsed && node.targetGroupKey) {
+			const group = layoutTargetGroupByKey(node.targetGroupKey);
+			if (group) {
+				return {
+					x: direction === 'from' ? group.left + group.width : group.left,
+					y: group.top + group.height / 2
+				};
+			}
+		}
 		return {
 			x: direction === 'from' ? node.left + node.width : node.left,
 			y: node.top + node.height / 2
@@ -402,6 +993,35 @@
 		};
 	}
 
+	function edgeInsertPoint(edge: MappingEdge): Point | null {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return null;
+		const point = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
+		return {
+			x: point.x,
+			y: point.y
+		};
+	}
+
+	function edgeReconnectPoint(edge: MappingEdge, side: 'source' | 'target'): Point | null {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return null;
+		return side === 'source' ? edgePoint(fromNode, 'from') : edgePoint(toNode, 'to');
+	}
+
+	function canInsertTransformNode(edge: MappingEdge): boolean {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		if (!fromNode || !toNode) return false;
+		if (fromNode.role === 'transform' || toNode.role === 'transform') return false;
+		return (
+			(fromNode.role === 'source' && toNode.role === 'target') ||
+			(fromNode.role === 'target' && toNode.role === 'destination')
+		);
+	}
+
 	function edgeAccent(edge: MappingEdge): string {
 		const fromNode = nodeById(edge.from);
 		const toNode = nodeById(edge.to);
@@ -424,10 +1044,18 @@
 			edge.id === selectedEdgeId ? 'edge-picked' : '',
 			hoverEdges.has(edge.id) ? 'edge-connected' : '',
 			selectedEdges.has(edge.id) ? 'edge-selected' : '',
+			edgeHasTypeMismatch(edge) ? 'edge-invalid' : '',
 			fromNode?.hidden || toNode?.hidden ? 'edge-muted' : ''
 		]
 			.filter(Boolean)
 			.join(' ');
+	}
+
+	function edgeHasTypeMismatch(edge: MappingEdge): boolean {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		if (!fromNode || !toNode) return false;
+		return isConnectionTypeMismatch(fromNode, toNode) || isConnectionCardinalityMismatch(edge);
 	}
 
 	function nodeClasses(node: LayoutNode): string {
@@ -437,12 +1065,17 @@
 			'graph-node',
 			`${node.role}-node`,
 			node.role === 'target' ? `cardinality-${targetInputCardinality(node)}` : '',
+			node.role === 'target' && node.targetGroupKey ? 'target-grouped-node' : '',
+			node.targetGroupPosition ? `target-group-${node.targetGroupPosition}` : '',
+			node.locked ? 'locked-node' : '',
 			node.hidden ? 'adapter-hidden' : '',
-			node.ruleId === activeRuleId ? 'active' : '',
+			node.collapsed ? 'collapsed-node' : '',
+			node.id === selectedNodeId ? 'active' : '',
 			node.id === selectedNodeId ? 'selection-origin' : '',
 			dragState?.validTarget === false && dragState.targetNodeId === node.id
 				? 'connection-rejected'
 				: '',
+			invalidEdgeTargetNodeIds.has(node.id) ? 'connection-rejected' : '',
 			selectedRelated ? 'selection-related' : '',
 			node.id === hoverNodeId ? 'connection-origin' : '',
 			hoverRelated ? 'connection-related' : ''
@@ -455,26 +1088,125 @@
 		fromNode: MappingNode | undefined,
 		toNode: MappingNode | undefined
 	): boolean {
+		return isConnectionAllowed(fromNode, toNode);
+	}
+
+	function isConnectionAllowed(
+		fromNode: MappingNode | undefined,
+		toNode: MappingNode | undefined,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
+	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
-		const validDirection =
-			(fromNode.role === 'source' && toNode.role === 'target') ||
-			(fromNode.role === 'target' && toNode.role === 'destination');
+		if (fromNode.locked || toNode.locked) return false;
 		return (
-			validDirection &&
-			isTypeCompatible(fromNode, toNode) &&
-			!isDuplicateConnection(fromNode.id, toNode.id) &&
-			!isTargetInputFull(fromNode, toNode)
+			isConnectionDirectionAllowed(fromNode, toNode) &&
+			!connectionExists(fromNode.id, toNode.id, ignoredEdgeIds, extraEdges) &&
+			!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)
 		);
 	}
 
-	function isDuplicateConnection(fromNodeId: string, toNodeId: string): boolean {
-		return edges.some((edge) => edge.from === fromNodeId && edge.to === toNodeId);
+	function isConnectionDirectionAllowed(fromNode: MappingNode, toNode: MappingNode): boolean {
+		return (
+			(fromNode.role === 'source' && toNode.role === 'target') ||
+			(fromNode.role === 'source' && toNode.role === 'transform') ||
+			(fromNode.role === 'transform' && toNode.role === 'target') ||
+			(fromNode.role === 'target' && toNode.role === 'destination') ||
+			(fromNode.role === 'target' && toNode.role === 'transform') ||
+			(fromNode.role === 'transform' && toNode.role === 'destination')
+		);
 	}
 
-	function isTargetInputFull(fromNode: MappingNode, toNode: MappingNode): boolean {
-		if (fromNode.role !== 'source' || toNode.role !== 'target') return false;
+	function connectionExists(
+		fromNodeId: string,
+		toNodeId: string,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
+	): boolean {
+		return [...edges, ...extraEdges].some(
+			(edge) => !ignoredEdgeIds.has(edge.id) && edge.from === fromNodeId && edge.to === toNodeId
+		);
+	}
+
+	function isConnectionTypeMismatch(fromNode: MappingNode, toNode: MappingNode): boolean {
+		if (!isConnectionDirectionAllowed(fromNode, toNode)) return false;
+		if (toNode.role === 'transform') return !isTypeCompatibleWithTransformInput(fromNode, toNode);
+		if (fromNode.role === 'transform') return !isTransformOutputCompatible(fromNode, toNode);
+		return !isTypeCompatible(fromNode, toNode);
+	}
+
+	function isConnectionCardinalityMismatch(edge: MappingEdge): boolean {
+		const toNode = nodeById(edge.to);
+		if (!toNode) return false;
+		if (toNode.role === 'target' && targetInputCardinality(toNode) === 'one') {
+			const incoming = targetInputEdges(toNode);
+			return incoming.length > 1 && incoming.some((candidate) => candidate.id === edge.id);
+		}
+		if (toNode.role === 'transform' && transformInputCardinality(toNode) === 'one') {
+			const incoming = transformInputEdges(toNode);
+			return incoming.length > 1 && incoming.some((candidate) => candidate.id === edge.id);
+		}
+		return false;
+	}
+
+	function targetInputEdges(node: MappingNode): MappingEdge[] {
+		return edges.filter((edge) => {
+			if (edge.to !== node.id) return false;
+			const edgeFromRole = nodeById(edge.from)?.role;
+			return edgeFromRole === 'source' || edgeFromRole === 'transform';
+		});
+	}
+
+	function transformInputEdges(node: MappingNode): MappingEdge[] {
+		return edges.filter((edge) => edge.to === node.id && nodeById(edge.from));
+	}
+
+	function transformInputCardinality(node: MappingNode): 'one' | 'many' {
+		if (node.role !== 'transform') return 'many';
+		const operation = activeTransformOperation(node);
+		return operation === 'concat' || operation === 'fallback' || operation === 'json_build'
+			? 'many'
+			: 'one';
+	}
+
+	function isTypeCompatibleWithTransformInput(
+		fromNode: MappingNode,
+		transformNode: MappingNode
+	): boolean {
+		const fromType = effectiveNodeOutputType(fromNode);
+		if (!fromType) return true;
+		const operation = activeTransformOperation(transformNode);
+		if (operation === 'json_extract_text') return fromType === 'json';
+		if (operation === 'json_extract_boolean') return fromType === 'json';
+		if (operation === 'json_extract_integer') return fromType === 'json';
+		if (operation === 'text_to_boolean') {
+			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'boolean'].includes(
+				fromType
+			);
+		}
+		return true;
+	}
+
+	function isTransformOutputCompatible(transformNode: MappingNode, toNode: MappingNode): boolean {
+		const outputType = transformOutputType(transformNode);
+		if (!outputType) return true;
+		return isTypeCompatible({ ...transformNode, role: 'source', type: outputType }, toNode);
+	}
+
+	function isTargetInputFull(
+		fromNode: MappingNode,
+		toNode: MappingNode,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
+	): boolean {
+		if (fromNode.role !== 'source' && fromNode.role !== 'transform') return false;
+		if (toNode.role !== 'target') return false;
 		if (targetInputCardinality(toNode) !== 'one') return false;
-		return edges.some((edge) => edge.to === toNode.id && nodeById(edge.from)?.role === 'source');
+		return [...edges, ...extraEdges].some((edge) => {
+			if (ignoredEdgeIds.has(edge.id) || edge.to !== toNode.id) return false;
+			const edgeFromRole = nodeById(edge.from)?.role;
+			return edgeFromRole === 'source' || edgeFromRole === 'transform';
+		});
 	}
 
 	function targetInputCardinality(node: MappingNode): 'one' | 'many' {
@@ -485,26 +1217,62 @@
 	}
 
 	function targetInputCardinalityLabel(node: MappingNode): string {
-		return targetInputCardinality(node) === 'one' ? '(1)' : '(N)';
+		return targetInputCardinality(node) === 'one' ? '1' : 'N';
 	}
 
 	function isTypeCompatible(fromNode: MappingNode, toNode: MappingNode): boolean {
-		const fromType = normalizeNodeType(fromNode.type);
+		const fromType = effectiveNodeOutputType(fromNode);
 		const toType = normalizeNodeType(toNode.type);
 		if (!fromType || !toType) return true;
 		if (fromType === toType) return true;
 		if (toType === 'text')
 			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale'].includes(fromType);
-		if (fromType === 'text') return ['text', 'identifier', 'enum', 'locale'].includes(toType);
+		if (fromType === 'text') return ['text', 'identifier', 'locale'].includes(toType);
 		if (toType === 'identifier') return ['identifier', 'text'].includes(fromType);
+		if (toType === 'boolean') return fromType === 'boolean';
+		if (toType === 'number') return fromType === 'number';
+		if (toType === 'enum') return fromType === 'enum';
 		if (toType === 'multi-value') return fromType === 'multi-value';
 		if (toType === 'json') return fromType === 'json';
 		return false;
 	}
 
+	function effectiveNodeOutputType(node: MappingNode | undefined): string | null {
+		if (!node) return null;
+		if (node.role === 'transform') return transformOutputType(node);
+		return normalizeNodeType(node.type);
+	}
+
+	function transformOutputType(node: MappingNode): string | null {
+		const operation = activeTransformOperation(node);
+		if (operation === 'text_to_boolean' || operation === 'json_extract_boolean') return 'boolean';
+		if (operation === 'json_extract_integer') return 'number';
+		if (operation === 'json_extract_text' || operation === 'concat') return 'text';
+		if (operation === 'json_build') return 'json';
+		return firstTransformInputType(node);
+	}
+
+	function firstTransformInputType(node: MappingNode): string | null {
+		for (const edge of transformInputEdges(node)) {
+			const type = effectiveNodeOutputType(nodeById(edge.from));
+			if (type) return type;
+		}
+		return null;
+	}
+
 	function normalizeNodeType(type: string | undefined): string | null {
 		const normalized = type?.toLowerCase().trim();
 		if (!normalized) return null;
+		if (normalized === 'transform') return null;
+		if (normalized.includes('boolean') || normalized.includes('bool')) return 'boolean';
+		if (
+			normalized.includes('number') ||
+			normalized.includes('integer') ||
+			normalized.includes('float') ||
+			normalized.includes('double')
+		) {
+			return 'number';
+		}
 		if (['string', 'text', 'name'].some((needle) => normalized.includes(needle))) return 'text';
 		if (normalized.includes('email') || normalized.includes('mail')) return 'email';
 		if (
@@ -524,13 +1292,7 @@
 			return 'multi-value';
 		}
 		if (normalized.includes('json') || normalized.includes('object')) return 'json';
-		if (
-			normalized.includes('enum') ||
-			normalized.includes('boolean') ||
-			normalized.includes('number')
-		) {
-			return 'enum';
-		}
+		if (normalized.includes('enum')) return 'enum';
 		if (normalized.includes('locale') || normalized.includes('timezone')) return 'locale';
 		return normalized;
 	}
@@ -552,7 +1314,7 @@
 	}
 
 	function startConnectionDrag(event: PointerEvent, node: LayoutNode) {
-		if (!editable || node.hidden || node.role === 'destination') return;
+		if (!editable || node.hidden || node.locked || node.role === 'destination') return;
 		event.preventDefault();
 		event.stopPropagation();
 		pendingConnectionStart = null;
@@ -569,7 +1331,14 @@
 	}
 
 	function startEasyConnectionDrag(event: PointerEvent, node: LayoutNode) {
-		if (!editable || node.hidden || node.role === 'destination' || event.button !== 0) return;
+		if (
+			!editable ||
+			node.hidden ||
+			node.locked ||
+			node.role === 'destination' ||
+			event.button !== 0
+		)
+			return;
 		if ((event.target as HTMLElement | null)?.closest('.node-handle')) return;
 		pendingConnectionStart = {
 			fromNodeId: node.id,
@@ -611,8 +1380,40 @@
 
 	function handlePointerMove(event: PointerEvent) {
 		if (!dragState) return;
-		const fromNode = nodeById(dragState.fromNodeId);
 		const toNode = connectionTargetForPointer(event);
+		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'source') {
+			const fixedToNode = nodeById(dragState.fixedNodeId ?? '');
+			const fixedToLayout = fixedToNode ? layoutNodeById(fixedToNode.id) : undefined;
+			dragState = {
+				...dragState,
+				from: canvasPoint(event),
+				to: fixedToLayout ? edgePoint(fixedToLayout, 'to') : dragState.to,
+				validTarget: toNode
+					? isValidConnectionForReconnect(toNode, fixedToNode, new Set([dragState.reconnectEdgeId]))
+					: null,
+				targetNodeId: toNode?.id ?? null
+			};
+			return;
+		}
+		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'target') {
+			const fixedFromNode = nodeById(dragState.fixedNodeId ?? '');
+			const fixedFromLayout = fixedFromNode ? layoutNodeById(fixedFromNode.id) : undefined;
+			dragState = {
+				...dragState,
+				from: fixedFromLayout ? edgePoint(fixedFromLayout, 'from') : dragState.from,
+				to: canvasPoint(event),
+				validTarget: toNode
+					? isValidConnectionForReconnect(
+							fixedFromNode,
+							toNode,
+							new Set([dragState.reconnectEdgeId])
+						)
+					: null,
+				targetNodeId: toNode?.id ?? null
+			};
+			return;
+		}
+		const fromNode = nodeById(dragState.fromNodeId);
 		dragState = {
 			...dragState,
 			to: canvasPoint(event),
@@ -623,9 +1424,12 @@
 
 	function handlePointerUp(event: PointerEvent) {
 		if (!dragState) return;
+		const reconnectState = dragState;
 		const fromNode = nodeById(dragState.fromNodeId);
 		const toNode = connectionTargetForPointer(event);
-		if (isValidConnection(fromNode, toNode) && toNode) {
+		if (reconnectState.reconnectEdgeId && reconnectState.reconnectSide && toNode) {
+			reconnectEdge(reconnectState.reconnectEdgeId, reconnectState.reconnectSide, toNode.id);
+		} else if (isValidConnection(fromNode, toNode) && toNode) {
 			addEdge(dragState.fromNodeId, toNode.id);
 		}
 		dragState = null;
@@ -635,7 +1439,8 @@
 
 	function addEdge(from: string, to: string) {
 		if (!editable) return;
-		if (edges.some((edge) => edge.from === from && edge.to === to)) return;
+		if (!isValidConnection(nodeById(from), nodeById(to))) return;
+		if (connectionExists(from, to)) return;
 		customCounter += 1;
 		const edge = {
 			id: `custom-edge-${customCounter}`,
@@ -647,18 +1452,195 @@
 		edges = [...edges, edge];
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
+	}
+
+	function startReconnectDrag(event: PointerEvent, edge: MappingEdge, side: 'source' | 'target') {
+		if (!editable || event.button !== 0) return;
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return;
+		event.preventDefault();
+		event.stopPropagation();
+		selectedEdgeId = edge.id;
+		selectedNodeId = null;
+		pendingConnectionStart = null;
+		dragState = {
+			fromNodeId: edge.from,
+			from: side === 'source' ? canvasPoint(event) : edgePoint(fromNode, 'from'),
+			to: side === 'source' ? edgePoint(toNode, 'to') : canvasPoint(event),
+			validTarget: null,
+			targetNodeId: null,
+			reconnectEdgeId: edge.id,
+			reconnectSide: side,
+			fixedNodeId: side === 'source' ? edge.to : edge.from
+		};
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+	}
+
+	function reconnectEdge(edgeId: string, side: 'source' | 'target', candidateNodeId: string) {
+		const edge = edges.find((candidate) => candidate.id === edgeId);
+		if (!edge) return;
+		const fromNode = side === 'source' ? nodeById(candidateNodeId) : nodeById(edge.from);
+		const toNode = side === 'target' ? nodeById(candidateNodeId) : nodeById(edge.to);
+		if (!isValidConnectionForReconnect(fromNode, toNode, new Set([edgeId]))) return;
+		edges = edges.map((candidate) =>
+			candidate.id === edgeId
+				? {
+						...candidate,
+						from: side === 'source' ? candidateNodeId : candidate.from,
+						to: side === 'target' ? candidateNodeId : candidate.to,
+						outbound:
+							side === 'source' ? nodeById(candidateNodeId)?.role === 'target' : candidate.outbound,
+						custom: true
+					}
+				: candidate
+		);
+		selectedEdgeId = edgeId;
+		selectedNodeId = null;
+		markDraftDirty();
+	}
+
+	function addTransformNode(edge: MappingEdge) {
+		if (!editable || !canInsertTransformNode(edge)) return;
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return;
+		customCounter += 1;
+		const insertPoint = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
+		const nodeId = `transform-node-${customCounter}`;
+		const ruleId = `transform-rule-${customCounter}`;
+		const operation: TransformOperation = 'copy';
+		const parameters = defaultTransformParameters(operation);
+		const transformNode: MappingNode = {
+			id: nodeId,
+			ruleId,
+			role: 'transform',
+			label: `Transform ${customCounter}`,
+			caption: transformCaption(operation, parameters),
+			transformOperation: operation,
+			transformParameters: parameters,
+			privacy: 'Other',
+			layoutPosition: {
+				x: insertPoint.x - transformWidth / 2,
+				y: insertPoint.y - transformHeight / 2
+			}
+		};
+		nodes = [...nodes, transformNode];
+		edges = [
+			...edges.filter((candidate) => candidate.id !== edge.id),
+			{
+				id: `${edge.id}-in-${customCounter}`,
+				from: edge.from,
+				to: nodeId,
+				outbound: edge.outbound,
+				custom: true
+			},
+			{
+				id: `${edge.id}-out-${customCounter}`,
+				from: nodeId,
+				to: edge.to,
+				outbound: edge.outbound,
+				custom: true
+			}
+		];
+		sample.rules[ruleId] = {
+			...fallbackRule(),
+			title: transformNode.label,
+			source: 'Inserted on selected mapping edge',
+			target: 'Transform node',
+			destination: 'Continues to the original edge target',
+			transform: transformSummary(operation, parameters),
+			validation: 'draft transform node inserted',
+			trace: 'This transform node was inserted into an existing mapping edge.'
+		};
+		activeRuleId = ruleId;
+		selectedNodeId = nodeId;
+		selectedEdgeId = null;
+		markDraftDirty();
 	}
 
 	function deleteSelectedEdge() {
 		if (!editable || !selectedEdgeId) return;
 		edges = edges.filter((edge) => edge.id !== selectedEdgeId);
 		selectedEdgeId = null;
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
+	}
+
+	function deleteTransformNode(nodeId: string) {
+		if (!editable) return;
+		const transformNode = nodeById(nodeId);
+		if (transformNode?.role !== 'transform') return;
+		const incoming = edges.filter((edge) => edge.to === nodeId);
+		const outgoing = edges.filter((edge) => edge.from === nodeId);
+		const reconnectedEdges: MappingEdge[] = [];
+
+		for (const inEdge of incoming) {
+			for (const outEdge of outgoing) {
+				const fromNode = nodeById(inEdge.from);
+				const toNode = nodeById(outEdge.to);
+				if (
+					!isValidConnectionForReconnect(
+						fromNode,
+						toNode,
+						new Set([inEdge.id, outEdge.id]),
+						reconnectedEdges
+					)
+				) {
+					continue;
+				}
+				if (
+					edges.some((edge) => edge.from === inEdge.from && edge.to === outEdge.to) ||
+					reconnectedEdges.some((edge) => edge.from === inEdge.from && edge.to === outEdge.to)
+				) {
+					continue;
+				}
+				customCounter += 1;
+				reconnectedEdges.push({
+					id: `transform-reconnect-${customCounter}`,
+					from: inEdge.from,
+					to: outEdge.to,
+					outbound: outEdge.outbound || inEdge.outbound,
+					custom: true
+				});
+			}
+		}
+
+		nodes = nodes.filter((node) => node.id !== nodeId);
+		edges = [
+			...edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId),
+			...reconnectedEdges
+		];
+		if (selectedNodeId === nodeId) {
+			selectedNodeId = null;
+			activeRuleId = sample.activeRuleId;
+		}
+		selectedEdgeId = null;
+		hoverNodeId = null;
+		markDraftDirty();
+	}
+
+	function deleteSelectedTransformNode() {
+		if (!selectedNodeId) return;
+		deleteTransformNode(selectedNodeId);
+	}
+
+	function isValidConnectionForReconnect(
+		fromNode: MappingNode | undefined,
+		toNode: MappingNode | undefined,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
+	): boolean {
+		return isConnectionAllowed(fromNode, toNode, ignoredEdgeIds, extraEdges);
 	}
 
 	function handleGlobalKeyDown(event: KeyboardEvent) {
-		if (!editable || !selectedEdgeId || (event.key !== 'Backspace' && event.key !== 'Delete')) {
+		if (
+			!editable ||
+			(!selectedEdgeId && nodeById(selectedNodeId ?? '')?.role !== 'transform') ||
+			(event.key !== 'Backspace' && event.key !== 'Delete')
+		) {
 			return;
 		}
 		const target = event.target as HTMLElement | null;
@@ -669,7 +1651,11 @@
 			return;
 		}
 		event.preventDefault();
-		deleteSelectedEdge();
+		if (selectedEdgeId) {
+			deleteSelectedEdge();
+		} else {
+			deleteSelectedTransformNode();
+		}
 	}
 
 	function selectSample(event: Event) {
@@ -686,6 +1672,14 @@
 		selectedSampleId = nextId;
 	}
 
+	function selectDestinationProfile(event: Event) {
+		const select = event.currentTarget as HTMLSelectElement;
+		selectedDestinationProfileId = select.value;
+		outboundAdapter =
+			destinationProfileOptions.find((option) => option.id === selectedDestinationProfileId)
+				?.adapter ?? outboundAdapter;
+	}
+
 	function addNode(role: 'source' | 'destination') {
 		if (!editable) return;
 		customCounter += 1;
@@ -699,7 +1693,7 @@
 			caption: 'drag handle to connect'
 		};
 		nodes = [...nodes, node];
-		hasUnsavedDraftChanges = true;
+		markDraftDirty();
 		sample.rules[node.ruleId] = {
 			...fallbackRule(),
 			title: node.label,
@@ -709,6 +1703,294 @@
 			trace: 'Custom draft node added. Drag a connection handle to attach it to canonical schema.'
 		};
 		selectRule(node.ruleId);
+	}
+
+	function transformSchema(operation: TransformOperation): TransformOperationSchema {
+		return (
+			transformOperationSchemas.find((schema) => schema.operation === operation) ??
+			transformOperationSchemas[0]
+		);
+	}
+
+	function transformOperation(value: string): TransformOperation {
+		return transformOperationSchemas.some((schema) => schema.operation === value)
+			? (value as TransformOperation)
+			: 'copy';
+	}
+
+	function activeTransformOperation(node: MappingNode): TransformOperation {
+		return transformOperation(node.transformOperation ?? 'copy');
+	}
+
+	function activeTransformSchema(node: MappingNode): TransformOperationSchema {
+		return transformSchema(activeTransformOperation(node));
+	}
+
+	function defaultTransformParameters(operation: TransformOperation): Record<string, string> {
+		if (operation === 'normalize') return { mode: 'whitespace' };
+		if (operation === 'case') return { mode: 'lower' };
+		if (operation === 'concat') return { delimiter: ' ' };
+		if (operation === 'text_to_boolean') {
+			return {
+				trueValues: 'true,1,yes,y,on,active,enabled',
+				falseValues: 'false,0,no,n,off,inactive,disabled',
+				nullValues: 'null,none,n/a,unknown'
+			};
+		}
+		if (operation === 'json_build') return { keyMap: '', nullHandling: 'omit' };
+		if (
+			operation === 'json_extract_text' ||
+			operation === 'json_extract_boolean' ||
+			operation === 'json_extract_integer'
+		) {
+			return { path: '' };
+		}
+		return {};
+	}
+
+	function sanitizeTransformParameters(
+		operation: TransformOperation,
+		parameters: Record<string, string> = {}
+	): Record<string, string> {
+		const schema = transformSchema(operation);
+		const defaults = defaultTransformParameters(operation);
+		const sanitized: Record<string, string> = {};
+		for (const parameter of schema.parameters) {
+			const value = parameters[parameter.name] ?? defaults[parameter.name] ?? '';
+			if (parameter.kind === 'enum') {
+				sanitized[parameter.name] = parameter.options.some((option) => option.value === value)
+					? value
+					: (parameter.options[0]?.value ?? '');
+			} else {
+				sanitized[parameter.name] = value;
+			}
+		}
+		return sanitized;
+	}
+
+	function transformSummary(
+		operation: TransformOperation,
+		parameters: Record<string, string> = {}
+	): string {
+		const schema = transformSchema(operation);
+		const entries = schema.parameters
+			.map((parameter) => {
+				const value = parameters[parameter.name];
+				return value ? `${parameter.name}=${JSON.stringify(value)}` : null;
+			})
+			.filter(Boolean);
+		return entries.length > 0 ? `${operation}(${entries.join(', ')})` : operation;
+	}
+
+	function transformCaption(
+		operation: TransformOperation,
+		parameters: Record<string, string> = {}
+	): string {
+		const schema = transformSchema(operation);
+		if (schema.parameters.length === 0) return schema.label.toLowerCase();
+		const values = schema.parameters
+			.map((parameter) => parameters[parameter.name])
+			.filter((value) => value && value.length > 0);
+		return [schema.label.toLowerCase(), ...values].join(' / ');
+	}
+
+	function updateRuleDetail(ruleId: string, patch: Partial<ReturnType<typeof fallbackRule>>) {
+		sample = {
+			...sample,
+			rules: {
+				...sample.rules,
+				[ruleId]: {
+					...(sample.rules[ruleId] ?? fallbackRule()),
+					...patch
+				}
+			}
+		};
+	}
+
+	function updateTransformNode(
+		nodeId: string,
+		operation: TransformOperation,
+		parameters: Record<string, string>
+	) {
+		if (!editable) return;
+		const sanitized = sanitizeTransformParameters(operation, parameters);
+		let ruleId: string | null = null;
+		nodes = nodes.map((node) => {
+			if (node.id !== nodeId || node.role !== 'transform') return node;
+			ruleId = node.ruleId;
+			return {
+				...node,
+				transformOperation: operation,
+				transformParameters: sanitized,
+				caption: transformCaption(operation, sanitized)
+			};
+		});
+		if (ruleId) {
+			updateRuleDetail(ruleId, {
+				transform: transformSummary(operation, sanitized),
+				validation: 'draft transform configured; compile validation pending',
+				output: `Transform output preview pending for ${transformSummary(operation, sanitized)}.`,
+				trace:
+					'Transform configuration is stored on the draft node and will be persisted as a mapping transform step.'
+			});
+		}
+		markDraftDirty();
+	}
+
+	function updateTransformOperation(node: MappingNode, value: string) {
+		const operation = transformOperation(value);
+		updateTransformNode(node.id, operation, defaultTransformParameters(operation));
+	}
+
+	function updateTransformParameter(node: MappingNode, parameterName: string, value: string) {
+		const operation = activeTransformOperation(node);
+		updateTransformNode(node.id, operation, {
+			...sanitizeTransformParameters(operation, node.transformParameters),
+			[parameterName]: value
+		});
+	}
+
+	function nodeFieldRef(node: MappingNode): Record<string, unknown> {
+		return {
+			nodeId: node.id,
+			role: node.role,
+			label: node.label,
+			path: node.caption || node.label,
+			adapter: node.adapter,
+			profileId: node.profileId,
+			profileTitle: node.profileTitle,
+			valueType: node.type,
+			storageTarget: node.storageTarget,
+			uiGroupKey: node.uiGroupKey,
+			locked: node.locked
+		};
+	}
+
+	function stableRuleKey(parts: string[]): string {
+		return parts
+			.join('.')
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '')
+			.slice(0, 96);
+	}
+
+	function directDraftRule(edge: MappingEdge, fromNode: MappingNode, toNode: MappingNode) {
+		const edgeKind = fromNode.role === 'target' ? 'outbound_release' : 'inbound_mapping';
+		return {
+			ruleKey: stableRuleKey(['ui', sample.id, edge.id, fromNode.id, toNode.id]),
+			ruleKind: edgeKind,
+			action: 'map',
+			priority: 0,
+			metadata: {
+				source: 'admin_ui_flow_editor',
+				viewMode
+			},
+			edges: [
+				{
+					sourceRef: nodeFieldRef(fromNode),
+					targetRef: nodeFieldRef(toNode),
+					edgeKind: 'direct'
+				}
+			]
+		} satisfies MappingDraftRuleInput;
+	}
+
+	function transformDraftRules(transformNode: MappingNode): MappingDraftRuleInput[] {
+		const incoming = edges.filter((edge) => edge.to === transformNode.id);
+		const outgoing = edges.filter((edge) => edge.from === transformNode.id);
+		const operation = activeTransformOperation(transformNode);
+		const parameters = sanitizeTransformParameters(operation, transformNode.transformParameters);
+		return outgoing.flatMap((outEdge) => {
+			const toNode = nodeById(outEdge.to);
+			if (!toNode) return [];
+			const inputNodes = incoming
+				.map((edge) => nodeById(edge.from))
+				.filter((node): node is MappingNode => Boolean(node));
+			if (inputNodes.length === 0) return [];
+			const edgeKind = toNode.role === 'destination' ? 'outbound_transform' : 'inbound_transform';
+			return [
+				{
+					ruleKey: stableRuleKey(['ui', sample.id, transformNode.id, toNode.id]),
+					ruleKind: edgeKind,
+					action: 'map',
+					priority: 0,
+					metadata: {
+						source: 'admin_ui_flow_editor',
+						viewMode,
+						transformNodeId: transformNode.id
+					},
+					edges: inputNodes.map((fromNode) => ({
+						sourceRef: nodeFieldRef(fromNode),
+						targetRef: nodeFieldRef(toNode),
+						edgeKind: 'transform_input'
+					})),
+					transforms: [
+						{
+							edgeIndex: 0,
+							operation,
+							parameters
+						}
+					]
+				}
+			];
+		});
+	}
+
+	function buildDraftPayload(): MappingDraftPayload {
+		const transformIds = new Set(
+			nodes.filter((node) => node.role === 'transform').map((node) => node.id)
+		);
+		const directRules = edges.flatMap((edge) => {
+			if (transformIds.has(edge.from) || transformIds.has(edge.to)) return [];
+			const fromNode = nodeById(edge.from);
+			const toNode = nodeById(edge.to);
+			if (!fromNode || !toNode) return [];
+			return [directDraftRule(edge, fromNode, toNode)];
+		});
+		const transformRules = nodes
+			.filter((node) => node.role === 'transform')
+			.flatMap((node) => transformDraftRules(node));
+		return {
+			versionLabel: `ui-draft-${new Date().toISOString()}`,
+			compatibilityRange: '>=0.2.0',
+			rules: [...directRules, ...transformRules],
+			metadata: {
+				sampleId: sample.id,
+				sampleTitle: sample.title,
+				viewMode,
+				edgeCount: edges.length,
+				transformCount: transformRules.length
+			}
+		};
+	}
+
+	async function submitDraftForCompile() {
+		if (!editable || draftSubmitStatus === 'saving') return;
+		const draft = buildDraftPayload();
+		if (draft.rules.length === 0) {
+			draftSubmitStatus = 'error';
+			draftSubmitMessage = 'Connect at least one mapping edge before compiling a draft.';
+			return;
+		}
+		if (!onCompileDraft) {
+			draftSubmitStatus = 'error';
+			draftSubmitMessage = 'Compile draft is not connected on this page.';
+			return;
+		}
+		draftSubmitStatus = 'saving';
+		draftSubmitMessage = 'Saving draft policy version...';
+		try {
+			await onCompileDraft(draft);
+			draftSubmitStatus = 'saved';
+			draftSubmitMessage = 'Draft policy version saved and compiled.';
+			hasUnsavedDraftChanges = false;
+			onDraftDirtyChange?.(false);
+		} catch (error) {
+			draftSubmitStatus = 'error';
+			draftSubmitMessage =
+				error instanceof Error ? error.message : 'Failed to compile mapping draft.';
+		}
 	}
 
 	function edgeInspectorRule(edge: MappingEdge) {
@@ -752,6 +2034,7 @@
 			transform: 'not configured',
 			validation: 'not configured',
 			release: 'not configured',
+			storageTarget: 'not configured',
 			consentStatus: 'not_required' as const,
 			legalBasis: 'legitimate_interest' as const,
 			purpose: 'not configured',
@@ -787,41 +2070,55 @@
 					<h2>{sample.title}</h2>
 				</div>
 				<div class="graph-actions">
-					<label class="source-profile-select" for="sourceProfile">
-						<span>Source profile</span>
-						<select
-							id="sourceProfile"
-							value={selectedSampleId ?? emptySample.id}
-							disabled={loading || samples.length === 0}
-							onchange={selectSample}
-						>
-							{#if samples.length === 0}
-								<option value={emptySample.id}>No profiles</option>
-							{:else}
-								{#each samples as option (option.id)}
-									<option value={option.id}>{option.title}</option>
-								{/each}
-							{/if}
-						</select>
-					</label>
-					<div class="mode-toggle" aria-label="Flow view mode">
-						{#each enabledViewModes as mode (mode)}
-							<button
-								class:active={viewMode === mode}
-								type="button"
-								onclick={() => (viewMode = mode)}
+					{#if showToolbarSourceProfile}
+						<label class="source-profile-select" for="sourceProfile">
+							<span>Source profile</span>
+							<select
+								id="sourceProfile"
+								value={selectedSampleId ?? emptySample.id}
+								disabled={loading || samples.length === 0}
+								onchange={selectSample}
 							>
-								{mode === 'overview'
-									? 'Overview'
-									: mode === 'inbound'
-										? 'Inbound mapping'
-										: 'Outbound release'}
-							</button>
-						{/each}
-					</div>
-					<button class="primary-action" type="button">Compile draft</button>
+								{#if samples.length === 0}
+									<option value={emptySample.id}>No profiles</option>
+								{:else}
+									{#each samples as option (option.id)}
+										<option value={option.id}>{option.title}</option>
+									{/each}
+								{/if}
+							</select>
+						</label>
+					{/if}
+					{#if showToolbarModeToggle}
+						<div class="mode-toggle" aria-label="Flow view mode">
+							{#each enabledViewModes as mode (mode)}
+								<button
+									class:active={viewMode === mode}
+									type="button"
+									onclick={() => (viewMode = mode)}
+								>
+									{mode === 'overview'
+										? 'Overview'
+										: mode === 'inbound'
+											? 'Inbound mapping'
+											: 'Outbound release'}
+								</button>
+							{/each}
+						</div>
+					{/if}
+					<button
+						class="primary-action"
+						type="button"
+						disabled={!editable || draftSubmitStatus === 'saving'}
+						onclick={submitDraftForCompile}
+					>
+						{draftSubmitStatus === 'saving' ? 'Compiling...' : 'Compile draft'}
+					</button>
 				</div>
 			</div>
+			{#if draftSubmitMessage}
+				<p class={`draft-submit-message ${draftSubmitStatus}`}>{draftSubmitMessage}</p>
+			{/if}
 
 			<div class="health-strip">
 				<span><strong>Snapshot</strong> {sample.snapshot}</span>
@@ -829,24 +2126,26 @@
 				<span class="status-warn">{sample.reviewGates}</span>
 			</div>
 
-			<div class="metric-row">
-				<div class="metric">
-					<span>Mapped fields</span>
-					<strong>{sample.metrics[0]}</strong>
+			{#if showMetrics}
+				<div class="metric-row">
+					<div class="metric">
+						<span>Mapped fields</span>
+						<strong>{sample.metrics[0]}</strong>
+					</div>
+					<div class="metric">
+						<span>Hot-path reads</span>
+						<strong>{sample.metrics[1]}</strong>
+					</div>
+					<div class="metric">
+						<span>Release denies</span>
+						<strong>{sample.metrics[2]}</strong>
+					</div>
+					<div class="metric">
+						<span>Catalog version</span>
+						<strong>{sample.metrics[3]}</strong>
+					</div>
 				</div>
-				<div class="metric">
-					<span>Hot-path reads</span>
-					<strong>{sample.metrics[1]}</strong>
-				</div>
-				<div class="metric">
-					<span>Release denies</span>
-					<strong>{sample.metrics[2]}</strong>
-				</div>
-				<div class="metric">
-					<span>Catalog version</span>
-					<strong>{sample.metrics[3]}</strong>
-				</div>
-			</div>
+			{/if}
 
 			<div
 				class={`graph-canvas view-${viewMode}`}
@@ -873,34 +2172,67 @@
 				{/if}
 				{#if viewMode !== 'outbound'}
 					<div class="lane-label lane-inbound">
-						<span>Inbound adapter</span>
-						<select bind:value={inboundAdapter}>
-							{#each adapters as adapter (adapter)}
-								<option value={adapter}>{adapter}</option>
-							{/each}
-						</select>
-						{#if editable}
-							<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
-								>+</button
+						<span>Inbound profile</span>
+						{#if showLaneProfileSelectors}
+							<select
+								value={selectedSampleId ?? emptySample.id}
+								disabled={sourceProfileOptions.length === 0}
+								onchange={selectSample}
 							>
+								{#each sourceProfileOptions as option (option.id)}
+									<option value={option.id}>{option.title}</option>
+								{/each}
+							</select>
+							{#if editable}
+								<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
+									>+</button
+								>
+							{/if}
 						{/if}
 					</div>
 				{/if}
 				<div class="lane-label lane-canonical">
 					<span>Canonical targets</span>
 				</div>
+				{#each layout.targetGroups as group (group.key)}
+					<button
+						class={`target-group-header ${group.collapsed ? 'collapsed' : ''} ${activeTargetGroupKeys.includes(group.key) ? 'group-hovered' : ''}`}
+						style={targetGroupStyle(group)}
+						type="button"
+						aria-expanded={!group.collapsed}
+						aria-label={`${group.collapsed ? 'Expand' : 'Collapse'} ${group.label} target group`}
+						onclick={(event) => {
+							event.stopPropagation();
+							toggleTargetGroup(group.key);
+						}}
+						onpointerover={() => (hoverTargetGroupKey = group.key)}
+						onpointerout={() => (hoverTargetGroupKey = null)}
+					>
+						<span class="target-group-title">{group.label}</span>
+						<span class="target-group-count">{group.count}</span>
+						<span class="target-group-chevron" aria-hidden="true"></span>
+					</button>
+				{/each}
 				{#if viewMode !== 'inbound'}
 					<div class="lane-label lane-outbound">
-						<span>Outbound adapter</span>
-						<select bind:value={outboundAdapter}>
-							{#each adapters as adapter (adapter)}
-								<option value={adapter}>{adapter}</option>
-							{/each}
-						</select>
-						{#if editable}
-							<button class="mini-tool-button" type="button" onclick={() => addNode('destination')}
-								>+</button
+						<span>Outbound profile</span>
+						{#if showLaneProfileSelectors}
+							<select
+								value={selectedDestinationProfileId ?? ''}
+								disabled={destinationProfileOptions.length === 0}
+								onchange={selectDestinationProfile}
 							>
+								{#each destinationProfileOptions as option (option.id)}
+									<option value={option.id}>{option.title}</option>
+								{/each}
+							</select>
+							{#if editable}
+								<button
+									class="mini-tool-button"
+									type="button"
+									onclick={() => addNode('destination')}>+</button
+								>
+							{/if}
 						{/if}
 					</div>
 				{/if}
@@ -933,6 +2265,8 @@
 								event.stopPropagation();
 								selectEdge(edge);
 							}}
+							onpointerover={() => (hoverEdgeId = edge.id)}
+							onpointerout={() => (hoverEdgeId = null)}
 							onkeydown={(event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
 									event.preventDefault();
@@ -945,6 +2279,51 @@
 							style={`--edge-accent:${edgeAccent(edge)}`}
 							d={edgePath(edge)}
 						/>
+						{#if editable && edge.id === selectedEdgeId}
+							{#each ['source', 'target'] as side (side)}
+								{@const reconnectPoint = edgeReconnectPoint(edge, side as 'source' | 'target')}
+								{#if reconnectPoint}
+									<g
+										class={`edge-reconnect-control reconnect-${side}`}
+										transform={`translate(${reconnectPoint.x} ${reconnectPoint.y})`}
+										style={`--edge-accent:${edgeAccent(edge)}`}
+										role="button"
+										tabindex="0"
+										aria-label={`Reconnect ${side} endpoint for selected mapping edge`}
+										onpointerdown={(event) =>
+											startReconnectDrag(event, edge, side as 'source' | 'target')}
+									>
+										<circle r="6" />
+									</g>
+								{/if}
+							{/each}
+						{/if}
+						{#if editable && selectedEdges.has(edge.id) && canInsertTransformNode(edge)}
+							{@const insertPoint = edgeInsertPoint(edge)}
+							{#if insertPoint}
+								<g
+									class="edge-insert-control"
+									transform={`translate(${insertPoint.x} ${insertPoint.y})`}
+									style={`--edge-accent:${edgeAccent(edge)}`}
+									role="button"
+									tabindex="0"
+									aria-label="Insert transform node on selected mapping edge"
+									onclick={(event) => {
+										event.stopPropagation();
+										addTransformNode(edge);
+									}}
+									onkeydown={(event) => {
+										if (event.key === 'Enter' || event.key === ' ') {
+											event.preventDefault();
+											addTransformNode(edge);
+										}
+									}}
+								>
+									<rect x="-9" y="-9" width="18" height="18" rx="3" />
+									<path d="M -4 0 H 4 M 0 -4 V 4" />
+								</g>
+							{/if}
+						{/if}
 						{#if editable && edge.id === selectedEdgeId}
 							{@const deletePoint = edgeDeletePoint(edge)}
 							{#if deletePoint}
@@ -990,63 +2369,88 @@
 				</svg>
 
 				{#each laidOutNodes as node (node.id)}
-					<button
-						class={nodeClasses(node)}
-						style={nodeStyle(node)}
-						type="button"
-						data-node-id={node.id}
-						data-adapter={node.adapter}
-						aria-hidden={node.hidden}
-						tabindex={node.hidden ? -1 : 0}
-						onclick={(event) => {
-							event.stopPropagation();
-							if (suppressNextNodeClickId === node.id) {
-								suppressNextNodeClickId = null;
-								return;
-							}
-							if (!node.hidden) selectRule(node.ruleId);
-						}}
-						onpointerdown={(event) => startEasyConnectionDrag(event, node)}
-						onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
-						onpointerout={() => (hoverNodeId = null)}
-					>
-						{#if node.role !== 'source'}
-							<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
-						{/if}
-						<span>{node.label}</span>
-						<small>{node.caption}</small>
-						{#if node.role === 'target'}
-							<span class="target-badge-row">
-								<span class="target-badges">
-									{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
-									<span
-										class={`target-badge cardinality cardinality-${targetInputCardinality(node)}`}
-										aria-label={`Accepts ${targetInputCardinality(node) === 'one' ? 'one input' : 'multiple inputs'}`}
-									>
-										{targetInputCardinalityLabel(node)}
+					{#if !node.collapsed}
+						<button
+							class={nodeClasses(node)}
+							style={nodeStyle(node)}
+							type="button"
+							data-node-id={node.id}
+							data-adapter={node.adapter}
+							aria-hidden={node.hidden}
+							tabindex={node.hidden ? -1 : 0}
+							onclick={(event) => {
+								event.stopPropagation();
+								if (suppressNextNodeClickId === node.id) {
+									suppressNextNodeClickId = null;
+									return;
+								}
+								if (!node.hidden) selectRule(node.ruleId);
+							}}
+							onpointerdown={(event) => startEasyConnectionDrag(event, node)}
+							onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
+							onpointerout={() => (hoverNodeId = null)}
+						>
+							{#if !node.locked && (node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'outbound'))}
+								<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
+							{/if}
+							{#if node.locked}
+								<span
+									class="node-lock-icon"
+									aria-hidden="true"
+									title="Managed by subject identifier strategy"
+								></span>
+							{/if}
+							<span>{node.label}</span>
+							{#if node.caption}
+								<small>{node.caption}</small>
+							{/if}
+							{#if node.role === 'target'}
+								<span class="target-badge-row">
+									<span class="target-badges">
+										{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
+										<span
+											class={`target-badge cardinality cardinality-${targetInputCardinality(node)}`}
+											aria-label={`Accepts ${targetInputCardinality(node) === 'one' ? 'one input' : 'multiple inputs'}`}
+										>
+											{targetInputCardinalityLabel(node)}
+										</span>
+									</span>
+									<span class="target-badges meta-badges">
+										{#if node.required}<span class="target-badge required">Required</span>{/if}
+										{#if node.privacy}
+											<span
+												class={`target-badge ${node.privacy.toLowerCase().replace(/[^a-z]+/g, '-')}`}
+											>
+												{node.privacy}
+											</span>
+										{/if}
 									</span>
 								</span>
-								<span class="target-badges meta-badges">
-									{#if node.required}<span class="target-badge required">Required</span>{/if}
-									{#if node.privacy}
-										<span
-											class={`target-badge ${node.privacy.toLowerCase().replace(/[^a-z]+/g, '-')}`}
-										>
-											{node.privacy}
-										</span>
-									{/if}
-								</span>
-							</span>
-						{/if}
-						{#if editable && node.role !== 'destination'}
-							<span
-								class="node-handle output"
-								data-node-id={node.id}
-								aria-hidden="true"
-								onpointerdown={(event) => startConnectionDrag(event, node)}
-							></span>
-						{/if}
-					</button>
+							{/if}
+							{#if editable && !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
+								<span
+									class="node-handle output"
+									data-node-id={node.id}
+									aria-hidden="true"
+									onpointerdown={(event) => startConnectionDrag(event, node)}
+								></span>
+							{/if}
+						</button>
+					{/if}
+					{#if editable && node.role === 'transform' && node.id === selectedNodeId && !node.hidden && !node.collapsed}
+						<button
+							class="transform-delete-control"
+							style={transformDeleteStyle(node)}
+							type="button"
+							aria-label={`Delete ${node.label}`}
+							onclick={(event) => {
+								event.stopPropagation();
+								deleteTransformNode(node.id);
+							}}
+						>
+							<span aria-hidden="true">×</span>
+						</button>
+					{/if}
 				{/each}
 			</div>
 		</section>
@@ -1085,6 +2489,85 @@
 			</div>
 
 			{#if activeTab === 'rule'}
+				{#if selectedTransformNode}
+					{@const schema = activeTransformSchema(selectedTransformNode)}
+					<section class="transform-config-card" aria-label="Transform configuration">
+						<div class="transform-config-header">
+							<div>
+								<p class="section-kicker">Transform step</p>
+								<h3>{schema.label}</h3>
+							</div>
+							<span class="transform-operation-pill"
+								>{activeTransformOperation(selectedTransformNode)}</span
+							>
+						</div>
+						<label class="inspector-field" for={`transform-operation-${selectedTransformNode.id}`}>
+							<span>Operation</span>
+							<select
+								id={`transform-operation-${selectedTransformNode.id}`}
+								value={activeTransformOperation(selectedTransformNode)}
+								disabled={!editable}
+								onchange={(event) =>
+									updateTransformOperation(
+										selectedTransformNode,
+										(event.currentTarget as HTMLSelectElement).value
+									)}
+							>
+								{#each transformOperationSchemas as option (option.operation)}
+									<option value={option.operation}>{option.label}</option>
+								{/each}
+							</select>
+						</label>
+						<p class="transform-description">{schema.description}</p>
+						{#each schema.parameters as parameter (parameter.name)}
+							<label
+								class="inspector-field"
+								for={`transform-${selectedTransformNode.id}-${parameter.name}`}
+							>
+								<span>
+									{parameter.label}
+									{#if parameter.required}<em>Required</em>{/if}
+								</span>
+								{#if parameter.kind === 'enum'}
+									<select
+										id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+										value={sanitizeTransformParameters(
+											activeTransformOperation(selectedTransformNode),
+											selectedTransformNode.transformParameters
+										)[parameter.name]}
+										disabled={!editable}
+										onchange={(event) =>
+											updateTransformParameter(
+												selectedTransformNode,
+												parameter.name,
+												(event.currentTarget as HTMLSelectElement).value
+											)}
+									>
+										{#each parameter.options as option (option.value)}
+											<option value={option.value}>{option.label}</option>
+										{/each}
+									</select>
+								{:else}
+									<input
+										id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+										value={sanitizeTransformParameters(
+											activeTransformOperation(selectedTransformNode),
+											selectedTransformNode.transformParameters
+										)[parameter.name]}
+										placeholder={parameter.placeholder}
+										disabled={!editable}
+										oninput={(event) =>
+											updateTransformParameter(
+												selectedTransformNode,
+												parameter.name,
+												(event.currentTarget as HTMLInputElement).value
+											)}
+									/>
+								{/if}
+							</label>
+						{/each}
+					</section>
+				{/if}
 				<dl class="detail-list">
 					<div>
 						<dt>Source</dt>
@@ -1109,6 +2592,10 @@
 					<div>
 						<dt>Release</dt>
 						<dd>{rule.release}</dd>
+					</div>
+					<div>
+						<dt>Storage</dt>
+						<dd>{rule.storageTarget ?? 'not configured'}</dd>
 					</div>
 				</dl>
 			{:else if activeTab === 'dryrun'}
@@ -1311,11 +2798,13 @@
 	}
 
 	select,
+	input,
 	button {
 		font: inherit;
 	}
 
-	select {
+	select,
+	input {
 		height: 30px;
 		border: 1px solid var(--map-line);
 		border-radius: 4px;
@@ -1323,6 +2812,10 @@
 		background: var(--map-surface);
 		font-size: 12px;
 		font-weight: 700;
+	}
+
+	input {
+		padding: 0 8px;
 	}
 
 	button {
@@ -1355,6 +2848,29 @@
 		padding: 0 16px;
 		color: #ffffff;
 		background: var(--map-brand);
+	}
+
+	.primary-action:disabled {
+		cursor: progress;
+		opacity: 0.66;
+	}
+
+	.draft-submit-message {
+		margin: 0;
+		padding: 9px 16px;
+		border-top: 1px solid var(--map-line);
+		color: var(--map-muted);
+		background: var(--map-surface-muted);
+		font-size: 12px;
+		font-weight: 700;
+	}
+
+	.draft-submit-message.saved {
+		color: var(--map-green);
+	}
+
+	.draft-submit-message.error {
+		color: var(--map-red);
 	}
 
 	.workspace {
@@ -1469,7 +2985,8 @@
 		position: absolute;
 		top: 12px;
 		z-index: 4;
-		display: flex;
+		display: grid;
+		grid-template-columns: auto auto;
 		align-items: center;
 		gap: 7px;
 		color: var(--map-muted);
@@ -1477,6 +2994,10 @@
 		font-weight: 800;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
+	}
+
+	.lane-label > span {
+		grid-column: 1 / -1;
 	}
 
 	.lane-inbound {
@@ -1502,6 +3023,78 @@
 
 	.graph-canvas.view-outbound .lane-outbound {
 		right: 16px;
+	}
+
+	.target-group-header {
+		--target-group-accent: var(--map-brand);
+		position: absolute;
+		z-index: 4;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto auto;
+		align-items: center;
+		gap: 7px;
+		padding: 0 8px;
+		border: 1px solid color-mix(in srgb, var(--target-group-accent) 70%, transparent);
+		border-radius: 5px 5px 0 0;
+		color: var(--map-text);
+		background: color-mix(in srgb, var(--target-group-accent) 15%, var(--map-surface));
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 8%, transparent),
+			0 4px 10px rgb(0 0 0 / 0.2);
+		text-align: left;
+	}
+
+	.target-group-header:hover,
+	.target-group-header:focus-visible,
+	.target-group-header.group-hovered {
+		border-color: var(--target-group-accent);
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--target-group-accent) 70%, transparent),
+			0 0 0 4px color-mix(in srgb, var(--target-group-accent) 14%, transparent),
+			0 0 22px 2px color-mix(in srgb, var(--target-group-accent) 36%, transparent),
+			0 8px 18px rgba(0, 0, 0, 0.3);
+		outline: none;
+	}
+
+	.target-group-title {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 12px;
+		font-weight: 900;
+		letter-spacing: 0;
+	}
+
+	.target-group-count {
+		min-width: 18px;
+		height: 16px;
+		padding: 0 5px;
+		border-radius: 999px;
+		color: var(--map-brand);
+		background: color-mix(in srgb, var(--map-brand) 14%, transparent);
+		font-size: 10px;
+		font-weight: 900;
+		line-height: 16px;
+		text-align: center;
+	}
+
+	.target-group-chevron {
+		width: 7px;
+		height: 7px;
+		border-right: 2px solid currentColor;
+		border-bottom: 2px solid currentColor;
+		opacity: 0.72;
+		transform: translateY(-1px) rotate(45deg);
+		transition: transform 160ms ease;
+	}
+
+	.target-group-header.collapsed {
+		border-radius: 5px;
+	}
+
+	.target-group-header.collapsed .target-group-chevron {
+		transform: translateX(-1px) rotate(-45deg);
 	}
 
 	.mini-tool-button {
@@ -1553,6 +3146,37 @@
 		pointer-events: auto;
 	}
 
+	.edge-insert-control {
+		color: var(--map-text);
+		cursor: pointer;
+		pointer-events: auto;
+	}
+
+	.edge-reconnect-control {
+		color: var(--map-text);
+		cursor: grab;
+		pointer-events: auto;
+	}
+
+	.edge-reconnect-control:active {
+		cursor: grabbing;
+	}
+
+	.edge-reconnect-control circle {
+		fill: var(--map-surface);
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-width: 2;
+		filter: drop-shadow(
+			0 0 8px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 40%, transparent)
+		);
+	}
+
+	.edge-reconnect-control:hover circle,
+	.edge-reconnect-control:focus-visible circle {
+		fill: color-mix(in srgb, var(--edge-accent, var(--map-brand)) 16%, var(--map-surface));
+		outline: none;
+	}
+
 	.edge-delete-control circle {
 		fill: var(--map-surface);
 		stroke: var(--edge-accent, var(--map-red));
@@ -1573,6 +3197,27 @@
 	.edge-delete-control:focus-visible circle {
 		fill: color-mix(in srgb, var(--map-red) 12%, var(--map-surface));
 		stroke: var(--map-red);
+	}
+
+	.edge-insert-control rect {
+		fill: var(--map-surface);
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-width: 1.5;
+		filter: drop-shadow(
+			0 0 10px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 32%, transparent)
+		);
+	}
+
+	.edge-insert-control path {
+		fill: none;
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-linecap: round;
+		stroke-width: 2;
+	}
+
+	.edge-insert-control:hover rect,
+	.edge-insert-control:focus-visible rect {
+		fill: color-mix(in srgb, var(--edge-accent, var(--map-brand)) 16%, var(--map-surface));
 	}
 
 	.edge {
@@ -1648,6 +3293,15 @@
 	.custom-edge {
 		stroke: var(--map-teal);
 		stroke-width: 2.6;
+	}
+
+	.edge.edge-invalid {
+		stroke: var(--map-red);
+		stroke-dasharray: var(--map-edge-dash-pattern);
+		opacity: 1;
+		animation:
+			edge-flow var(--map-edge-flow-speed) linear infinite,
+			connection-pulse var(--map-edge-pulse-speed) ease-in-out infinite;
 	}
 
 	.drag-edge {
@@ -1729,6 +3383,89 @@
 		border-color: rgba(96, 165, 250, 0.64);
 	}
 
+	.target-grouped-node {
+		border-radius: 0;
+		box-shadow: none;
+	}
+
+	.target-grouped-node::after {
+		content: '';
+		position: absolute;
+		right: 0;
+		bottom: -1px;
+		left: 0;
+		z-index: 2;
+		height: 2px;
+		background: color-mix(in srgb, var(--map-brand) 44%, var(--map-line));
+		pointer-events: none;
+	}
+
+	.target-grouped-node.target-group-single,
+	.target-grouped-node.target-group-last {
+		border-radius: 0 0 5px 5px;
+		box-shadow: 0 4px 10px rgb(0 0 0 / 0.16);
+	}
+
+	.target-grouped-node.target-group-first,
+	.target-grouped-node.target-group-middle,
+	.target-grouped-node.target-group-single {
+		border-bottom-color: color-mix(in srgb, var(--map-brand) 46%, var(--map-line));
+	}
+
+	.target-grouped-node.target-group-middle,
+	.target-grouped-node.target-group-last {
+		border-top-color: color-mix(in srgb, var(--map-brand) 22%, transparent);
+	}
+
+	.target-grouped-node:hover,
+	.target-grouped-node.active,
+	.target-grouped-node.connection-origin,
+	.target-grouped-node.selection-origin,
+	.target-grouped-node.connection-rejected,
+	.target-grouped-node.connection-related,
+	.target-grouped-node.selection-related {
+		z-index: 6;
+	}
+
+	.transform-node {
+		--node-accent: var(--map-green);
+		place-content: center;
+		border-color: color-mix(in srgb, var(--map-green) 74%, transparent);
+		background: color-mix(in srgb, var(--map-green) 14%, var(--map-surface));
+		text-align: center;
+	}
+
+	.transform-delete-control {
+		position: absolute;
+		z-index: 8;
+		display: grid;
+		place-items: center;
+		width: 16px;
+		height: 16px;
+		padding: 0;
+		border: 1px solid color-mix(in srgb, var(--map-red) 72%, transparent);
+		border-radius: 999px;
+		color: var(--map-red);
+		background: var(--map-surface);
+		box-shadow:
+			0 0 0 2px color-mix(in srgb, var(--map-red) 12%, transparent),
+			0 6px 14px rgb(0 0 0 / 0.3);
+		font-size: 12px;
+		font-weight: 900;
+		line-height: 1;
+	}
+
+	.transform-delete-control:hover,
+	.transform-delete-control:focus-visible {
+		background: color-mix(in srgb, var(--map-red) 12%, var(--map-surface));
+		outline: none;
+	}
+
+	.transform-delete-control span {
+		display: block;
+		transform: translateY(-0.5px);
+	}
+
 	.target-node.cardinality-one .node-handle.input {
 		box-shadow:
 			0 0 0 1px rgba(213, 224, 238, 0.18),
@@ -1738,13 +3475,14 @@
 	.target-node.cardinality-many .node-handle.input {
 		box-shadow:
 			0 0 0 1px rgba(213, 224, 238, 0.18),
-			0 0 0 4px color-mix(in srgb, var(--map-brand) 14%, transparent);
+			inset 0 0 0 2px var(--map-canvas);
 	}
 
 	.adapter-hidden {
 		opacity: 0.22;
 		filter: saturate(0.65);
 		transform: translate(var(--stack-x), var(--stack-y));
+		pointer-events: none;
 	}
 
 	.adapter-hidden::before {
@@ -1763,7 +3501,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-size: 11.2px;
+		font-size: 14px;
 		font-weight: 400;
 		line-height: 1.15;
 	}
@@ -1794,6 +3532,7 @@
 	.graph-node.connection-rejected {
 		border-color: var(--map-red);
 		--node-glow: color-mix(in srgb, var(--map-red) 38%, transparent);
+		background: color-mix(in srgb, var(--map-red) 16%, var(--map-surface));
 		box-shadow:
 			0 0 0 1px color-mix(in srgb, var(--map-red) 70%, transparent),
 			0 0 0 4px color-mix(in srgb, var(--map-red) 16%, transparent),
@@ -1810,6 +3549,79 @@
 	.graph-node.selection-related {
 		border-color: color-mix(in srgb, var(--node-accent) 84%, transparent);
 		background: color-mix(in srgb, var(--node-accent) 18%, var(--map-surface));
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--node-accent) 58%, transparent),
+			0 0 0 3px color-mix(in srgb, var(--node-accent) 10%, transparent),
+			0 0 18px 1px color-mix(in srgb, var(--node-accent) 28%, transparent),
+			0 8px 18px rgba(0, 0, 0, 0.26);
+	}
+
+	.target-grouped-node:hover,
+	.target-grouped-node.active,
+	.target-grouped-node.connection-origin,
+	.target-grouped-node.selection-origin,
+	.target-grouped-node.connection-related,
+	.target-grouped-node.selection-related {
+		outline: 2px solid color-mix(in srgb, var(--node-accent) 88%, transparent);
+		outline-offset: -2px;
+		box-shadow:
+			inset 0 0 0 1px color-mix(in srgb, var(--node-accent) 42%, transparent),
+			0 0 0 2px color-mix(in srgb, var(--node-accent) 16%, transparent),
+			0 0 18px 1px color-mix(in srgb, var(--node-accent) 28%, transparent);
+	}
+
+	.target-grouped-node.connection-rejected {
+		background: color-mix(in srgb, var(--map-red) 16%, var(--map-surface));
+		outline: 2px solid color-mix(in srgb, var(--map-red) 88%, transparent);
+		outline-offset: -2px;
+		box-shadow:
+			inset 0 0 0 1px color-mix(in srgb, var(--map-red) 44%, transparent),
+			0 0 0 2px color-mix(in srgb, var(--map-red) 16%, transparent),
+			0 0 18px 1px color-mix(in srgb, var(--map-red) 30%, transparent);
+	}
+
+	.target-grouped-node.connection-rejected::after {
+		z-index: 3;
+		background: color-mix(in srgb, var(--map-red) 76%, var(--map-line));
+	}
+
+	.graph-node.locked-node {
+		cursor: default;
+	}
+
+	.node-lock-icon {
+		position: absolute;
+		top: 5px;
+		right: 6px;
+		width: 10px;
+		height: 9px;
+		border: 1.5px solid var(--map-muted);
+		border-radius: 2px;
+		opacity: 0.86;
+		pointer-events: none;
+	}
+
+	.node-lock-icon::before {
+		content: '';
+		position: absolute;
+		left: 1px;
+		top: -6px;
+		width: 5px;
+		height: 6px;
+		border: 1.5px solid var(--map-muted);
+		border-bottom: 0;
+		border-radius: 5px 5px 0 0;
+	}
+
+	.node-lock-icon::after {
+		content: '';
+		position: absolute;
+		left: 3px;
+		top: 2px;
+		width: 2px;
+		height: 3px;
+		border-radius: 999px;
+		background: var(--map-muted);
 	}
 
 	.node-handle {
@@ -1946,6 +3758,71 @@
 		gap: 10px;
 		margin: 0;
 		padding: 14px;
+	}
+
+	.transform-config-card {
+		display: grid;
+		gap: 12px;
+		margin: 14px 14px 0;
+		padding: 12px;
+		border: 1px solid color-mix(in srgb, var(--map-green) 48%, var(--map-line));
+		border-radius: var(--map-radius);
+		background: color-mix(in srgb, var(--map-green) 7%, var(--map-surface-muted));
+		box-shadow: 0 0 0 1px color-mix(in srgb, var(--map-green) 16%, transparent);
+	}
+
+	.transform-config-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 10px;
+	}
+
+	.transform-config-header h3 {
+		margin: 2px 0 0;
+		font-size: 14px;
+	}
+
+	.transform-operation-pill {
+		padding: 3px 8px;
+		border: 1px solid color-mix(in srgb, var(--map-green) 50%, transparent);
+		border-radius: 999px;
+		color: var(--map-green);
+		background: color-mix(in srgb, var(--map-green) 11%, transparent);
+		font-size: 11px;
+		font-weight: 900;
+	}
+
+	.transform-description {
+		margin: 0;
+		color: var(--map-muted);
+		font-size: 12px;
+		line-height: 1.45;
+	}
+
+	.inspector-field {
+		display: grid;
+		gap: 6px;
+	}
+
+	.inspector-field > span {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		color: var(--map-muted);
+		font-size: 11px;
+		font-weight: 900;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.inspector-field em {
+		color: var(--map-amber);
+		font-style: normal;
+		font-size: 10px;
+		letter-spacing: 0;
+		text-transform: none;
 	}
 
 	.detail-list div,

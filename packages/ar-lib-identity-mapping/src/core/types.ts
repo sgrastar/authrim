@@ -11,7 +11,18 @@ export type MappingDecisionAction =
   | 'redacted'
   | 'transformed';
 
-export type TransformOperation = 'copy' | 'concat' | 'fallback' | 'normalize' | 'case' | 'trim';
+export type TransformOperation =
+  | 'copy'
+  | 'concat'
+  | 'fallback'
+  | 'normalize'
+  | 'case'
+  | 'trim'
+  | 'text_to_boolean'
+  | 'json_build'
+  | 'json_extract_text'
+  | 'json_extract_boolean'
+  | 'json_extract_integer';
 export type ValidationRuleKind = 'required' | 'type' | 'enum' | 'format' | 'cardinality';
 export type FormatKind = 'email' | 'uri' | 'date' | 'datetime' | 'phone' | 'locale';
 
@@ -141,6 +152,11 @@ export interface FieldCatalogEntry {
   valueType: string;
   cardinality: Cardinality;
   classification: RedactionClassification;
+  uiGroupKey?: string;
+  uiGroupLabel?: string;
+  uiGroupOrder?: number;
+  uiFieldOrder?: number;
+  examples?: unknown[];
 }
 
 export interface FieldCatalogBundle {

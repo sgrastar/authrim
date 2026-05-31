@@ -52,6 +52,48 @@ describe('validation rules', () => {
     expect(result.reasons.map((item) => item.code)).toContain('validation.format_mismatch');
   });
 
+  it('validates JSON value type without treating plain text as JSON', () => {
+    const jsonInput = mappingInput([
+      sourceValue('csv', 'email', { locale: 'ja', active: true }, 'internal'),
+    ]);
+    const textInput = mappingInput([sourceValue('csv', 'email', 'not json', 'internal')]);
+    const jsonCatalog = {
+      ...jsonInput.catalog,
+      entries: jsonInput.catalog.entries.map((entry) =>
+        entry.namespace === 'csv' && entry.path === 'email'
+          ? { ...entry, valueType: 'json' }
+          : entry
+      ),
+    };
+    const valid = validateMappingInput({
+      ...jsonInput,
+      catalog: jsonCatalog,
+      validationRules: [
+        {
+          id: 'validation.profile.json',
+          kind: 'type',
+          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          parameters: { valueType: 'json' },
+        },
+      ],
+    });
+    const invalid = validateMappingInput({
+      ...textInput,
+      catalog: jsonCatalog,
+      validationRules: [
+        {
+          id: 'validation.profile.json',
+          kind: 'type',
+          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          parameters: { valueType: 'json' },
+        },
+      ],
+    });
+
+    expect(valid.reasons.map((item) => item.code)).not.toContain('validation.type_mismatch');
+    expect(invalid.reasons.map((item) => item.code)).toContain('validation.type_mismatch');
+  });
+
   it('validates email format without regex backtracking exposure', () => {
     const valid = validateMappingInput({
       ...mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]),

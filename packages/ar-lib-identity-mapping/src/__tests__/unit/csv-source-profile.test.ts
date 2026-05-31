@@ -51,4 +51,16 @@ describe('parseCsvSourceProfile', () => {
     expect(result.columns.map((column) => column.headerName)).toEqual(['column_1', 'column_2']);
     expect(result.columns[1]?.valueType).toBe('email');
   });
+
+  it('infers JSON text columns when every sampled value is valid JSON object or array text', () => {
+    const result = parseCsvSourceProfile(
+      'external_profile\n"{""department"":""library"",""roles"":[""patron""]}"\n"{""department"":""research"",""roles"":[""staff""]}"'
+    );
+
+    expect(result.columns[0]).toMatchObject({
+      headerName: 'external_profile',
+      valueType: 'json',
+      candidates: { valueType: 'json' },
+    });
+  });
 });

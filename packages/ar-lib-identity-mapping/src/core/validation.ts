@@ -118,6 +118,9 @@ function matchesValueType(valueType: string, value: unknown): boolean {
   if (value === undefined || value === null || value === '') {
     return true;
   }
+  if (valueType === 'json') {
+    return typeof value === 'object';
+  }
   if (Array.isArray(value)) {
     return value.every((item) => matchesValueType(valueType, item));
   }

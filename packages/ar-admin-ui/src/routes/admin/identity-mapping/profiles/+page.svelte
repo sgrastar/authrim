@@ -66,7 +66,7 @@
 
 	const profileKinds: Array<ProfileKind | 'all'> = ['all', 'inbound', 'outbound', 'template'];
 	const profileTabs: ProfileTab[] = ['sources', 'destinations', 'registries'];
-	const valueTypeOptions = ['string', 'email', 'phone', 'number', 'boolean', 'date', 'datetime'];
+	const valueTypeOptions = ['string', 'email', 'phone', 'number', 'boolean', 'json', 'date', 'datetime'];
 	const classificationOptions = ['internal', 'public', 'pii', 'regulated', 'secret'];
 	const ownerScopeOptions = ['tenant', 'platform', 'client'];
 	const registryOwnerScopeOptions = ['tenant', 'platform'];
@@ -122,6 +122,7 @@
 	let destinationProtocolSchemaRef = $state('');
 	let destinationBlockingWarningsConfirmed = $state(false);
 	let savingDestination = $state(false);
+	let deletingProfileId = $state<string | null>(null);
 	let oidcClaimsParameterJson = $state('');
 	let oidcClaims = $state<OidcClaimDraft[]>([
 		createOidcClaimDraft(
@@ -267,7 +268,7 @@
 
 	function sourceProfileToProfile(profile: IdentityMappingSourceProfileSummary): ProfileItem {
 		return {
-			id: profile.id,
+			id: `source:${profile.id}`,
 			kind: 'inbound',
 			protocol: profile.sourceType.toUpperCase(),
 			displayName: profile.displayName,
@@ -283,7 +284,7 @@
 		profile: IdentityMappingDestinationProfileSummary
 	): ProfileItem {
 		return {
-			id: profile.id,
+			id: `destination:${profile.id}`,
 			kind: 'outbound',
 			protocol: profile.destinationType.toUpperCase(),
 			displayName: profile.displayName,
@@ -297,7 +298,7 @@
 
 	function protocolSchemaToProfile(schema: IdentityMappingProtocolSchemaSummary): ProfileItem {
 		return {
-			id: schema.id,
+			id: `protocol:${schema.id}`,
 			kind: ['saml', 'oidc'].includes(schema.protocol.toLowerCase()) ? 'outbound' : 'inbound',
 			protocol: schema.protocol,
 			displayName: schema.displayName ?? schema.schemaKey,
@@ -309,7 +310,7 @@
 
 	function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): ProfileItem {
 		return {
-			id: schema.id,
+			id: `external:${schema.id}`,
 			kind: 'inbound',
 			protocol: schema.sourceType,
 			displayName: schema.displayName ?? schema.schemaKey,
@@ -321,7 +322,7 @@
 
 	function templateToProfile(template: IdentityMappingTemplateSummary): ProfileItem {
 		return {
-			id: template.id,
+			id: `template:${template.id}`,
 			kind: 'template',
 			protocol: template.protocol,
 			displayName: template.displayName,
@@ -431,6 +432,10 @@
 
 	async function activateSourceProfile(profile: ProfileItem) {
 		if (!profile.sourceProfileId || !profile.sourceProfileVersionId) return;
+		if (profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active') {
+			createMessage = `Review ${profile.displayName} before activating it.`;
+			return;
+		}
 		try {
 			await adminIdentityMappingAPI.activateSourceProfileVersion(
 				profile.sourceProfileId,
@@ -502,6 +507,10 @@
 
 	async function activateDestinationProfile(profile: ProfileItem) {
 		if (!profile.destinationProfileId || !profile.destinationProfileVersionId) return;
+		if (profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active') {
+			createMessage = `Review ${profile.displayName} before activating it.`;
+			return;
+		}
 		try {
 			await adminIdentityMappingAPI.activateDestinationProfileVersion(
 				profile.destinationProfileId,
@@ -514,6 +523,37 @@
 				error instanceof Error
 					? error.message
 					: 'Failed to activate identity mapping destination profile';
+		}
+	}
+
+	async function deleteProfile(profile: ProfileItem) {
+		if (profile.kind !== 'inbound' && profile.kind !== 'outbound') return;
+		const profileId = profile.sourceProfileId ?? profile.destinationProfileId;
+		if (!profileId) return;
+		const confirmed = window.confirm(
+			`Delete ${profile.displayName}? This removes the profile and its versions. Existing draft graph references may need to be reconnected.`
+		);
+		if (!confirmed) return;
+		deletingProfileId = profile.id;
+		createMessage = null;
+		try {
+			if (profile.sourceProfileId) {
+				await adminIdentityMappingAPI.deleteSourceProfile(profile.sourceProfileId);
+			} else if (profile.destinationProfileId) {
+				await adminIdentityMappingAPI.deleteDestinationProfile(profile.destinationProfileId);
+			}
+			if (selectedProfileId === profile.id) {
+				selectedProfileId = null;
+			}
+			consentDrafts = Object.fromEntries(
+				Object.entries(consentDrafts).filter(([key]) => key !== profile.id)
+			);
+			createMessage = `Deleted ${profile.displayName}.`;
+			await loadProfiles();
+		} catch (error) {
+			createMessage = error instanceof Error ? error.message : 'Failed to delete profile';
+		} finally {
+			deletingProfileId = null;
 		}
 	}
 
@@ -1721,7 +1761,13 @@
 						{#if profile.sourceProfileId && profile.sourceProfileVersionId}
 							<div class="profile-actions">
 								<button type="button" onclick={() => reviewSourceProfile(profile)}>Review</button>
-								<button type="button" onclick={() => activateSourceProfile(profile)}
+								<button
+									type="button"
+									disabled={profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active'}
+									title={profile.lifecycleState === 'draft'
+										? 'Review this profile before activation.'
+										: undefined}
+									onclick={() => activateSourceProfile(profile)}
 									>Activate</button
 								>
 							</div>
@@ -1731,9 +1777,27 @@
 								<button type="button" onclick={() => reviewDestinationProfile(profile)}
 									>Review</button
 								>
-								<button type="button" onclick={() => activateDestinationProfile(profile)}
+								<button
+									type="button"
+									disabled={profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active'}
+									title={profile.lifecycleState === 'draft'
+										? 'Review this profile before activation.'
+										: undefined}
+									onclick={() => activateDestinationProfile(profile)}
 									>Activate</button
 								>
+							</div>
+						{/if}
+						{#if profile.sourceProfileId || profile.destinationProfileId}
+							<div class="profile-actions danger-actions">
+								<button
+									type="button"
+									class="danger-button"
+									disabled={deletingProfileId === profile.id}
+									onclick={() => deleteProfile(profile)}
+								>
+									{deletingProfileId === profile.id ? 'Deleting...' : 'Delete'}
+								</button>
 							</div>
 						{/if}
 					</article>
@@ -1907,6 +1971,21 @@
 	.profile-actions {
 		align-items: center;
 		justify-content: flex-start;
+	}
+
+	.danger-actions {
+		margin-top: 4px;
+	}
+
+	.danger-button {
+		border-color: color-mix(in srgb, var(--color-danger, #dc2626) 45%, var(--border-color));
+		color: var(--color-danger, #dc2626);
+	}
+
+	.danger-button:hover:not(:disabled),
+	.danger-button:focus-visible:not(:disabled) {
+		border-color: var(--color-danger, #dc2626);
+		background: color-mix(in srgb, var(--color-danger, #dc2626) 10%, transparent);
 	}
 
 	.back-link,
