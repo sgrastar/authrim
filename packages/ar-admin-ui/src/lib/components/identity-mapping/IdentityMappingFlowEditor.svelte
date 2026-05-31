@@ -274,6 +274,7 @@
 	let nodes = $state<MappingNode[]>([...emptySample.nodes]);
 	let edges = $state<MappingEdge[]>([...emptySample.edges]);
 	let hoverNodeId = $state<string | null>(null);
+	let hoverEdgeId = $state<string | null>(null);
 	let hoverTargetGroupKey = $state<string | null>(null);
 	let selectedNodeId = $state<string | null>(null);
 	let selectedEdgeId = $state<string | null>(null);
@@ -397,6 +398,15 @@
 	const hoverEdges = $derived(
 		new Set([...connectedEdgeIds(hoverNodeId), ...connectedTargetGroupEdgeIds(hoverTargetGroupKey)])
 	);
+	const activeTargetGroupKeys = $derived.by(() => {
+		const keys: string[] = [];
+		if (hoverTargetGroupKey) addTargetGroupKey(keys, hoverTargetGroupKey);
+		addConnectedTargetGroupKeys(hoverNodeId, keys);
+		addConnectedTargetGroupKeys(selectedNodeId, keys);
+		addEdgeTargetGroupKeys(hoverEdgeId, keys);
+		addEdgeTargetGroupKeys(selectedEdgeId, keys);
+		return keys;
+	});
 	const invalidEdgeTargetNodeIds = $derived(
 		new Set(
 			graphEdges
@@ -590,6 +600,7 @@
 		selectedEdgeId = null;
 		selectedNodeId = null;
 		hoverNodeId = null;
+		hoverEdgeId = null;
 		hoverTargetGroupKey = null;
 	}
 
@@ -620,6 +631,27 @@
 				return [...graph.edgeIds];
 			})
 		);
+	}
+
+	function addTargetGroupKey(keys: string[], key: string) {
+		if (!keys.includes(key)) keys.push(key);
+	}
+
+	function addConnectedTargetGroupKeys(nodeId: string | null, keys: string[]) {
+		if (!nodeId) return;
+		for (const connectedNodeId of [nodeId, ...connectedGraph(nodeId).nodeIds]) {
+			const node = nodeById(connectedNodeId);
+			if (node?.role !== 'target') continue;
+			addTargetGroupKey(keys, targetGroupKey(node));
+		}
+	}
+
+	function addEdgeTargetGroupKeys(edgeId: string | null, keys: string[]) {
+		if (!edgeId) return;
+		const edge = edges.find((candidate) => candidate.id === edgeId);
+		if (!edge) return;
+		addConnectedTargetGroupKeys(edge.from, keys);
+		addConnectedTargetGroupKeys(edge.to, keys);
 	}
 
 	function connectedNodeIds(nodeId: string | null): Set<string> {
@@ -2164,7 +2196,7 @@
 				</div>
 				{#each layout.targetGroups as group (group.key)}
 					<button
-						class={`target-group-header ${group.collapsed ? 'collapsed' : ''} ${hoverTargetGroupKey === group.key ? 'group-hovered' : ''}`}
+						class={`target-group-header ${group.collapsed ? 'collapsed' : ''} ${activeTargetGroupKeys.includes(group.key) ? 'group-hovered' : ''}`}
 						style={targetGroupStyle(group)}
 						type="button"
 						aria-expanded={!group.collapsed}
@@ -2233,6 +2265,8 @@
 								event.stopPropagation();
 								selectEdge(edge);
 							}}
+							onpointerover={() => (hoverEdgeId = edge.id)}
+							onpointerout={() => (hoverEdgeId = null)}
 							onkeydown={(event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
 									event.preventDefault();
