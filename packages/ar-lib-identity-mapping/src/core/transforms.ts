@@ -53,6 +53,16 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
     outputValueType: 'string',
     outputCardinality: 'single',
   },
+  {
+    operation: 'text_to_boolean',
+    parameters: [
+      { name: 'trueValues', kind: 'string', required: false },
+      { name: 'falseValues', kind: 'string', required: false },
+      { name: 'nullValues', kind: 'string', required: false },
+    ],
+    outputValueType: 'boolean',
+    outputCardinality: 'single',
+  },
 ];
 
 const transformSchemas = new Map(
@@ -186,6 +196,8 @@ function executeOperation(step: MappingTransformStep, values: SourceValueEnvelop
       return caseValue(rawValues[0], step.parameters?.mode);
     case 'trim':
       return typeof rawValues[0] === 'string' ? rawValues[0].trim() : rawValues[0];
+    case 'text_to_boolean':
+      return textToBoolean(rawValues[0], step.parameters);
     default:
       return undefined;
   }
@@ -218,6 +230,67 @@ function caseValue(value: unknown, mode: unknown): unknown {
   return value.toLowerCase();
 }
 
+function textToBoolean(
+  value: unknown,
+  parameters: Record<string, unknown> | undefined
+): boolean | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  const trueValues = parseTextValueSet(parameters?.trueValues, [
+    'true',
+    '1',
+    'yes',
+    'y',
+    'on',
+    'active',
+    'enabled',
+  ]);
+  const falseValues = parseTextValueSet(parameters?.falseValues, [
+    'false',
+    '0',
+    'no',
+    'n',
+    'off',
+    'inactive',
+    'disabled',
+  ]);
+  const nullValues = parseTextValueSet(parameters?.nullValues, [
+    '',
+    'null',
+    'none',
+    'n/a',
+    'unknown',
+  ]);
+
+  if (trueValues.has(normalized)) {
+    return true;
+  }
+  if (falseValues.has(normalized)) {
+    return false;
+  }
+  if (nullValues.has(normalized)) {
+    return null;
+  }
+  return null;
+}
+
+function parseTextValueSet(value: unknown, defaults: string[]): Set<string> {
+  const source = typeof value === 'string' && value.trim().length > 0 ? value : defaults.join(',');
+  const values = source
+    .split(/[\n,]+/u)
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length > 0);
+  if (value === undefined) {
+    values.push(...defaults.map((item) => item.trim().toLowerCase()));
+  }
+  return new Set(values);
+}
+
 function isTransformOutputValid(operation: TransformOperation, value: unknown): boolean {
   const schema = transformSchemas.get(operation);
   if (!schema?.outputValueType) {
@@ -228,6 +301,9 @@ function isTransformOutputValid(operation: TransformOperation, value: unknown): 
   }
   if (schema.outputValueType === 'string') {
     return typeof value === 'string';
+  }
+  if (schema.outputValueType === 'boolean') {
+    return typeof value === 'boolean' || value === null;
   }
   return true;
 }

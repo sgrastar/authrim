@@ -38,6 +38,7 @@ describe('transform registry', () => {
       'copy',
       'fallback',
       'normalize',
+      'text_to_boolean',
       'trim',
     ]);
   });
@@ -74,5 +75,41 @@ describe('transform registry', () => {
         edgeValues,
       }).value?.value
     ).toBe(' user@example.test ');
+  });
+
+  it('converts configured text tokens to nullable booleans', () => {
+    const sourceRef = fieldRef('csv', 'active');
+    const targetRef = { side: 'canonical' as const, namespace: 'authrim.profile', path: 'active' };
+    const mappingEdge = edge(sourceRef, targetRef);
+    const step: MappingTransformStep = {
+      id: 'transform.active.text-to-boolean',
+      inputEdgeIds: [mappingEdge.id],
+      operation: 'text_to_boolean',
+      parameters: {
+        trueValues: '利用中,enabled',
+        falseValues: '停止,inactive',
+        nullValues: '未確認,unknown',
+      },
+      outputTargetRef: targetRef,
+    };
+
+    expect(
+      executeTransformStep({
+        step,
+        edgeValues: new Map([[mappingEdge.id, sourceValue('csv', 'active', '利用中')]]),
+      }).value?.value
+    ).toBe(true);
+    expect(
+      executeTransformStep({
+        step,
+        edgeValues: new Map([[mappingEdge.id, sourceValue('csv', 'active', '停止')]]),
+      }).value?.value
+    ).toBe(false);
+    expect(
+      executeTransformStep({
+        step,
+        edgeValues: new Map([[mappingEdge.id, sourceValue('csv', 'active', '未確認')]]),
+      }).value?.value
+    ).toBeNull();
   });
 });

@@ -11,7 +11,14 @@ export type MappingDecisionAction =
   | 'redacted'
   | 'transformed';
 
-export type TransformOperation = 'copy' | 'concat' | 'fallback' | 'normalize' | 'case' | 'trim';
+export type TransformOperation =
+  | 'copy'
+  | 'concat'
+  | 'fallback'
+  | 'normalize'
+  | 'case'
+  | 'trim'
+  | 'text_to_boolean';
 export type ValidationRuleKind = 'required' | 'type' | 'enum' | 'format' | 'cardinality';
 export type FormatKind = 'email' | 'uri' | 'date' | 'datetime' | 'phone' | 'locale';
 

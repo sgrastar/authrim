@@ -1,7 +1,14 @@
 export type MappingAdapter = 'CSV' | 'SAML' | 'OIDC' | 'SCIM';
 export type MappingRisk = 'low' | 'medium' | 'high';
 export type NodeRole = 'source' | 'transform' | 'target' | 'destination';
-export type TransformOperation = 'copy' | 'concat' | 'fallback' | 'normalize' | 'case' | 'trim';
+export type TransformOperation =
+	| 'copy'
+	| 'concat'
+	| 'fallback'
+	| 'normalize'
+	| 'case'
+	| 'trim'
+	| 'text_to_boolean';
 
 export interface MappingNode {
 	id: string;

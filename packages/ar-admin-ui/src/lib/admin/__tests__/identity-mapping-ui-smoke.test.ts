@@ -78,6 +78,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('normalize');
 		expect(flowEditor).toContain('case');
 		expect(flowEditor).toContain('trim');
+		expect(flowEditor).toContain('text_to_boolean');
+		expect(flowEditor).toContain("toType === 'boolean'");
+		expect(flowEditor).toContain("toType === 'json'");
 		expect(flowEditor).toContain('isValidConnectionForReconnect');
 		expect(flowEditor).toContain('isTypeCompatible');
 		expect(flowEditor).toContain('isTargetInputFull');

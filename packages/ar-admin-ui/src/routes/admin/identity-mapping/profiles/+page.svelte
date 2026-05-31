@@ -66,7 +66,7 @@
 
 	const profileKinds: Array<ProfileKind | 'all'> = ['all', 'inbound', 'outbound', 'template'];
 	const profileTabs: ProfileTab[] = ['sources', 'destinations', 'registries'];
-	const valueTypeOptions = ['string', 'email', 'phone', 'number', 'boolean', 'date', 'datetime'];
+	const valueTypeOptions = ['string', 'email', 'phone', 'number', 'boolean', 'json', 'date', 'datetime'];
 	const classificationOptions = ['internal', 'public', 'pii', 'regulated', 'secret'];
 	const ownerScopeOptions = ['tenant', 'platform', 'client'];
 	const registryOwnerScopeOptions = ['tenant', 'platform'];

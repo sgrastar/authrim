@@ -14,14 +14,14 @@
 	type ViewMode = 'overview' | 'inbound' | 'outbound';
 	type TransformParameterSchema =
 		| {
-				name: 'mode';
+				name: string;
 				label: string;
 				kind: 'enum';
 				required: true;
 				options: Array<{ value: string; label: string }>;
 		  }
 		| {
-				name: 'delimiter';
+				name: string;
 				label: string;
 				kind: 'string';
 				required: false;
@@ -101,6 +101,35 @@
 			label: 'Fallback',
 			description: 'Use the first non-empty connected input value.',
 			parameters: []
+		},
+		{
+			operation: 'text_to_boolean',
+			label: 'Text to boolean',
+			description:
+				'Convert configured text tokens to true, false, or null before writing to a boolean target.',
+			parameters: [
+				{
+					name: 'trueValues',
+					label: 'True values',
+					kind: 'string',
+					required: false,
+					placeholder: 'true, 1, yes, active'
+				},
+				{
+					name: 'falseValues',
+					label: 'False values',
+					kind: 'string',
+					required: false,
+					placeholder: 'false, 0, no, inactive'
+				},
+				{
+					name: 'nullValues',
+					label: 'Null values',
+					kind: 'string',
+					required: false,
+					placeholder: 'empty, null, none, n/a'
+				}
+			]
 		}
 	];
 
@@ -849,8 +878,11 @@
 		if (fromType === toType) return true;
 		if (toType === 'text')
 			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale'].includes(fromType);
-		if (fromType === 'text') return ['text', 'identifier', 'enum', 'locale'].includes(toType);
+		if (fromType === 'text') return ['text', 'identifier', 'locale'].includes(toType);
 		if (toType === 'identifier') return ['identifier', 'text'].includes(fromType);
+		if (toType === 'boolean') return fromType === 'boolean';
+		if (toType === 'number') return fromType === 'number';
+		if (toType === 'enum') return fromType === 'enum';
 		if (toType === 'multi-value') return fromType === 'multi-value';
 		if (toType === 'json') return fromType === 'json';
 		return false;
@@ -860,6 +892,15 @@
 		const normalized = type?.toLowerCase().trim();
 		if (!normalized) return null;
 		if (normalized === 'transform') return null;
+		if (normalized.includes('boolean') || normalized.includes('bool')) return 'boolean';
+		if (
+			normalized.includes('number') ||
+			normalized.includes('integer') ||
+			normalized.includes('float') ||
+			normalized.includes('double')
+		) {
+			return 'number';
+		}
 		if (['string', 'text', 'name'].some((needle) => normalized.includes(needle))) return 'text';
 		if (normalized.includes('email') || normalized.includes('mail')) return 'email';
 		if (
@@ -879,13 +920,7 @@
 			return 'multi-value';
 		}
 		if (normalized.includes('json') || normalized.includes('object')) return 'json';
-		if (
-			normalized.includes('enum') ||
-			normalized.includes('boolean') ||
-			normalized.includes('number')
-		) {
-			return 'enum';
-		}
+		if (normalized.includes('enum')) return 'enum';
 		if (normalized.includes('locale') || normalized.includes('timezone')) return 'locale';
 		return normalized;
 	}
@@ -1244,6 +1279,13 @@
 		if (operation === 'normalize') return { mode: 'whitespace' };
 		if (operation === 'case') return { mode: 'lower' };
 		if (operation === 'concat') return { delimiter: ' ' };
+		if (operation === 'text_to_boolean') {
+			return {
+				trueValues: 'true,1,yes,y,on,active,enabled',
+				falseValues: 'false,0,no,n,off,inactive,disabled',
+				nullValues: 'null,none,n/a,unknown'
+			};
+		}
 		return {};
 	}
 
