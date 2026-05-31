@@ -257,6 +257,9 @@
 	const targetGroupHeaderHeight = 28;
 	const targetGroupRowStep = targetHeight - 1;
 	const targetGroupGap = 10;
+	const connectionAutoScrollMargin = 72;
+	const connectionAutoScrollMaxSpeed = 24;
+	const connectionAutoScrollMinSpeed = 4;
 
 	let canvas: HTMLDivElement;
 	let canvasWidth = $state(1000);
@@ -298,6 +301,8 @@
 		startClient: Point;
 		from: Point;
 	} | null = null;
+	let connectionDragPointer: Point | null = null;
+	let connectionAutoScrollFrame: number | null = null;
 	let suppressNextNodeClickId: string | null = null;
 
 	interface Point {
@@ -550,6 +555,7 @@
 	}
 
 	function resetDraftFromCurrentSample() {
+		stopConnectionAutoScroll();
 		nodes = [...sample.nodes];
 		edges = [...sample.edges];
 		activeRuleId = sample.activeRuleId;
@@ -563,6 +569,7 @@
 	}
 
 	onDestroy(() => {
+		stopConnectionAutoScroll();
 		window.removeEventListener('pointermove', handlePointerMove);
 		window.removeEventListener('pointerup', handlePointerUp);
 		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
@@ -1297,20 +1304,149 @@
 		return normalized;
 	}
 
-	function connectionTargetForPointer(event: PointerEvent): MappingNode | undefined {
-		const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+	function connectionTargetForClientPoint(point: Point): MappingNode | undefined {
+		const target = document.elementFromPoint(point.x, point.y) as HTMLElement | null;
 		const handle = target?.closest?.('.node-handle.input') as HTMLElement | null;
 		const nodeElement = target?.closest?.('.graph-node') as HTMLElement | null;
 		const toNodeId = handle?.dataset.nodeId ?? nodeElement?.dataset.nodeId;
 		return toNodeId ? nodeById(toNodeId) : undefined;
 	}
 
-	function canvasPoint(event: PointerEvent): Point {
+	function connectionTargetForPointer(event: PointerEvent): MappingNode | undefined {
+		return connectionTargetForClientPoint({ x: event.clientX, y: event.clientY });
+	}
+
+	function canvasPointForClientPoint(point: Point): Point {
 		const rect = canvas.getBoundingClientRect();
 		return {
-			x: event.clientX - rect.left,
-			y: event.clientY - rect.top
+			x: point.x - rect.left,
+			y: point.y - rect.top
 		};
+	}
+
+	function canvasPoint(event: PointerEvent): Point {
+		return canvasPointForClientPoint({ x: event.clientX, y: event.clientY });
+	}
+
+	function scrollableCanvasAncestor(): HTMLElement | null {
+		let element = canvas?.parentElement;
+		while (element && element !== document.body && element !== document.documentElement) {
+			const style = getComputedStyle(element);
+			const scrollableY = ['auto', 'scroll', 'overlay'].includes(style.overflowY);
+			if (scrollableY && element.scrollHeight > element.clientHeight) return element;
+			element = element.parentElement;
+		}
+		return null;
+	}
+
+	function edgeDragAutoScrollDelta(pointerY: number, top: number, bottom: number): number {
+		if (pointerY < top + connectionAutoScrollMargin) {
+			const ratio = Math.min(
+				1,
+				(top + connectionAutoScrollMargin - pointerY) / connectionAutoScrollMargin
+			);
+			return -Math.ceil(connectionAutoScrollMinSpeed + ratio * connectionAutoScrollMaxSpeed);
+		}
+		if (pointerY > bottom - connectionAutoScrollMargin) {
+			const ratio = Math.min(
+				1,
+				(pointerY - (bottom - connectionAutoScrollMargin)) / connectionAutoScrollMargin
+			);
+			return Math.ceil(connectionAutoScrollMinSpeed + ratio * connectionAutoScrollMaxSpeed);
+		}
+		return 0;
+	}
+
+	function updateDragStateForClientPoint(clientPoint: Point) {
+		if (!dragState) return;
+		const toNode = connectionTargetForClientPoint(clientPoint);
+		const canvasTargetPoint = canvasPointForClientPoint(clientPoint);
+		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'source') {
+			const fixedToNode = nodeById(dragState.fixedNodeId ?? '');
+			const fixedToLayout = fixedToNode ? layoutNodeById(fixedToNode.id) : undefined;
+			dragState = {
+				...dragState,
+				from: canvasTargetPoint,
+				to: fixedToLayout ? edgePoint(fixedToLayout, 'to') : dragState.to,
+				validTarget: toNode
+					? isValidConnectionForReconnect(toNode, fixedToNode, new Set([dragState.reconnectEdgeId]))
+					: null,
+				targetNodeId: toNode?.id ?? null
+			};
+			return;
+		}
+		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'target') {
+			const fixedFromNode = nodeById(dragState.fixedNodeId ?? '');
+			const fixedFromLayout = fixedFromNode ? layoutNodeById(fixedFromNode.id) : undefined;
+			dragState = {
+				...dragState,
+				from: fixedFromLayout ? edgePoint(fixedFromLayout, 'from') : dragState.from,
+				to: canvasTargetPoint,
+				validTarget: toNode
+					? isValidConnectionForReconnect(
+							fixedFromNode,
+							toNode,
+							new Set([dragState.reconnectEdgeId])
+						)
+					: null,
+				targetNodeId: toNode?.id ?? null
+			};
+			return;
+		}
+		const fromNode = nodeById(dragState.fromNodeId);
+		dragState = {
+			...dragState,
+			to: canvasTargetPoint,
+			validTarget: toNode ? isValidConnection(fromNode, toNode) : null,
+			targetNodeId: toNode?.id ?? null
+		};
+	}
+
+	function runConnectionAutoScroll() {
+		connectionAutoScrollFrame = null;
+		if (!dragState || !connectionDragPointer) return;
+
+		let didScroll = false;
+		const scrollContainer = scrollableCanvasAncestor();
+		if (scrollContainer) {
+			const rect = scrollContainer.getBoundingClientRect();
+			const delta = edgeDragAutoScrollDelta(connectionDragPointer.y, rect.top, rect.bottom);
+			if (delta !== 0) {
+				const before = scrollContainer.scrollTop;
+				scrollContainer.scrollTop += delta;
+				didScroll = scrollContainer.scrollTop !== before;
+			}
+		}
+
+		if (!didScroll) {
+			const maxWindowScroll = document.documentElement.scrollHeight - window.innerHeight;
+			const delta = edgeDragAutoScrollDelta(connectionDragPointer.y, 0, window.innerHeight);
+			if (delta !== 0 && window.scrollY >= 0 && window.scrollY <= maxWindowScroll) {
+				const before = window.scrollY;
+				window.scrollBy({ top: delta, left: 0, behavior: 'instant' });
+				didScroll = window.scrollY !== before;
+			}
+		}
+
+		if (didScroll) updateDragStateForClientPoint(connectionDragPointer);
+		if (dragState && connectionDragPointer) {
+			connectionAutoScrollFrame = requestAnimationFrame(runConnectionAutoScroll);
+		}
+	}
+
+	function updateConnectionAutoScrollPointer(event: PointerEvent) {
+		connectionDragPointer = { x: event.clientX, y: event.clientY };
+		if (connectionAutoScrollFrame === null) {
+			connectionAutoScrollFrame = requestAnimationFrame(runConnectionAutoScroll);
+		}
+	}
+
+	function stopConnectionAutoScroll() {
+		connectionDragPointer = null;
+		if (connectionAutoScrollFrame !== null) {
+			cancelAnimationFrame(connectionAutoScrollFrame);
+			connectionAutoScrollFrame = null;
+		}
 	}
 
 	function startConnectionDrag(event: PointerEvent, node: LayoutNode) {
@@ -1326,6 +1462,7 @@
 			validTarget: null,
 			targetNodeId: null
 		};
+		updateConnectionAutoScrollPointer(event);
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', handlePointerUp);
 	}
@@ -1380,50 +1517,15 @@
 
 	function handlePointerMove(event: PointerEvent) {
 		if (!dragState) return;
-		const toNode = connectionTargetForPointer(event);
-		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'source') {
-			const fixedToNode = nodeById(dragState.fixedNodeId ?? '');
-			const fixedToLayout = fixedToNode ? layoutNodeById(fixedToNode.id) : undefined;
-			dragState = {
-				...dragState,
-				from: canvasPoint(event),
-				to: fixedToLayout ? edgePoint(fixedToLayout, 'to') : dragState.to,
-				validTarget: toNode
-					? isValidConnectionForReconnect(toNode, fixedToNode, new Set([dragState.reconnectEdgeId]))
-					: null,
-				targetNodeId: toNode?.id ?? null
-			};
-			return;
-		}
-		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'target') {
-			const fixedFromNode = nodeById(dragState.fixedNodeId ?? '');
-			const fixedFromLayout = fixedFromNode ? layoutNodeById(fixedFromNode.id) : undefined;
-			dragState = {
-				...dragState,
-				from: fixedFromLayout ? edgePoint(fixedFromLayout, 'from') : dragState.from,
-				to: canvasPoint(event),
-				validTarget: toNode
-					? isValidConnectionForReconnect(
-							fixedFromNode,
-							toNode,
-							new Set([dragState.reconnectEdgeId])
-						)
-					: null,
-				targetNodeId: toNode?.id ?? null
-			};
-			return;
-		}
-		const fromNode = nodeById(dragState.fromNodeId);
-		dragState = {
-			...dragState,
-			to: canvasPoint(event),
-			validTarget: toNode ? isValidConnection(fromNode, toNode) : null,
-			targetNodeId: toNode?.id ?? null
-		};
+		updateConnectionAutoScrollPointer(event);
+		updateDragStateForClientPoint({ x: event.clientX, y: event.clientY });
 	}
 
 	function handlePointerUp(event: PointerEvent) {
-		if (!dragState) return;
+		if (!dragState) {
+			stopConnectionAutoScroll();
+			return;
+		}
 		const reconnectState = dragState;
 		const fromNode = nodeById(dragState.fromNodeId);
 		const toNode = connectionTargetForPointer(event);
@@ -1433,6 +1535,7 @@
 			addEdge(dragState.fromNodeId, toNode.id);
 		}
 		dragState = null;
+		stopConnectionAutoScroll();
 		window.removeEventListener('pointermove', handlePointerMove);
 		window.removeEventListener('pointerup', handlePointerUp);
 	}
@@ -1475,6 +1578,7 @@
 			reconnectSide: side,
 			fixedNodeId: side === 'source' ? edge.to : edge.from
 		};
+		updateConnectionAutoScrollPointer(event);
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', handlePointerUp);
 	}
