@@ -3061,6 +3061,18 @@
 		box-shadow: none;
 	}
 
+	.target-grouped-node::after {
+		content: '';
+		position: absolute;
+		right: 0;
+		bottom: -1px;
+		left: 0;
+		z-index: 2;
+		height: 2px;
+		background: color-mix(in srgb, var(--map-brand) 44%, var(--map-line));
+		pointer-events: none;
+	}
+
 	.target-grouped-node.target-group-single,
 	.target-grouped-node.target-group-last {
 		border-radius: 0 0 5px 5px;
@@ -3070,7 +3082,7 @@
 	.target-grouped-node.target-group-first,
 	.target-grouped-node.target-group-middle,
 	.target-grouped-node.target-group-single {
-		border-bottom-color: color-mix(in srgb, var(--map-brand) 30%, var(--map-line));
+		border-bottom-color: color-mix(in srgb, var(--map-brand) 46%, var(--map-line));
 	}
 
 	.target-grouped-node.target-group-middle,
