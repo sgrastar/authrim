@@ -56,8 +56,11 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('edge-hit');
 		expect(flowEditor).toContain('.edge-hit:focus-visible');
 		expect(flowEditor).toContain('edge-delete-control');
+		expect(flowEditor).toContain('edge-reconnect-control');
 		expect(flowEditor).toContain('edge-insert-control');
 		expect(flowEditor).toContain('addTransformNode');
+		expect(flowEditor).toContain('startReconnectDrag');
+		expect(flowEditor).toContain('reconnectEdge');
 		expect(flowEditor).toContain('canInsertTransformNode');
 		expect(flowEditor).toContain('edgeDeletePoint');
 		expect(flowEditor).toContain('edgeInsertPoint');
@@ -87,6 +90,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain("toType === 'json'");
 		expect(flowEditor).toContain('isValidConnectionForReconnect');
 		expect(flowEditor).toContain('isTypeCompatible');
+		expect(flowEditor).toContain('isConnectionTypeMismatch');
+		expect(flowEditor).toContain('edge-invalid');
 		expect(flowEditor).toContain('isTargetInputFull');
 		expect(flowEditor).toContain("fromNode.role !== 'source' && fromNode.role !== 'transform'");
 		expect(flowEditor).toContain("edgeFromRole === 'source' || edgeFromRole === 'transform'");

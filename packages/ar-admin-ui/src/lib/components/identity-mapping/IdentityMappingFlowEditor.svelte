@@ -288,6 +288,9 @@
 		to: Point;
 		validTarget: boolean | null;
 		targetNodeId: string | null;
+		reconnectEdgeId?: string;
+		reconnectSide?: 'source' | 'target';
+		fixedNodeId?: string;
 	} | null>(null);
 	let pendingConnectionStart: {
 		fromNodeId: string;
@@ -393,6 +396,14 @@
 	);
 	const hoverEdges = $derived(
 		new Set([...connectedEdgeIds(hoverNodeId), ...connectedTargetGroupEdgeIds(hoverTargetGroupKey)])
+	);
+	const invalidEdgeTargetNodeIds = $derived(
+		new Set(
+			graphEdges
+				.filter((edge) => edgeHasTypeMismatch(edge))
+				.map((edge) => edge.to)
+				.filter(Boolean)
+		)
 	);
 	const enabledViewModes = $derived(
 		allowedViewModes.length > 0 ? allowedViewModes : (['overview'] satisfies ViewMode[])
@@ -960,6 +971,13 @@
 		};
 	}
 
+	function edgeReconnectPoint(edge: MappingEdge, side: 'source' | 'target'): Point | null {
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return null;
+		return side === 'source' ? edgePoint(fromNode, 'from') : edgePoint(toNode, 'to');
+	}
+
 	function canInsertTransformNode(edge: MappingEdge): boolean {
 		const fromNode = nodeById(edge.from);
 		const toNode = nodeById(edge.to);
@@ -993,10 +1011,18 @@
 			edge.id === selectedEdgeId ? 'edge-picked' : '',
 			hoverEdges.has(edge.id) ? 'edge-connected' : '',
 			selectedEdges.has(edge.id) ? 'edge-selected' : '',
+			edgeHasTypeMismatch(edge) ? 'edge-invalid' : '',
 			fromNode?.hidden || toNode?.hidden ? 'edge-muted' : ''
 		]
 			.filter(Boolean)
 			.join(' ');
+	}
+
+	function edgeHasTypeMismatch(edge: MappingEdge): boolean {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		if (!fromNode || !toNode) return false;
+		return isConnectionTypeMismatch(fromNode, toNode);
 	}
 
 	function nodeClasses(node: LayoutNode): string {
@@ -1016,6 +1042,7 @@
 			dragState?.validTarget === false && dragState.targetNodeId === node.id
 				? 'connection-rejected'
 				: '',
+			invalidEdgeTargetNodeIds.has(node.id) ? 'connection-rejected' : '',
 			selectedRelated ? 'selection-related' : '',
 			node.id === hoverNodeId ? 'connection-origin' : '',
 			hoverRelated ? 'connection-related' : ''
@@ -1028,25 +1055,50 @@
 		fromNode: MappingNode | undefined,
 		toNode: MappingNode | undefined
 	): boolean {
+		return isConnectionAllowed(fromNode, toNode);
+	}
+
+	function isConnectionAllowed(
+		fromNode: MappingNode | undefined,
+		toNode: MappingNode | undefined,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
+	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
 		if (fromNode.locked || toNode.locked) return false;
-		const validDirection =
+		return (
+			isConnectionDirectionAllowed(fromNode, toNode) &&
+			!connectionExists(fromNode.id, toNode.id, ignoredEdgeIds, extraEdges) &&
+			!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)
+		);
+	}
+
+	function isConnectionDirectionAllowed(fromNode: MappingNode, toNode: MappingNode): boolean {
+		return (
 			(fromNode.role === 'source' && toNode.role === 'target') ||
 			(fromNode.role === 'source' && toNode.role === 'transform') ||
 			(fromNode.role === 'transform' && toNode.role === 'target') ||
 			(fromNode.role === 'target' && toNode.role === 'destination') ||
 			(fromNode.role === 'target' && toNode.role === 'transform') ||
-			(fromNode.role === 'transform' && toNode.role === 'destination');
-		return (
-			validDirection &&
-			isTypeCompatible(fromNode, toNode) &&
-			!isDuplicateConnection(fromNode.id, toNode.id) &&
-			!isTargetInputFull(fromNode, toNode)
+			(fromNode.role === 'transform' && toNode.role === 'destination')
 		);
 	}
 
-	function isDuplicateConnection(fromNodeId: string, toNodeId: string): boolean {
-		return edges.some((edge) => edge.from === fromNodeId && edge.to === toNodeId);
+	function connectionExists(
+		fromNodeId: string,
+		toNodeId: string,
+		ignoredEdgeIds = new Set<string>(),
+		extraEdges: MappingEdge[] = []
+	): boolean {
+		return [...edges, ...extraEdges].some(
+			(edge) => !ignoredEdgeIds.has(edge.id) && edge.from === fromNodeId && edge.to === toNodeId
+		);
+	}
+
+	function isConnectionTypeMismatch(fromNode: MappingNode, toNode: MappingNode): boolean {
+		if (fromNode.role === 'transform' || toNode.role === 'transform') return false;
+		if (!isConnectionDirectionAllowed(fromNode, toNode)) return false;
+		return !isTypeCompatible(fromNode, toNode);
 	}
 
 	function isTargetInputFull(
@@ -1213,8 +1265,40 @@
 
 	function handlePointerMove(event: PointerEvent) {
 		if (!dragState) return;
-		const fromNode = nodeById(dragState.fromNodeId);
 		const toNode = connectionTargetForPointer(event);
+		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'source') {
+			const fixedToNode = nodeById(dragState.fixedNodeId ?? '');
+			const fixedToLayout = fixedToNode ? layoutNodeById(fixedToNode.id) : undefined;
+			dragState = {
+				...dragState,
+				from: canvasPoint(event),
+				to: fixedToLayout ? edgePoint(fixedToLayout, 'to') : dragState.to,
+				validTarget: toNode
+					? isValidConnectionForReconnect(toNode, fixedToNode, new Set([dragState.reconnectEdgeId]))
+					: null,
+				targetNodeId: toNode?.id ?? null
+			};
+			return;
+		}
+		if (dragState.reconnectEdgeId && dragState.reconnectSide === 'target') {
+			const fixedFromNode = nodeById(dragState.fixedNodeId ?? '');
+			const fixedFromLayout = fixedFromNode ? layoutNodeById(fixedFromNode.id) : undefined;
+			dragState = {
+				...dragState,
+				from: fixedFromLayout ? edgePoint(fixedFromLayout, 'from') : dragState.from,
+				to: canvasPoint(event),
+				validTarget: toNode
+					? isValidConnectionForReconnect(
+							fixedFromNode,
+							toNode,
+							new Set([dragState.reconnectEdgeId])
+						)
+					: null,
+				targetNodeId: toNode?.id ?? null
+			};
+			return;
+		}
+		const fromNode = nodeById(dragState.fromNodeId);
 		dragState = {
 			...dragState,
 			to: canvasPoint(event),
@@ -1225,9 +1309,12 @@
 
 	function handlePointerUp(event: PointerEvent) {
 		if (!dragState) return;
+		const reconnectState = dragState;
 		const fromNode = nodeById(dragState.fromNodeId);
 		const toNode = connectionTargetForPointer(event);
-		if (isValidConnection(fromNode, toNode) && toNode) {
+		if (reconnectState.reconnectEdgeId && reconnectState.reconnectSide && toNode) {
+			reconnectEdge(reconnectState.reconnectEdgeId, reconnectState.reconnectSide, toNode.id);
+		} else if (isValidConnection(fromNode, toNode) && toNode) {
 			addEdge(dragState.fromNodeId, toNode.id);
 		}
 		dragState = null;
@@ -1238,7 +1325,7 @@
 	function addEdge(from: string, to: string) {
 		if (!editable) return;
 		if (!isValidConnection(nodeById(from), nodeById(to))) return;
-		if (edges.some((edge) => edge.from === from && edge.to === to)) return;
+		if (connectionExists(from, to)) return;
 		customCounter += 1;
 		const edge = {
 			id: `custom-edge-${customCounter}`,
@@ -1249,6 +1336,53 @@
 		};
 		edges = [...edges, edge];
 		selectedEdgeId = edge.id;
+		selectedNodeId = null;
+		markDraftDirty();
+	}
+
+	function startReconnectDrag(event: PointerEvent, edge: MappingEdge, side: 'source' | 'target') {
+		if (!editable || event.button !== 0) return;
+		const fromNode = layoutNodeById(edge.from);
+		const toNode = layoutNodeById(edge.to);
+		if (!fromNode || !toNode) return;
+		event.preventDefault();
+		event.stopPropagation();
+		selectedEdgeId = edge.id;
+		selectedNodeId = null;
+		pendingConnectionStart = null;
+		dragState = {
+			fromNodeId: edge.from,
+			from: side === 'source' ? canvasPoint(event) : edgePoint(fromNode, 'from'),
+			to: side === 'source' ? edgePoint(toNode, 'to') : canvasPoint(event),
+			validTarget: null,
+			targetNodeId: null,
+			reconnectEdgeId: edge.id,
+			reconnectSide: side,
+			fixedNodeId: side === 'source' ? edge.to : edge.from
+		};
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+	}
+
+	function reconnectEdge(edgeId: string, side: 'source' | 'target', candidateNodeId: string) {
+		const edge = edges.find((candidate) => candidate.id === edgeId);
+		if (!edge) return;
+		const fromNode = side === 'source' ? nodeById(candidateNodeId) : nodeById(edge.from);
+		const toNode = side === 'target' ? nodeById(candidateNodeId) : nodeById(edge.to);
+		if (!isValidConnectionForReconnect(fromNode, toNode, new Set([edgeId]))) return;
+		edges = edges.map((candidate) =>
+			candidate.id === edgeId
+				? {
+						...candidate,
+						from: side === 'source' ? candidateNodeId : candidate.from,
+						to: side === 'target' ? candidateNodeId : candidate.to,
+						outbound:
+							side === 'source' ? nodeById(candidateNodeId)?.role === 'target' : candidate.outbound,
+						custom: true
+					}
+				: candidate
+		);
+		selectedEdgeId = edgeId;
 		selectedNodeId = null;
 		markDraftDirty();
 	}
@@ -1383,16 +1517,7 @@
 		ignoredEdgeIds = new Set<string>(),
 		extraEdges: MappingEdge[] = []
 	): boolean {
-		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
-		if (fromNode.locked || toNode.locked) return false;
-		const validDirection =
-			(fromNode.role === 'source' && toNode.role === 'target') ||
-			(fromNode.role === 'target' && toNode.role === 'destination');
-		return (
-			validDirection &&
-			isTypeCompatible(fromNode, toNode) &&
-			!isTargetInputFull(fromNode, toNode, ignoredEdgeIds, extraEdges)
-		);
+		return isConnectionAllowed(fromNode, toNode, ignoredEdgeIds, extraEdges);
 	}
 
 	function handleGlobalKeyDown(event: KeyboardEvent) {
@@ -2037,6 +2162,25 @@
 							style={`--edge-accent:${edgeAccent(edge)}`}
 							d={edgePath(edge)}
 						/>
+						{#if editable && edge.id === selectedEdgeId}
+							{#each ['source', 'target'] as side (side)}
+								{@const reconnectPoint = edgeReconnectPoint(edge, side as 'source' | 'target')}
+								{#if reconnectPoint}
+									<g
+										class={`edge-reconnect-control reconnect-${side}`}
+										transform={`translate(${reconnectPoint.x} ${reconnectPoint.y})`}
+										style={`--edge-accent:${edgeAccent(edge)}`}
+										role="button"
+										tabindex="0"
+										aria-label={`Reconnect ${side} endpoint for selected mapping edge`}
+										onpointerdown={(event) =>
+											startReconnectDrag(event, edge, side as 'source' | 'target')}
+									>
+										<circle r="6" />
+									</g>
+								{/if}
+							{/each}
+						{/if}
 						{#if editable && selectedEdges.has(edge.id) && canInsertTransformNode(edge)}
 							{@const insertPoint = edgeInsertPoint(edge)}
 							{#if insertPoint}
@@ -2891,6 +3035,31 @@
 		pointer-events: auto;
 	}
 
+	.edge-reconnect-control {
+		color: var(--map-text);
+		cursor: grab;
+		pointer-events: auto;
+	}
+
+	.edge-reconnect-control:active {
+		cursor: grabbing;
+	}
+
+	.edge-reconnect-control circle {
+		fill: var(--map-surface);
+		stroke: var(--edge-accent, var(--map-brand));
+		stroke-width: 2;
+		filter: drop-shadow(
+			0 0 8px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 40%, transparent)
+		);
+	}
+
+	.edge-reconnect-control:hover circle,
+	.edge-reconnect-control:focus-visible circle {
+		fill: color-mix(in srgb, var(--edge-accent, var(--map-brand)) 16%, var(--map-surface));
+		outline: none;
+	}
+
 	.edge-delete-control circle {
 		fill: var(--map-surface);
 		stroke: var(--edge-accent, var(--map-red));
@@ -3007,6 +3176,15 @@
 	.custom-edge {
 		stroke: var(--map-teal);
 		stroke-width: 2.6;
+	}
+
+	.edge.edge-invalid {
+		stroke: var(--map-red);
+		stroke-dasharray: var(--map-edge-dash-pattern);
+		opacity: 1;
+		animation:
+			edge-flow var(--map-edge-flow-speed) linear infinite,
+			connection-pulse var(--map-edge-pulse-speed) ease-in-out infinite;
 	}
 
 	.drag-edge {
