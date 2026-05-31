@@ -60,7 +60,9 @@ describe('validation rules', () => {
     const jsonCatalog = {
       ...jsonInput.catalog,
       entries: jsonInput.catalog.entries.map((entry) =>
-        entry.namespace === 'csv' && entry.path === 'email' ? { ...entry, valueType: 'json' } : entry
+        entry.namespace === 'csv' && entry.path === 'email'
+          ? { ...entry, valueType: 'json' }
+          : entry
       ),
     };
     const valid = validateMappingInput({

@@ -65,7 +65,13 @@ const defaultCanonicalTargetDefinitions = [
 	['field.canonical.email', 'Email', 'string', 'single', 'pii'],
 	['field.canonical.email_verified', 'Email Verified', 'boolean', 'single', 'internal'],
 	['field.canonical.phone_number', 'Phone Number', 'string', 'single', 'pii'],
-	['field.canonical.phone_number_verified', 'Phone Number Verified', 'boolean', 'single', 'internal'],
+	[
+		'field.canonical.phone_number_verified',
+		'Phone Number Verified',
+		'boolean',
+		'single',
+		'internal'
+	],
 	['field.canonical.address', 'Address', 'json', 'multi', 'pii'],
 	['field.canonical.address_formatted', 'Address (Formatted)', 'string', 'single', 'pii'],
 	['field.canonical.address_street_address', 'Street Address', 'string', 'single', 'pii'],
@@ -236,7 +242,10 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 	const catalogEntries = activeCatalog?.entries ?? [];
 	if (catalogEntries.length > 0) {
 		return catalogEntries
-			.filter((entry) => entry.targetTaxonomy !== 'outbound-only' && entry.targetTaxonomy !== 'review-only')
+			.filter(
+				(entry) =>
+					entry.targetTaxonomy !== 'outbound-only' && entry.targetTaxonomy !== 'review-only'
+			)
 			.sort(
 				(a, b) =>
 					canonicalTargetSortPriority(a.stableFieldId) -
@@ -520,7 +529,9 @@ function labelForCatalogEntry(path: string): string {
 function displayValueType(value: string | undefined): string | undefined {
 	if (!value) return undefined;
 	const normalized = value.toLowerCase();
-	if (['string', 'text', 'email', 'phone', 'url', 'uri', 'identifier', 'locale'].includes(normalized)) {
+	if (
+		['string', 'text', 'email', 'phone', 'url', 'uri', 'identifier', 'locale'].includes(normalized)
+	) {
 		return 'String';
 	}
 	if (['date', 'datetime', 'timestamp'].includes(normalized)) return 'Date';

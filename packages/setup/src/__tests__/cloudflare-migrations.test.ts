@@ -181,7 +181,11 @@ describe('buildDefaultCanonicalCatalogSeedSql', () => {
 
     try {
       runMigrationFiles(sqlite3Path, dbPath, activeAdminMigrationFiles());
-      runSqlite(sqlite3Path, dbPath, buildDefaultCanonicalCatalogSeedSql(createDefaultConfig('dev')));
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        buildDefaultCanonicalCatalogSeedSql(createDefaultConfig('dev'))
+      );
 
       expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalogs;')).toBe('1');
       expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalog_versions;')).toBe(

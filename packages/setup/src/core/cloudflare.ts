@@ -3063,7 +3063,9 @@ export async function seedDefaultCanonicalCatalog(
       return { success: false, seededCount: 0, error: errorDetail };
     }
 
-    onProgress?.(`  ✅ Default canonical field catalog ready (${DEFAULT_CANONICAL_CATALOG_ENTRIES.length} fields)`);
+    onProgress?.(
+      `  ✅ Default canonical field catalog ready (${DEFAULT_CANONICAL_CATALOG_ENTRIES.length} fields)`
+    );
     return { success: true, seededCount: DEFAULT_CANONICAL_CATALOG_ENTRIES.length };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

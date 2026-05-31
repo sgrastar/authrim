@@ -583,10 +583,7 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    const deleted = await repository.deleteDestinationProfile(
-      'tenant_a',
-      'destination_profile_1'
-    );
+    const deleted = await repository.deleteDestinationProfile('tenant_a', 'destination_profile_1');
 
     expect(deleted).toEqual({ id: 'destination_profile_1', deleted: true });
     expect(adapter.executes.map((item) => item.sql)).toEqual([
@@ -615,9 +612,7 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    await expect(
-      repository.deleteDestinationProfile('tenant_a', 'missing')
-    ).rejects.toMatchObject({
+    await expect(repository.deleteDestinationProfile('tenant_a', 'missing')).rejects.toMatchObject({
       status: 404,
       code: 'not_found',
     });

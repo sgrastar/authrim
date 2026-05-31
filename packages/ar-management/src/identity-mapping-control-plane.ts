@@ -1367,19 +1367,17 @@ export class IdentityMappingControlPlaneRepository {
     >();
 
     for (const row of rows) {
-      const catalog =
-        catalogs.get(row.id) ??
-        {
-          id: row.id,
-          tenantId: row.tenant_id,
-          catalogKey: row.catalog_key,
-          displayName: row.display_name,
-          lifecycleState: row.lifecycle_state,
-          versionId: row.version_id,
-          versionLabel: row.version_label,
-          bundleHash: row.bundle_hash,
-          entries: [],
-        };
+      const catalog = catalogs.get(row.id) ?? {
+        id: row.id,
+        tenantId: row.tenant_id,
+        catalogKey: row.catalog_key,
+        displayName: row.display_name,
+        lifecycleState: row.lifecycle_state,
+        versionId: row.version_id,
+        versionLabel: row.version_label,
+        bundleHash: row.bundle_hash,
+        entries: [],
+      };
       if (row.entry_id && row.stable_field_id && row.namespace && row.path) {
         catalog.entries.push({
           id: row.entry_id,
@@ -1803,10 +1801,10 @@ export class IdentityMappingControlPlaneRepository {
       throw notFound('source profile not found');
     }
     await this.adapter.transaction(async (tx) => {
-      await tx.execute('DELETE FROM source_profile_versions WHERE tenant_id = ? AND profile_id = ?', [
-        tenantId,
-        profileId,
-      ]);
+      await tx.execute(
+        'DELETE FROM source_profile_versions WHERE tenant_id = ? AND profile_id = ?',
+        [tenantId, profileId]
+      );
       await tx.execute('DELETE FROM source_profiles WHERE tenant_id = ? AND id = ?', [
         tenantId,
         profileId,
@@ -2214,11 +2212,7 @@ export class IdentityMappingControlPlaneRepository {
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
   }
 
-  async deleteDestinationProfile(
-    tenantId: string,
-    profileId: string,
-    allowPlatformScope = false
-  ) {
+  async deleteDestinationProfile(tenantId: string, profileId: string, allowPlatformScope = false) {
     validateRequiredString(profileId, 'profileId');
     const existing = await this.adapter.queryOne<{ id: string; tenant_id: string }>(
       `SELECT id, tenant_id
