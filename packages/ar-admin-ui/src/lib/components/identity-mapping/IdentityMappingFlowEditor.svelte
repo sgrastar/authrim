@@ -834,7 +834,19 @@
 	function nodeStyle(node: LayoutNode): string {
 		const stackX = node.hidden ? 12 + node.stackIndex * 8 : 0;
 		const stackY = node.hidden ? 7 + node.stackIndex * 6 : 0;
-		const zIndex = node.hidden ? Math.max(1, 4 - node.stackIndex) : node.role === 'target' ? 3 : 5;
+		const interactive =
+			node.id === selectedNodeId ||
+			node.id === hoverNodeId ||
+			connectedNodeIds(selectedNodeId).has(node.id) ||
+			connectedNodeIds(hoverNodeId).has(node.id) ||
+			(dragState?.validTarget === false && dragState.targetNodeId === node.id);
+		const zIndex = node.hidden
+			? Math.max(1, 4 - node.stackIndex)
+			: interactive
+				? 8
+				: node.role === 'target'
+					? 3
+					: 5;
 		return [
 			`left:${node.left}px`,
 			`top:${node.top}px`,
