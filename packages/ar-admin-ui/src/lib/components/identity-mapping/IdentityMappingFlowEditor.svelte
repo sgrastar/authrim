@@ -2474,6 +2474,11 @@
 						<div class="mode-toggle" aria-label="Flow view mode">
 							{#each enabledViewModes as mode (mode)}
 								<button
+									class={mode === 'inbound'
+										? 'view-inbound'
+										: mode === 'outbound'
+											? 'view-outbound'
+											: 'view-overview'}
 									class:active={viewMode === mode}
 									type="button"
 									onclick={() => (viewMode = mode)}

@@ -163,7 +163,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(pageShell).toContain('createPolicyVersion');
 		expect(pageShell).toContain('compilePolicyVersion');
 		expect(pageShell).toContain('getSchemaReadiness');
-		expect(pageShell).toContain('samples={flowSamples}');
+		expect(pageShell).toContain('editorSamples');
+		expect(pageShell).toContain('samples={editorSamples}');
 		expect(pageShell).toContain('profile-mode-control');
 		expect(pageShell).toContain('selectedEditorProfileId');
 		expect(editPage).toContain('pageTitle="Edit"');

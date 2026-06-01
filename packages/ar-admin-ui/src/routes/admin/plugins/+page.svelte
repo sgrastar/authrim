@@ -593,21 +593,16 @@
 				{/each}
 			</div>
 		</div>
-		{/if}
+	{/if}
 
-		{#if selectedPlugin?.meta?.author}
-			{@const authorUrl = safePluginUrl(selectedPlugin.meta.author.url)}
-			<div class="plugin-section">
-				<div class="plugin-section-title">Author</div>
-				<div class="plugin-info-value">
-					{selectedPlugin.meta.author.name}
-					{#if authorUrl}
-						<a
-							href={authorUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="plugin-doc-link"
-					>
+	{#if selectedPlugin?.meta?.author}
+		{@const authorUrl = safePluginUrl(selectedPlugin.meta.author.url)}
+		<div class="plugin-section">
+			<div class="plugin-section-title">Author</div>
+			<div class="plugin-info-value">
+				{selectedPlugin.meta.author.name}
+				{#if authorUrl}
+					<a href={authorUrl} target="_blank" rel="noopener noreferrer" class="plugin-doc-link">
 						↗
 					</a>
 				{/if}
@@ -615,21 +610,21 @@
 		</div>
 	{/if}
 
-		{#if selectedPlugin?.meta?.documentationUrl}
-			{@const documentationUrl = safePluginUrl(selectedPlugin.meta.documentationUrl)}
-			{#if documentationUrl}
-				<div class="plugin-section">
-					<a
-						href={documentationUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="plugin-doc-link"
-					>
-						📖 Documentation ↗
-					</a>
-				</div>
-			{/if}
+	{#if selectedPlugin?.meta?.documentationUrl}
+		{@const documentationUrl = safePluginUrl(selectedPlugin.meta.documentationUrl)}
+		{#if documentationUrl}
+			<div class="plugin-section">
+				<a
+					href={documentationUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="plugin-doc-link"
+				>
+					📖 Documentation ↗
+				</a>
+			</div>
 		{/if}
+	{/if}
 
 	<!-- Success/Error Messages -->
 	{#if successMessage}
