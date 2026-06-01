@@ -13,8 +13,8 @@ describe('setup web server security helpers', () => {
     expect(buildSetupUiUrl('http://localhost:3456', { lang: 'ja' })).toBe(
       'http://localhost:3456/?lang=ja'
     );
-    expect(
-      buildSetupUiUrl('http://localhost:3456', { lang: 'ja', token: 'setup-secret' })
-    ).toBe('http://localhost:3456/?lang=ja&setup_token=setup-secret');
+    expect(buildSetupUiUrl('http://localhost:3456', { lang: 'ja', token: 'setup-secret' })).toBe(
+      'http://localhost:3456/?lang=ja&setup_token=setup-secret'
+    );
   });
 });

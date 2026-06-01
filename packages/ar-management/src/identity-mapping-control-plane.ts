@@ -2749,14 +2749,12 @@ export class IdentityMappingControlPlaneRepository {
     >();
     for (const row of ruleRows) {
       if (typeof row.rule_kind !== 'string') continue;
-      const summary =
-        summariesByVersion.get(row.policy_version_id) ??
-        {
-          inbound: false,
-          outbound: false,
-          sourceProfileIds: new Set<string>(),
-          destinationProfileIds: new Set<string>(),
-        };
+      const summary = summariesByVersion.get(row.policy_version_id) ?? {
+        inbound: false,
+        outbound: false,
+        sourceProfileIds: new Set<string>(),
+        destinationProfileIds: new Set<string>(),
+      };
       if (row.rule_kind.includes('inbound')) summary.inbound = true;
       if (row.rule_kind.includes('outbound') || row.rule_kind.includes('release')) {
         summary.outbound = true;

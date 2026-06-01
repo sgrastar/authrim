@@ -41,7 +41,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getLogger: mockGetLogger,
-    getEmailDomainHashConfig: vi.fn().mockResolvedValue({ current_version: 1, secrets: { 1: 'secret' } }),
+    getEmailDomainHashConfig: vi
+      .fn()
+      .mockResolvedValue({ current_version: 1, secrets: { 1: 'secret' } }),
     generateEmailDomainHashWithVersion: mockGenerateEmailDomainHashWithVersion,
     getDomainMappingById: mockGetDomainMappingById,
     generateVerificationToken: mockGenerateVerificationToken,

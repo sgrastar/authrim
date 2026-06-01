@@ -212,15 +212,15 @@ describe('Upgrade Handlers', () => {
     // Default mock for valid anonymous session
     mockSessionStore.getSessionRpc.mockResolvedValue({
       userId: 'anon-user-123',
-          data: {
-            is_anonymous: true,
-            upgrade_eligible: true,
-            client_id: 'client-123',
-            pending_upgrade_token: 'upgrade-token',
-            pending_upgrade_method: 'passkey',
-            verified_upgrade_method: 'passkey',
-          },
-        });
+      data: {
+        is_anonymous: true,
+        upgrade_eligible: true,
+        client_id: 'client-123',
+        pending_upgrade_token: 'upgrade-token',
+        pending_upgrade_method: 'passkey',
+        verified_upgrade_method: 'passkey',
+      },
+    });
 
     mockUserCoreRepository.findById.mockResolvedValue({
       id: 'anon-user-123',

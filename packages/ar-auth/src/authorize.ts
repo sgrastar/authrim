@@ -120,7 +120,10 @@ function getClientAllowedScopes(clientMetadata: {
   requestable_scopes?: string[] | null;
   scope?: string | null;
 }): string[] {
-  if (Array.isArray(clientMetadata.requestable_scopes) && clientMetadata.requestable_scopes.length) {
+  if (
+    Array.isArray(clientMetadata.requestable_scopes) &&
+    clientMetadata.requestable_scopes.length
+  ) {
     return clientMetadata.requestable_scopes;
   }
   if (Array.isArray(clientMetadata.allowed_scopes) && clientMetadata.allowed_scopes.length) {
@@ -616,9 +619,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       ui_locales = typeof body.ui_locales === 'string' ? body.ui_locales : undefined;
       login_hint = typeof body.login_hint === 'string' ? body.login_hint : undefined;
       _confirmation_challenge =
-        typeof body._confirmation_challenge === 'string'
-          ? body._confirmation_challenge
-          : undefined;
+        typeof body._confirmation_challenge === 'string' ? body._confirmation_challenge : undefined;
       _consent_confirmation_challenge =
         typeof body._consent_confirmation_challenge === 'string'
           ? body._consent_confirmation_challenge
@@ -3389,7 +3390,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Record authentication time
   const currentAuthTime = authTime || Math.floor(Date.now() / 1000);
-  const oidcSid = sessionId ? await deriveOidcSid(sessionId, validClientId, getRequestIssuer(c)) : undefined;
+  const oidcSid = sessionId
+    ? await deriveOidcSid(sessionId, validClientId, getRequestIssuer(c))
+    : undefined;
   log.debug('Final authTime for code', {
     action: 'auth_time_final',
     authTime,

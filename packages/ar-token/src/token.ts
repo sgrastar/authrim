@@ -693,7 +693,9 @@ async function isDPoPRequiredForTokenRequest(
       fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
     }
   } catch (error) {
-    getLogger(c).module('TOKEN').error('Failed to load FAPI settings for DPoP', {}, error as Error);
+    getLogger(c)
+      .module('TOKEN')
+      .error('Failed to load FAPI settings for DPoP', {}, error as Error);
   }
 
   const requestPath = new URL(c.req.url).pathname;

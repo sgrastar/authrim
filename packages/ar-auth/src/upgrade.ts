@@ -261,7 +261,11 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     const pendingUpgradeToken = session.data?.pending_upgrade_token as string | undefined;
     const pendingUpgradeMethod = session.data?.pending_upgrade_method as string | undefined;
-    if (!upgrade_token || upgrade_token !== pendingUpgradeToken || method !== pendingUpgradeMethod) {
+    if (
+      !upgrade_token ||
+      upgrade_token !== pendingUpgradeToken ||
+      method !== pendingUpgradeMethod
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
