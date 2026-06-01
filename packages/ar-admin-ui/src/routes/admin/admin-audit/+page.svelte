@@ -173,10 +173,21 @@
 	function getActorLabel(entry: AdminAuditLogEntry): string {
 		const actorType = getActorType(entry);
 		if (actorType === 'machine') {
-			return entry.machine_client_id || entry.actor_display_name || entry.machine_principal_id || 'Machine';
+			return (
+				entry.machine_client_id ||
+				entry.actor_display_name ||
+				entry.machine_principal_id ||
+				'Machine'
+			);
 		}
 		if (actorType === 'system') return 'System';
-		return entry.admin_email || entry.admin_user_name || entry.actor_display_name || entry.admin_user_id || '-';
+		return (
+			entry.admin_email ||
+			entry.admin_user_name ||
+			entry.actor_display_name ||
+			entry.admin_user_id ||
+			'-'
+		);
 	}
 
 	async function openDetail(entry: AdminAuditLogEntry) {
@@ -440,7 +451,9 @@
 							<td>
 								{#if getActorType(entry) === 'machine'}
 									<span class="cell-primary">{getActorLabel(entry)}</span>
-									<span class="cell-secondary mono">{truncateId(entry.machine_principal_id || entry.actor_id || null)}</span>
+									<span class="cell-secondary mono"
+										>{truncateId(entry.machine_principal_id || entry.actor_id || null)}</span
+									>
 								{:else if getActorType(entry) === 'admin_user'}
 									<span class="cell-primary">{getActorLabel(entry)}</span>
 								{:else}
@@ -561,7 +574,9 @@
 			{#if getActorType(selectedEntry) === 'machine'}
 				<div class="detail-item">
 					<span class="detail-label">Machine Principal ID</span>
-					<span class="detail-value mono">{selectedEntry.machine_principal_id || selectedEntry.actor_id || '-'}</span>
+					<span class="detail-value mono"
+						>{selectedEntry.machine_principal_id || selectedEntry.actor_id || '-'}</span
+					>
 				</div>
 				<div class="detail-item">
 					<span class="detail-label">Machine Credential ID</span>

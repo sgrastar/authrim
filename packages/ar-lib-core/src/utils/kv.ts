@@ -909,11 +909,10 @@ function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
  *
  * Architecture:
  * - Primary source: D1 database (oauth_clients table)
- * - Cache: CLIENTS_CACHE KV (TTL based on cache mode)
- * - Pattern: Read-Through (cache miss → fetch from D1 → populate cache)
+ * - Primary path is D1. KV can be used only when the configured TTL is positive.
  *
  * Cache mode:
- * - fixed: 24 hours TTL (production)
+ * - fixed: D1 source of truth for client metadata
  * - maintenance: 30 seconds TTL (development/changes)
  *
  * @param env - Cloudflare environment bindings
@@ -931,8 +930,8 @@ export async function getClient(
   // Get cache TTL based on cache mode (client-specific > platform > default)
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientId);
 
-  // Step 1: Try CLIENTS_CACHE (Read-Through Cache with edge memory cache)
-  const cached = await env.CLIENTS_CACHE.get(cacheKey, { cacheTtl });
+  // Step 1: Try CLIENTS_CACHE only when explicitly configured with a positive TTL.
+  const cached = cacheTtl > 0 ? await env.CLIENTS_CACHE.get(cacheKey, { cacheTtl }) : null;
 
   if (cached) {
     try {
@@ -1206,6 +1205,10 @@ export async function putClient(env: Env, clientData: ClientMetadata): Promise<v
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientData.client_id);
   const normalizedClientData = normalizeClientMetadata(clientData);
 
+  if (cacheTtl <= 0) {
+    return;
+  }
+
   try {
     await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(normalizedClientData), {
       expirationTtl: cacheTtl,
@@ -1300,7 +1303,7 @@ export async function isTokenRevoked(env: Env, jti: string, tenantId: string): P
 
   try {
     // Use sharded Durable Object instance for token revocation checks
-    const { stub } = await getRevocationStoreByJti(env, jti, tenantId);
+    const { stub, instanceName } = await getRevocationStoreByJti(env, jti, tenantId);
 
     const response = await stub.fetch(`http://internal/check?jti=${encodeURIComponent(jti)}`, {
       method: 'GET',
@@ -1311,7 +1314,27 @@ export async function isTokenRevoked(env: Env, jti: string, tenantId: string): P
     }
 
     const data = await response.json<{ revoked: boolean }>();
-    return data.revoked;
+    if (data.revoked) {
+      return true;
+    }
+
+    const legacyInstanceName = buildDOInstanceName('token-revocation', tenantId);
+    if (legacyInstanceName !== instanceName) {
+      const legacyId = env.TOKEN_REVOCATION_STORE.idFromName(legacyInstanceName);
+      const legacyStub = env.TOKEN_REVOCATION_STORE.get(legacyId);
+      const legacyResponse = await legacyStub.fetch(
+        `http://internal/check?jti=${encodeURIComponent(jti)}`,
+        {
+          method: 'GET',
+        }
+      );
+      if (legacyResponse.ok) {
+        const legacyData = await legacyResponse.json<{ revoked: boolean }>();
+        return legacyData.revoked;
+      }
+    }
+
+    return false;
   } catch (error) {
     // PII Protection: Don't log full error (may contain token details)
     log.error('Failed to check token revocation', {}, error as Error);

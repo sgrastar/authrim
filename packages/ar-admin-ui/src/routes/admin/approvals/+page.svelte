@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
-	import { Modal } from '$lib/components'
-	import ApprovalCompletionGuideCard from '$lib/components/admin/ApprovalCompletionGuideCard.svelte'
-	import ApprovalDecisionReceiptsPanel from '$lib/components/admin/ApprovalDecisionReceiptsPanel.svelte'
-	import ApprovalGrantGuideCard from '$lib/components/admin/ApprovalGrantGuideCard.svelte'
-	import ApprovalGrantIntegrationCard from '$lib/components/admin/ApprovalGrantIntegrationCard.svelte'
-	import ApprovalEvidenceTimeline from '$lib/components/admin/ApprovalEvidenceTimeline.svelte'
-	import ApprovalRequestPreviewPanel from '$lib/components/admin/ApprovalRequestPreviewPanel.svelte'
-	import ApprovalStepGuideCard from '$lib/components/admin/ApprovalStepGuideCard.svelte'
+	import { onMount } from 'svelte';
+	import { Modal } from '$lib/components';
+	import ApprovalCompletionGuideCard from '$lib/components/admin/ApprovalCompletionGuideCard.svelte';
+	import ApprovalDecisionReceiptsPanel from '$lib/components/admin/ApprovalDecisionReceiptsPanel.svelte';
+	import ApprovalGrantGuideCard from '$lib/components/admin/ApprovalGrantGuideCard.svelte';
+	import ApprovalGrantIntegrationCard from '$lib/components/admin/ApprovalGrantIntegrationCard.svelte';
+	import ApprovalEvidenceTimeline from '$lib/components/admin/ApprovalEvidenceTimeline.svelte';
+	import ApprovalRequestPreviewPanel from '$lib/components/admin/ApprovalRequestPreviewPanel.svelte';
+	import ApprovalStepGuideCard from '$lib/components/admin/ApprovalStepGuideCard.svelte';
 	import {
 		adminApprovalsAPI,
 		type ApprovalCompletionArtifactIssueResult,
@@ -22,94 +22,94 @@
 		type ApprovalRequestStatus,
 		type ApprovalTransportMethod,
 		type ElevationGrantRecord
-	} from '$lib/api/admin-approvals'
+	} from '$lib/api/admin-approvals';
 
-	let loading = $state(true)
-	let error = $state('')
-	let requests = $state<ApprovalRequestRecord[]>([])
-	let total = $state(0)
+	let loading = $state(true);
+	let error = $state('');
+	let requests = $state<ApprovalRequestRecord[]>([]);
+	let total = $state(0);
 
-	let statusFilter = $state<ApprovalRequestStatus | ''>('')
-	let investigationIdFilter = $state('')
+	let statusFilter = $state<ApprovalRequestStatus | ''>('');
+	let investigationIdFilter = $state('');
 
-	let showCreateModal = $state(false)
-	let createBusy = $state(false)
-	let createError = $state('')
-	let createPreviewBusy = $state(false)
-	let createPreviewError = $state('')
-	let createPreview = $state<ApprovalRequestPreviewResult | null>(null)
-	let createModel = $state<ApprovalRequestCreateInput>(buildInitialCreateModel())
-	let createResourceIds = $state('')
-	let createDetailClasses = $state('')
-	let createReferenceSystem = $state('')
-	let createReferenceId = $state('')
-	let createReferenceUrl = $state('')
-	let createTicketSystem = $state('')
-	let createTicketId = $state('')
-	let createTicketUrl = $state('')
+	let showCreateModal = $state(false);
+	let createBusy = $state(false);
+	let createError = $state('');
+	let createPreviewBusy = $state(false);
+	let createPreviewError = $state('');
+	let createPreview = $state<ApprovalRequestPreviewResult | null>(null);
+	let createModel = $state<ApprovalRequestCreateInput>(buildInitialCreateModel());
+	let createResourceIds = $state('');
+	let createDetailClasses = $state('');
+	let createReferenceSystem = $state('');
+	let createReferenceId = $state('');
+	let createReferenceUrl = $state('');
+	let createTicketSystem = $state('');
+	let createTicketId = $state('');
+	let createTicketUrl = $state('');
 
-	let selectedRequest = $state<ApprovalRequestRecord | null>(null)
-	let showDetailModal = $state(false)
-	let detailLoading = $state(false)
-	let detailError = $state('')
-	let actionBusy = $state(false)
-	let actionError = $state('')
-	let actionTransportProvider = $state('')
-	let actionTransportStatus = $state('')
-	let actionTransportTarget = $state('')
-	let actionTransportCorrelationId = $state('')
-	let actionTransportRequestId = $state('')
-	let actionTransportRequestJson = $state('')
-	let actionTransportResponseJson = $state('')
-	let actionTransportMetadataJson = $state('')
-	let detailEvidenceLoading = $state(false)
-	let detailEvidenceError = $state('')
-	let detailEvidence = $state<ApprovalTransportEvidence | null>(null)
-	let detailReceiptsLoading = $state(false)
-	let detailReceiptsError = $state('')
-	let detailReceipts = $state<ApprovalDecisionReceiptRecord[]>([])
-	let stepGuideLoadingId = $state<string | null>(null)
-	let stepGuideError = $state('')
-	let stepGuides = $state<Record<string, ApprovalStepGuideResult | undefined>>({})
-	let issuingGrantId = $state<string | null>(null)
-	let subjectTokenBusy = $state(false)
-	let subjectTokenError = $state('')
-	let subjectTokenClientId = $state('')
-	let subjectTokenExpiresIn = $state(300)
-	let issuedSubjectToken = $state<ApprovalGrantSubjectTokenResult | null>(null)
-	let revokeGrantBusyId = $state<string | null>(null)
-	let revokeGrantError = $state('')
-	let issuingArtifactApprovalId = $state<string | null>(null)
-	let issuedCompletionArtifact = $state<ApprovalCompletionArtifactIssueResult | null>(null)
-	let actionReasonCode = $state('support_case')
-	let actionReasonNote = $state('')
-	let actionMethod = $state<ApprovalTransportMethod>('portal_confirm')
-	const TRANSPORT_REQUEST_PLACEHOLDER = '{"channel":"portal_confirm"}'
-	const TRANSPORT_RESPONSE_PLACEHOLDER = '{"status":"accepted"}'
-	const TRANSPORT_METADATA_PLACEHOLDER = '{"attempt":2}'
+	let selectedRequest = $state<ApprovalRequestRecord | null>(null);
+	let showDetailModal = $state(false);
+	let detailLoading = $state(false);
+	let detailError = $state('');
+	let actionBusy = $state(false);
+	let actionError = $state('');
+	let actionTransportProvider = $state('');
+	let actionTransportStatus = $state('');
+	let actionTransportTarget = $state('');
+	let actionTransportCorrelationId = $state('');
+	let actionTransportRequestId = $state('');
+	let actionTransportRequestJson = $state('');
+	let actionTransportResponseJson = $state('');
+	let actionTransportMetadataJson = $state('');
+	let detailEvidenceLoading = $state(false);
+	let detailEvidenceError = $state('');
+	let detailEvidence = $state<ApprovalTransportEvidence | null>(null);
+	let detailReceiptsLoading = $state(false);
+	let detailReceiptsError = $state('');
+	let detailReceipts = $state<ApprovalDecisionReceiptRecord[]>([]);
+	let stepGuideLoadingId = $state<string | null>(null);
+	let stepGuideError = $state('');
+	let stepGuides = $state<Record<string, ApprovalStepGuideResult | undefined>>({});
+	let issuingGrantId = $state<string | null>(null);
+	let subjectTokenBusy = $state(false);
+	let subjectTokenError = $state('');
+	let subjectTokenClientId = $state('');
+	let subjectTokenExpiresIn = $state(300);
+	let issuedSubjectToken = $state<ApprovalGrantSubjectTokenResult | null>(null);
+	let revokeGrantBusyId = $state<string | null>(null);
+	let revokeGrantError = $state('');
+	let issuingArtifactApprovalId = $state<string | null>(null);
+	let issuedCompletionArtifact = $state<ApprovalCompletionArtifactIssueResult | null>(null);
+	let actionReasonCode = $state('support_case');
+	let actionReasonNote = $state('');
+	let actionMethod = $state<ApprovalTransportMethod>('portal_confirm');
+	const TRANSPORT_REQUEST_PLACEHOLDER = '{"channel":"portal_confirm"}';
+	const TRANSPORT_RESPONSE_PLACEHOLDER = '{"status":"accepted"}';
+	const TRANSPORT_METADATA_PLACEHOLDER = '{"attempt":2}';
 
 	async function loadRequests() {
-		loading = true
-		error = ''
+		loading = true;
+		error = '';
 
 		try {
 			const response = await adminApprovalsAPI.list({
 				status: statusFilter || undefined,
 				investigationId: investigationIdFilter.trim() || undefined,
 				limit: 100
-			})
-			requests = response.items
-			total = response.total
+			});
+			requests = response.items;
+			total = response.total;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load approvals'
+			error = err instanceof Error ? err.message : 'Failed to load approvals';
 		} finally {
-			loading = false
+			loading = false;
 		}
 	}
 
 	onMount(() => {
-		loadRequests()
-	})
+		loadRequests();
+	});
 
 	function buildInitialCreateModel(): ApprovalRequestCreateInput {
 		return {
@@ -132,305 +132,316 @@
 					method: 'portal_confirm'
 				}
 			]
-		}
+		};
 	}
 
 	function resetCreateForm() {
-		createModel = buildInitialCreateModel()
-		createResourceIds = ''
-		createDetailClasses = ''
-		createReferenceSystem = ''
-		createReferenceId = ''
-		createReferenceUrl = ''
-		createTicketSystem = ''
-		createTicketId = ''
-		createTicketUrl = ''
-		createBusy = false
-		createError = ''
-		createPreviewBusy = false
-		createPreviewError = ''
-		createPreview = null
+		createModel = buildInitialCreateModel();
+		createResourceIds = '';
+		createDetailClasses = '';
+		createReferenceSystem = '';
+		createReferenceId = '';
+		createReferenceUrl = '';
+		createTicketSystem = '';
+		createTicketId = '';
+		createTicketUrl = '';
+		createBusy = false;
+		createError = '';
+		createPreviewBusy = false;
+		createPreviewError = '';
+		createPreview = null;
 	}
 
 	function openCreateModal() {
-		resetCreateForm()
-		showCreateModal = true
+		resetCreateForm();
+		showCreateModal = true;
 	}
 
 	function closeCreateModal() {
-		showCreateModal = false
-		resetCreateForm()
+		showCreateModal = false;
+		resetCreateForm();
 	}
 
 	function resetActionTransportInputs() {
-		actionTransportProvider = ''
-		actionTransportStatus = ''
-		actionTransportTarget = ''
-		actionTransportCorrelationId = ''
-		actionTransportRequestId = ''
-		actionTransportRequestJson = ''
-		actionTransportResponseJson = ''
-		actionTransportMetadataJson = ''
+		actionTransportProvider = '';
+		actionTransportStatus = '';
+		actionTransportTarget = '';
+		actionTransportCorrelationId = '';
+		actionTransportRequestId = '';
+		actionTransportRequestJson = '';
+		actionTransportResponseJson = '';
+		actionTransportMetadataJson = '';
 	}
 
 	async function openDetail(request: ApprovalRequestRecord) {
-		showDetailModal = true
-		selectedRequest = request
-		detailLoading = true
-		detailError = ''
-		detailEvidence = null
-		detailEvidenceLoading = false
-		detailEvidenceError = ''
-		detailReceipts = []
-		detailReceiptsLoading = false
-		detailReceiptsError = ''
-		stepGuideLoadingId = null
-		stepGuideError = ''
-		stepGuides = {}
-		issuingGrantId = null
-		subjectTokenBusy = false
-		subjectTokenError = ''
-		subjectTokenClientId = ''
-		subjectTokenExpiresIn = 300
-		issuedSubjectToken = null
-		revokeGrantBusyId = null
-		revokeGrantError = ''
-		issuingArtifactApprovalId = null
-		issuedCompletionArtifact = null
-		actionError = ''
-		actionReasonNote = ''
-		resetActionTransportInputs()
+		showDetailModal = true;
+		selectedRequest = request;
+		detailLoading = true;
+		detailError = '';
+		detailEvidence = null;
+		detailEvidenceLoading = false;
+		detailEvidenceError = '';
+		detailReceipts = [];
+		detailReceiptsLoading = false;
+		detailReceiptsError = '';
+		stepGuideLoadingId = null;
+		stepGuideError = '';
+		stepGuides = {};
+		issuingGrantId = null;
+		subjectTokenBusy = false;
+		subjectTokenError = '';
+		subjectTokenClientId = '';
+		subjectTokenExpiresIn = 300;
+		issuedSubjectToken = null;
+		revokeGrantBusyId = null;
+		revokeGrantError = '';
+		issuingArtifactApprovalId = null;
+		issuedCompletionArtifact = null;
+		actionError = '';
+		actionReasonNote = '';
+		resetActionTransportInputs();
 
 		try {
-			selectedRequest = await adminApprovalsAPI.get(request.public_request_id)
+			selectedRequest = await adminApprovalsAPI.get(request.public_request_id);
 			if (selectedRequest.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
 		} catch (err) {
-			detailError = err instanceof Error ? err.message : 'Failed to load approval request'
+			detailError = err instanceof Error ? err.message : 'Failed to load approval request';
 		} finally {
-			detailLoading = false
+			detailLoading = false;
 		}
 	}
 
 	function closeDetail() {
-		showDetailModal = false
-		selectedRequest = null
-		detailLoading = false
-		detailError = ''
-		detailEvidence = null
-		detailEvidenceLoading = false
-		detailEvidenceError = ''
-		detailReceipts = []
-		detailReceiptsLoading = false
-		detailReceiptsError = ''
-		stepGuideLoadingId = null
-		stepGuideError = ''
-		stepGuides = {}
-		issuingGrantId = null
-		subjectTokenBusy = false
-		subjectTokenError = ''
-		subjectTokenClientId = ''
-		subjectTokenExpiresIn = 300
-		issuedSubjectToken = null
-		issuingArtifactApprovalId = null
-		issuedCompletionArtifact = null
-		actionBusy = false
-		actionError = ''
-		actionReasonNote = ''
-		resetActionTransportInputs()
+		showDetailModal = false;
+		selectedRequest = null;
+		detailLoading = false;
+		detailError = '';
+		detailEvidence = null;
+		detailEvidenceLoading = false;
+		detailEvidenceError = '';
+		detailReceipts = [];
+		detailReceiptsLoading = false;
+		detailReceiptsError = '';
+		stepGuideLoadingId = null;
+		stepGuideError = '';
+		stepGuides = {};
+		issuingGrantId = null;
+		subjectTokenBusy = false;
+		subjectTokenError = '';
+		subjectTokenClientId = '';
+		subjectTokenExpiresIn = 300;
+		issuedSubjectToken = null;
+		issuingArtifactApprovalId = null;
+		issuedCompletionArtifact = null;
+		actionBusy = false;
+		actionError = '';
+		actionReasonNote = '';
+		resetActionTransportInputs();
 	}
 
 	async function refreshSelectedRequest(requestId: string) {
-		selectedRequest = await adminApprovalsAPI.get(requestId)
+		selectedRequest = await adminApprovalsAPI.get(requestId);
 	}
 
 	async function reloadDetailTracking(request: ApprovalRequestRecord) {
-		detailEvidenceLoading = true
-		detailEvidenceError = ''
-		detailReceiptsLoading = true
-		detailReceiptsError = ''
+		detailEvidenceLoading = true;
+		detailEvidenceError = '';
+		detailReceiptsLoading = true;
+		detailReceiptsError = '';
 
 		const [evidenceResult, receiptResult] = await Promise.allSettled([
 			adminApprovalsAPI.getEvidence(request.public_request_id),
 			adminApprovalsAPI.getReceipts(request.public_request_id)
-		])
+		]);
 
 		if (evidenceResult.status === 'fulfilled') {
-			detailEvidence = evidenceResult.value
+			detailEvidence = evidenceResult.value;
 		} else {
 			detailEvidenceError =
 				evidenceResult.reason instanceof Error
 					? evidenceResult.reason.message
-					: 'Failed to load transport evidence'
+					: 'Failed to load transport evidence';
 		}
-		detailEvidenceLoading = false
+		detailEvidenceLoading = false;
 
 		if (receiptResult.status === 'fulfilled') {
-			detailReceipts = receiptResult.value.items
+			detailReceipts = receiptResult.value.items;
 		} else {
 			detailReceiptsError =
 				receiptResult.reason instanceof Error
 					? receiptResult.reason.message
-					: 'Failed to load decision receipts'
+					: 'Failed to load decision receipts';
 		}
-		detailReceiptsLoading = false
+		detailReceiptsLoading = false;
 	}
 
 	async function loadStepGuide(approval: ApprovalRequestApproval) {
-		if (!selectedRequest) return
-		stepGuideLoadingId = approval.id
-		stepGuideError = ''
+		if (!selectedRequest) return;
+		stepGuideLoadingId = approval.id;
+		stepGuideError = '';
 
 		try {
-			const guide = await adminApprovalsAPI.getStepGuide(selectedRequest.public_request_id, approval.id)
+			const guide = await adminApprovalsAPI.getStepGuide(
+				selectedRequest.public_request_id,
+				approval.id
+			);
 			stepGuides = {
 				...stepGuides,
 				[approval.id]: guide
-			}
+			};
 		} catch (err) {
-			stepGuideError = err instanceof Error ? err.message : 'Failed to load approval step guide'
+			stepGuideError = err instanceof Error ? err.message : 'Failed to load approval step guide';
 		} finally {
-			stepGuideLoadingId = null
+			stepGuideLoadingId = null;
 		}
 	}
 
 	async function approveStep(approval: ApprovalRequestApproval) {
-		if (!selectedRequest) return
-		actionBusy = true
-		actionError = ''
+		if (!selectedRequest) return;
+		actionBusy = true;
+		actionError = '';
 
 		try {
-			const transport = buildActionTransportPayload()
+			const transport = buildActionTransportPayload();
 			await adminApprovalsAPI.approve(selectedRequest.public_request_id, approval.id, {
 				method: actionMethod,
 				reason_code: actionReasonCode || undefined,
 				reason_note: actionReasonNote || undefined,
 				...transport
-			})
-			await refreshSelectedRequest(selectedRequest.public_request_id)
+			});
+			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
-			await loadRequests()
-			actionReasonNote = ''
-			resetActionTransportInputs()
+			await loadRequests();
+			actionReasonNote = '';
+			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to approve step'
+			actionError = err instanceof Error ? err.message : 'Failed to approve step';
 		} finally {
-			actionBusy = false
+			actionBusy = false;
 		}
 	}
 
 	async function denyStep(approval: ApprovalRequestApproval) {
-		if (!selectedRequest) return
-		actionBusy = true
-		actionError = ''
+		if (!selectedRequest) return;
+		actionBusy = true;
+		actionError = '';
 
 		try {
-			const transport = buildActionTransportPayload()
+			const transport = buildActionTransportPayload();
 			await adminApprovalsAPI.deny(selectedRequest.public_request_id, approval.id, {
 				method: actionMethod,
 				reason_code: actionReasonCode || undefined,
 				reason_note: actionReasonNote || undefined,
 				...transport
-			})
-			await refreshSelectedRequest(selectedRequest.public_request_id)
+			});
+			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
-			await loadRequests()
-			actionReasonNote = ''
-			resetActionTransportInputs()
+			await loadRequests();
+			actionReasonNote = '';
+			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to deny step'
+			actionError = err instanceof Error ? err.message : 'Failed to deny step';
 		} finally {
-			actionBusy = false
+			actionBusy = false;
 		}
 	}
 
 	async function remindStep(approval: ApprovalRequestApproval) {
-		if (!selectedRequest) return
-		actionBusy = true
-		actionError = ''
+		if (!selectedRequest) return;
+		actionBusy = true;
+		actionError = '';
 
 		try {
-			const transport = buildActionTransportPayload()
-			const updated = await adminApprovalsAPI.remind(selectedRequest.public_request_id, approval.id, {
-				method: actionMethod,
-				reason_code: actionReasonCode || undefined,
-				reason_note: actionReasonNote || undefined,
-				...transport
-			})
-			const failedNotification = updated.notification_results?.find((result) => !result.success)
+			const transport = buildActionTransportPayload();
+			const updated = await adminApprovalsAPI.remind(
+				selectedRequest.public_request_id,
+				approval.id,
+				{
+					method: actionMethod,
+					reason_code: actionReasonCode || undefined,
+					reason_note: actionReasonNote || undefined,
+					...transport
+				}
+			);
+			const failedNotification = updated.notification_results?.find((result) => !result.success);
 			if (failedNotification) {
-				actionError = failedNotification.error || 'Notification transport failed'
+				actionError = failedNotification.error || 'Notification transport failed';
 			}
-			await refreshSelectedRequest(selectedRequest.public_request_id)
+			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
-			await loadRequests()
-			actionReasonNote = ''
-			resetActionTransportInputs()
+			await loadRequests();
+			actionReasonNote = '';
+			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to remind approval step'
+			actionError = err instanceof Error ? err.message : 'Failed to remind approval step';
 		} finally {
-			actionBusy = false
+			actionBusy = false;
 		}
 	}
 
 	async function resendStep(approval: ApprovalRequestApproval) {
-		if (!selectedRequest) return
-		actionBusy = true
-		actionError = ''
+		if (!selectedRequest) return;
+		actionBusy = true;
+		actionError = '';
 
 		try {
-			const transport = buildActionTransportPayload()
-			const updated = await adminApprovalsAPI.resend(selectedRequest.public_request_id, approval.id, {
-				method: actionMethod,
-				reason_code: actionReasonCode || undefined,
-				reason_note: actionReasonNote || undefined,
-				...transport
-			})
-			const failedNotification = updated.notification_results?.find((result) => !result.success)
+			const transport = buildActionTransportPayload();
+			const updated = await adminApprovalsAPI.resend(
+				selectedRequest.public_request_id,
+				approval.id,
+				{
+					method: actionMethod,
+					reason_code: actionReasonCode || undefined,
+					reason_note: actionReasonNote || undefined,
+					...transport
+				}
+			);
+			const failedNotification = updated.notification_results?.find((result) => !result.success);
 			if (failedNotification) {
-				actionError = failedNotification.error || 'Notification transport failed'
+				actionError = failedNotification.error || 'Notification transport failed';
 			}
-			await refreshSelectedRequest(selectedRequest.public_request_id)
+			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
-			await loadRequests()
-			actionReasonNote = ''
-			resetActionTransportInputs()
+			await loadRequests();
+			actionReasonNote = '';
+			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to resend approval step'
+			actionError = err instanceof Error ? err.message : 'Failed to resend approval step';
 		} finally {
-			actionBusy = false
+			actionBusy = false;
 		}
 	}
 
 	async function cancelRequest() {
-		if (!selectedRequest) return
-		actionBusy = true
-		actionError = ''
+		if (!selectedRequest) return;
+		actionBusy = true;
+		actionError = '';
 
 		try {
 			await adminApprovalsAPI.cancel(selectedRequest.public_request_id, {
 				reason_code: actionReasonCode || undefined,
 				reason_note: actionReasonNote || undefined
-			})
-			await refreshSelectedRequest(selectedRequest.public_request_id)
+			});
+			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
-			await loadRequests()
-			actionReasonNote = ''
+			await loadRequests();
+			actionReasonNote = '';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to cancel request'
+			actionError = err instanceof Error ? err.message : 'Failed to cancel request';
 		} finally {
-			actionBusy = false
+			actionBusy = false;
 		}
 	}
 
@@ -438,10 +449,10 @@
 		approval: ApprovalRequestApproval,
 		methodOverride?: ApprovalTransportMethod
 	) {
-		if (!selectedRequest) return
-		actionBusy = true
-		actionError = ''
-		issuingArtifactApprovalId = approval.id
+		if (!selectedRequest) return;
+		actionBusy = true;
+		actionError = '';
+		issuingArtifactApprovalId = approval.id;
 
 		try {
 			issuedCompletionArtifact = await adminApprovalsAPI.issueCompletionArtifact(
@@ -451,107 +462,107 @@
 					method: methodOverride ?? actionMethod,
 					transport_channel: approval.transport_channel || undefined
 				}
-			)
-			await refreshSelectedRequest(selectedRequest.public_request_id)
+			);
+			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
-			await loadRequests()
+			await loadRequests();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to issue completion artifact'
+			actionError = err instanceof Error ? err.message : 'Failed to issue completion artifact';
 		} finally {
-			actionBusy = false
+			actionBusy = false;
 		}
 	}
 
 	function formatDateTime(timestamp?: number | null): string {
-		if (!timestamp) return '-'
-		return new Date(timestamp).toLocaleString()
+		if (!timestamp) return '-';
+		return new Date(timestamp).toLocaleString();
 	}
 
 	function getStatusBadgeClass(status: ApprovalRequestStatus): string {
 		switch (status) {
 			case 'approved':
-				return 'status-badge status-approved'
+				return 'status-badge status-approved';
 			case 'partially_approved':
-				return 'status-badge status-partial'
+				return 'status-badge status-partial';
 			case 'denied':
-				return 'status-badge status-denied'
+				return 'status-badge status-denied';
 			case 'expired':
-				return 'status-badge status-expired'
+				return 'status-badge status-expired';
 			case 'cancelled':
-				return 'status-badge status-cancelled'
+				return 'status-badge status-cancelled';
 			default:
-				return 'status-badge status-pending'
+				return 'status-badge status-pending';
 		}
 	}
 
 	function getStepStatusBadgeClass(status: ApprovalRequestApproval['status']): string {
-		return getStatusBadgeClass(status as ApprovalRequestStatus)
+		return getStatusBadgeClass(status as ApprovalRequestStatus);
 	}
 
 	function formatSide(side: ApprovalRequestApproval['side']): string {
 		switch (side) {
 			case 'admin_operator':
-				return 'Admin Operator'
+				return 'Admin Operator';
 			case 'customer_data_owner':
-				return 'Customer / Data Owner'
+				return 'Customer / Data Owner';
 			case 'guardian_delegate':
-				return 'Guardian / Delegate'
+				return 'Guardian / Delegate';
 			default:
-				return side
+				return side;
 		}
 	}
 
 	function formatScopeSummary(request: ApprovalRequestRecord): string {
-		const scope = request.scope_json || {}
+		const scope = request.scope_json || {};
 		const resourceClass =
-			typeof scope.resource_class === 'string' ? scope.resource_class : request.request_surface
-		return `${request.requested_action} · ${resourceClass}`
+			typeof scope.resource_class === 'string' ? scope.resource_class : request.request_surface;
+		return `${request.requested_action} · ${resourceClass}`;
 	}
 
 	function formatReference(reference?: { system: string; id: string; url?: string | null } | null) {
-		if (!reference) return '-'
-		return `${reference.system}:${reference.id}`
+		if (!reference) return '-';
+		return `${reference.system}:${reference.id}`;
 	}
 
 	function pendingApprovals(request: ApprovalRequestRecord | null): ApprovalRequestApproval[] {
-		if (!request) return []
-		return request.approvals.filter((approval) => approval.status === 'pending')
+		if (!request) return [];
+		return request.approvals.filter((approval) => approval.status === 'pending');
 	}
 
 	function formatGrantStatusClass(status: ElevationGrantRecord['status']): string {
 		switch (status) {
 			case 'active':
-				return 'status-badge status-approved'
+				return 'status-badge status-approved';
 			case 'expired':
-				return 'status-badge status-expired'
+				return 'status-badge status-expired';
 			case 'revoked':
-				return 'status-badge status-cancelled'
+				return 'status-badge status-cancelled';
 			default:
-				return 'status-badge status-pending'
+				return 'status-badge status-pending';
 		}
 	}
 
 	function formatJson(value: unknown): string {
-		return JSON.stringify(value ?? {}, null, 2)
+		return JSON.stringify(value ?? {}, null, 2);
 	}
 
 	function parseOptionalJson(text: string, field: string): Record<string, unknown> | null {
-		const trimmed = text.trim()
-		if (!trimmed) return null
+		const trimmed = text.trim();
+		if (!trimmed) return null;
 
 		try {
-			const parsed = JSON.parse(trimmed)
+			const parsed = JSON.parse(trimmed);
 			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				return parsed as Record<string, unknown>
+				return parsed as Record<string, unknown>;
 			}
-			throw new Error(`${field} must be a JSON object`)
+			throw new Error(`${field} must be a JSON object`);
 		} catch (error) {
 			if (error instanceof Error) {
-				throw new Error(`${field}: ${error.message}`)
+				throw new Error(`${field}: ${error.message}`);
 			}
-			throw new Error(`${field}: invalid JSON`)
+			throw new Error(`${field}: invalid JSON`);
 		}
 	}
 
@@ -569,45 +580,45 @@
 						correlation_id: actionTransportCorrelationId.trim() || undefined,
 						transport_request_id: actionTransportRequestId.trim() || undefined
 					}
-				: undefined
+				: undefined;
 
-		const request = parseOptionalJson(actionTransportRequestJson, 'Transport request')
-		const response = parseOptionalJson(actionTransportResponseJson, 'Transport response')
-		const metadata = parseOptionalJson(actionTransportMetadataJson, 'Transport metadata')
-		const detail = request || response || metadata ? { request, response, metadata } : undefined
+		const request = parseOptionalJson(actionTransportRequestJson, 'Transport request');
+		const response = parseOptionalJson(actionTransportResponseJson, 'Transport response');
+		const metadata = parseOptionalJson(actionTransportMetadataJson, 'Transport metadata');
+		const detail = request || response || metadata ? { request, response, metadata } : undefined;
 
 		return {
 			transport_summary: summary,
 			transport_detail: detail
-		}
+		};
 	}
 
 	function openGrantIssue(grant: ElevationGrantRecord) {
-		issuingGrantId = grant.public_grant_id
-		subjectTokenBusy = false
-		subjectTokenError = ''
-		subjectTokenExpiresIn = 300
-		issuedSubjectToken = null
+		issuingGrantId = grant.public_grant_id;
+		subjectTokenBusy = false;
+		subjectTokenError = '';
+		subjectTokenExpiresIn = 300;
+		issuedSubjectToken = null;
 	}
 
 	function closeGrantIssue() {
-		issuingGrantId = null
-		subjectTokenBusy = false
-		subjectTokenError = ''
-		subjectTokenClientId = ''
-		subjectTokenExpiresIn = 300
-		issuedSubjectToken = null
+		issuingGrantId = null;
+		subjectTokenBusy = false;
+		subjectTokenError = '';
+		subjectTokenClientId = '';
+		subjectTokenExpiresIn = 300;
+		issuedSubjectToken = null;
 	}
 
 	async function issueGrantSubjectToken(grant: ElevationGrantRecord) {
-		if (!selectedRequest) return
+		if (!selectedRequest) return;
 		if (!subjectTokenClientId.trim()) {
-			subjectTokenError = 'Service client ID is required'
-			return
+			subjectTokenError = 'Service client ID is required';
+			return;
 		}
 
-		subjectTokenBusy = true
-		subjectTokenError = ''
+		subjectTokenBusy = true;
+		subjectTokenError = '';
 		try {
 			issuedSubjectToken = await adminApprovalsAPI.issueSubjectToken(
 				selectedRequest.public_request_id,
@@ -616,23 +627,23 @@
 					client_id: subjectTokenClientId.trim(),
 					expires_in: subjectTokenExpiresIn || undefined
 				}
-			)
+			);
 			if (selectedRequest.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
 		} catch (err) {
 			subjectTokenError =
-				err instanceof Error ? err.message : 'Failed to issue downstream subject token'
+				err instanceof Error ? err.message : 'Failed to issue downstream subject token';
 		} finally {
-			subjectTokenBusy = false
+			subjectTokenBusy = false;
 		}
 	}
 
 	async function revokeGrant(grant: ElevationGrantRecord) {
-		if (!selectedRequest) return
-		revokeGrantBusyId = grant.public_grant_id
-		revokeGrantError = ''
-		actionError = ''
+		if (!selectedRequest) return;
+		revokeGrantBusyId = grant.public_grant_id;
+		revokeGrantError = '';
+		actionError = '';
 
 		try {
 			selectedRequest = await adminApprovalsAPI.revokeGrant(
@@ -642,27 +653,27 @@
 					reason_code: actionReasonCode || 'manual_revoke',
 					reason_note: actionReasonNote || undefined
 				}
-			)
+			);
 			requests = requests.map((item) =>
 				item.public_request_id === selectedRequest?.public_request_id ? selectedRequest! : item
-			)
+			);
 			if (selectedRequest.has_detail) {
-				await reloadDetailTracking(selectedRequest)
+				await reloadDetailTracking(selectedRequest);
 			}
 			if (issuingGrantId === grant.public_grant_id) {
-				issuingGrantId = null
-				issuedSubjectToken = null
+				issuingGrantId = null;
+				issuedSubjectToken = null;
 			}
 		} catch (err) {
-			revokeGrantError = err instanceof Error ? err.message : 'Failed to revoke elevation grant'
+			revokeGrantError = err instanceof Error ? err.message : 'Failed to revoke elevation grant';
 		} finally {
-			revokeGrantBusyId = null
+			revokeGrantBusyId = null;
 		}
 	}
 
 	function addApprovalStep() {
-		createPreview = null
-		createPreviewError = ''
+		createPreview = null;
+		createPreviewError = '';
 		createModel = {
 			...createModel,
 			approvals: [
@@ -675,40 +686,43 @@
 					method: 'portal_confirm'
 				}
 			]
-		}
+		};
 	}
 
 	function removeApprovalStep(index: number) {
-		createPreview = null
-		createPreviewError = ''
+		createPreview = null;
+		createPreviewError = '';
 		createModel = {
 			...createModel,
 			approvals: createModel.approvals.filter((_, currentIndex) => currentIndex !== index)
-		}
+		};
 	}
 
-	function updateApprovalStep(index: number, patch: Partial<ApprovalRequestCreateInput['approvals'][number]>) {
-		createPreview = null
-		createPreviewError = ''
+	function updateApprovalStep(
+		index: number,
+		patch: Partial<ApprovalRequestCreateInput['approvals'][number]>
+	) {
+		createPreview = null;
+		createPreviewError = '';
 		createModel = {
 			...createModel,
 			approvals: createModel.approvals.map((step, currentIndex) =>
 				currentIndex === index ? { ...step, ...patch } : step
 			)
-		}
+		};
 	}
 
 	function validateCreateRequest(): string | null {
 		if (!createModel.target_subject_id.trim()) {
-			return 'Target subject ID is required'
+			return 'Target subject ID is required';
 		}
 		if (!createModel.reason_code.trim()) {
-			return 'Reason code is required'
+			return 'Reason code is required';
 		}
 		if (createModel.approvals.length === 0) {
-			return 'At least one approval step is required'
+			return 'At least one approval step is required';
 		}
-		return null
+		return null;
 	}
 
 	function buildCreatePayload(): ApprovalRequestCreateInput {
@@ -755,20 +769,20 @@
 				method: step.method || undefined,
 				transport_channel: step.transport_channel?.trim() || undefined
 			}))
-		}
+		};
 
-		if (!payload.resource_ids?.length) delete payload.resource_ids
-		if (!payload.detail_classes?.length) delete payload.detail_classes
+		if (!payload.resource_ids?.length) delete payload.resource_ids;
+		if (!payload.detail_classes?.length) delete payload.detail_classes;
 
-		return payload
+		return payload;
 	}
 
 	function createPreviewHasResolutionErrors(): boolean {
-		return !!createPreview?.steps.some((step) => !!step.transport_resolution_error)
+		return !!createPreview?.steps.some((step) => !!step.transport_resolution_error);
 	}
 
 	function applyPreviewResolvedSteps() {
-		if (!createPreview) return
+		if (!createPreview) return;
 		createModel = {
 			...createModel,
 			approvals: createPreview.steps.map((step) => ({
@@ -782,56 +796,58 @@
 				transport_channel: step.transport_channel ?? undefined,
 				expires_at: step.expires_at
 			}))
-		}
-		createError = ''
+		};
+		createError = '';
 	}
 
 	async function previewCreateRequest() {
-		createError = ''
-		createPreviewError = ''
-		const validationError = validateCreateRequest()
+		createError = '';
+		createPreviewError = '';
+		const validationError = validateCreateRequest();
 		if (validationError) {
-			createPreview = null
-			createPreviewError = validationError
-			return
+			createPreview = null;
+			createPreviewError = validationError;
+			return;
 		}
 
-		createPreviewBusy = true
+		createPreviewBusy = true;
 		try {
-			createPreview = await adminApprovalsAPI.preview(buildCreatePayload())
+			createPreview = await adminApprovalsAPI.preview(buildCreatePayload());
 		} catch (err) {
-			createPreview = null
+			createPreview = null;
 			createPreviewError =
-				err instanceof Error ? err.message : 'Failed to resolve approval request preview'
+				err instanceof Error ? err.message : 'Failed to resolve approval request preview';
 		} finally {
-			createPreviewBusy = false
+			createPreviewBusy = false;
 		}
 	}
 
 	async function createRequest() {
-		createError = ''
-		const validationError = validateCreateRequest()
+		createError = '';
+		const validationError = validateCreateRequest();
 		if (validationError) {
-			createError = validationError
-			return
+			createError = validationError;
+			return;
 		}
 
-		createBusy = true
+		createBusy = true;
 		try {
-			const created = await adminApprovalsAPI.create(buildCreatePayload())
-			const failedInitialNotification = created.notification_results?.find((result) => !result.success)
-			closeCreateModal()
-			await loadRequests()
-			await openDetail(created)
+			const created = await adminApprovalsAPI.create(buildCreatePayload());
+			const failedInitialNotification = created.notification_results?.find(
+				(result) => !result.success
+			);
+			closeCreateModal();
+			await loadRequests();
+			await openDetail(created);
 			if (failedInitialNotification) {
 				error =
 					failedInitialNotification.error ||
-					'Approval request was created, but one or more initial notifications failed.'
+					'Approval request was created, but one or more initial notifications failed.';
 			}
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create approval request'
+			createError = err instanceof Error ? err.message : 'Failed to create approval request';
 		} finally {
-			createBusy = false
+			createBusy = false;
 		}
 	}
 </script>
@@ -850,9 +866,7 @@
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateModal}>New Approval Request</button>
-			<button class="btn btn-secondary" onclick={loadRequests} disabled={loading}>
-				Refresh
-			</button>
+			<button class="btn btn-secondary" onclick={loadRequests} disabled={loading}> Refresh </button>
 		</div>
 	</div>
 
@@ -960,26 +974,76 @@
 			<div class="detail-card">
 				<h3>Request</h3>
 				<dl class="detail-list">
-					<div><dt>Status</dt><dd><span class={getStatusBadgeClass(selectedRequest.status)}>{selectedRequest.status}</span></dd></div>
-					<div><dt>Reason</dt><dd>{selectedRequest.reason_code}</dd></div>
-					<div><dt>Requested Action</dt><dd>{selectedRequest.requested_action}</dd></div>
-					<div><dt>Redaction</dt><dd>{selectedRequest.redaction_level}</dd></div>
-					<div><dt>Reuse Scope</dt><dd>{selectedRequest.reuse_scope}</dd></div>
-					<div><dt>Reference</dt><dd>{formatReference(selectedRequest.reference)}</dd></div>
-					<div><dt>Ticket</dt><dd>{formatReference(selectedRequest.ticket_reference)}</dd></div>
-					<div><dt>Expires</dt><dd>{formatDateTime(selectedRequest.expires_at)}</dd></div>
+					<div>
+						<dt>Status</dt>
+						<dd>
+							<span class={getStatusBadgeClass(selectedRequest.status)}
+								>{selectedRequest.status}</span
+							>
+						</dd>
+					</div>
+					<div>
+						<dt>Reason</dt>
+						<dd>{selectedRequest.reason_code}</dd>
+					</div>
+					<div>
+						<dt>Requested Action</dt>
+						<dd>{selectedRequest.requested_action}</dd>
+					</div>
+					<div>
+						<dt>Redaction</dt>
+						<dd>{selectedRequest.redaction_level}</dd>
+					</div>
+					<div>
+						<dt>Reuse Scope</dt>
+						<dd>{selectedRequest.reuse_scope}</dd>
+					</div>
+					<div>
+						<dt>Reference</dt>
+						<dd>{formatReference(selectedRequest.reference)}</dd>
+					</div>
+					<div>
+						<dt>Ticket</dt>
+						<dd>{formatReference(selectedRequest.ticket_reference)}</dd>
+					</div>
+					<div>
+						<dt>Expires</dt>
+						<dd>{formatDateTime(selectedRequest.expires_at)}</dd>
+					</div>
 				</dl>
 			</div>
 
 			<div class="detail-card">
 				<h3>Resolved Policy</h3>
 				<dl class="detail-list">
-					<div><dt>Preset</dt><dd>{selectedRequest.resolved_policy?.preset ?? selectedRequest.policy_preset}</dd></div>
-					<div><dt>TTL (seconds)</dt><dd>{selectedRequest.resolved_policy?.request_ttl_seconds ?? '-'}</dd></div>
-					<div><dt>Remind Cooldown</dt><dd>{selectedRequest.resolved_policy?.notification_cooldown_seconds?.remind ?? '-'}s</dd></div>
-					<div><dt>Resend Cooldown</dt><dd>{selectedRequest.resolved_policy?.notification_cooldown_seconds?.resend ?? '-'}s</dd></div>
-					<div><dt>Partial Access</dt><dd>{selectedRequest.partial_access_allowed ? 'Allowed' : 'Blocked'}</dd></div>
-					<div><dt>Target</dt><dd>{selectedRequest.target_subject_type}:{selectedRequest.target_subject_id}</dd></div>
+					<div>
+						<dt>Preset</dt>
+						<dd>{selectedRequest.resolved_policy?.preset ?? selectedRequest.policy_preset}</dd>
+					</div>
+					<div>
+						<dt>TTL (seconds)</dt>
+						<dd>{selectedRequest.resolved_policy?.request_ttl_seconds ?? '-'}</dd>
+					</div>
+					<div>
+						<dt>Remind Cooldown</dt>
+						<dd>
+							{selectedRequest.resolved_policy?.notification_cooldown_seconds?.remind ?? '-'}s
+						</dd>
+					</div>
+					<div>
+						<dt>Resend Cooldown</dt>
+						<dd>
+							{selectedRequest.resolved_policy?.notification_cooldown_seconds?.resend ?? '-'}s
+						</dd>
+					</div>
+					<div>
+						<dt>Partial Access</dt>
+						<dd>{selectedRequest.partial_access_allowed ? 'Allowed' : 'Blocked'}</dd>
+					</div>
+					<div>
+						<dt>Target</dt>
+						<dd>{selectedRequest.target_subject_type}:{selectedRequest.target_subject_id}</dd>
+					</div>
 				</dl>
 			</div>
 		</div>
@@ -1002,33 +1066,57 @@
 							<span class={getStepStatusBadgeClass(approval.status)}>{approval.status}</span>
 						</div>
 
-							<div class="step-meta">
-								<div>Expires: {formatDateTime(approval.expires_at)}</div>
-								<div>Method: {approval.method ?? '-'}</div>
-								<div>Reason: {approval.reason_code ?? '-'}</div>
-								<div>Notifications: {approval.notification_count}</div>
-								<div>Last Notify: {formatDateTime(approval.last_notified_at)}</div>
-								<div>Last Action: {approval.last_notification_action ?? '-'}</div>
-							</div>
+						<div class="step-meta">
+							<div>Expires: {formatDateTime(approval.expires_at)}</div>
+							<div>Method: {approval.method ?? '-'}</div>
+							<div>Reason: {approval.reason_code ?? '-'}</div>
+							<div>Notifications: {approval.notification_count}</div>
+							<div>Last Notify: {formatDateTime(approval.last_notified_at)}</div>
+							<div>Last Action: {approval.last_notification_action ?? '-'}</div>
+						</div>
 
 						{#if approval.status === 'pending'}
 							<div class="step-actions">
-								<button class="btn btn-sm btn-primary" onclick={() => approveStep(approval)} disabled={actionBusy}>
+								<button
+									class="btn btn-sm btn-primary"
+									onclick={() => approveStep(approval)}
+									disabled={actionBusy}
+								>
 									Approve
 								</button>
-								<button class="btn btn-sm btn-danger" onclick={() => denyStep(approval)} disabled={actionBusy}>
+								<button
+									class="btn btn-sm btn-danger"
+									onclick={() => denyStep(approval)}
+									disabled={actionBusy}
+								>
 									Deny
 								</button>
-								<button class="btn btn-sm btn-secondary" onclick={() => remindStep(approval)} disabled={actionBusy}>
+								<button
+									class="btn btn-sm btn-secondary"
+									onclick={() => remindStep(approval)}
+									disabled={actionBusy}
+								>
 									Remind
 								</button>
-								<button class="btn btn-sm btn-secondary" onclick={() => resendStep(approval)} disabled={actionBusy}>
+								<button
+									class="btn btn-sm btn-secondary"
+									onclick={() => resendStep(approval)}
+									disabled={actionBusy}
+								>
 									Resend
 								</button>
-								<button class="btn btn-sm btn-secondary" onclick={() => issueCompletionArtifact(approval)} disabled={actionBusy}>
+								<button
+									class="btn btn-sm btn-secondary"
+									onclick={() => issueCompletionArtifact(approval)}
+									disabled={actionBusy}
+								>
 									Issue Artifact
 								</button>
-								<button class="btn btn-sm btn-secondary" onclick={() => loadStepGuide(approval)} disabled={stepGuideLoadingId === approval.id}>
+								<button
+									class="btn btn-sm btn-secondary"
+									onclick={() => loadStepGuide(approval)}
+									disabled={stepGuideLoadingId === approval.id}
+								>
 									{stepGuideLoadingId === approval.id ? 'Resolving…' : 'Resolve Guide'}
 								</button>
 							</div>
@@ -1038,7 +1126,8 @@
 							{#if stepGuides[approval.id]}
 								<ApprovalStepGuideCard
 									guide={stepGuides[approval.id]!}
-									onIssueFallback={(method) => issueCompletionArtifact(approval, method as ApprovalTransportMethod)}
+									onIssueFallback={(method) =>
+										issueCompletionArtifact(approval, method as ApprovalTransportMethod)}
 								/>
 							{/if}
 							{#if issuingArtifactApprovalId === approval.id && issuedCompletionArtifact}
@@ -1049,10 +1138,26 @@
 										artifactId={issuedCompletionArtifact.artifact.artifact_id}
 									/>
 									<div class="detail-grid compact-grid">
-										<div><strong>Artifact ID</strong><div class="cell-secondary">{issuedCompletionArtifact.artifact.artifact_id}</div></div>
-										<div><strong>Method</strong><div class="cell-secondary">{issuedCompletionArtifact.artifact.method}</div></div>
-										<div><strong>Completion Path</strong><div class="cell-secondary">{issuedCompletionArtifact.completion_path}</div></div>
-										<div><strong>Expires</strong><div class="cell-secondary">{formatDateTime(issuedCompletionArtifact.artifact.expires_at)}</div></div>
+										<div>
+											<strong>Artifact ID</strong>
+											<div class="cell-secondary">
+												{issuedCompletionArtifact.artifact.artifact_id}
+											</div>
+										</div>
+										<div>
+											<strong>Method</strong>
+											<div class="cell-secondary">{issuedCompletionArtifact.artifact.method}</div>
+										</div>
+										<div>
+											<strong>Completion Path</strong>
+											<div class="cell-secondary">{issuedCompletionArtifact.completion_path}</div>
+										</div>
+										<div>
+											<strong>Expires</strong>
+											<div class="cell-secondary">
+												{formatDateTime(issuedCompletionArtifact.artifact.expires_at)}
+											</div>
+										</div>
 									</div>
 								</div>
 							{/if}
@@ -1126,7 +1231,9 @@
 								<div class="grant-issue-panel">
 									<div class="detail-grid compact-grid">
 										<div class="form-group">
-											<label class="form-label" for="subject-token-client-id">Service Client ID</label>
+											<label class="form-label" for="subject-token-client-id"
+												>Service Client ID</label
+											>
 											<input
 												id="subject-token-client-id"
 												class="form-input"
@@ -1180,11 +1287,15 @@
 										</div>
 										<details class="grant-details" open>
 											<summary>Subject Token</summary>
-											<textarea class="form-textarea monospace-textarea" rows="8" readonly>{issuedSubjectToken.subject_token}</textarea>
+											<textarea class="form-textarea monospace-textarea" rows="8" readonly
+												>{issuedSubjectToken.subject_token}</textarea
+											>
 										</details>
 										<details class="grant-details">
 											<summary>Authorization Details</summary>
-											<pre class="json-block">{formatJson(issuedSubjectToken.authorization_details)}</pre>
+											<pre class="json-block">{formatJson(
+													issuedSubjectToken.authorization_details
+												)}</pre>
 										</details>
 										<ApprovalGrantIntegrationCard token={issuedSubjectToken} />
 									{/if}
@@ -1207,11 +1318,7 @@
 			{:else if detailEvidenceError}
 				<div class="alert alert-error">{detailEvidenceError}</div>
 			{:else if detailEvidence}
-				<ApprovalEvidenceTimeline
-					evidence={detailEvidence}
-					{formatDateTime}
-					{formatJson}
-				/>
+				<ApprovalEvidenceTimeline evidence={detailEvidence} {formatDateTime} {formatJson} />
 			{/if}
 		</div>
 
@@ -1301,7 +1408,9 @@
 						/>
 					</div>
 					<div class="form-group">
-						<label class="form-label" for="approval-transport-request-id">Transport Request ID</label>
+						<label class="form-label" for="approval-transport-request-id"
+							>Transport Request ID</label
+						>
 						<input
 							id="approval-transport-request-id"
 							class="form-input"
@@ -1311,7 +1420,9 @@
 					</div>
 				</div>
 				<div class="form-group">
-					<label class="form-label" for="approval-transport-request-json">Transport Request JSON</label>
+					<label class="form-label" for="approval-transport-request-json"
+						>Transport Request JSON</label
+					>
 					<textarea
 						id="approval-transport-request-json"
 						class="form-textarea monospace-textarea"
@@ -1321,7 +1432,9 @@
 					></textarea>
 				</div>
 				<div class="form-group">
-					<label class="form-label" for="approval-transport-response-json">Transport Response JSON</label>
+					<label class="form-label" for="approval-transport-response-json"
+						>Transport Response JSON</label
+					>
 					<textarea
 						id="approval-transport-response-json"
 						class="form-textarea monospace-textarea"
@@ -1331,7 +1444,9 @@
 					></textarea>
 				</div>
 				<div class="form-group">
-					<label class="form-label" for="approval-transport-metadata-json">Transport Metadata JSON</label>
+					<label class="form-label" for="approval-transport-metadata-json"
+						>Transport Metadata JSON</label
+					>
 					<textarea
 						id="approval-transport-metadata-json"
 						class="form-textarea monospace-textarea"
@@ -1348,7 +1463,8 @@
 				<button
 					class="btn btn-danger"
 					onclick={cancelRequest}
-					disabled={actionBusy || !['pending', 'partially_approved'].includes(selectedRequest.status)}
+					disabled={actionBusy ||
+						!['pending', 'partially_approved'].includes(selectedRequest.status)}
 				>
 					Cancel Request
 				</button>
@@ -1369,7 +1485,11 @@
 	<div class="filter-row">
 		<div class="form-group">
 			<label class="form-label" for="create-target-type">Target Type</label>
-			<select id="create-target-type" class="form-select" bind:value={createModel.target_subject_type}>
+			<select
+				id="create-target-type"
+				class="form-select"
+				bind:value={createModel.target_subject_type}
+			>
 				<option value="user">User</option>
 				<option value="artifact">Artifact</option>
 				<option value="service_resource">Service Resource</option>
@@ -1403,7 +1523,11 @@
 		</div>
 		<div class="form-group">
 			<label class="form-label" for="create-resource-class">Resource Class</label>
-			<input id="create-resource-class" class="form-input" bind:value={createModel.resource_class} />
+			<input
+				id="create-resource-class"
+				class="form-input"
+				bind:value={createModel.resource_class}
+			/>
 		</div>
 	</div>
 
@@ -1428,7 +1552,11 @@
 		</div>
 		<div class="form-group">
 			<label class="form-label" for="create-redaction-level">Redaction Level</label>
-			<select id="create-redaction-level" class="form-select" bind:value={createModel.redaction_level}>
+			<select
+				id="create-redaction-level"
+				class="form-select"
+				bind:value={createModel.redaction_level}
+			>
 				<option value="summary_only">Summary Only</option>
 				<option value="masked">Masked</option>
 				<option value="raw">Raw</option>
@@ -1453,7 +1581,12 @@
 
 	<div class="form-group">
 		<label class="form-label" for="create-reason-note">Reason Note</label>
-		<textarea id="create-reason-note" class="form-textarea" rows="3" bind:value={createModel.reason_note}></textarea>
+		<textarea
+			id="create-reason-note"
+			class="form-textarea"
+			rows="3"
+			bind:value={createModel.reason_note}
+		></textarea>
 	</div>
 
 	<div class="filter-row">
@@ -1547,7 +1680,8 @@
 								value={step.subject_type}
 								onchange={(event) =>
 									updateApprovalStep(index, {
-										subject_type: (event.currentTarget as HTMLSelectElement).value as typeof step.subject_type
+										subject_type: (event.currentTarget as HTMLSelectElement)
+											.value as typeof step.subject_type
 									})}
 							>
 								<option value="admin_user">Admin User</option>
@@ -1583,7 +1717,8 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label class="form-label" for={`step-relation-source-${index}`}>Relation Source</label>
+							<label class="form-label" for={`step-relation-source-${index}`}>Relation Source</label
+							>
 							<input
 								id={`step-relation-source-${index}`}
 								class="form-input"
@@ -1604,8 +1739,8 @@
 								value={step.method ?? ''}
 								onchange={(event) =>
 									updateApprovalStep(index, {
-										method:
-											((event.currentTarget as HTMLSelectElement).value || undefined) as typeof step.method
+										method: ((event.currentTarget as HTMLSelectElement).value ||
+											undefined) as typeof step.method
 									})}
 							>
 								<option value="">No initial notification</option>
@@ -1618,7 +1753,9 @@
 							</select>
 						</div>
 						<div class="form-group">
-							<label class="form-label" for={`step-transport-channel-${index}`}>Transport Channel</label>
+							<label class="form-label" for={`step-transport-channel-${index}`}
+								>Transport Channel</label
+							>
 							<input
 								id={`step-transport-channel-${index}`}
 								class="form-input"
@@ -1664,7 +1801,9 @@
 	{/if}
 
 	<div class="detail-actions">
-		<button class="btn btn-secondary" onclick={closeCreateModal} disabled={createBusy}>Cancel</button>
+		<button class="btn btn-secondary" onclick={closeCreateModal} disabled={createBusy}
+			>Cancel</button
+		>
 		<button
 			class="btn btn-secondary"
 			onclick={previewCreateRequest}
@@ -1884,13 +2023,7 @@
 
 	.monospace-textarea {
 		width: 100%;
-		font-family:
-			'SFMono-Regular',
-			'SF Mono',
-			Consolas,
-			'Liberation Mono',
-			Menlo,
-			monospace;
+		font-family: 'SFMono-Regular', 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
 	}
 
 	.checkbox-group {

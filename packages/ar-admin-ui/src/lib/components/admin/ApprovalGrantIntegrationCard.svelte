@@ -1,16 +1,16 @@
 <script lang="ts">
-	import type { ApprovalGrantSubjectTokenResult } from '$lib/api/admin-approvals'
+	import type { ApprovalGrantSubjectTokenResult } from '$lib/api/admin-approvals';
 
 	type Props = {
-		token: ApprovalGrantSubjectTokenResult
-	}
+		token: ApprovalGrantSubjectTokenResult;
+	};
 
-	let { token }: Props = $props()
+	let { token }: Props = $props();
 
 	function buildTokenExchangeCurl(result: ApprovalGrantSubjectTokenResult): string {
 		const audienceLine = result.integration_hint.target_audience
 			? `  -d "audience=${result.integration_hint.target_audience}" \\\n`
-			: ''
+			: '';
 		return [
 			`curl -X POST "${result.integration_hint.token_endpoint}" \\`,
 			'  -H "Content-Type: application/x-www-form-urlencoded" \\',
@@ -21,10 +21,12 @@
 			audienceLine
 				? audienceLine.trimEnd()
 				: '  -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token"',
-			audienceLine ? '  -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token"' : ''
+			audienceLine
+				? '  -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token"'
+				: ''
 		]
 			.filter(Boolean)
-			.join('\n')
+			.join('\n');
 	}
 
 	function buildIntrospectionCurl(result: ApprovalGrantSubjectTokenResult): string {
@@ -34,37 +36,37 @@
 			'  -u "${SERVICE_CLIENT_ID}:${SERVICE_CLIENT_SECRET}" \\',
 			'  -d "token=${DOWNSTREAM_ACCESS_TOKEN}" \\',
 			'  -d "token_type_hint=access_token"'
-		].join('\n')
+		].join('\n');
 	}
 
 	function buildProtectedResourceCurl(result: ApprovalGrantSubjectTokenResult): string {
-		const resourceId = result.integration_hint.resource_ids[0] ?? '${RESOURCE_ID}'
-		const tokenEndpoint = new URL(result.integration_hint.token_endpoint)
-		const productRoutePath = result.integration_hint.product_route?.path_template
+		const resourceId = result.integration_hint.resource_ids[0] ?? '${RESOURCE_ID}';
+		const tokenEndpoint = new URL(result.integration_hint.token_endpoint);
+		const productRoutePath = result.integration_hint.product_route?.path_template;
 		const resolvedPath = productRoutePath
 			? productRoutePath.replace(':userId', resourceId)
-			: `/resources/${resourceId}`
-		const basePath = `${tokenEndpoint.protocol}//${tokenEndpoint.host}`
+			: `/resources/${resourceId}`;
+		const basePath = `${tokenEndpoint.protocol}//${tokenEndpoint.host}`;
 		return [
 			`curl -X GET "${basePath}${resolvedPath}" \\`,
 			'  -H "Authorization: Bearer ${DOWNSTREAM_ACCESS_TOKEN}" \\',
 			'  -H "Accept: application/json"'
-		].join('\n')
+		].join('\n');
 	}
 
 	function buildServiceMiddlewareSnippet(result: ApprovalGrantSubjectTokenResult): string {
-		const audience = result.integration_hint.authorization_defaults.expected_audience
-		const audienceValue = audience ? `'${audience}'` : 'null'
-		const resourceClass = result.integration_hint.authorization_defaults.required_resource_class
+		const audience = result.integration_hint.authorization_defaults.expected_audience;
+		const audienceValue = audience ? `'${audience}'` : 'null';
+		const resourceClass = result.integration_hint.authorization_defaults.required_resource_class;
 		const detailClasses = JSON.stringify(
 			result.integration_hint.authorization_defaults.required_detail_classes
-		)
+		);
 
 		return [
-			"import {",
+			'import {',
 			`  ${result.integration_hint.service_sdk.authorizer_factory},`,
 			`  ${result.integration_hint.service_sdk.protected_resource_middleware},`,
-			"  getDownstreamGrantProtectedResourceContext,",
+			'  getDownstreamGrantProtectedResourceContext,',
 			`  ${result.integration_hint.service_sdk.projection_helper},`,
 			"} from '@authrim/ar-lib-core';",
 			'',
@@ -101,19 +103,19 @@
 			'  );',
 			'  return c.json(body);',
 			'});'
-		].join('\n')
+		].join('\n');
 	}
 
 	function buildProtectedResourceFetchSnippet(result: ApprovalGrantSubjectTokenResult): string {
-		const audience = result.integration_hint.target_audience
-		const audienceLine = audience ? `  audience: '${audience}',\n` : ''
-		const resourceId = result.integration_hint.resource_ids[0] ?? '${RESOURCE_ID}'
-		const detailClass = result.integration_hint.detail_classes[0] ?? '${DETAIL_CLASS}'
-		const tokenEndpoint = new URL(result.integration_hint.token_endpoint)
-		const productRoutePath = result.integration_hint.product_route?.path_template
+		const audience = result.integration_hint.target_audience;
+		const audienceLine = audience ? `  audience: '${audience}',\n` : '';
+		const resourceId = result.integration_hint.resource_ids[0] ?? '${RESOURCE_ID}';
+		const detailClass = result.integration_hint.detail_classes[0] ?? '${DETAIL_CLASS}';
+		const tokenEndpoint = new URL(result.integration_hint.token_endpoint);
+		const productRoutePath = result.integration_hint.product_route?.path_template;
 		const resourceUrl = productRoutePath
 			? `${tokenEndpoint.protocol}//${tokenEndpoint.host}${productRoutePath.replace(':userId', resourceId)}`
-			: `https://service.example.com/resources/${resourceId}`
+			: `https://service.example.com/resources/${resourceId}`;
 
 		return [
 			"import { fetchProtectedResourceWithDownstreamGrant } from '@authrim/ar-lib-core';",
@@ -122,10 +124,10 @@
 			`  tokenEndpoint: '${result.integration_hint.token_endpoint}',`,
 			`  introspectionEndpoint: '${result.integration_hint.introspection_endpoint}',`,
 			'  client: {',
-			"    clientId: process.env.SERVICE_CLIENT_ID!,",
-			"    clientSecret: process.env.SERVICE_CLIENT_SECRET!,",
+			'    clientId: process.env.SERVICE_CLIENT_ID!,',
+			'    clientSecret: process.env.SERVICE_CLIENT_SECRET!,',
 			'  },',
-			"  subjectToken: issuedSubjectToken.subject_token,",
+			'  subjectToken: issuedSubjectToken.subject_token,',
 			audienceLine.trimEnd(),
 			'  authorization: {',
 			`    expectedAudience: ${audience ? `'${audience}'` : 'null'},`,
@@ -140,19 +142,19 @@
 			'console.log(result.resourceData);'
 		]
 			.filter(Boolean)
-			.join('\n')
+			.join('\n');
 	}
 
 	function formatDetailClasses(result: ApprovalGrantSubjectTokenResult): string {
 		return result.integration_hint.detail_classes.length > 0
 			? result.integration_hint.detail_classes.join(', ')
-			: '-'
+			: '-';
 	}
 
 	function formatResourceIds(result: ApprovalGrantSubjectTokenResult): string {
 		return result.integration_hint.resource_ids.length > 0
 			? result.integration_hint.resource_ids.join(', ')
-			: '-'
+			: '-';
 	}
 </script>
 
@@ -251,6 +253,10 @@
 
 	<details class="grant-details">
 		<summary>Authorization Defaults</summary>
-		<pre class="json-block">{JSON.stringify(token.integration_hint.authorization_defaults, null, 2)}</pre>
+		<pre class="json-block">{JSON.stringify(
+				token.integration_hint.authorization_defaults,
+				null,
+				2
+			)}</pre>
 	</details>
 </div>

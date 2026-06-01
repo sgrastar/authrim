@@ -64,6 +64,7 @@ type UpgradeMethod = 'email' | 'passkey' | 'social' | 'phone';
  */
 interface UpgradeRequest {
   method: UpgradeMethod;
+  upgrade_token?: string;
   preserve_sub?: boolean;
   migrate_data?: boolean;
   // Method-specific params
@@ -133,7 +134,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const { session } = sessionResult;
+    const { session, sessionId } = sessionResult;
     const clientId = (session.data?.client_id as string) || '';
 
     const body = await c.req.json<UpgradeRequest>();
@@ -159,6 +160,17 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
+
+    const upgradeToken = generateId();
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
+    await sessionStore.updateSessionDataRpc(sessionId, {
+      pending_upgrade_token: upgradeToken,
+      pending_upgrade_method: method,
+    });
 
     // Return instructions for the chosen method
     const methodInstructions: Record<UpgradeMethod, object> = {
@@ -191,7 +203,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       success: true,
       user_id: session.userId,
-      upgrade_token: generateId(), // Token to track upgrade flow
+      upgrade_token: upgradeToken,
       instructions: methodInstructions[method],
     });
   } catch (error) {
@@ -232,6 +244,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     const body = await c.req.json<{
       method: UpgradeMethod;
+      upgrade_token?: string;
       preserve_sub?: boolean;
       migrate_data?: boolean;
       email?: string;
@@ -240,7 +253,31 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       external_user_id?: string;
     }>();
 
-    const { method, name, provider_id } = body;
+    const { method, name, provider_id, upgrade_token } = body;
+
+    if (!method || !['email', 'passkey', 'social', 'phone'].includes(method)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const pendingUpgradeToken = session.data?.pending_upgrade_token as string | undefined;
+    const pendingUpgradeMethod = session.data?.pending_upgrade_method as string | undefined;
+    if (!upgrade_token || upgrade_token !== pendingUpgradeToken || method !== pendingUpgradeMethod) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const clientContract = await loadClientContractCached(
+      c,
+      c.env.AUTHRIM_CONFIG,
+      c.env,
+      tenantId,
+      clientId
+    );
+    if (
+      clientContract?.anonymousAuth?.allowedUpgradeMethods &&
+      !clientContract.anonymousAuth.allowedUpgradeMethods.includes(method)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
 
     // Security: For email upgrade, email MUST have been verified via OTP flow
     // The verified email is stored in session data by email-code.ts
@@ -299,18 +336,12 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         otpUserId = verifiedEmailUserId;
       }
     } else {
-      // For non-email methods, email is optional from request body
+      if (session.data?.verified_upgrade_method !== method) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      // For non-email methods, email is optional from request body after method proof.
       email = body.email;
     }
-
-    // Load client contract for default settings
-    const clientContract = await loadClientContractCached(
-      c,
-      c.env.AUTHRIM_CONFIG,
-      c.env,
-      tenantId,
-      clientId
-    );
 
     // Determine if we should preserve sub (client default or explicit request)
     const preserveSub =
@@ -426,6 +457,9 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       verified_email_at: undefined,
       verified_email_user_id: undefined,
       upgrade_nonce: undefined,
+      pending_upgrade_token: undefined,
+      pending_upgrade_method: undefined,
+      verified_upgrade_method: undefined,
       // Clear device identification data (privacy)
       device_id_hash: undefined,
       // Mirror the lifecycle snapshot into session data so the UI can recover

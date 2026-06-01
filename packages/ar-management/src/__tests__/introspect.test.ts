@@ -1372,7 +1372,7 @@ describe('Token Introspection Endpoint', () => {
   });
 
   describe('Response Caching', () => {
-    it('should return cached response when cache is enabled and hit', async () => {
+    it('should ignore cached responses until the submitted token is fully validated', async () => {
       const cachedResponse = {
         active: true,
         scope: 'openid profile',
@@ -1412,6 +1412,7 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
       mockClientRepository.findByClientId.mockResolvedValue({
@@ -1421,12 +1422,11 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
-      // Should check revocation even on cache hit
+      // Cached responses are not trusted before signature and revocation validation.
+      expect(mockKvGet).not.toHaveBeenCalled();
+      expect(verifyToken).toHaveBeenCalled();
       expect(isTokenRevoked).toHaveBeenCalled();
-      // Should return cached response
-      expect(c.json).toHaveBeenCalledWith(cachedResponse);
-      // Should NOT call verifyToken (expensive operation skipped)
-      expect(verifyToken).not.toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
     });
 
     it('should return active=false and delete cache when cached token is revoked', async () => {
@@ -1462,6 +1462,7 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(true); // Token is revoked
 
       mockClientRepository.findByClientId.mockResolvedValue({
@@ -1471,8 +1472,8 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
-      // Should delete cache entry
-      expect(mockKvDelete).toHaveBeenCalled();
+      // Cached state is ignored; revocation is checked against the live token.
+      expect(mockKvDelete).not.toHaveBeenCalled();
       // Should return inactive
       expect(c.json).toHaveBeenCalledWith({ active: false });
     });
@@ -1509,7 +1510,12 @@ describe('Token Introspection Endpoint', () => {
       });
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      const expiredTokenPayload = {
+        ...sampleTokenPayload,
+        exp: Math.floor(Date.now() / 1000) - 100,
+      };
+      vi.mocked(parseToken).mockReturnValue(expiredTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(expiredTokenPayload);
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
@@ -1518,8 +1524,8 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
-      // Should delete cache entry
-      expect(mockKvDelete).toHaveBeenCalled();
+      // Cached state is ignored; expiry is checked against the live token.
+      expect(mockKvDelete).not.toHaveBeenCalled();
       // Should return inactive
       expect(c.json).toHaveBeenCalledWith({ active: false });
     });
@@ -1741,7 +1747,7 @@ describe('Token Introspection Endpoint', () => {
       );
     });
 
-    it('should use getRefreshToken for cache hit when token_type_hint is refresh_token', async () => {
+    it('should validate refresh_token hints without trusting cached responses', async () => {
       const cachedResponse = {
         active: true,
         scope: 'openid offline_access',
@@ -1782,6 +1788,7 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(getRefreshToken).mockResolvedValue({
         familyId: 'family-123',
         tokenId: 'token-jti-123',
@@ -1794,6 +1801,8 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
+      expect(mockKvGet).not.toHaveBeenCalled();
+      expect(verifyToken).toHaveBeenCalled();
       // Should call getRefreshToken instead of isTokenRevoked for refresh_token hint
       expect(getRefreshToken).toHaveBeenCalledWith(
         c.env,
@@ -1804,10 +1813,7 @@ describe('Token Introspection Endpoint', () => {
         'tenant1'
       );
       expect(isTokenRevoked).not.toHaveBeenCalled();
-      // Should return cached response
-      expect(c.json).toHaveBeenCalledWith(cachedResponse);
-      // Should NOT call verifyToken (expensive operation skipped)
-      expect(verifyToken).not.toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
     });
 
     it('should return active=false when refresh_token not found on cache hit', async () => {
@@ -1846,6 +1852,7 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(getRefreshToken).mockResolvedValue(null); // Refresh token not found
 
       mockClientRepository.findByClientId.mockResolvedValue({
@@ -1857,8 +1864,8 @@ describe('Token Introspection Endpoint', () => {
 
       // Should call getRefreshToken for refresh_token hint
       expect(getRefreshToken).toHaveBeenCalled();
-      // Should delete cache entry when refresh token not found
-      expect(mockKvDelete).toHaveBeenCalled();
+      // Cached state is ignored; no cache entry is consumed or deleted.
+      expect(mockKvDelete).not.toHaveBeenCalled();
       // Should return inactive
       expect(c.json).toHaveBeenCalledWith({ active: false });
     });
@@ -1950,6 +1957,7 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(tokenWithoutSub);
+      vi.mocked(verifyToken).mockResolvedValue(tokenWithoutSub);
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
@@ -1962,8 +1970,9 @@ describe('Token Introspection Endpoint', () => {
       expect(getRefreshToken).not.toHaveBeenCalled();
       // Should NOT call isTokenRevoked either (refresh_token hint)
       expect(isTokenRevoked).not.toHaveBeenCalled();
-      // Should return cached response directly
-      expect(c.json).toHaveBeenCalledWith(cachedResponse);
+      expect(mockKvGet).not.toHaveBeenCalled();
+      expect(verifyToken).toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
     });
 
     it('should NOT cache active=false response', async () => {

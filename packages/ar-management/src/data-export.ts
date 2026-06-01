@@ -321,7 +321,13 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const introspection = await introspectTokenFromContext(c);
-    if (introspection.valid && introspection.claims?.sub) {
+    const scope = typeof introspection.claims?.scope === 'string' ? introspection.claims.scope : '';
+    const scopes = scope.split(/\s+/).filter((value) => value.length > 0);
+    if (
+      introspection.valid &&
+      introspection.claims?.sub &&
+      (scopes.includes('data_export') || scopes.includes('authrim:data_export'))
+    ) {
       return introspection.claims.sub as string;
     }
     return null;

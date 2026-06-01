@@ -11,6 +11,32 @@ export interface IdentityMappingPolicySummary {
 	lifecycleState: string;
 }
 
+export interface IdentityMappingPolicyVersionSummary {
+	id: string;
+	tenantId: string;
+	policySetId: string;
+	versionLabel: string;
+	lifecycleState: string;
+	policyHash?: string | null;
+	compatibilityRange?: string | null;
+	authorId?: string | null;
+	publishedAt?: number | null;
+	createdAt?: number | null;
+	updatedAt?: number | null;
+	directions?: {
+		inbound: boolean;
+		outbound: boolean;
+	};
+	sourceProfileIds?: string[];
+	destinationProfileIds?: string[];
+	latestSnapshot?: {
+		id: string;
+		catalogVersionId?: string | null;
+		lifecycleState?: string | null;
+		compiledAt?: number | null;
+	} | null;
+}
+
 export interface IdentityMappingCatalogSummary {
 	id: string;
 	tenantId: string;
@@ -109,7 +135,7 @@ export interface IdentityMappingSourceProfileSummary {
 	} | null;
 }
 
-export type IdentityMappingDestinationType = 'oidc' | 'csv';
+export type IdentityMappingDestinationType = 'oidc' | 'csv' | 'saml';
 export type IdentityMappingProfileOwnerScope = 'platform' | 'tenant' | 'client';
 export type IdentityMappingRegistryOwnerScope = 'platform' | 'tenant';
 export type IdentityMappingOidcSurface = 'id_token' | 'userinfo';
@@ -148,6 +174,19 @@ export interface IdentityMappingDestinationProfileCreateRequest {
 	ownerScopeId?: string | null;
 	baseProfileId?: string | null;
 	schema: Record<string, unknown>;
+	warningSummary?: Record<string, unknown>;
+	releaseImpact?: Record<string, unknown>;
+}
+
+export interface IdentityMappingDestinationProfileUpdateRequest {
+	destinationType?: IdentityMappingDestinationType;
+	profileKey?: string;
+	displayName?: string;
+	versionLabel?: string;
+	ownerScopeType?: IdentityMappingProfileOwnerScope;
+	ownerScopeId?: string | null;
+	baseProfileId?: string | null;
+	schema?: Record<string, unknown>;
 	warningSummary?: Record<string, unknown>;
 	releaseImpact?: Record<string, unknown>;
 }
@@ -218,6 +257,18 @@ export interface IdentityMappingSourceProfileCreateRequest {
 	sourceType: 'csv';
 	profileKey: string;
 	displayName: string;
+	versionLabel?: string;
+	parseDraftId?: string;
+	schema?: IdentityMappingSourceProfileSchema;
+	parserOptions?: Record<string, unknown>;
+	warningSummary?: Record<string, unknown>;
+	sourceMetadata?: Record<string, unknown>;
+}
+
+export interface IdentityMappingSourceProfileUpdateRequest {
+	sourceType?: 'csv';
+	profileKey?: string;
+	displayName?: string;
 	versionLabel?: string;
 	parseDraftId?: string;
 	schema?: IdentityMappingSourceProfileSchema;
@@ -450,10 +501,23 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to create identity mapping policy version');
 	},
 
+	async listPolicyVersions(
+		policySetId: string
+	): Promise<{ policyVersions: IdentityMappingPolicyVersionSummary[] }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions`
+		);
+		return parseJson(response, 'Failed to load identity mapping policy versions');
+	},
+
 	async rollbackPolicy(policySetId: string): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/rollback`,
-			{ method: 'POST' }
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
 		);
 		return parseJson(response, 'Failed to rollback identity mapping policy');
 	},
@@ -464,7 +528,11 @@ export const adminIdentityMappingAPI = {
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/publish`,
-			{ method: 'POST' }
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
 		);
 		return parseJson(response, 'Failed to publish identity mapping policy version');
 	},
@@ -478,7 +546,7 @@ export const adminIdentityMappingAPI = {
 			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/compile`,
 			{
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
@@ -494,7 +562,7 @@ export const adminIdentityMappingAPI = {
 			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/activate`,
 			{
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
@@ -555,6 +623,21 @@ export const adminIdentityMappingAPI = {
 			}
 		);
 		return parseJson(response, 'Failed to create identity mapping source profile');
+	},
+
+	async updateSourceProfile(
+		sourceProfileId: string,
+		request: IdentityMappingSourceProfileUpdateRequest
+	): Promise<{ result: IdentityMappingSourceProfileSummary }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}`,
+			{
+				method: 'PUT',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to update identity mapping source profile');
 	},
 
 	async reviewSourceProfileVersion(
@@ -620,6 +703,21 @@ export const adminIdentityMappingAPI = {
 			}
 		);
 		return parseJson(response, 'Failed to create identity mapping destination profile');
+	},
+
+	async updateDestinationProfile(
+		destinationProfileId: string,
+		request: IdentityMappingDestinationProfileUpdateRequest
+	): Promise<{ result: IdentityMappingDestinationProfileSummary }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}`,
+			{
+				method: 'PUT',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to update identity mapping destination profile');
 	},
 
 	async reviewDestinationProfileVersion(
@@ -737,7 +835,7 @@ export const adminIdentityMappingAPI = {
 			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
 			{
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
@@ -752,7 +850,7 @@ export const adminIdentityMappingAPI = {
 			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
 			{
 				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
+				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
@@ -762,7 +860,11 @@ export const adminIdentityMappingAPI = {
 	async deleteFederationTrustSource(trustSourceId: string): Promise<{ success: boolean }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
-			{ method: 'DELETE' }
+			{
+				method: 'DELETE',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
 		);
 		return parseJson(response, 'Failed to delete federation trust source');
 	},
@@ -793,7 +895,7 @@ export const adminIdentityMappingAPI = {
 			`${API_BASE_URL}/api/admin/identity-mapping/review-tasks/${encodeURIComponent(reviewTaskId)}/transition`,
 			{
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);

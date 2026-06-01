@@ -287,7 +287,10 @@
 			});
 			currentCohortId = cohortResult.cohort_id;
 			activeTab = 'action';
-			if (cohortResult.snapshot_status === 'pending' || cohortResult.snapshot_status === 'running') {
+			if (
+				cohortResult.snapshot_status === 'pending' ||
+				cohortResult.snapshot_status === 'running'
+			) {
 				startCohortPolling();
 				success = 'Cohort snapshot queued';
 			} else {

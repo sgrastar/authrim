@@ -1,9 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		adminAdminAbacAPI,
-		type AdminAttribute
-	} from '$lib/api/admin-admin-abac';
+	import { adminAdminAbacAPI, type AdminAttribute } from '$lib/api/admin-admin-abac';
 	import { Modal } from '$lib/components';
 
 	// State
@@ -237,8 +234,8 @@
 		<div>
 			<h1 class="page-title">Admin Attribute-Based Access Control</h1>
 			<p class="page-description">
-				Manage attribute definitions for admin operators. Attributes can be assigned to admin
-				users for fine-grained access control.
+				Manage attribute definitions for admin operators. Attributes can be assigned to admin users
+				for fine-grained access control.
 			</p>
 		</div>
 		<div class="page-actions">
@@ -316,9 +313,7 @@
 						{#if attr.attribute_type === 'number' && (attr.min_value !== null || attr.max_value !== null)}
 							<div class="detail-item">
 								<span class="detail-label">Range:</span>
-								<span class="detail-value"
-									>{attr.min_value ?? '∞'} - {attr.max_value ?? '∞'}</span
-								>
+								<span class="detail-value">{attr.min_value ?? '∞'} - {attr.max_value ?? '∞'}</span>
 							</div>
 						{/if}
 						{#if attr.is_required}

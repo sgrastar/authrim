@@ -1049,11 +1049,6 @@ export class FlowExecutor {
       return typeof value === 'object' && value !== null && !Array.isArray(value);
     };
 
-    // Type guard: check whether it is NodeOutput
-    const isNodeOutput = (value: unknown): value is import('./types.js').NodeOutput => {
-      return isObject(value) && typeof value.success === 'boolean';
-    };
-
     // Prefer tenant/client values verified from the DO
     // Ignore values from collectedData because they are untrusted
     const tenant = verifiedContext?.tenantId ? { id: verifiedContext.tenantId } : undefined;
@@ -1064,16 +1059,16 @@ export class FlowExecutor {
       tenant,
       client,
 
-      // Get user/device/request/risk from collectedData (should be retrieved from authenticated sources in the future)
-      // Note: these values are used only within the flow and not directly for authentication decisions
-      user: isObject(collectedData.user) ? collectedData.user : undefined,
-      device: isObject(collectedData.device) ? collectedData.device : undefined,
-      request: isObject(collectedData.request) ? collectedData.request : undefined,
-      risk: isObject(collectedData.risk) ? collectedData.risk : undefined,
+      // Do not hydrate security-sensitive decision context from client-submitted
+      // collectedData. These fields must come from trusted server-side nodes.
+      user: undefined,
+      device: undefined,
+      request: undefined,
+      risk: undefined,
 
       // The following data is collected within the flow
       form: isObject(collectedData.form) ? collectedData.form : undefined,
-      prevNode: isNodeOutput(collectedData.prevNode) ? collectedData.prevNode : undefined,
+      prevNode: undefined,
       variables: isObject(collectedData.variables) ? collectedData.variables : undefined,
     };
   }

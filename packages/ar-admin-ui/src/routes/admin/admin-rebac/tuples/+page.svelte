@@ -208,19 +208,29 @@
 			<table class="min-w-full divide-y divide-gray-200">
 				<thead class="bg-gray-50">
 					<tr>
-						<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+						<th
+							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+						>
 							From
 						</th>
-						<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+						<th
+							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+						>
 							Relationship
 						</th>
-						<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+						<th
+							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+						>
 							To
 						</th>
-						<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+						<th
+							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+						>
 							Details
 						</th>
-						<th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+						<th
+							class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
+						>
 							Actions
 						</th>
 					</tr>
@@ -292,20 +302,20 @@
 </div>
 
 <!-- Create Dialog -->
-	{#if showCreateDialog}
+{#if showCreateDialog}
+	<div
+		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+		role="button"
+		tabindex="0"
+		aria-label="Close create relationship dialog"
+		on:click|self={() => (showCreateDialog = false)}
+		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
+	>
 		<div
-			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-			role="button"
-			tabindex="0"
-			aria-label="Close create relationship dialog"
-			on:click|self={() => (showCreateDialog = false)}
-			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
+			class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
+			role="dialog"
+			aria-modal="true"
 		>
-			<div
-				class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
-				role="dialog"
-				aria-modal="true"
-			>
 			<h2 class="text-xl font-semibold mb-4">Create Relationship</h2>
 
 			{#if createError}
@@ -443,7 +453,10 @@
 					</button>
 					<button
 						type="submit"
-						disabled={createLoading || !createForm.relationship_type || !createForm.from_id || !createForm.to_id}
+						disabled={createLoading ||
+							!createForm.relationship_type ||
+							!createForm.from_id ||
+							!createForm.to_id}
 						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
 					>
 						{createLoading ? 'Creating...' : 'Create'}
@@ -455,20 +468,16 @@
 {/if}
 
 <!-- Delete Confirmation Dialog -->
-	{#if showDeleteDialog && deletingRelationship}
-		<div
-			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-			role="button"
-			tabindex="0"
-			aria-label="Close delete relationship dialog"
-			on:click|self={() => (showDeleteDialog = false)}
-			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
-		>
-			<div
-				class="bg-white rounded-lg max-w-md w-full p-6"
-				role="dialog"
-				aria-modal="true"
-			>
+{#if showDeleteDialog && deletingRelationship}
+	<div
+		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+		role="button"
+		tabindex="0"
+		aria-label="Close delete relationship dialog"
+		on:click|self={() => (showDeleteDialog = false)}
+		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
+	>
+		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
 			<h2 class="text-xl font-semibold mb-4">Delete Relationship</h2>
 
 			{#if deleteError}
@@ -477,9 +486,7 @@
 				</div>
 			{/if}
 
-			<p class="text-gray-700 mb-4">
-				Are you sure you want to delete this relationship?
-			</p>
+			<p class="text-gray-700 mb-4">Are you sure you want to delete this relationship?</p>
 			<div class="bg-gray-50 p-4 rounded-lg mb-4 font-mono text-sm">
 				<div class="text-blue-600">{deletingRelationship.from_id}</div>
 				<div class="text-gray-500 my-1">{deletingRelationship.relationship_type}</div>

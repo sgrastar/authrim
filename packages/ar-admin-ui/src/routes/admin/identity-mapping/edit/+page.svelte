@@ -12,4 +12,7 @@
 	showEditorToolbarModeToggle={false}
 	showEditorMetrics={false}
 	showProfileModeControl
+	showPolicySaveControl
+	primaryActionLabel="Save draft"
+	primaryActionBusyLabel="Saving..."
 />

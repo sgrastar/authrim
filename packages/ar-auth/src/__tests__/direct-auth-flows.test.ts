@@ -31,6 +31,9 @@ const mocks = vi.hoisted(() => {
     updateCounterAfterAuth: vi.fn(),
     create: vi.fn(),
   };
+  const emailNotifier = {
+    send: vi.fn(),
+  };
   const userPII = {
     findById: vi.fn(),
     findByTenantAndEmail: vi.fn(),
@@ -45,6 +48,8 @@ const mocks = vi.hoisted(() => {
     coreAdapter,
     userCore,
     passkey,
+    emailNotifier,
+    getNotifier: vi.fn(),
     userPII,
     getClient: vi.fn(),
     getWebOriginRegistry: vi.fn(),
@@ -183,7 +188,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getChallengeStoreByUserId: vi.fn(async () => mocks.challengeStore),
     getPluginContext: vi.fn(() => ({
       registry: {
-        getNotifier: vi.fn(() => null),
+        getNotifier: mocks.getNotifier,
       },
     })),
     publishEvent: mocks.publishEvent,
@@ -310,6 +315,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
     mocks.passkey.updateCounterAfterAuth.mockResolvedValue(undefined);
     mocks.passkey.create.mockResolvedValue(undefined);
+    mocks.emailNotifier.send.mockResolvedValue({ success: true, messageId: 'message_1' });
+    mocks.getNotifier.mockReturnValue(mocks.emailNotifier);
     mocks.userPII.findByTenantAndEmail.mockResolvedValue(null);
     mocks.userPII.findById.mockResolvedValue({
       id: 'user_existing',
@@ -590,6 +597,34 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it('rejects passkey signup for an existing user', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeySignupStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'existing@example.com',
+          code_challenge: 'signup-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      ) as never
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'direct_passkey_signup' })
+    );
+  });
+
   it('allows passkey signup from a tenant Login UI proxy origin not present in registry', async () => {
     mocks.getWebOriginRegistry.mockResolvedValue({
       origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
@@ -825,8 +860,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       attempt_id: expect.any(String),
       expires_in: 300,
       masked_email: 'n***w@example.com',
-      _dev_code: '123456',
     });
+    expect(body).not.toHaveProperty('_dev_code');
     expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
       'direct_email_code:new@example.com',
       {
@@ -855,6 +890,29 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
+  });
+
+  it('does not return email codes when no email notifier is configured', async () => {
+    mocks.getNotifier.mockReturnValue(null);
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'email-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(500);
+    expect(body).not.toHaveProperty('_dev_code');
+    expect(body).not.toHaveProperty('code');
   });
 
   it('allows email-code signup from a tenant Login UI proxy origin not present in registry', async () => {

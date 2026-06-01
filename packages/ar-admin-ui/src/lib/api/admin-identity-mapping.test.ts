@@ -43,6 +43,19 @@ describe('adminIdentityMappingAPI', () => {
 		return value;
 	}
 
+	function requestHeader(init: unknown, headerName: string): string | undefined {
+		if (!init || typeof init !== 'object' || !('headers' in init)) return undefined;
+		const headers = (init as { headers?: HeadersInit }).headers;
+		if (!headers) return undefined;
+		if (headers instanceof Headers) return headers.get(headerName) ?? undefined;
+		if (Array.isArray(headers)) {
+			return headers.find(([key]) => key.toLowerCase() === headerName.toLowerCase())?.[1];
+		}
+		return Object.entries(headers).find(
+			([key]) => key.toLowerCase() === headerName.toLowerCase()
+		)?.[1];
+	}
+
 	it('loads identity mapping control-plane collections from admin endpoints', async () => {
 		await adminIdentityMappingAPI.listPolicies();
 		await adminIdentityMappingAPI.listCatalogs();
@@ -60,6 +73,10 @@ describe('adminIdentityMappingAPI', () => {
 			displayName: 'Workday CSV',
 			schema: { sourceType: 'csv', columns: [] }
 		});
+		await adminIdentityMappingAPI.updateSourceProfile('source profile 1', {
+			displayName: 'Workday CSV updated',
+			schema: { sourceType: 'csv', columns: [] }
+		});
 		await adminIdentityMappingAPI.reviewSourceProfileVersion('source profile 1', 'version 1');
 		await adminIdentityMappingAPI.activateSourceProfileVersion('source profile 1', 'version 1');
 		await adminIdentityMappingAPI.deleteSourceProfile('source profile 1');
@@ -67,6 +84,10 @@ describe('adminIdentityMappingAPI', () => {
 			destinationType: 'oidc',
 			profileKey: 'library_oidc',
 			displayName: 'Library OIDC',
+			schema: { destinationType: 'oidc', claims: [{ claimName: 'sub', surfaces: ['id_token'] }] }
+		});
+		await adminIdentityMappingAPI.updateDestinationProfile('destination profile 1', {
+			displayName: 'Library OIDC updated',
 			schema: { destinationType: 'oidc', claims: [{ claimName: 'sub', surfaces: ['id_token'] }] }
 		});
 		await adminIdentityMappingAPI.reviewDestinationProfileVersion(
@@ -111,6 +132,7 @@ describe('adminIdentityMappingAPI', () => {
 				}
 			]
 		});
+		await adminIdentityMappingAPI.listPolicyVersions('policy set 1');
 		await adminIdentityMappingAPI.rollbackPolicy('policy set 1');
 		await adminIdentityMappingAPI.publishPolicyVersion('policy set 1', 'version 1');
 		await adminIdentityMappingAPI.compilePolicyVersion('policy set 1', 'version 1', {
@@ -134,10 +156,12 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/destination-profiles',
 			'/api/admin/identity-mapping/source-profiles/csv/parse',
 			'/api/admin/identity-mapping/source-profiles',
+			'/api/admin/identity-mapping/source-profiles/source%20profile%201',
 			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/review',
 			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/activate',
 			'/api/admin/identity-mapping/source-profiles/source%20profile%201',
 			'/api/admin/identity-mapping/destination-profiles',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
@@ -152,6 +176,7 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/review-tasks?status=open&limit=25',
 			'/api/admin/identity-mapping/policies',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions',
+			'/api/admin/identity-mapping/policies/policy%20set%201/versions',
 			'/api/admin/identity-mapping/policies/policy%20set%201/rollback',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/publish',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/compile',
@@ -160,22 +185,29 @@ describe('adminIdentityMappingAPI', () => {
 		]);
 		expect(fetchMock.mock.calls[6][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[7][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[8][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[8][1]).toMatchObject({ method: 'PUT' });
 		expect(fetchMock.mock.calls[9][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[10][1]).toMatchObject({ method: 'DELETE' });
-		expect(fetchMock.mock.calls[11][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[10][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[11][1]).toMatchObject({ method: 'DELETE' });
 		expect(fetchMock.mock.calls[12][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[13][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[14][1]).toMatchObject({ method: 'DELETE' });
-		expect(fetchMock.mock.calls[16][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[13][1]).toMatchObject({ method: 'PUT' });
+		expect(fetchMock.mock.calls[14][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[15][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[16][1]).toMatchObject({ method: 'DELETE' });
 		expect(fetchMock.mock.calls[18][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[24][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[25][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[26][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[27][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[28][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[28][1]).not.toMatchObject({ method: expect.any(String) });
 		expect(fetchMock.mock.calls[29][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[30][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[31][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[32][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[33][1]).toMatchObject({ method: 'POST' });
+		for (const callIndex of [26, 27, 29, 30, 31, 32, 33]) {
+			expect(requestHeader(fetchMock.mock.calls[callIndex][1], 'Idempotency-Key')).toEqual(
+				expect.any(String)
+			);
+		}
 	});
 
 	it('surfaces API error descriptions', async () => {

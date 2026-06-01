@@ -18,15 +18,15 @@
 
 	// Create dialog state (unused, kept for future implementation)
 	let showCreateDialog = $state(false);
-		let _creating = $state(false);
-		let _createError = $state('');
+	let _creating = $state(false);
+	let _createError = $state('');
 	let newRoleName = $state('');
 	let newRoleDisplayName = $state('');
 	let newRoleDescription = $state('');
 	let selectedPermissions = $state<Set<string>>(new Set());
 
 	// Edit dialog state (unused, kept for future implementation)
-		let _showEditDialog = $state(false);
+	let _showEditDialog = $state(false);
 	let editingRole: AdminRole | null = $state(null);
 	let editDisplayName = $state('');
 	let editDescription = $state('');
@@ -70,7 +70,7 @@
 		showCreateDialog = false;
 	}
 
-		async function _handleCreate() {
+	async function _handleCreate() {
 		if (!newRoleName.trim()) {
 			_createError = 'Role name is required';
 			return;

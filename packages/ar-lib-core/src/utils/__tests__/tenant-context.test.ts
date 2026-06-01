@@ -96,7 +96,7 @@ describe('resolveTenantFromRequest', () => {
       expect(result.error).toBe('tenant_not_found');
     });
 
-    it('should resolve tenant subdomain from X-Forwarded-Host when Host is workers.dev', () => {
+    it('should reject generic X-Forwarded-Host when Host is workers.dev', () => {
       const request = new Request(
         'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
         {
@@ -108,11 +108,11 @@ describe('resolveTenantFromRequest', () => {
       );
 
       const result = resolveTenantFromRequest(request, multiTenantEnv);
-      expect(result.success).toBe(true);
-      expect(result.tenantId).toBe('acme');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
-    it('should prefer a valid forwarded tenant host over an invalid naked-domain host', () => {
+    it('should not let forwarded tenant host override an unrecognized Host', () => {
       const request = new Request(
         'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
         {
@@ -125,11 +125,11 @@ describe('resolveTenantFromRequest', () => {
       );
 
       const result = resolveTenantFromRequest(request, multiTenantEnv);
-      expect(result.success).toBe(true);
-      expect(result.tenantId).toBe('acme');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
-    it('should resolve forwarded naked domain when tenant omission is enabled', () => {
+    it('should not let forwarded naked domain override an unrecognized Host', () => {
       const request = new Request(
         'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
         {
@@ -144,8 +144,8 @@ describe('resolveTenantFromRequest', () => {
         ...multiTenantEnv,
         NAKED_DOMAIN_AS_ISSUER: 'true',
       });
-      expect(result.success).toBe(true);
-      expect(result.tenantId).toBe('default');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('tenant_not_found');
     });
 
     it('should prefer Host when it already resolves to a tenant', () => {

@@ -654,6 +654,7 @@ import {
   adminIdentityMappingDestinationProfileCreateHandler,
   adminIdentityMappingDestinationProfileDeleteHandler,
   adminIdentityMappingDestinationProfileReviewHandler,
+  adminIdentityMappingDestinationProfileUpdateHandler,
   adminIdentityMappingDestinationProfilesListHandler,
   adminIdentityMappingPoliciesListHandler,
   adminIdentityMappingPolicyCreateHandler,
@@ -661,6 +662,7 @@ import {
   adminIdentityMappingPolicyVersionActivateHandler,
   adminIdentityMappingPolicyVersionCompileHandler,
   adminIdentityMappingPolicyVersionCreateHandler,
+  adminIdentityMappingPolicyVersionsListHandler,
   adminIdentityMappingPolicyVersionPublishHandler,
   adminIdentityMappingEntitlementGrantHandler,
   adminIdentityMappingFederationMetadataDocumentCreateHandler,
@@ -683,6 +685,7 @@ import {
   adminIdentityMappingSourceProfileCreateHandler,
   adminIdentityMappingSourceProfileDeleteHandler,
   adminIdentityMappingSourceProfileReviewHandler,
+  adminIdentityMappingSourceProfileUpdateHandler,
   adminIdentityMappingSourceProfilesListHandler,
   adminIdentityMappingProtocolSchemaCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
@@ -778,6 +781,19 @@ function requireAiGrantAdminAccess(requiredPermission: string) {
     }
 
     return requireAnyRole(AI_GRANTS_ADMIN_ROLES)(c, next);
+  };
+}
+
+function requireClientManagementPermission() {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const method = c.req.method.toUpperCase();
+    const requiredPermissions =
+      method === 'GET'
+        ? [ADMIN_PERMISSIONS.CLIENTS_READ]
+        : method === 'DELETE'
+          ? [ADMIN_PERMISSIONS.CLIENTS_DELETE]
+          : [ADMIN_PERMISSIONS.CLIENTS_WRITE];
+    return requireAdminPermissions(requiredPermissions)(c, next);
   };
 }
 
@@ -887,7 +903,6 @@ app.use('*', async (c, next) => {
       'If-None-Match',
       'X-Tenant-Id',
       'X-Diagnostic-Session-Id',
-      'X-Session-Id',
     ],
     exposeHeaders: [
       'X-RateLimit-Limit',
@@ -1130,6 +1145,8 @@ app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/api/admin/avatars/:filename', serveAvatarHandler); // Avatar serving (protected by adminAuthMiddleware)
 app.post('/api/admin/users/:id/retry-pii', adminUserRetryPiiHandler);
 app.delete('/api/admin/users/:id/pii', adminUserDeletePiiHandler);
+app.use('/api/admin/clients', requireClientManagementPermission());
+app.use('/api/admin/clients/*', requireClientManagementPermission());
 app.get('/api/admin/clients', adminClientsListHandler);
 app.post('/api/admin/clients', adminClientCreateHandler);
 app.delete('/api/admin/clients/bulk', adminClientsBulkDeleteHandler); // Must be before :id route
@@ -1274,6 +1291,8 @@ app.delete(
 // - POST   /api/admin/tenants/:id/set-default - Set as default tenant
 // - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
+app.use('/api/admin/tenants', requireSystemAdmin());
+app.use('/api/admin/tenants/*', requireSystemAdmin());
 app.use('/api/admin/tenants/:id', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:id/*', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:tenantId', requireSupportedTenantParam('tenantId'));
@@ -1487,13 +1506,13 @@ app.get('/api/admin/settings/region-shards/validate', validateRegionShardsConfig
 
 // Admin Session Shards Configuration
 // Session Store DO sharding (default: 4 shards)
-app.get('/api/admin/settings/session-shards', getSessionShards);
-app.put('/api/admin/settings/session-shards', updateSessionShards);
+app.get('/api/admin/settings/session-shards', requireSystemAdmin(), getSessionShards);
+app.put('/api/admin/settings/session-shards', requireSystemAdmin(), updateSessionShards);
 
 // Admin Challenge Shards Configuration
 // Challenge Store DO sharding (default: 4 shards)
-app.get('/api/admin/settings/challenge-shards', getChallengeShards);
-app.put('/api/admin/settings/challenge-shards', updateChallengeShards);
+app.get('/api/admin/settings/challenge-shards', requireSystemAdmin(), getChallengeShards);
+app.put('/api/admin/settings/challenge-shards', requireSystemAdmin(), updateChallengeShards);
 
 // [DEPRECATED] Admin PII Partition
 // → Migrate to: /api/admin/platform/settings/infrastructure
@@ -1766,6 +1785,8 @@ app.get('/api/admin/users/:id/effective-permissions', adminUserEffectivePermissi
 // =============================================================================
 // Manages relation definitions (Zanzibar-style DSL) and relationship tuples.
 // RBAC: Requires system_admin role.
+app.use('/api/admin/rebac', requireSystemAdmin());
+app.use('/api/admin/rebac/*', requireSystemAdmin());
 
 // Relation definitions management
 app.get('/api/admin/rebac/relation-definitions', adminRelationDefinitionsListHandler);
@@ -1790,6 +1811,14 @@ app.get('/api/admin/rebac/object-types', adminObjectTypesListHandler);
 // =============================================================================
 // Manages user attributes for ABAC policy evaluation.
 // Attributes can come from VCs, SAML, or manual assignment.
+app.use(
+  '/api/admin/attributes',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+app.use(
+  '/api/admin/attributes/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
 
 // Attribute management
 app.get('/api/admin/attributes', adminAttributesListHandler);
@@ -2288,6 +2317,11 @@ app.post(
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileCreateHandler
 );
+app.put(
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingSourceProfileUpdateHandler
+);
 app.post(
   '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/review',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
@@ -2312,6 +2346,11 @@ app.post(
   '/api/admin/identity-mapping/destination-profiles',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingDestinationProfileCreateHandler
+);
+app.put(
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingDestinationProfileUpdateHandler
 );
 app.post(
   '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/review',
@@ -2372,6 +2411,11 @@ app.post(
   '/api/admin/identity-mapping/policies/:policySetId/versions',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingPolicyVersionCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/policies/:policySetId/versions',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingPolicyVersionsListHandler
 );
 app.post(
   '/api/admin/identity-mapping/policies/:policySetId/versions/:policyVersionId/publish',

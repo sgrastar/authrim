@@ -645,6 +645,45 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(400);
     });
 
+    it('should reject examples_json larger than the storage budget on create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          field_key: 'test_field',
+          display_label: 'Test',
+          field_type: 'string',
+          examples_json: { values: Array.from({ length: 101 }, (_, index) => `value_${index}`) },
+        },
+      });
+
+      const res = await adminCustomClaimCreateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(400);
+      expect(body.error_code).toBe('AR130002');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
+    it('should reject deeply nested examples_json on create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          field_key: 'test_field',
+          display_label: 'Test',
+          field_type: 'string',
+          examples_json: {
+            a: { b: { c: { d: { e: { f: { g: { h: { i: 'too deep' } } } } } } } },
+          },
+        },
+      });
+
+      const res = await adminCustomClaimCreateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(400);
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
     it('should reject required_scopes with more than 50 items', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -1111,6 +1150,25 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(400);
+    });
+
+    it('should reject examples_json larger than the storage budget on update', async () => {
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow()]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: {
+          examples_json: { values: Array.from({ length: 101 }, (_, index) => `value_${index}`) },
+        },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(400);
+      expect(body.error_code).toBe('AR130002');
+      expect(mockDbExecute).not.toHaveBeenCalled();
     });
 
     it('should clear registration_required when signup visibility is disabled on update', async () => {

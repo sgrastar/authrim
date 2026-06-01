@@ -12,4 +12,7 @@
 	showEditorToolbarSourceProfile={false}
 	showEditorToolbarModeToggle={false}
 	showEditorMetrics={false}
+	laneSelectorMode="policy"
+	showGraphPolicyDraftLabel={false}
+	showCompileDraftButton={false}
 />

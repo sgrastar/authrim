@@ -251,6 +251,62 @@ describe('Device Flow Security', () => {
   });
 
   describe('User Code Validation', () => {
+    it('should reject caller-supplied approval subject without an authenticated session', async () => {
+      const mockDeviceCodeStore = {
+        fetch: vi.fn().mockImplementation(async (request: Request) => {
+          const url = new URL(request.url);
+          if (url.pathname === '/get-by-user-code') {
+            return new Response(
+              JSON.stringify({
+                device_code: 'device-123',
+                user_code: 'WDJB-MJHT',
+                status: 'pending',
+                client_id: 'test-client',
+                scope: 'openid',
+              }),
+              { status: 200 }
+            );
+          }
+          if (url.pathname === '/approve') {
+            return new Response(JSON.stringify({ success: true }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+        }),
+      };
+
+      const mockEnvWithStore = {
+        ...mockEnv,
+        DEVICE_CODE_STORE: {
+          idFromName: vi.fn().mockReturnValue('device-code-store-id'),
+          get: vi.fn().mockReturnValue(mockDeviceCodeStore),
+        } as any,
+      };
+
+      const mockContext = {
+        req: {
+          json: vi.fn().mockResolvedValue({
+            user_code: 'WDJB-MJHT',
+            user_id: 'victim-user',
+            sub: 'victim-user',
+          }),
+          header: vi.fn().mockReturnValue('192.168.1.1'),
+        },
+        json: vi.fn().mockImplementation((data, status) => {
+          return new Response(JSON.stringify(data), { status });
+        }),
+        env: mockEnvWithStore,
+      } as any;
+
+      const response = await deviceVerifyApiHandler(mockContext);
+      const body = (await response.json()) as any;
+
+      expect(response.status).toBe(401);
+      expect(body.error).toBe('authentication_required');
+      expect(mockDeviceCodeStore.fetch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ url: expect.stringContaining('/approve') })
+      );
+    });
+
     it('should normalize user code format', async () => {
       const receivedUserCodes: string[] = [];
 

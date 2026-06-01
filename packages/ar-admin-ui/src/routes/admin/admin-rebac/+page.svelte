@@ -34,12 +34,16 @@
 	<!-- Header -->
 	<div class="mb-8">
 		<h1 class="text-3xl font-bold mb-2 dark:text-white">Admin ReBAC</h1>
-		<p class="text-gray-600 dark:text-gray-400">Relationship-Based Access Control for Admin Operators</p>
+		<p class="text-gray-600 dark:text-gray-400">
+			Relationship-Based Access Control for Admin Operators
+		</p>
 	</div>
 
 	<!-- Error Message -->
 	{#if error}
-		<div class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded">
+		<div
+			class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded"
+		>
 			{error}
 		</div>
 	{/if}
@@ -53,7 +57,9 @@
 		>
 			<div class="flex items-start justify-between mb-4">
 				<div class="flex items-center space-x-3">
-					<div class="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
+					<div
+						class="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center"
+					>
 						<span class="i-ph-arrows-split text-purple-600 dark:text-purple-400 text-2xl"></span>
 					</div>
 					<div>
@@ -66,7 +72,9 @@
 			{#if loading}
 				<div class="text-sm text-gray-500 dark:text-gray-400">Loading...</div>
 			{:else}
-				<div class="text-2xl font-bold text-purple-600 dark:text-purple-400">{definitions.length}</div>
+				<div class="text-2xl font-bold text-purple-600 dark:text-purple-400">
+					{definitions.length}
+				</div>
 				<div class="text-sm text-gray-600 dark:text-gray-400">Total definitions</div>
 			{/if}
 		</a>
@@ -78,7 +86,9 @@
 		>
 			<div class="flex items-start justify-between mb-4">
 				<div class="flex items-center space-x-3">
-					<div class="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+					<div
+						class="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center"
+					>
 						<span class="i-ph-link text-blue-600 dark:text-blue-400 text-2xl"></span>
 					</div>
 					<div>
@@ -91,7 +101,9 @@
 			{#if loading}
 				<div class="text-sm text-gray-500 dark:text-gray-400">Loading...</div>
 			{:else}
-				<div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{relationships.length}</div>
+				<div class="text-2xl font-bold text-blue-600 dark:text-blue-400">
+					{relationships.length}
+				</div>
 				<div class="text-sm text-gray-600 dark:text-gray-400">Active relationships</div>
 			{/if}
 		</a>
@@ -132,7 +144,9 @@
 
 	<!-- Recent Definitions Preview -->
 	{#if !loading && definitions.length > 0}
-		<div class="mt-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+		<div
+			class="mt-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6"
+		>
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-xl font-semibold dark:text-white">Recent Definitions</h2>
 				<a
@@ -145,11 +159,17 @@
 			</div>
 			<div class="space-y-2">
 				{#each definitions.slice(0, 5) as definition (definition.id)}
-					<div class="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700">
+					<div
+						class="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700"
+					>
 						<div>
-							<div class="font-mono text-sm text-gray-900 dark:text-gray-100">{definition.relation_name}</div>
+							<div class="font-mono text-sm text-gray-900 dark:text-gray-100">
+								{definition.relation_name}
+							</div>
 							{#if definition.display_name}
-								<div class="text-xs text-gray-600 dark:text-gray-400">{definition.display_name}</div>
+								<div class="text-xs text-gray-600 dark:text-gray-400">
+									{definition.display_name}
+								</div>
 							{/if}
 						</div>
 						<div class="flex items-center space-x-2">
@@ -160,7 +180,9 @@
 									System
 								</span>
 							{/if}
-							<span class="text-xs text-gray-500 dark:text-gray-400">Priority: {definition.priority}</span>
+							<span class="text-xs text-gray-500 dark:text-gray-400"
+								>Priority: {definition.priority}</span
+							>
 						</div>
 					</div>
 				{/each}
@@ -170,7 +192,9 @@
 
 	<!-- Recent Relationships Preview -->
 	{#if !loading && relationships.length > 0}
-		<div class="mt-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+		<div
+			class="mt-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6"
+		>
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-xl font-semibold dark:text-white">Recent Relationships</h2>
 				<a
@@ -183,10 +207,14 @@
 			</div>
 			<div class="space-y-2">
 				{#each relationships.slice(0, 5) as relationship (relationship.id)}
-					<div class="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700">
+					<div
+						class="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700"
+					>
 						<div class="font-mono text-sm text-gray-900 dark:text-gray-100">
 							<span class="text-blue-600 dark:text-blue-400">{relationship.from_id}</span>
-							<span class="text-gray-500 dark:text-gray-400 mx-2">{relationship.relationship_type}</span>
+							<span class="text-gray-500 dark:text-gray-400 mx-2"
+								>{relationship.relationship_type}</span
+							>
 							<span class="text-purple-600 dark:text-purple-400">{relationship.to_id}</span>
 						</div>
 						<div class="flex items-center space-x-2">

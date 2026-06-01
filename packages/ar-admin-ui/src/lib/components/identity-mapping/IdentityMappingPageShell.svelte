@@ -3,12 +3,10 @@
 	import { adminIdentityMappingAPI } from '$lib/api/admin-identity-mapping';
 	import IdentityMappingFlowEditor from '$lib/components/identity-mapping/IdentityMappingFlowEditor.svelte';
 	import { buildIdentityMappingFlowSamples } from '$lib/components/identity-mapping/flow-data';
-	import type {
-		MappingDraftPayload,
-		MappingSample
-	} from '$lib/components/identity-mapping/types';
+	import type { MappingDraftPayload, MappingSample } from '$lib/components/identity-mapping/types';
 	import type {
 		IdentityMappingCatalogSummary,
+		IdentityMappingPolicyVersionSummary,
 		IdentityMappingPolicySummary
 	} from '$lib/api/admin-identity-mapping';
 
@@ -24,7 +22,13 @@
 		showEditorToolbarSourceProfile = true,
 		showEditorToolbarModeToggle = true,
 		showEditorMetrics = true,
-		showProfileModeControl = false
+		showProfileModeControl = false,
+		laneSelectorMode = 'profile',
+		showGraphPolicyDraftLabel = true,
+		showCompileDraftButton = true,
+		showPolicySaveControl = false,
+		primaryActionLabel = 'Compile draft',
+		primaryActionBusyLabel = 'Compiling...'
 	} = $props<{
 		pageTitle?: string;
 		pageDescription?: string;
@@ -36,16 +40,24 @@
 		showEditorToolbarModeToggle?: boolean;
 		showEditorMetrics?: boolean;
 		showProfileModeControl?: boolean;
+		laneSelectorMode?: 'profile' | 'policy';
+		showGraphPolicyDraftLabel?: boolean;
+		showCompileDraftButton?: boolean;
+		showPolicySaveControl?: boolean;
+		primaryActionLabel?: string;
+		primaryActionBusyLabel?: string;
 	}>();
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
 	let flowSamples = $state<MappingSample[]>([]);
 	let policySummaries = $state<IdentityMappingPolicySummary[]>([]);
+	let policyVersionsByPolicyId = $state<Record<string, IdentityMappingPolicyVersionSummary[]>>({});
 	let catalogSummaries = $state<IdentityMappingCatalogSummary[]>([]);
 	let editMode = $state<Extract<ViewMode, 'inbound' | 'outbound'>>('inbound');
 	let selectedInboundProfileId = $state<string | null>(null);
 	let selectedOutboundProfileId = $state<string | null>(null);
+	let policyDisplayName = $state('Identity Mapping UI Draft');
 	let editorDraftResetKey = $state(0);
 	let editorHasUnsavedDraftChanges = $state(false);
 	let summary = $state({
@@ -63,6 +75,35 @@
 	const destinationProfileOptions = $derived(destinationProfileOptionsFromSamples(flowSamples));
 	const selectedEditorProfileId = $derived(
 		editMode === 'inbound' ? selectedInboundProfileId : selectedOutboundProfileId
+	);
+	const policySelectorOptions = $derived(
+		policySummaries.flatMap((policy) =>
+			(policyVersionsByPolicyId[policy.id] ?? [])
+				.filter((version) => isActivePolicyVersion(policy, version))
+				.flatMap((version) => {
+					const title = `${policy.displayName || policy.policyKey} / ${version.versionLabel}`;
+					const base = {
+						id: `${policy.id}:${version.id}`,
+						title,
+						policyId: policy.id,
+						versionId: version.id,
+						sourceProfileIds: version.sourceProfileIds ?? [],
+						destinationProfileIds: version.destinationProfileIds ?? []
+					};
+					const directions = version.directions ?? { inbound: false, outbound: false };
+					const options = [];
+					if (directions.inbound) {
+						options.push({ ...base, id: `${base.id}:inbound`, direction: 'inbound' as const });
+					}
+					if (directions.outbound) {
+						options.push({ ...base, id: `${base.id}:outbound`, direction: 'outbound' as const });
+					}
+					return options;
+				})
+		)
+	);
+	const editorSamples = $derived(
+		laneSelectorMode === 'policy' && policySelectorOptions.length === 0 ? [] : flowSamples
 	);
 
 	$effect(() => {
@@ -134,15 +175,17 @@
 		if (!catalogVersionId) {
 			throw new Error('No canonical catalog version is available for compile.');
 		}
-		let policy = policySummaries[0];
+		const displayName = policyDisplayName.trim() || 'Identity Mapping UI Draft';
+		const policyKey = policyKeyFromDisplayName(displayName);
+		let policy = policySummaries.find((candidate) => candidate.policyKey === policyKey);
 		if (!policy) {
 			const createdPolicy = await adminIdentityMappingAPI.createPolicy({
-				policyKey: 'identity-mapping-ui-draft',
-				displayName: 'Identity Mapping UI Draft',
+				policyKey,
+				displayName,
 				description: 'Draft policy set created from the Admin UI Flow Editor.'
 			});
 			policy = createdPolicy.result;
-			policySummaries = [policy];
+			policySummaries = [policy, ...policySummaries];
 		}
 		const version = await adminIdentityMappingAPI.createPolicyVersion(policy.id, {
 			versionLabel: draft.versionLabel,
@@ -153,10 +196,32 @@
 			catalogVersionId,
 			metadata: {
 				source: 'admin_ui_flow_editor',
+				policyDisplayName: displayName,
 				...draft.metadata
 			}
 		});
 		editorHasUnsavedDraftChanges = false;
+	}
+
+	function policyKeyFromDisplayName(value: string): string {
+		const key = value
+			.trim()
+			.toLowerCase()
+			.normalize('NFKC')
+			.replace(/[^\p{L}\p{N}]+/gu, '-')
+			.replace(/^-|-$/g, '')
+			.slice(0, 80);
+		return key || 'identity-mapping-ui-draft';
+	}
+
+	function isActivePolicyVersion(
+		policy: IdentityMappingPolicySummary,
+		version: IdentityMappingPolicyVersionSummary
+	): boolean {
+		if (policy.lifecycleState !== 'active') return false;
+		return (
+			version.lifecycleState === 'active' || version.latestSnapshot?.lifecycleState === 'active'
+		);
 	}
 
 	onMount(async () => {
@@ -192,6 +257,14 @@
 				federationTrustSources: federationTrustSources.federationTrustSources.length
 			};
 			policySummaries = policies.policies;
+			policyVersionsByPolicyId = Object.fromEntries(
+				await Promise.all(
+					policies.policies.map(async (policy) => {
+						const versions = await adminIdentityMappingAPI.listPolicyVersions(policy.id);
+						return [policy.id, versions.policyVersions] as const;
+					})
+				)
+			);
 			catalogSummaries = catalogs.catalogs;
 			flowSamples = buildIdentityMappingFlowSamples({
 				policies: policies.policies,
@@ -267,6 +340,16 @@
 					</select>
 				</div>
 			{/if}
+			{#if showPolicySaveControl}
+				<label class="policy-save-control">
+					<span>Policy name</span>
+					<input
+						type="text"
+						bind:value={policyDisplayName}
+						placeholder="Identity Mapping UI Draft"
+					/>
+				</label>
+			{/if}
 		</div>
 		<div class="status-panel">
 			<span class="status-dot"></span>
@@ -293,7 +376,7 @@
 	</div>
 
 	<IdentityMappingFlowEditor
-		samples={flowSamples}
+		samples={editorSamples}
 		{loading}
 		{loadError}
 		allowedViewModes={editorAllowedViewModes}
@@ -303,6 +386,12 @@
 		showToolbarModeToggle={showEditorToolbarModeToggle}
 		showMetrics={showEditorMetrics}
 		showLaneProfileSelectors={!showProfileModeControl}
+		{laneSelectorMode}
+		{policySelectorOptions}
+		{showGraphPolicyDraftLabel}
+		{showCompileDraftButton}
+		{primaryActionLabel}
+		{primaryActionBusyLabel}
 		selectedViewMode={showProfileModeControl ? editMode : null}
 		selectedProfileId={showProfileModeControl ? selectedEditorProfileId : null}
 		draftResetKey={editorDraftResetKey}
@@ -387,6 +476,31 @@
 		background: var(--bg-card);
 		font-size: 13px;
 		font-weight: 700;
+	}
+
+	.policy-save-control {
+		display: grid;
+		gap: 6px;
+		max-width: 360px;
+		margin-top: 14px;
+		color: var(--text-secondary);
+		font-size: 11px;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.policy-save-control input {
+		height: 40px;
+		padding: 0 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		color: var(--text-primary);
+		background: var(--bg-card);
+		font-size: 14px;
+		font-weight: 700;
+		letter-spacing: 0;
+		text-transform: none;
 	}
 
 	.status-panel {

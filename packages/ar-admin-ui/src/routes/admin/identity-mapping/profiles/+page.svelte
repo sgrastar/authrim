@@ -23,7 +23,7 @@
 	type ProfileTab = 'sources' | 'destinations' | 'registries';
 	type CsvCreateMode = 'upload' | 'manual';
 	type CsvDetailTab = 'summary' | 'parser' | 'columns' | 'warnings';
-	type DestinationKind = 'oidc' | 'csv';
+	type DestinationKind = 'oidc' | 'csv' | 'saml';
 
 	interface ProfileItem {
 		id: string;
@@ -37,6 +37,7 @@
 		sourceProfileVersionId?: string;
 		destinationProfileId?: string;
 		destinationProfileVersionId?: string;
+		destinationTemplateId?: string;
 	}
 
 	interface OidcClaimDraft {
@@ -64,9 +65,40 @@
 		purpose: string;
 	}
 
+	interface SamlAttributeDraft {
+		name: string;
+		label: string;
+		nameFormat: string;
+		valueType: string;
+		classification: string;
+		required: boolean;
+		releaseCondition: string;
+		formatter: string;
+		legalBasis: string;
+		purpose: string;
+	}
+
+	interface DestinationTemplate {
+		id: string;
+		destinationType: DestinationKind;
+		profileKey: string;
+		displayName: string;
+		description: string;
+		schema: Record<string, unknown>;
+	}
+
 	const profileKinds: Array<ProfileKind | 'all'> = ['all', 'inbound', 'outbound', 'template'];
 	const profileTabs: ProfileTab[] = ['sources', 'destinations', 'registries'];
-	const valueTypeOptions = ['string', 'email', 'phone', 'number', 'boolean', 'json', 'date', 'datetime'];
+	const valueTypeOptions = [
+		'string',
+		'email',
+		'phone',
+		'number',
+		'boolean',
+		'json',
+		'date',
+		'datetime'
+	];
 	const classificationOptions = ['internal', 'public', 'pii', 'regulated', 'secret'];
 	const ownerScopeOptions = ['tenant', 'platform', 'client'];
 	const registryOwnerScopeOptions = ['tenant', 'platform'];
@@ -75,12 +107,183 @@
 	const requiredMissingPolicyOptions = ['error', 'review', 'omit'];
 	const oidcClaimsParameterPlaceholder =
 		'{"userinfo":{"email":{"essential":true}},"acr_values":["urn:authrim:loa:2"]}';
+	const csvSourceProfileMaxBytes = 2 * 1024 * 1024;
 	const delimiterOptions = [
 		{ value: 'auto', label: 'Auto' },
 		{ value: ',', label: 'Comma' },
 		{ value: '\\t', label: 'Tab' },
 		{ value: ';', label: 'Semicolon' },
 		{ value: '|', label: 'Pipe' }
+	];
+	const destinationTemplates: DestinationTemplate[] = [
+		{
+			id: 'template_destination_oidc_standard',
+			destinationType: 'oidc',
+			profileKey: 'standard_oidc_claims',
+			displayName: 'Standard OIDC claims',
+			description: 'OpenID Connect Core and profile claims for ID Token and UserInfo output.',
+			schema: {
+				destinationType: 'oidc',
+				subjectContract: {
+					required: true,
+					strategySource: 'tenant_default_with_client_override'
+				},
+				claims: [
+					{
+						claimName: 'sub',
+						label: 'Subject',
+						valueType: 'string',
+						classification: 'internal',
+						surfaces: ['id_token', 'userinfo'],
+						requiredScopes: ['openid']
+					},
+					{
+						claimName: 'name',
+						label: 'Full name',
+						valueType: 'string',
+						classification: 'pii',
+						surfaces: ['userinfo'],
+						requiredScopes: ['profile']
+					},
+					{
+						claimName: 'given_name',
+						label: 'Given name',
+						valueType: 'string',
+						classification: 'pii',
+						surfaces: ['userinfo'],
+						requiredScopes: ['profile']
+					},
+					{
+						claimName: 'family_name',
+						label: 'Family name',
+						valueType: 'string',
+						classification: 'pii',
+						surfaces: ['userinfo'],
+						requiredScopes: ['profile']
+					},
+					{
+						claimName: 'preferred_username',
+						label: 'Preferred username',
+						valueType: 'string',
+						classification: 'internal',
+						surfaces: ['userinfo'],
+						requiredScopes: ['profile']
+					},
+					{
+						claimName: 'email',
+						label: 'Email',
+						valueType: 'email',
+						classification: 'pii',
+						surfaces: ['userinfo'],
+						requiredScopes: ['email']
+					},
+					{
+						claimName: 'email_verified',
+						label: 'Email verified',
+						valueType: 'boolean',
+						classification: 'internal',
+						surfaces: ['userinfo'],
+						requiredScopes: ['email']
+					},
+					{
+						claimName: 'phone_number',
+						label: 'Phone number',
+						valueType: 'phone',
+						classification: 'pii',
+						surfaces: ['userinfo'],
+						requiredScopes: ['phone']
+					},
+					{
+						claimName: 'locale',
+						label: 'Locale',
+						valueType: 'string',
+						classification: 'internal',
+						surfaces: ['userinfo'],
+						requiredScopes: ['profile']
+					},
+					{
+						claimName: 'zoneinfo',
+						label: 'Time zone',
+						valueType: 'string',
+						classification: 'internal',
+						surfaces: ['userinfo'],
+						requiredScopes: ['profile']
+					},
+					{
+						claimName: 'updated_at',
+						label: 'Updated at',
+						valueType: 'number',
+						classification: 'internal',
+						surfaces: ['userinfo'],
+						requiredScopes: ['profile']
+					}
+				]
+			}
+		},
+		{
+			id: 'template_destination_saml_standard',
+			destinationType: 'saml',
+			profileKey: 'standard_saml_attributes',
+			displayName: 'Standard SAML attributes',
+			description: 'Common SAML NameID and attribute release profile for SP assertions.',
+			schema: {
+				destinationType: 'saml',
+				nameId: {
+					format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+					source: 'subject_identifier'
+				},
+				attributes: [
+					{
+						name: 'urn:oid:0.9.2342.19200300.100.1.3',
+						label: 'Email',
+						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+						valueType: 'email',
+						classification: 'pii',
+						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
+					},
+					{
+						name: 'urn:oid:2.5.4.42',
+						label: 'Given name',
+						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+						valueType: 'string',
+						classification: 'pii',
+						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
+					},
+					{
+						name: 'urn:oid:2.5.4.4',
+						label: 'Surname',
+						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+						valueType: 'string',
+						classification: 'pii',
+						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
+					},
+					{
+						name: 'urn:oid:2.16.840.1.113730.3.1.241',
+						label: 'Display name',
+						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+						valueType: 'string',
+						classification: 'pii',
+						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
+					},
+					{
+						name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.1',
+						label: 'Affiliation',
+						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+						valueType: 'string',
+						classification: 'internal',
+						releasePolicy: { legalBasis: 'legitimate_interest', purpose: 'attribute_release' }
+					},
+					{
+						name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.7',
+						label: 'Entitlement',
+						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+						valueType: 'string',
+						classification: 'internal',
+						releasePolicy: { legalBasis: 'legitimate_interest', purpose: 'attribute_release' }
+					}
+				]
+			}
+		}
 	];
 
 	let profiles = $state<ProfileItem[]>([]);
@@ -90,12 +293,15 @@
 	let activeTab = $state<ProfileTab>('sources');
 	let activeKind = $state<ProfileKind | 'all'>('all');
 	let selectedProfileId = $state<string | null>(null);
+	let sourceProfiles = $state<IdentityMappingSourceProfileSummary[]>([]);
+	let destinationProfiles = $state<IdentityMappingDestinationProfileSummary[]>([]);
 	let protocolSchemaOptions = $state<IdentityMappingProtocolSchemaSummary[]>([]);
 	let customScopes = $state<IdentityMappingOidcCustomScope[]>([]);
 	let customClaims = $state<IdentityMappingOidcCustomClaim[]>([]);
 	let consentDrafts = $state<Record<string, DestinationConsentSettingsDraft>>({});
 	let csvMode = $state<CsvCreateMode>('upload');
 	let csvDetailTab = $state<CsvDetailTab>('summary');
+	let editingSourceProfileId = $state<string | null>(null);
 	let csvDisplayName = $state('');
 	let csvProfileKey = $state('');
 	let csvVersionLabel = $state('v1');
@@ -114,6 +320,7 @@
 		createManualColumn('email', 'Email', 'email')
 	]);
 	let destinationKind = $state<DestinationKind>('oidc');
+	let editingDestinationProfileId = $state<string | null>(null);
 	let destinationDisplayName = $state('');
 	let destinationProfileKey = $state('');
 	let destinationVersionLabel = $state('v1');
@@ -141,6 +348,11 @@
 	let csvDestinationRequiredMissingPolicy = $state('review');
 	let csvDestinationColumns = $state<CsvDestinationColumnDraft[]>([
 		createCsvDestinationColumnDraft('email', 'Email', 1, 'email', 'pii')
+	]);
+	let samlNameIdFormat = $state('urn:oasis:names:tc:SAML:2.0:nameid-format:persistent');
+	let samlNameIdSource = $state('subject_identifier');
+	let samlAttributes = $state<SamlAttributeDraft[]>([
+		createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')
 	]);
 	let scopeKey = $state('');
 	let scopeDisplayName = $state('');
@@ -184,7 +396,11 @@
 			Boolean(destinationProfileKey.trim()) &&
 			(destinationKind === 'oidc'
 				? oidcClaims.some((claim) => claim.claimName.trim() === 'sub')
-				: csvDestinationColumns.length > 0) &&
+				: destinationKind === 'saml'
+					? Boolean(samlNameIdFormat.trim()) &&
+						Boolean(samlNameIdSource.trim()) &&
+						samlAttributes.length > 0
+					: csvDestinationColumns.length > 0) &&
 			(destinationBlockingWarningCount === 0 || destinationBlockingWarningsConfirmed)
 	);
 
@@ -211,10 +427,13 @@
 			]);
 			customScopes = loadedCustomScopes.customScopes;
 			customClaims = loadedCustomClaims.customClaims;
+			sourceProfiles = loadedSourceProfiles.sourceProfiles;
+			destinationProfiles = loadedDestinationProfiles.destinationProfiles;
 			protocolSchemaOptions = protocolSchemas.protocolSchemas;
 			const loadedProfiles = [
 				...loadedSourceProfiles.sourceProfiles.map(sourceProfileToProfile),
 				...loadedDestinationProfiles.destinationProfiles.map(destinationProfileToProfile),
+				...destinationTemplates.map(destinationTemplateToProfile),
 				...protocolSchemas.protocolSchemas.map(protocolSchemaToProfile),
 				...externalSchemas.externalSchemas.map(externalSchemaToProfile),
 				...templates.templates.map(templateToProfile)
@@ -296,6 +515,19 @@
 		};
 	}
 
+	function destinationTemplateToProfile(template: DestinationTemplate): ProfileItem {
+		return {
+			id: `destination-template:${template.id}`,
+			kind: 'template',
+			protocol: template.destinationType.toUpperCase(),
+			displayName: template.displayName,
+			versionLabel: 'template',
+			lifecycleState: 'template',
+			source: template.profileKey,
+			destinationTemplateId: template.id
+		};
+	}
+
 	function protocolSchemaToProfile(schema: IdentityMappingProtocolSchemaSummary): ProfileItem {
 		return {
 			id: `protocol:${schema.id}`,
@@ -335,6 +567,10 @@
 	async function parseSelectedCsv() {
 		if (!selectedCsvFile) {
 			createMessage = 'Choose a CSV file before parsing.';
+			return;
+		}
+		if (selectedCsvFile.size > csvSourceProfileMaxBytes) {
+			createMessage = `CSV source profile files must be ${formatFileSize(csvSourceProfileMaxBytes)} or smaller.`;
 			return;
 		}
 		parsingCsv = true;
@@ -391,20 +627,26 @@
 				...(csvMode === 'manual' ? schema.summary : parsedCsvWarningSummary),
 				confirmedBlockingWarningCount: blockingWarningsConfirmed ? csvBlockingWarningCount : 0
 			};
-			const response = await adminIdentityMappingAPI.createSourceProfile({
+			const request = {
 				sourceType: 'csv',
 				profileKey: csvProfileKey.trim(),
 				displayName: csvDisplayName.trim(),
 				versionLabel: csvVersionLabel.trim() || 'v1',
-				parseDraftId: csvMode === 'upload' ? (parsedCsvDraftId ?? undefined) : undefined,
+				parseDraftId:
+					csvMode === 'upload' && !editingSourceProfileId
+						? (parsedCsvDraftId ?? undefined)
+						: undefined,
 				schema,
 				parserOptions: csvMode === 'upload' ? parsedCsvParserOptions : {},
 				warningSummary,
 				sourceMetadata: {
-					creationMode: csvMode,
+					creationMode: editingSourceProfileId ? 'edit' : csvMode,
 					rawContentPersisted: false
 				}
-			});
+			} satisfies Parameters<typeof adminIdentityMappingAPI.createSourceProfile>[0];
+			const response = editingSourceProfileId
+				? await adminIdentityMappingAPI.updateSourceProfile(editingSourceProfileId, request)
+				: await adminIdentityMappingAPI.createSourceProfile(request);
 			createMessage = `Saved ${response.result.displayName}. Review and activate it before Flow Editor use.`;
 			resetCsvComposer();
 			await loadProfiles();
@@ -460,8 +702,12 @@
 		createMessage = null;
 		try {
 			const schema =
-				destinationKind === 'oidc' ? buildOidcDestinationSchema() : buildCsvDestinationSchema();
-			const response = await adminIdentityMappingAPI.createDestinationProfile({
+				destinationKind === 'oidc'
+					? buildOidcDestinationSchema()
+					: destinationKind === 'saml'
+						? buildSamlDestinationSchema()
+						: buildCsvDestinationSchema();
+			const request = {
 				destinationType: destinationKind,
 				profileKey: destinationProfileKey.trim(),
 				displayName: destinationDisplayName.trim(),
@@ -476,7 +722,13 @@
 						? destinationBlockingWarningCount
 						: 0
 				}
-			});
+			} satisfies Parameters<typeof adminIdentityMappingAPI.createDestinationProfile>[0];
+			const response = editingDestinationProfileId
+				? await adminIdentityMappingAPI.updateDestinationProfile(
+						editingDestinationProfileId,
+						request
+					)
+				: await adminIdentityMappingAPI.createDestinationProfile(request);
 			createMessage = `Saved ${response.result.displayName}. Review and activate it before Flow Editor use.`;
 			resetDestinationComposer();
 			await loadProfiles();
@@ -555,6 +807,126 @@
 		} finally {
 			deletingProfileId = null;
 		}
+	}
+
+	function editSourceProfile(profile: ProfileItem) {
+		if (!profile.sourceProfileId) return;
+		const sourceProfile = sourceProfiles.find((item) => item.id === profile.sourceProfileId);
+		const schema = sourceProfile?.version?.schema;
+		if (!sourceProfile || !schema) {
+			createMessage = 'Source profile version schema is not available for editing.';
+			return;
+		}
+		activeTab = 'sources';
+		editingSourceProfileId = sourceProfile.id;
+		csvMode = 'upload';
+		csvDetailTab = 'columns';
+		csvDisplayName = sourceProfile.displayName;
+		csvProfileKey = sourceProfile.profileKey;
+		csvVersionLabel = nextVersionLabel(sourceProfile.version?.versionLabel);
+		selectedCsvFile = null;
+		parsedCsvDraftId = null;
+		parsedCsvSchema = cloneSchema(schema);
+		parsedCsvParserOptions = schema.parser ?? {};
+		parsedCsvWarningSummary = sourceProfile.version?.warningSummary ?? {};
+		blockingWarningsConfirmed = getBlockingWarningCount(parsedCsvSchema) === 0;
+		createMessage = `Editing ${sourceProfile.displayName}. Saving creates a new draft version.`;
+	}
+
+	function copySourceProfile(profile: ProfileItem) {
+		if (!profile.sourceProfileId) return;
+		const sourceProfile = sourceProfiles.find((item) => item.id === profile.sourceProfileId);
+		const schema = sourceProfile?.version?.schema;
+		if (!sourceProfile || !schema) {
+			createMessage = 'Source profile version schema is not available for copying.';
+			return;
+		}
+		activeTab = 'sources';
+		editingSourceProfileId = null;
+		csvMode = 'upload';
+		csvDetailTab = 'columns';
+		csvDisplayName = `${sourceProfile.displayName} copy`;
+		csvProfileKey = uniqueProfileKey(`${sourceProfile.profileKey}_copy`, sourceProfiles);
+		csvVersionLabel = 'v1';
+		selectedCsvFile = null;
+		parsedCsvDraftId = null;
+		parsedCsvSchema = cloneSchema(schema);
+		parsedCsvParserOptions = schema.parser ?? {};
+		parsedCsvWarningSummary = sourceProfile.version?.warningSummary ?? {};
+		blockingWarningsConfirmed = getBlockingWarningCount(parsedCsvSchema) === 0;
+		createMessage = `Copied ${sourceProfile.displayName}. Save it as a new source profile.`;
+	}
+
+	function editDestinationProfile(profile: ProfileItem) {
+		if (!profile.destinationProfileId) return;
+		const destinationProfile = destinationProfiles.find(
+			(item) => item.id === profile.destinationProfileId
+		);
+		const schema = destinationProfile?.version?.schema;
+		if (!destinationProfile || !schema) {
+			createMessage = 'Destination profile version schema is not available for editing.';
+			return;
+		}
+		activeTab = 'destinations';
+		editingDestinationProfileId = destinationProfile.id;
+		destinationKind = destinationProfile.destinationType;
+		destinationDisplayName = destinationProfile.displayName;
+		destinationProfileKey = destinationProfile.profileKey;
+		destinationVersionLabel = nextVersionLabel(destinationProfile.version?.versionLabel);
+		destinationOwnerScopeType = destinationProfile.ownerScopeType;
+		destinationOwnerScopeId = destinationProfile.ownerScopeId ?? '';
+		loadDestinationSchemaDraft(schema);
+		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
+		createMessage = `Editing ${destinationProfile.displayName}. Saving creates a new draft version.`;
+	}
+
+	function copyDestinationProfile(profile: ProfileItem) {
+		if (profile.destinationTemplateId) {
+			const template = destinationTemplates.find(
+				(item) => item.id === profile.destinationTemplateId
+			);
+			if (template) {
+				copyDestinationTemplate(template);
+			}
+			return;
+		}
+		if (!profile.destinationProfileId) return;
+		const destinationProfile = destinationProfiles.find(
+			(item) => item.id === profile.destinationProfileId
+		);
+		const schema = destinationProfile?.version?.schema;
+		if (!destinationProfile || !schema) {
+			createMessage = 'Destination profile version schema is not available for copying.';
+			return;
+		}
+		activeTab = 'destinations';
+		editingDestinationProfileId = null;
+		destinationKind = destinationProfile.destinationType;
+		destinationDisplayName = `${destinationProfile.displayName} copy`;
+		destinationProfileKey = uniqueProfileKey(
+			`${destinationProfile.profileKey}_copy`,
+			destinationProfiles
+		);
+		destinationVersionLabel = 'v1';
+		destinationOwnerScopeType = destinationProfile.ownerScopeType;
+		destinationOwnerScopeId = destinationProfile.ownerScopeId ?? '';
+		loadDestinationSchemaDraft(schema);
+		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
+		createMessage = `Copied ${destinationProfile.displayName}. Save it as a new destination profile.`;
+	}
+
+	function copyDestinationTemplate(template: DestinationTemplate) {
+		activeTab = 'destinations';
+		editingDestinationProfileId = null;
+		destinationKind = template.destinationType;
+		destinationDisplayName = template.displayName.replace(/^Standard /, '');
+		destinationProfileKey = uniqueProfileKey(template.profileKey, destinationProfiles);
+		destinationVersionLabel = 'v1';
+		destinationOwnerScopeType = 'tenant';
+		destinationOwnerScopeId = '';
+		loadDestinationSchemaDraft(template.schema);
+		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
+		createMessage = `Copied template ${template.displayName}. Save it as a new destination profile.`;
 	}
 
 	async function saveCustomScope() {
@@ -690,6 +1062,28 @@
 		csvDestinationColumns = csvDestinationColumns.filter((_, columnIndex) => columnIndex !== index);
 	}
 
+	function updateSamlAttribute(
+		index: number,
+		field: keyof SamlAttributeDraft,
+		value: string | boolean
+	) {
+		samlAttributes = samlAttributes.map((attribute, attributeIndex) =>
+			attributeIndex === index ? { ...attribute, [field]: value } : attribute
+		);
+	}
+
+	function addSamlAttribute() {
+		const order = samlAttributes.length + 1;
+		samlAttributes = [
+			...samlAttributes,
+			createSamlAttributeDraft(`urn:authrim:attribute:${order}`, `Attribute ${order}`)
+		];
+	}
+
+	function removeSamlAttribute(index: number) {
+		samlAttributes = samlAttributes.filter((_, attributeIndex) => attributeIndex !== index);
+	}
+
 	function toggleClaimSurface(surface: IdentityMappingOidcSurface, checked: boolean) {
 		claimSurfaces = checked
 			? Array.from(new Set([...claimSurfaces, surface]))
@@ -752,6 +1146,26 @@
 			formatter: '',
 			nullHandling: csvDestinationNullHandling,
 			requiredMissingPolicy: csvDestinationRequiredMissingPolicy,
+			legalBasis: classification === 'pii' ? 'consent' : 'legitimate_interest',
+			purpose: 'attribute_release'
+		};
+	}
+
+	function createSamlAttributeDraft(
+		name: string,
+		label: string,
+		valueType = 'string',
+		classification = 'internal'
+	): SamlAttributeDraft {
+		return {
+			name,
+			label,
+			nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+			valueType,
+			classification,
+			required: false,
+			releaseCondition: '',
+			formatter: '',
 			legalBasis: classification === 'pii' ? 'consent' : 'legitimate_interest',
 			purpose: 'attribute_release'
 		};
@@ -827,6 +1241,151 @@
 		};
 	}
 
+	function buildSamlDestinationSchema(): Record<string, unknown> {
+		return {
+			destinationType: 'saml',
+			nameId: {
+				format: samlNameIdFormat,
+				source: samlNameIdSource
+			},
+			attributes: samlAttributes.map((attribute) => ({
+				name: attribute.name.trim(),
+				label: attribute.label.trim() || attribute.name.trim(),
+				nameFormat: attribute.nameFormat.trim(),
+				valueType: attribute.valueType,
+				classification: attribute.classification,
+				required: attribute.required,
+				releaseCondition: attribute.releaseCondition.trim() || undefined,
+				formatter: attribute.formatter.trim()
+					? { operation: attribute.formatter.trim() }
+					: undefined,
+				releasePolicy: {
+					legalBasis: attribute.legalBasis,
+					purpose: attribute.purpose.trim() || 'attribute_release'
+				}
+			})),
+			protocolSchemaRef: destinationProtocolSchemaRef
+				? { type: 'protocol_schema', id: destinationProtocolSchemaRef }
+				: undefined
+		};
+	}
+
+	function loadDestinationSchemaDraft(schema: Record<string, unknown>) {
+		destinationProtocolSchemaRef = getProtocolSchemaRef(schema);
+		if (schema.destinationType === 'csv') {
+			const defaults = isRecord(schema.defaults) ? schema.defaults : {};
+			csvDestinationEncoding = String(defaults.encoding ?? 'utf-8');
+			csvDestinationIncludeHeader = defaults.includeHeader !== false;
+			csvDestinationNullHandling = String(defaults.nullHandling ?? 'empty');
+			csvDestinationRequiredMissingPolicy = String(defaults.requiredMissingPolicy ?? 'review');
+			csvDestinationColumns = Array.isArray(schema.columns)
+				? schema.columns
+						.filter(isRecord)
+						.map((column, index) =>
+							createCsvDestinationColumnDraft(
+								String(column.columnName ?? `column_${index + 1}`),
+								String(column.label ?? column.columnName ?? `Column ${index + 1}`),
+								typeof column.order === 'number' ? column.order : index + 1,
+								String(column.valueType ?? 'string'),
+								String(column.classification ?? 'internal')
+							)
+						)
+				: [createCsvDestinationColumnDraft('email', 'Email', 1, 'email', 'pii')];
+			csvDestinationColumns = csvDestinationColumns.map((column, index) => {
+				const source =
+					Array.isArray(schema.columns) && isRecord(schema.columns[index])
+						? schema.columns[index]
+						: {};
+				const exportPolicy = isRecord(source.exportPolicy) ? source.exportPolicy : {};
+				return {
+					...column,
+					required: Boolean(source.required),
+					formatter: isRecord(source.formatter) ? String(source.formatter.operation ?? '') : '',
+					nullHandling: String(source.nullHandling ?? column.nullHandling),
+					requiredMissingPolicy: String(
+						source.requiredMissingPolicy ?? column.requiredMissingPolicy
+					),
+					legalBasis: String(exportPolicy.legalBasis ?? column.legalBasis),
+					purpose: String(exportPolicy.purpose ?? column.purpose)
+				};
+			});
+			return;
+		}
+		if (schema.destinationType === 'saml') {
+			const nameId = isRecord(schema.nameId) ? schema.nameId : {};
+			samlNameIdFormat = String(
+				nameId.format ?? 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent'
+			);
+			samlNameIdSource = String(nameId.source ?? 'subject_identifier');
+			samlAttributes = Array.isArray(schema.attributes)
+				? schema.attributes.filter(isRecord).map((attribute) => {
+						const releasePolicy = isRecord(attribute.releasePolicy) ? attribute.releasePolicy : {};
+						const formatter = isRecord(attribute.formatter) ? attribute.formatter : {};
+						return {
+							...createSamlAttributeDraft(
+								String(attribute.name ?? ''),
+								String(attribute.label ?? attribute.name ?? ''),
+								String(attribute.valueType ?? 'string'),
+								String(attribute.classification ?? 'internal')
+							),
+							nameFormat: String(
+								attribute.nameFormat ?? 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri'
+							),
+							required: Boolean(attribute.required),
+							releaseCondition: String(attribute.releaseCondition ?? ''),
+							formatter: String(formatter.operation ?? ''),
+							legalBasis: String(releasePolicy.legalBasis ?? 'legitimate_interest'),
+							purpose: String(releasePolicy.purpose ?? 'attribute_release')
+						};
+					})
+				: [createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')];
+			return;
+		}
+
+		const claimsParameter = isRecord(schema.claimsParameter)
+			? JSON.stringify(schema.claimsParameter, null, 2)
+			: '';
+		oidcClaimsParameterJson = claimsParameter;
+		oidcClaims = Array.isArray(schema.claims)
+			? schema.claims.filter(isRecord).map((claim) => {
+					const formatter = isRecord(claim.formatter) ? claim.formatter : {};
+					return {
+						...createOidcClaimDraft(
+							String(claim.claimName ?? ''),
+							String(claim.label ?? claim.claimName ?? ''),
+							String(claim.valueType ?? 'string'),
+							String(claim.classification ?? 'internal'),
+							Array.isArray(claim.surfaces)
+								? (claim.surfaces
+										.map(String)
+										.filter((surface) =>
+											oidcSurfaceOptions.includes(surface as IdentityMappingOidcSurface)
+										) as IdentityMappingOidcSurface[])
+								: ['userinfo'],
+							Array.isArray(claim.requiredScopes) ? claim.requiredScopes.map(String).join(',') : ''
+						),
+						releaseCondition: String(claim.releaseCondition ?? ''),
+						formatter: String(formatter.operation ?? '')
+					};
+				})
+			: [
+					createOidcClaimDraft(
+						'sub',
+						'Subject',
+						'string',
+						'internal',
+						['id_token', 'userinfo'],
+						'openid'
+					)
+				];
+		if (!oidcClaims.some((claim) => claim.claimName === 'sub')) {
+			oidcClaims = [
+				createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token'], 'openid'),
+				...oidcClaims
+			];
+		}
+	}
+
 	function getBlockingWarningCount(schema: IdentityMappingSourceProfileSchema | null): number {
 		const summaryCount = schema?.summary?.blockingWarningCount;
 		if (typeof summaryCount === 'number') return summaryCount;
@@ -847,6 +1406,13 @@
 					splitCsv(claim.requiredScopes).length === 0
 			).length;
 		}
+		if (destinationKind === 'saml') {
+			return samlAttributes.filter(
+				(attribute) =>
+					['pii', 'regulated'].includes(attribute.classification) &&
+					(!attribute.legalBasis.trim() || !attribute.purpose.trim())
+			).length;
+		}
 		return csvDestinationColumns.filter(
 			(column) =>
 				['pii', 'regulated'].includes(column.classification) &&
@@ -855,15 +1421,23 @@
 	}
 
 	function resetCsvComposer() {
+		editingSourceProfileId = null;
+		csvMode = 'upload';
+		csvDetailTab = 'summary';
+		csvDisplayName = '';
+		csvProfileKey = '';
+		csvVersionLabel = 'v1';
 		selectedCsvFile = null;
 		parsedCsvDraftId = null;
 		parsedCsvSchema = null;
 		parsedCsvParserOptions = {};
 		parsedCsvWarningSummary = {};
 		blockingWarningsConfirmed = false;
+		manualColumns = [createManualColumn('email', 'Email', 'email')];
 	}
 
 	function resetDestinationComposer() {
+		editingDestinationProfileId = null;
 		destinationDisplayName = '';
 		destinationProfileKey = '';
 		destinationVersionLabel = 'v1';
@@ -884,6 +1458,31 @@
 			createOidcClaimDraft('email', 'Email', 'email', 'pii', ['userinfo'], 'email')
 		];
 		csvDestinationColumns = [createCsvDestinationColumnDraft('email', 'Email', 1, 'email', 'pii')];
+		samlNameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+		samlNameIdSource = 'subject_identifier';
+		samlAttributes = [
+			createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')
+		];
+	}
+
+	function nextVersionLabel(value: string | null | undefined): string {
+		const label = value?.trim();
+		if (!label) return 'v2';
+		const match = /^v(\d+)$/i.exec(label);
+		if (match) return `v${Number(match[1]) + 1}`;
+		return `${label}-edit`;
+	}
+
+	function getProtocolSchemaRef(schema: Record<string, unknown>): string {
+		const protocolSchemaRef = schema.protocolSchemaRef;
+		if (isRecord(protocolSchemaRef) && typeof protocolSchemaRef.id === 'string') {
+			return protocolSchemaRef.id;
+		}
+		return '';
+	}
+
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 	}
 
 	function cloneSchema(
@@ -911,6 +1510,13 @@
 		return btoa(binary);
 	}
 
+	function formatFileSize(bytes: number): string {
+		if (bytes >= 1024 * 1024) {
+			return `${Math.round((bytes / 1024 / 1024) * 10) / 10} MB`;
+		}
+		return `${Math.round(bytes / 1024)} KB`;
+	}
+
 	function normalizeProfileKey(value: string): string {
 		return (
 			value
@@ -919,6 +1525,17 @@
 				.replace(/[^a-z0-9]+/g, '_')
 				.replace(/^_|_$/g, '') || 'csv_source'
 		);
+	}
+
+	function uniqueProfileKey(base: string, existingProfiles: Array<{ profileKey: string }>): string {
+		const normalizedBase = normalizeProfileKey(base);
+		const existingKeys = new Set(existingProfiles.map((profile) => profile.profileKey));
+		if (!existingKeys.has(normalizedBase)) return normalizedBase;
+		for (let index = 2; index < 1000; index += 1) {
+			const candidate = `${normalizedBase}_${index}`;
+			if (!existingKeys.has(candidate)) return candidate;
+		}
+		return `${normalizedBase}_${Date.now()}`;
 	}
 
 	function splitCsv(value: string): string[] {
@@ -985,7 +1602,9 @@
 		<section class="profiles-panel">
 			<div class="panel-heading">
 				<div>
-					<p class="eyebrow">Create Source Profile</p>
+					<p class="eyebrow">
+						{editingSourceProfileId ? 'Edit Source Profile' : 'Create Source Profile'}
+					</p>
 					<h2>CSV source profile</h2>
 				</div>
 				<div class="filter-bar" aria-label="CSV create mode">
@@ -1004,6 +1623,19 @@
 						Manual columns
 					</button>
 				</div>
+			</div>
+
+			<div class="template-strip" aria-label="Destination profile templates">
+				{#each destinationTemplates as template (template.id)}
+					<div class="template-card">
+						<div>
+							<span>{template.destinationType.toUpperCase()} template</span>
+							<strong>{template.displayName}</strong>
+							<small>{template.description}</small>
+						</div>
+						<button type="button" onclick={() => copyDestinationTemplate(template)}>Copy</button>
+					</div>
+				{/each}
 			</div>
 
 			<div class="settings-grid">
@@ -1212,6 +1844,9 @@
 						<button type="button" onclick={saveCsvProfile} disabled={savingCsv || !canSaveCsv}>
 							{savingCsv ? 'Saving...' : 'Save draft profile'}
 						</button>
+						{#if editingSourceProfileId}
+							<button type="button" onclick={resetCsvComposer}>Cancel edit</button>
+						{/if}
 						<a href="/admin/identity-mapping">Open Flow Editor</a>
 					</div>
 				</div>
@@ -1225,7 +1860,11 @@
 		<section class="profiles-panel">
 			<div class="panel-heading">
 				<div>
-					<p class="eyebrow">Create Destination Profile</p>
+					<p class="eyebrow">
+						{editingDestinationProfileId
+							? 'Edit Destination Profile'
+							: 'Create Destination Profile'}
+					</p>
 					<h2>{destinationKind.toUpperCase()} destination profile</h2>
 				</div>
 				<div class="filter-bar" aria-label="Destination profile type">
@@ -1243,6 +1882,13 @@
 					>
 						CSV
 					</button>
+					<button
+						type="button"
+						class:active={destinationKind === 'saml'}
+						onclick={() => (destinationKind = 'saml')}
+					>
+						SAML
+					</button>
 				</div>
 			</div>
 
@@ -1251,7 +1897,11 @@
 					<span>Display name</span>
 					<input
 						value={destinationDisplayName}
-						placeholder={destinationKind === 'oidc' ? 'Library OIDC claims' : 'Weekly CSV export'}
+						placeholder={destinationKind === 'oidc'
+							? 'Library OIDC claims'
+							: destinationKind === 'saml'
+								? 'Library SAML attributes'
+								: 'Weekly CSV export'}
 						oninput={(event) => {
 							destinationDisplayName = getInputValue(event);
 							if (!destinationProfileKey.trim()) {
@@ -1264,7 +1914,11 @@
 					<span>Profile key</span>
 					<input
 						value={destinationProfileKey}
-						placeholder={destinationKind === 'oidc' ? 'library_oidc' : 'weekly_csv_export'}
+						placeholder={destinationKind === 'oidc'
+							? 'library_oidc'
+							: destinationKind === 'saml'
+								? 'library_saml'
+								: 'weekly_csv_export'}
 						oninput={(event) => (destinationProfileKey = normalizeProfileKey(getInputValue(event)))}
 					/>
 				</label>
@@ -1391,7 +2045,7 @@
 						oninput={(event) => (oidcClaimsParameterJson = getInputValue(event))}
 					></textarea>
 				</label>
-			{:else}
+			{:else if destinationKind === 'csv'}
 				<div class="settings-grid">
 					<label>
 						<span>Encoding default</span>
@@ -1507,6 +2161,91 @@
 						</div>
 					{/each}
 				</div>
+			{:else}
+				<div class="settings-grid">
+					<label>
+						<span>NameID format</span>
+						<input
+							value={samlNameIdFormat}
+							oninput={(event) => (samlNameIdFormat = getInputValue(event))}
+						/>
+					</label>
+					<label>
+						<span>NameID source</span>
+						<input
+							value={samlNameIdSource}
+							placeholder="subject_identifier"
+							oninput={(event) => (samlNameIdSource = getInputValue(event))}
+						/>
+					</label>
+				</div>
+				<div class="action-row">
+					<button type="button" onclick={addSamlAttribute}>Add SAML attribute</button>
+					<span>SAML destination profiles define assertion attribute output shape.</span>
+				</div>
+				<div class="saml-attribute-table">
+					<div class="saml-attribute-header">
+						<span>Name</span>
+						<span>Label</span>
+						<span>Name format</span>
+						<span>Type</span>
+						<span>Class</span>
+						<span>Required</span>
+						<span>Legal basis</span>
+						<span>Purpose</span>
+						<span></span>
+					</div>
+					{#each samlAttributes as attribute, index (`${attribute.name}-${index}`)}
+						<div class="saml-attribute-row">
+							<input
+								value={attribute.name}
+								oninput={(event) => updateSamlAttribute(index, 'name', getInputValue(event))}
+							/>
+							<input
+								value={attribute.label}
+								oninput={(event) => updateSamlAttribute(index, 'label', getInputValue(event))}
+							/>
+							<input
+								value={attribute.nameFormat}
+								oninput={(event) => updateSamlAttribute(index, 'nameFormat', getInputValue(event))}
+							/>
+							<select
+								value={attribute.valueType}
+								onchange={(event) => updateSamlAttribute(index, 'valueType', getInputValue(event))}
+							>
+								{#each valueTypeOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+							<select
+								value={attribute.classification}
+								onchange={(event) =>
+									updateSamlAttribute(index, 'classification', getInputValue(event))}
+							>
+								{#each classificationOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+							<label class="mini-check">
+								<input
+									type="checkbox"
+									checked={attribute.required}
+									onchange={(event) =>
+										updateSamlAttribute(index, 'required', getCheckboxValue(event))}
+								/>
+							</label>
+							<input
+								value={attribute.legalBasis}
+								oninput={(event) => updateSamlAttribute(index, 'legalBasis', getInputValue(event))}
+							/>
+							<input
+								value={attribute.purpose}
+								oninput={(event) => updateSamlAttribute(index, 'purpose', getInputValue(event))}
+							/>
+							<button type="button" onclick={() => removeSamlAttribute(index)}>Remove</button>
+						</div>
+					{/each}
+				</div>
 			{/if}
 
 			{#if destinationBlockingWarningCount > 0}
@@ -1528,6 +2267,11 @@
 							(claim) => claim.classification === 'pii'
 						).length}
 						PII claims
+					{:else if destinationKind === 'saml'}
+						{samlAttributes.length} attributes, {samlAttributes.filter(
+							(attribute) => attribute.classification === 'pii'
+						).length}
+						PII attributes
 					{:else}
 						{csvDestinationColumns.length} columns, {csvDestinationColumns.filter(
 							(column) => column.classification === 'pii'
@@ -1546,6 +2290,9 @@
 				>
 					{savingDestination ? 'Saving...' : 'Save destination draft'}
 				</button>
+				{#if editingDestinationProfileId}
+					<button type="button" onclick={resetDestinationComposer}>Cancel edit</button>
+				{/if}
 				<a href="/admin/identity-mapping">Open Flow Editor</a>
 			</div>
 
@@ -1760,32 +2507,41 @@
 						{/if}
 						{#if profile.sourceProfileId && profile.sourceProfileVersionId}
 							<div class="profile-actions">
+								<button type="button" onclick={() => editSourceProfile(profile)}>Edit</button>
+								<button type="button" onclick={() => copySourceProfile(profile)}>Copy</button>
 								<button type="button" onclick={() => reviewSourceProfile(profile)}>Review</button>
 								<button
 									type="button"
-									disabled={profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active'}
+									disabled={profile.lifecycleState !== 'reviewed' &&
+										profile.lifecycleState !== 'active'}
 									title={profile.lifecycleState === 'draft'
 										? 'Review this profile before activation.'
 										: undefined}
-									onclick={() => activateSourceProfile(profile)}
-									>Activate</button
+									onclick={() => activateSourceProfile(profile)}>Activate</button
 								>
 							</div>
 						{/if}
 						{#if profile.destinationProfileId && profile.destinationProfileVersionId}
 							<div class="profile-actions">
+								<button type="button" onclick={() => editDestinationProfile(profile)}>Edit</button>
+								<button type="button" onclick={() => copyDestinationProfile(profile)}>Copy</button>
 								<button type="button" onclick={() => reviewDestinationProfile(profile)}
 									>Review</button
 								>
 								<button
 									type="button"
-									disabled={profile.lifecycleState !== 'reviewed' && profile.lifecycleState !== 'active'}
+									disabled={profile.lifecycleState !== 'reviewed' &&
+										profile.lifecycleState !== 'active'}
 									title={profile.lifecycleState === 'draft'
 										? 'Review this profile before activation.'
 										: undefined}
-									onclick={() => activateDestinationProfile(profile)}
-									>Activate</button
+									onclick={() => activateDestinationProfile(profile)}>Activate</button
 								>
+							</div>
+						{/if}
+						{#if profile.destinationTemplateId}
+							<div class="profile-actions">
+								<button type="button" onclick={() => copyDestinationProfile(profile)}>Copy</button>
 							</div>
 						{/if}
 						{#if profile.sourceProfileId || profile.destinationProfileId}
@@ -2057,6 +2813,7 @@
 	.consent-panel,
 	.empty-state,
 	.profile-grid article,
+	.template-card,
 	.csv-detail,
 	.registry-card,
 	.impact-preview,
@@ -2080,6 +2837,33 @@
 		display: block;
 		margin-top: 4px;
 		font-size: 22px;
+	}
+
+	.template-strip {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+	}
+
+	.template-card {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 14px;
+		padding: 14px;
+	}
+
+	.template-card span,
+	.template-card small {
+		display: block;
+		color: var(--text-muted);
+		font-size: 12px;
+	}
+
+	.template-card strong {
+		display: block;
+		margin: 4px 0;
+		color: var(--text-primary);
 	}
 
 	.profiles-panel,
@@ -2206,12 +2990,20 @@
 		overflow-x: auto;
 	}
 
+	.saml-attribute-table {
+		display: grid;
+		gap: 8px;
+		overflow-x: auto;
+	}
+
 	.column-header,
 	.column-row,
 	.claim-header,
 	.claim-row,
 	.destination-column-header,
-	.destination-column-row {
+	.destination-column-row,
+	.saml-attribute-header,
+	.saml-attribute-row {
 		display: grid;
 		gap: 8px;
 		align-items: center;
@@ -2234,9 +3026,16 @@
 		min-width: 1040px;
 	}
 
+	.saml-attribute-header,
+	.saml-attribute-row {
+		grid-template-columns: 1.4fr 1fr 1.3fr 0.8fr 0.8fr 80px 1fr 1fr 90px;
+		min-width: 1280px;
+	}
+
 	.column-header,
 	.claim-header,
-	.destination-column-header {
+	.destination-column-header,
+	.saml-attribute-header {
 		color: var(--text-muted);
 		font-size: 12px;
 		font-weight: 800;

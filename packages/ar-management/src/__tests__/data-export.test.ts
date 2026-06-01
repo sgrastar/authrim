@@ -268,13 +268,28 @@ describe('Data Export API', () => {
       const response = await dataExportRequestHandler(c);
       expect(response.status).toBe(401);
     });
+
+    it('should reject bearer tokens without data export scope', async () => {
+      mockIntrospectTokenFromContext.mockResolvedValue({
+        valid: true,
+        claims: { sub: 'user-123', scope: 'openid profile' },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' },
+      });
+
+      const response = await dataExportRequestHandler(c);
+      expect(response.status).toBe(401);
+    });
   });
 
   describe('dataExportRequestHandler', () => {
     beforeEach(() => {
       mockIntrospectTokenFromContext.mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123' },
+        claims: { sub: 'user-123', scope: 'openid profile data_export' },
       });
     });
 
@@ -329,7 +344,7 @@ describe('Data Export API', () => {
     beforeEach(() => {
       mockIntrospectTokenFromContext.mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123' },
+        claims: { sub: 'user-123', scope: 'openid profile data_export' },
       });
     });
 
@@ -403,7 +418,7 @@ describe('Data Export API', () => {
     beforeEach(() => {
       mockIntrospectTokenFromContext.mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123' },
+        claims: { sub: 'user-123', scope: 'openid profile data_export' },
       });
     });
 
@@ -670,7 +685,7 @@ describe('Data Export API', () => {
     beforeEach(() => {
       mockIntrospectTokenFromContext.mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123' },
+        claims: { sub: 'user-123', scope: 'openid profile data_export' },
       });
     });
 

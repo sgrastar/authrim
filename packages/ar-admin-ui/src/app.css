@@ -13,7 +13,8 @@
 	/* === Typography === */
 	--font-display: system-ui, -apple-system, 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
 	--font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-	--font-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+	--font-mono:
+		ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
 
 	/* === Layout === */
 	--nav-width-collapsed: 72px;

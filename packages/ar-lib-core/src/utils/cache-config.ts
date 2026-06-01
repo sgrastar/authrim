@@ -63,7 +63,7 @@ export const KV_KEY_VERSION = 'v1';
  * Values are in seconds
  */
 export const FIXED_MODE_TTL: CacheTTLConfig = {
-  clientMetadata: 86400, // 24 hours
+  clientMetadata: 0, // Security-sensitive: read from D1 to avoid stale client revocation.
   redirectUris: 43200, // 12 hours (shorter for security)
   grantTypes: 86400, // 24 hours
   scopes: 86400, // 24 hours

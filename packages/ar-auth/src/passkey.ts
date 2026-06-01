@@ -98,8 +98,8 @@ interface RegistrationInfoCompat {
 }
 
 /**
- * Get allowed origins from KV (Settings Manager format) with fallback to env
- * Priority: KV (tenant.allowed_origins) > env (ALLOWED_ORIGINS) > ISSUER_URL
+ * Get allowed origins from env or KV (Settings Manager format)
+ * Priority: env (ALLOWED_ORIGINS) > KV (tenant.allowed_origins) > ISSUER_URL
  */
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
@@ -109,7 +109,7 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
+  const allowedOriginsEnv = env.ALLOWED_ORIGINS || allowedOriginsValue || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 
@@ -227,6 +227,9 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         variables: { field: 'email' },
       });
     }
+    if (userId) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    }
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
@@ -268,24 +271,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
-    if (userId) {
-      const runtimeUser = await runtimeUsers.findById(userId);
-      if (runtimeUser) {
-        user = {
-          id: runtimeUser.id,
-          email: runtimeUser.email || email,
-          name: runtimeUser.name || null,
-        };
-      }
-    } else {
-      const runtimeUser = await runtimeUsers.findByEmail(email);
-      if (runtimeUser) {
-        user = {
-          id: runtimeUser.id,
-          email: runtimeUser.email || email,
-          name: runtimeUser.name || null,
-        };
-      }
+    const normalizedEmail = email.toLowerCase();
+    const runtimeUser = await runtimeUsers.findByEmail(normalizedEmail);
+    if (runtimeUser) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
     // If user doesn't exist, create a new canonical runtime user.
@@ -297,7 +286,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       try {
         await runtimeUsers.syncUser({
           userId: newUserId,
-          email,
+          email: normalizedEmail,
           name: defaultName,
           active: true,
           emailVerified: false,
@@ -316,7 +305,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      user = { id: newUserId, email, name: defaultName || email.split('@')[0] };
+      user = { id: newUserId, email: normalizedEmail, name: defaultName || email.split('@')[0] };
     }
 
     // Get user's existing passkeys via Repository
@@ -348,8 +337,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       rpID,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
       userID: encoder.encode(user.id as string),
-      userName: email,
-      userDisplayName: (user.name as string) || email,
+      userName: normalizedEmail,
+      userDisplayName: (user.name as string) || normalizedEmail,
       excludeCredentials: excludeCredentials,
       // Use platform authenticator (device-bound) for better security
       authenticatorSelection: {
@@ -374,7 +363,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       userId: user.id as string,
       challenge: options.challenge,
       ttl: 300, // 5 minutes
-      email,
+      email: normalizedEmail,
       metadata:
         Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
@@ -439,6 +428,9 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         // No challenge value needed - DO will return it
       })) as typeof challengeData;
     } catch {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
+    }
+    if ((challengeData as { userId?: string }).userId !== userId) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
@@ -867,6 +859,28 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const runtimeUser = await runtimeUsers.findById(passkey.user_id);
+    if (!runtimeUser || runtimeUser.active !== 1) {
+      publishEvent(c, {
+        type: AUTH_EVENTS.PASSKEY_FAILED,
+        tenantId,
+        data: {
+          userId: passkey.user_id,
+          method: 'passkey',
+          clientId: 'passkey-auth',
+          errorCode: 'user_inactive',
+        } satisfies AuthEventData,
+      }).catch((err) => {
+        log.error('Failed to publish auth.passkey.failed event', {
+          action: 'event_publish',
+          errorType: err instanceof Error ? err.name : 'Unknown',
+        });
+      });
+
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
+
     const now = Date.now();
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
@@ -904,13 +918,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       authenticationInfo.newCounter
     );
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-
     // Step 3: Update user's last_login_at in canonical runtime metadata.
     await runtimeUsers.touchLastLogin(passkey.user_id);
-
-    // Get user details via canonical projection.
-    const runtimeUser = await runtimeUsers.findById(passkey.user_id, { includeInactive: true });
 
     // Admin/EndUser Separation: Create session in admin_sessions table for admin users
     // This is required because admin-auth middleware reads from admin_sessions (DB_ADMIN)

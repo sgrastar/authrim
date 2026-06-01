@@ -35,6 +35,30 @@ export interface WebServerOptions {
   lang?: string;
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+}
+
+export function isAllowedSetupOrigin(origin: string, port: number): boolean {
+  try {
+    const url = new URL(origin);
+    return url.port === String(port) && isLoopbackHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function buildSetupUiUrl(baseUrl: string, options: { lang?: string; token?: string } = {}) {
+  const url = new URL(baseUrl);
+  if (options.lang) {
+    url.searchParams.set('lang', options.lang);
+  }
+  if (options.token) {
+    url.searchParams.set('setup_token', options.token);
+  }
+  return url.toString();
+}
+
 // =============================================================================
 // Server
 // =============================================================================
@@ -57,22 +81,16 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
 
   // Generate session token for this server instance
   generateSessionToken();
+  const sessionToken = getSessionToken();
 
   const app = new Hono();
 
-  // CORS for API requests
-  // When binding to 0.0.0.0 (WSL), allow requests from any origin on the same port
-  // Security is maintained through session token validation
+  // CORS for API requests. Even when binding to 0.0.0.0 for WSL, restrict
+  // browser origins to loopback hosts so LAN pages cannot call privileged APIs.
   const corsOrigins =
     host === '0.0.0.0'
       ? (origin: string): string | null => {
-          // Allow localhost variants and any IP on the same port
-          try {
-            const url = new URL(origin);
-            return url.port === String(port) ? origin : null;
-          } catch {
-            return null;
-          }
+          return isAllowedSetupOrigin(origin, port) ? origin : null;
         }
       : [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
 
@@ -91,6 +109,13 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
 
   // Serve UI with embedded session token and locale-aware translations
   app.get('/', async (c) => {
+    if (host === '0.0.0.0' && c.req.query('setup_token') !== sessionToken) {
+      return c.html(
+        '<!DOCTYPE html><html><body><h1>Unauthorized</h1><p>Use the setup URL printed by the CLI.</p></body></html>',
+        401
+      );
+    }
+
     // Detect locale from query param, then Accept-Language header
     const queryLang = c.req.query('lang');
     let locale: Locale = DEFAULT_LOCALE;
@@ -141,8 +166,10 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   // When binding to 0.0.0.0, use localhost for browser URL (0.0.0.0 is not a valid browser address)
   const browserHost = host === '0.0.0.0' ? 'localhost' : host;
   const baseUrl = `http://${browserHost}:${port}`;
-  // Add language parameter if specified (from CLI selection)
-  const url = options.lang ? `${baseUrl}?lang=${options.lang}` : baseUrl;
+  const url = buildSetupUiUrl(baseUrl, {
+    lang: options.lang,
+    token: host === '0.0.0.0' ? sessionToken : undefined,
+  });
 
   console.log(chalk.bold('\n🌐 Authrim Setup Web UI\n'));
 
@@ -151,11 +178,11 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   }
 
   console.log('Open at:');
-  console.log(chalk.cyan(`  ${baseUrl}\n`));
+  console.log(chalk.cyan(`  ${url}\n`));
 
   // Show additional hint for WSL users accessing from Windows
   if (host === '0.0.0.0') {
-    console.log(chalk.gray(`  (From Windows browser, also try: http://localhost:${port})\n`));
+    console.log(chalk.gray(`  (From Windows browser, use the full URL above.)\n`));
   }
 
   // Open browser if requested - wait for ENTER first

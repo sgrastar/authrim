@@ -86,8 +86,8 @@ function toBase64URLString(input: CredentialIDLike): string {
 }
 
 /**
- * Get allowed origins from KV (priority) or environment variables
- * Priority: KV > env > ISSUER_URL
+ * Get allowed origins from environment variables or KV
+ * Priority: env (ALLOWED_ORIGINS) > KV > ISSUER_URL
  */
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
@@ -97,7 +97,7 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
+  const allowedOriginsEnv = env.ALLOWED_ORIGINS || allowedOriginsValue || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 

@@ -1,12 +1,12 @@
 <script lang="ts">
-	import type { ApprovalDecisionReceiptRecord } from '$lib/api/admin-approvals'
+	import type { ApprovalDecisionReceiptRecord } from '$lib/api/admin-approvals';
 
 	type Props = {
-		receipts: ApprovalDecisionReceiptRecord[]
-		formatDateTime: (timestamp?: number | null) => string
-	}
+		receipts: ApprovalDecisionReceiptRecord[];
+		formatDateTime: (timestamp?: number | null) => string;
+	};
 
-	let { receipts, formatDateTime }: Props = $props()
+	let { receipts, formatDateTime }: Props = $props();
 </script>
 
 {#if receipts.length === 0}

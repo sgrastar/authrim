@@ -1,27 +1,27 @@
 <script lang="ts">
-	import type { ElevationGrantRecord } from '$lib/api/admin-approvals'
+	import type { ElevationGrantRecord } from '$lib/api/admin-approvals';
 
 	interface Props {
-		grant: ElevationGrantRecord
+		grant: ElevationGrantRecord;
 	}
 
-	let { grant }: Props = $props()
+	let { grant }: Props = $props();
 
 	function enforcementSummary(redactionLevel: ElevationGrantRecord['redaction_level']) {
 		if (redactionLevel === 'raw') {
 			return {
 				title: 'High-Risk Grant',
-				body: 'Services should require online introspection, fail closed, and avoid caching this grant decision.',
-			}
+				body: 'Services should require online introspection, fail closed, and avoid caching this grant decision.'
+			};
 		}
 
 		return {
 			title: 'Standard Grant',
-			body: 'Services may verify offline first, keep caching short, and still apply local ACL or ownership checks.',
-		}
+			body: 'Services may verify offline first, keep caching short, and still apply local ACL or ownership checks.'
+		};
 	}
 
-	const enforcement = $derived(enforcementSummary(grant.redaction_level))
+	const enforcement = $derived(enforcementSummary(grant.redaction_level));
 </script>
 
 <div class="grant-guide">
