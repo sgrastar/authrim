@@ -204,8 +204,8 @@ type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 // ===== Helper Functions =====
 
 /**
- * Get allowed origins from KV (Settings Manager format) with fallback to env
- * Priority: KV (tenant.allowed_origins) > env (ALLOWED_ORIGINS) > ISSUER_URL
+ * Get allowed origins from env or KV (Settings Manager format)
+ * Priority: env (ALLOWED_ORIGINS) > KV (tenant.allowed_origins) > ISSUER_URL
  */
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
@@ -215,7 +215,7 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
+  const allowedOriginsEnv = env.ALLOWED_ORIGINS || allowedOriginsValue || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 
@@ -356,7 +356,7 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
 
 function buildAuthorizeContinuationUrl(
   metadata: Record<string, unknown>,
-  authTime: number,
+  confirmationChallengeId: string,
   fallbackIssuer: string
 ): string {
   const issuer = metadataString(metadata, 'issuer') || fallbackIssuer;
@@ -389,13 +389,7 @@ function buildAuthorizeContinuationUrl(
     }
   }
 
-  params.set('_confirmed', 'true');
-  params.set('_auth_time', String(authTime));
-
-  const sessionUserId = metadataString(metadata, 'sessionUserId');
-  if (sessionUserId) {
-    params.set('_session_user_id', sessionUserId);
-  }
+  params.set('_confirmation_challenge', confirmationChallengeId);
 
   authorizeUrl.search = params.toString();
   return authorizeUrl.toString();
@@ -466,9 +460,25 @@ async function consumeAuthorizationChallengeContinuation(
     };
   }
 
+  const confirmationId = crypto.randomUUID();
+  const confirmationStore = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
+  await confirmationStore.storeChallengeRpc({
+    id: confirmationId,
+    tenantId,
+    type: 'reauth',
+    userId: authenticatedUserId,
+    challenge: confirmationId,
+    ttl: 60,
+    metadata: {
+      purpose: 'authorize_confirmation',
+      authTime,
+      sessionUserId: expectedUserId || authenticatedUserId,
+    },
+  });
+
   return {
     type,
-    redirectUrl: buildAuthorizeContinuationUrl(metadata, authTime, fallbackIssuer),
+    redirectUrl: buildAuthorizeContinuationUrl(metadata, confirmationId, fallbackIssuer),
   };
 }
 
@@ -1066,11 +1076,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     const existingUser = await runtimeUsers.findByEmail(email.toLowerCase());
     if (existingUser) {
-      user = {
-        id: existingUser.id,
-        email: existingUser.email || email.toLowerCase(),
-        name: existingUser.name || null,
-      };
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
     if (!user) {
@@ -1643,14 +1649,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     if (!emailNotifier) {
       log.warn('No email notifier plugin configured', {
         action: 'notifier_check',
-        devCode: code,
       });
-      return c.json({
-        attempt_id: attemptId,
-        expires_in: EMAIL_CODE_TTL,
-        masked_email: maskEmail(email),
-        _dev_code: code, // Only for development
-      });
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';

@@ -18,6 +18,7 @@ import {
   buildDOInstanceName,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
+import { getAuthenticatedAsyncUser } from './authenticated-session';
 
 /**
  * POST /api/device/verify
@@ -218,32 +219,32 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
 
     // Handle approval or denial
     if (approve) {
-      // Check if we need to use mock credentials
-      const needsMockCredentials = !userId || !sub;
+      const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
+      const mockAuthEnabled = await isMockAuthEnabled(c.env);
 
-      if (needsMockCredentials) {
-        // Check if mock auth is enabled (SECURITY: default is disabled)
-        const mockAuthEnabled = await isMockAuthEnabled(c.env);
+      if (!authenticatedUser && !mockAuthEnabled) {
+        return c.json(
+          {
+            success: false,
+            error: 'authentication_required',
+            error_description: 'A valid browser session is required to approve a device code.',
+          },
+          401
+        );
+      }
 
-        if (!mockAuthEnabled) {
-          return c.json(
-            {
-              success: false,
-              error: 'authentication_required',
-              error_description:
-                'User credentials (user_id and sub) are required. Mock authentication is disabled.',
-            },
-            401
-          );
-        }
+      if ((userId || sub) && !mockAuthEnabled) {
+        log.warn('Ignoring caller-supplied device approval subject', {
+          action: 'approval_subject_ignored',
+        });
+      }
 
-        // DEVELOPMENT ONLY: Log warning about mock auth usage
+      if (!authenticatedUser) {
         log.warn('Mock authentication is enabled. This should NEVER be used in production!');
       }
 
-      // Use provided credentials or fallback to mock (only if mock auth is enabled)
-      const finalUserId = userId || 'user_' + Date.now();
-      const finalSub = sub || 'mock-user@example.com';
+      const finalUserId = authenticatedUser?.userId || userId || 'user_' + Date.now();
+      const finalSub = authenticatedUser?.sub || sub || finalUserId;
 
       const approveResponse = await deviceCodeStore.fetch(
         new Request('https://internal/approve', {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount } from 'svelte';
+	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		type MappingAdapter,
 		type MappingDraftPayload,
@@ -12,6 +13,14 @@
 	} from './types';
 
 	type ViewMode = 'overview' | 'inbound' | 'outbound';
+	type SelectorOption = {
+		id: string;
+		title: string;
+		adapter?: MappingAdapter;
+		direction?: 'inbound' | 'outbound' | 'both';
+		sourceProfileIds?: string[];
+		destinationProfileIds?: string[];
+	};
 	type TransformParameterSchema =
 		| {
 				name: string;
@@ -211,6 +220,12 @@
 		showToolbarModeToggle = true,
 		showMetrics = true,
 		showLaneProfileSelectors = true,
+		laneSelectorMode = 'profile',
+		policySelectorOptions = [],
+		showGraphPolicyDraftLabel = true,
+		showCompileDraftButton = true,
+		primaryActionLabel = 'Compile draft',
+		primaryActionBusyLabel = 'Compiling...',
 		selectedViewMode = null,
 		selectedProfileId = null,
 		draftResetKey = 0,
@@ -227,6 +242,12 @@
 		showToolbarModeToggle?: boolean;
 		showMetrics?: boolean;
 		showLaneProfileSelectors?: boolean;
+		laneSelectorMode?: 'profile' | 'policy';
+		policySelectorOptions?: SelectorOption[];
+		showGraphPolicyDraftLabel?: boolean;
+		showCompileDraftButton?: boolean;
+		primaryActionLabel?: string;
+		primaryActionBusyLabel?: string;
 		selectedViewMode?: ViewMode | null;
 		selectedProfileId?: string | null;
 		draftResetKey?: number;
@@ -269,6 +290,8 @@
 	let inboundAdapter = $state<MappingAdapter>(emptySample.inboundAdapter);
 	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
 	let selectedDestinationProfileId = $state<string | null>(null);
+	let selectedInboundPolicyId = $state<string | null>(null);
+	let selectedOutboundPolicyId = $state<string | null>(null);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
 	let viewMode = $state<ViewMode>('overview');
@@ -284,8 +307,11 @@
 	let collapsedTargetGroupKeys = $state<string[]>([]);
 	let hasUnsavedDraftChanges = $state(false);
 	let activeDraftResetKey = $state<number | null>(null);
-	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'info' | 'error'>('idle');
 	let draftSubmitMessage = $state<string | null>(null);
+	let autoMappedEdgeIds = $state<string[]>([]);
+	let autoMapAnimationTimer: ReturnType<typeof setTimeout> | null = null;
+	let pulseNextSampleEdges = false;
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
@@ -339,17 +365,41 @@
 		collapsed: boolean;
 	}
 
-	const visibleNodes = $derived(
-		nodes.filter(
-			(node) =>
-				node.role === 'target' ||
-				node.role === 'transform' ||
-				(node.role === 'source' && viewMode !== 'outbound') ||
-				(node.role === 'destination' && viewMode !== 'inbound')
+	const inboundPolicyOptions = $derived(
+		policySelectorOptions.filter(
+			(option: SelectorOption) => option.direction === 'inbound' || option.direction === 'both'
 		)
 	);
+	const outboundPolicyOptions = $derived(
+		policySelectorOptions.filter(
+			(option: SelectorOption) => option.direction === 'outbound' || option.direction === 'both'
+		)
+	);
+	const selectedInboundPolicy = $derived(
+		inboundPolicyOptions.find((option: SelectorOption) => option.id === selectedInboundPolicyId) ??
+			null
+	);
+	const selectedOutboundPolicy = $derived(
+		outboundPolicyOptions.find(
+			(option: SelectorOption) => option.id === selectedOutboundPolicyId
+		) ?? null
+	);
+	const policyModeHasSelection = $derived(
+		laneSelectorMode !== 'policy' || Boolean(selectedInboundPolicyId || selectedOutboundPolicyId)
+	);
+	const visibleNodes = $derived(
+		policyModeHasSelection
+			? nodes.filter(
+					(node) =>
+						node.role === 'target' ||
+						node.role === 'transform' ||
+						(node.role === 'source' && viewMode !== 'outbound') ||
+						(node.role === 'destination' && viewMode !== 'inbound')
+				)
+			: []
+	);
 	const overviewLayerSourceNodes = $derived(
-		viewMode === 'overview'
+		viewMode === 'overview' && policyModeHasSelection
 			? samples
 					.filter((candidate: MappingSample) => candidate.id !== sample.id)
 					.flatMap((candidate: MappingSample) =>
@@ -384,7 +434,34 @@
 		)
 	);
 	const destinationProfileOptions = $derived(destinationProfileOptionsForSample(sample));
-	const hasControlPlaneData = $derived(samples.length > 0);
+	const selectedInboundPolicyTitle = $derived(selectedInboundPolicy?.title ?? null);
+	const selectedOutboundPolicyTitle = $derived(selectedOutboundPolicy?.title ?? null);
+	const graphTitle = $derived.by(() => {
+		if (laneSelectorMode !== 'policy') return sample.title;
+		if (!selectedInboundPolicyTitle && !selectedOutboundPolicyTitle) return 'No mapping policies';
+		if (selectedInboundPolicyTitle && selectedInboundPolicyTitle === selectedOutboundPolicyTitle) {
+			return selectedInboundPolicyTitle;
+		}
+		return [selectedInboundPolicyTitle, selectedOutboundPolicyTitle].filter(Boolean).join(' / ');
+	});
+	const emptyGraphTitle = $derived(
+		laneSelectorMode === 'policy'
+			? policySelectorOptions.length === 0
+				? 'No active mapping policies'
+				: 'Select an active mapping policy'
+			: 'No source or destination profiles registered'
+	);
+	const emptyGraphDescription = $derived(
+		laneSelectorMode === 'policy'
+			? policySelectorOptions.length === 0
+				? 'Save, publish, compile, and activate a mapping policy before using this overview.'
+				: 'Choose an inbound policy and/or outbound policy to render its nodes and edges.'
+			: 'Register source and destination profiles, or add a field catalog, to populate this graph.'
+	);
+	const hasControlPlaneData = $derived(
+		samples.length > 0 && (laneSelectorMode !== 'policy' || policySelectorOptions.length > 0)
+	);
+	const hasRenderableGraph = $derived(hasControlPlaneData && policyModeHasSelection);
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
 	const graphEdges = $derived(
@@ -454,6 +531,7 @@
 			selectedProfileId &&
 			selectedProfileId !== selectedSampleId
 		) {
+			pulseNextSampleEdges = true;
 			selectedSampleId = selectedProfileId;
 		}
 		const next =
@@ -468,6 +546,19 @@
 	});
 
 	$effect(() => {
+		if (laneSelectorMode === 'policy') {
+			if (!selectedOutboundPolicyId) {
+				selectedDestinationProfileId = null;
+				return;
+			}
+			const destinationProfileId = selectedOutboundPolicy?.destinationProfileIds?.find(
+				(id: string) => destinationProfileOptions.some((option) => option.id === id)
+			);
+			if (destinationProfileId) {
+				selectedDestinationProfileId = destinationProfileId;
+				return;
+			}
+		}
 		if (selectedViewMode === 'outbound' && selectedProfileId) {
 			selectedDestinationProfileId = selectedProfileId;
 		}
@@ -552,6 +643,11 @@
 		selectedEdgeId = null;
 		selectedNodeId = null;
 		hasUnsavedDraftChanges = false;
+		autoMappedEdgeIds = [];
+		if (pulseNextSampleEdges) {
+			pulseNextSampleEdges = false;
+			queueMicrotask(pulseVisibleEdges);
+		}
 	}
 
 	function resetDraftFromCurrentSample() {
@@ -566,10 +662,12 @@
 		pendingConnectionStart = null;
 		suppressNextNodeClickId = null;
 		hasUnsavedDraftChanges = false;
+		autoMappedEdgeIds = [];
 	}
 
 	onDestroy(() => {
 		stopConnectionAutoScroll();
+		if (autoMapAnimationTimer) clearTimeout(autoMapAnimationTimer);
 		window.removeEventListener('pointermove', handlePointerMove);
 		window.removeEventListener('pointerup', handlePointerUp);
 		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
@@ -615,6 +713,89 @@
 		hasUnsavedDraftChanges = true;
 		draftSubmitStatus = 'idle';
 		draftSubmitMessage = null;
+	}
+
+	function visibleAutoMapFromNodes(): MappingNode[] {
+		if (viewMode === 'outbound') {
+			return targetNodes.filter((node) => !node.locked);
+		}
+		return sourceNodes.filter((node) =>
+			node.profileId ? node.profileId === sample.id : node.adapter === inboundAdapter
+		);
+	}
+
+	function visibleAutoMapToNodes(): MappingNode[] {
+		if (viewMode === 'outbound') {
+			return destinationNodes.filter((node) =>
+				node.profileId
+					? node.profileId === selectedDestinationProfileId
+					: node.adapter === outboundAdapter
+			);
+		}
+		return targetNodes.filter((node) => !node.locked);
+	}
+
+	function autoMapConnections() {
+		if (!editable) return;
+		const candidates = suggestAutoMapConnections({
+			fromNodes: visibleAutoMapFromNodes(),
+			toNodes: visibleAutoMapToNodes(),
+			existingEdges: edges,
+			max: 32
+		});
+		const newEdges: MappingEdge[] = [];
+
+		for (const candidate of candidates) {
+			const fromNode = nodeById(candidate.fromId);
+			const toNode = nodeById(candidate.toId);
+			if (!fromNode || !toNode) continue;
+			if (!isConnectionAllowed(fromNode, toNode, new Set(), newEdges)) continue;
+			if (isConnectionTypeMismatch(fromNode, toNode)) continue;
+			customCounter += 1;
+			newEdges.push({
+				id: `auto-edge-${customCounter}`,
+				from: fromNode.id,
+				to: toNode.id,
+				outbound: fromNode.role === 'target',
+				custom: true
+			});
+		}
+
+		if (newEdges.length === 0) {
+			draftSubmitStatus = 'info';
+			draftSubmitMessage = 'No confident auto-mapping candidates were found.';
+			return;
+		}
+
+		edges = [...edges, ...newEdges];
+		autoMappedEdgeIds = newEdges.map((edge) => edge.id);
+		selectedEdgeId = newEdges.at(-1)?.id ?? null;
+		selectedNodeId = null;
+		hasUnsavedDraftChanges = true;
+		onDraftDirtyChange?.(true);
+		draftSubmitStatus = 'info';
+		draftSubmitMessage = `Auto-mapped ${newEdges.length} connection${newEdges.length === 1 ? '' : 's'}. Review and compile the draft when ready.`;
+		if (autoMapAnimationTimer) clearTimeout(autoMapAnimationTimer);
+		autoMapAnimationTimer = setTimeout(() => {
+			autoMappedEdgeIds = [];
+			autoMapAnimationTimer = null;
+		}, 2600);
+	}
+
+	function pulseVisibleEdges() {
+		if (autoMapAnimationTimer) clearTimeout(autoMapAnimationTimer);
+		const visibleNodeIds = new Set(
+			laidOutNodes.filter((node) => !node.hidden).map((node) => node.id)
+		);
+		const visibleEdgeIds = edges
+			.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to))
+			.map((edge) => edge.id);
+		autoMappedEdgeIds = visibleEdgeIds;
+		if (visibleEdgeIds.length === 0) return;
+		autoMapAnimationTimer = setTimeout(() => {
+			autoMappedEdgeIds = [];
+			autoMapAnimationTimer = null;
+		}, 1800);
 	}
 
 	function handleClearSelectionKeyDown(event: KeyboardEvent) {
@@ -803,9 +984,12 @@
 		const hiddenSourceRowOffsets: Record<string, number> = {};
 
 		const sourceLayout = sourceNodes.map((node) => {
-			const selected = node.profileId
-				? node.profileId === sample.id
-				: node.adapter === inboundAdapter;
+			const selected =
+				laneSelectorMode === 'policy' && !selectedInboundPolicyId
+					? false
+					: node.profileId
+						? node.profileId === sample.id
+						: node.adapter === inboundAdapter;
 			const profileKey = node.profileId ?? node.adapter ?? 'source';
 			const visibleOffset = selected ? visibleSourceOffset++ : 0;
 			const hiddenRowOffset = hiddenSourceRowOffsets[profileKey] ?? 0;
@@ -849,9 +1033,12 @@
 		const hiddenDestinationRowOffsets: Record<string, number> = {};
 
 		const destinationLayout = destinationNodes.map((node) => {
-			const selected = node.profileId
-				? node.profileId === selectedDestinationProfileId
-				: node.adapter === outboundAdapter;
+			const selected =
+				laneSelectorMode === 'policy' && !selectedOutboundPolicyId
+					? false
+					: node.profileId
+						? node.profileId === selectedDestinationProfileId
+						: node.adapter === outboundAdapter;
 			const profileKey = node.profileId ?? node.adapter ?? 'destination';
 			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
 			const hiddenRowOffset = hiddenDestinationRowOffsets[profileKey] ?? 0;
@@ -879,6 +1066,27 @@
 					.map((node) => node.top + node.height + 36)
 			)
 		};
+	}
+
+	function laneLabelStyle(role: 'inbound' | 'canonical' | 'outbound'): string {
+		const width = Math.max(190, canvasWidth * 0.23);
+		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
+		const targetLeft =
+			viewMode === 'outbound'
+				? Math.max(26, canvasWidth * 0.12)
+				: viewMode === 'inbound'
+					? Math.min(
+							canvasWidth - width - 26,
+							Math.max(sourceLeft + width + 100, canvasWidth * 0.66)
+						)
+					: canvasWidth * 0.385;
+		const destinationLeft =
+			viewMode === 'outbound'
+				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
+				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
+		const left =
+			role === 'inbound' ? sourceLeft : role === 'canonical' ? targetLeft : destinationLeft;
+		return `left:${left + width / 2}px;width:${width}px;`;
 	}
 
 	function sourceProfileStackIndex(profileId: string): number {
@@ -1051,6 +1259,7 @@
 			edge.id === selectedEdgeId ? 'edge-picked' : '',
 			hoverEdges.has(edge.id) ? 'edge-connected' : '',
 			selectedEdges.has(edge.id) ? 'edge-selected' : '',
+			autoMappedEdgeIds.includes(edge.id) ? 'edge-auto-mapped' : '',
 			edgeHasTypeMismatch(edge) ? 'edge-invalid' : '',
 			fromNode?.hidden || toNode?.hidden ? 'edge-muted' : ''
 		]
@@ -1667,8 +1876,46 @@
 
 	function deleteSelectedEdge() {
 		if (!editable || !selectedEdgeId) return;
-		edges = edges.filter((edge) => edge.id !== selectedEdgeId);
+		deleteEdge(selectedEdgeId);
+	}
+
+	function deleteEdge(edgeId: string) {
+		if (!editable) return;
+		const edge = edges.find((candidate) => candidate.id === edgeId);
+		if (!edge) return;
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		const transformNode =
+			fromNode?.role === 'transform' ? fromNode : toNode?.role === 'transform' ? toNode : null;
+
+		if (transformNode) {
+			const incoming = edges.filter((candidate) => candidate.to === transformNode.id);
+			const outgoing = edges.filter((candidate) => candidate.from === transformNode.id);
+			const removesLastInput = edge.to === transformNode.id && incoming.length <= 1;
+			const removesLastOutput = edge.from === transformNode.id && outgoing.length <= 1;
+
+			if (removesLastInput || removesLastOutput) {
+				deleteTransformNodeWithoutReconnect(transformNode.id);
+				return;
+			}
+		}
+
+		edges = edges.filter((candidate) => candidate.id !== edgeId);
 		selectedEdgeId = null;
+		markDraftDirty();
+	}
+
+	function deleteTransformNodeWithoutReconnect(nodeId: string) {
+		const transformNode = nodeById(nodeId);
+		if (transformNode?.role !== 'transform') return;
+		nodes = nodes.filter((node) => node.id !== nodeId);
+		edges = edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
+		if (selectedNodeId === nodeId) {
+			selectedNodeId = null;
+			activeRuleId = sample.activeRuleId;
+		}
+		selectedEdgeId = null;
+		hoverNodeId = null;
 		markDraftDirty();
 	}
 
@@ -1774,6 +2021,7 @@
 			return;
 		}
 		selectedSampleId = nextId;
+		pulseNextSampleEdges = true;
 	}
 
 	function selectDestinationProfile(event: Event) {
@@ -1782,6 +2030,33 @@
 		outboundAdapter =
 			destinationProfileOptions.find((option) => option.id === selectedDestinationProfileId)
 				?.adapter ?? outboundAdapter;
+		pulseVisibleEdges();
+	}
+
+	function selectInboundPolicy(event: Event) {
+		const select = event.currentTarget as HTMLSelectElement;
+		selectedInboundPolicyId = select.value || null;
+		const selectedPolicy = inboundPolicyOptions.find(
+			(option: SelectorOption) => option.id === selectedInboundPolicyId
+		);
+		const sourceProfileId = selectedPolicy?.sourceProfileIds?.find((id: string) =>
+			samples.some((candidate: MappingSample) => candidate.id === id)
+		);
+		selectedSampleId = sourceProfileId ?? null;
+		pulseVisibleEdges();
+	}
+
+	function selectOutboundPolicy(event: Event) {
+		const select = event.currentTarget as HTMLSelectElement;
+		selectedOutboundPolicyId = select.value || null;
+		const selectedPolicy = outboundPolicyOptions.find(
+			(option: SelectorOption) => option.id === selectedOutboundPolicyId
+		);
+		const destinationProfileId = selectedPolicy?.destinationProfileIds?.find((id: string) =>
+			destinationProfileOptions.some((option) => option.id === id)
+		);
+		selectedDestinationProfileId = destinationProfileId ?? null;
+		pulseVisibleEdges();
 	}
 
 	function addNode(role: 'source' | 'destination') {
@@ -2170,8 +2445,10 @@
 		<section class="pane graph-pane" aria-label="Mapping graph">
 			<div class="graph-toolbar">
 				<div>
-					<p class="section-kicker">Policy draft</p>
-					<h2>{sample.title}</h2>
+					{#if showGraphPolicyDraftLabel}
+						<p class="section-kicker">Policy draft</p>
+					{/if}
+					<h2>{graphTitle}</h2>
 				</div>
 				<div class="graph-actions">
 					{#if showToolbarSourceProfile}
@@ -2197,6 +2474,11 @@
 						<div class="mode-toggle" aria-label="Flow view mode">
 							{#each enabledViewModes as mode (mode)}
 								<button
+									class={mode === 'inbound'
+										? 'view-inbound'
+										: mode === 'outbound'
+											? 'view-outbound'
+											: 'view-overview'}
 									class:active={viewMode === mode}
 									type="button"
 									onclick={() => (viewMode = mode)}
@@ -2210,14 +2492,21 @@
 							{/each}
 						</div>
 					{/if}
-					<button
-						class="primary-action"
-						type="button"
-						disabled={!editable || draftSubmitStatus === 'saving'}
-						onclick={submitDraftForCompile}
-					>
-						{draftSubmitStatus === 'saving' ? 'Compiling...' : 'Compile draft'}
-					</button>
+					{#if editable}
+						<button class="secondary-action" type="button" onclick={autoMapConnections}>
+							Auto-map
+						</button>
+					{/if}
+					{#if showCompileDraftButton}
+						<button
+							class="primary-action"
+							type="button"
+							disabled={!editable || draftSubmitStatus === 'saving'}
+							onclick={submitDraftForCompile}
+						>
+							{draftSubmitStatus === 'saving' ? primaryActionBusyLabel : primaryActionLabel}
+						</button>
+					{/if}
 				</div>
 			</div>
 			{#if draftSubmitMessage}
@@ -2256,37 +2545,50 @@
 				bind:this={canvas}
 				style={`height:${layout.height}px`}
 			>
-				{#if loading || loadError || !hasControlPlaneData}
+				{#if loading || loadError || !hasRenderableGraph}
 					<div class="graph-empty-state">
 						<strong
 							>{loading
 								? 'Loading control-plane schemas'
 								: loadError
 									? 'Control-plane schema load failed'
-									: 'No source or destination profiles registered'}</strong
+									: emptyGraphTitle}</strong
 						>
 						<span
 							>{loading
 								? 'The graph will render protocol, external, and canonical schemas when loading completes.'
 								: loadError
 									? loadError
-									: 'Register source and destination profiles, or add a field catalog, to populate this graph.'}</span
+									: emptyGraphDescription}</span
 						>
 					</div>
 				{/if}
 				{#if viewMode !== 'outbound'}
-					<div class="lane-label lane-inbound">
-						<span>Inbound profile</span>
+					<div class="lane-label lane-inbound" style={laneLabelStyle('inbound')}>
+						<span>{laneSelectorMode === 'policy' ? 'Inbound policy' : 'Inbound profile'}</span>
 						{#if showLaneProfileSelectors}
-							<select
-								value={selectedSampleId ?? emptySample.id}
-								disabled={sourceProfileOptions.length === 0}
-								onchange={selectSample}
-							>
-								{#each sourceProfileOptions as option (option.id)}
-									<option value={option.id}>{option.title}</option>
-								{/each}
-							</select>
+							{#if laneSelectorMode === 'policy'}
+								<select
+									value={selectedInboundPolicyId ?? ''}
+									disabled={inboundPolicyOptions.length === 0}
+									onchange={selectInboundPolicy}
+								>
+									<option value="">Select inbound policy</option>
+									{#each inboundPolicyOptions as option (option.id)}
+										<option value={option.id}>{option.title}</option>
+									{/each}
+								</select>
+							{:else}
+								<select
+									value={selectedSampleId ?? emptySample.id}
+									disabled={sourceProfileOptions.length === 0}
+									onchange={selectSample}
+								>
+									{#each sourceProfileOptions as option (option.id)}
+										<option value={option.id}>{option.title}</option>
+									{/each}
+								</select>
+							{/if}
 							{#if editable}
 								<button class="mini-tool-button" type="button" onclick={() => addNode('source')}
 									>+</button
@@ -2295,7 +2597,7 @@
 						{/if}
 					</div>
 				{/if}
-				<div class="lane-label lane-canonical">
+				<div class="lane-label lane-canonical" style={laneLabelStyle('canonical')}>
 					<span>Canonical targets</span>
 				</div>
 				{#each layout.targetGroups as group (group.key)}
@@ -2318,18 +2620,31 @@
 					</button>
 				{/each}
 				{#if viewMode !== 'inbound'}
-					<div class="lane-label lane-outbound">
-						<span>Outbound profile</span>
+					<div class="lane-label lane-outbound" style={laneLabelStyle('outbound')}>
+						<span>{laneSelectorMode === 'policy' ? 'Outbound policy' : 'Outbound profile'}</span>
 						{#if showLaneProfileSelectors}
-							<select
-								value={selectedDestinationProfileId ?? ''}
-								disabled={destinationProfileOptions.length === 0}
-								onchange={selectDestinationProfile}
-							>
-								{#each destinationProfileOptions as option (option.id)}
-									<option value={option.id}>{option.title}</option>
-								{/each}
-							</select>
+							{#if laneSelectorMode === 'policy'}
+								<select
+									value={selectedOutboundPolicyId ?? ''}
+									disabled={outboundPolicyOptions.length === 0}
+									onchange={selectOutboundPolicy}
+								>
+									<option value="">Select outbound policy</option>
+									{#each outboundPolicyOptions as option (option.id)}
+										<option value={option.id}>{option.title}</option>
+									{/each}
+								</select>
+							{:else}
+								<select
+									value={selectedDestinationProfileId ?? ''}
+									disabled={destinationProfileOptions.length === 0}
+									onchange={selectDestinationProfile}
+								>
+									{#each destinationProfileOptions as option (option.id)}
+										<option value={option.id}>{option.title}</option>
+									{/each}
+								</select>
+							{/if}
 							{#if editable}
 								<button
 									class="mini-tool-button"
@@ -2937,6 +3252,7 @@
 	}
 
 	.mode-toggle button,
+	.secondary-action,
 	.primary-action {
 		height: 30px;
 		border: 0;
@@ -2955,6 +3271,19 @@
 		color: var(--map-text);
 		background: var(--map-surface);
 		box-shadow: inset 0 0 0 1px var(--map-line);
+	}
+
+	.secondary-action {
+		height: 40px;
+		padding: 0 14px;
+		border: 1px solid color-mix(in srgb, var(--map-brand) 48%, var(--map-line));
+		color: var(--map-brand);
+		background: color-mix(in srgb, var(--map-brand) 8%, var(--map-surface));
+	}
+
+	.secondary-action:hover,
+	.secondary-action:focus-visible {
+		background: color-mix(in srgb, var(--map-brand) 14%, var(--map-surface));
 	}
 
 	.primary-action {
@@ -2981,6 +3310,10 @@
 
 	.draft-submit-message.saved {
 		color: var(--map-green);
+	}
+
+	.draft-submit-message.info {
+		color: var(--map-brand);
 	}
 
 	.draft-submit-message.error {
@@ -3102,41 +3435,20 @@
 		display: grid;
 		grid-template-columns: auto auto;
 		align-items: center;
+		justify-content: center;
+		justify-items: center;
 		gap: 7px;
 		color: var(--map-muted);
 		font-size: 11px;
 		font-weight: 800;
 		letter-spacing: 0.08em;
+		text-align: center;
 		text-transform: uppercase;
+		transform: translateX(-50%);
 	}
 
 	.lane-label > span {
 		grid-column: 1 / -1;
-	}
-
-	.lane-inbound {
-		left: 16px;
-	}
-
-	.lane-canonical {
-		left: 38%;
-	}
-
-	.lane-outbound {
-		right: 16px;
-	}
-
-	.graph-canvas.view-inbound .lane-canonical {
-		right: 16px;
-		left: auto;
-	}
-
-	.graph-canvas.view-outbound .lane-canonical {
-		left: 16px;
-	}
-
-	.graph-canvas.view-outbound .lane-outbound {
-		right: 16px;
 	}
 
 	.target-group-header {
@@ -3376,7 +3688,8 @@
 
 	.edge.edge-connected,
 	.edge.edge-selected,
-	.edge.edge-picked {
+	.edge.edge-picked,
+	.edge.edge-auto-mapped {
 		stroke: var(--edge-accent, var(--map-brand));
 		stroke-dasharray: var(--map-edge-dash-pattern);
 		opacity: 1;
@@ -3397,6 +3710,13 @@
 		stroke-width: 3;
 		filter: drop-shadow(
 			0 0 4px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 56%, transparent)
+		);
+	}
+
+	.edge.edge-auto-mapped {
+		stroke-width: 3;
+		filter: drop-shadow(
+			0 0 7px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 68%, transparent)
 		);
 	}
 

@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { adminAdminAccessControlAPI, type AdminAccessControlStats } from '$lib/api/admin-admin-access-control';
+	import {
+		adminAdminAccessControlAPI,
+		type AdminAccessControlStats
+	} from '$lib/api/admin-admin-access-control';
 
 	let stats: AdminAccessControlStats | null = $state(null);
 	let loading = $state(true);
@@ -40,7 +43,8 @@
 			id: 'abac',
 			title: 'ABAC',
 			subtitle: 'Admin Attributes',
-			description: 'Define and manage admin operator attributes for attribute-based access control.',
+			description:
+				'Define and manage admin operator attributes for attribute-based access control.',
 			icon: 'i-ph-tag',
 			color: 'green',
 			href: '/admin/admin-abac',
@@ -73,7 +77,8 @@
 		<div>
 			<h1 class="page-title">Admin Access Control Hub</h1>
 			<p class="page-description">
-				Unified management for Admin RBAC, ABAC, ReBAC, and Policy-based access control for admin operators.
+				Unified management for Admin RBAC, ABAC, ReBAC, and Policy-based access control for admin
+				operators.
 			</p>
 		</div>
 	</div>
@@ -129,8 +134,9 @@
 				<i class="i-ph-arrow-right hub-card-arrow"></i>
 			</div>
 			<p class="hub-card-description">
-				Combine Admin RBAC, ABAC, and ReBAC conditions to create fine-grained access control policies for admin operators.
-				Define complex rules that evaluate multiple factors to determine access decisions.
+				Combine Admin RBAC, ABAC, and ReBAC conditions to create fine-grained access control
+				policies for admin operators. Define complex rules that evaluate multiple factors to
+				determine access decisions.
 			</p>
 			<div class="hub-card-stats">
 				<i class="i-ph-chart-bar"></i>

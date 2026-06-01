@@ -22,6 +22,10 @@ import {
 } from '@authrim/ar-lib-core';
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
 import { resolveAsyncTenantId } from './tenant';
+import {
+  cibaLoginHintMatchesAuthenticatedUser,
+  getAuthenticatedAsyncUser,
+} from './authenticated-session';
 
 /**
  * POST /api/ciba/approve
@@ -136,24 +140,35 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Check if we need to use mock credentials
-    const needsMockCredentials = !userId || !sub;
+    const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
 
-    if (needsMockCredentials) {
-      // Check if mock auth is enabled (SECURITY: default is disabled)
-      const mockAuthEnabled = await isMockAuthEnabled(c.env);
-
-      if (!mockAuthEnabled) {
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    if (!authenticatedUser && !mockAuthEnabled) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    }
+    if (authenticatedUser) {
+      if (
+        metadata.resolved_subject_id &&
+        metadata.resolved_subject_id !== authenticatedUser.userId &&
+        metadata.resolved_subject_id !== authenticatedUser.sub
+      ) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
       }
-
-      // DEVELOPMENT ONLY: Log warning about mock auth usage
+      if (!cibaLoginHintMatchesAuthenticatedUser(metadata.login_hint, authenticatedUser)) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
+    } else {
       log.warn('Mock authentication is enabled. This should NEVER be used in production!');
     }
 
-    // Use provided credentials or fallback to mock (only if mock auth is enabled)
-    const finalUserId = userId || 'user_' + Date.now();
-    const finalSub = sub || 'mock-user@example.com';
+    if ((userId || sub) && !mockAuthEnabled) {
+      log.warn('Ignoring caller-supplied CIBA approval subject', {
+        action: 'approval_subject_ignored',
+      });
+    }
+
+    const finalUserId = authenticatedUser?.userId || userId || 'user_' + Date.now();
+    const finalSub = authenticatedUser?.sub || sub || finalUserId;
 
     // Approve the request
     const approveResponse = await cibaRequestStore.fetch(

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ApprovalTransportEvidence } from '$lib/api/admin-approvals'
+	import type { ApprovalTransportEvidence } from '$lib/api/admin-approvals';
 	import {
 		getApprovalEvidenceArtifactSwitch,
 		getApprovalEvidenceCompletionArtifact,
@@ -7,25 +7,34 @@
 		getApprovalEvidenceGrantSubjectTokenIssue,
 		getApprovalEvidenceEventDescriptor,
 		getApprovalEvidenceEventMeta
-	} from '$lib/admin/approval-evidence-timeline'
+	} from '$lib/admin/approval-evidence-timeline';
 
 	type Props = {
-		evidence: ApprovalTransportEvidence
-		formatDateTime: (timestamp?: number | null) => string
-		formatJson: (value: unknown) => string
-	}
+		evidence: ApprovalTransportEvidence;
+		formatDateTime: (timestamp?: number | null) => string;
+		formatJson: (value: unknown) => string;
+	};
 
-	let { evidence, formatDateTime, formatJson }: Props = $props()
+	let { evidence, formatDateTime, formatJson }: Props = $props();
 
 	function getToneClass(tone: 'info' | 'success' | 'warning' | 'danger'): string {
-		return `timeline-card tone-${tone}`
+		return `timeline-card tone-${tone}`;
 	}
 </script>
 
 <div class="detail-grid compact-grid">
-	<div><strong>Investigation</strong><div>{evidence.request.investigation_id}</div></div>
-	<div><strong>Requested At</strong><div>{formatDateTime(evidence.request.requested_at)}</div></div>
-	<div><strong>Events</strong><div>{evidence.events.length}</div></div>
+	<div>
+		<strong>Investigation</strong>
+		<div>{evidence.request.investigation_id}</div>
+	</div>
+	<div>
+		<strong>Requested At</strong>
+		<div>{formatDateTime(evidence.request.requested_at)}</div>
+	</div>
+	<div>
+		<strong>Events</strong>
+		<div>{evidence.events.length}</div>
+	</div>
 </div>
 
 <div class="steps-list">
@@ -48,9 +57,13 @@
 			<div class="timeline-badges">
 				<span class="timeline-status">{event.request_status}</span>
 				{#if event.actor_subject_type}
-					<span>{event.actor_subject_type}{event.actor_subject_id ? ` · ${event.actor_subject_id}` : ''}</span>
+					<span
+						>{event.actor_subject_type}{event.actor_subject_id
+							? ` · ${event.actor_subject_id}`
+							: ''}</span
+					>
 				{/if}
-					{#each meta as item (item)}
+				{#each meta as item (item)}
 					<span>{item}</span>
 				{/each}
 			</div>
@@ -65,7 +78,9 @@
 						{/if}
 					</div>
 					{#if artifactSwitch.allowedMethods.length > 0}
-						<div class="cell-secondary">Allowed methods: {artifactSwitch.allowedMethods.join(', ')}</div>
+						<div class="cell-secondary">
+							Allowed methods: {artifactSwitch.allowedMethods.join(', ')}
+						</div>
 					{/if}
 				</div>
 			{/if}
@@ -73,7 +88,11 @@
 			{#if completionArtifact}
 				<div class="timeline-summary">
 					<strong>Completion Artifact</strong>
-					<div class="cell-secondary">{completionArtifact.artifactId ?? '-'} · expires {formatDateTime(completionArtifact.expiresAt)}</div>
+					<div class="cell-secondary">
+						{completionArtifact.artifactId ?? '-'} · expires {formatDateTime(
+							completionArtifact.expiresAt
+						)}
+					</div>
 					{#if completionArtifact.path}
 						<div class="cell-secondary">{completionArtifact.path}</div>
 					{/if}

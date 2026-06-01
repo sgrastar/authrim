@@ -63,7 +63,6 @@
 		}
 	}
 
-
 	async function handleDelete(id: string) {
 		deletingId = id;
 		error = '';
@@ -100,131 +99,134 @@
 </svelte:head>
 
 {#if accessReady}
-<div class="page">
-	<div class="page-header">
-		<div>
-			<h1>Tenant Vanity Domains</h1>
-			<p>
-				{#if singleTenantMode}
-					Available after enabling multi-tenant mode. Use this page to manage cross-tenant vanity domains.
-				{:else}
-					Cross-tenant vanity domain status and Cloudflare refresh controls.
+	<div class="page">
+		<div class="page-header">
+			<div>
+				<h1>Tenant Vanity Domains</h1>
+				<p>
+					{#if singleTenantMode}
+						Available after enabling multi-tenant mode. Use this page to manage cross-tenant vanity
+						domains.
+					{:else}
+						Cross-tenant vanity domain status and Cloudflare refresh controls.
+					{/if}
+				</p>
+			</div>
+			<button
+				class="btn btn-secondary"
+				onclick={loadDomains}
+				disabled={loading || singleTenantMode}
+			>
+				{#if loading}
+					<i class="i-ph-circle-notch animate-spin"></i>
 				{/if}
-			</p>
-		</div>
-		<button
-			class="btn btn-secondary"
-			onclick={loadDomains}
-			disabled={loading || singleTenantMode}
-		>
-			{#if loading}
-				<i class="i-ph-circle-notch animate-spin"></i>
-			{/if}
-			Refresh
-		</button>
-	</div>
-
-	{#if error}
-		<div class="alert alert-error">{error}</div>
-	{/if}
-	{#if success}
-		<div class="alert alert-success">{success}</div>
-	{/if}
-	{#if singleTenantMode}
-		<div class="alert alert-info">
-			Enable multi-tenant mode in Setup to add and manage vanity domains. You can start from
-			`workers.dev`, add an API custom domain later, and then switch this deployment to
-			multi-tenant mode.
-		</div>
-	{:else if !cloudflareConfigured}
-		<div class="alert alert-warning">
-			Cloudflare automation is not configured. Domains can still be tracked, but Custom Hostname
-			creation and sync require manual Cloudflare setup.
-		</div>
-	{/if}
-
-	<section class="card">
-		<div class="filter-row">
-			<input
-				class="form-input"
-				type="text"
-				bind:value={tenantFilter}
-				placeholder="Filter by tenant ID"
-				disabled={singleTenantMode}
-			/>
-			<button class="btn btn-primary" onclick={loadDomains} disabled={singleTenantMode}>Apply</button>
+				Refresh
+			</button>
 		</div>
 
+		{#if error}
+			<div class="alert alert-error">{error}</div>
+		{/if}
+		{#if success}
+			<div class="alert alert-success">{success}</div>
+		{/if}
 		{#if singleTenantMode}
-			<p class="empty-text">
-				Vanity domains are disabled while this deployment is running in single-tenant mode.
-			</p>
-		{:else if loading}
-			<div class="loading-state"><i class="i-ph-circle-notch animate-spin"></i> Loading...</div>
-		{:else if domains.length === 0}
-			<p class="empty-text">No vanity domains found.</p>
-		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Hostname</th>
-							<th>Tenant</th>
-							<th>Status</th>
-							<th>SSL</th>
-							<th>Primary</th>
-							<th>Last Sync</th>
-							<th>Actions</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each domains as domain (domain.id)}
-							<tr>
-								<td class="mono">{domain.hostname}</td>
-								<td class="mono">{domain.tenant_id}</td>
-								<td>{domain.status}</td>
-								<td>{domain.ssl_status ?? 'pending'}</td>
-								<td>{domain.is_primary ? 'Yes' : 'No'}</td>
-								<td>
-									{domain.last_sync_at
-										? new Date(domain.last_sync_at * 1000).toLocaleString()
-										: 'Never'}
-								</td>
-								<td>
-									<div class="actions">
-										<button
-											class="btn btn-secondary"
-											onclick={() => handleSync(domain.id)}
-											disabled={syncingId === domain.id}
-										>
-											Sync
-										</button>
-										{#if domain.status !== 'active'}
-											<button
-												class="btn btn-secondary"
-												onclick={() => handleVerify(domain.id)}
-												disabled={verifyingId === domain.id}
-											>
-												Verify
-											</button>
-										{/if}
-										<button
-											class="btn btn-danger-outline"
-											onclick={() => handleDelete(domain.id)}
-											disabled={deletingId === domain.id}
-										>
-											Delete
-										</button>
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+			<div class="alert alert-info">
+				Enable multi-tenant mode in Setup to add and manage vanity domains. You can start from
+				`workers.dev`, add an API custom domain later, and then switch this deployment to
+				multi-tenant mode.
+			</div>
+		{:else if !cloudflareConfigured}
+			<div class="alert alert-warning">
+				Cloudflare automation is not configured. Domains can still be tracked, but Custom Hostname
+				creation and sync require manual Cloudflare setup.
 			</div>
 		{/if}
-	</section>
-</div>
+
+		<section class="card">
+			<div class="filter-row">
+				<input
+					class="form-input"
+					type="text"
+					bind:value={tenantFilter}
+					placeholder="Filter by tenant ID"
+					disabled={singleTenantMode}
+				/>
+				<button class="btn btn-primary" onclick={loadDomains} disabled={singleTenantMode}
+					>Apply</button
+				>
+			</div>
+
+			{#if singleTenantMode}
+				<p class="empty-text">
+					Vanity domains are disabled while this deployment is running in single-tenant mode.
+				</p>
+			{:else if loading}
+				<div class="loading-state"><i class="i-ph-circle-notch animate-spin"></i> Loading...</div>
+			{:else if domains.length === 0}
+				<p class="empty-text">No vanity domains found.</p>
+			{:else}
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>Hostname</th>
+								<th>Tenant</th>
+								<th>Status</th>
+								<th>SSL</th>
+								<th>Primary</th>
+								<th>Last Sync</th>
+								<th>Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each domains as domain (domain.id)}
+								<tr>
+									<td class="mono">{domain.hostname}</td>
+									<td class="mono">{domain.tenant_id}</td>
+									<td>{domain.status}</td>
+									<td>{domain.ssl_status ?? 'pending'}</td>
+									<td>{domain.is_primary ? 'Yes' : 'No'}</td>
+									<td>
+										{domain.last_sync_at
+											? new Date(domain.last_sync_at * 1000).toLocaleString()
+											: 'Never'}
+									</td>
+									<td>
+										<div class="actions">
+											<button
+												class="btn btn-secondary"
+												onclick={() => handleSync(domain.id)}
+												disabled={syncingId === domain.id}
+											>
+												Sync
+											</button>
+											{#if domain.status !== 'active'}
+												<button
+													class="btn btn-secondary"
+													onclick={() => handleVerify(domain.id)}
+													disabled={verifyingId === domain.id}
+												>
+													Verify
+												</button>
+											{/if}
+											<button
+												class="btn btn-danger-outline"
+												onclick={() => handleDelete(domain.id)}
+												disabled={deletingId === domain.id}
+											>
+												Delete
+											</button>
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
+	</div>
 {/if}
 
 <style>

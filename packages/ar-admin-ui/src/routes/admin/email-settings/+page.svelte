@@ -105,11 +105,11 @@
 </svelte:head>
 
 <div class="page">
-		<div class="page-header">
-			<div>
-				<h1>Email Settings</h1>
-				<p>Choose the tenant-wide delivery order for enabled and configured email providers.</p>
-			</div>
+	<div class="page-header">
+		<div>
+			<h1>Email Settings</h1>
+			<p>Choose the tenant-wide delivery order for enabled and configured email providers.</p>
+		</div>
 		<button class="save-button" onclick={saveSettings} disabled={saving || loading || !tenantId}>
 			{saving ? 'Saving...' : 'Save Order'}
 		</button>

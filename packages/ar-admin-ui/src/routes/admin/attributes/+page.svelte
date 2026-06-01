@@ -297,8 +297,9 @@
 			<div>
 				<h3 class="font-semibold text-blue-900 mb-1">End User ABAC</h3>
 				<p class="text-sm text-blue-800">
-					This page manages attributes for <strong>End Users</strong>.
-					For <strong>Admin Operator</strong> attribute management, visit
+					This page manages attributes for <strong>End Users</strong>. For
+					<strong>Admin Operator</strong>
+					attribute management, visit
 					<a href="/admin/admin-abac" class="underline hover:text-blue-900">Admin ABAC</a>.
 				</p>
 			</div>

@@ -228,8 +228,8 @@ describe('Input Validation Security Tests', () => {
         // OAuth 2.0 spec says redirect_uri SHOULD NOT have fragments
         const urlWithFragment = 'https://example.com/callback#section';
         const result = validateRedirectUri(urlWithFragment);
-        // URL is valid, fragment handling is at a different layer
-        expect(result.valid).toBe(true);
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('fragment');
       });
     });
   });

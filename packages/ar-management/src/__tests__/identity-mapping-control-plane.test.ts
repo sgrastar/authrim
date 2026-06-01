@@ -8,6 +8,9 @@ import type {
   TransactionContext,
 } from '@authrim/ar-lib-core';
 import {
+  adminIdentityMappingDestinationProfileCreateHandler,
+  adminIdentityMappingOidcCustomClaimCreateHandler,
+  adminIdentityMappingOidcCustomScopeCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
   adminIdentityMappingPoliciesListHandler,
   adminIdentityMappingPolicyCreateHandler,
@@ -29,11 +32,13 @@ interface RecordedQuery {
 
 function createAdapter(options: {
   queryRows?: Record<string, unknown>[];
+  queryRowSets?: Record<string, unknown>[][];
   queryOneRows?: Array<Record<string, unknown> | null>;
 }): DatabaseAdapter & { executes: RecordedExecute[]; queries: RecordedQuery[] } {
   const executes: RecordedExecute[] = [];
   const queries: RecordedQuery[] = [];
   const queryRows = [...(options.queryRows ?? [])];
+  const queryRowSets = [...(options.queryRowSets ?? [])];
   const queryOneRows = [...(options.queryOneRows ?? [])];
   const executeResult: ExecuteResult = { rowsAffected: 1, success: true };
   return {
@@ -41,6 +46,9 @@ function createAdapter(options: {
     queries,
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       queries.push({ sql, params });
+      if (queryRowSets.length > 0) {
+        return queryRowSets.shift() as T[];
+      }
       return queryRows as T[];
     },
     async queryOne<T>(): Promise<T | null> {
@@ -220,6 +228,51 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
     });
   });
 
+  it('rejects CSV source profile parse payloads above the encoded size budget', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.parseCsvSourceProfile('tenant_a', {
+        contentBase64: 'A'.repeat(2_800_000),
+        encoding: 'utf-8',
+        parserOptions: { headerMode: 'first_row' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects CSV parser row and column limits above the profile budget', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.parseCsvSourceProfile('tenant_a', {
+        contentBase64: btoa('Email\nalice@example.test'),
+        encoding: 'utf-8',
+        parserOptions: { headerMode: 'first_row', maxRows: 1001 },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+
+    await expect(
+      repository.parseCsvSourceProfile('tenant_a', {
+        contentBase64: btoa('Email\nalice@example.test'),
+        encoding: 'utf-8',
+        parserOptions: { headerMode: 'first_row', maxColumns: 501 },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('creates, reviews, and activates CSV source profile versions', async () => {
     const adapter = createAdapter({
       queryOneRows: [
@@ -301,6 +354,88 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
     ).rejects.toMatchObject({
       status: 409,
       code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('updates CSV source profiles by adding a new draft version', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'source_profile_1',
+          source_type: 'csv',
+          profile_key: 'workday_csv',
+          display_name: 'Workday CSV',
+        },
+        null,
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const updated = await repository.updateSourceProfile('tenant_a', 'source_profile_1', {
+      sourceType: 'csv',
+      profileKey: 'workday_csv_v2',
+      displayName: 'Workday CSV v2',
+      versionLabel: 'v2',
+      schema: {
+        sourceType: 'csv',
+        columns: [{ stableColumnId: 'csv.email.1', headerName: 'Email' }],
+      },
+      warningSummary: {
+        blockingWarningCount: 0,
+      },
+    });
+
+    expect(updated).toMatchObject({
+      id: 'source_profile_1',
+      profileKey: 'workday_csv_v2',
+      displayName: 'Workday CSV v2',
+      lifecycleState: 'draft',
+      version: {
+        versionLabel: 'v2',
+        lifecycleState: 'draft',
+      },
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('UPDATE source_profiles'),
+      expect.stringContaining('INSERT INTO source_profile_versions'),
+    ]);
+    expect(adapter.executes[0].params).toEqual([
+      'csv',
+      'workday_csv_v2',
+      'Workday CSV v2',
+      'draft',
+      1000,
+      'tenant_a',
+      'source_profile_1',
+    ]);
+  });
+
+  it('rejects oversized source profile schema JSON before stable hashing', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [null],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createSourceProfile('tenant_a', {
+        sourceType: 'csv',
+        profileKey: 'workday_csv',
+        displayName: 'Workday CSV',
+        schema: {
+          sourceType: 'csv',
+          columns: [
+            {
+              stableColumnId: 'csv.notes.1',
+              headerName: 'Notes',
+              description: 'x'.repeat(4097),
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
     });
     expect(adapter.executes).toHaveLength(0);
   });
@@ -499,6 +634,36 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     });
   });
 
+  it('rejects oversized destination profile schema JSON before validation and hashing', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'csv',
+        profileKey: 'oversized_export',
+        displayName: 'Oversized export',
+        schema: {
+          destinationType: 'csv',
+          columns: [
+            {
+              columnName: 'notes',
+              label: 'Notes',
+              order: 1,
+              valueType: 'string',
+              classification: 'internal',
+              description: 'x'.repeat(4097),
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('creates CSV destination profile versions with formatter and null handling policy', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -546,6 +711,47 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     ]);
   });
 
+  it('creates SAML destination profile versions with NameID and attributes', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const created = await repository.createDestinationProfile('tenant_a', {
+      destinationType: 'saml',
+      profileKey: 'standard_saml',
+      displayName: 'Standard SAML',
+      schema: {
+        destinationType: 'saml',
+        nameId: {
+          format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+          source: 'subject_identifier',
+        },
+        attributes: [
+          {
+            name: 'urn:oid:0.9.2342.19200300.100.1.3',
+            label: 'Email',
+            valueType: 'email',
+            classification: 'pii',
+            releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' },
+          },
+        ],
+      },
+      warningSummary: {
+        blockingWarningCount: 0,
+      },
+    });
+
+    expect(created.destinationType).toBe('saml');
+    expect(created.version.releaseImpact).toMatchObject({
+      destinationType: 'saml',
+      attributeCount: 1,
+      piiAttributeCount: 1,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO destination_profiles'),
+      expect.stringContaining('INSERT INTO destination_profile_versions'),
+    ]);
+  });
+
   it('rejects duplicate destination profile keys before hitting database constraints', async () => {
     const adapter = createAdapter({
       queryOneRows: [{ id: 'existing_destination_profile' }],
@@ -573,6 +779,118 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     ).rejects.toMatchObject({
       status: 409,
       code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('updates destination profiles by adding a new draft version', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'destination_profile_1',
+          tenant_id: 'tenant_a',
+          destination_type: 'csv',
+          profile_key: 'weekly_export',
+          display_name: 'Weekly export',
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          base_profile_id: null,
+        },
+        null,
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const updated = await repository.updateDestinationProfile('tenant_a', 'destination_profile_1', {
+      destinationType: 'csv',
+      profileKey: 'weekly_export_v2',
+      displayName: 'Weekly export v2',
+      versionLabel: 'v2',
+      schema: {
+        destinationType: 'csv',
+        columns: [
+          {
+            columnName: 'email',
+            label: 'Email',
+            order: 1,
+            valueType: 'email',
+            classification: 'pii',
+          },
+        ],
+      },
+      warningSummary: {
+        blockingWarningCount: 0,
+      },
+    });
+
+    expect(updated).toMatchObject({
+      id: 'destination_profile_1',
+      profileKey: 'weekly_export_v2',
+      displayName: 'Weekly export v2',
+      lifecycleState: 'draft',
+      version: {
+        versionLabel: 'v2',
+        lifecycleState: 'draft',
+        releaseImpact: {
+          destinationType: 'csv',
+          columnCount: 1,
+          piiColumnCount: 1,
+        },
+      },
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('UPDATE destination_profiles'),
+      expect.stringContaining('INSERT INTO destination_profile_versions'),
+    ]);
+    expect(adapter.executes[0].params).toEqual([
+      'tenant_a',
+      'csv',
+      'weekly_export_v2',
+      'Weekly export v2',
+      'tenant',
+      null,
+      null,
+      'draft',
+      1000,
+      'tenant_a',
+      'destination_profile_1',
+    ]);
+  });
+
+  it('rejects moving destination profiles across tenant storage scopes', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'destination_profile_1',
+          tenant_id: 'tenant_a',
+          destination_type: 'csv',
+          profile_key: 'weekly_export',
+          display_name: 'Weekly export',
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          base_profile_id: null,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.updateDestinationProfile(
+        'tenant_a',
+        'destination_profile_1',
+        {
+          ownerScopeType: 'platform',
+          destinationType: 'csv',
+          schema: {
+            destinationType: 'csv',
+            columns: [{ columnName: 'email', label: 'Email', order: 1 }],
+          },
+        },
+        true
+      )
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
     });
     expect(adapter.executes).toHaveLength(0);
   });
@@ -621,6 +939,66 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository policy activation', () => {
+  it('lists policy versions with latest compiled snapshot for operations UI', async () => {
+    const adapter = createAdapter({
+      queryRowSets: [
+        [
+          {
+            id: 'policy_version_1',
+            tenant_id: 'tenant_a',
+            policy_set_id: 'policy_1',
+            version_label: 'draft-1',
+            lifecycle_state: 'draft',
+            policy_hash: 'policy_hash_1',
+            compatibility_range: '^1',
+            author_id: null,
+            published_at: null,
+            created_at: 1000,
+            updated_at: 1000,
+            snapshot_id: 'snapshot_1',
+            snapshot_catalog_version_id: 'catalog_version_1',
+            snapshot_lifecycle_state: 'draft',
+            snapshot_compiled_at: 1100,
+          },
+        ],
+        [
+          {
+            policy_version_id: 'policy_version_1',
+            rule_kind: 'inbound_mapping',
+            source_ref_json: JSON.stringify({ profileId: 'source-profile-workforce' }),
+            target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+          },
+          {
+            policy_version_id: 'policy_version_1',
+            rule_kind: 'outbound_release',
+            source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            target_ref_json: JSON.stringify({ profileId: 'destination-profile-oidc' }),
+          },
+        ],
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const versions = await repository.listPolicyVersions('tenant_a', 'policy_1');
+
+    expect(adapter.queries[0]).toMatchObject({ params: ['tenant_a', 'policy_1'] });
+    expect(versions).toEqual([
+      expect.objectContaining({
+        id: 'policy_version_1',
+        policySetId: 'policy_1',
+        versionLabel: 'draft-1',
+        directions: { inbound: true, outbound: true },
+        sourceProfileIds: ['source-profile-workforce'],
+        destinationProfileIds: ['destination-profile-oidc'],
+        latestSnapshot: expect.objectContaining({
+          id: 'snapshot_1',
+          catalogVersionId: 'catalog_version_1',
+          lifecycleState: 'draft',
+        }),
+      }),
+    ]);
+  });
+
   it('compiles a load-time verified snapshot with dependency graph hash', async () => {
     const adapter = createAdapter({
       queryOneRows: [
@@ -760,6 +1138,76 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             metadata: {
               rawValue: 'person@example.test',
             },
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects sensitive policy rule references before persistence', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createPolicyVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        rules: [
+          {
+            ruleKey: 'unsafe-edge',
+            ruleKind: 'mapping',
+            action: 'allow',
+            edges: [
+              {
+                sourceRef: {
+                  namespace: 'csv',
+                  path: 'email',
+                  rawValue: 'person@example.test',
+                },
+                targetRef: {
+                  namespace: 'authrim.profile',
+                  path: 'email',
+                },
+              },
+            ],
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects oversized or unsupported policy transforms before persistence', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createPolicyVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        rules: [
+          {
+            ruleKey: 'unsafe-transform',
+            ruleKind: 'mapping',
+            action: 'allow',
+            edges: [
+              {
+                sourceRef: { namespace: 'csv', path: 'email' },
+                targetRef: { namespace: 'authrim.profile', path: 'email' },
+              },
+            ],
+            transforms: [
+              {
+                edgeIndex: 0,
+                operation: 'custom_script',
+                parameters: {},
+              },
+            ],
           },
         ],
       })
@@ -2031,6 +2479,26 @@ describe('IdentityMappingControlPlaneRepository schema and template catalogs', (
       '{"attributes":[{"name":"userName","type":"string"}]}'
     );
   });
+
+  it('rejects oversized imported schema catalogs before persistence', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.importExternalSchema('tenant_a', {
+        sourceType: 'saml',
+        sourceId: 'idp-1',
+        schemaKey: 'attributes',
+        schema: {
+          attributes: [{ name: 'mail', description: 'x'.repeat(4097) }],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
 });
 
 describe('identity mapping control plane Admin API handlers', () => {
@@ -2117,6 +2585,116 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
+  });
+
+  it('rejects tenant admins creating platform-scoped destination profiles', async () => {
+    const adapter = createAdapter({});
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
+      (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
+        roles: ['tenant_admin'],
+        is_platform_admin: false,
+      });
+      await next();
+    });
+    app.post(
+      '/api/admin/identity-mapping/destination-profiles',
+      adminIdentityMappingDestinationProfileCreateHandler
+    );
+
+    const response = await app.request(
+      '/api/admin/identity-mapping/destination-profiles',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'X-Tenant-Id': 'tenant_a',
+          'Idempotency-Key': 'deny-platform-destination',
+        },
+        body: JSON.stringify({
+          ownerScopeType: 'platform',
+          destinationType: 'csv',
+          profileKey: 'platform_export',
+          displayName: 'Platform export',
+          schema: {
+            destinationType: 'csv',
+            columns: [{ columnName: 'email', label: 'Email', order: 1 }],
+          },
+        }),
+      },
+      { DB_ADMIN: adapter } as unknown as Env
+    );
+
+    expect(response.status).toBe(403);
+    expect(adapter.executes.map((item) => item.sql).join('\n')).not.toContain(
+      'INSERT INTO destination_profiles'
+    );
+  });
+
+  it('rejects tenant admins creating platform-scoped OIDC custom registries', async () => {
+    const adapter = createAdapter({});
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
+      (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
+        roles: ['tenant_admin'],
+        is_platform_admin: false,
+      });
+      await next();
+    });
+    app.post(
+      '/api/admin/identity-mapping/oidc/custom-scopes',
+      adminIdentityMappingOidcCustomScopeCreateHandler
+    );
+    app.post(
+      '/api/admin/identity-mapping/oidc/custom-claims',
+      adminIdentityMappingOidcCustomClaimCreateHandler
+    );
+
+    const scopeResponse = await app.request(
+      '/api/admin/identity-mapping/oidc/custom-scopes',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'X-Tenant-Id': 'tenant_a',
+          'Idempotency-Key': 'deny-platform-scope',
+        },
+        body: JSON.stringify({
+          ownerScopeType: 'platform',
+          scopeKey: 'library',
+          displayName: 'Library',
+          allowedClaims: ['library_card'],
+        }),
+      },
+      { DB_ADMIN: adapter } as unknown as Env
+    );
+    const claimResponse = await app.request(
+      '/api/admin/identity-mapping/oidc/custom-claims',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'X-Tenant-Id': 'tenant_a',
+          'Idempotency-Key': 'deny-platform-claim',
+        },
+        body: JSON.stringify({
+          ownerScopeType: 'platform',
+          claimName: 'library_card',
+          displayName: 'Library card',
+          classification: 'pii',
+          allowedSurfaces: ['userinfo'],
+        }),
+      },
+      { DB_ADMIN: adapter } as unknown as Env
+    );
+
+    expect(scopeResponse.status).toBe(403);
+    expect(claimResponse.status).toBe(403);
+    const executedSql = adapter.executes.map((item) => item.sql).join('\n');
+    expect(executedSql).not.toContain('INSERT INTO oidc_custom_scope_registry');
+    expect(executedSql).not.toContain('INSERT INTO oidc_custom_claim_registry');
   });
 
   it('lists review tasks through the Admin API response shape', async () => {

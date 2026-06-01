@@ -127,6 +127,51 @@ describe('adminCsvDryRunPreviewHandler', () => {
       error_description: 'rows must contain at most 100 items',
     });
   });
+
+  it('rejects CSV preview cells that exceed the preview budget', async () => {
+    const app = buildApp();
+    const response = await app.request('/preview/csv', {
+      method: 'POST',
+      body: JSON.stringify(
+        buildPreviewBody({
+          rows: [{ email: 'a'.repeat(4097) }],
+        })
+      ),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as ErrorResponseBody;
+    expect(body).toMatchObject({
+      error: 'invalid_request',
+      error_description: 'request.rows[0].email string value must be at most 4096 characters',
+    });
+  });
+
+  it('rejects CSV previews with excessive edge counts', async () => {
+    const app = buildApp();
+    const emailSource = fieldRef('csv', 'email', 'field.csv.email');
+    const emailTarget: FieldRef = {
+      side: 'canonical',
+      namespace: 'authrim.profile',
+      path: 'email',
+      catalogEntryId: 'field.canonical.email',
+    };
+    const edges = Array.from({ length: 501 }, () => edge(emailSource, emailTarget));
+
+    const response = await app.request('/preview/csv', {
+      method: 'POST',
+      body: JSON.stringify(buildPreviewBody({ edges })),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as ErrorResponseBody;
+    expect(body).toMatchObject({
+      error: 'invalid_request',
+      error_description: 'edges must contain at most 500 items',
+    });
+  });
 });
 
 describe('admin outbound release preview handlers', () => {
@@ -291,6 +336,41 @@ describe('admin outbound release preview handlers', () => {
     expect(body).toMatchObject({
       error: 'invalid_request',
       error_description: 'destination.protocol must be saml',
+    });
+  });
+
+  it('rejects outbound previews above the value cap', async () => {
+    const app = buildApp();
+    const values = Array.from({ length: 251 }, (_, index) => ({
+      fieldRef: {
+        side: 'canonical',
+        namespace: 'authrim.profile',
+        path: `field_${index}`,
+      },
+      outputName: `field_${index}`,
+      classification: 'internal',
+      valueType: 'string',
+      legalBasis: 'contract',
+    }));
+
+    const response = await app.request('/preview/oidc', {
+      method: 'POST',
+      body: JSON.stringify({
+        destination: {
+          protocol: 'oidc',
+          destinationId: 'client-web',
+          purpose: 'login',
+        },
+        values,
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as ErrorResponseBody;
+    expect(body).toMatchObject({
+      error: 'invalid_request',
+      error_description: 'values must contain at most 250 items',
     });
   });
 });

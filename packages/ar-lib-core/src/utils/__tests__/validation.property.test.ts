@@ -291,35 +291,28 @@ describe('Redirect URI Registration Properties', () => {
       fc.property(
         fc.tuple(httpsRedirectUriArb, httpsRedirectUriArb).filter(([a, b]) => a !== b),
         ([provided, registered]) => {
-          // Normalize both and check they're different
-          const normalizedProvided = normalizeRedirectUri(provided);
-          const normalizedRegistered = normalizeRedirectUri(registered);
-
-          if (normalizedProvided !== normalizedRegistered) {
-            expect(isRedirectUriRegistered(provided, [registered])).toBe(false);
-          }
+          expect(isRedirectUriRegistered(provided, [registered])).toBe(false);
         }
       ),
       { numRuns: 200 }
     );
   });
 
-  it('matching ignores default ports', () => {
+  it('requires exact string matching for default ports', () => {
     expect(
       isRedirectUriRegistered('https://example.com:443/callback', ['https://example.com/callback'])
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       isRedirectUriRegistered('https://example.com/callback', ['https://example.com:443/callback'])
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it('matching is case-insensitive for hostname only', () => {
+  it('requires exact string matching for host casing and path', () => {
     expect(
       isRedirectUriRegistered('https://EXAMPLE.COM/callback', ['https://example.com/callback'])
-    ).toBe(true);
+    ).toBe(false);
 
-    // Path should be case-sensitive
     expect(
       isRedirectUriRegistered('https://example.com/CallBack', ['https://example.com/callback'])
     ).toBe(false);

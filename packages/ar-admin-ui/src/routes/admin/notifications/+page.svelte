@@ -179,7 +179,12 @@
 			<h1>Notification Center</h1>
 		</div>
 		<div class="header-actions">
-			<button class="btn btn-secondary" type="button" onclick={runDelivery} disabled={deliveryRunning}>
+			<button
+				class="btn btn-secondary"
+				type="button"
+				onclick={runDelivery}
+				disabled={deliveryRunning}
+			>
 				{deliveryRunning ? 'Delivering' : 'Run delivery'}
 			</button>
 			<button class="btn btn-primary" type="button" onclick={loadNotifications} disabled={loading}>

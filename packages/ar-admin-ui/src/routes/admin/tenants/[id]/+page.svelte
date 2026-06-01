@@ -371,7 +371,6 @@
 		}
 	}
 
-
 	async function handleSetPrimaryVanityDomain(id: string) {
 		vanityPrimaryId = id;
 		vanityError = '';
@@ -707,8 +706,8 @@
 				{#if !vanityCloudflareConfigured}
 					<div class="alert alert-warning">
 						<i class="i-ph-warning"></i>
-						Cloudflare automation is not configured. Create a Cloudflare Custom Hostname manually
-						and add the required CNAME and HTTP ownership validation records.
+						Cloudflare automation is not configured. Create a Cloudflare Custom Hostname manually and
+						add the required CNAME and HTTP ownership validation records.
 					</div>
 				{/if}
 
@@ -739,7 +738,9 @@
 				</div>
 
 				{#if vanityLoading}
-					<div class="loading-inline"><i class="i-ph-circle-notch animate-spin"></i> Loading...</div>
+					<div class="loading-inline">
+						<i class="i-ph-circle-notch animate-spin"></i> Loading...
+					</div>
 				{:else if vanityDomains.length === 0}
 					<p class="empty-text">No vanity domains configured.</p>
 				{:else}
@@ -782,7 +783,9 @@
 									<button
 										class="btn btn-secondary"
 										onclick={() => handleSetPrimaryVanityDomain(domain.id)}
-										disabled={domain.is_primary || domain.status !== 'active' || vanityPrimaryId === domain.id}
+										disabled={domain.is_primary ||
+											domain.status !== 'active' ||
+											vanityPrimaryId === domain.id}
 										title={domain.status !== 'active'
 											? 'Only active vanity domains can be primary'
 											: 'Set as primary canonical issuer'}
@@ -831,7 +834,9 @@
 				</div>
 
 				{#if settingsLoading}
-					<div class="loading-inline"><i class="i-ph-circle-notch animate-spin"></i> Loading...</div>
+					<div class="loading-inline">
+						<i class="i-ph-circle-notch animate-spin"></i> Loading...
+					</div>
 				{:else if settingsError}
 					<div class="alert alert-error">{settingsError}</div>
 				{:else if settingsMeta && settings}

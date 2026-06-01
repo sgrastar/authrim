@@ -108,20 +108,12 @@ describe('Email Code Handlers', () => {
       );
     });
 
-    it('should include code in development mode response', () => {
-      const isDev = true;
+    it('should not include code when no notifier is configured', () => {
       const code = '123456';
 
-      const response = isDev ? { success: true, code } : { success: true };
-      expect(response).toHaveProperty('code');
-    });
-
-    it('should not include code in production mode response', () => {
-      const isDev = false;
-      const code = '123456';
-
-      const response = isDev ? { success: true, code } : { success: true };
+      const response = { error: 'server_error' };
       expect(response).not.toHaveProperty('code');
+      expect(JSON.stringify(response)).not.toContain(code);
     });
   });
 

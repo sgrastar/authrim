@@ -565,9 +565,8 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
  * Revoke all sessions for a user
  * POST /admin/users/:id/revoke-all-sessions
  *
- * Note: With sharded SessionStore, we can only delete sessions from D1.
- * Sessions in SessionStore will expire naturally. For immediate invalidation,
- * consider implementing a userId -> sessionIds index in a future phase.
+ * Deletes persisted session rows and invalidates any sharded SessionStore entries
+ * that can be located from the persistence index.
  */
 export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -587,13 +586,34 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     }
 
     const log = getLogger(c).module('ADMIN');
-    log.warn(
-      'Revoking all sessions for user - sharded SessionStore sessions will expire naturally',
-      {
-        action: 'revoke_all_sessions',
-        userId,
-      }
+    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+      'SELECT id FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
+
+    let storeRevokedCount = 0;
+    for (const session of sessions) {
+      if (!isShardedSessionId(session.id)) {
+        continue;
+      }
+      try {
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, session.id, tenantId);
+        const deleted = await sessionStore.invalidateSessionRpc(session.id);
+        if (deleted) {
+          storeRevokedCount += 1;
+        } else {
+          log.warn('Failed to delete session from SessionStore', {
+            action: 'session_delete',
+            sessionId: session.id,
+          });
+        }
+      } catch {
+        log.warn('Failed to route to session store', {
+          action: 'session_delete',
+          sessionId: session.id,
+        });
+      }
+    }
 
     const deleteResult = await authCtx.coreAdapter.execute(
       'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?',
@@ -606,22 +626,24 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
       action: 'revoke_all_sessions',
       userId,
       revokedCount: dbRevokedCount,
+      storeRevokedCount,
     });
 
     await createAuditLogFromContext(c, 'user.sessions_revoked', 'user', userId, {
       revoked_count: dbRevokedCount,
+      store_revoked_count: storeRevokedCount,
     });
     scheduleAdminAuditLog(c, 'user.sessions_revoked', userId, 'success', {
       revoked_count: dbRevokedCount,
+      store_revoked_count: storeRevokedCount,
     });
 
     return c.json({
       success: true,
-      message:
-        'All user sessions revoked from D1. Active sessions in memory will expire naturally.',
+      message: 'All located user sessions were revoked.',
       userId,
       revokedCount: dbRevokedCount,
-      note: 'Sessions in sharded SessionStore cannot be bulk-deleted by userId',
+      storeRevokedCount,
     });
   } catch (error) {
     logSanitizedError('Admin revoke all sessions error', error);

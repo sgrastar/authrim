@@ -141,8 +141,9 @@
 			<div>
 				<h3 class="font-semibold text-blue-900 mb-1">End User ReBAC</h3>
 				<p class="text-sm text-blue-800">
-					This page manages relationships for <strong>End Users</strong>.
-					For <strong>Admin Operator</strong> relationship management, visit
+					This page manages relationships for <strong>End Users</strong>. For
+					<strong>Admin Operator</strong>
+					relationship management, visit
 					<a href="/admin/admin-rebac" class="underline hover:text-blue-900">Admin ReBAC</a>.
 				</p>
 			</div>

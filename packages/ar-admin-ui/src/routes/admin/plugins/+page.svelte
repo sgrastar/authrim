@@ -41,6 +41,17 @@
 		return settingsContext.tenantId || undefined;
 	}
 
+	function safePluginUrl(url: string | undefined): string | null {
+		if (!url) return null;
+		try {
+			const parsed = new URL(url);
+			if (parsed.protocol !== 'https:') return null;
+			return parsed.toString();
+		} catch {
+			return null;
+		}
+	}
+
 	// JSON Schema type definition
 	interface JSONSchemaProperty {
 		type?: string;
@@ -585,17 +596,13 @@
 	{/if}
 
 	{#if selectedPlugin?.meta?.author}
+		{@const authorUrl = safePluginUrl(selectedPlugin.meta.author.url)}
 		<div class="plugin-section">
 			<div class="plugin-section-title">Author</div>
 			<div class="plugin-info-value">
 				{selectedPlugin.meta.author.name}
-				{#if selectedPlugin.meta.author.url}
-					<a
-						href={selectedPlugin.meta.author.url}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="plugin-doc-link"
-					>
+				{#if authorUrl}
+					<a href={authorUrl} target="_blank" rel="noopener noreferrer" class="plugin-doc-link">
 						↗
 					</a>
 				{/if}
@@ -604,16 +611,19 @@
 	{/if}
 
 	{#if selectedPlugin?.meta?.documentationUrl}
-		<div class="plugin-section">
-			<a
-				href={selectedPlugin.meta.documentationUrl}
-				target="_blank"
-				rel="noopener noreferrer"
-				class="plugin-doc-link"
-			>
-				📖 Documentation ↗
-			</a>
-		</div>
+		{@const documentationUrl = safePluginUrl(selectedPlugin.meta.documentationUrl)}
+		{#if documentationUrl}
+			<div class="plugin-section">
+				<a
+					href={documentationUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="plugin-doc-link"
+				>
+					📖 Documentation ↗
+				</a>
+			</div>
+		{/if}
 	{/if}
 
 	<!-- Success/Error Messages -->

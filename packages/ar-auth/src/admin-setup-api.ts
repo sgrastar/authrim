@@ -630,7 +630,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/options', async (c) => {
  * { challengeId: string, credential: AuthenticationResponseJSON }
  *
  * Response:
- * { verified: true, sessionId: string, userId: string, user: { id, email, name } }
+ * { verified: true, userId: string, user: { id, email, name } }
  */
 adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
   try {
@@ -765,7 +765,6 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
 
     return c.json({
       verified: true,
-      sessionId,
       userId: adminUser.id,
       user: {
         id: adminUser.id,

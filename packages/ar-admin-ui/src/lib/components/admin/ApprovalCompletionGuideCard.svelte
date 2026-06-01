@@ -1,23 +1,23 @@
 <script lang="ts">
-	import type { ApprovalCompletionRequirements } from '$lib/api/admin-approvals'
+	import type { ApprovalCompletionRequirements } from '$lib/api/admin-approvals';
 
 	interface Props {
-		requirements: ApprovalCompletionRequirements
-		completionPath?: string
-		artifactId?: string
+		requirements: ApprovalCompletionRequirements;
+		completionPath?: string;
+		artifactId?: string;
 	}
 
-	let { requirements, completionPath = '', artifactId = '' }: Props = $props()
+	let { requirements, completionPath = '', artifactId = '' }: Props = $props();
 
 	function formatMethods(methods: string[]): string {
-		return methods.length ? methods.join(', ') : '-'
+		return methods.length ? methods.join(', ') : '-';
 	}
 
 	function formatAssertionEndpoints(
 		endpoints: ApprovalCompletionRequirements['assertion_endpoints']
 	): string[] {
-		if (!endpoints) return []
-		return Object.entries(endpoints).map(([key, value]) => `${key}: ${value}`)
+		if (!endpoints) return [];
+		return Object.entries(endpoints).map(([key, value]) => `${key}: ${value}`);
 	}
 </script>
 
@@ -71,7 +71,7 @@
 		<details class="guide-details">
 			<summary>Assertion Endpoints</summary>
 			<ul>
-					{#each formatAssertionEndpoints(requirements.assertion_endpoints) as endpoint (endpoint)}
+				{#each formatAssertionEndpoints(requirements.assertion_endpoints) as endpoint (endpoint)}
 					<li class="monospace">{endpoint}</li>
 				{/each}
 			</ul>

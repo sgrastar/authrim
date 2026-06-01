@@ -210,7 +210,9 @@
 		<!-- Definitions Grid -->
 		<div class="grid grid-cols-1 gap-4">
 			{#each filteredDefinitions as definition (definition.id)}
-				<div class="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+				<div
+					class="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow"
+				>
 					<div class="flex items-start justify-between">
 						<div class="flex-1">
 							<div class="flex items-center space-x-3 mb-2">
@@ -262,20 +264,16 @@
 </div>
 
 <!-- Create Dialog -->
-	{#if showCreateDialog}
-		<div
-			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-			role="button"
-			tabindex="0"
-			aria-label="Close create relationship definition dialog"
-			on:click|self={() => (showCreateDialog = false)}
-			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
-		>
-			<div
-				class="bg-white rounded-lg max-w-md w-full p-6"
-				role="dialog"
-				aria-modal="true"
-			>
+{#if showCreateDialog}
+	<div
+		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+		role="button"
+		tabindex="0"
+		aria-label="Close create relationship definition dialog"
+		on:click|self={() => (showCreateDialog = false)}
+		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
+	>
+		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
 			<h2 class="text-xl font-semibold mb-4">Create Relationship Definition</h2>
 
 			{#if createError}
@@ -365,20 +363,16 @@
 {/if}
 
 <!-- Edit Dialog -->
-	{#if showEditDialog && editingDefinition}
-		<div
-			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-			role="button"
-			tabindex="0"
-			aria-label="Close edit relationship definition dialog"
-			on:click|self={() => (showEditDialog = false)}
-			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showEditDialog = false))}
-		>
-			<div
-				class="bg-white rounded-lg max-w-md w-full p-6"
-				role="dialog"
-				aria-modal="true"
-			>
+{#if showEditDialog && editingDefinition}
+	<div
+		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+		role="button"
+		tabindex="0"
+		aria-label="Close edit relationship definition dialog"
+		on:click|self={() => (showEditDialog = false)}
+		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showEditDialog = false))}
+	>
+		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
 			<h2 class="text-xl font-semibold mb-4">Edit Relationship Definition</h2>
 
 			{#if editError}
@@ -389,12 +383,12 @@
 
 			<form on:submit|preventDefault={handleEdit}>
 				<div class="space-y-4">
-						<div>
-							<p class="block text-sm font-medium text-gray-700 mb-1">Relation Name</p>
-							<div class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-mono text-sm">
-								{editingDefinition.relation_name}
-							</div>
-							<p class="text-xs text-gray-500 mt-1">Relation name cannot be changed</p>
+					<div>
+						<p class="block text-sm font-medium text-gray-700 mb-1">Relation Name</p>
+						<div class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-mono text-sm">
+							{editingDefinition.relation_name}
+						</div>
+						<p class="text-xs text-gray-500 mt-1">Relation name cannot be changed</p>
 					</div>
 
 					<div>
@@ -460,20 +454,16 @@
 {/if}
 
 <!-- Delete Confirmation Dialog -->
-	{#if showDeleteDialog && deletingDefinition}
-		<div
-			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-			role="button"
-			tabindex="0"
-			aria-label="Close delete relationship definition dialog"
-			on:click|self={() => (showDeleteDialog = false)}
-			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
-		>
-			<div
-				class="bg-white rounded-lg max-w-md w-full p-6"
-				role="dialog"
-				aria-modal="true"
-			>
+{#if showDeleteDialog && deletingDefinition}
+	<div
+		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+		role="button"
+		tabindex="0"
+		aria-label="Close delete relationship definition dialog"
+		on:click|self={() => (showDeleteDialog = false)}
+		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
+	>
+		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
 			<h2 class="text-xl font-semibold mb-4">Delete Relationship Definition</h2>
 
 			{#if deleteError}

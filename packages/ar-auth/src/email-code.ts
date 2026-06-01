@@ -287,16 +287,10 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       const emailNotifier = pluginCtx.registry.getNotifier('email');
 
       if (!emailNotifier) {
-        // Development mode: no email notifier configured
         log.warn('No email notifier plugin configured', {
           action: 'notifier_check',
-          devCode: code,
         });
-        return c.json({
-          success: true,
-          message: 'Verification code generated (email not sent - no notifier plugin configured)',
-          code: code, // Only for development
-        });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
       const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';

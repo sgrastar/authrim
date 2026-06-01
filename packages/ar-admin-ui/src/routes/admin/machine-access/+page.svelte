@@ -50,7 +50,9 @@
 	let credentialDisplayName = $state('');
 	let credentialDescription = $state('');
 	let credentialAlg: AdminMachineCredentialAlgorithm = $state('ES256');
-	let credentialPublicJwk = $state('{\n  "kty": "EC",\n  "crv": "P-256",\n  "x": "",\n  "y": ""\n}');
+	let credentialPublicJwk = $state(
+		'{\n  "kty": "EC",\n  "crv": "P-256",\n  "x": "",\n  "y": ""\n}'
+	);
 	let credentialPermissions = $state('');
 	let credentialTenantScopes = $state('');
 
@@ -138,7 +140,9 @@
 		if (!selectedPrincipal) return;
 		const refreshed = await adminMachineAccessAPI.get(selectedPrincipal.id);
 		selectedPrincipal = refreshed;
-		principals = principals.map((principal) => (principal.id === refreshed.id ? refreshed : principal));
+		principals = principals.map((principal) =>
+			principal.id === refreshed.id ? refreshed : principal
+		);
 		if (selectedCredential) {
 			selectedCredential =
 				refreshed.credentials.find((credential) => credential.id === selectedCredential?.id) ||
@@ -157,7 +161,9 @@
 			});
 			principals = response.items;
 			if (selectedPrincipal) {
-				const stillSelected = principals.find((principal) => principal.id === selectedPrincipal?.id);
+				const stillSelected = principals.find(
+					(principal) => principal.id === selectedPrincipal?.id
+				);
 				if (stillSelected) {
 					selectPrincipal(stillSelected);
 				} else {
@@ -336,7 +342,9 @@
 	<div class="page-header">
 		<div>
 			<h1 class="page-title">Admin Machine Access</h1>
-			<p class="page-description">Manage scoped machine principals, credentials, and tenant grants.</p>
+			<p class="page-description">
+				Manage scoped machine principals, credentials, and tenant grants.
+			</p>
 		</div>
 		<div class="page-actions">
 			<select class="form-select" bind:value={statusFilter} onchange={() => void loadPrincipals()}>
@@ -488,7 +496,11 @@
 						placeholder="Disable reason"
 						disabled={selectedPrincipal.status !== 'active'}
 					/>
-					<button class="btn btn-warning" onclick={() => void togglePrincipalStatus()} disabled={saving}>
+					<button
+						class="btn btn-warning"
+						onclick={() => void togglePrincipalStatus()}
+						disabled={saving}
+					>
 						{selectedPrincipal.status === 'active' ? 'Disable' : 'Enable'}
 					</button>
 				</div>
@@ -520,13 +532,29 @@
 				{#if selectedCredential}
 					<div class="credential-detail">
 						<dl>
-							<div><dt>ID</dt><dd>{selectedCredential.id}</dd></div>
-							<div><dt>Last used</dt><dd>{formatDate(selectedCredential.lastUsedAt)}</dd></div>
-							<div><dt>Last IP</dt><dd>{selectedCredential.lastUsedIp || '-'}</dd></div>
-							<div><dt>Expires</dt><dd>{formatDate(selectedCredential.expiresAt)}</dd></div>
+							<div>
+								<dt>ID</dt>
+								<dd>{selectedCredential.id}</dd>
+							</div>
+							<div>
+								<dt>Last used</dt>
+								<dd>{formatDate(selectedCredential.lastUsedAt)}</dd>
+							</div>
+							<div>
+								<dt>Last IP</dt>
+								<dd>{selectedCredential.lastUsedIp || '-'}</dd>
+							</div>
+							<div>
+								<dt>Expires</dt>
+								<dd>{formatDate(selectedCredential.expiresAt)}</dd>
+							</div>
 						</dl>
 						<div class="button-row">
-							<input class="form-input compact" bind:value={emergencyReason} placeholder="Revoke reason" />
+							<input
+								class="form-input compact"
+								bind:value={emergencyReason}
+								placeholder="Revoke reason"
+							/>
 							<button
 								class="btn btn-danger"
 								onclick={() => void emergencyRevokeCredential()}
@@ -609,7 +637,13 @@
 					</label>
 					<label>
 						Overlap seconds
-						<input class="form-input" type="number" min="0" max="604800" bind:value={rotateOverlapSeconds} />
+						<input
+							class="form-input"
+							type="number"
+							min="0"
+							max="604800"
+							bind:value={rotateOverlapSeconds}
+						/>
 					</label>
 					<label class="wide">
 						Public JWK

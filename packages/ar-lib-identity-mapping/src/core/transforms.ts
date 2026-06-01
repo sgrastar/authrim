@@ -101,6 +101,16 @@ const transformSchemas = new Map(
   TRANSFORM_OPERATION_SCHEMAS.map((schema) => [schema.operation, schema])
 );
 
+const TRANSFORM_PARAMETER_MAX_CHARS = 2048;
+const TRANSFORM_KEY_MAP_MAX_CHARS = 4096;
+const TRANSFORM_JSON_MAX_BYTES = 32 * 1024;
+const TRANSFORM_JSON_MAX_DEPTH = 12;
+const TRANSFORM_JSON_MAX_NODES = 1000;
+const TRANSFORM_JSON_MAX_ARRAY_ITEMS = 500;
+const TRANSFORM_JSON_MAX_OBJECT_KEYS = 200;
+const TRANSFORM_JSON_PATH_MAX_CHARS = 512;
+const TRANSFORM_JSON_PATH_MAX_SEGMENTS = 32;
+
 export function validateTransformStep(step: MappingTransformStep): ValidationResult {
   const reasons: ReasonCode[] = [];
   const schema = transformSchemas.get(step.operation);
@@ -334,7 +344,7 @@ function parseTextValueSet(value: unknown, defaults: string[]): Set<string> {
 function buildJsonValue(
   values: SourceValueEnvelope[],
   parameters: Record<string, unknown> | undefined
-): Record<string, unknown> | unknown[] | null {
+): Record<string, unknown> | unknown[] | null | undefined {
   if (values.length === 1) {
     const parsed = parseJsonText(values[0]?.value);
     if (parsed !== undefined) {
@@ -354,16 +364,24 @@ function buildJsonValue(
     const key = uniqueJsonKey(jsonBuildKey(source, keyMap), seenKeys);
     output[key] = parseJsonText(rawValue) ?? (rawValue === undefined ? null : rawValue);
   }
-  return output;
+  return isJsonWithinBudget(output) ? output : undefined;
 }
 
 function parseKeyMap(value: unknown): Record<string, string> {
   if (typeof value !== 'string' || value.trim().length === 0) {
     return {};
   }
+  if (value.length > TRANSFORM_KEY_MAP_MAX_CHARS) {
+    return {};
+  }
   try {
     const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (
+      !isJsonWithinBudget(parsed) ||
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed)
+    ) {
       return {};
     }
     return Object.fromEntries(
@@ -418,7 +436,7 @@ function uniqueJsonKey(key: string, seenKeys: Set<string>): string {
 
 function parseJsonText(value: unknown): Record<string, unknown> | unknown[] | undefined {
   if (value && typeof value === 'object') {
-    return value as Record<string, unknown> | unknown[];
+    return isJsonWithinBudget(value) ? (value as Record<string, unknown> | unknown[]) : undefined;
   }
   if (typeof value !== 'string') {
     return undefined;
@@ -427,9 +445,12 @@ function parseJsonText(value: unknown): Record<string, unknown> | unknown[] | un
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
     return undefined;
   }
+  if (jsonByteLength(trimmed) > TRANSFORM_JSON_MAX_BYTES) {
+    return undefined;
+  }
   try {
     const parsed = JSON.parse(trimmed) as unknown;
-    return parsed && typeof parsed === 'object'
+    return parsed && typeof parsed === 'object' && isJsonWithinBudget(parsed)
       ? (parsed as Record<string, unknown> | unknown[])
       : undefined;
   } catch {
@@ -448,7 +469,11 @@ function extractTextValue(value: unknown, path: unknown): string | null {
   if (typeof extracted === 'number' || typeof extracted === 'boolean') {
     return String(extracted);
   }
-  return JSON.stringify(extracted);
+  if (!isJsonWithinBudget(extracted)) {
+    return null;
+  }
+  const serialized = JSON.stringify(extracted);
+  return serialized.length <= TRANSFORM_PARAMETER_MAX_CHARS ? serialized : null;
 }
 
 function extractIntegerValue(value: unknown, path: unknown): number | null {
@@ -470,8 +495,12 @@ function extractJsonValue(value: unknown, path: unknown): unknown {
   if (typeof path !== 'string' || path.trim().length === 0) {
     return root;
   }
+  const segments = parseJsonPath(path);
+  if (!segments) {
+    return undefined;
+  }
   let current: unknown = root;
-  for (const segment of parseJsonPath(path)) {
+  for (const segment of segments) {
     if (current === undefined || current === null) {
       return undefined;
     }
@@ -487,7 +516,10 @@ function extractJsonValue(value: unknown, path: unknown): unknown {
   return current;
 }
 
-function parseJsonPath(path: string): Array<string | number> {
+function parseJsonPath(path: string): Array<string | number> | null {
+  if (path.length > TRANSFORM_JSON_PATH_MAX_CHARS) {
+    return null;
+  }
   const segments: Array<string | number> = [];
   for (const part of path.trim().split('.')) {
     const keyMatch = part.match(/^[^\[]+/u);
@@ -499,7 +531,7 @@ function parseJsonPath(path: string): Array<string | number> {
       segments.push(Number.parseInt(match[1] ?? '0', 10));
     }
   }
-  return segments;
+  return segments.length <= TRANSFORM_JSON_PATH_MAX_SEGMENTS ? segments : null;
 }
 
 function isTransformOutputValid(operation: TransformOperation, value: unknown): boolean {
@@ -527,7 +559,7 @@ function isTransformOutputValid(operation: TransformOperation, value: unknown): 
     return typeof value === 'number' && Number.isFinite(value);
   }
   if (schema.outputValueType === 'json') {
-    return typeof value === 'object';
+    return typeof value === 'object' && isJsonWithinBudget(value);
   }
   return true;
 }
@@ -546,7 +578,16 @@ function isParameterValueValid(
 ): boolean {
   switch (parameter.kind) {
     case 'string':
-      return typeof value === 'string';
+      if (typeof value !== 'string') {
+        return false;
+      }
+      if (parameter.name === 'path') {
+        return value.length <= TRANSFORM_JSON_PATH_MAX_CHARS && parseJsonPath(value) !== null;
+      }
+      if (parameter.name === 'keyMap') {
+        return value.length <= TRANSFORM_KEY_MAP_MAX_CHARS;
+      }
+      return value.length <= TRANSFORM_PARAMETER_MAX_CHARS;
     case 'number':
       return typeof value === 'number';
     case 'boolean':
@@ -560,4 +601,44 @@ function isParameterValueValid(
     default:
       return false;
   }
+}
+
+function isJsonWithinBudget(value: unknown): boolean {
+  const seen = new WeakSet<object>();
+  let nodeCount = 0;
+
+  const visit = (item: unknown, depth: number): boolean => {
+    nodeCount += 1;
+    if (nodeCount > TRANSFORM_JSON_MAX_NODES || depth > TRANSFORM_JSON_MAX_DEPTH) {
+      return false;
+    }
+    if (typeof item === 'string' && item.length > TRANSFORM_PARAMETER_MAX_CHARS) {
+      return false;
+    }
+    if (item === undefined || item === null || typeof item !== 'object') {
+      return true;
+    }
+    if (seen.has(item)) {
+      return false;
+    }
+    seen.add(item);
+    if (Array.isArray(item)) {
+      return (
+        item.length <= TRANSFORM_JSON_MAX_ARRAY_ITEMS &&
+        item.every((child) => visit(child, depth + 1))
+      );
+    }
+    const entries = Object.entries(item);
+    return (
+      entries.length <= TRANSFORM_JSON_MAX_OBJECT_KEYS &&
+      entries.every(([, child]) => visit(child, depth + 1))
+    );
+  };
+
+  return visit(value, 0) && jsonByteLength(value) <= TRANSFORM_JSON_MAX_BYTES;
+}
+
+function jsonByteLength(value: unknown): number {
+  const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+  return new TextEncoder().encode(text).length;
 }

@@ -533,6 +533,18 @@ describe('Consent Handlers', () => {
 
       // Should save consent to database
       expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('oauth_client_consents'));
+      const jsonBody = c.json.mock.calls[0][0] as { redirect_url: string };
+      const redirectUrl = new URL(jsonBody.redirect_url, 'https://example.com');
+      const confirmationChallenge = redirectUrl.searchParams.get('_consent_confirmation_challenge');
+      expect(confirmationChallenge).toBeTruthy();
+      expect(redirectUrl.searchParams.get('_consent_confirmed')).toBeNull();
+      expect(challengeStore._challenges.get(confirmationChallenge!)).toMatchObject({
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+        },
+      });
     });
 
     it('should handle form-encoded requests', async () => {

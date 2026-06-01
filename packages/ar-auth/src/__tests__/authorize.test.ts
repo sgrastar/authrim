@@ -304,6 +304,19 @@ describe('Authorization Handler', () => {
       expect(location).toContain('challenge_id=');
     });
 
+    it('should ignore caller-supplied internal confirmation parameters', async () => {
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state&_confirmed=true&_session_user_id=victim-user&_auth_time=1700000000',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toContain('/flow/login');
+      expect(location).not.toContain('code=');
+    });
+
     it('should preserve state parameter through login redirect', async () => {
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=my-state',
@@ -504,6 +517,54 @@ describe('Authorization Handler', () => {
         'Invalid code_challenge format'
       );
     });
+
+    it('should require PKCE with S256 when the client requires PKCE', async () => {
+      mockGetClient.mockResolvedValue({
+        client_id: 'pkce-client',
+        client_secret: 'test-secret',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile',
+        token_endpoint_auth_method: 'client_secret_basic',
+        require_pkce: true,
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=pkce-client&redirect_uri=https://example.com/callback&scope=openid&state=pkce-required',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
+      expect(redirectUrl.searchParams.get('error_description')).toContain('PKCE with S256');
+      expect(redirectUrl.searchParams.get('state')).toBe('pkce-required');
+    });
+
+    it('should require PKCE with S256 for public clients', async () => {
+      mockGetClient.mockResolvedValue({
+        client_id: 'public-client',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile',
+        token_endpoint_auth_method: 'none',
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=public-client&redirect_uri=https://example.com/callback&scope=openid&state=public-pkce',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
+      expect(redirectUrl.searchParams.get('error_description')).toContain('PKCE with S256');
+      expect(redirectUrl.searchParams.get('state')).toBe('public-pkce');
+    });
   });
 
   describe('Parameter Validation - Direct Errors', () => {
@@ -582,6 +643,29 @@ describe('Authorization Handler', () => {
       expect(body).toContain('Invalid Authorization Request');
       expect(body).toContain('unsupported_response_type');
       expect(body).toContain('Unsupported response_type');
+    });
+
+    it('escapes attacker-controlled values in local authorization error pages', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          ui: {
+            baseUrl: 'https://login.example.com',
+          },
+        })
+      );
+
+      const response = await app.request(
+        '/authorize?response_type=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.text();
+      expect(body).toContain('&lt;img src=x onerror=alert(1)&gt;');
+      expect(body).not.toContain('<img src=x onerror=alert(1)>');
     });
 
     it('should return 400 when client_id is missing', async () => {
@@ -748,7 +832,7 @@ describe('Authorization Handler', () => {
           codeChallenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
           codeChallengeMethod: 'S256',
           state: 'session-state',
-          sid: TEST_SESSION_ID,
+          sid: expect.not.stringMatching('session_test-session'),
         })
       );
     });
@@ -756,6 +840,7 @@ describe('Authorization Handler', () => {
     it('issues a handoff token for prompt=none SSO without returning an authorization code', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
+        'client.consent_required': false,
       });
       seedSession(env);
 
@@ -789,6 +874,56 @@ describe('Authorization Handler', () => {
           aud: 'handoff',
         }),
       });
+    });
+
+    it('does not let handoff bypass prompt=none consent requirements', async () => {
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+      });
+      seedSession(env);
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=handoff-state&prompt=none&handoff=true',
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      const redirectUrl = new URL(location!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://example.com/callback');
+      expect(redirectUrl.searchParams.get('error')).toBe('consent_required');
+      expect(redirectUrl.searchParams.get('handoff_token')).toBeNull();
+    });
+
+    it('ignores caller-supplied consent confirmation flags', async () => {
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+      });
+      seedSession(env);
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=consent-state&prompt=none&_consent_confirmed=true',
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://example.com/callback');
+      expect(redirectUrl.searchParams.get('error')).toBe('consent_required');
+      expect(redirectUrl.searchParams.get('code')).toBeNull();
     });
 
     it('rejects response_type=none when the tenant profile does not allow session-check responses', async () => {
@@ -999,8 +1134,20 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('state')).toBe('login-state');
       expect(redirect.searchParams.get('nonce')).toBe('login-nonce');
       expect(redirect.searchParams.get('code_challenge_method')).toBe('S256');
-      expect(redirect.searchParams.get('_confirmed')).toBe('true');
-      expect(redirect.searchParams.get('_auth_time')).toMatch(/^\d+$/);
+      const confirmationChallenge = redirect.searchParams.get('_confirmation_challenge');
+      expect(confirmationChallenge).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      );
+      expect(getChallengeMap(env).get(confirmationChallenge!)).toEqual(
+        expect.objectContaining({
+          type: 'reauth',
+          userId: expect.any(String),
+          metadata: expect.objectContaining({
+            purpose: 'authorize_confirmation',
+            authTime: expect.any(Number),
+          }),
+        })
+      );
       expect(getChallengeMap(env).has('login_challenge')).toBe(false);
     });
 
@@ -1050,9 +1197,21 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('client_id')).toBe('test-client');
       expect(redirect.searchParams.get('state')).toBe('reauth-state');
       expect(redirect.searchParams.get('prompt')).toBe('login');
-      expect(redirect.searchParams.get('_confirmed')).toBe('true');
-      expect(redirect.searchParams.get('_auth_time')).toBe('1700000000');
-      expect(redirect.searchParams.get('_session_user_id')).toBe('test-user');
+      const confirmationChallenge = redirect.searchParams.get('_confirmation_challenge');
+      expect(confirmationChallenge).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      );
+      expect(getChallengeMap(env).get(confirmationChallenge!)).toEqual(
+        expect.objectContaining({
+          type: 'reauth',
+          userId: 'test-user',
+          metadata: expect.objectContaining({
+            purpose: 'authorize_confirmation',
+            authTime: 1700000000,
+            sessionUserId: 'test-user',
+          }),
+        })
+      );
       expect(getChallengeMap(env).has('reauth_challenge')).toBe(false);
     });
 
@@ -1276,6 +1435,31 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error')).toBe('invalid_scope');
       expect(redirectUrl.searchParams.get('error_description')).toContain('email');
       expect(redirectUrl.searchParams.get('state')).toBe('scoped-state');
+    });
+
+    it('should reject scopes outside the client allowed_scopes whitelist', async () => {
+      mockGetClient.mockResolvedValue({
+        client_id: 'allowed-scopes-client',
+        client_secret: 'test-secret',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        allowed_scopes: ['openid', 'profile'],
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=allowed-scopes-client&redirect_uri=https://example.com/callback&scope=openid%20email&state=allowed-state',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.searchParams.get('error')).toBe('invalid_scope');
+      expect(redirectUrl.searchParams.get('error_description')).toContain('email');
+      expect(redirectUrl.searchParams.get('state')).toBe('allowed-state');
     });
 
     it('should reject authorization_details when RAR is not enabled', async () => {

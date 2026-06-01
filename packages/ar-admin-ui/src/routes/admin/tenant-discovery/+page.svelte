@@ -104,10 +104,13 @@
 
 	const currentTenantId = $derived(settingsContext.tenantId);
 	const currentTenantName = $derived(
-		settingsContext.availableTenants.find((tenant) => tenant.id === currentTenantId)?.name || currentTenantId
+		settingsContext.availableTenants.find((tenant) => tenant.id === currentTenantId)?.name ||
+			currentTenantId
 	);
 	const singleTenantMode = $derived(tenantStore.singleTenantMode);
-	const canEditTenant = $derived(settingsContext.getPermissionForScope('tenant', adminAuth.user?.roles ?? []) === 'edit');
+	const canEditTenant = $derived(
+		settingsContext.getPermissionForScope('tenant', adminAuth.user?.roles ?? []) === 'edit'
+	);
 	const canEditPlatform = $derived(
 		settingsContext.getPermissionForScope('platform', adminAuth.user?.roles ?? []) === 'edit'
 	);
@@ -116,24 +119,25 @@
 	const hasBehaviorChanges = $derived(
 		initialBehaviorValues
 			? JSON.stringify(buildTenantBehaviorValues(behaviorForm, singleTenantMode)) !==
-				JSON.stringify(initialBehaviorValues)
+					JSON.stringify(initialBehaviorValues)
 			: false
 	);
 	const hasCommonEntryBehaviorChanges = $derived(
 		initialCommonEntryBehaviorValues
 			? JSON.stringify(buildBehaviorValues(commonEntryBehaviorForm)) !==
-				JSON.stringify(initialCommonEntryBehaviorValues)
+					JSON.stringify(initialCommonEntryBehaviorValues)
 			: false
 	);
 	const hasCommonEntryChanges = $derived(
 		initialCommonEntryValues
-			? JSON.stringify(buildDiscoveryUiValues(commonEntryForm)) !== JSON.stringify(initialCommonEntryValues)
+			? JSON.stringify(buildDiscoveryUiValues(commonEntryForm)) !==
+					JSON.stringify(initialCommonEntryValues)
 			: false
 	);
 	const hasTenantUiChanges = $derived(
 		initialTenantUiValues
 			? JSON.stringify(buildTenantDiscoveryUiValues(tenantUiForm, singleTenantMode)) !==
-				JSON.stringify(initialTenantUiValues)
+					JSON.stringify(initialTenantUiValues)
 			: false
 	);
 	function getBehaviorValidationError(form: LoginEntryForm | null): string {
@@ -182,8 +186,7 @@
 				};
 			case 'discovery_required':
 				return {
-					description:
-						'Users must resolve a tenant before login methods are shown.',
+					description: 'Users must resolve a tenant before login methods are shown.',
 					sample: 'Use when the shared login entry should always choose a tenant first.'
 				};
 		}
@@ -199,8 +202,7 @@
 		switch (policy) {
 			case 'exact_email_only':
 				return {
-					description:
-						'Resolve the tenant only when the full email address is explicitly mapped.',
+					description: 'Resolve the tenant only when the full email address is explicitly mapped.',
 					sample: 'alice@example.edu must have its own mapping.'
 				};
 			case 'exact_email_then_domain':
@@ -293,8 +295,7 @@
 				typeof settings.values['login-entry.override_enabled'] === 'boolean'
 					? settings.values['login-entry.override_enabled']
 					: (options?.overrideEnabledDefault ?? false),
-			mode:
-				(settings.values['login-entry.mode'] as LoginEntryForm['mode']) ?? 'discovery_optional',
+			mode: (settings.values['login-entry.mode'] as LoginEntryForm['mode']) ?? 'discovery_optional',
 			emailResolutionPolicy:
 				resolvedEmailResolutionPolicy === 'disabled'
 					? 'exact_email_then_domain'
@@ -306,10 +307,7 @@
 			selectionPolicy:
 				(settings.values['login-entry.selection_policy'] as LoginEntryForm['selectionPolicy']) ??
 				'select_if_multiple',
-			allowManualTenantEntry: readBoolean(
-				settings.values,
-				'login-entry.allow_manual_tenant_entry'
-			),
+			allowManualTenantEntry: readBoolean(settings.values, 'login-entry.allow_manual_tenant_entry'),
 			rememberLastTenant: readBoolean(settings.values, 'login-entry.remember_last_tenant'),
 			redirectDefaultLoginToDiscovery: readBoolean(
 				settings.values,
@@ -338,25 +336,28 @@
 			overrideEnabledDefault?: boolean;
 		}
 	): DiscoveryUiForm {
-		const inheritFromLoginUi = readBoolean(settings.values, 'tenant-discovery-ui.inherit_from_login_ui');
+		const inheritFromLoginUi = readBoolean(
+			settings.values,
+			'tenant-discovery-ui.inherit_from_login_ui'
+		);
 		const platformValues = options?.platformSettings?.values ?? {};
 		const loginUiValues = options?.loginUiSettings?.values ?? {};
 		const loginUiFallback: LoginUiFallback = {
 			theme:
 				(typeof loginUiValues['login-ui.theme'] === 'string' &&
-				String(loginUiValues['login-ui.theme']).trim()) ||
+					String(loginUiValues['login-ui.theme']).trim()) ||
 				DISCOVERY_UI_RUNTIME_DEFAULTS.theme,
 			variant:
 				(typeof loginUiValues['login-ui.variant'] === 'string' &&
-				String(loginUiValues['login-ui.variant']).trim()) ||
+					String(loginUiValues['login-ui.variant']).trim()) ||
 				DISCOVERY_UI_RUNTIME_DEFAULTS.variant,
 			brandName:
 				(typeof loginUiValues['login-ui.brand_name'] === 'string' &&
-				String(loginUiValues['login-ui.brand_name']).trim()) ||
+					String(loginUiValues['login-ui.brand_name']).trim()) ||
 				DISCOVERY_UI_RUNTIME_DEFAULTS.brandName,
 			logoUrl:
 				(typeof loginUiValues['login-ui.logo_url'] === 'string' &&
-				String(loginUiValues['login-ui.logo_url']).trim()) ||
+					String(loginUiValues['login-ui.logo_url']).trim()) ||
 				''
 		};
 
@@ -443,8 +444,7 @@
 			'login-entry.allow_manual_tenant_entry': form.allowManualTenantEntry,
 			'login-entry.remember_last_tenant': form.rememberLastTenant,
 			'login-entry.redirect_default_login_to_discovery': form.redirectDefaultLoginToDiscovery,
-			'login-entry.require_common_discovery_before_login':
-				form.requireCommonDiscoveryBeforeLogin,
+			'login-entry.require_common_discovery_before_login': form.requireCommonDiscoveryBeforeLogin,
 			'login-entry.skip_discovery_if_only_one_tenant': form.skipDiscoveryIfOnlyOneTenant,
 			'login-entry.redirect_tenant_discover_to_common_entry':
 				form.redirectTenantDiscoverToCommonEntry
@@ -527,12 +527,19 @@
 
 		try {
 			const tenantId = settingsContext.resolveTenantId(currentTenantId);
-			const [loginEntryResult, tenantUiResult, tenantLoginUiResult, tenantInfoResult] = await Promise.all([
-				scopedSettingsAPI.getSettingsForScope(LOGIN_ENTRY_CATEGORY, { level: 'tenant', tenantId }),
-				scopedSettingsAPI.getSettingsForScope(DISCOVERY_UI_CATEGORY, { level: 'tenant', tenantId }),
-				scopedSettingsAPI.getSettingsForScope(LOGIN_UI_CATEGORY, { level: 'tenant', tenantId }),
-				getTenantInfo(tenantId).catch(() => null)
-			]);
+			const [loginEntryResult, tenantUiResult, tenantLoginUiResult, tenantInfoResult] =
+				await Promise.all([
+					scopedSettingsAPI.getSettingsForScope(LOGIN_ENTRY_CATEGORY, {
+						level: 'tenant',
+						tenantId
+					}),
+					scopedSettingsAPI.getSettingsForScope(DISCOVERY_UI_CATEGORY, {
+						level: 'tenant',
+						tenantId
+					}),
+					scopedSettingsAPI.getSettingsForScope(LOGIN_UI_CATEGORY, { level: 'tenant', tenantId }),
+					getTenantInfo(tenantId).catch(() => null)
+				]);
 			commonDiscoverUrl = tenantInfoResult?.discover_url ?? null;
 
 			loginEntrySettings = loginEntryResult;
@@ -754,7 +761,8 @@
 			<h1 class="page-title">Tenant Discovery</h1>
 			<p class="page-description">
 				{#if singleTenantMode}
-					Available after enabling multi-tenant mode. Use this page to configure tenant discovery flows.
+					Available after enabling multi-tenant mode. Use this page to configure tenant discovery
+					flows.
 				{:else}
 					Configure tenant resolution behavior and customize the discovery screen.
 				{/if}
@@ -769,9 +777,9 @@
 	{:else if singleTenantMode}
 		<section class="panel">
 			<div class="alert alert-info">
-				Tenant discovery is disabled while this deployment is running in single-tenant mode.
-				You can start from `workers.dev`, add an API custom domain later, and then enable
-				multi-tenant mode in Setup.
+				Tenant discovery is disabled while this deployment is running in single-tenant mode. You can
+				start from `workers.dev`, add an API custom domain later, and then enable multi-tenant mode
+				in Setup.
 			</div>
 		</section>
 		<section class="panel">
@@ -779,8 +787,8 @@
 				<div>
 					<h2>Discovery Controls</h2>
 					<p>
-						Common entry, tenant resolution, and discovery screen overrides become available
-						after multi-tenant mode is enabled.
+						Common entry, tenant resolution, and discovery screen overrides become available after
+						multi-tenant mode is enabled.
 					</p>
 				</div>
 			</div>
@@ -798,7 +806,11 @@
 				<div class="section-header">
 					<div>
 						<h2>Common Entry Login Behavior</h2>
-						<p>Controls the shared entry page before a tenant is selected. Current URL: <code>{commonDiscoverDisplay}</code>.</p>
+						<p>
+							Controls the shared entry page before a tenant is selected. Current URL: <code
+								>{commonDiscoverDisplay}</code
+							>.
+						</p>
 					</div>
 				</div>
 
@@ -813,7 +825,8 @@
 				{/if}
 				{#if !canEditPlatform}
 					<div class="alert alert-info">
-						Common entry behavior is a platform setting. Tenant admins can review it, but cannot edit it.
+						Common entry behavior is a platform setting. Tenant admins can review it, but cannot
+						edit it.
 					</div>
 				{/if}
 
@@ -841,9 +854,13 @@
 							<select
 								id="common-email-policy"
 								bind:value={commonEntryBehaviorForm.emailResolutionPolicy}
-								disabled={!canEditPlatform || commonEntryBehaviorSaving || !commonEntryBehaviorForm.emailEnabled}
+								disabled={!canEditPlatform ||
+									commonEntryBehaviorSaving ||
+									!commonEntryBehaviorForm.emailEnabled}
 							>
-								<option value="exact_email_then_domain">Exact email, then email-domain fallback</option>
+								<option value="exact_email_then_domain"
+									>Exact email, then email-domain fallback</option
+								>
 								<option value="exact_email_only">Exact email only</option>
 							</select>
 							<div class="inline-help">
@@ -957,7 +974,8 @@
 								checked={commonEntryBehaviorForm.allowManualTenantEntry}
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 								onchange={(value) => {
-									if (commonEntryBehaviorForm) commonEntryBehaviorForm.allowManualTenantEntry = value;
+									if (commonEntryBehaviorForm)
+										commonEntryBehaviorForm.allowManualTenantEntry = value;
 								}}
 							/>
 						</div>
@@ -978,14 +996,17 @@
 						<div class="toggle-row">
 							<div>
 								<strong>Redirect default login to discovery</strong>
-								<p>Redirect common-entry <code>/login</code> requests to <code>/discover</code> when appropriate.</p>
+								<p>
+									Redirect common-entry <code>/login</code> requests to <code>/discover</code> when appropriate.
+								</p>
 							</div>
 							<ToggleSwitch
 								id="common-redirect-default-login"
 								checked={commonEntryBehaviorForm.redirectDefaultLoginToDiscovery}
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 								onchange={(value) => {
-									if (commonEntryBehaviorForm) commonEntryBehaviorForm.redirectDefaultLoginToDiscovery = value;
+									if (commonEntryBehaviorForm)
+										commonEntryBehaviorForm.redirectDefaultLoginToDiscovery = value;
 								}}
 							/>
 						</div>
@@ -993,39 +1014,41 @@
 							<div>
 								<strong>Require common discovery before tenant login</strong>
 								<p>
-									When enabled, direct tenant-host <code>/login</code> visits must pass through the
-									shared discover screen first. Challenge-based OIDC login is unchanged.
+									When enabled, direct tenant-host <code>/login</code> visits must pass through the shared
+									discover screen first. Challenge-based OIDC login is unchanged.
 								</p>
 							</div>
-						<ToggleSwitch
-							id="common-require-discovery-before-login"
-							checked={commonEntryBehaviorForm.requireCommonDiscoveryBeforeLogin}
-							disabled={!canEditPlatform || commonEntryBehaviorSaving}
-							onchange={(value) => {
-								if (commonEntryBehaviorForm) commonEntryBehaviorForm.requireCommonDiscoveryBeforeLogin = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Redirect tenant discover to common entry</strong>
-							<p>Redirect tenant-host and vanity-host <code>/discover</code> to common entry.</p>
+							<ToggleSwitch
+								id="common-require-discovery-before-login"
+								checked={commonEntryBehaviorForm.requireCommonDiscoveryBeforeLogin}
+								disabled={!canEditPlatform || commonEntryBehaviorSaving}
+								onchange={(value) => {
+									if (commonEntryBehaviorForm)
+										commonEntryBehaviorForm.requireCommonDiscoveryBeforeLogin = value;
+								}}
+							/>
 						</div>
-						<ToggleSwitch
-							id="common-redirect-tenant-discover"
-							checked={commonEntryBehaviorForm.redirectTenantDiscoverToCommonEntry}
-							disabled={!canEditPlatform || commonEntryBehaviorSaving}
-							onchange={(value) => {
-								if (commonEntryBehaviorForm) commonEntryBehaviorForm.redirectTenantDiscoverToCommonEntry = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Skip discovery when only one tenant exists</strong>
+						<div class="toggle-row">
+							<div>
+								<strong>Redirect tenant discover to common entry</strong>
+								<p>Redirect tenant-host and vanity-host <code>/discover</code> to common entry.</p>
+							</div>
+							<ToggleSwitch
+								id="common-redirect-tenant-discover"
+								checked={commonEntryBehaviorForm.redirectTenantDiscoverToCommonEntry}
+								disabled={!canEditPlatform || commonEntryBehaviorSaving}
+								onchange={(value) => {
+									if (commonEntryBehaviorForm)
+										commonEntryBehaviorForm.redirectTenantDiscoverToCommonEntry = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>Skip discovery when only one tenant exists</strong>
 								<p>
-									When enabled, the shared <code>/discover</code> flow immediately continues to the
-									tenant login page if there is exactly one active tenant.
+									When enabled, the shared <code>/discover</code> flow immediately continues to the tenant
+									login page if there is exactly one active tenant.
 								</p>
 							</div>
 							<ToggleSwitch
@@ -1033,7 +1056,8 @@
 								checked={commonEntryBehaviorForm.skipDiscoveryIfOnlyOneTenant}
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 								onchange={(value) => {
-									if (commonEntryBehaviorForm) commonEntryBehaviorForm.skipDiscoveryIfOnlyOneTenant = value;
+									if (commonEntryBehaviorForm)
+										commonEntryBehaviorForm.skipDiscoveryIfOnlyOneTenant = value;
 								}}
 							/>
 						</div>
@@ -1043,7 +1067,10 @@
 						<button
 							class="btn btn-primary"
 							onclick={saveCommonEntryBehavior}
-							disabled={!canEditPlatform || !hasCommonEntryBehaviorChanges || commonEntryBehaviorSaving || !!commonEntryBehaviorValidationError}
+							disabled={!canEditPlatform ||
+								!hasCommonEntryBehaviorChanges ||
+								commonEntryBehaviorSaving ||
+								!!commonEntryBehaviorValidationError}
 						>
 							{#if commonEntryBehaviorSaving}Saving...{:else}Save Common Entry Behavior{/if}
 						</button>
@@ -1052,16 +1079,16 @@
 			</section>
 		{/if}
 
-			<section class="panel">
-				<div class="section-header">
-					<div>
-						<h2>{singleTenantMode ? 'Discovery Behavior' : 'Tenant Entry Override'}</h2>
-						<p>
-							{singleTenantMode
-								? 'Controls how this tenant is resolved before login.'
-								: `Controls direct entry behavior for ${currentTenantName}. This does not change the shared entry page at ${commonDiscoverDisplay}.`}
-						</p>
-					</div>
+		<section class="panel">
+			<div class="section-header">
+				<div>
+					<h2>{singleTenantMode ? 'Discovery Behavior' : 'Tenant Entry Override'}</h2>
+					<p>
+						{singleTenantMode
+							? 'Controls how this tenant is resolved before login.'
+							: `Controls direct entry behavior for ${currentTenantName}. This does not change the shared entry page at ${commonDiscoverDisplay}.`}
+					</p>
+				</div>
 				<a class="subtle-link" href={`/admin/tenants/${currentTenantId}`}>Open Tenant Details</a>
 			</div>
 
@@ -1081,8 +1108,8 @@
 						<div>
 							<strong>Enable tenant entry override</strong>
 							<p>
-								When disabled, this tenant uses the common entry behavior. Existing tenant values are
-								kept but ignored until this override is enabled.
+								When disabled, this tenant uses the common entry behavior. Existing tenant values
+								are kept but ignored until this override is enabled.
 							</p>
 						</div>
 						<ToggleSwitch
@@ -1097,214 +1124,228 @@
 				{/if}
 
 				{#if singleTenantMode || behaviorForm.overrideEnabled}
-				<div class="form-grid">
-					<div class="form-group">
-						<label for="mode">Entry Mode</label>
-						<select id="mode" bind:value={behaviorForm.mode} disabled={!canEditTenant || behaviorSaving}>
-							<option value="tenant_only">Tenant-specific entry only</option>
-							<option value="discovery_optional">Discovery optional</option>
-							<option value="discovery_required">Discovery required</option>
-						</select>
-						<div class="inline-help">
-							<p>{entryModeInfo(behaviorForm.mode).description}</p>
-							<code>Example: {entryModeInfo(behaviorForm.mode).sample}</code>
+					<div class="form-grid">
+						<div class="form-group">
+							<label for="mode">Entry Mode</label>
+							<select
+								id="mode"
+								bind:value={behaviorForm.mode}
+								disabled={!canEditTenant || behaviorSaving}
+							>
+								<option value="tenant_only">Tenant-specific entry only</option>
+								<option value="discovery_optional">Discovery optional</option>
+								<option value="discovery_required">Discovery required</option>
+							</select>
+							<div class="inline-help">
+								<p>{entryModeInfo(behaviorForm.mode).description}</p>
+								<code>Example: {entryModeInfo(behaviorForm.mode).sample}</code>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label for="email-policy">Email Resolution</label>
+							<select
+								id="email-policy"
+								bind:value={behaviorForm.emailResolutionPolicy}
+								disabled={!canEditTenant || behaviorSaving || !behaviorForm.emailEnabled}
+							>
+								<option value="exact_email_then_domain"
+									>Exact email, then email-domain fallback</option
+								>
+								<option value="exact_email_only">Exact email only</option>
+							</select>
+							<div class="inline-help">
+								<p>
+									{emailResolutionInfo(
+										behaviorForm.emailResolutionPolicy,
+										behaviorForm.emailEnabled
+									).description}
+								</p>
+								<code>
+									Example: {emailResolutionInfo(
+										behaviorForm.emailResolutionPolicy,
+										behaviorForm.emailEnabled
+									).sample}
+								</code>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label for="selection-policy">Selection Policy</label>
+							<select
+								id="selection-policy"
+								bind:value={behaviorForm.selectionPolicy}
+								disabled={!canEditTenant || behaviorSaving}
+							>
+								<option value="auto_if_single">Auto if single</option>
+								<option value="always_select">Always select</option>
+								<option value="select_if_multiple">Select if multiple</option>
+								<option value="manual_only">Manual only</option>
+							</select>
+							<div class="inline-help">
+								<p>{selectionPolicyInfo(behaviorForm.selectionPolicy).description}</p>
+								<code>Example: {selectionPolicyInfo(behaviorForm.selectionPolicy).sample}</code>
+							</div>
 						</div>
 					</div>
 
-					<div class="form-group">
-						<label for="email-policy">Email Resolution</label>
-						<select
-							id="email-policy"
-							bind:value={behaviorForm.emailResolutionPolicy}
-							disabled={!canEditTenant || behaviorSaving || !behaviorForm.emailEnabled}
+					<div class="methods-card">
+						<h3>Enabled Discovery Methods</h3>
+						<div class="toggle-row">
+							<div>
+								<strong>Email address</strong>
+								<p>
+									Allow users to identify the tenant from their email address, with optional
+									email-domain fallback.
+								</p>
+							</div>
+							<ToggleSwitch
+								id="email-enabled"
+								checked={behaviorForm.emailEnabled}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.emailEnabled = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>Tenant code</strong>
+								<p>Allow users to identify the tenant by tenant code.</p>
+							</div>
+							<ToggleSwitch
+								id="tenant-code-enabled"
+								checked={behaviorForm.tenantCodeEnabled}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.tenantCodeEnabled = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>Tenant slug</strong>
+								<p>Allow users to identify the tenant by tenant slug.</p>
+							</div>
+							<ToggleSwitch
+								id="tenant-slug-enabled"
+								checked={behaviorForm.tenantSlugEnabled}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.tenantSlugEnabled = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>WAYF tenant chooser</strong>
+								<p>Show a tenant-name dropdown populated from active tenants.</p>
+							</div>
+							<ToggleSwitch
+								id="wayf-enabled"
+								checked={behaviorForm.wayfEnabled}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.wayfEnabled = value;
+								}}
+							/>
+						</div>
+					</div>
+
+					<div class="toggle-list">
+						<div class="toggle-row">
+							<div>
+								<strong>Allow manual tenant entry</strong>
+								<p>Show manual entry fallback when automatic discovery cannot resolve a tenant.</p>
+							</div>
+							<ToggleSwitch
+								id="allow-manual-entry"
+								checked={behaviorForm.allowManualTenantEntry}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.allowManualTenantEntry = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>Remember last tenant</strong>
+								<p>Remember the tenant that was resolved most recently for this browser.</p>
+							</div>
+							<ToggleSwitch
+								id="remember-last-tenant"
+								checked={behaviorForm.rememberLastTenant}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.rememberLastTenant = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>Redirect default login to discovery</strong>
+								<p>Redirect common-entry `/login` requests to `/discover` when appropriate.</p>
+							</div>
+							<ToggleSwitch
+								id="redirect-default-login"
+								checked={behaviorForm.redirectDefaultLoginToDiscovery}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.redirectDefaultLoginToDiscovery = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>Require common discovery before tenant login</strong>
+								<p>
+									When enabled, direct visits to this tenant's <code>/login</code> must pass through the
+									shared discover screen first. Challenge-based OIDC login is unchanged.
+								</p>
+							</div>
+							<ToggleSwitch
+								id="require-discovery-before-login"
+								checked={behaviorForm.requireCommonDiscoveryBeforeLogin}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.requireCommonDiscoveryBeforeLogin = value;
+								}}
+							/>
+						</div>
+						<div class="toggle-row">
+							<div>
+								<strong>Redirect tenant discover to common entry</strong>
+								<p>
+									Redirect this tenant's host and vanity host <code>/discover</code> to common entry.
+								</p>
+							</div>
+							<ToggleSwitch
+								id="redirect-tenant-discover"
+								checked={behaviorForm.redirectTenantDiscoverToCommonEntry}
+								disabled={!canEditTenant || behaviorSaving}
+								onchange={(value) => {
+									if (behaviorForm) behaviorForm.redirectTenantDiscoverToCommonEntry = value;
+								}}
+							/>
+						</div>
+					</div>
+
+					<div class="actions">
+						<button
+							class="btn btn-primary"
+							onclick={saveBehavior}
+							disabled={!canEditTenant ||
+								!hasBehaviorChanges ||
+								behaviorSaving ||
+								!!behaviorValidationError}
 						>
-							<option value="exact_email_then_domain">Exact email, then email-domain fallback</option>
-							<option value="exact_email_only">Exact email only</option>
-						</select>
-						<div class="inline-help">
-							<p>
-								{emailResolutionInfo(behaviorForm.emailResolutionPolicy, behaviorForm.emailEnabled)
-									.description}
-							</p>
-							<code>
-								Example: {emailResolutionInfo(
-									behaviorForm.emailResolutionPolicy,
-									behaviorForm.emailEnabled
-								).sample}
-							</code>
-						</div>
+							{#if behaviorSaving}Saving...{:else}Save Discovery Behavior{/if}
+						</button>
 					</div>
-
-					<div class="form-group">
-						<label for="selection-policy">Selection Policy</label>
-						<select
-							id="selection-policy"
-							bind:value={behaviorForm.selectionPolicy}
-							disabled={!canEditTenant || behaviorSaving}
-						>
-							<option value="auto_if_single">Auto if single</option>
-							<option value="always_select">Always select</option>
-							<option value="select_if_multiple">Select if multiple</option>
-							<option value="manual_only">Manual only</option>
-						</select>
-						<div class="inline-help">
-							<p>{selectionPolicyInfo(behaviorForm.selectionPolicy).description}</p>
-							<code>Example: {selectionPolicyInfo(behaviorForm.selectionPolicy).sample}</code>
-						</div>
-					</div>
-				</div>
-
-				<div class="methods-card">
-					<h3>Enabled Discovery Methods</h3>
-					<div class="toggle-row">
-						<div>
-							<strong>Email address</strong>
-							<p>
-								Allow users to identify the tenant from their email address, with optional
-								email-domain fallback.
-							</p>
-						</div>
-						<ToggleSwitch
-							id="email-enabled"
-							checked={behaviorForm.emailEnabled}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.emailEnabled = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Tenant code</strong>
-							<p>Allow users to identify the tenant by tenant code.</p>
-						</div>
-						<ToggleSwitch
-							id="tenant-code-enabled"
-							checked={behaviorForm.tenantCodeEnabled}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.tenantCodeEnabled = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Tenant slug</strong>
-							<p>Allow users to identify the tenant by tenant slug.</p>
-						</div>
-						<ToggleSwitch
-							id="tenant-slug-enabled"
-							checked={behaviorForm.tenantSlugEnabled}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.tenantSlugEnabled = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>WAYF tenant chooser</strong>
-							<p>Show a tenant-name dropdown populated from active tenants.</p>
-						</div>
-						<ToggleSwitch
-							id="wayf-enabled"
-							checked={behaviorForm.wayfEnabled}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.wayfEnabled = value;
-							}}
-						/>
-					</div>
-				</div>
-
-				<div class="toggle-list">
-					<div class="toggle-row">
-						<div>
-							<strong>Allow manual tenant entry</strong>
-							<p>Show manual entry fallback when automatic discovery cannot resolve a tenant.</p>
-						</div>
-						<ToggleSwitch
-							id="allow-manual-entry"
-							checked={behaviorForm.allowManualTenantEntry}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.allowManualTenantEntry = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Remember last tenant</strong>
-							<p>Remember the tenant that was resolved most recently for this browser.</p>
-						</div>
-						<ToggleSwitch
-							id="remember-last-tenant"
-							checked={behaviorForm.rememberLastTenant}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.rememberLastTenant = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Redirect default login to discovery</strong>
-							<p>Redirect common-entry `/login` requests to `/discover` when appropriate.</p>
-						</div>
-						<ToggleSwitch
-							id="redirect-default-login"
-							checked={behaviorForm.redirectDefaultLoginToDiscovery}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.redirectDefaultLoginToDiscovery = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Require common discovery before tenant login</strong>
-							<p>
-								When enabled, direct visits to this tenant's <code>/login</code> must pass through the
-								shared discover screen first. Challenge-based OIDC login is unchanged.
-							</p>
-						</div>
-						<ToggleSwitch
-							id="require-discovery-before-login"
-							checked={behaviorForm.requireCommonDiscoveryBeforeLogin}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.requireCommonDiscoveryBeforeLogin = value;
-							}}
-						/>
-					</div>
-					<div class="toggle-row">
-						<div>
-							<strong>Redirect tenant discover to common entry</strong>
-							<p>Redirect this tenant's host and vanity host <code>/discover</code> to common entry.</p>
-						</div>
-						<ToggleSwitch
-							id="redirect-tenant-discover"
-							checked={behaviorForm.redirectTenantDiscoverToCommonEntry}
-							disabled={!canEditTenant || behaviorSaving}
-							onchange={(value) => {
-								if (behaviorForm) behaviorForm.redirectTenantDiscoverToCommonEntry = value;
-							}}
-						/>
-					</div>
-				</div>
-
-				<div class="actions">
-					<button
-						class="btn btn-primary"
-						onclick={saveBehavior}
-						disabled={!canEditTenant || !hasBehaviorChanges || behaviorSaving || !!behaviorValidationError}
-					>
-						{#if behaviorSaving}Saving...{:else}Save Discovery Behavior{/if}
-					</button>
-				</div>
 				{:else}
 					<div class="collapsed-override">
-						Common entry behavior is active for this tenant. Enable the override to configure tenant-specific entry behavior.
+						Common entry behavior is active for this tenant. Enable the override to configure
+						tenant-specific entry behavior.
 					</div>
 					<div class="actions">
 						<button
@@ -1324,7 +1365,11 @@
 				<div class="section-header">
 					<div>
 						<h2>Common Entry Screen Content</h2>
-						<p>Text, branding, and theme used by the shared entry page at <code>{commonDiscoverDisplay}</code>.</p>
+						<p>
+							Text, branding, and theme used by the shared entry page at <code
+								>{commonDiscoverDisplay}</code
+							>.
+						</p>
 					</div>
 				</div>
 
@@ -1336,18 +1381,24 @@
 				{/if}
 				{#if !canEditPlatform}
 					<div class="alert alert-info">
-						Common entry screen content is a platform setting. Tenant admins can review it, but cannot edit it.
+						Common entry screen content is a platform setting. Tenant admins can review it, but
+						cannot edit it.
 					</div>
 				{/if}
 
 				{#if commonEntryForm}
 					<p class="field-hint section-hint">
-						Blank values are prefilled with the effective defaults currently shown on the shared discovery screen.
+						Blank values are prefilled with the effective defaults currently shown on the shared
+						discovery screen.
 					</p>
 					<div class="form-grid two-column">
 						<div class="form-group">
 							<label for="common-theme">Theme</label>
-							<select id="common-theme" bind:value={commonEntryForm.theme} disabled={!canEditPlatform || commonEntrySaving}>
+							<select
+								id="common-theme"
+								bind:value={commonEntryForm.theme}
+								disabled={!canEditPlatform || commonEntrySaving}
+							>
 								<option value="">Inherit / default</option>
 								<option value="light">light</option>
 								<option value="dark">dark</option>
@@ -1355,7 +1406,11 @@
 						</div>
 						<div class="form-group">
 							<label for="common-variant">Variant</label>
-							<select id="common-variant" bind:value={commonEntryForm.variant} disabled={!canEditPlatform || commonEntrySaving}>
+							<select
+								id="common-variant"
+								bind:value={commonEntryForm.variant}
+								disabled={!canEditPlatform || commonEntrySaving}
+							>
 								<option value="">Inherit / default</option>
 								<option value="beige">beige</option>
 								<option value="blue-gray">blue-gray</option>
@@ -1367,31 +1422,65 @@
 						</div>
 						<div class="form-group">
 							<label for="common-brand-name">Brand Name</label>
-							<input id="common-brand-name" type="text" bind:value={commonEntryForm.brandName} disabled={!canEditPlatform || commonEntrySaving} />
+							<input
+								id="common-brand-name"
+								type="text"
+								bind:value={commonEntryForm.brandName}
+								disabled={!canEditPlatform || commonEntrySaving}
+							/>
 						</div>
 						<div class="form-group full-width">
 							<label for="common-logo-url">Logo URL</label>
-							<input id="common-logo-url" type="url" bind:value={commonEntryForm.logoUrl} disabled={!canEditPlatform || commonEntrySaving} />
+							<input
+								id="common-logo-url"
+								type="url"
+								bind:value={commonEntryForm.logoUrl}
+								disabled={!canEditPlatform || commonEntrySaving}
+							/>
 						</div>
 						<div class="form-group full-width">
 							<label for="common-page-title">Page Title</label>
-							<input id="common-page-title" type="text" bind:value={commonEntryForm.pageTitle} disabled={!canEditPlatform || commonEntrySaving} />
+							<input
+								id="common-page-title"
+								type="text"
+								bind:value={commonEntryForm.pageTitle}
+								disabled={!canEditPlatform || commonEntrySaving}
+							/>
 						</div>
 						<div class="form-group full-width">
 							<label for="common-kicker">Kicker Text</label>
-							<input id="common-kicker" type="text" bind:value={commonEntryForm.kickerText} disabled={!canEditPlatform || commonEntrySaving} />
+							<input
+								id="common-kicker"
+								type="text"
+								bind:value={commonEntryForm.kickerText}
+								disabled={!canEditPlatform || commonEntrySaving}
+							/>
 						</div>
 						<div class="form-group full-width">
 							<label for="common-title">Title Text</label>
-							<input id="common-title" type="text" bind:value={commonEntryForm.titleText} disabled={!canEditPlatform || commonEntrySaving} />
+							<input
+								id="common-title"
+								type="text"
+								bind:value={commonEntryForm.titleText}
+								disabled={!canEditPlatform || commonEntrySaving}
+							/>
 						</div>
 						<div class="form-group full-width">
 							<label for="common-subtitle">Subtitle Text</label>
-							<textarea id="common-subtitle" rows="3" bind:value={commonEntryForm.subtitleText} disabled={!canEditPlatform || commonEntrySaving}></textarea>
+							<textarea
+								id="common-subtitle"
+								rows="3"
+								bind:value={commonEntryForm.subtitleText}
+								disabled={!canEditPlatform || commonEntrySaving}
+							></textarea>
 						</div>
 					</div>
 					<div class="actions">
-						<button class="btn btn-primary" onclick={saveCommonEntryUi} disabled={!canEditPlatform || !hasCommonEntryChanges || commonEntrySaving}>
+						<button
+							class="btn btn-primary"
+							onclick={saveCommonEntryUi}
+							disabled={!canEditPlatform || !hasCommonEntryChanges || commonEntrySaving}
+						>
 							{#if commonEntrySaving}Saving...{:else}Save Common Entry Screen{/if}
 						</button>
 					</div>
@@ -1425,8 +1514,8 @@
 						<div>
 							<strong>Enable tenant screen content override</strong>
 							<p>
-								When disabled, common discovery screen content applies. Existing tenant screen values
-								are kept but ignored until this override is enabled.
+								When disabled, common discovery screen content applies. Existing tenant screen
+								values are kept but ignored until this override is enabled.
 							</p>
 						</div>
 						<ToggleSwitch
@@ -1441,77 +1530,125 @@
 				{/if}
 
 				{#if singleTenantMode || tenantUiForm.overrideEnabled}
-				<p class="field-hint section-hint">
-					Fields are prefilled with the effective values currently used for this tenant. Saving writes them as explicit tenant overrides.
-				</p>
-				<div class="form-grid two-column">
-					<div class="form-group">
-						<label for="tenant-inherit">Inherit from Login UI</label>
-						<ToggleSwitch
-							id="tenant-inherit"
-							checked={tenantUiForm.inheritFromLoginUi}
-							disabled={!canEditTenant || tenantUiSaving}
-							onchange={(value) => {
-								if (tenantUiForm) tenantUiForm.inheritFromLoginUi = value;
-							}}
-						/>
-					</div>
-					<div class="form-group">
-						<label for="tenant-theme">Theme</label>
-						<select id="tenant-theme" bind:value={tenantUiForm.theme} disabled={!canEditTenant || tenantUiSaving}>
-							<option value="">Inherit / default</option>
-							<option value="light">light</option>
-							<option value="dark">dark</option>
-						</select>
-					</div>
-					<div class="form-group">
-						<label for="tenant-variant">Variant</label>
-						<select id="tenant-variant" bind:value={tenantUiForm.variant} disabled={!canEditTenant || tenantUiSaving}>
-							<option value="">Inherit / default</option>
-							<option value="beige">beige</option>
-							<option value="blue-gray">blue-gray</option>
-							<option value="green">green</option>
-							<option value="brown">brown</option>
-							<option value="navy">navy</option>
-							<option value="slate">slate</option>
-						</select>
-					</div>
-					<div class="form-group">
-						<label for="tenant-brand-name">Brand Name</label>
-						<input id="tenant-brand-name" type="text" bind:value={tenantUiForm.brandName} disabled={!canEditTenant || tenantUiSaving} />
-					</div>
-					<div class="form-group full-width">
-						<label for="tenant-logo-url">Logo URL</label>
-						<input id="tenant-logo-url" type="url" bind:value={tenantUiForm.logoUrl} disabled={!canEditTenant || tenantUiSaving} />
-					</div>
-					<div class="form-group full-width">
-						<label for="tenant-page-title">Page Title</label>
-						<input id="tenant-page-title" type="text" bind:value={tenantUiForm.pageTitle} disabled={!canEditTenant || tenantUiSaving} />
-					</div>
-					<div class="form-group full-width">
-						<label for="tenant-kicker">Kicker Text</label>
-						<input id="tenant-kicker" type="text" bind:value={tenantUiForm.kickerText} disabled={!canEditTenant || tenantUiSaving} />
-					</div>
-					<div class="form-group full-width">
-						<label for="tenant-title">Title Text</label>
-						<input id="tenant-title" type="text" bind:value={tenantUiForm.titleText} disabled={!canEditTenant || tenantUiSaving} />
-					</div>
-					<div class="form-group full-width">
-						<label for="tenant-subtitle">Subtitle Text</label>
-						<textarea id="tenant-subtitle" rows="3" bind:value={tenantUiForm.subtitleText} disabled={!canEditTenant || tenantUiSaving}></textarea>
-					</div>
-				</div>
-				<div class="actions">
-					<button class="btn btn-primary" onclick={saveTenantUi} disabled={!canEditTenant || !hasTenantUiChanges || tenantUiSaving}>
-						{#if tenantUiSaving}Saving...{:else}Save Tenant Override{/if}
-					</button>
-				</div>
-				{:else}
-					<div class="collapsed-override">
-						Common discovery screen content is active for this tenant. Enable the override to customize tenant-specific discovery screens.
+					<p class="field-hint section-hint">
+						Fields are prefilled with the effective values currently used for this tenant. Saving
+						writes them as explicit tenant overrides.
+					</p>
+					<div class="form-grid two-column">
+						<div class="form-group">
+							<label for="tenant-inherit">Inherit from Login UI</label>
+							<ToggleSwitch
+								id="tenant-inherit"
+								checked={tenantUiForm.inheritFromLoginUi}
+								disabled={!canEditTenant || tenantUiSaving}
+								onchange={(value) => {
+									if (tenantUiForm) tenantUiForm.inheritFromLoginUi = value;
+								}}
+							/>
+						</div>
+						<div class="form-group">
+							<label for="tenant-theme">Theme</label>
+							<select
+								id="tenant-theme"
+								bind:value={tenantUiForm.theme}
+								disabled={!canEditTenant || tenantUiSaving}
+							>
+								<option value="">Inherit / default</option>
+								<option value="light">light</option>
+								<option value="dark">dark</option>
+							</select>
+						</div>
+						<div class="form-group">
+							<label for="tenant-variant">Variant</label>
+							<select
+								id="tenant-variant"
+								bind:value={tenantUiForm.variant}
+								disabled={!canEditTenant || tenantUiSaving}
+							>
+								<option value="">Inherit / default</option>
+								<option value="beige">beige</option>
+								<option value="blue-gray">blue-gray</option>
+								<option value="green">green</option>
+								<option value="brown">brown</option>
+								<option value="navy">navy</option>
+								<option value="slate">slate</option>
+							</select>
+						</div>
+						<div class="form-group">
+							<label for="tenant-brand-name">Brand Name</label>
+							<input
+								id="tenant-brand-name"
+								type="text"
+								bind:value={tenantUiForm.brandName}
+								disabled={!canEditTenant || tenantUiSaving}
+							/>
+						</div>
+						<div class="form-group full-width">
+							<label for="tenant-logo-url">Logo URL</label>
+							<input
+								id="tenant-logo-url"
+								type="url"
+								bind:value={tenantUiForm.logoUrl}
+								disabled={!canEditTenant || tenantUiSaving}
+							/>
+						</div>
+						<div class="form-group full-width">
+							<label for="tenant-page-title">Page Title</label>
+							<input
+								id="tenant-page-title"
+								type="text"
+								bind:value={tenantUiForm.pageTitle}
+								disabled={!canEditTenant || tenantUiSaving}
+							/>
+						</div>
+						<div class="form-group full-width">
+							<label for="tenant-kicker">Kicker Text</label>
+							<input
+								id="tenant-kicker"
+								type="text"
+								bind:value={tenantUiForm.kickerText}
+								disabled={!canEditTenant || tenantUiSaving}
+							/>
+						</div>
+						<div class="form-group full-width">
+							<label for="tenant-title">Title Text</label>
+							<input
+								id="tenant-title"
+								type="text"
+								bind:value={tenantUiForm.titleText}
+								disabled={!canEditTenant || tenantUiSaving}
+							/>
+						</div>
+						<div class="form-group full-width">
+							<label for="tenant-subtitle">Subtitle Text</label>
+							<textarea
+								id="tenant-subtitle"
+								rows="3"
+								bind:value={tenantUiForm.subtitleText}
+								disabled={!canEditTenant || tenantUiSaving}
+							></textarea>
+						</div>
 					</div>
 					<div class="actions">
-						<button class="btn btn-primary" onclick={saveTenantUi} disabled={!canEditTenant || !hasTenantUiChanges || tenantUiSaving}>
+						<button
+							class="btn btn-primary"
+							onclick={saveTenantUi}
+							disabled={!canEditTenant || !hasTenantUiChanges || tenantUiSaving}
+						>
+							{#if tenantUiSaving}Saving...{:else}Save Tenant Override{/if}
+						</button>
+					</div>
+				{:else}
+					<div class="collapsed-override">
+						Common discovery screen content is active for this tenant. Enable the override to
+						customize tenant-specific discovery screens.
+					</div>
+					<div class="actions">
+						<button
+							class="btn btn-primary"
+							onclick={saveTenantUi}
+							disabled={!canEditTenant || !hasTenantUiChanges || tenantUiSaving}
+						>
 							{#if tenantUiSaving}Saving...{:else}Save Tenant Screen Override{/if}
 						</button>
 					</div>

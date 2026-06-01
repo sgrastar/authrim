@@ -62,7 +62,6 @@ export interface SessionStatus {
  */
 export interface LoginResult {
 	verified: boolean;
-	sessionId: string;
 	userId: string;
 	user: {
 		id: string;

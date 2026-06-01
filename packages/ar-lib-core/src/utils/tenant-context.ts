@@ -112,9 +112,15 @@ export function resolveTenantFromRequest(
     return hostResult;
   }
 
+  // Do not allow a caller-supplied forwarded host to override a syntactically valid
+  // but unrecognized Host header such as a public workers.dev route. Forwarded host
+  // fallback is only for runtimes that omit or mangle Host before service binding.
+  if (hostResult.error === 'tenant_not_found' || hostResult.error === 'sub_subdomain_not_allowed') {
+    return hostResult;
+  }
+
   const forwardedHosts = [
     request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim(),
-    request.headers.get('X-Forwarded-Host')?.split(',')[0]?.trim(),
   ].filter((value, index, array): value is string => !!value && array.indexOf(value) === index);
 
   for (const forwardedHost of forwardedHosts) {

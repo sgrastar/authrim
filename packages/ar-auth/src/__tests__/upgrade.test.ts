@@ -216,6 +216,9 @@ describe('Upgrade Handlers', () => {
         is_anonymous: true,
         upgrade_eligible: true,
         client_id: 'client-123',
+        pending_upgrade_token: 'upgrade-token',
+        pending_upgrade_method: 'passkey',
+        verified_upgrade_method: 'passkey',
       },
     });
 
@@ -641,6 +644,8 @@ describe('Upgrade Handlers', () => {
             verified_email_at: Date.now(),
             verified_email_user_id: 'otp-user-456',
             upgrade_nonce: 'nonce-123',
+            pending_upgrade_token: 'upgrade-token',
+            pending_upgrade_method: 'email',
           },
         });
         const c = createMockContext({
@@ -648,6 +653,7 @@ describe('Upgrade Handlers', () => {
           dbPii: {},
           body: {
             method: 'email',
+            upgrade_token: 'upgrade-token',
             name: 'Verified User',
             email: 'attacker@example.com',
           },
@@ -699,10 +705,22 @@ describe('Upgrade Handlers', () => {
       });
 
       it('creates a new subject and updates the session user when preserve_sub=false', async () => {
+        mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+          userId: 'anon-user-123',
+          data: {
+            is_anonymous: true,
+            upgrade_eligible: true,
+            client_id: 'client-123',
+            pending_upgrade_token: 'upgrade-token',
+            pending_upgrade_method: 'social',
+            verified_upgrade_method: 'social',
+          },
+        });
         const c = createMockContext({
           method: 'POST',
           body: {
             method: 'social',
+            upgrade_token: 'upgrade-token',
             preserve_sub: false,
             provider_id: 'google',
           },
@@ -769,7 +787,7 @@ describe('Upgrade Handlers', () => {
 
         const c = createMockContext({
           method: 'POST',
-          body: { method: 'passkey' },
+          body: { method: 'passkey', upgrade_token: 'upgrade-token' },
         });
 
         const response = await upgradeCompleteHandler(c);

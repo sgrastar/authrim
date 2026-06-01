@@ -5,10 +5,7 @@
 		type IdentityMappingFederationMetadataDocument,
 		type IdentityMappingFederationTrustSourceSummary
 	} from '$lib/api/admin-identity-mapping';
-	import {
-		adminSAMLAPI,
-		type SAMLMetadataEntitySummary
-	} from '$lib/api/admin-saml';
+	import { adminSAMLAPI, type SAMLMetadataEntitySummary } from '$lib/api/admin-saml';
 
 	let trustSources = $state<IdentityMappingFederationTrustSourceSummary[]>([]);
 	let loading = $state(true);
@@ -112,8 +109,8 @@
 			<p class="eyebrow">Identity Mapping</p>
 			<h1>Federation Trust</h1>
 			<p class="summary">
-				Manage normalized federation trust sources and inspect SAML aggregate entities before binding
-				them to mapping profiles.
+				Manage normalized federation trust sources and inspect SAML aggregate entities before
+				binding them to mapping profiles.
 			</p>
 		</div>
 		<div class="status-panel">
@@ -199,7 +196,9 @@
 								<div>
 									<p>{document.documentType}</p>
 									<h3>{document.sourceUrl ?? document.documentHash}</h3>
-									<span>{document.validationState} / {document.entitySummaries.length} entities</span>
+									<span
+										>{document.validationState} / {document.entitySummaries.length} entities</span
+									>
 								</div>
 								<strong>{document.validatedAt ?? document.fetchedAt ?? 'pending'}</strong>
 							</article>

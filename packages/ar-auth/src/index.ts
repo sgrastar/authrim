@@ -178,7 +178,7 @@ app.use('*', async (c, next) => {
 });
 
 // CORS configuration with origin validation
-// Priority: KV (tenant.allowed_origins) > env (ALLOWED_ORIGINS) > ISSUER_URL
+// Priority: env (ALLOWED_ORIGINS) > KV (tenant.allowed_origins) > ISSUER_URL
 app.use('*', async (c, next) => {
   // Try to get allowed origins from KV (Settings Manager format)
   let allowedOriginsValue: string | undefined;
@@ -192,8 +192,9 @@ app.use('*', async (c, next) => {
     allowedOriginsValue = tenantSettings['tenant.allowed_origins'];
   }
 
-  // Fallback to environment variable, then ISSUER_URL
-  const allowedOriginsEnv = allowedOriginsValue || c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
+  // Environment allowlist is an operator-enforced ceiling; KV can only configure origins
+  // when no env allowlist is set.
+  const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || allowedOriginsValue || c.env.ISSUER_URL;
   const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
 
   const corsMiddleware = cors({

@@ -202,15 +202,14 @@
 		loading = true;
 		error = '';
 		try {
-			const [code, revocation, session, challenge, region, refreshToken] =
-				await Promise.all([
-					adminInfrastructureAPI.getCodeShards(),
-					adminInfrastructureAPI.getRevocationShards(),
-					adminInfrastructureAPI.getSessionShards(),
-					adminInfrastructureAPI.getChallengeShards(),
-					adminInfrastructureAPI.getRegionShards().catch(() => null),
-					adminInfrastructureAPI.getRefreshTokenSharding().catch(() => null)
-				]);
+			const [code, revocation, session, challenge, region, refreshToken] = await Promise.all([
+				adminInfrastructureAPI.getCodeShards(),
+				adminInfrastructureAPI.getRevocationShards(),
+				adminInfrastructureAPI.getSessionShards(),
+				adminInfrastructureAPI.getChallengeShards(),
+				adminInfrastructureAPI.getRegionShards().catch(() => null),
+				adminInfrastructureAPI.getRefreshTokenSharding().catch(() => null)
+			]);
 
 			_currentConfig = {
 				codeShards: code,

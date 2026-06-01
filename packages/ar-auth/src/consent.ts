@@ -89,6 +89,27 @@ function acceptsJson(c: Context): boolean {
   return accept.includes('application/json');
 }
 
+async function createConsentConfirmationChallenge(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<string> {
+  const confirmationId = crypto.randomUUID();
+  const confirmationStore = await getChallengeStoreByChallengeId(c.env, confirmationId, tenantId);
+  await confirmationStore.storeChallengeRpc({
+    id: confirmationId,
+    tenantId,
+    type: 'consent',
+    userId,
+    challenge: confirmationId,
+    ttl: 60,
+    metadata: {
+      purpose: 'authorize_consent_confirmation',
+    },
+  });
+  return confirmationId;
+}
+
 /**
  * Parse scope string to ConsentScopeInfo array
  */
@@ -1014,8 +1035,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     if (metadata.error_uri) params.set('error_uri', metadata.error_uri as string);
     if (metadata.cancel_uri) params.set('cancel_uri', metadata.cancel_uri as string);
 
-    // Add flag to indicate consent is confirmed
-    params.set('_consent_confirmed', 'true');
+    // Add one-time proof that this redirect came from a completed consent challenge.
+    const consentConfirmationId = await createConsentConfirmationChallenge(c, tenantId, userId);
+    params.set('_consent_confirmation_challenge', consentConfirmationId);
 
     // Redirect to /authorize with original parameters
     const redirectUrl = `/authorize?${params.toString()}`;

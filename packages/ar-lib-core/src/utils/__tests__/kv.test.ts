@@ -288,7 +288,7 @@ describe('KV Utilities', () => {
       });
     });
 
-    it('should return client from cache when available', async () => {
+    it('should ignore stale client metadata cache when client caching is disabled', async () => {
       const clientId = 'cached-client';
       const cachedData = {
         client_id: clientId,
@@ -301,24 +301,8 @@ describe('KV Utilities', () => {
 
       const retrieved = await getClient(env, 'default', clientId, env.DB);
 
-      // normalizeClientMetadata adds default values for missing fields
-      const expectedNormalized = {
-        ...cachedData,
-        grant_types: ['authorization_code'], // Default added by normalization
-        response_types: ['code'], // Default added by normalization
-        contacts: undefined,
-        allowed_subject_token_clients: undefined,
-        allowed_token_exchange_resources: undefined,
-        allowed_scopes: undefined,
-        post_logout_redirect_uris: undefined,
-        requestable_scopes: undefined,
-        allowed_redirect_origins: undefined,
-        allowed_channels: undefined,
-      };
-
-      expect(retrieved).toEqual(expectedNormalized);
-      // D1 should not be called when cache hits
-      expect(env.DB.prepare).not.toHaveBeenCalled();
+      expect(retrieved).toBeNull();
+      expect(env.DB.prepare).toHaveBeenCalled();
     });
 
     it('should isolate cached client metadata by tenant', async () => {
@@ -344,9 +328,9 @@ describe('KV Utilities', () => {
       const tenantAClient = await getClient(env, 'tenant-a', clientId, env.DB);
       const tenantBClient = await getClient(env, 'tenant-b', clientId, env.DB);
 
-      expect(tenantAClient?.client_name).toBe('Tenant A Client');
-      expect(tenantBClient?.client_name).toBe('Tenant B Client');
-      expect(env.DB.prepare).not.toHaveBeenCalled();
+      expect(tenantAClient).toBeNull();
+      expect(tenantBClient).toBeNull();
+      expect(env.DB.prepare).toHaveBeenCalledTimes(2);
     });
 
     it('should normalize malformed response_types from cache', async () => {
@@ -363,8 +347,8 @@ describe('KV Utilities', () => {
 
       const retrieved = await getClient(env, 'default', clientId, env.DB);
 
-      expect(retrieved).not.toBeNull();
-      expect(retrieved?.response_types).toEqual(['code']);
+      expect(retrieved).toBeNull();
+      expect(env.DB.prepare).toHaveBeenCalled();
     });
 
     it('should fail runtime client config containing legacy app_suite', async () => {
@@ -378,12 +362,8 @@ describe('KV Utilities', () => {
 
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
-      await expect(getClient(env, 'default', clientId, env.DB)).rejects.toMatchObject({
-        error: 'legacy_app_suite_not_supported',
-        error_uri: 'https://docs.authrim.com/errors/error-codes#legacy-app-suite-not-supported',
-        statusCode: 400,
-      });
-      expect(env.DB.prepare).not.toHaveBeenCalled();
+      await expect(getClient(env, 'default', clientId, env.DB)).resolves.toBeNull();
+      expect(env.DB.prepare).toHaveBeenCalled();
     });
 
     it('should normalize client metadata before write-through caching', async () => {
@@ -397,12 +377,7 @@ describe('KV Utilities', () => {
       });
 
       const cached = await clientsCacheKV.get(`tenant:default:client:${clientId}`);
-      expect(JSON.parse(cached ?? '{}')).toMatchObject({
-        client_id: clientId,
-        redirect_uris: ['http://example.com/callback'],
-        grant_types: ['authorization_code'],
-        response_types: ['code'],
-      });
+      expect(cached).toBeNull();
     });
 
     it('should normalize double-encoded response_types from D1', async () => {

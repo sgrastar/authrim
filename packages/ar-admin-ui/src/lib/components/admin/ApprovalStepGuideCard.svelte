@@ -1,20 +1,20 @@
 <script lang="ts">
-	import type { ApprovalStepGuideResult } from '$lib/api/admin-approvals'
+	import type { ApprovalStepGuideResult } from '$lib/api/admin-approvals';
 
 	type Props = {
-		guide: ApprovalStepGuideResult
-		onIssueFallback?: ((method: string) => void) | null
-	}
+		guide: ApprovalStepGuideResult;
+		onIssueFallback?: ((method: string) => void) | null;
+	};
 
-	let { guide, onIssueFallback = null }: Props = $props()
+	let { guide, onIssueFallback = null }: Props = $props();
 
 	function formatMethods(methods: string[]): string {
-		return methods.length > 0 ? methods.join(', ') : '-'
+		return methods.length > 0 ? methods.join(', ') : '-';
 	}
 
 	function getFallbackMethods(): string[] {
-		if (!guide.guide) return []
-		return guide.guide.acceptable_methods.filter((method) => method !== guide.guide?.method)
+		if (!guide.guide) return [];
+		return guide.guide.acceptable_methods.filter((method) => method !== guide.guide?.method);
 	}
 </script>
 
@@ -50,7 +50,7 @@
 		{/if}
 		{#if onIssueFallback && getFallbackMethods().length > 0}
 			<div class="fallback-actions">
-					{#each getFallbackMethods() as method (method)}
+				{#each getFallbackMethods() as method (method)}
 					<button class="fallback-button" type="button" onclick={() => onIssueFallback?.(method)}>
 						Issue {method}
 					</button>
@@ -58,7 +58,9 @@
 			</div>
 		{/if}
 	{:else}
-		<div class="guide-error">{guide.resolution_error ?? 'Unable to resolve current completion guide.'}</div>
+		<div class="guide-error">
+			{guide.resolution_error ?? 'Unable to resolve current completion guide.'}
+		</div>
 	{/if}
 </div>
 

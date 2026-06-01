@@ -149,6 +149,13 @@ const PII_BATCH_SIZE = 500;
 /** field group key pattern: lower-case symbolic key, max 64 chars */
 const UI_GROUP_KEY_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 
+const EXAMPLES_JSON_MAX_BYTES = 8 * 1024;
+const EXAMPLES_JSON_MAX_DEPTH = 8;
+const EXAMPLES_JSON_MAX_NODES = 500;
+const EXAMPLES_JSON_MAX_ARRAY_ITEMS = 100;
+const EXAMPLES_JSON_MAX_OBJECT_KEYS = 100;
+const EXAMPLES_JSON_MAX_STRING_CHARS = 512;
+
 // =============================================================================
 // Validation Helpers
 // =============================================================================
@@ -289,6 +296,91 @@ function normalizeNamespace(
   return { valid: true, value: result };
 }
 
+function normalizeExamplesJson(
+  rawExamples: unknown
+): { valid: true; value: string } | { valid: false; reason: string } {
+  let value: unknown;
+  if (typeof rawExamples === 'string') {
+    try {
+      value = JSON.parse(rawExamples);
+    } catch {
+      return { valid: false, reason: 'examples_json must be valid JSON' };
+    }
+  } else {
+    value = rawExamples;
+  }
+
+  const budget = validateExamplesJsonBudget(value);
+  if (!budget.valid) {
+    return { valid: false, reason: budget.reason };
+  }
+
+  try {
+    const normalized = JSON.stringify(value);
+    const bytes = new TextEncoder().encode(normalized).length;
+    if (bytes > EXAMPLES_JSON_MAX_BYTES) {
+      return {
+        valid: false,
+        reason: `examples_json must be at most ${EXAMPLES_JSON_MAX_BYTES} bytes`,
+      };
+    }
+    return { valid: true, value: normalized };
+  } catch {
+    return { valid: false, reason: 'examples_json must be serializable JSON' };
+  }
+}
+
+function validateExamplesJsonBudget(
+  value: unknown
+): { valid: true } | { valid: false; reason: string } {
+  const seen = new WeakSet<object>();
+  let nodeCount = 0;
+
+  const visit = (item: unknown, depth: number): string | null => {
+    nodeCount += 1;
+    if (nodeCount > EXAMPLES_JSON_MAX_NODES) {
+      return `examples_json must contain at most ${EXAMPLES_JSON_MAX_NODES} JSON nodes`;
+    }
+    if (depth > EXAMPLES_JSON_MAX_DEPTH) {
+      return `examples_json must be at most ${EXAMPLES_JSON_MAX_DEPTH} levels deep`;
+    }
+    if (typeof item === 'string' && item.length > EXAMPLES_JSON_MAX_STRING_CHARS) {
+      return `examples_json string values must be at most ${EXAMPLES_JSON_MAX_STRING_CHARS} characters`;
+    }
+    if (item === undefined || item === null || typeof item !== 'object') {
+      return null;
+    }
+    if (seen.has(item)) {
+      return 'examples_json must not contain circular references';
+    }
+    seen.add(item);
+
+    if (Array.isArray(item)) {
+      if (item.length > EXAMPLES_JSON_MAX_ARRAY_ITEMS) {
+        return `examples_json arrays must contain at most ${EXAMPLES_JSON_MAX_ARRAY_ITEMS} items`;
+      }
+      for (const child of item) {
+        const error = visit(child, depth + 1);
+        if (error) return error;
+      }
+      return null;
+    }
+
+    const entries = Object.entries(item);
+    if (entries.length > EXAMPLES_JSON_MAX_OBJECT_KEYS) {
+      return `examples_json objects must contain at most ${EXAMPLES_JSON_MAX_OBJECT_KEYS} keys`;
+    }
+    for (const [, child] of entries) {
+      const error = visit(child, depth + 1);
+      if (error) return error;
+    }
+    return null;
+  };
+
+  const error = visit(value, 0);
+  return error ? { valid: false, reason: error } : { valid: true };
+}
+
 function normalizeUiGroupMetadata(body: Record<string, unknown>):
   | {
       valid: true;
@@ -344,28 +436,15 @@ function normalizeUiGroupMetadata(body: Record<string, unknown>):
 
   let examplesJson: string | null = null;
   if (rawExamples !== undefined && rawExamples !== null) {
-    if (typeof rawExamples === 'string') {
-      try {
-        JSON.parse(rawExamples);
-      } catch {
-        return {
-          valid: false,
-          field: 'examples_json',
-          reason: 'examples_json must be valid JSON',
-        };
-      }
-      examplesJson = rawExamples;
-    } else {
-      try {
-        examplesJson = JSON.stringify(rawExamples);
-      } catch {
-        return {
-          valid: false,
-          field: 'examples_json',
-          reason: 'examples_json must be serializable JSON',
-        };
-      }
+    const normalized = normalizeExamplesJson(rawExamples);
+    if (!normalized.valid) {
+      return {
+        valid: false,
+        field: 'examples_json',
+        reason: normalized.reason,
+      };
     }
+    examplesJson = normalized.value;
   }
 
   return {
@@ -1335,17 +1414,13 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       });
     }
     if (body.examples_json !== undefined && body.examples_json !== null) {
-      if (typeof body.examples_json === 'string') {
-        try {
-          JSON.parse(body.examples_json);
-        } catch {
-          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-            variables: { field: 'examples_json', reason: 'examples_json must be valid JSON' },
-          });
-        }
-      } else {
-        body.examples_json = JSON.stringify(body.examples_json);
+      const normalizedExamples = normalizeExamplesJson(body.examples_json);
+      if (!normalizedExamples.valid) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+          variables: { field: 'examples_json', reason: normalizedExamples.reason },
+        });
       }
+      body.examples_json = normalizedExamples.value;
     }
 
     const now = Math.floor(Date.now() / 1000);

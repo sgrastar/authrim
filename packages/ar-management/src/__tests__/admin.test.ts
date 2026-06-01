@@ -400,6 +400,84 @@ function createMockDB(options: {
   };
 }
 
+function createOAuthClientRow(
+  clientId: string,
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    client_id: clientId,
+    client_secret_hash: 'existing-secret-hash',
+    client_name: null,
+    redirect_uris: JSON.stringify(['https://example.com/callback']),
+    grant_types: JSON.stringify(['authorization_code']),
+    response_types: JSON.stringify(['code']),
+    scope: null,
+    token_endpoint_auth_method: 'client_secret_basic',
+    contacts: null,
+    logo_uri: null,
+    client_uri: null,
+    policy_uri: null,
+    tos_uri: null,
+    jwks_uri: null,
+    jwks: null,
+    subject_type: null,
+    sector_identifier_uri: null,
+    id_token_signed_response_alg: null,
+    userinfo_signed_response_alg: null,
+    request_object_signing_alg: null,
+    is_trusted: null,
+    skip_consent: null,
+    allow_claims_without_scope: null,
+    claims_parameter_policy: null,
+    asc_enabled: null,
+    asc_protected_request_required: null,
+    asc_sao_enabled: null,
+    asc_transformed_claims_enabled: null,
+    asc_allowed_transformed_claims: null,
+    token_exchange_allowed: null,
+    allowed_subject_token_clients: null,
+    allowed_token_exchange_resources: null,
+    delegation_mode: null,
+    client_credentials_allowed: null,
+    allowed_scopes: null,
+    default_scope: null,
+    default_audience: null,
+    default_resource: null,
+    initiate_login_uri: null,
+    registration_access_token_hash: null,
+    post_logout_redirect_uris: null,
+    backchannel_logout_uri: null,
+    backchannel_logout_session_required: null,
+    frontchannel_logout_uri: null,
+    frontchannel_logout_session_required: null,
+    software_id: null,
+    software_version: null,
+    requestable_scopes: null,
+    backchannel_token_delivery_mode: null,
+    backchannel_client_notification_endpoint: null,
+    backchannel_authentication_request_signing_alg: null,
+    backchannel_user_code_parameter: null,
+    allowed_redirect_origins: null,
+    require_pkce: null,
+    tenant_id: 'default',
+    application_type: null,
+    trust_group: null,
+    trust_group_id: null,
+    browser_public_client_mode: null,
+    browser_refresh_token_policy: null,
+    native_sso_enabled: null,
+    native_channel_allowed: null,
+    allowed_channels: null,
+    device_secret_revoke_enabled: null,
+    device_secret_revoke_trust_groups: null,
+    device_secret_introspection_enabled: null,
+    device_secret_introspection_trust_groups: null,
+    created_at: 1_700_000_000,
+    updated_at: 1_700_000_000,
+    ...overrides,
+  };
+}
+
 function createSqlAwareMockDB(
   handler: (
     sql: string,
@@ -3433,6 +3511,7 @@ describe('Admin API Handlers', () => {
 
     it('should rotate the secret, revoke tokens, and disable caching', async () => {
       const mockDB = createMockDB({
+        firstResult: createOAuthClientRow('client-rotate'),
         runResult: {
           success: true,
           meta: {
@@ -3481,6 +3560,7 @@ describe('Admin API Handlers', () => {
 
     it('should tolerate invalid JSON bodies and use default options', async () => {
       const mockDB = createMockDB({
+        firstResult: createOAuthClientRow('client-defaults'),
         runResult: {
           success: true,
           meta: {

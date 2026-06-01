@@ -24,6 +24,7 @@ import {
 } from './helpers/mocks';
 import {
   createConfidentialClient,
+  createM2MClient,
   createPublicClient,
   createFAPIClient,
   createAuthCodeData,
@@ -915,6 +916,72 @@ describe('Security-Critical Tests', () => {
         expect(response.status).toBe(400);
         expect(body.error).toBe('invalid_request');
         expect(body.error_description).toContain('DPoP proof is required');
+      });
+
+      it('should require DPoP proof for refresh_token grant when client requires sender-constrained tokens', async () => {
+        const client = createConfidentialClient({ dpop_bound_access_tokens: true });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+          sub: 'user-001',
+        });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockExtractDPoPProof.mockReturnValue(null);
+
+        const ctx = createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'refresh_token',
+            refresh_token: refreshTokenJWT,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        });
+
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{ error: string; error_description: string }>(
+          response
+        );
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_request');
+        expect(body.error_description).toContain('DPoP proof is required');
+        expect(mocks.mockGetRefreshToken).not.toHaveBeenCalled();
+      });
+
+      it('should require DPoP proof for client_credentials grant when client dpop_mode is all', async () => {
+        const client = createM2MClient({ dpop_mode: 'all' });
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockExtractDPoPProof.mockReturnValue(null);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({
+          feature_client_credentials_enabled: true,
+        });
+
+        const ctx = createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+            scope: 'api:read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        });
+
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{ error: string; error_description: string }>(
+          response
+        );
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_request');
+        expect(body.error_description).toContain('DPoP proof is required');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       });
 
       it('should require DPoP proof when FAPI settings require DPoP globally', async () => {

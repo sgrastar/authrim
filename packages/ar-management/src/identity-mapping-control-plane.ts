@@ -24,6 +24,37 @@ type LifecycleState = 'draft' | 'published' | 'active' | 'scheduled' | 'retired'
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const ACTIVATION_LEASE_TTL_MS = 60 * 1000;
+const CSV_SOURCE_PROFILE_MAX_BYTES = 2 * 1024 * 1024;
+const CSV_SOURCE_PROFILE_MAX_BASE64_CHARS = Math.ceil(CSV_SOURCE_PROFILE_MAX_BYTES / 3) * 4 + 4;
+const CSV_SOURCE_PROFILE_MAX_ROWS = 1000;
+const CSV_SOURCE_PROFILE_MAX_COLUMNS = 500;
+const PROFILE_SCHEMA_MAX_JSON_BYTES = 128 * 1024;
+const PROFILE_SCHEMA_MAX_DEPTH = 12;
+const PROFILE_SCHEMA_MAX_NODES = 4000;
+const PROFILE_SCHEMA_MAX_ARRAY_ITEMS = 1000;
+const PROFILE_SCHEMA_MAX_OBJECT_KEYS = 500;
+const PROFILE_SCHEMA_MAX_STRING_CHARS = 4096;
+const POLICY_VERSION_MAX_RULES = 250;
+const POLICY_RULE_MAX_EDGES = 500;
+const POLICY_RULE_MAX_TRANSFORMS = 500;
+const POLICY_RULE_MAX_VALIDATION_RULES = 250;
+const POLICY_RULE_MAX_RELEASE_RULES = 250;
+const POLICY_RULE_MAX_CONFLICT_RULES = 100;
+const POLICY_SYMBOL_MAX_CHARS = 128;
+const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
+const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
+  'copy',
+  'concat',
+  'fallback',
+  'normalize',
+  'case',
+  'trim',
+  'text_to_boolean',
+  'json_build',
+  'json_extract_text',
+  'json_extract_boolean',
+  'json_extract_integer',
+]);
 
 const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   {
@@ -386,6 +417,20 @@ interface MappingPolicyVersionRow {
   updated_at: number;
 }
 
+interface MappingPolicyVersionListRow extends MappingPolicyVersionRow {
+  snapshot_id: string | null;
+  snapshot_catalog_version_id: string | null;
+  snapshot_lifecycle_state: LifecycleState | null;
+  snapshot_compiled_at: number | null;
+}
+
+interface MappingPolicyRuleSummaryRow {
+  policy_version_id: string;
+  rule_kind: string;
+  source_ref_json: string | null;
+  target_ref_json: string | null;
+}
+
 interface FieldCatalogVersionRow {
   id: string;
   tenant_id: string;
@@ -643,8 +688,20 @@ interface CreateSourceProfileRequest {
   sourceMetadata?: Record<string, unknown>;
 }
 
+interface UpdateSourceProfileRequest {
+  sourceType?: 'csv';
+  profileKey?: string;
+  displayName?: string;
+  versionLabel?: string;
+  parseDraftId?: string;
+  schema?: Record<string, unknown>;
+  parserOptions?: Record<string, unknown>;
+  warningSummary?: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown>;
+}
+
 interface CreateDestinationProfileRequest {
-  destinationType: 'oidc' | 'csv';
+  destinationType: 'oidc' | 'csv' | 'saml';
   profileKey: string;
   displayName: string;
   ownerScopeType?: 'platform' | 'tenant' | 'client';
@@ -652,6 +709,19 @@ interface CreateDestinationProfileRequest {
   baseProfileId?: string | null;
   versionLabel?: string;
   schema: Record<string, unknown>;
+  warningSummary?: Record<string, unknown>;
+  releaseImpact?: Record<string, unknown>;
+}
+
+interface UpdateDestinationProfileRequest {
+  destinationType?: 'oidc' | 'csv' | 'saml';
+  profileKey?: string;
+  displayName?: string;
+  ownerScopeType?: 'platform' | 'tenant' | 'client';
+  ownerScopeId?: string | null;
+  baseProfileId?: string | null;
+  versionLabel?: string;
+  schema?: Record<string, unknown>;
   warningSummary?: Record<string, unknown>;
   releaseImpact?: Record<string, unknown>;
 }
@@ -1042,7 +1112,7 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
 ]);
 const SOURCE_PROFILE_TYPES = new Set(['csv']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
-const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv']);
+const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml']);
 const DESTINATION_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const PROFILE_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant', 'client']);
 const REGISTRY_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant']);
@@ -1408,6 +1478,7 @@ export class IdentityMappingControlPlaneRepository {
     if (!isRecord(input.schema)) {
       throw badRequest('schema must be an object');
     }
+    assertProfileSchemaBudget(input.schema, 'protocolSchema.schema');
     const now = this.now();
     const id = createId('protocol_schema');
     await this.adapter.execute(
@@ -1462,6 +1533,7 @@ export class IdentityMappingControlPlaneRepository {
     if (!isRecord(input.schema)) {
       throw badRequest('schema must be an object');
     }
+    assertProfileSchemaBudget(input.schema, 'externalSchema.schema');
     const now = this.now();
     const id = createId('external_schema');
     await this.adapter.execute(
@@ -1514,6 +1586,7 @@ export class IdentityMappingControlPlaneRepository {
 
   async parseCsvSourceProfile(tenantId: string, input: ParseCsvSourceProfileRequest) {
     validateRequiredString(input.contentBase64, 'contentBase64');
+    assertCsvSourceProfilePayloadBudget(input.contentBase64);
     const now = this.now();
     const encoding = normalizeCsvEncoding(input.encoding);
     assertNoSensitiveMetadata(input.sourceMetadata, 'sourceProfile.parse.sourceMetadata');
@@ -1590,6 +1663,7 @@ export class IdentityMappingControlPlaneRepository {
     if (!schema) {
       throw badRequest('schema or parseDraftId is required');
     }
+    assertProfileSchemaBudget(schema, 'sourceProfile.schema');
     assertNoSourceProfileRawSamples(schema, 'sourceProfile.schema');
     assertNoSensitiveMetadata(input.sourceMetadata, 'sourceProfile.sourceMetadata');
     const profileId = createId('source_profile');
@@ -1683,7 +1757,6 @@ export class IdentityMappingControlPlaneRepository {
          FROM source_profiles p
          LEFT JOIN source_profile_versions v
            ON v.id = COALESCE(
-             p.active_version_id,
              (
                SELECT latest.id
                  FROM source_profile_versions latest
@@ -1691,7 +1764,8 @@ export class IdentityMappingControlPlaneRepository {
                   AND latest.profile_id = p.id
                 ORDER BY latest.updated_at DESC
                 LIMIT 1
-             )
+             ),
+             p.active_version_id
            )
         WHERE p.tenant_id = ?
         ORDER BY p.updated_at DESC`,
@@ -1718,6 +1792,129 @@ export class IdentityMappingControlPlaneRepository {
           }
         : null,
     }));
+  }
+
+  async updateSourceProfile(
+    tenantId: string,
+    profileId: string,
+    input: UpdateSourceProfileRequest
+  ) {
+    validateRequiredString(profileId, 'profileId');
+    const existing = await this.adapter.queryOne<{
+      id: string;
+      source_type: string;
+      profile_key: string;
+      display_name: string;
+    }>(
+      `SELECT id, source_type, profile_key, display_name
+         FROM source_profiles
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, profileId]
+    );
+    if (!existing) {
+      throw notFound('source profile not found');
+    }
+    const sourceType = input.sourceType ?? (existing.source_type as 'csv');
+    if (!SOURCE_PROFILE_TYPES.has(sourceType)) {
+      throw badRequest('sourceType must be csv');
+    }
+    const profileKey = input.profileKey ?? existing.profile_key;
+    const displayName = input.displayName ?? existing.display_name;
+    validateRequiredString(profileKey, 'profileKey');
+    validateRequiredString(displayName, 'displayName');
+    const duplicate = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM source_profiles
+        WHERE tenant_id = ?
+          AND profile_key = ?
+          AND id <> ?`,
+      [tenantId, profileKey, profileId]
+    );
+    if (duplicate) {
+      throw conflict('source profile key already exists');
+    }
+
+    const now = this.now();
+    const draft = input.parseDraftId
+      ? await this.getSourceProfileParseDraft(tenantId, input.parseDraftId, now)
+      : null;
+    const schema = isRecord(input.schema)
+      ? input.schema
+      : draft
+        ? (JSON.parse(draft.schema_json) as Record<string, unknown>)
+        : null;
+    if (!schema) {
+      throw badRequest('schema or parseDraftId is required');
+    }
+    assertProfileSchemaBudget(schema, 'sourceProfile.schema');
+    assertNoSourceProfileRawSamples(schema, 'sourceProfile.schema');
+    assertNoSensitiveMetadata(input.sourceMetadata, 'sourceProfile.sourceMetadata');
+    const versionId = createId('source_profile_version');
+    const schemaHash = await hashStableJson(schema);
+    const parserOptions = isRecord(input.parserOptions)
+      ? input.parserOptions
+      : draft?.parser_options_json
+        ? (JSON.parse(draft.parser_options_json) as Record<string, unknown>)
+        : {};
+    const warningSummary = normalizeWarningSummary(
+      input.warningSummary,
+      draft?.warning_summary_json
+    );
+    const sourceMetadata = {
+      ...(draft?.source_metadata_json
+        ? (JSON.parse(draft.source_metadata_json) as Record<string, unknown>)
+        : {}),
+      ...(isRecord(input.sourceMetadata) ? input.sourceMetadata : {}),
+      parseDraftId: input.parseDraftId ?? null,
+      rawContentPersisted: false,
+    };
+    const versionLabel = input.versionLabel ?? 'draft';
+
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `UPDATE source_profiles
+            SET source_type = ?, profile_key = ?, display_name = ?, lifecycle_state = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [sourceType, profileKey, displayName, 'draft', now, tenantId, profileId]
+      );
+      await tx.execute(
+        `INSERT INTO source_profile_versions (
+          id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json,
+          parser_options_json, warning_summary_json, source_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          versionId,
+          tenantId,
+          profileId,
+          versionLabel,
+          'draft',
+          schemaHash,
+          stableJson(schema),
+          stableJson(parserOptions),
+          stableJson(warningSummary),
+          stableJson(sourceMetadata),
+          now,
+          now,
+        ]
+      );
+    });
+
+    return {
+      id: profileId,
+      tenantId,
+      sourceType,
+      profileKey,
+      displayName,
+      lifecycleState: 'draft',
+      version: {
+        id: versionId,
+        versionLabel,
+        lifecycleState: 'draft',
+        schemaHash,
+        schema,
+        warningSummary,
+      },
+    };
   }
 
   async reviewSourceProfileVersion(tenantId: string, profileId: string, versionId: string) {
@@ -1947,11 +2144,12 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.profileKey, 'profileKey');
     validateRequiredString(input.displayName, 'displayName');
     if (!DESTINATION_PROFILE_TYPES.has(input.destinationType)) {
-      throw badRequest('destinationType must be oidc or csv');
+      throw badRequest('destinationType must be oidc, csv, or saml');
     }
     if (!isRecord(input.schema)) {
       throw badRequest('schema must be an object');
     }
+    assertProfileSchemaBudget(input.schema, 'destinationProfile.schema');
     assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
 
     const owner = normalizeProfileOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
@@ -1975,10 +2173,11 @@ export class IdentityMappingControlPlaneRepository {
       throw conflict('destination profile key already exists for this owner scope');
     }
     const customScopes = await this.listOidcCustomScopes(tenantId);
-    const validation =
-      input.destinationType === 'oidc'
-        ? validateOidcDestinationProfileSchema(input.schema, customScopes)
-        : validateCsvDestinationProfileSchema(input.schema);
+    const validation = validateDestinationProfileSchema(
+      input.destinationType,
+      input.schema,
+      customScopes
+    );
     if (validation.errorCount > 0) {
       throw badRequest(`destination profile schema is invalid: ${validation.errors.join('; ')}`);
     }
@@ -2074,7 +2273,6 @@ export class IdentityMappingControlPlaneRepository {
          FROM destination_profiles p
          LEFT JOIN destination_profile_versions v
            ON v.id = COALESCE(
-             p.active_version_id,
              (
                SELECT latest.id
                  FROM destination_profile_versions latest
@@ -2082,7 +2280,8 @@ export class IdentityMappingControlPlaneRepository {
                   AND latest.profile_id = p.id
                 ORDER BY latest.updated_at DESC
                 LIMIT 1
-             )
+             ),
+             p.active_version_id
            )
         WHERE p.tenant_id IN (?, ?)
         ORDER BY p.owner_scope_type ASC, p.updated_at DESC`,
@@ -2118,6 +2317,171 @@ export class IdentityMappingControlPlaneRepository {
           }
         : null,
     }));
+  }
+
+  async updateDestinationProfile(
+    tenantId: string,
+    profileId: string,
+    input: UpdateDestinationProfileRequest,
+    allowPlatformScope = false
+  ) {
+    validateRequiredString(profileId, 'profileId');
+    const existing = await this.adapter.queryOne<{
+      id: string;
+      tenant_id: string;
+      destination_type: string;
+      profile_key: string;
+      display_name: string;
+      owner_scope_type: string;
+      owner_scope_id: string | null;
+      base_profile_id: string | null;
+    }>(
+      `SELECT id, tenant_id, destination_type, profile_key, display_name,
+              owner_scope_type, owner_scope_id, base_profile_id
+         FROM destination_profiles
+        WHERE id = ?
+          AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
+      [profileId, tenantId, allowPlatformScope ? 1 : 0, 'platform']
+    );
+    if (!existing) {
+      throw notFound('destination profile not found');
+    }
+
+    const destinationType =
+      input.destinationType ?? (existing.destination_type as 'oidc' | 'csv' | 'saml');
+    if (!DESTINATION_PROFILE_TYPES.has(destinationType)) {
+      throw badRequest('destinationType must be oidc, csv, or saml');
+    }
+    if (!isRecord(input.schema)) {
+      throw badRequest('schema is required');
+    }
+    assertProfileSchemaBudget(input.schema, 'destinationProfile.schema');
+    assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
+
+    const owner = normalizeProfileOwner(
+      tenantId,
+      input.ownerScopeType ?? (existing.owner_scope_type as 'platform' | 'tenant' | 'client'),
+      input.ownerScopeId === undefined ? existing.owner_scope_id : input.ownerScopeId
+    );
+    if (owner.tenantId === 'platform' && !allowPlatformScope) {
+      throw forbidden('platform owner scope requires platform admin');
+    }
+    if (owner.tenantId !== existing.tenant_id) {
+      throw badRequest('destination profile owner tenant cannot be changed');
+    }
+    const profileKey = input.profileKey ?? existing.profile_key;
+    const displayName = input.displayName ?? existing.display_name;
+    validateRequiredString(profileKey, 'profileKey');
+    validateRequiredString(displayName, 'displayName');
+    const duplicate = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM destination_profiles
+        WHERE tenant_id = ?
+          AND owner_scope_type = ?
+          AND COALESCE(owner_scope_id, '') = COALESCE(?, '')
+          AND destination_type = ?
+          AND profile_key = ?
+          AND id <> ?`,
+      [
+        owner.tenantId,
+        owner.ownerScopeType,
+        owner.ownerScopeId,
+        destinationType,
+        profileKey,
+        profileId,
+      ]
+    );
+    if (duplicate) {
+      throw conflict('destination profile key already exists for this owner scope');
+    }
+
+    const customScopes = await this.listOidcCustomScopes(tenantId);
+    const validation = validateDestinationProfileSchema(
+      destinationType,
+      input.schema,
+      customScopes
+    );
+    if (validation.errorCount > 0) {
+      throw badRequest(`destination profile schema is invalid: ${validation.errors.join('; ')}`);
+    }
+    const warningSummary = {
+      ...validation.warningSummary,
+      ...(isRecord(input.warningSummary) ? input.warningSummary : {}),
+    };
+    const releaseImpact = {
+      ...validation.releaseImpact,
+      ...(isRecord(input.releaseImpact) ? input.releaseImpact : {}),
+    };
+    const now = this.now();
+    const versionId = createId('destination_profile_version');
+    const versionLabel = input.versionLabel ?? 'draft';
+    const schemaHash = await hashStableJson(input.schema);
+
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `UPDATE destination_profiles
+            SET tenant_id = ?, destination_type = ?, profile_key = ?, display_name = ?,
+                owner_scope_type = ?, owner_scope_id = ?, base_profile_id = ?,
+                lifecycle_state = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [
+          owner.tenantId,
+          destinationType,
+          profileKey,
+          displayName,
+          owner.ownerScopeType,
+          owner.ownerScopeId,
+          input.baseProfileId === undefined ? existing.base_profile_id : input.baseProfileId,
+          'draft',
+          now,
+          existing.tenant_id,
+          profileId,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO destination_profile_versions (
+          id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json,
+          validation_summary_json, warning_summary_json, release_impact_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          versionId,
+          owner.tenantId,
+          profileId,
+          versionLabel,
+          'draft',
+          schemaHash,
+          stableJson(input.schema),
+          stableJson(validation),
+          stableJson(warningSummary),
+          stableJson(releaseImpact),
+          now,
+          now,
+        ]
+      );
+    });
+
+    return {
+      id: profileId,
+      tenantId: owner.tenantId,
+      destinationType,
+      profileKey,
+      displayName,
+      ownerScopeType: owner.ownerScopeType,
+      ownerScopeId: owner.ownerScopeId,
+      baseProfileId:
+        input.baseProfileId === undefined ? existing.base_profile_id : input.baseProfileId,
+      lifecycleState: 'draft',
+      version: {
+        id: versionId,
+        versionLabel,
+        lifecycleState: 'draft',
+        schemaHash,
+        schema: input.schema,
+        validationSummary: validation,
+        warningSummary,
+        releaseImpact,
+      },
+    };
   }
 
   async reviewDestinationProfileVersion(
@@ -2338,6 +2702,105 @@ export class IdentityMappingControlPlaneRepository {
     }));
   }
 
+  async listPolicyVersions(tenantId: string, policySetId: string) {
+    const rows = await this.adapter.query<MappingPolicyVersionListRow>(
+      `SELECT v.*,
+              s.id AS snapshot_id,
+              s.catalog_version_id AS snapshot_catalog_version_id,
+              s.lifecycle_state AS snapshot_lifecycle_state,
+              s.compiled_at AS snapshot_compiled_at
+         FROM mapping_policy_versions v
+         LEFT JOIN compiled_mapping_snapshots s
+           ON s.tenant_id = v.tenant_id
+          AND s.policy_version_id = v.id
+          AND s.compiled_at = (
+                SELECT MAX(latest.compiled_at)
+                  FROM compiled_mapping_snapshots latest
+                 WHERE latest.tenant_id = v.tenant_id
+                   AND latest.policy_version_id = v.id
+              )
+        WHERE v.tenant_id = ? AND v.policy_set_id = ?
+        ORDER BY v.updated_at DESC, v.created_at DESC`,
+      [tenantId, policySetId]
+    );
+    const ruleRows = await this.adapter.query<MappingPolicyRuleSummaryRow>(
+      `SELECT v.id AS policy_version_id,
+              r.rule_kind,
+              e.source_ref_json,
+              e.target_ref_json
+         FROM mapping_policy_versions v
+         JOIN mapping_rules r
+           ON r.tenant_id = v.tenant_id
+          AND r.policy_version_id = v.id
+         LEFT JOIN mapping_rule_edges e
+           ON e.tenant_id = r.tenant_id
+          AND e.rule_id = r.id
+        WHERE v.tenant_id = ? AND v.policy_set_id = ?`,
+      [tenantId, policySetId]
+    );
+    const summariesByVersion = new Map<
+      string,
+      {
+        inbound: boolean;
+        outbound: boolean;
+        sourceProfileIds: Set<string>;
+        destinationProfileIds: Set<string>;
+      }
+    >();
+    for (const row of ruleRows) {
+      if (typeof row.rule_kind !== 'string') continue;
+      const summary = summariesByVersion.get(row.policy_version_id) ?? {
+        inbound: false,
+        outbound: false,
+        sourceProfileIds: new Set<string>(),
+        destinationProfileIds: new Set<string>(),
+      };
+      if (row.rule_kind.includes('inbound')) summary.inbound = true;
+      if (row.rule_kind.includes('outbound') || row.rule_kind.includes('release')) {
+        summary.outbound = true;
+      }
+      for (const profileId of profileIdsFromPolicyRefs(row.source_ref_json, row.target_ref_json)) {
+        if (profileId.startsWith('source-profile-') || profileId.startsWith('external-source-')) {
+          summary.sourceProfileIds.add(profileId);
+        }
+        if (
+          profileId.startsWith('destination-profile-') ||
+          profileId.startsWith('protocol-destination-')
+        ) {
+          summary.destinationProfileIds.add(profileId);
+        }
+      }
+      summariesByVersion.set(row.policy_version_id, summary);
+    }
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      policySetId: row.policy_set_id,
+      versionLabel: row.version_label,
+      lifecycleState: row.lifecycle_state,
+      policyHash: row.policy_hash,
+      compatibilityRange: row.compatibility_range,
+      authorId: row.author_id,
+      publishedAt: row.published_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      directions: {
+        inbound: summariesByVersion.get(row.id)?.inbound ?? false,
+        outbound: summariesByVersion.get(row.id)?.outbound ?? false,
+      },
+      sourceProfileIds: [...(summariesByVersion.get(row.id)?.sourceProfileIds ?? [])],
+      destinationProfileIds: [...(summariesByVersion.get(row.id)?.destinationProfileIds ?? [])],
+      latestSnapshot: row.snapshot_id
+        ? {
+            id: row.snapshot_id,
+            catalogVersionId: row.snapshot_catalog_version_id,
+            lifecycleState: row.snapshot_lifecycle_state,
+            compiledAt: row.snapshot_compiled_at,
+          }
+        : null,
+    }));
+  }
+
   async createPolicyVersion(
     tenantId: string,
     policySetId: string,
@@ -2348,9 +2811,7 @@ export class IdentityMappingControlPlaneRepository {
     if (!Array.isArray(input.rules)) {
       throw badRequest('rules must be an array');
     }
-    for (const rule of input.rules) {
-      assertNoSensitiveMetadata(rule.metadata, 'rule.metadata');
-    }
+    assertPolicyVersionRequestSafe(input);
 
     const policySet = await this.getPolicySet(tenantId, policySetId);
     if (!policySet) {
@@ -5163,6 +5624,16 @@ export async function adminIdentityMappingSourceProfileCreateHandler(c: AdminCon
   );
 }
 
+export async function adminIdentityMappingSourceProfileUpdateHandler(c: AdminContext) {
+  return handleMutation(c, 'source-profile.update', async (repository, tenantId, body) =>
+    repository.updateSourceProfile(
+      tenantId,
+      requiredParam(c, 'sourceProfileId'),
+      body as UpdateSourceProfileRequest
+    )
+  );
+}
+
 export async function adminIdentityMappingSourceProfileReviewHandler(c: AdminContext) {
   return handleMutation(c, 'source-profile.review', async (repository, tenantId) =>
     repository.reviewSourceProfileVersion(
@@ -5199,6 +5670,18 @@ export async function adminIdentityMappingDestinationProfileCreateHandler(c: Adm
   return handleMutation(c, 'destination-profile.create', async (repository, tenantId, body) => {
     assertPlatformOwnerScopeAllowed(c, body);
     return repository.createDestinationProfile(tenantId, body as CreateDestinationProfileRequest);
+  });
+}
+
+export async function adminIdentityMappingDestinationProfileUpdateHandler(c: AdminContext) {
+  return handleMutation(c, 'destination-profile.update', async (repository, tenantId, body) => {
+    assertPlatformOwnerScopeAllowed(c, body);
+    return repository.updateDestinationProfile(
+      tenantId,
+      requiredParam(c, 'destinationProfileId'),
+      body as UpdateDestinationProfileRequest,
+      hasPlatformOwnerScopeAuthority(c)
+    );
   });
 }
 
@@ -5275,6 +5758,12 @@ export async function adminIdentityMappingTemplateCreateHandler(c: AdminContext)
 export async function adminIdentityMappingPoliciesListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     policies: await repository.listPolicySets(tenantId),
+  }));
+}
+
+export async function adminIdentityMappingPolicyVersionsListHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => ({
+    policyVersions: await repository.listPolicyVersions(tenantId, requiredParam(c, 'policySetId')),
   }));
 }
 
@@ -5703,8 +6192,20 @@ function normalizeCsvParserOptions(value: unknown): CsvSourceProfileParserOption
   ) {
     options.headerMode = value.headerMode;
   }
-  if (typeof value.maxRows === 'number') options.maxRows = value.maxRows;
-  if (typeof value.maxColumns === 'number') options.maxColumns = value.maxColumns;
+  if (typeof value.maxRows === 'number') {
+    const maxRows = Math.trunc(value.maxRows);
+    if (maxRows < 1 || maxRows > CSV_SOURCE_PROFILE_MAX_ROWS) {
+      throw badRequest(`maxRows must be between 1 and ${CSV_SOURCE_PROFILE_MAX_ROWS}`);
+    }
+    options.maxRows = maxRows;
+  }
+  if (typeof value.maxColumns === 'number') {
+    const maxColumns = Math.trunc(value.maxColumns);
+    if (maxColumns < 1 || maxColumns > CSV_SOURCE_PROFILE_MAX_COLUMNS) {
+      throw badRequest(`maxColumns must be between 1 and ${CSV_SOURCE_PROFILE_MAX_COLUMNS}`);
+    }
+    options.maxColumns = maxColumns;
+  }
   return options;
 }
 
@@ -5717,13 +6218,29 @@ function isCsvDelimiter(
 function decodeBase64Text(contentBase64: string, encoding: string): string {
   try {
     const binary = atob(contentBase64);
+    if (binary.length > CSV_SOURCE_PROFILE_MAX_BYTES) {
+      throw badRequest(
+        `contentBase64 decoded payload must be at most ${CSV_SOURCE_PROFILE_MAX_BYTES} bytes`
+      );
+    }
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
     }
     return new TextDecoder(encoding, { fatal: false, ignoreBOM: false }).decode(bytes);
-  } catch {
+  } catch (error) {
+    if (error instanceof IdentityMappingControlPlaneError) {
+      throw error;
+    }
     throw badRequest('contentBase64 could not be decoded with the selected encoding');
+  }
+}
+
+function assertCsvSourceProfilePayloadBudget(contentBase64: string): void {
+  if (contentBase64.length > CSV_SOURCE_PROFILE_MAX_BASE64_CHARS) {
+    throw badRequest(
+      `contentBase64 encoded payload must be at most ${CSV_SOURCE_PROFILE_MAX_BASE64_CHARS} characters`
+    );
   }
 }
 
@@ -5786,6 +6303,23 @@ function normalizeOidcSurfaces(value: unknown[]): string[] {
     throw badRequest('allowedSurfaces must include id_token or userinfo');
   }
   return Array.from(new Set(surfaces)).sort();
+}
+
+function validateDestinationProfileSchema(
+  destinationType: string,
+  schema: Record<string, unknown>,
+  customScopes: Array<{ scopeKey: string; allowedClaims: string[] }>
+) {
+  switch (destinationType) {
+    case 'oidc':
+      return validateOidcDestinationProfileSchema(schema, customScopes);
+    case 'csv':
+      return validateCsvDestinationProfileSchema(schema);
+    case 'saml':
+      return validateSamlDestinationProfileSchema(schema);
+    default:
+      throw badRequest('destinationType must be oidc, csv, or saml');
+  }
 }
 
 function validateOidcDestinationProfileSchema(
@@ -5973,6 +6507,62 @@ function validateCsvDestinationProfileSchema(schema: Record<string, unknown>) {
   };
 }
 
+function validateSamlDestinationProfileSchema(schema: Record<string, unknown>) {
+  const attributes = Array.isArray(schema.attributes)
+    ? schema.attributes.filter(isRecord)
+    : ([] as Record<string, unknown>[]);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (schema.destinationType !== 'saml') errors.push('destinationType must be saml');
+  if (!isRecord(schema.nameId)) {
+    errors.push('SAML destination profile must include nameId');
+  }
+  if (attributes.length === 0) errors.push('SAML destination profile must include attributes');
+
+  const seenNames = new Set<string>();
+  let piiAttributeCount = 0;
+  let regulatedAttributeCount = 0;
+  let blockingWarningCount = 0;
+
+  for (const attribute of attributes) {
+    const name = String(attribute.name ?? '');
+    if (!name) {
+      errors.push('SAML attribute name is required');
+      continue;
+    }
+    if (seenNames.has(name)) errors.push(`${name} appears more than once`);
+    seenNames.add(name);
+    const classification = String(attribute.classification ?? 'internal');
+    if (classification === 'pii') piiAttributeCount += 1;
+    if (classification === 'regulated') regulatedAttributeCount += 1;
+    if (
+      (classification === 'pii' || classification === 'regulated') &&
+      !isRecord(attribute.releasePolicy)
+    ) {
+      blockingWarningCount += 1;
+      warnings.push(`${name} releases sensitive data without release policy`);
+    }
+  }
+
+  return {
+    errorCount: errors.length,
+    errors,
+    warningCount: warnings.length,
+    warnings,
+    warningSummary: {
+      warningCount: warnings.length,
+      blockingWarningCount,
+    },
+    releaseImpact: {
+      destinationType: 'saml',
+      attributeCount: attributes.length,
+      nameIdFormat: isRecord(schema.nameId) ? String(schema.nameId.format ?? '') : '',
+      piiAttributeCount,
+      regulatedAttributeCount,
+    },
+  };
+}
+
 function requiredParam(c: AdminContext, name: string): string {
   const value = c.req.param(name);
   validateRequiredString(value, name);
@@ -6058,6 +6648,158 @@ function assertNoSourceProfileRawSamples(value: unknown, path: string): void {
       throw badRequest(`${path}.${key} is not allowed in source profile schema`);
     }
     assertNoSourceProfileRawSamples(item, `${path}.${key}`);
+  }
+}
+
+function assertProfileSchemaBudget(value: unknown, path: string): void {
+  const seen = new WeakSet<object>();
+  let nodeCount = 0;
+
+  const visit = (item: unknown, currentPath: string, depth: number): void => {
+    nodeCount += 1;
+    if (nodeCount > PROFILE_SCHEMA_MAX_NODES) {
+      throw badRequest(`${path} must contain at most ${PROFILE_SCHEMA_MAX_NODES} JSON nodes`);
+    }
+    if (depth > PROFILE_SCHEMA_MAX_DEPTH) {
+      throw badRequest(`${currentPath} exceeds maximum depth ${PROFILE_SCHEMA_MAX_DEPTH}`);
+    }
+    if (typeof item === 'string' && item.length > PROFILE_SCHEMA_MAX_STRING_CHARS) {
+      throw badRequest(
+        `${currentPath} string value must be at most ${PROFILE_SCHEMA_MAX_STRING_CHARS} characters`
+      );
+    }
+    if (item === undefined || item === null || typeof item !== 'object') {
+      return;
+    }
+    if (seen.has(item)) {
+      throw badRequest(`${currentPath} must not contain circular references`);
+    }
+    seen.add(item);
+
+    if (Array.isArray(item)) {
+      if (item.length > PROFILE_SCHEMA_MAX_ARRAY_ITEMS) {
+        throw badRequest(
+          `${currentPath} array must contain at most ${PROFILE_SCHEMA_MAX_ARRAY_ITEMS} items`
+        );
+      }
+      item.forEach((child, index) => visit(child, `${currentPath}[${index}]`, depth + 1));
+      return;
+    }
+
+    const entries = Object.entries(item);
+    if (entries.length > PROFILE_SCHEMA_MAX_OBJECT_KEYS) {
+      throw badRequest(
+        `${currentPath} object must contain at most ${PROFILE_SCHEMA_MAX_OBJECT_KEYS} keys`
+      );
+    }
+    entries.forEach(([key, child]) => visit(child, `${currentPath}.${key}`, depth + 1));
+  };
+
+  visit(value, path, 0);
+  const bytes = new TextEncoder().encode(JSON.stringify(value)).length;
+  if (bytes > PROFILE_SCHEMA_MAX_JSON_BYTES) {
+    throw badRequest(`${path} JSON must be at most ${PROFILE_SCHEMA_MAX_JSON_BYTES} bytes`);
+  }
+}
+
+function assertPolicyVersionRequestSafe(input: CreatePolicyVersionRequest): void {
+  assertProfileSchemaBudget(input, 'policyVersion');
+  assertNoSensitiveMetadata(input, 'policyVersion');
+  if (input.rules.length > POLICY_VERSION_MAX_RULES) {
+    throw badRequest(`rules must contain at most ${POLICY_VERSION_MAX_RULES} items`);
+  }
+  input.rules.forEach((rule, index) => assertPolicyRuleSafe(rule, `rules[${index}]`));
+}
+
+function assertPolicyRuleSafe(rule: PolicyVersionRuleInput, path: string): void {
+  validatePolicySymbol(rule.ruleKey, `${path}.ruleKey`);
+  validatePolicySymbol(rule.ruleKind, `${path}.ruleKind`);
+  validatePolicySymbol(rule.action, `${path}.action`);
+
+  assertArrayLimit(rule.edges, POLICY_RULE_MAX_EDGES, `${path}.edges`);
+  assertArrayLimit(rule.transforms, POLICY_RULE_MAX_TRANSFORMS, `${path}.transforms`);
+  assertArrayLimit(
+    rule.validationRules,
+    POLICY_RULE_MAX_VALIDATION_RULES,
+    `${path}.validationRules`
+  );
+  assertArrayLimit(rule.releaseRules, POLICY_RULE_MAX_RELEASE_RULES, `${path}.releaseRules`);
+  assertArrayLimit(rule.conflictRules, POLICY_RULE_MAX_CONFLICT_RULES, `${path}.conflictRules`);
+
+  rule.edges?.forEach((edge, index) => {
+    assertNonEmptyRecord(edge.sourceRef, `${path}.edges[${index}].sourceRef`);
+    assertNonEmptyRecord(edge.targetRef, `${path}.edges[${index}].targetRef`);
+    if (edge.edgeKind !== undefined) {
+      validatePolicySymbol(edge.edgeKind, `${path}.edges[${index}].edgeKind`);
+    }
+  });
+
+  rule.transforms?.forEach((transform, index) => {
+    validatePolicySymbol(transform.operation, `${path}.transforms[${index}].operation`);
+    if (!SUPPORTED_POLICY_TRANSFORM_OPERATIONS.has(transform.operation)) {
+      throw badRequest(`${path}.transforms[${index}].operation is not supported`);
+    }
+    if (
+      transform.edgeIndex !== undefined &&
+      (!Number.isInteger(transform.edgeIndex) || transform.edgeIndex < 0)
+    ) {
+      throw badRequest(`${path}.transforms[${index}].edgeIndex must be a non-negative integer`);
+    }
+  });
+
+  rule.validationRules?.forEach((validationRule, index) => {
+    assertNonEmptyRecord(validationRule.targetRef, `${path}.validationRules[${index}].targetRef`);
+    validatePolicySymbol(
+      validationRule.validationKind,
+      `${path}.validationRules[${index}].validationKind`
+    );
+    if (validationRule.severity !== undefined) {
+      validatePolicySymbol(validationRule.severity, `${path}.validationRules[${index}].severity`);
+    }
+  });
+
+  rule.releaseRules?.forEach((releaseRule, index) => {
+    validatePolicySymbol(
+      releaseRule.destinationType,
+      `${path}.releaseRules[${index}].destinationType`
+    );
+    assertNonEmptyRecord(releaseRule.sourceRef, `${path}.releaseRules[${index}].sourceRef`);
+    validatePolicySymbol(releaseRule.releaseAction, `${path}.releaseRules[${index}].releaseAction`);
+    if (releaseRule.legalBasis !== undefined) {
+      validatePolicySymbol(releaseRule.legalBasis, `${path}.releaseRules[${index}].legalBasis`);
+    }
+    if (releaseRule.purpose !== undefined) {
+      validatePolicySymbol(releaseRule.purpose, `${path}.releaseRules[${index}].purpose`);
+    }
+  });
+
+  rule.conflictRules?.forEach((conflictRule, index) => {
+    assertNonEmptyRecord(conflictRule.targetRef, `${path}.conflictRules[${index}].targetRef`);
+    validatePolicySymbol(
+      conflictRule.conflictStrategy,
+      `${path}.conflictRules[${index}].conflictStrategy`
+    );
+  });
+}
+
+function assertArrayLimit(value: unknown[] | undefined, limit: number, path: string): void {
+  if (value !== undefined && value.length > limit) {
+    throw badRequest(`${path} must contain at most ${limit} items`);
+  }
+}
+
+function assertNonEmptyRecord(value: unknown, path: string): void {
+  if (!isRecord(value) || Object.keys(value).length === 0) {
+    throw badRequest(`${path} must be a non-empty object`);
+  }
+}
+
+function validatePolicySymbol(value: unknown, path: string): void {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw badRequest(`${path} is required`);
+  }
+  if (value.length > POLICY_SYMBOL_MAX_CHARS || !POLICY_SYMBOL_PATTERN.test(value)) {
+    throw badRequest(`${path} must be a stable symbolic identifier`);
   }
 }
 
@@ -6237,6 +6979,19 @@ function parseCatalogAliases(value: string | null): Array<{ namespace: string; p
   } catch {
     return [];
   }
+}
+
+function profileIdsFromPolicyRefs(...values: Array<string | null>): string[] {
+  const ids: string[] = [];
+  for (const value of values) {
+    if (!value) continue;
+    const parsed = parseJsonObject(value, {});
+    const profileId = parsed.profileId;
+    if (typeof profileId === 'string' && profileId.length > 0 && !ids.includes(profileId)) {
+      ids.push(profileId);
+    }
+  }
+  return ids;
 }
 
 function assertSafeMaterialRef(materialRef: string): void {

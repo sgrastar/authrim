@@ -496,7 +496,8 @@
 						<h3>Request Headers</h3>
 						<button
 							class="copy-btn"
-							onclick={() => copyToClipboard(JSON.stringify(selectedDelivery?.request_headers || {}, null, 2))}
+							onclick={() =>
+								copyToClipboard(JSON.stringify(selectedDelivery?.request_headers || {}, null, 2))}
 							title="Copy masked content"
 						>
 							Copy
@@ -504,7 +505,9 @@
 					</div>
 					<pre class="payload-content">{detailViewMode === 'pretty'
 							? formatJson(JSON.stringify(selectedDelivery.request_headers))
-							: truncateContent(maskSensitiveData(JSON.stringify(selectedDelivery.request_headers, null, 2)))}</pre>
+							: truncateContent(
+									maskSensitiveData(JSON.stringify(selectedDelivery.request_headers, null, 2))
+								)}</pre>
 				</div>
 			{/if}
 

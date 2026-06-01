@@ -211,4 +211,45 @@ describe('transform registry', () => {
       }).value?.value
     ).toBe(42);
   });
+
+  it('rejects oversized transform parameters before execution', () => {
+    const step: MappingTransformStep = {
+      id: 'transform.profile.path',
+      inputEdgeIds: ['edge.profile'],
+      operation: 'json_extract_text',
+      parameters: { path: `profile.${'x'.repeat(512)}` },
+      outputTargetRef: {
+        side: 'canonical',
+        namespace: 'authrim.profile',
+        path: 'profile',
+      },
+    };
+
+    const validation = validateTransformStep(step);
+    expect(validation.reasons.map((item) => item.code)).toContain('transform.invalid_parameter');
+    expect(executeTransformStep({ step, edgeValues: new Map() }).value).toBeUndefined();
+  });
+
+  it('does not parse JSON transform inputs above the runtime budget', () => {
+    const sourceRef = fieldRef('csv', 'profile');
+    const targetRef = { side: 'canonical' as const, namespace: 'authrim.profile', path: 'profile' };
+    const mappingEdge = edge(sourceRef, targetRef);
+    const largeJson = JSON.stringify({
+      payload: 'x'.repeat(33 * 1024),
+    });
+
+    const result = executeTransformStep({
+      step: {
+        id: 'transform.profile.parse-json',
+        inputEdgeIds: [mappingEdge.id],
+        operation: 'json_build',
+        parameters: { nullHandling: 'omit' },
+        outputTargetRef: targetRef,
+      },
+      edgeValues: new Map([[mappingEdge.id, sourceValue('csv', 'profile', largeJson)]]),
+    });
+
+    expect(result.value).toBeUndefined();
+    expect(result.reasons.map((item) => item.code)).toContain('transform.invalid_output');
+  });
 });
