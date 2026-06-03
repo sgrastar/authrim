@@ -147,9 +147,11 @@ class MockKeyManagerStub {
           n: `modulus-${kid}`,
           e: 'AQAB',
         },
-        privatePEM: ['-----BEGIN PRIVATE KEY-----', `private-${kid}`, '-----END PRIVATE KEY-----'].join(
-          '\n'
-        ),
+        privatePEM: [
+          '-----BEGIN PRIVATE KEY-----',
+          `private-${kid}`,
+          '-----END PRIVATE KEY-----',
+        ].join('\n'),
         createdAt: 1770000000000,
         status: 'active',
         certificatePEM: ['-----BEGIN CERTIFICATE-----', 'QUJD', '-----END CERTIFICATE-----'].join(

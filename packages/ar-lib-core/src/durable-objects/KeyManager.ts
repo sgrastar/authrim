@@ -175,11 +175,7 @@ async function verifyImportedKeyPair(
       ['verify']
     );
     const verificationInput = new TextEncoder().encode('authrim-key-manager-import-check');
-    const signature = await crypto.subtle.sign(
-      'RSASSA-PKCS1-v1_5',
-      privateKey,
-      verificationInput
-    );
+    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, verificationInput);
     const verified = await crypto.subtle.verify(
       'RSASSA-PKCS1-v1_5',
       publicKey,

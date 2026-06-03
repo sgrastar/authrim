@@ -399,7 +399,8 @@ export async function importSigningKeyWithPrivateMaterial(
         certificatePEM: key.certificate,
         certificateCreatedAt: key.certificateCreatedAt,
         certificateSha256Thumbprint:
-          key.certificateSha256Thumbprint ?? (await calculateCertificateThumbprint(key.certificate)),
+          key.certificateSha256Thumbprint ??
+          (await calculateCertificateThumbprint(key.certificate)),
       }),
     })
   );

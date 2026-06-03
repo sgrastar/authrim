@@ -16,10 +16,7 @@ import {
   type SAMLInteractiveLoginUrlPolicy,
   type SAMLEntityIdStyle,
 } from '../common/entity-id';
-import {
-  assertSAMLKeyRefTenantBound,
-  buildSAMLSigningKeyRef,
-} from '../common/saml-signing-keys';
+import { assertSAMLKeyRefTenantBound, buildSAMLSigningKeyRef } from '../common/saml-signing-keys';
 import { requireSAMLTenantId } from '../common/tenant';
 
 export const SAML_LOCAL_SIGNING_SECRET_DR_BUNDLE_KIND =
@@ -267,9 +264,12 @@ async function collectSAMLSigningKeysForDRBundle(
           }),
       },
       policy.next?.keyRef ? { role, slot: 'next' as const, keyRef: policy.next.keyRef } : null,
-      policy.backup?.keyRef ? { role, slot: 'backup' as const, keyRef: policy.backup.keyRef } : null,
-    ].filter((ref): ref is { role: SAMLSigningRole; slot: 'active' | 'next' | 'backup'; keyRef: string } =>
-      Boolean(ref)
+      policy.backup?.keyRef
+        ? { role, slot: 'backup' as const, keyRef: policy.backup.keyRef }
+        : null,
+    ].filter(
+      (ref): ref is { role: SAMLSigningRole; slot: 'active' | 'next' | 'backup'; keyRef: string } =>
+        Boolean(ref)
     );
 
     for (const ref of refs) {
@@ -330,9 +330,7 @@ function normalizeEncryptedSAMLLocalSigningDRBundle(
       ? (source.cipher as Record<string, unknown>)
       : {};
   const iterations =
-    typeof kdf.iterations === 'number' && Number.isInteger(kdf.iterations)
-      ? kdf.iterations
-      : 0;
+    typeof kdf.iterations === 'number' && Number.isInteger(kdf.iterations) ? kdf.iterations : 0;
   if (
     kdf.name !== 'PBKDF2' ||
     kdf.hash !== 'SHA-256' ||
@@ -366,9 +364,7 @@ function normalizeEncryptedSAMLLocalSigningDRBundle(
   };
 }
 
-function normalizeSAMLLocalSigningSecretDRBundle(
-  input: unknown
-): SAMLLocalSigningSecretDRBundle {
+function normalizeSAMLLocalSigningSecretDRBundle(input: unknown): SAMLLocalSigningSecretDRBundle {
   if (typeof input !== 'object' || input === null) {
     throw new Error('Invalid SAML DR bundle');
   }
@@ -471,10 +467,15 @@ function normalizeSigningKeyPolicies(value: unknown): {
   idp?: SAMLSigningKeyPolicy;
   sp?: SAMLSigningKeyPolicy;
 } {
-  const source = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+  const source =
+    typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
   return {
-    idp: typeof source.idp === 'object' && source.idp ? (source.idp as SAMLSigningKeyPolicy) : undefined,
-    sp: typeof source.sp === 'object' && source.sp ? (source.sp as SAMLSigningKeyPolicy) : undefined,
+    idp:
+      typeof source.idp === 'object' && source.idp
+        ? (source.idp as SAMLSigningKeyPolicy)
+        : undefined,
+    sp:
+      typeof source.sp === 'object' && source.sp ? (source.sp as SAMLSigningKeyPolicy) : undefined,
   };
 }
 
@@ -488,7 +489,10 @@ function readRequiredString(value: unknown, field: string, maxLength: number): s
 
 function readOptionalString(value: unknown, maxLength: number): string {
   return typeof value === 'string'
-    ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, maxLength)
+    ? value
+        .replace(/[\u0000-\u001f\u007f]/g, '')
+        .trim()
+        .slice(0, maxLength)
     : '';
 }
 

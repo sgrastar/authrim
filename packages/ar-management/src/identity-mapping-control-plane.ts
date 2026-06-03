@@ -2888,14 +2888,14 @@ export class IdentityMappingControlPlaneRepository {
             )`,
         [tenantId, tenantId, policySetId]
       );
-      await tx.execute(`DELETE FROM mapping_policy_activations WHERE tenant_id = ? AND policy_set_id = ?`, [
-        tenantId,
-        policySetId,
-      ]);
-      await tx.execute(`DELETE FROM mapping_policy_versions WHERE tenant_id = ? AND policy_set_id = ?`, [
-        tenantId,
-        policySetId,
-      ]);
+      await tx.execute(
+        `DELETE FROM mapping_policy_activations WHERE tenant_id = ? AND policy_set_id = ?`,
+        [tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_policy_versions WHERE tenant_id = ? AND policy_set_id = ?`,
+        [tenantId, policySetId]
+      );
       await tx.execute(`DELETE FROM mapping_policy_sets WHERE tenant_id = ? AND id = ?`, [
         tenantId,
         policySetId,
