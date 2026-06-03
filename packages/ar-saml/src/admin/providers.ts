@@ -85,6 +85,10 @@ import {
   publishSAMLNextSigningCertificate,
   retireSAMLBackupSigningCertificate,
 } from './signing-rollover';
+import {
+  buildEncryptedSAMLLocalSigningSecretDRBundle,
+  restoreEncryptedSAMLLocalSigningSecretDRBundle,
+} from './local-signing-dr-bundle';
 import { previewTrustCertificate } from './certificate-preview';
 import {
   getSAMLLocalEntityIds,
@@ -699,6 +703,127 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
     log.error('Update SAML local signing error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+export async function handleExportSAMLLocalSigningDRBundle(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(
+      c,
+      ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_DR_BUNDLE_EXPORT
+    );
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as { passphrase?: unknown };
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const bundle = await buildEncryptedSAMLLocalSigningSecretDRBundle(
+      c.env,
+      tenantId,
+      body.passphrase
+    );
+
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.local_signing.dr_bundle.exported',
+      resource: 'saml_settings',
+      resourceId: tenantId,
+      severity: 'warning',
+      metadata: {
+        encrypted: true,
+        kdf: bundle.kdf.name,
+        kdf_iterations: bundle.kdf.iterations,
+      },
+    });
+
+    return c.json(bundle);
+  } catch (error) {
+    if (isSAMLDRBundleValidationError(error)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'passphrase' },
+      });
+    }
+    log.error('Export SAML local signing DR bundle error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(
+      c,
+      ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_DR_BUNDLE_IMPORT
+    );
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as { bundle?: unknown; passphrase?: unknown };
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const result = await restoreEncryptedSAMLLocalSigningSecretDRBundle(
+      c.env,
+      tenantId,
+      body.bundle,
+      body.passphrase
+    );
+
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.local_signing.dr_bundle.imported',
+      resource: 'saml_settings',
+      resourceId: tenantId,
+      severity: 'warning',
+      metadata: {
+        imported_key_count: result.importedKeys,
+        restored_roles: result.restoredRoles,
+      },
+    });
+
+    const settings = await getSAMLPublicSettings(c.env, tenantId);
+    const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
+    return c.json({
+      tenantId,
+      ...settings,
+      metadata: buildSAMLMetadataPublicationSettings(c.env),
+      localSigning: {
+        certificateSubject: settings.certificateSubject,
+        idpSigningKeyPolicy: settings.signingKeyPolicies.idp ?? {},
+        spSigningKeyPolicy: settings.signingKeyPolicies.sp ?? {},
+      },
+      generated: {
+        issuerUrl: entityIds.issuerUrl,
+        idpEntityId: entityIds.idpEntityId,
+        spEntityId: entityIds.spEntityId,
+        idpMetadataUrl: entityIds.idpMetadataUrl,
+        spMetadataUrl: entityIds.spMetadataUrl,
+      },
+      imported: result,
+    });
+  } catch (error) {
+    if (isSAMLDRBundleValidationError(error)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'bundle' },
+      });
+    }
+    log.error('Import SAML local signing DR bundle error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+function isSAMLDRBundleValidationError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.includes('SAML DR bundle') ||
+    error.message.includes('encrypted SAML DR bundle') ||
+    error.message.includes('decrypt SAML DR bundle') ||
+    error.message.includes('passphrase')
+  );
 }
 
 interface SAMLMetadataPreviewRequest extends MetadataImportRequest {

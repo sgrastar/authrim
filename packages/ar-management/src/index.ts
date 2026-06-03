@@ -658,10 +658,12 @@ import {
   adminIdentityMappingDestinationProfilesListHandler,
   adminIdentityMappingPoliciesListHandler,
   adminIdentityMappingPolicyCreateHandler,
+  adminIdentityMappingPolicyDeleteHandler,
   adminIdentityMappingPolicyRollbackHandler,
   adminIdentityMappingPolicyVersionActivateHandler,
   adminIdentityMappingPolicyVersionCompileHandler,
   adminIdentityMappingPolicyVersionCreateHandler,
+  adminIdentityMappingPolicyVersionDeactivateHandler,
   adminIdentityMappingPolicyVersionsListHandler,
   adminIdentityMappingPolicyVersionPublishHandler,
   adminIdentityMappingEntitlementGrantHandler,
@@ -677,10 +679,10 @@ import {
   adminIdentityMappingKeyRegistryCreateHandler,
   adminIdentityMappingKeyRegistryRotateHandler,
   adminIdentityMappingLifecycleSignalRecordHandler,
-  adminIdentityMappingOidcCustomClaimCreateHandler,
-  adminIdentityMappingOidcCustomClaimsListHandler,
-  adminIdentityMappingOidcCustomScopeCreateHandler,
-  adminIdentityMappingOidcCustomScopesListHandler,
+  adminIdentityMappingAttributeFieldCreateHandler,
+  adminIdentityMappingAttributeFieldsListHandler,
+  adminIdentityMappingAttributeGroupCreateHandler,
+  adminIdentityMappingAttributeGroupsListHandler,
   adminIdentityMappingSourceProfileActivateHandler,
   adminIdentityMappingSourceProfileCreateHandler,
   adminIdentityMappingSourceProfileDeleteHandler,
@@ -2368,24 +2370,24 @@ app.delete(
   adminIdentityMappingDestinationProfileDeleteHandler
 );
 app.get(
-  '/api/admin/identity-mapping/oidc/custom-scopes',
+  '/api/admin/identity-mapping/attribute-groups',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminIdentityMappingOidcCustomScopesListHandler
+  adminIdentityMappingAttributeGroupsListHandler
 );
 app.post(
-  '/api/admin/identity-mapping/oidc/custom-scopes',
+  '/api/admin/identity-mapping/attribute-groups',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingOidcCustomScopeCreateHandler
+  adminIdentityMappingAttributeGroupCreateHandler
 );
 app.get(
-  '/api/admin/identity-mapping/oidc/custom-claims',
+  '/api/admin/identity-mapping/attribute-fields',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminIdentityMappingOidcCustomClaimsListHandler
+  adminIdentityMappingAttributeFieldsListHandler
 );
 app.post(
-  '/api/admin/identity-mapping/oidc/custom-claims',
+  '/api/admin/identity-mapping/attribute-fields',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingOidcCustomClaimCreateHandler
+  adminIdentityMappingAttributeFieldCreateHandler
 );
 app.get(
   '/api/admin/identity-mapping/templates',
@@ -2406,6 +2408,11 @@ app.post(
   '/api/admin/identity-mapping/policies',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingPolicyCreateHandler
+);
+app.delete(
+  '/api/admin/identity-mapping/policies/:policySetId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyDeleteHandler
 );
 app.post(
   '/api/admin/identity-mapping/policies/:policySetId/versions',
@@ -2431,6 +2438,11 @@ app.post(
   '/api/admin/identity-mapping/policies/:policySetId/versions/:policyVersionId/activate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingPolicyVersionActivateHandler
+);
+app.post(
+  '/api/admin/identity-mapping/policies/:policySetId/versions/:policyVersionId/deactivate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingPolicyVersionDeactivateHandler
 );
 app.post(
   '/api/admin/identity-mapping/policies/:policySetId/rollback',

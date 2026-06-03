@@ -25,7 +25,20 @@ interface KeyManagerSigningKey {
   kid: string;
   privatePEM: string;
   publicJWK: JWK;
+  createdAt?: number;
+  status?: 'active' | 'overlap' | 'revoked';
   certificatePEM?: string;
+  certificateCreatedAt?: number;
+  certificateSha256Thumbprint?: string;
+}
+
+export interface SAMLExportedSigningKey {
+  keyRef: string;
+  kid: string;
+  publicJWK: JWK;
+  privateKeyPem: string;
+  certificate: string;
+  createdAt?: number;
   certificateCreatedAt?: number;
   certificateSha256Thumbprint?: string;
 }
@@ -320,6 +333,126 @@ export async function rotateSigningKeyWithCertificate(
     kid: rotateData.key.kid,
     certificate,
   };
+}
+
+export async function exportSigningKeyWithPrivateMaterial(
+  env: Env,
+  tenantId: string,
+  options: {
+    keyRef: string;
+    certificateSubject?: SAMLSigningCertificateSubject;
+  }
+): Promise<SAMLExportedSigningKey> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
+  const keyManagerId = env.KEY_MANAGER.idFromName(options.keyRef);
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+  const keyData = await getOrCreateKeyManagerSigningKey(keyManager, env.KEY_MANAGER_SECRET, {
+    certificateSubject: options.certificateSubject,
+  });
+  const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
+    keyData,
+    certificateSubject: options.certificateSubject,
+  });
+
+  signingKeyCache.set(buildSigningKeyCacheKey(resolvedTenantId, options.keyRef), {
+    privateKeyPem: keyData.privatePEM,
+    publicKeyPem: await jwkToPublicKeyPem(keyData.publicJWK),
+    certificate,
+    kid: keyData.kid,
+    cachedAt: Date.now(),
+  });
+
+  return {
+    keyRef: options.keyRef,
+    kid: keyData.kid,
+    publicJWK: keyData.publicJWK,
+    privateKeyPem: keyData.privatePEM,
+    certificate,
+    createdAt: keyData.createdAt,
+    certificateCreatedAt: keyData.certificateCreatedAt,
+    certificateSha256Thumbprint:
+      keyData.certificateSha256Thumbprint ?? (await calculateCertificateThumbprint(certificate)),
+  };
+}
+
+export async function importSigningKeyWithPrivateMaterial(
+  env: Env,
+  tenantId: string,
+  key: SAMLExportedSigningKey
+): Promise<void> {
+  const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
+  const keyManagerId = env.KEY_MANAGER.idFromName(key.keyRef);
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+  const response = await keyManager.fetch(
+    new Request('https://key-manager/internal/import-key', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        kid: key.kid,
+        publicJWK: key.publicJWK,
+        privatePEM: key.privateKeyPem,
+        status: 'active',
+        createdAt: key.createdAt,
+        certificatePEM: key.certificate,
+        certificateCreatedAt: key.certificateCreatedAt,
+        certificateSha256Thumbprint:
+          key.certificateSha256Thumbprint ?? (await calculateCertificateThumbprint(key.certificate)),
+      }),
+    })
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to import SAML signing key: ${response.status}`);
+  }
+  signingKeyCache.delete(buildSigningKeyCacheKey(resolvedTenantId, key.keyRef));
+}
+
+async function getOrCreateKeyManagerSigningKey(
+  keyManager: Pick<DurableObjectStub, 'fetch'>,
+  keyManagerSecret: string | undefined,
+  options: {
+    certificateSubject?: SAMLSigningCertificateSubject;
+  }
+): Promise<KeyManagerSigningKey> {
+  if (!keyManagerSecret) {
+    throw new Error('KEY_MANAGER_SECRET is required to export SAML signing key material');
+  }
+
+  const response = await keyManager.fetch(
+    new Request('https://key-manager/internal/active-with-private', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${keyManagerSecret}`,
+      },
+    })
+  );
+  if (response.ok) {
+    return (await response.json()) as KeyManagerSigningKey;
+  }
+  if (response.status !== 404) {
+    throw new Error(`KeyManager error: ${response.status}`);
+  }
+
+  const rotateResponse = await keyManager.fetch(
+    new Request('https://key-manager/internal/rotate', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${keyManagerSecret}`,
+      },
+    })
+  );
+  if (!rotateResponse.ok) {
+    throw new Error('Failed to generate signing key');
+  }
+  const rotateData = (await rotateResponse.json()) as { key: KeyManagerSigningKey };
+  await getOrPersistSigningCertificate(keyManager, keyManagerSecret, {
+    keyData: rotateData.key,
+    certificateSubject: options.certificateSubject,
+  });
+  return rotateData.key;
 }
 
 function buildSigningKeyCacheKey(tenantId: string, keyRef?: string): string {

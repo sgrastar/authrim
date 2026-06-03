@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		type MappingAdapter,
@@ -9,6 +9,7 @@
 		type MappingEdge,
 		type MappingNode,
 		type MappingSample,
+		type RuleDetail,
 		type TransformOperation
 	} from './types';
 
@@ -20,6 +21,31 @@
 		direction?: 'inbound' | 'outbound' | 'both';
 		sourceProfileIds?: string[];
 		destinationProfileIds?: string[];
+		rules?: PolicySelectorRule[];
+	};
+	type PolicySelectorRule = {
+		id: string;
+		ruleKey: string;
+		ruleKind: string;
+		action: string;
+		priority: number;
+		metadata?: Record<string, unknown>;
+		edges: PolicySelectorEdge[];
+		transforms: PolicySelectorTransform[];
+	};
+	type PolicySelectorEdge = {
+		id: string;
+		sourceRef: Record<string, unknown>;
+		targetRef: Record<string, unknown>;
+		edgeKind: string;
+		displayOrder: number;
+	};
+	type PolicySelectorTransform = {
+		id: string;
+		edgeId?: string | null;
+		stepOrder: number;
+		operation: string;
+		parameters: Record<string, unknown>;
 	};
 	type TransformParameterSchema =
 		| {
@@ -219,6 +245,7 @@
 		showToolbarSourceProfile = true,
 		showToolbarModeToggle = true,
 		showMetrics = true,
+		showInspector = true,
 		showLaneProfileSelectors = true,
 		laneSelectorMode = 'profile',
 		policySelectorOptions = [],
@@ -226,6 +253,7 @@
 		showCompileDraftButton = true,
 		primaryActionLabel = 'Compile draft',
 		primaryActionBusyLabel = 'Compiling...',
+		initialPolicyOptionId = null,
 		selectedViewMode = null,
 		selectedProfileId = null,
 		draftResetKey = 0,
@@ -241,6 +269,7 @@
 		showToolbarSourceProfile?: boolean;
 		showToolbarModeToggle?: boolean;
 		showMetrics?: boolean;
+		showInspector?: boolean;
 		showLaneProfileSelectors?: boolean;
 		laneSelectorMode?: 'profile' | 'policy';
 		policySelectorOptions?: SelectorOption[];
@@ -248,6 +277,7 @@
 		showCompileDraftButton?: boolean;
 		primaryActionLabel?: string;
 		primaryActionBusyLabel?: string;
+		initialPolicyOptionId?: string | null;
 		selectedViewMode?: ViewMode | null;
 		selectedProfileId?: string | null;
 		draftResetKey?: number;
@@ -269,8 +299,8 @@
 		edges: [],
 		rules: {}
 	};
-	const nodeHeight = 30;
-	const targetHeight = 46;
+	const nodeHeight = 32;
+	const targetHeight = 40;
 	const transformWidth = 168;
 	const transformHeight = 38;
 	const graphBaseTop = $derived(showLaneProfileSelectors ? 76 : 48);
@@ -292,6 +322,7 @@
 	let selectedDestinationProfileId = $state<string | null>(null);
 	let selectedInboundPolicyId = $state<string | null>(null);
 	let selectedOutboundPolicyId = $state<string | null>(null);
+	let appliedInitialPolicyOptionId = $state<string | null>(null);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
 	let viewMode = $state<ViewMode>('overview');
@@ -302,6 +333,7 @@
 	let hoverNodeId = $state<string | null>(null);
 	let hoverEdgeId = $state<string | null>(null);
 	let hoverTargetGroupKey = $state<string | null>(null);
+	let infoOverlayNodeId = $state<string | null>(null);
 	let selectedNodeId = $state<string | null>(null);
 	let selectedEdgeId = $state<string | null>(null);
 	let collapsedTargetGroupKeys = $state<string[]>([]);
@@ -309,9 +341,9 @@
 	let activeDraftResetKey = $state<number | null>(null);
 	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'info' | 'error'>('idle');
 	let draftSubmitMessage = $state<string | null>(null);
-	let autoMappedEdgeIds = $state<string[]>([]);
-	let autoMapAnimationTimer: ReturnType<typeof setTimeout> | null = null;
-	let pulseNextSampleEdges = false;
+	let swappingNodeIds = $state<string[]>([]);
+	let nodeSwapAnimationTimer: ReturnType<typeof setTimeout> | null = null;
+	let animateNextSampleSourceNodes = false;
 	let dragState = $state<{
 		fromNodeId: string;
 		from: Point;
@@ -464,11 +496,12 @@
 	const hasRenderableGraph = $derived(hasControlPlaneData && policyModeHasSelection);
 	const layout = $derived(buildLayout());
 	const laidOutNodes = $derived(layout.nodes);
+	const overviewLayerEdges = $derived(buildOverviewLayerEdges());
 	const graphEdges = $derived(
-		edges.filter((edge) => {
+		[...edges, ...overviewLayerEdges].filter((edge) => {
 			const fromNode = layoutNodeById(edge.from);
 			const toNode = layoutNodeById(edge.to);
-			return fromNode && toNode && !fromNode.hidden && !toNode.hidden;
+			return fromNode && toNode;
 		})
 	);
 	const selectedEdge = $derived(
@@ -531,7 +564,7 @@
 			selectedProfileId &&
 			selectedProfileId !== selectedSampleId
 		) {
-			pulseNextSampleEdges = true;
+			animateNextSampleSourceNodes = true;
 			selectedSampleId = selectedProfileId;
 		}
 		const next =
@@ -542,6 +575,26 @@
 			emptySample;
 		if (activeSampleRef !== next) {
 			activateSample(next);
+		}
+	});
+
+	$effect(() => {
+		if (
+			laneSelectorMode !== 'policy' ||
+			!initialPolicyOptionId ||
+			appliedInitialPolicyOptionId === initialPolicyOptionId
+		) {
+			return;
+		}
+		const option = policySelectorOptions.find(
+			(candidate: SelectorOption) => candidate.id === initialPolicyOptionId
+		);
+		if (!option) return;
+		appliedInitialPolicyOptionId = initialPolicyOptionId;
+		if (option.direction === 'inbound') {
+			applyInboundPolicySelection(option.id);
+		} else if (option.direction === 'outbound') {
+			applyOutboundPolicySelection(option.id);
 		}
 	});
 
@@ -624,12 +677,6 @@
 
 	function activateSample(next: MappingSample) {
 		activeSampleRef = next;
-		sample = {
-			...next,
-			nodes: [...next.nodes],
-			edges: [...next.edges],
-			rules: { ...next.rules }
-		};
 		selectedSampleId = next.id;
 		inboundAdapter = next.inboundAdapter;
 		outboundAdapter = next.outboundAdapter;
@@ -637,17 +684,23 @@
 			destinationProfileOptionsForSample(next).find((option) => option.adapter === 'OIDC')?.id ??
 			destinationProfileOptionsForSample(next)[0]?.id ??
 			null;
-		activeRuleId = next.activeRuleId;
-		nodes = [...next.nodes];
-		edges = [...next.edges];
+		applyPolicyGraph(next);
+		if (animateNextSampleSourceNodes) {
+			animateNextSampleSourceNodes = false;
+			queueMicrotask(() => animateVisibleNodeSwap('source'));
+		}
+	}
+
+	function applyPolicyGraph(base: MappingSample) {
+		const policyGraph = buildPolicyGraph(base);
+		sample = policyGraph;
+		nodes = [...policyGraph.nodes];
+		edges = [...policyGraph.edges];
+		activeRuleId = policyGraph.edges[0]?.id ?? policyGraph.activeRuleId;
 		selectedEdgeId = null;
 		selectedNodeId = null;
 		hasUnsavedDraftChanges = false;
-		autoMappedEdgeIds = [];
-		if (pulseNextSampleEdges) {
-			pulseNextSampleEdges = false;
-			queueMicrotask(pulseVisibleEdges);
-		}
+		swappingNodeIds = [];
 	}
 
 	function resetDraftFromCurrentSample() {
@@ -662,12 +715,12 @@
 		pendingConnectionStart = null;
 		suppressNextNodeClickId = null;
 		hasUnsavedDraftChanges = false;
-		autoMappedEdgeIds = [];
+		swappingNodeIds = [];
 	}
 
 	onDestroy(() => {
 		stopConnectionAutoScroll();
-		if (autoMapAnimationTimer) clearTimeout(autoMapAnimationTimer);
+		if (nodeSwapAnimationTimer) clearTimeout(nodeSwapAnimationTimer);
 		window.removeEventListener('pointermove', handlePointerMove);
 		window.removeEventListener('pointerup', handlePointerUp);
 		window.removeEventListener('pointermove', handleEasyConnectionPointerMove);
@@ -768,34 +821,29 @@
 		}
 
 		edges = [...edges, ...newEdges];
-		autoMappedEdgeIds = newEdges.map((edge) => edge.id);
 		selectedEdgeId = newEdges.at(-1)?.id ?? null;
 		selectedNodeId = null;
 		hasUnsavedDraftChanges = true;
 		onDraftDirtyChange?.(true);
 		draftSubmitStatus = 'info';
 		draftSubmitMessage = `Auto-mapped ${newEdges.length} connection${newEdges.length === 1 ? '' : 's'}. Review and compile the draft when ready.`;
-		if (autoMapAnimationTimer) clearTimeout(autoMapAnimationTimer);
-		autoMapAnimationTimer = setTimeout(() => {
-			autoMappedEdgeIds = [];
-			autoMapAnimationTimer = null;
-		}, 2600);
 	}
 
-	function pulseVisibleEdges() {
-		if (autoMapAnimationTimer) clearTimeout(autoMapAnimationTimer);
-		const visibleNodeIds = new Set(
-			laidOutNodes.filter((node) => !node.hidden).map((node) => node.id)
-		);
-		const visibleEdgeIds = edges
-			.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to))
-			.map((edge) => edge.id);
-		autoMappedEdgeIds = visibleEdgeIds;
-		if (visibleEdgeIds.length === 0) return;
-		autoMapAnimationTimer = setTimeout(() => {
-			autoMappedEdgeIds = [];
-			autoMapAnimationTimer = null;
-		}, 1800);
+	async function animateVisibleNodeSwap(role: 'source' | 'destination') {
+		await tick();
+		if (nodeSwapAnimationTimer) clearTimeout(nodeSwapAnimationTimer);
+		const visibleNodeIds = laidOutNodes
+			.filter((node) => node.role === role && !node.hidden)
+			.map((node) => node.id);
+		swappingNodeIds = [];
+		if (visibleNodeIds.length === 0) return;
+		queueMicrotask(() => {
+			swappingNodeIds = visibleNodeIds;
+			nodeSwapAnimationTimer = setTimeout(() => {
+				swappingNodeIds = [];
+				nodeSwapAnimationTimer = null;
+			}, 300);
+		});
 	}
 
 	function handleClearSelectionKeyDown(event: KeyboardEvent) {
@@ -870,6 +918,347 @@
 		return { nodeIds: new Set(nodeIds), edgeIds: new Set(edgeIds) };
 	}
 
+	function buildOverviewLayerEdges(): MappingEdge[] {
+		if (laneSelectorMode !== 'policy' || viewMode !== 'overview') return [];
+		const layerEdges: MappingEdge[] = [];
+		const seen = new Set<string>();
+		const addLayerEdge = (from: string, to: string, outbound = false) => {
+			const id = `overview-layer-edge-${from}-${to}`;
+			if (seen.has(id)) return;
+			seen.add(id);
+			layerEdges.push({ id, from, to, outbound });
+		};
+
+		for (const option of inboundPolicyOptions) {
+			if (option.id === selectedInboundPolicyId) continue;
+			for (const rule of rulesForPolicyOption(option, 'inbound')) {
+				for (const edge of rule.edges) {
+					for (const profileId of sourceProfileIdsForPolicyEdge(option, edge)) {
+						const profileSample = samples.find(
+							(candidate: MappingSample) => candidate.id === profileId
+						);
+						if (!profileSample) continue;
+						const sourceNode = nodeFromPolicyRef(profileSample.nodes, edge.sourceRef);
+						const targetNode = nodeFromPolicyRef(nodes, edge.targetRef);
+						if (!sourceNode || !targetNode) continue;
+						addLayerEdge(`overview-layer-${profileSample.id}-${sourceNode.id}`, targetNode.id);
+					}
+				}
+			}
+		}
+
+		for (const option of outboundPolicyOptions) {
+			if (option.id === selectedOutboundPolicyId) continue;
+			for (const rule of rulesForPolicyOption(option, 'outbound')) {
+				for (const edge of rule.edges) {
+					const sourceNode = nodeFromPolicyRef(nodes, edge.sourceRef);
+					const destinationNode = nodeFromPolicyRef(nodes, edge.targetRef);
+					if (!sourceNode || !destinationNode) continue;
+					addLayerEdge(sourceNode.id, destinationNode.id, true);
+				}
+			}
+		}
+
+		return layerEdges;
+	}
+
+	function sourceProfileIdsForPolicyEdge(
+		option: SelectorOption,
+		edge: PolicySelectorEdge
+	): string[] {
+		const profileId = stringRef(edge.sourceRef, 'profileId');
+		if (profileId) return [profileId];
+		return option.sourceProfileIds ?? [];
+	}
+
+	function buildPolicyGraph(base: MappingSample): MappingSample {
+		const baseNodes = base.nodes.map((node) => ({ ...node }));
+		const policyRules = selectedPolicyRules();
+		if (laneSelectorMode !== 'policy' || policyRules.length === 0) {
+			return {
+				...base,
+				nodes: baseNodes,
+				edges: [...base.edges],
+				rules: { ...base.rules }
+			};
+		}
+
+		const graphNodes = [...baseNodes];
+		const graphEdges: MappingEdge[] = [];
+		const graphRules: MappingSample['rules'] = { ...base.rules };
+		let transformIndex = 0;
+
+		for (const rule of policyRules) {
+			const transforms = [...rule.transforms].sort((a, b) => a.stepOrder - b.stepOrder);
+			const resolvedEdges = rule.edges.flatMap((edge) => {
+				const fromNode = nodeFromPolicyRef(graphNodes, edge.sourceRef);
+				const toNode = nodeFromPolicyRef(graphNodes, edge.targetRef);
+				if (!fromNode || !toNode) return [];
+				return [{ edge, fromNode, toNode }];
+			});
+			if (transforms.length === 0) {
+				for (const { edge, fromNode, toNode } of resolvedEdges) {
+					const edgeId = `policy-edge-${edge.id}`;
+					graphEdges.push({
+						id: edgeId,
+						from: fromNode.id,
+						to: toNode.id,
+						outbound: fromNode.role === 'target'
+					});
+					graphRules[edgeId] = ruleForPolicyEdge(rule, fromNode, toNode);
+				}
+				continue;
+			}
+
+			if (shouldGroupPolicyTransformInputs(rule, resolvedEdges, transforms)) {
+				const targetNode = resolvedEdges[0]?.toNode;
+				if (!targetNode) continue;
+				transformIndex += 1;
+				const transformNode = policyTransformNode(
+					rule,
+					'group',
+					targetNode,
+					transforms,
+					transformIndex
+				);
+				graphNodes.push(transformNode);
+				graphRules[transformNode.ruleId] = ruleForPolicyTransform(rule, transformNode, targetNode);
+
+				const addedInputNodeIds = new Set<string>();
+				for (const { edge, fromNode } of resolvedEdges) {
+					if (addedInputNodeIds.has(fromNode.id)) continue;
+					addedInputNodeIds.add(fromNode.id);
+					graphEdges.push({
+						id: `policy-edge-${edge.id}-in`,
+						from: fromNode.id,
+						to: transformNode.id,
+						outbound: fromNode.role === 'target'
+					});
+				}
+				graphEdges.push({
+					id: `policy-edge-${rule.id}-out`,
+					from: transformNode.id,
+					to: targetNode.id,
+					outbound: targetNode.role === 'destination'
+				});
+				continue;
+			}
+
+			for (const { edge, fromNode, toNode } of resolvedEdges) {
+				const edgeTransforms = transforms.filter((transform) => transform.edgeId === edge.id);
+				if (edgeTransforms.length === 0) {
+					const edgeId = `policy-edge-${edge.id}`;
+					graphEdges.push({
+						id: edgeId,
+						from: fromNode.id,
+						to: toNode.id,
+						outbound: fromNode.role === 'target'
+					});
+					graphRules[edgeId] = ruleForPolicyEdge(rule, fromNode, toNode);
+					continue;
+				}
+				transformIndex += 1;
+				const transformNode = policyTransformNode(
+					rule,
+					edge.id,
+					toNode,
+					edgeTransforms,
+					transformIndex
+				);
+				graphNodes.push(transformNode);
+				graphRules[transformNode.ruleId] = ruleForPolicyTransform(rule, transformNode, toNode);
+				graphEdges.push(
+					{
+						id: `policy-edge-${edge.id}-in`,
+						from: fromNode.id,
+						to: transformNode.id,
+						outbound: fromNode.role === 'target'
+					},
+					{
+						id: `policy-edge-${edge.id}-out`,
+						from: transformNode.id,
+						to: toNode.id,
+						outbound: toNode.role === 'destination'
+					}
+				);
+			}
+		}
+
+		return {
+			...base,
+			nodes: graphNodes,
+			edges: graphEdges,
+			rules: graphRules
+		};
+	}
+
+	function shouldGroupPolicyTransformInputs(
+		rule: PolicySelectorRule,
+		resolvedEdges: Array<{
+			edge: PolicySelectorEdge;
+			fromNode: MappingNode;
+			toNode: MappingNode;
+		}>,
+		transforms: PolicySelectorTransform[]
+	): boolean {
+		if (resolvedEdges.length <= 1) return false;
+		const targetIds = new Set(resolvedEdges.map(({ toNode }) => toNode.id));
+		if (targetIds.size !== 1) return false;
+		if (rule.edges.some((edge) => edge.edgeKind === 'transform_input')) return true;
+		const transformEdgeIds = new Set(
+			transforms.flatMap((transform) => (transform.edgeId ? [transform.edgeId] : []))
+		);
+		return transformEdgeIds.size <= 1;
+	}
+
+	function policyTransformNode(
+		rule: PolicySelectorRule,
+		key: string,
+		targetNode: MappingNode,
+		transforms: PolicySelectorTransform[],
+		index: number
+	): MappingNode {
+		const operation = transformOperation(transforms[0]?.operation ?? 'copy');
+		const parameters = sanitizeTransformParameters(
+			operation,
+			stringParameters(transforms[0]?.parameters)
+		);
+		const stableKey = stableRuleKey([rule.id, key, targetNode.id]);
+		return {
+			id: `policy-transform-${stableKey}`,
+			ruleId: `policy-transform-${stableKey}`,
+			role: 'transform',
+			label: transformSchema(operation).label,
+			caption:
+				transforms.length > 1
+					? `${transformCaption(operation, parameters)} + ${transforms.length - 1}`
+					: transformCaption(operation, parameters),
+			transformOperation: operation,
+			transformParameters: parameters,
+			privacy: targetNode.privacy ?? 'Other',
+			layoutPosition: {
+				x: Number.NaN,
+				y: graphBaseTop + (index - 1) * graphStep
+			}
+		};
+	}
+
+	function selectedPolicyRules(): PolicySelectorRule[] {
+		const rulesByKey = new Map<string, PolicySelectorRule>();
+		for (const rule of [
+			...rulesForPolicyOption(selectedInboundPolicy, 'inbound'),
+			...rulesForPolicyOption(selectedOutboundPolicy, 'outbound')
+		]) {
+			rulesByKey.set(rule.id, rule);
+		}
+		return [...rulesByKey.values()];
+	}
+
+	function rulesForPolicyOption(
+		option: SelectorOption | null,
+		direction: 'inbound' | 'outbound'
+	): PolicySelectorRule[] {
+		if (!option) return [];
+		return (option.rules ?? []).filter((rule) =>
+			direction === 'inbound'
+				? rule.ruleKind.includes('inbound')
+				: rule.ruleKind.includes('outbound') || rule.ruleKind.includes('release')
+		);
+	}
+
+	function nodeFromPolicyRef(
+		candidates: MappingNode[],
+		ref: Record<string, unknown>
+	): MappingNode | undefined {
+		const nodeId = stringRef(ref, 'nodeId');
+		if (nodeId) {
+			const exact = candidates.find((node) => node.id === nodeId);
+			if (exact) return exact;
+		}
+		const role = stringRef(ref, 'role');
+		const profileId = stringRef(ref, 'profileId');
+		const label = stringRef(ref, 'label');
+		const path = stringRef(ref, 'path');
+		return candidates.find((node) => {
+			if (role && node.role !== role) return false;
+			if (profileId && node.profileId !== profileId) return false;
+			if (label && node.label === label) return true;
+			if (path && node.caption === path) return true;
+			return false;
+		});
+	}
+
+	function firstMappedNode(
+		candidates: MappingNode[],
+		refs: Record<string, unknown>[]
+	): MappingNode | undefined {
+		for (const ref of refs) {
+			const node = nodeFromPolicyRef(candidates, ref);
+			if (node) return node;
+		}
+		return undefined;
+	}
+
+	function ruleForPolicyEdge(
+		rule: PolicySelectorRule,
+		fromNode: MappingNode,
+		toNode: MappingNode
+	): RuleDetail {
+		return {
+			...fallbackRule(),
+			title: toNode.label,
+			risk: toNode.privacy === 'PII' || fromNode.privacy === 'PII' ? 'medium' : 'low',
+			source:
+				fromNode.role === 'source'
+					? `${fromNode.adapter ?? 'source'} / ${fromNode.label}`
+					: fromNode.label,
+			target: toNode.role === 'target' ? toNode.label : fromNode.label,
+			destination:
+				toNode.role === 'destination'
+					? `${toNode.adapter ?? 'destination'} / ${toNode.label}`
+					: 'Not connected',
+			transform: 'not configured',
+			validation: `loaded from ${rule.ruleKey}`,
+			release: rule.ruleKind.includes('release') ? 'configured' : 'not configured',
+			trace: `Active policy rule ${rule.ruleKey} restored this mapping edge.`
+		};
+	}
+
+	function ruleForPolicyTransform(
+		rule: PolicySelectorRule,
+		transformNode: MappingNode,
+		targetNode: MappingNode
+	): RuleDetail {
+		return {
+			...fallbackRule(),
+			title: transformNode.label,
+			risk: targetNode.privacy === 'PII' ? 'medium' : 'low',
+			source: 'Connected policy input',
+			target: targetNode.role === 'target' ? targetNode.label : 'Transform node',
+			destination:
+				targetNode.role === 'destination'
+					? `${targetNode.adapter ?? 'destination'} / ${targetNode.label}`
+					: 'Not connected',
+			transform: transformNode.caption,
+			validation: `loaded from ${rule.ruleKey}`,
+			release: rule.ruleKind.includes('release') ? 'configured' : 'not configured',
+			trace: `Active policy rule ${rule.ruleKey} restored this transform node.`
+		};
+	}
+
+	function stringRef(ref: Record<string, unknown>, key: string): string | null {
+		const value = ref[key];
+		return typeof value === 'string' && value.trim().length > 0 ? value : null;
+	}
+
+	function stringParameters(value: Record<string, unknown> | undefined): Record<string, string> {
+		return Object.fromEntries(
+			Object.entries(value ?? {}).flatMap(([key, entry]) =>
+				typeof entry === 'string' ? [[key, entry]] : []
+			)
+		);
+	}
+
 	function destinationProfileOptionsForSample(candidate: MappingSample) {
 		const seen: string[] = [];
 		return candidate.nodes
@@ -930,6 +1319,18 @@
 		return 'middle';
 	}
 
+	function transformLane(node: MappingNode): 'inbound' | 'outbound' {
+		if (node.role !== 'transform') return 'inbound';
+		const incoming = edges
+			.filter((edge) => edge.to === node.id)
+			.map((edge) => nodeById(edge.from)?.role);
+		const outgoing = edges
+			.filter((edge) => edge.from === node.id)
+			.map((edge) => nodeById(edge.to)?.role);
+		if (incoming.includes('target') || outgoing.includes('destination')) return 'outbound';
+		return 'inbound';
+	}
+
 	function buildLayout(): {
 		nodes: LayoutNode[];
 		targetGroups: LayoutTargetGroup[];
@@ -938,7 +1339,7 @@
 		const rowTops: Record<string, number> = {};
 		const targetPositions: Record<string, LayoutNode['targetGroupPosition']> = {};
 
-		const width = Math.max(190, canvasWidth * 0.23);
+		const width = Math.max(180, Math.min(240, canvasWidth * 0.2));
 		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
 		const targetLeft =
 			viewMode === 'outbound'
@@ -948,7 +1349,7 @@
 							canvasWidth - width - 26,
 							Math.max(sourceLeft + width + 100, canvasWidth * 0.66)
 						)
-					: canvasWidth * 0.385;
+					: (canvasWidth - width) / 2;
 		const destinationLeft =
 			viewMode === 'outbound'
 				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
@@ -1019,15 +1420,32 @@
 			targetGroupPosition: targetPositions[node.id]
 		}));
 
-		const transformLayout = transformNodes.map((node) => ({
-			...node,
-			top: node.layoutPosition?.y ?? graphBaseTop,
-			left: node.layoutPosition?.x ?? (sourceLeft + targetLeft + width) / 2 - transformWidth / 2,
-			width: transformWidth,
-			height: transformHeight,
-			hidden: false,
-			stackIndex: 0
-		}));
+		const inboundTransformLeft = (sourceLeft + width + targetLeft) / 2 - transformWidth / 2;
+		const outboundTransformLeft = (targetLeft + width + destinationLeft) / 2 - transformWidth / 2;
+		const transformLaneOffsets: Record<'inbound' | 'outbound', number> = {
+			inbound: 0,
+			outbound: 0
+		};
+		const transformLayout = transformNodes.map((node) => {
+			const lane = transformLane(node);
+			const laneOffset = transformLaneOffsets[lane];
+			transformLaneOffsets[lane] = laneOffset + 1;
+			const left =
+				node.layoutPosition && Number.isFinite(node.layoutPosition.x)
+					? node.layoutPosition.x
+					: lane === 'outbound'
+						? outboundTransformLeft
+						: inboundTransformLeft;
+			return {
+				...node,
+				top: node.layoutPosition?.y ?? graphBaseTop + laneOffset * graphStep,
+				left,
+				width: transformWidth,
+				height: transformHeight,
+				hidden: false,
+				stackIndex: 0
+			};
+		});
 
 		let visibleDestinationOffset = 0;
 		const hiddenDestinationRowOffsets: Record<string, number> = {};
@@ -1069,7 +1487,7 @@
 	}
 
 	function laneLabelStyle(role: 'inbound' | 'canonical' | 'outbound'): string {
-		const width = Math.max(190, canvasWidth * 0.23);
+		const width = Math.max(180, Math.min(240, canvasWidth * 0.2));
 		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
 		const targetLeft =
 			viewMode === 'outbound'
@@ -1079,7 +1497,7 @@
 							canvasWidth - width - 26,
 							Math.max(sourceLeft + width + 100, canvasWidth * 0.66)
 						)
-					: canvasWidth * 0.385;
+					: (canvasWidth - width) / 2;
 		const destinationLeft =
 			viewMode === 'outbound'
 				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
@@ -1115,13 +1533,16 @@
 			connectedNodeIds(hoverNodeId).has(node.id) ||
 			invalidEdgeTargetNodeIds.has(node.id) ||
 			(dragState?.validTarget === false && dragState.targetNodeId === node.id);
-		const zIndex = node.hidden
-			? Math.max(1, 4 - node.stackIndex)
-			: interactive
-				? 8
-				: node.role === 'target'
-					? 3
-					: 5;
+		const zIndex =
+			node.id === infoOverlayNodeId
+				? 40
+				: node.hidden
+					? Math.max(1, 4 - node.stackIndex)
+					: interactive
+						? 8
+						: node.role === 'target'
+							? 3
+							: 5;
 		return [
 			`left:${node.left}px`,
 			`top:${node.top}px`,
@@ -1158,9 +1579,18 @@
 				};
 			}
 		}
+		const offset = nodeVisualOffset(node);
 		return {
-			x: direction === 'from' ? node.left + node.width : node.left,
-			y: node.top + node.height / 2
+			x: (direction === 'from' ? node.left + node.width : node.left) + offset.x,
+			y: node.top + offset.y + node.height / 2
+		};
+	}
+
+	function nodeVisualOffset(node: LayoutNode): Point {
+		if (!node.hidden) return { x: 0, y: 0 };
+		return {
+			x: 12 + node.stackIndex * 8,
+			y: 7 + node.stackIndex * 6
 		};
 	}
 
@@ -1238,9 +1668,7 @@
 	}
 
 	function edgeAccent(edge: MappingEdge): string {
-		const fromNode = nodeById(edge.from);
-		const toNode = nodeById(edge.to);
-		const adapter = fromNode?.role === 'target' ? toNode?.adapter : fromNode?.adapter;
+		const adapter = edgeAdapter(edge);
 		if (adapter === 'SAML') return 'var(--map-violet)';
 		if (adapter === 'OIDC') return 'var(--map-amber)';
 		if (adapter === 'SCIM') return 'var(--map-brand)';
@@ -1248,23 +1676,127 @@
 		return 'var(--map-brand)';
 	}
 
+	function edgeAdapter(edge: MappingEdge): MappingAdapter | undefined {
+		const fromNode = nodeById(edge.from) ?? layoutNodeById(edge.from);
+		const toNode = nodeById(edge.to) ?? layoutNodeById(edge.to);
+		if (fromNode?.role === 'source') return fromNode.adapter;
+		if (toNode?.role === 'destination') return toNode.adapter;
+		const transformNode =
+			fromNode?.role === 'transform' ? fromNode : toNode?.role === 'transform' ? toNode : null;
+		if (transformNode) {
+			if (transformLane(transformNode) === 'outbound') {
+				return (
+					connectedAdapter(transformNode, 'destination') ??
+					selectedOutboundPolicy?.adapter ??
+					outboundAdapter
+				);
+			}
+			return (
+				connectedAdapter(transformNode, 'source') ??
+				selectedInboundPolicy?.adapter ??
+				inboundAdapter
+			);
+		}
+		if (edge.outbound) return selectedOutboundPolicy?.adapter ?? outboundAdapter;
+		return selectedInboundPolicy?.adapter ?? inboundAdapter;
+	}
+
+	function connectedAdapter(
+		node: MappingNode,
+		role: 'source' | 'destination'
+	): MappingAdapter | undefined {
+		const relatedNodeIds = [node.id, ...connectedGraph(node.id).nodeIds];
+		return relatedNodeIds.map((id) => nodeById(id)).find((candidate) => candidate?.role === role)
+			?.adapter;
+	}
+
 	function edgeClasses(edge: MappingEdge): string {
 		const fromNode = layoutNodeById(edge.from);
 		const toNode = layoutNodeById(edge.to);
 		return [
 			'edge',
+			isOverviewLayerEdge(edge) ? 'overview-layer-edge' : '',
 			edge.outbound ? 'outbound-edge' : '',
 			edge.custom ? 'custom-edge' : '',
 			edge.id === activeRuleId ? 'active' : '',
 			edge.id === selectedEdgeId ? 'edge-picked' : '',
 			hoverEdges.has(edge.id) ? 'edge-connected' : '',
 			selectedEdges.has(edge.id) ? 'edge-selected' : '',
-			autoMappedEdgeIds.includes(edge.id) ? 'edge-auto-mapped' : '',
 			edgeHasTypeMismatch(edge) ? 'edge-invalid' : '',
 			fromNode?.hidden || toNode?.hidden ? 'edge-muted' : ''
 		]
 			.filter(Boolean)
 			.join(' ');
+	}
+
+	function isOverviewLayerEdge(edge: MappingEdge): boolean {
+		return edge.id.startsWith('overview-layer-edge-');
+	}
+
+	function nodeVisibleCaption(node: MappingNode): string | null {
+		if (!node.caption) return null;
+		if (node.role !== 'target' && isTypeOnlyCaption(node.caption)) return null;
+		return node.caption;
+	}
+
+	function nodeInfoExamples(node: MappingNode): string[] {
+		return (node.examples ?? []).slice(0, 3).map(formatNodeInfoValue);
+	}
+
+	function nodeInfoNote(node: MappingNode): string | null {
+		return node.note?.trim() || null;
+	}
+
+	function nodeAllowedValues(node: MappingNode): string[] {
+		return node.allowedValues ?? [];
+	}
+
+	function nodeMultiplicityLabel(node: MappingNode): string {
+		if (node.valueMultiplicity === 'multi') return 'Multiple values';
+		if (node.valueMultiplicity === 'single') return 'Single value';
+		return node.inputCardinality === 'many' ? 'Multiple values' : 'Single value';
+	}
+
+	function nodeNullableLabel(node: MappingNode): string {
+		if (node.nullable === true) return 'Nullable';
+		if (node.nullable === false) return 'Not nullable';
+		return node.required ? 'Not nullable by required mapping' : 'Not specified';
+	}
+
+	function formatNodeInfoValue(value: unknown): string {
+		if (value === null) return 'null';
+		if (typeof value === 'string') return value;
+		if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+		try {
+			return JSON.stringify(value);
+		} catch {
+			return String(value);
+		}
+	}
+
+	function isTypeOnlyCaption(value: string): boolean {
+		const normalized = value.trim().toLowerCase();
+		return [
+			'string',
+			'text',
+			'email',
+			'mail',
+			'phone',
+			'tel',
+			'mobile',
+			'boolean',
+			'bool',
+			'number',
+			'integer',
+			'int',
+			'date',
+			'datetime',
+			'timestamp',
+			'json',
+			'object',
+			'array',
+			'list'
+		].includes(normalized);
 	}
 
 	function edgeHasTypeMismatch(edge: MappingEdge): boolean {
@@ -1294,7 +1826,8 @@
 			invalidEdgeTargetNodeIds.has(node.id) ? 'connection-rejected' : '',
 			selectedRelated ? 'selection-related' : '',
 			node.id === hoverNodeId ? 'connection-origin' : '',
-			hoverRelated ? 'connection-related' : ''
+			hoverRelated ? 'connection-related' : '',
+			swappingNodeIds.includes(node.id) ? 'node-swap-enter' : ''
 		]
 			.filter(Boolean)
 			.join(' ');
@@ -1348,7 +1881,17 @@
 		if (!isConnectionDirectionAllowed(fromNode, toNode)) return false;
 		if (toNode.role === 'transform') return !isTypeCompatibleWithTransformInput(fromNode, toNode);
 		if (fromNode.role === 'transform') return !isTransformOutputCompatible(fromNode, toNode);
-		return !isTypeCompatible(fromNode, toNode);
+		return !isTypeCompatible(fromNode, toNode) || isValueConstraintMismatch(fromNode, toNode);
+	}
+
+	function isValueConstraintMismatch(fromNode: MappingNode, toNode: MappingNode): boolean {
+		if (toNode.valueMultiplicity === 'single' && fromNode.valueMultiplicity === 'multi')
+			return true;
+		const fromAllowed = nodeAllowedValues(fromNode);
+		const toAllowed = nodeAllowedValues(toNode);
+		if (fromAllowed.length === 0 || toAllowed.length === 0) return false;
+		const toAllowedValues = new Set(toAllowed.map((value) => value.toLowerCase()));
+		return fromAllowed.some((value) => !toAllowedValues.has(value.toLowerCase()));
 	}
 
 	function isConnectionCardinalityMismatch(edge: MappingEdge): boolean {
@@ -2021,7 +2564,7 @@
 			return;
 		}
 		selectedSampleId = nextId;
-		pulseNextSampleEdges = true;
+		animateNextSampleSourceNodes = true;
 	}
 
 	function selectDestinationProfile(event: Event) {
@@ -2030,25 +2573,42 @@
 		outboundAdapter =
 			destinationProfileOptions.find((option) => option.id === selectedDestinationProfileId)
 				?.adapter ?? outboundAdapter;
-		pulseVisibleEdges();
+		animateVisibleNodeSwap('destination');
 	}
 
 	function selectInboundPolicy(event: Event) {
 		const select = event.currentTarget as HTMLSelectElement;
-		selectedInboundPolicyId = select.value || null;
+		applyInboundPolicySelection(select.value || null);
+	}
+
+	function applyInboundPolicySelection(optionId: string | null) {
+		selectedInboundPolicyId = optionId;
 		const selectedPolicy = inboundPolicyOptions.find(
 			(option: SelectorOption) => option.id === selectedInboundPolicyId
 		);
 		const sourceProfileId = selectedPolicy?.sourceProfileIds?.find((id: string) =>
 			samples.some((candidate: MappingSample) => candidate.id === id)
 		);
+		const sampleWillChange = Boolean(sourceProfileId && activeSampleRef?.id !== sourceProfileId);
+		if (sampleWillChange) {
+			animateNextSampleSourceNodes = true;
+		}
 		selectedSampleId = sourceProfileId ?? null;
-		pulseVisibleEdges();
+		if (activeSampleRef && (!sourceProfileId || activeSampleRef.id === sourceProfileId)) {
+			applyPolicyGraph(activeSampleRef);
+		}
+		if (!sampleWillChange) {
+			animateVisibleNodeSwap('source');
+		}
 	}
 
 	function selectOutboundPolicy(event: Event) {
 		const select = event.currentTarget as HTMLSelectElement;
-		selectedOutboundPolicyId = select.value || null;
+		applyOutboundPolicySelection(select.value || null);
+	}
+
+	function applyOutboundPolicySelection(optionId: string | null) {
+		selectedOutboundPolicyId = optionId;
 		const selectedPolicy = outboundPolicyOptions.find(
 			(option: SelectorOption) => option.id === selectedOutboundPolicyId
 		);
@@ -2056,7 +2616,10 @@
 			destinationProfileOptions.some((option) => option.id === id)
 		);
 		selectedDestinationProfileId = destinationProfileId ?? null;
-		pulseVisibleEdges();
+		if (activeSampleRef) {
+			applyPolicyGraph(activeSampleRef);
+		}
+		animateVisibleNodeSwap('destination');
 	}
 
 	function addNode(role: 'source' | 'destination') {
@@ -2079,7 +2642,8 @@
 			source: role === 'source' ? `${adapter} adapter / ${node.label}` : 'Custom graph edge',
 			destination:
 				role === 'destination' ? `${adapter} adapter / ${node.label}` : 'Not connected yet',
-			trace: 'Custom draft node added. Drag a connection handle to attach it to canonical schema.'
+			trace:
+				'Custom draft node added. Drag a connection handle to attach it to the identity schema.'
 		};
 		selectRule(node.ruleId);
 	}
@@ -2385,7 +2949,7 @@
 				? fromNode.label
 				: toNode?.role === 'target'
 					? toNode.label
-					: (base.target ?? 'No canonical target selected');
+					: (base.target ?? 'No schema field selected');
 		const destination =
 			toNode?.role === 'destination'
 				? `${toNode.adapter} / ${toNode.label}`
@@ -2408,7 +2972,7 @@
 			title: 'Mapping node',
 			risk: 'medium' as const,
 			source: 'Selected graph node',
-			target: 'Connected canonical target',
+			target: 'Connected schema field',
 			destination: 'Connected destination',
 			transform: 'not configured',
 			validation: 'not configured',
@@ -2441,7 +3005,7 @@
 </script>
 
 <section class="mapping-shell">
-	<div class="workspace">
+	<div class={`workspace ${showInspector ? '' : 'no-inspector'}`}>
 		<section class="pane graph-pane" aria-label="Mapping graph">
 			<div class="graph-toolbar">
 				<div>
@@ -2556,7 +3120,7 @@
 						>
 						<span
 							>{loading
-								? 'The graph will render protocol, external, and canonical schemas when loading completes.'
+								? 'The graph will render protocol, external, and identity schemas when loading completes.'
 								: loadError
 									? loadError
 									: emptyGraphDescription}</span
@@ -2598,7 +3162,7 @@
 					</div>
 				{/if}
 				<div class="lane-label lane-canonical" style={laneLabelStyle('canonical')}>
-					<span>Canonical targets</span>
+					<span>Identity schema</span>
 				</div>
 				{#each layout.targetGroups as group (group.key)}
 					<button
@@ -2606,7 +3170,7 @@
 						style={targetGroupStyle(group)}
 						type="button"
 						aria-expanded={!group.collapsed}
-						aria-label={`${group.collapsed ? 'Expand' : 'Collapse'} ${group.label} target group`}
+						aria-label={`${group.collapsed ? 'Expand' : 'Collapse'} ${group.label} schema group`}
 						onclick={(event) => {
 							event.stopPropagation();
 							toggleTargetGroup(group.key);
@@ -2674,25 +3238,27 @@
 						onkeydown={handleClearSelectionKeyDown}
 					/>
 					{#each graphEdges as edge (edge.id)}
-						<path
-							class="edge-hit"
-							d={edgePath(edge)}
-							role="button"
-							tabindex="0"
-							aria-label={`Select mapping edge ${nodeById(edge.from)?.label ?? edge.from} to ${nodeById(edge.to)?.label ?? edge.to}`}
-							onclick={(event) => {
-								event.stopPropagation();
-								selectEdge(edge);
-							}}
-							onpointerover={() => (hoverEdgeId = edge.id)}
-							onpointerout={() => (hoverEdgeId = null)}
-							onkeydown={(event) => {
-								if (event.key === 'Enter' || event.key === ' ') {
-									event.preventDefault();
+						{#if !isOverviewLayerEdge(edge)}
+							<path
+								class="edge-hit"
+								d={edgePath(edge)}
+								role="button"
+								tabindex="0"
+								aria-label={`Select mapping edge ${nodeById(edge.from)?.label ?? edge.from} to ${nodeById(edge.to)?.label ?? edge.to}`}
+								onclick={(event) => {
+									event.stopPropagation();
 									selectEdge(edge);
-								}
-							}}
-						/>
+								}}
+								onpointerover={() => (hoverEdgeId = edge.id)}
+								onpointerout={() => (hoverEdgeId = null)}
+								onkeydown={(event) => {
+									if (event.key === 'Enter' || event.key === ' ') {
+										event.preventDefault();
+										selectEdge(edge);
+									}
+								}}
+							/>
+						{/if}
 						<path
 							class={edgeClasses(edge)}
 							style={`--edge-accent:${edgeAccent(edge)}`}
@@ -2819,9 +3385,47 @@
 									title="Managed by subject identifier strategy"
 								></span>
 							{/if}
+							{#if node.role !== 'transform' && !node.hidden}
+								<span
+									class="node-info"
+									aria-hidden="true"
+									onpointerenter={() => (infoOverlayNodeId = node.id)}
+									onpointerleave={() => {
+										if (infoOverlayNodeId === node.id) infoOverlayNodeId = null;
+									}}
+									onpointerdown={(event) => event.stopPropagation()}
+								>
+									<span class="node-info-mark">i</span>
+									<span class="node-info-overlay">
+										<strong>Sample value</strong>
+										{#each nodeInfoExamples(node) as example (example)}
+											<code>{example}</code>
+										{:else}
+											<small>No sample value registered.</small>
+										{/each}
+										<strong>Note</strong>
+										<small>{nodeInfoNote(node) ?? 'No note registered.'}</small>
+										<strong>Allowed values</strong>
+										{#if nodeAllowedValues(node).length > 0}
+											<small>{nodeAllowedValues(node).join(', ')}</small>
+										{:else}
+											<small>No fixed values registered.</small>
+										{/if}
+										<strong>Value rule</strong>
+										<small>{nodeMultiplicityLabel(node)} / {nodeNullableLabel(node)}</small>
+									</span>
+								</span>
+							{/if}
 							<span>{node.label}</span>
-							{#if node.caption}
-								<small>{node.caption}</small>
+							{#if nodeVisibleCaption(node)}
+								<small>{nodeVisibleCaption(node)}</small>
+							{/if}
+							{#if node.role !== 'target' && node.type}
+								<span class="node-badge-row">
+									<span class="target-badges">
+										<span class="target-badge type">{node.type}</span>
+									</span>
+								</span>
 							{/if}
 							{#if node.role === 'target'}
 								<span class="target-badge-row">
@@ -2846,7 +3450,7 @@
 									</span>
 								</span>
 							{/if}
-							{#if editable && !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
+							{#if !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
 								<span
 									class="node-handle output"
 									data-node-id={node.id}
@@ -2874,233 +3478,238 @@
 			</div>
 		</section>
 
-		<aside class="pane right-pane" aria-label="Mapping inspector">
-			<div class="pane-header">
-				<div>
-					<p class="section-kicker">Inspector</p>
-					<h2>{rule.title}</h2>
+		{#if showInspector}
+			<aside class="pane right-pane" aria-label="Mapping inspector">
+				<div class="pane-header">
+					<div>
+						<p class="section-kicker">Inspector</p>
+						<h2>{rule.title}</h2>
+					</div>
+					<span class={`risk-badge risk-${rule.risk}`}>{rule.risk}</span>
 				</div>
-				<span class={`risk-badge risk-${rule.risk}`}>{rule.risk}</span>
-			</div>
 
-			<div class="tab-bar" role="tablist" aria-label="Inspector tabs">
-				<button
-					class:active={activeTab === 'rule'}
-					type="button"
-					onclick={() => (activeTab = 'rule')}
-				>
-					Rule
-				</button>
-				<button
-					class:active={activeTab === 'dryrun'}
-					type="button"
-					onclick={() => (activeTab = 'dryrun')}
-				>
-					Dry-run
-				</button>
-				<button
-					class:active={activeTab === 'diff'}
-					type="button"
-					onclick={() => (activeTab = 'diff')}
-				>
-					Diff
-				</button>
-			</div>
+				<div class="tab-bar" role="tablist" aria-label="Inspector tabs">
+					<button
+						class:active={activeTab === 'rule'}
+						type="button"
+						onclick={() => (activeTab = 'rule')}
+					>
+						Rule
+					</button>
+					<button
+						class:active={activeTab === 'dryrun'}
+						type="button"
+						onclick={() => (activeTab = 'dryrun')}
+					>
+						Dry-run
+					</button>
+					<button
+						class:active={activeTab === 'diff'}
+						type="button"
+						onclick={() => (activeTab = 'diff')}
+					>
+						Diff
+					</button>
+				</div>
 
-			{#if activeTab === 'rule'}
-				{#if selectedTransformNode}
-					{@const schema = activeTransformSchema(selectedTransformNode)}
-					<section class="transform-config-card" aria-label="Transform configuration">
-						<div class="transform-config-header">
-							<div>
-								<p class="section-kicker">Transform step</p>
-								<h3>{schema.label}</h3>
+				{#if activeTab === 'rule'}
+					{#if selectedTransformNode}
+						{@const schema = activeTransformSchema(selectedTransformNode)}
+						<section class="transform-config-card" aria-label="Transform configuration">
+							<div class="transform-config-header">
+								<div>
+									<p class="section-kicker">Transform step</p>
+									<h3>{schema.label}</h3>
+								</div>
+								<span class="transform-operation-pill"
+									>{activeTransformOperation(selectedTransformNode)}</span
+								>
 							</div>
-							<span class="transform-operation-pill"
-								>{activeTransformOperation(selectedTransformNode)}</span
-							>
-						</div>
-						<label class="inspector-field" for={`transform-operation-${selectedTransformNode.id}`}>
-							<span>Operation</span>
-							<select
-								id={`transform-operation-${selectedTransformNode.id}`}
-								value={activeTransformOperation(selectedTransformNode)}
-								disabled={!editable}
-								onchange={(event) =>
-									updateTransformOperation(
-										selectedTransformNode,
-										(event.currentTarget as HTMLSelectElement).value
-									)}
-							>
-								{#each transformOperationSchemas as option (option.operation)}
-									<option value={option.operation}>{option.label}</option>
-								{/each}
-							</select>
-						</label>
-						<p class="transform-description">{schema.description}</p>
-						{#each schema.parameters as parameter (parameter.name)}
 							<label
 								class="inspector-field"
-								for={`transform-${selectedTransformNode.id}-${parameter.name}`}
+								for={`transform-operation-${selectedTransformNode.id}`}
 							>
-								<span>
-									{parameter.label}
-									{#if parameter.required}<em>Required</em>{/if}
-								</span>
-								{#if parameter.kind === 'enum'}
-									<select
-										id={`transform-${selectedTransformNode.id}-${parameter.name}`}
-										value={sanitizeTransformParameters(
-											activeTransformOperation(selectedTransformNode),
-											selectedTransformNode.transformParameters
-										)[parameter.name]}
-										disabled={!editable}
-										onchange={(event) =>
-											updateTransformParameter(
-												selectedTransformNode,
-												parameter.name,
-												(event.currentTarget as HTMLSelectElement).value
-											)}
-									>
-										{#each parameter.options as option (option.value)}
-											<option value={option.value}>{option.label}</option>
-										{/each}
-									</select>
-								{:else}
-									<input
-										id={`transform-${selectedTransformNode.id}-${parameter.name}`}
-										value={sanitizeTransformParameters(
-											activeTransformOperation(selectedTransformNode),
-											selectedTransformNode.transformParameters
-										)[parameter.name]}
-										placeholder={parameter.placeholder}
-										disabled={!editable}
-										oninput={(event) =>
-											updateTransformParameter(
-												selectedTransformNode,
-												parameter.name,
-												(event.currentTarget as HTMLInputElement).value
-											)}
-									/>
-								{/if}
+								<span>Operation</span>
+								<select
+									id={`transform-operation-${selectedTransformNode.id}`}
+									value={activeTransformOperation(selectedTransformNode)}
+									disabled={!editable}
+									onchange={(event) =>
+										updateTransformOperation(
+											selectedTransformNode,
+											(event.currentTarget as HTMLSelectElement).value
+										)}
+								>
+									{#each transformOperationSchemas as option (option.operation)}
+										<option value={option.operation}>{option.label}</option>
+									{/each}
+								</select>
 							</label>
-						{/each}
+							<p class="transform-description">{schema.description}</p>
+							{#each schema.parameters as parameter (parameter.name)}
+								<label
+									class="inspector-field"
+									for={`transform-${selectedTransformNode.id}-${parameter.name}`}
+								>
+									<span>
+										{parameter.label}
+										{#if parameter.required}<em>Required</em>{/if}
+									</span>
+									{#if parameter.kind === 'enum'}
+										<select
+											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+											value={sanitizeTransformParameters(
+												activeTransformOperation(selectedTransformNode),
+												selectedTransformNode.transformParameters
+											)[parameter.name]}
+											disabled={!editable}
+											onchange={(event) =>
+												updateTransformParameter(
+													selectedTransformNode,
+													parameter.name,
+													(event.currentTarget as HTMLSelectElement).value
+												)}
+										>
+											{#each parameter.options as option (option.value)}
+												<option value={option.value}>{option.label}</option>
+											{/each}
+										</select>
+									{:else}
+										<input
+											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+											value={sanitizeTransformParameters(
+												activeTransformOperation(selectedTransformNode),
+												selectedTransformNode.transformParameters
+											)[parameter.name]}
+											placeholder={parameter.placeholder}
+											disabled={!editable}
+											oninput={(event) =>
+												updateTransformParameter(
+													selectedTransformNode,
+													parameter.name,
+													(event.currentTarget as HTMLInputElement).value
+												)}
+										/>
+									{/if}
+								</label>
+							{/each}
+						</section>
+					{/if}
+					<dl class="detail-list">
+						<div>
+							<dt>Source</dt>
+							<dd>{rule.source}</dd>
+						</div>
+						<div>
+							<dt>Schema field</dt>
+							<dd>{rule.target}</dd>
+						</div>
+						<div>
+							<dt>Destination</dt>
+							<dd>{rule.destination}</dd>
+						</div>
+						<div>
+							<dt>Transform</dt>
+							<dd>{rule.transform}</dd>
+						</div>
+						<div>
+							<dt>Validation</dt>
+							<dd>{rule.validation}</dd>
+						</div>
+						<div>
+							<dt>Release</dt>
+							<dd>{rule.release}</dd>
+						</div>
+						<div>
+							<dt>Storage</dt>
+							<dd>{rule.storageTarget ?? 'not configured'}</dd>
+						</div>
+					</dl>
+				{:else if activeTab === 'dryrun'}
+					<section class="dryrun-card">
+						<div class="dryrun-header">
+							<h3>Sample Evaluation</h3>
+							<span class={`dryrun-status ${rule.dryrunTone}`}>{rule.dryrunStatus}</span>
+						</div>
+						<div class="value-pair">
+							<span>Input</span>
+							<code>{rule.input}</code>
+						</div>
+						<div class="value-pair">
+							<span>Output</span>
+							<code>{rule.output}</code>
+						</div>
+						<p class="trace-box">{rule.trace}</p>
+					</section>
+				{:else}
+					<section class="diff-card">
+						<div class="diff-summary">
+							<h3>{rule.diffTitle}</h3>
+							<span class={`risk-badge risk-${rule.diffSeverity}`}>{rule.diffSeverity}</span>
+						</div>
+						<ul class="diff-list">
+							{#each rule.diff as item (item)}
+								<li>{item}</li>
+							{/each}
+						</ul>
 					</section>
 				{/if}
-				<dl class="detail-list">
-					<div>
-						<dt>Source</dt>
-						<dd>{rule.source}</dd>
-					</div>
-					<div>
-						<dt>Target</dt>
-						<dd>{rule.target}</dd>
-					</div>
-					<div>
-						<dt>Destination</dt>
-						<dd>{rule.destination}</dd>
-					</div>
-					<div>
-						<dt>Transform</dt>
-						<dd>{rule.transform}</dd>
-					</div>
-					<div>
-						<dt>Validation</dt>
-						<dd>{rule.validation}</dd>
-					</div>
-					<div>
-						<dt>Release</dt>
-						<dd>{rule.release}</dd>
-					</div>
-					<div>
-						<dt>Storage</dt>
-						<dd>{rule.storageTarget ?? 'not configured'}</dd>
-					</div>
-				</dl>
-			{:else if activeTab === 'dryrun'}
-				<section class="dryrun-card">
-					<div class="dryrun-header">
-						<h3>Sample Evaluation</h3>
-						<span class={`dryrun-status ${rule.dryrunTone}`}>{rule.dryrunStatus}</span>
-					</div>
-					<div class="value-pair">
-						<span>Input</span>
-						<code>{rule.input}</code>
-					</div>
-					<div class="value-pair">
-						<span>Output</span>
-						<code>{rule.output}</code>
-					</div>
-					<p class="trace-box">{rule.trace}</p>
-				</section>
-			{:else}
-				<section class="diff-card">
-					<div class="diff-summary">
-						<h3>{rule.diffTitle}</h3>
-						<span class={`risk-badge risk-${rule.diffSeverity}`}>{rule.diffSeverity}</span>
-					</div>
-					<ul class="diff-list">
-						{#each rule.diff as item (item)}
-							<li>{item}</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 
-			<div class="control-block">
-				<div class="control-row">
-					<span>Consent status</span>
-					<strong>{rule.consentStatus.replaceAll('_', ' ')}</strong>
+				<div class="control-block">
+					<div class="control-row">
+						<span>Consent status</span>
+						<strong>{rule.consentStatus.replaceAll('_', ' ')}</strong>
+					</div>
+					<div class="control-row">
+						<span>Legal basis</span>
+						<strong>{rule.legalBasis.replaceAll('_', ' ')}</strong>
+					</div>
+					<div class="control-row">
+						<span>Purpose</span>
+						<strong>{rule.purpose}</strong>
+					</div>
+					<div class="control-row">
+						<span>Attribute set</span>
+						<strong>{rule.attributeSetHash}</strong>
+					</div>
+					<div class="control-row">
+						<span>Challenge mode</span>
+						<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
+					</div>
+					<div class="control-row">
+						<span>Release policy</span>
+						<strong>{rule.releasePolicyVersion}</strong>
+					</div>
+					<div class="control-row">
+						<span>Terms</span>
+						<strong>{rule.termsVersion}</strong>
+					</div>
+					<div class="control-row">
+						<span>Privacy Policy</span>
+						<strong>{rule.privacyPolicyVersion}</strong>
+					</div>
+					<div class="control-row">
+						<span>Deny reason</span>
+						<strong>{rule.denyReason}</strong>
+					</div>
 				</div>
-				<div class="control-row">
-					<span>Legal basis</span>
-					<strong>{rule.legalBasis.replaceAll('_', ' ')}</strong>
-				</div>
-				<div class="control-row">
-					<span>Purpose</span>
-					<strong>{rule.purpose}</strong>
-				</div>
-				<div class="control-row">
-					<span>Attribute set</span>
-					<strong>{rule.attributeSetHash}</strong>
-				</div>
-				<div class="control-row">
-					<span>Challenge mode</span>
-					<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
-				</div>
-				<div class="control-row">
-					<span>Release policy</span>
-					<strong>{rule.releasePolicyVersion}</strong>
-				</div>
-				<div class="control-row">
-					<span>Terms</span>
-					<strong>{rule.termsVersion}</strong>
-				</div>
-				<div class="control-row">
-					<span>Privacy Policy</span>
-					<strong>{rule.privacyPolicyVersion}</strong>
-				</div>
-				<div class="control-row">
-					<span>Deny reason</span>
-					<strong>{rule.denyReason}</strong>
-				</div>
-			</div>
 
-			<div class="control-block">
-				<div class="control-row">
-					<span>Runtime exposure</span>
-					<strong>{rule.runtime}</strong>
+				<div class="control-block">
+					<div class="control-row">
+						<span>Runtime exposure</span>
+						<strong>{rule.runtime}</strong>
+					</div>
+					<div class="control-row">
+						<span>Conflict policy</span>
+						<strong>{rule.conflict}</strong>
+					</div>
+					<div class="control-row">
+						<span>Trace disclosure</span>
+						<strong>{rule.disclosure}</strong>
+					</div>
 				</div>
-				<div class="control-row">
-					<span>Conflict policy</span>
-					<strong>{rule.conflict}</strong>
-				</div>
-				<div class="control-row">
-					<span>Trace disclosure</span>
-					<strong>{rule.disclosure}</strong>
-				</div>
-			</div>
-		</aside>
+			</aside>
+		{/if}
 	</div>
 </section>
 
@@ -3132,6 +3741,8 @@
 		--map-drag-edge-flow-speed: 620ms;
 		--map-edge-dash-pattern: 6 6;
 		--map-drag-edge-dash-pattern: 4 3;
+		--map-layer-edge-opacity: 0.24;
+		--map-layer-outbound-edge-opacity: 0.16;
 		overflow: hidden;
 		border: 1px solid var(--map-line);
 		border-radius: 8px;
@@ -3159,6 +3770,8 @@
 		--map-target-group-active-surface: color-mix(in srgb, var(--map-brand) 15%, var(--map-surface));
 		--map-target-active-surface: color-mix(in srgb, var(--map-brand) 42%, var(--map-surface));
 		--map-target-related-surface: color-mix(in srgb, var(--map-brand) 18%, var(--map-surface));
+		--map-layer-edge-opacity: 0.38;
+		--map-layer-outbound-edge-opacity: 0.42;
 	}
 
 	.graph-toolbar,
@@ -3192,7 +3805,7 @@
 	}
 
 	h3 {
-		font-size: 14px;
+		font-size: 12px;
 	}
 
 	.graph-actions {
@@ -3327,6 +3940,10 @@
 		padding: 14px;
 	}
 
+	.workspace.no-inspector {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
 	.pane {
 		min-width: 0;
 		border: 1px solid var(--map-line);
@@ -3409,10 +4026,12 @@
 
 	.graph-empty-state {
 		position: absolute;
-		inset: 68px 24px auto;
+		top: 92px;
+		left: 50%;
 		z-index: 6;
 		display: grid;
 		gap: 4px;
+		width: min(520px, calc(100% - 48px));
 		max-width: 520px;
 		padding: 14px 16px;
 		border: 1px solid var(--map-line);
@@ -3420,6 +4039,7 @@
 		color: var(--map-text);
 		background: color-mix(in srgb, var(--map-surface) 92%, transparent);
 		box-shadow: 0 16px 40px rgb(0 0 0 / 0.18);
+		transform: translateX(-50%);
 	}
 
 	.graph-empty-state span {
@@ -3649,8 +4269,8 @@
 
 	.edge {
 		fill: none;
-		stroke: #5f7085;
-		stroke-width: 1.5;
+		stroke: var(--edge-accent, #5f7085);
+		stroke-width: 1.2;
 		opacity: 0.72;
 		pointer-events: none;
 		transition:
@@ -3676,20 +4296,65 @@
 		}
 	}
 
+	@keyframes node-swap-in {
+		0% {
+			opacity: 0.28;
+			filter: saturate(0.68);
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+		}
+
+		58% {
+			opacity: 1;
+			filter: saturate(1);
+			box-shadow:
+				0 0 0 1px color-mix(in srgb, var(--node-accent) 52%, transparent),
+				0 0 14px color-mix(in srgb, var(--node-accent) 18%, transparent),
+				0 6px 14px rgba(0, 0, 0, 0.24);
+		}
+
+		100% {
+			opacity: 1;
+			filter: saturate(1);
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+		}
+	}
+
 	.edge-muted {
-		opacity: 0.1;
+		stroke: #5f7085;
+		stroke-dasharray: 0;
+		opacity: 0.12;
+	}
+
+	.overview-layer-edge {
+		stroke: #5f7085;
+		stroke-width: 1;
+		stroke-dasharray: 0;
+		opacity: var(--map-layer-edge-opacity);
+	}
+
+	.edge.edge-muted.active {
+		stroke: #5f7085;
+		stroke-width: 1.2;
+		opacity: 0.12;
+	}
+
+	.edge.edge-muted.edge-connected {
+		opacity: 0.5;
+	}
+
+	.edge.edge-muted.edge-selected {
+		opacity: 0.62;
 	}
 
 	.edge.active {
 		stroke: var(--edge-accent, var(--map-brand));
-		stroke-width: 2.2;
+		stroke-width: 1.45;
 		opacity: 1;
 	}
 
 	.edge.edge-connected,
 	.edge.edge-selected,
-	.edge.edge-picked,
-	.edge.edge-auto-mapped {
+	.edge.edge-picked {
 		stroke: var(--edge-accent, var(--map-brand));
 		stroke-dasharray: var(--map-edge-dash-pattern);
 		opacity: 1;
@@ -3699,49 +4364,42 @@
 	}
 
 	.edge.edge-connected {
-		stroke-width: 2.1;
+		stroke-width: 1.55;
 	}
 
 	.edge.edge-selected {
-		stroke-width: 2.7;
+		stroke-width: 1.75;
 	}
 
 	.edge.edge-picked {
-		stroke-width: 3;
+		stroke-width: 1.9;
 		filter: drop-shadow(
 			0 0 4px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 56%, transparent)
 		);
 	}
 
-	.edge.edge-auto-mapped {
-		stroke-width: 3;
-		filter: drop-shadow(
-			0 0 7px color-mix(in srgb, var(--edge-accent, var(--map-brand)) 68%, transparent)
-		);
+	.outbound-edge {
+		opacity: 0.62;
 	}
 
-	.outbound-edge {
-		stroke: #6f8198;
-		opacity: 0.55;
+	.edge.overview-layer-edge.outbound-edge {
+		opacity: var(--map-layer-outbound-edge-opacity);
 	}
 
 	.custom-edge {
-		stroke: var(--map-teal);
-		stroke-width: 2.6;
+		stroke: var(--edge-accent, var(--map-teal));
+		stroke-width: 1.7;
 	}
 
 	.edge.edge-invalid {
 		stroke: var(--map-red);
 		stroke-dasharray: var(--map-edge-dash-pattern);
 		opacity: 1;
-		animation:
-			edge-flow var(--map-edge-flow-speed) linear infinite,
-			connection-pulse var(--map-edge-pulse-speed) ease-in-out infinite;
 	}
 
 	.drag-edge {
 		stroke: var(--map-brand);
-		stroke-width: 2.6;
+		stroke-width: 1.9;
 		stroke-dasharray: var(--map-drag-edge-dash-pattern);
 		opacity: 0.82;
 		animation: edge-flow var(--map-drag-edge-flow-speed) linear infinite;
@@ -3773,6 +4431,7 @@
 		--node-accent: var(--map-brand);
 		--node-glow: color-mix(in srgb, var(--node-accent) 36%, transparent);
 		position: absolute;
+		box-sizing: border-box;
 		display: grid;
 		gap: 1px;
 		padding: 3px 8px;
@@ -3810,7 +4469,9 @@
 
 	.source-node,
 	.destination-node {
+		padding-bottom: 13px;
 		border-color: color-mix(in srgb, var(--node-accent) 72%, transparent);
+		background: color-mix(in srgb, var(--map-canvas) 88%, var(--node-accent) 8%);
 	}
 
 	.target-node {
@@ -3916,30 +4577,43 @@
 	}
 
 	.adapter-hidden {
-		opacity: 0.22;
-		filter: saturate(0.65);
+		opacity: 0.28;
+		filter: saturate(0.68);
 		transform: translate(var(--stack-x), var(--stack-y));
 		pointer-events: none;
 	}
 
-	.adapter-hidden::before {
+	.adapter-hidden::before,
+	.adapter-hidden::after {
 		content: '';
 		position: absolute;
 		inset: 0;
 		border: 1px solid var(--map-line-strong);
 		border-radius: inherit;
-		transform: translate(var(--stack-shadow-x), var(--stack-shadow-y));
-		opacity: 0.38;
+		background: color-mix(in srgb, var(--map-surface) 70%, transparent);
 		pointer-events: none;
 	}
 
-	.graph-node span:not(.node-handle):not(.target-badge-row):not(.target-badge):not(.target-badges) {
+	.adapter-hidden::before {
+		transform: translate(var(--stack-shadow-x), var(--stack-shadow-y));
+		opacity: 0.38;
+	}
+
+	.adapter-hidden::after {
+		transform: translate(calc(var(--stack-shadow-x) + 18px), calc(var(--stack-shadow-y) + 12px));
+		opacity: 0.18;
+	}
+
+	.graph-node
+		span:not(.node-handle):not(.node-badge-row):not(.target-badge-row):not(.target-badge):not(
+			.target-badges
+		):not(.node-info):not(.node-info-mark):not(.node-info-overlay) {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-size: 14px;
-		font-weight: 400;
+		font-size: 12px;
+		font-weight: 650;
 		line-height: 1.15;
 	}
 
@@ -3975,6 +4649,11 @@
 			0 0 0 4px color-mix(in srgb, var(--map-red) 16%, transparent),
 			0 0 22px 2px var(--node-glow),
 			0 8px 18px rgba(0, 0, 0, 0.3);
+	}
+
+	.graph-node.node-swap-enter:not(.adapter-hidden) {
+		border-color: color-mix(in srgb, var(--node-accent) 86%, transparent);
+		animation: node-swap-in 260ms ease-out both;
 	}
 
 	.graph-node.selection-origin,
@@ -4079,6 +4758,92 @@
 		background: var(--map-muted);
 	}
 
+	.node-info {
+		position: absolute;
+		top: 4px;
+		right: 5px;
+		z-index: 7;
+		display: grid;
+		place-items: center;
+		width: 13px;
+		height: 13px;
+		pointer-events: auto;
+	}
+
+	.locked-node .node-info {
+		right: 20px;
+	}
+
+	.node-info-mark {
+		display: grid;
+		place-items: center;
+		width: 11px;
+		height: 11px;
+		border: 1px solid color-mix(in srgb, var(--node-accent) 72%, var(--map-muted));
+		border-radius: 999px;
+		color: var(--node-accent);
+		background: color-mix(in srgb, var(--map-surface) 86%, transparent);
+		font-family: ui-sans-serif, system-ui, sans-serif;
+		font-size: 8px;
+		font-weight: 900;
+		line-height: 1;
+		opacity: 0.86;
+	}
+
+	.node-info-overlay {
+		position: absolute;
+		top: 16px;
+		right: -6px;
+		z-index: 20;
+		display: none;
+		min-width: 190px;
+		max-width: 260px;
+		padding: 9px 10px;
+		border: 1px solid color-mix(in srgb, var(--node-accent) 48%, var(--map-line));
+		border-radius: 6px;
+		color: var(--map-text);
+		background: color-mix(in srgb, var(--map-surface) 96%, var(--map-canvas));
+		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
+		text-align: left;
+	}
+
+	.node-info:hover .node-info-overlay {
+		display: grid;
+		gap: 5px;
+	}
+
+	.node-info-overlay strong {
+		color: var(--map-muted);
+		font-size: 10px;
+		font-weight: 900;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+	}
+
+	.node-info-overlay code,
+	.node-info-overlay small {
+		min-width: 0;
+		overflow-wrap: anywhere;
+		color: var(--map-text);
+		font-size: 11px;
+		font-weight: 650;
+		line-height: 1.35;
+		white-space: normal;
+	}
+
+	.node-info-overlay code {
+		padding: 2px 4px;
+		border: 1px solid var(--map-line);
+		border-radius: 4px;
+		background: var(--map-canvas);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	.node-info-overlay small {
+		color: var(--map-muted);
+		font-weight: 600;
+	}
+
 	.node-handle {
 		position: absolute;
 		top: 50%;
@@ -4087,18 +4852,20 @@
 		border: 2px solid var(--map-canvas);
 		border-radius: 999px;
 		background: #7f8ea3;
-		box-shadow: 0 0 0 1px rgba(213, 224, 238, 0.18);
+		box-shadow:
+			0 0 0 1px rgba(213, 224, 238, 0.34),
+			0 0 0 4px color-mix(in srgb, var(--node-accent) 10%, transparent);
 		cursor: crosshair;
 		transform: translateY(-50%);
 		z-index: 3;
 	}
 
 	.node-handle.output {
-		right: -5px;
+		right: -6px;
 	}
 
 	.node-handle.input {
-		left: -5px;
+		left: -6px;
 	}
 
 	.source-node .node-handle.output,
@@ -4110,6 +4877,19 @@
 		background: var(--map-brand);
 	}
 
+	.graph-node:hover .node-handle,
+	.graph-node.active .node-handle,
+	.graph-node.connection-origin .node-handle,
+	.graph-node.selection-origin .node-handle,
+	.graph-node.connection-related .node-handle,
+	.graph-node.selection-related .node-handle {
+		box-shadow:
+			0 0 0 1px rgba(213, 224, 238, 0.48),
+			0 0 0 4px color-mix(in srgb, var(--node-accent) 18%, transparent),
+			0 0 12px color-mix(in srgb, var(--node-accent) 42%, transparent);
+	}
+
+	.node-badge-row,
 	.target-badge-row {
 		position: absolute;
 		left: 7px;
@@ -4122,6 +4902,10 @@
 		pointer-events: none;
 	}
 
+	.node-badge-row {
+		justify-content: flex-start;
+	}
+
 	.target-badges {
 		display: flex;
 		align-items: center;
@@ -4129,8 +4913,8 @@
 	}
 
 	.target-badge {
-		height: 11px;
-		padding: 0 4px;
+		height: 9px;
+		padding: 0 3px;
 		border: 1px solid color-mix(in srgb, var(--map-brand) 36%, transparent);
 		border-radius: 2px;
 		color: var(--map-muted);
@@ -4138,9 +4922,9 @@
 		font-family:
 			ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
 			monospace;
-		font-size: 8px;
+		font-size: 7px;
 		font-weight: 700;
-		line-height: 10px;
+		line-height: 8px;
 	}
 
 	.target-badge.required {

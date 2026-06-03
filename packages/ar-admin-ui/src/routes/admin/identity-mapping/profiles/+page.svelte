@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
 		adminIdentityMappingAPI,
+		type IdentityMappingAttributeField,
+		type IdentityMappingAttributeGroup,
+		type IdentityMappingAttributeProtocol,
 		type IdentityMappingDestinationProfileSummary,
 		type IdentityMappingExternalSchemaSummary,
-		type IdentityMappingOidcCustomClaim,
-		type IdentityMappingOidcCustomScope,
 		type IdentityMappingOidcSurface,
 		type IdentityMappingProtocolSchemaSummary,
 		type IdentityMappingSourceProfileColumn,
@@ -18,6 +20,10 @@
 		summarizeDestinationConsentSettings,
 		type DestinationConsentSettingsDraft
 	} from '$lib/admin/identity-mapping-profile-settings';
+	import {
+		destinationTemplates,
+		type DestinationTemplate
+	} from '$lib/admin/identity-mapping-destination-templates';
 
 	type ProfileKind = 'inbound' | 'outbound' | 'template';
 	type ProfileTab = 'sources' | 'destinations' | 'registries';
@@ -78,15 +84,6 @@
 		purpose: string;
 	}
 
-	interface DestinationTemplate {
-		id: string;
-		destinationType: DestinationKind;
-		profileKey: string;
-		displayName: string;
-		description: string;
-		schema: Record<string, unknown>;
-	}
-
 	const profileKinds: Array<ProfileKind | 'all'> = ['all', 'inbound', 'outbound', 'template'];
 	const profileTabs: ProfileTab[] = ['sources', 'destinations', 'registries'];
 	const valueTypeOptions = [
@@ -102,6 +99,13 @@
 	const classificationOptions = ['internal', 'public', 'pii', 'regulated', 'secret'];
 	const ownerScopeOptions = ['tenant', 'platform', 'client'];
 	const registryOwnerScopeOptions = ['tenant', 'platform'];
+	const attributeProtocolOptions: IdentityMappingAttributeProtocol[] = ['oidc', 'saml', 'vc'];
+	const attributeGroupTypeOptions = [
+		'scope',
+		'attribute_release',
+		'credential_type',
+		'presentation_definition'
+	];
 	const oidcSurfaceOptions: IdentityMappingOidcSurface[] = ['id_token', 'userinfo'];
 	const nullHandlingOptions = ['empty', 'omit', 'literal_null'];
 	const requiredMissingPolicyOptions = ['error', 'review', 'omit'];
@@ -115,177 +119,6 @@
 		{ value: ';', label: 'Semicolon' },
 		{ value: '|', label: 'Pipe' }
 	];
-	const destinationTemplates: DestinationTemplate[] = [
-		{
-			id: 'template_destination_oidc_standard',
-			destinationType: 'oidc',
-			profileKey: 'standard_oidc_claims',
-			displayName: 'Standard OIDC claims',
-			description: 'OpenID Connect Core and profile claims for ID Token and UserInfo output.',
-			schema: {
-				destinationType: 'oidc',
-				subjectContract: {
-					required: true,
-					strategySource: 'tenant_default_with_client_override'
-				},
-				claims: [
-					{
-						claimName: 'sub',
-						label: 'Subject',
-						valueType: 'string',
-						classification: 'internal',
-						surfaces: ['id_token', 'userinfo'],
-						requiredScopes: ['openid']
-					},
-					{
-						claimName: 'name',
-						label: 'Full name',
-						valueType: 'string',
-						classification: 'pii',
-						surfaces: ['userinfo'],
-						requiredScopes: ['profile']
-					},
-					{
-						claimName: 'given_name',
-						label: 'Given name',
-						valueType: 'string',
-						classification: 'pii',
-						surfaces: ['userinfo'],
-						requiredScopes: ['profile']
-					},
-					{
-						claimName: 'family_name',
-						label: 'Family name',
-						valueType: 'string',
-						classification: 'pii',
-						surfaces: ['userinfo'],
-						requiredScopes: ['profile']
-					},
-					{
-						claimName: 'preferred_username',
-						label: 'Preferred username',
-						valueType: 'string',
-						classification: 'internal',
-						surfaces: ['userinfo'],
-						requiredScopes: ['profile']
-					},
-					{
-						claimName: 'email',
-						label: 'Email',
-						valueType: 'email',
-						classification: 'pii',
-						surfaces: ['userinfo'],
-						requiredScopes: ['email']
-					},
-					{
-						claimName: 'email_verified',
-						label: 'Email verified',
-						valueType: 'boolean',
-						classification: 'internal',
-						surfaces: ['userinfo'],
-						requiredScopes: ['email']
-					},
-					{
-						claimName: 'phone_number',
-						label: 'Phone number',
-						valueType: 'phone',
-						classification: 'pii',
-						surfaces: ['userinfo'],
-						requiredScopes: ['phone']
-					},
-					{
-						claimName: 'locale',
-						label: 'Locale',
-						valueType: 'string',
-						classification: 'internal',
-						surfaces: ['userinfo'],
-						requiredScopes: ['profile']
-					},
-					{
-						claimName: 'zoneinfo',
-						label: 'Time zone',
-						valueType: 'string',
-						classification: 'internal',
-						surfaces: ['userinfo'],
-						requiredScopes: ['profile']
-					},
-					{
-						claimName: 'updated_at',
-						label: 'Updated at',
-						valueType: 'number',
-						classification: 'internal',
-						surfaces: ['userinfo'],
-						requiredScopes: ['profile']
-					}
-				]
-			}
-		},
-		{
-			id: 'template_destination_saml_standard',
-			destinationType: 'saml',
-			profileKey: 'standard_saml_attributes',
-			displayName: 'Standard SAML attributes',
-			description: 'Common SAML NameID and attribute release profile for SP assertions.',
-			schema: {
-				destinationType: 'saml',
-				nameId: {
-					format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
-					source: 'subject_identifier'
-				},
-				attributes: [
-					{
-						name: 'urn:oid:0.9.2342.19200300.100.1.3',
-						label: 'Email',
-						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-						valueType: 'email',
-						classification: 'pii',
-						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
-					},
-					{
-						name: 'urn:oid:2.5.4.42',
-						label: 'Given name',
-						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-						valueType: 'string',
-						classification: 'pii',
-						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
-					},
-					{
-						name: 'urn:oid:2.5.4.4',
-						label: 'Surname',
-						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-						valueType: 'string',
-						classification: 'pii',
-						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
-					},
-					{
-						name: 'urn:oid:2.16.840.1.113730.3.1.241',
-						label: 'Display name',
-						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-						valueType: 'string',
-						classification: 'pii',
-						releasePolicy: { legalBasis: 'consent', purpose: 'attribute_release' }
-					},
-					{
-						name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.1',
-						label: 'Affiliation',
-						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-						valueType: 'string',
-						classification: 'internal',
-						releasePolicy: { legalBasis: 'legitimate_interest', purpose: 'attribute_release' }
-					},
-					{
-						name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.7',
-						label: 'Entitlement',
-						nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-						valueType: 'string',
-						classification: 'internal',
-						releasePolicy: { legalBasis: 'legitimate_interest', purpose: 'attribute_release' }
-					}
-				]
-			}
-		}
-	];
-
 	let profiles = $state<ProfileItem[]>([]);
 	let loading = $state(true);
 	let errorMessage = $state<string | null>(null);
@@ -296,8 +129,8 @@
 	let sourceProfiles = $state<IdentityMappingSourceProfileSummary[]>([]);
 	let destinationProfiles = $state<IdentityMappingDestinationProfileSummary[]>([]);
 	let protocolSchemaOptions = $state<IdentityMappingProtocolSchemaSummary[]>([]);
-	let customScopes = $state<IdentityMappingOidcCustomScope[]>([]);
-	let customClaims = $state<IdentityMappingOidcCustomClaim[]>([]);
+	let attributeGroups = $state<IdentityMappingAttributeGroup[]>([]);
+	let attributeFields = $state<IdentityMappingAttributeField[]>([]);
 	let consentDrafts = $state<Record<string, DestinationConsentSettingsDraft>>({});
 	let csvMode = $state<CsvCreateMode>('upload');
 	let csvDetailTab = $state<CsvDetailTab>('summary');
@@ -354,17 +187,20 @@
 	let samlAttributes = $state<SamlAttributeDraft[]>([
 		createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')
 	]);
-	let scopeKey = $state('');
-	let scopeDisplayName = $state('');
-	let scopeDescription = $state('');
-	let scopeOwnerScopeType = $state<'tenant' | 'platform'>('tenant');
-	let scopeAllowedClaims = $state('');
-	let claimName = $state('');
-	let claimDisplayName = $state('');
-	let claimValueType = $state('string');
-	let claimClassification = $state('internal');
-	let claimOwnerScopeType = $state<'tenant' | 'platform'>('tenant');
-	let claimSurfaces = $state<IdentityMappingOidcSurface[]>(['userinfo']);
+	let groupProtocol = $state<IdentityMappingAttributeProtocol>('oidc');
+	let groupType = $state('scope');
+	let groupKey = $state('');
+	let groupDisplayName = $state('');
+	let groupDescription = $state('');
+	let groupOwnerScopeType = $state<'tenant' | 'platform'>('tenant');
+	let groupFieldKeys = $state('');
+	let fieldProtocol = $state<IdentityMappingAttributeProtocol>('oidc');
+	let fieldKey = $state('');
+	let fieldDisplayName = $state('');
+	let fieldValueType = $state('string');
+	let fieldClassification = $state('internal');
+	let fieldOwnerScopeType = $state<'tenant' | 'platform'>('tenant');
+	let fieldSurfaces = $state<string[]>(['userinfo']);
 	let savingRegistry = $state(false);
 
 	onMount(() => {
@@ -373,6 +209,12 @@
 
 	const visibleProfiles = $derived(
 		activeKind === 'all' ? profiles : profiles.filter((profile) => profile.kind === activeKind)
+	);
+	const sourceProfileListItems = $derived(
+		profiles.filter((profile) => profile.kind === 'inbound' && profile.sourceProfileId)
+	);
+	const destinationProfileListItems = $derived(
+		profiles.filter((profile) => profile.kind === 'outbound' && profile.destinationProfileId)
 	);
 	const selectedProfile = $derived(
 		profiles.find((profile) => profile.id === selectedProfileId) ?? null
@@ -413,20 +255,20 @@
 				externalSchemas,
 				loadedSourceProfiles,
 				loadedDestinationProfiles,
-				loadedCustomScopes,
-				loadedCustomClaims,
+				loadedAttributeGroups,
+				loadedAttributeFields,
 				templates
 			] = await Promise.all([
 				adminIdentityMappingAPI.listProtocolSchemas(),
 				adminIdentityMappingAPI.listExternalSchemas(),
 				adminIdentityMappingAPI.listSourceProfiles(),
 				adminIdentityMappingAPI.listDestinationProfiles(),
-				adminIdentityMappingAPI.listOidcCustomScopes(),
-				adminIdentityMappingAPI.listOidcCustomClaims(),
+				adminIdentityMappingAPI.listAttributeGroups(),
+				adminIdentityMappingAPI.listAttributeFields(),
 				adminIdentityMappingAPI.listTemplates()
 			]);
-			customScopes = loadedCustomScopes.customScopes;
-			customClaims = loadedCustomClaims.customClaims;
+			attributeGroups = loadedAttributeGroups.attributeGroups;
+			attributeFields = loadedAttributeFields.attributeFields;
 			sourceProfiles = loadedSourceProfiles.sourceProfiles;
 			destinationProfiles = loadedDestinationProfiles.destinationProfiles;
 			protocolSchemaOptions = protocolSchemas.protocolSchemas;
@@ -811,26 +653,9 @@
 
 	function editSourceProfile(profile: ProfileItem) {
 		if (!profile.sourceProfileId) return;
-		const sourceProfile = sourceProfiles.find((item) => item.id === profile.sourceProfileId);
-		const schema = sourceProfile?.version?.schema;
-		if (!sourceProfile || !schema) {
-			createMessage = 'Source profile version schema is not available for editing.';
-			return;
-		}
-		activeTab = 'sources';
-		editingSourceProfileId = sourceProfile.id;
-		csvMode = 'upload';
-		csvDetailTab = 'columns';
-		csvDisplayName = sourceProfile.displayName;
-		csvProfileKey = sourceProfile.profileKey;
-		csvVersionLabel = nextVersionLabel(sourceProfile.version?.versionLabel);
-		selectedCsvFile = null;
-		parsedCsvDraftId = null;
-		parsedCsvSchema = cloneSchema(schema);
-		parsedCsvParserOptions = schema.parser ?? {};
-		parsedCsvWarningSummary = sourceProfile.version?.warningSummary ?? {};
-		blockingWarningsConfirmed = getBlockingWarningCount(parsedCsvSchema) === 0;
-		createMessage = `Editing ${sourceProfile.displayName}. Saving creates a new draft version.`;
+		void goto(
+			`/admin/identity-mapping/profiles/edit?kind=source&id=${encodeURIComponent(profile.sourceProfileId)}`
+		);
 	}
 
 	function copySourceProfile(profile: ProfileItem) {
@@ -859,25 +684,9 @@
 
 	function editDestinationProfile(profile: ProfileItem) {
 		if (!profile.destinationProfileId) return;
-		const destinationProfile = destinationProfiles.find(
-			(item) => item.id === profile.destinationProfileId
+		void goto(
+			`/admin/identity-mapping/profiles/edit?kind=destination&id=${encodeURIComponent(profile.destinationProfileId)}`
 		);
-		const schema = destinationProfile?.version?.schema;
-		if (!destinationProfile || !schema) {
-			createMessage = 'Destination profile version schema is not available for editing.';
-			return;
-		}
-		activeTab = 'destinations';
-		editingDestinationProfileId = destinationProfile.id;
-		destinationKind = destinationProfile.destinationType;
-		destinationDisplayName = destinationProfile.displayName;
-		destinationProfileKey = destinationProfile.profileKey;
-		destinationVersionLabel = nextVersionLabel(destinationProfile.version?.versionLabel);
-		destinationOwnerScopeType = destinationProfile.ownerScopeType;
-		destinationOwnerScopeId = destinationProfile.ownerScopeId ?? '';
-		loadDestinationSchemaDraft(schema);
-		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
-		createMessage = `Editing ${destinationProfile.displayName}. Saving creates a new draft version.`;
 	}
 
 	function copyDestinationProfile(profile: ProfileItem) {
@@ -929,53 +738,56 @@
 		createMessage = `Copied template ${template.displayName}. Save it as a new destination profile.`;
 	}
 
-	async function saveCustomScope() {
+	async function saveAttributeGroup() {
 		savingRegistry = true;
 		createMessage = null;
 		try {
-			await adminIdentityMappingAPI.createOidcCustomScope({
-				scopeKey: scopeKey.trim(),
-				displayName: scopeDisplayName.trim(),
-				description: scopeDescription.trim() || null,
-				ownerScopeType: scopeOwnerScopeType,
-				allowedClaims: splitCsv(scopeAllowedClaims)
+			await adminIdentityMappingAPI.createAttributeGroup({
+				protocol: groupProtocol,
+				groupType: groupType.trim(),
+				groupKey: groupKey.trim(),
+				displayName: groupDisplayName.trim(),
+				description: groupDescription.trim() || null,
+				ownerScopeType: groupOwnerScopeType,
+				fieldKeys: splitCsv(groupFieldKeys)
 			});
-			scopeKey = '';
-			scopeDisplayName = '';
-			scopeDescription = '';
-			scopeAllowedClaims = '';
-			createMessage = 'Saved OIDC custom scope.';
+			groupKey = '';
+			groupDisplayName = '';
+			groupDescription = '';
+			groupFieldKeys = '';
+			createMessage = 'Saved attribute group.';
 			await loadProfiles();
 			activeTab = 'registries';
 		} catch (error) {
-			createMessage = error instanceof Error ? error.message : 'Failed to save OIDC custom scope';
+			createMessage = error instanceof Error ? error.message : 'Failed to save attribute group';
 		} finally {
 			savingRegistry = false;
 		}
 	}
 
-	async function saveCustomClaim() {
+	async function saveAttributeField() {
 		savingRegistry = true;
 		createMessage = null;
 		try {
-			await adminIdentityMappingAPI.createOidcCustomClaim({
-				claimName: claimName.trim(),
-				displayName: claimDisplayName.trim(),
-				valueType: claimValueType,
-				classification: claimClassification,
-				ownerScopeType: claimOwnerScopeType,
-				allowedSurfaces: claimSurfaces
+			await adminIdentityMappingAPI.createAttributeField({
+				protocol: fieldProtocol,
+				fieldKey: fieldKey.trim(),
+				displayName: fieldDisplayName.trim(),
+				valueType: fieldValueType,
+				classification: fieldClassification,
+				ownerScopeType: fieldOwnerScopeType,
+				surfaces: fieldProtocol === 'oidc' ? fieldSurfaces : []
 			});
-			claimName = '';
-			claimDisplayName = '';
-			claimValueType = 'string';
-			claimClassification = 'internal';
-			claimSurfaces = ['userinfo'];
-			createMessage = 'Saved OIDC custom claim.';
+			fieldKey = '';
+			fieldDisplayName = '';
+			fieldValueType = 'string';
+			fieldClassification = 'internal';
+			fieldSurfaces = ['userinfo'];
+			createMessage = 'Saved attribute field.';
 			await loadProfiles();
 			activeTab = 'registries';
 		} catch (error) {
-			createMessage = error instanceof Error ? error.message : 'Failed to save OIDC custom claim';
+			createMessage = error instanceof Error ? error.message : 'Failed to save attribute field';
 		} finally {
 			savingRegistry = false;
 		}
@@ -1085,9 +897,9 @@
 	}
 
 	function toggleClaimSurface(surface: IdentityMappingOidcSurface, checked: boolean) {
-		claimSurfaces = checked
-			? Array.from(new Set([...claimSurfaces, surface]))
-			: claimSurfaces.filter((item) => item !== surface);
+		fieldSurfaces = checked
+			? Array.from(new Set([...fieldSurfaces, surface]))
+			: fieldSurfaces.filter((item) => item !== surface);
 	}
 
 	function createManualColumn(
@@ -1436,6 +1248,10 @@
 		manualColumns = [createManualColumn('email', 'Email', 'email')];
 	}
 
+	function createSourceProfile() {
+		void goto('/admin/identity-mapping/profiles/edit?kind=source');
+	}
+
 	function resetDestinationComposer() {
 		editingDestinationProfileId = null;
 		destinationDisplayName = '';
@@ -1463,6 +1279,10 @@
 		samlAttributes = [
 			createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')
 		];
+	}
+
+	function createDestinationProfile() {
+		void goto('/admin/identity-mapping/profiles/edit?kind=destination');
 	}
 
 	function nextVersionLabel(value: string | null | undefined): string {
@@ -1590,895 +1410,11 @@
 		</div>
 	</div>
 
-	<div class="profile-tabs" aria-label="Profile workspace tabs">
-		{#each profileTabs as tab (tab)}
-			<button type="button" class:active={activeTab === tab} onclick={() => (activeTab = tab)}>
-				{tab}
-			</button>
-		{/each}
-	</div>
-
-	{#if activeTab === 'sources'}
-		<section class="profiles-panel">
-			<div class="panel-heading">
-				<div>
-					<p class="eyebrow">
-						{editingSourceProfileId ? 'Edit Source Profile' : 'Create Source Profile'}
-					</p>
-					<h2>CSV source profile</h2>
-				</div>
-				<div class="filter-bar" aria-label="CSV create mode">
-					<button
-						type="button"
-						class:active={csvMode === 'upload'}
-						onclick={() => (csvMode = 'upload')}
-					>
-						Upload CSV
-					</button>
-					<button
-						type="button"
-						class:active={csvMode === 'manual'}
-						onclick={() => (csvMode = 'manual')}
-					>
-						Manual columns
-					</button>
-				</div>
-			</div>
-
-			<div class="template-strip" aria-label="Destination profile templates">
-				{#each destinationTemplates as template (template.id)}
-					<div class="template-card">
-						<div>
-							<span>{template.destinationType.toUpperCase()} template</span>
-							<strong>{template.displayName}</strong>
-							<small>{template.description}</small>
-						</div>
-						<button type="button" onclick={() => copyDestinationTemplate(template)}>Copy</button>
-					</div>
-				{/each}
-			</div>
-
-			<div class="settings-grid">
-				<label>
-					<span>Display name</span>
-					<input
-						value={csvDisplayName}
-						placeholder="Workday CSV 2026"
-						oninput={(event) => {
-							csvDisplayName = getInputValue(event);
-							if (!csvProfileKey.trim()) csvProfileKey = normalizeProfileKey(csvDisplayName);
-						}}
-					/>
-				</label>
-				<label>
-					<span>Profile key</span>
-					<input
-						value={csvProfileKey}
-						placeholder="workday_csv_2026"
-						oninput={(event) => (csvProfileKey = normalizeProfileKey(getInputValue(event)))}
-					/>
-				</label>
-				<label>
-					<span>Version label</span>
-					<input
-						value={csvVersionLabel}
-						oninput={(event) => (csvVersionLabel = getInputValue(event))}
-					/>
-				</label>
-			</div>
-
-			{#if csvMode === 'upload'}
-				<div class="settings-grid parser-grid">
-					<label>
-						<span>CSV file</span>
-						<input
-							type="file"
-							accept=".csv,text/csv,text/plain"
-							onchange={(event) => {
-								selectedCsvFile =
-									event.currentTarget instanceof HTMLInputElement
-										? (event.currentTarget.files?.[0] ?? null)
-										: null;
-							}}
-						/>
-					</label>
-					<label>
-						<span>Encoding</span>
-						<select value={csvEncoding} onchange={(event) => (csvEncoding = getInputValue(event))}>
-							<option value="utf-8">UTF-8</option>
-							<option value="shift_jis">Shift_JIS</option>
-							<option value="cp932">CP932</option>
-							<option value="euc-jp">EUC-JP</option>
-						</select>
-					</label>
-					<label>
-						<span>Delimiter</span>
-						<select
-							value={csvDelimiter}
-							onchange={(event) => (csvDelimiter = getInputValue(event))}
-						>
-							{#each delimiterOptions as option (option.value)}
-								<option value={option.value}>{option.label}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						<span>Header row</span>
-						<select
-							value={csvHeaderMode}
-							onchange={(event) => (csvHeaderMode = getInputValue(event))}
-						>
-							<option value="auto">Auto detect</option>
-							<option value="first_row">First row</option>
-							<option value="none">No header</option>
-						</select>
-					</label>
-				</div>
-				<div class="action-row">
-					<button
-						type="button"
-						onclick={parseSelectedCsv}
-						disabled={parsingCsv || !selectedCsvFile}
-					>
-						{parsingCsv ? 'Parsing...' : 'Parse CSV'}
-					</button>
-					<span>Raw CSV rows are parsed server-side and are not persisted.</span>
-				</div>
-			{:else}
-				<div class="action-row">
-					<button type="button" onclick={addManualColumn}>Add column</button>
-					<span
-						>Create a CSV profile from scratch, then optionally import a file as a later version.</span
-					>
-				</div>
-			{/if}
-
-			{#if activeCsvSchema}
-				<div class="csv-detail">
-					<div class="filter-bar" aria-label="CSV profile detail tabs">
-						{#each ['summary', 'parser', 'columns', 'warnings'] as tab (tab)}
-							<button
-								type="button"
-								class:active={csvDetailTab === tab}
-								onclick={() => (csvDetailTab = tab as CsvDetailTab)}
-							>
-								{tab}
-							</button>
-						{/each}
-					</div>
-
-					{#if csvDetailTab === 'summary'}
-						<div class="metrics-grid">
-							<div>
-								<span>Columns</span>
-								<strong>{activeCsvSchema.columns.length}</strong>
-							</div>
-							<div>
-								<span>PII / regulated candidates</span>
-								<strong>{csvBlockingWarningCount}</strong>
-							</div>
-							<div>
-								<span>Rows sampled</span>
-								<strong>{activeCsvSchema.summary?.rowSampleCount ?? 0}</strong>
-							</div>
-						</div>
-					{:else if csvDetailTab === 'parser'}
-						<pre>{JSON.stringify(activeCsvSchema.parser ?? parsedCsvParserOptions, null, 2)}</pre>
-					{:else if csvDetailTab === 'warnings'}
-						{#if (activeCsvSchema.warnings ?? []).length === 0}
-							<div class="empty-state">No parser warnings for this profile draft.</div>
-						{:else}
-							<div class="warning-list">
-								{#each activeCsvSchema.warnings ?? [] as warning, index (index)}
-									<div>
-										<strong>{String(warning.code ?? 'warning')}</strong>
-										<span>{String(warning.message ?? '')}</span>
-									</div>
-								{/each}
-							</div>
-						{/if}
-					{:else}
-						<div class="column-table">
-							<div class="column-header">
-								<span>Header</span>
-								<span>Label</span>
-								<span>Type</span>
-								<span>Class</span>
-								<span>Required</span>
-								<span></span>
-							</div>
-							{#each activeCsvSchema.columns as column, index (column.stableColumnId)}
-								<div class="column-row">
-									<input
-										value={column.headerName}
-										oninput={(event) => updateCsvColumn(index, 'headerName', getInputValue(event))}
-									/>
-									<input
-										value={column.label}
-										oninput={(event) => updateCsvColumn(index, 'label', getInputValue(event))}
-									/>
-									<select
-										value={column.valueType}
-										onchange={(event) => updateCsvColumn(index, 'valueType', getInputValue(event))}
-									>
-										{#each valueTypeOptions as option (option)}
-											<option value={option}>{option}</option>
-										{/each}
-									</select>
-									<select
-										value={column.classification}
-										onchange={(event) =>
-											updateCsvColumn(index, 'classification', getInputValue(event))}
-									>
-										{#each classificationOptions as option (option)}
-											<option value={option}>{option}</option>
-										{/each}
-									</select>
-									<label class="mini-check">
-										<input
-											type="checkbox"
-											checked={column.required}
-											onchange={(event) =>
-												updateCsvColumn(index, 'required', getCheckboxValue(event))}
-										/>
-									</label>
-									{#if csvMode === 'manual'}
-										<button type="button" onclick={() => removeManualColumn(index)}>Remove</button>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{/if}
-
-					{#if csvBlockingWarningCount > 0}
-						<label class="checkbox-row">
-							<input
-								type="checkbox"
-								checked={blockingWarningsConfirmed}
-								onchange={(event) => (blockingWarningsConfirmed = getCheckboxValue(event))}
-							/>
-							<span>Confirm PII and regulated candidates for this CSV profile version</span>
-						</label>
-					{/if}
-					<div class="action-row">
-						<button type="button" onclick={saveCsvProfile} disabled={savingCsv || !canSaveCsv}>
-							{savingCsv ? 'Saving...' : 'Save draft profile'}
-						</button>
-						{#if editingSourceProfileId}
-							<button type="button" onclick={resetCsvComposer}>Cancel edit</button>
-						{/if}
-						<a href="/admin/identity-mapping">Open Flow Editor</a>
-					</div>
-				</div>
-			{/if}
-
-			{#if createMessage}
-				<div class="empty-state">{createMessage}</div>
-			{/if}
-		</section>
-	{:else if activeTab === 'destinations'}
-		<section class="profiles-panel">
-			<div class="panel-heading">
-				<div>
-					<p class="eyebrow">
-						{editingDestinationProfileId
-							? 'Edit Destination Profile'
-							: 'Create Destination Profile'}
-					</p>
-					<h2>{destinationKind.toUpperCase()} destination profile</h2>
-				</div>
-				<div class="filter-bar" aria-label="Destination profile type">
-					<button
-						type="button"
-						class:active={destinationKind === 'oidc'}
-						onclick={() => (destinationKind = 'oidc')}
-					>
-						OIDC
-					</button>
-					<button
-						type="button"
-						class:active={destinationKind === 'csv'}
-						onclick={() => (destinationKind = 'csv')}
-					>
-						CSV
-					</button>
-					<button
-						type="button"
-						class:active={destinationKind === 'saml'}
-						onclick={() => (destinationKind = 'saml')}
-					>
-						SAML
-					</button>
-				</div>
-			</div>
-
-			<div class="settings-grid">
-				<label>
-					<span>Display name</span>
-					<input
-						value={destinationDisplayName}
-						placeholder={destinationKind === 'oidc'
-							? 'Library OIDC claims'
-							: destinationKind === 'saml'
-								? 'Library SAML attributes'
-								: 'Weekly CSV export'}
-						oninput={(event) => {
-							destinationDisplayName = getInputValue(event);
-							if (!destinationProfileKey.trim()) {
-								destinationProfileKey = normalizeProfileKey(destinationDisplayName);
-							}
-						}}
-					/>
-				</label>
-				<label>
-					<span>Profile key</span>
-					<input
-						value={destinationProfileKey}
-						placeholder={destinationKind === 'oidc'
-							? 'library_oidc'
-							: destinationKind === 'saml'
-								? 'library_saml'
-								: 'weekly_csv_export'}
-						oninput={(event) => (destinationProfileKey = normalizeProfileKey(getInputValue(event)))}
-					/>
-				</label>
-				<label>
-					<span>Version label</span>
-					<input
-						value={destinationVersionLabel}
-						oninput={(event) => (destinationVersionLabel = getInputValue(event))}
-					/>
-				</label>
-				<label>
-					<span>Owner scope</span>
-					<select
-						value={destinationOwnerScopeType}
-						onchange={(event) =>
-							(destinationOwnerScopeType = getInputValue(
-								event
-							) as typeof destinationOwnerScopeType)}
-					>
-						{#each ownerScopeOptions as option (option)}
-							<option value={option}>{option}</option>
-						{/each}
-					</select>
-				</label>
-				<label>
-					<span>Owner scope ID</span>
-					<input
-						value={destinationOwnerScopeId}
-						placeholder="client override id; platform can stay blank"
-						disabled={destinationOwnerScopeType === 'tenant'}
-						oninput={(event) => (destinationOwnerScopeId = getInputValue(event))}
-					/>
-				</label>
-				<label>
-					<span>Reference schema</span>
-					<select
-						value={destinationProtocolSchemaRef}
-						onchange={(event) => (destinationProtocolSchemaRef = getInputValue(event))}
-					>
-						<option value="">No schema reference</option>
-						{#each protocolSchemaOptions.filter((schema) => schema.protocol.toLowerCase() === destinationKind) as schema (schema.id)}
-							<option value={schema.id}>{schema.displayName ?? schema.schemaKey}</option>
-						{/each}
-					</select>
-				</label>
-			</div>
-
-			{#if destinationKind === 'oidc'}
-				<div class="action-row">
-					<button type="button" onclick={addOidcClaim}>Add claim</button>
-					<span>OIDC sub is required. Subject strategy is tenant default with client override.</span
-					>
-				</div>
-				<div class="claim-table">
-					<div class="claim-header">
-						<span>Claim</span>
-						<span>Label</span>
-						<span>Type</span>
-						<span>Class</span>
-						<span>Surfaces</span>
-						<span>Scopes</span>
-						<span></span>
-					</div>
-					{#each oidcClaims as claim, index (`${claim.claimName}-${index}`)}
-						<div class="claim-row">
-							<input
-								value={claim.claimName}
-								oninput={(event) => updateOidcClaim(index, 'claimName', getInputValue(event))}
-							/>
-							<input
-								value={claim.label}
-								oninput={(event) => updateOidcClaim(index, 'label', getInputValue(event))}
-							/>
-							<select
-								value={claim.valueType}
-								onchange={(event) => updateOidcClaim(index, 'valueType', getInputValue(event))}
-							>
-								{#each valueTypeOptions as option (option)}
-									<option value={option}>{option}</option>
-								{/each}
-							</select>
-							<select
-								value={claim.classification}
-								onchange={(event) => updateOidcClaim(index, 'classification', getInputValue(event))}
-							>
-								{#each classificationOptions as option (option)}
-									<option value={option}>{option}</option>
-								{/each}
-							</select>
-							<div class="surface-checks">
-								{#each oidcSurfaceOptions as surface (surface)}
-									<label class="mini-check">
-										<input
-											type="checkbox"
-											checked={claim.surfaces.includes(surface)}
-											onchange={(event) =>
-												toggleOidcClaimSurface(index, surface, getCheckboxValue(event))}
-										/>
-										<span>{surface}</span>
-									</label>
-								{/each}
-							</div>
-							<input
-								value={claim.requiredScopes}
-								placeholder="openid,email"
-								oninput={(event) => updateOidcClaim(index, 'requiredScopes', getInputValue(event))}
-							/>
-							<button
-								type="button"
-								onclick={() => removeOidcClaim(index)}
-								disabled={claim.claimName === 'sub'}
-							>
-								Remove
-							</button>
-						</div>
-					{/each}
-				</div>
-				<label>
-					<span>Claims parameter policy JSON</span>
-					<textarea
-						rows="4"
-						value={oidcClaimsParameterJson}
-						placeholder={oidcClaimsParameterPlaceholder}
-						oninput={(event) => (oidcClaimsParameterJson = getInputValue(event))}
-					></textarea>
-				</label>
-			{:else if destinationKind === 'csv'}
-				<div class="settings-grid">
-					<label>
-						<span>Encoding default</span>
-						<select
-							value={csvDestinationEncoding}
-							onchange={(event) => (csvDestinationEncoding = getInputValue(event))}
-						>
-							<option value="utf-8">UTF-8</option>
-							<option value="utf-8-bom">UTF-8 BOM</option>
-							<option value="shift_jis">Shift_JIS</option>
-							<option value="cp932">CP932</option>
-						</select>
-					</label>
-					<label class="checkbox-row">
-						<input
-							type="checkbox"
-							checked={csvDestinationIncludeHeader}
-							onchange={(event) => (csvDestinationIncludeHeader = getCheckboxValue(event))}
-						/>
-						<span>Include header row by default</span>
-					</label>
-					<label>
-						<span>Null handling default</span>
-						<select
-							value={csvDestinationNullHandling}
-							onchange={(event) => (csvDestinationNullHandling = getInputValue(event))}
-						>
-							{#each nullHandlingOptions as option (option)}
-								<option value={option}>{option}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						<span>Required missing policy</span>
-						<select
-							value={csvDestinationRequiredMissingPolicy}
-							onchange={(event) => (csvDestinationRequiredMissingPolicy = getInputValue(event))}
-						>
-							{#each requiredMissingPolicyOptions as option (option)}
-								<option value={option}>{option}</option>
-							{/each}
-						</select>
-					</label>
-				</div>
-				<div class="action-row">
-					<button type="button" onclick={addCsvDestinationColumn}>Add column</button>
-					<span
-						>CSV destination profiles define export shape only; delivery is configured by export
-						jobs.</span
-					>
-				</div>
-				<div class="column-table">
-					<div class="destination-column-header">
-						<span>Column</span>
-						<span>Label</span>
-						<span>Type</span>
-						<span>Class</span>
-						<span>Required</span>
-						<span>Legal basis</span>
-						<span>Purpose</span>
-						<span></span>
-					</div>
-					{#each csvDestinationColumns as column, index (`${column.columnName}-${index}`)}
-						<div class="destination-column-row">
-							<input
-								value={column.columnName}
-								oninput={(event) =>
-									updateCsvDestinationColumn(index, 'columnName', getInputValue(event))}
-							/>
-							<input
-								value={column.label}
-								oninput={(event) =>
-									updateCsvDestinationColumn(index, 'label', getInputValue(event))}
-							/>
-							<select
-								value={column.valueType}
-								onchange={(event) =>
-									updateCsvDestinationColumn(index, 'valueType', getInputValue(event))}
-							>
-								{#each valueTypeOptions as option (option)}
-									<option value={option}>{option}</option>
-								{/each}
-							</select>
-							<select
-								value={column.classification}
-								onchange={(event) =>
-									updateCsvDestinationColumn(index, 'classification', getInputValue(event))}
-							>
-								{#each classificationOptions as option (option)}
-									<option value={option}>{option}</option>
-								{/each}
-							</select>
-							<label class="mini-check">
-								<input
-									type="checkbox"
-									checked={column.required}
-									onchange={(event) =>
-										updateCsvDestinationColumn(index, 'required', getCheckboxValue(event))}
-								/>
-							</label>
-							<input
-								value={column.legalBasis}
-								oninput={(event) =>
-									updateCsvDestinationColumn(index, 'legalBasis', getInputValue(event))}
-							/>
-							<input
-								value={column.purpose}
-								oninput={(event) =>
-									updateCsvDestinationColumn(index, 'purpose', getInputValue(event))}
-							/>
-							<button type="button" onclick={() => removeCsvDestinationColumn(index)}>Remove</button
-							>
-						</div>
-					{/each}
-				</div>
-			{:else}
-				<div class="settings-grid">
-					<label>
-						<span>NameID format</span>
-						<input
-							value={samlNameIdFormat}
-							oninput={(event) => (samlNameIdFormat = getInputValue(event))}
-						/>
-					</label>
-					<label>
-						<span>NameID source</span>
-						<input
-							value={samlNameIdSource}
-							placeholder="subject_identifier"
-							oninput={(event) => (samlNameIdSource = getInputValue(event))}
-						/>
-					</label>
-				</div>
-				<div class="action-row">
-					<button type="button" onclick={addSamlAttribute}>Add SAML attribute</button>
-					<span>SAML destination profiles define assertion attribute output shape.</span>
-				</div>
-				<div class="saml-attribute-table">
-					<div class="saml-attribute-header">
-						<span>Name</span>
-						<span>Label</span>
-						<span>Name format</span>
-						<span>Type</span>
-						<span>Class</span>
-						<span>Required</span>
-						<span>Legal basis</span>
-						<span>Purpose</span>
-						<span></span>
-					</div>
-					{#each samlAttributes as attribute, index (`${attribute.name}-${index}`)}
-						<div class="saml-attribute-row">
-							<input
-								value={attribute.name}
-								oninput={(event) => updateSamlAttribute(index, 'name', getInputValue(event))}
-							/>
-							<input
-								value={attribute.label}
-								oninput={(event) => updateSamlAttribute(index, 'label', getInputValue(event))}
-							/>
-							<input
-								value={attribute.nameFormat}
-								oninput={(event) => updateSamlAttribute(index, 'nameFormat', getInputValue(event))}
-							/>
-							<select
-								value={attribute.valueType}
-								onchange={(event) => updateSamlAttribute(index, 'valueType', getInputValue(event))}
-							>
-								{#each valueTypeOptions as option (option)}
-									<option value={option}>{option}</option>
-								{/each}
-							</select>
-							<select
-								value={attribute.classification}
-								onchange={(event) =>
-									updateSamlAttribute(index, 'classification', getInputValue(event))}
-							>
-								{#each classificationOptions as option (option)}
-									<option value={option}>{option}</option>
-								{/each}
-							</select>
-							<label class="mini-check">
-								<input
-									type="checkbox"
-									checked={attribute.required}
-									onchange={(event) =>
-										updateSamlAttribute(index, 'required', getCheckboxValue(event))}
-								/>
-							</label>
-							<input
-								value={attribute.legalBasis}
-								oninput={(event) => updateSamlAttribute(index, 'legalBasis', getInputValue(event))}
-							/>
-							<input
-								value={attribute.purpose}
-								oninput={(event) => updateSamlAttribute(index, 'purpose', getInputValue(event))}
-							/>
-							<button type="button" onclick={() => removeSamlAttribute(index)}>Remove</button>
-						</div>
-					{/each}
-				</div>
-			{/if}
-
-			{#if destinationBlockingWarningCount > 0}
-				<label class="checkbox-row">
-					<input
-						type="checkbox"
-						checked={destinationBlockingWarningsConfirmed}
-						onchange={(event) => (destinationBlockingWarningsConfirmed = getCheckboxValue(event))}
-					/>
-					<span>Confirm blocking release warnings for this destination profile version</span>
-				</label>
-			{/if}
-
-			<div class="impact-preview">
-				<span>Release impact</span>
-				<strong>
-					{#if destinationKind === 'oidc'}
-						{oidcClaims.length} claims, {oidcClaims.filter(
-							(claim) => claim.classification === 'pii'
-						).length}
-						PII claims
-					{:else if destinationKind === 'saml'}
-						{samlAttributes.length} attributes, {samlAttributes.filter(
-							(attribute) => attribute.classification === 'pii'
-						).length}
-						PII attributes
-					{:else}
-						{csvDestinationColumns.length} columns, {csvDestinationColumns.filter(
-							(column) => column.classification === 'pii'
-						).length}
-						PII columns
-					{/if}
-				</strong>
-				<small>{destinationBlockingWarningCount} blocking warning(s)</small>
-			</div>
-
-			<div class="action-row">
-				<button
-					type="button"
-					onclick={saveDestinationProfile}
-					disabled={savingDestination || !canSaveDestination}
-				>
-					{savingDestination ? 'Saving...' : 'Save destination draft'}
-				</button>
-				{#if editingDestinationProfileId}
-					<button type="button" onclick={resetDestinationComposer}>Cancel edit</button>
-				{/if}
-				<a href="/admin/identity-mapping">Open Flow Editor</a>
-			</div>
-
-			{#if createMessage}
-				<div class="empty-state">{createMessage}</div>
-			{/if}
-		</section>
-	{:else}
-		<section class="profiles-panel">
-			<div class="panel-heading">
-				<div>
-					<p class="eyebrow">OIDC Registries</p>
-					<h2>Custom scopes and claims</h2>
-				</div>
-				<button type="button" onclick={loadProfiles} disabled={loading}>Refresh</button>
-			</div>
-			<div class="registry-grid">
-				<div class="registry-card">
-					<h2>Custom scope</h2>
-					<label>
-						<span>Scope key</span>
-						<input
-							value={scopeKey}
-							placeholder="library"
-							oninput={(event) => (scopeKey = getInputValue(event))}
-						/>
-					</label>
-					<label>
-						<span>Display name</span>
-						<input
-							value={scopeDisplayName}
-							placeholder="Library"
-							oninput={(event) => (scopeDisplayName = getInputValue(event))}
-						/>
-					</label>
-					<label>
-						<span>Owner scope</span>
-						<select
-							value={scopeOwnerScopeType}
-							onchange={(event) =>
-								(scopeOwnerScopeType = getInputValue(event) as typeof scopeOwnerScopeType)}
-						>
-							{#each registryOwnerScopeOptions as option (option)}
-								<option value={option}>{option}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						<span>Allowed claims</span>
-						<input
-							value={scopeAllowedClaims}
-							placeholder="library_card,patron_type"
-							oninput={(event) => (scopeAllowedClaims = getInputValue(event))}
-						/>
-					</label>
-					<label>
-						<span>Description</span>
-						<input
-							value={scopeDescription}
-							oninput={(event) => (scopeDescription = getInputValue(event))}
-						/>
-					</label>
-					<button
-						type="button"
-						onclick={saveCustomScope}
-						disabled={savingRegistry || !scopeKey.trim() || !scopeDisplayName.trim()}
-					>
-						Save custom scope
-					</button>
-				</div>
-				<div class="registry-card">
-					<h2>Custom claim</h2>
-					<label>
-						<span>Claim name</span>
-						<input
-							value={claimName}
-							placeholder="library_card"
-							oninput={(event) => (claimName = getInputValue(event))}
-						/>
-					</label>
-					<label>
-						<span>Display name</span>
-						<input
-							value={claimDisplayName}
-							placeholder="Library card"
-							oninput={(event) => (claimDisplayName = getInputValue(event))}
-						/>
-					</label>
-					<label>
-						<span>Owner scope</span>
-						<select
-							value={claimOwnerScopeType}
-							onchange={(event) =>
-								(claimOwnerScopeType = getInputValue(event) as typeof claimOwnerScopeType)}
-						>
-							{#each registryOwnerScopeOptions as option (option)}
-								<option value={option}>{option}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						<span>Value type</span>
-						<select
-							value={claimValueType}
-							onchange={(event) => (claimValueType = getInputValue(event))}
-						>
-							{#each valueTypeOptions as option (option)}
-								<option value={option}>{option}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						<span>Classification</span>
-						<select
-							value={claimClassification}
-							onchange={(event) => (claimClassification = getInputValue(event))}
-						>
-							{#each classificationOptions as option (option)}
-								<option value={option}>{option}</option>
-							{/each}
-						</select>
-					</label>
-					<div class="surface-checks">
-						{#each oidcSurfaceOptions as surface (surface)}
-							<label class="mini-check">
-								<input
-									type="checkbox"
-									checked={claimSurfaces.includes(surface)}
-									onchange={(event) => toggleClaimSurface(surface, getCheckboxValue(event))}
-								/>
-								<span>{surface}</span>
-							</label>
-						{/each}
-					</div>
-					<button
-						type="button"
-						onclick={saveCustomClaim}
-						disabled={savingRegistry ||
-							!claimName.trim() ||
-							!claimDisplayName.trim() ||
-							claimSurfaces.length === 0}
-					>
-						Save custom claim
-					</button>
-				</div>
-			</div>
-			<div class="registry-grid">
-				<div class="registry-card">
-					<h2>Scopes</h2>
-					{#each customScopes as scope (scope.id)}
-						<p><strong>{scope.scopeKey}</strong> / {scope.allowedClaims.join(', ')}</p>
-					{:else}
-						<p>No custom scopes registered.</p>
-					{/each}
-				</div>
-				<div class="registry-card">
-					<h2>Claims</h2>
-					{#each customClaims as claim (claim.id)}
-						<p>
-							<strong>{claim.claimName}</strong> / {claim.classification} / {claim.allowedSurfaces.join(
-								', '
-							)}
-						</p>
-					{:else}
-						<p>No custom claims registered.</p>
-					{/each}
-				</div>
-			</div>
-			{#if createMessage}
-				<div class="empty-state">{createMessage}</div>
-			{/if}
-		</section>
-	{/if}
-
-	<section class="profiles-panel">
+	<section class="profile-list-panel" aria-labelledby="profile-list-heading">
 		<div class="panel-heading">
-			<div class="filter-bar" aria-label="Profile filters">
-				{#each profileKinds as kind (kind)}
-					<button
-						type="button"
-						class:active={activeKind === kind}
-						onclick={() => (activeKind = kind)}
-					>
-						{kind}
-					</button>
-				{/each}
+			<div>
+				<p class="eyebrow">Profile inventory</p>
+				<h2 id="profile-list-heading">Source and destination profile lists</h2>
 			</div>
 			<button type="button" onclick={loadProfiles} disabled={loading}>Refresh</button>
 		</div>
@@ -2487,223 +1423,74 @@
 			<div class="empty-state">Loading source and destination profiles.</div>
 		{:else if errorMessage}
 			<div class="empty-state">{errorMessage}</div>
-		{:else if visibleProfiles.length === 0}
-			<div class="empty-state">No profiles match this filter.</div>
 		{:else}
-			<div class="profile-grid">
-				{#each visibleProfiles as profile (profile.id)}
-					<article class:selected={profile.id === selectedProfileId}>
-						<div class="profile-heading">
-							<span>{profile.kind}</span>
-							<strong>{profile.lifecycleState}</strong>
-						</div>
-						<h2>{profile.displayName}</h2>
-						<p>{profile.protocol} / {profile.source}</p>
-						<small>{profile.versionLabel}</small>
-						{#if profile.kind === 'outbound'}
-							<button type="button" onclick={() => selectConsentProfile(profile)}>
-								Configure release consent
-							</button>
-						{/if}
-						{#if profile.sourceProfileId && profile.sourceProfileVersionId}
-							<div class="profile-actions">
-								<button type="button" onclick={() => editSourceProfile(profile)}>Edit</button>
-								<button type="button" onclick={() => copySourceProfile(profile)}>Copy</button>
-								<button type="button" onclick={() => reviewSourceProfile(profile)}>Review</button>
+			<div class="profile-list-columns">
+				<section class="profile-list-column" aria-labelledby="source-profile-list-heading">
+					<div class="column-heading">
+						<h3 id="source-profile-list-heading">Source profiles</h3>
+						<button type="button" onclick={createSourceProfile}>Create source profile</button>
+					</div>
+					{#if sourceProfileListItems.length === 0}
+						<div class="column-empty">No source profiles.</div>
+					{:else}
+						<div class="profile-list">
+							{#each sourceProfileListItems as profile (profile.id)}
 								<button
 									type="button"
-									disabled={profile.lifecycleState !== 'reviewed' &&
-										profile.lifecycleState !== 'active'}
-									title={profile.lifecycleState === 'draft'
-										? 'Review this profile before activation.'
-										: undefined}
-									onclick={() => activateSourceProfile(profile)}>Activate</button
+									class="profile-list-item"
+									onclick={() => editSourceProfile(profile)}
 								>
-							</div>
-						{/if}
-						{#if profile.destinationProfileId && profile.destinationProfileVersionId}
-							<div class="profile-actions">
-								<button type="button" onclick={() => editDestinationProfile(profile)}>Edit</button>
-								<button type="button" onclick={() => copyDestinationProfile(profile)}>Copy</button>
-								<button type="button" onclick={() => reviewDestinationProfile(profile)}
-									>Review</button
-								>
-								<button
-									type="button"
-									disabled={profile.lifecycleState !== 'reviewed' &&
-										profile.lifecycleState !== 'active'}
-									title={profile.lifecycleState === 'draft'
-										? 'Review this profile before activation.'
-										: undefined}
-									onclick={() => activateDestinationProfile(profile)}>Activate</button
-								>
-							</div>
-						{/if}
-						{#if profile.destinationTemplateId}
-							<div class="profile-actions">
-								<button type="button" onclick={() => copyDestinationProfile(profile)}>Copy</button>
-							</div>
-						{/if}
-						{#if profile.sourceProfileId || profile.destinationProfileId}
-							<div class="profile-actions danger-actions">
-								<button
-									type="button"
-									class="danger-button"
-									disabled={deletingProfileId === profile.id}
-									onclick={() => deleteProfile(profile)}
-								>
-									{deletingProfileId === profile.id ? 'Deleting...' : 'Delete'}
+									<div class="profile-list-main">
+										<h4>{profile.displayName}</h4>
+										<span>{profile.protocol} / {profile.source}</span>
+									</div>
+									<div class="profile-list-meta">
+										<span class="state-pill" class:active={profile.lifecycleState === 'active'}
+											>{profile.lifecycleState}</span
+										>
+										<span>{profile.versionLabel}</span>
+									</div>
 								</button>
-							</div>
-						{/if}
-					</article>
-				{/each}
+							{/each}
+						</div>
+					{/if}
+				</section>
+
+				<section class="profile-list-column" aria-labelledby="destination-profile-list-heading">
+					<div class="column-heading">
+						<h3 id="destination-profile-list-heading">Destination profiles</h3>
+						<button type="button" onclick={createDestinationProfile}>
+							Create destination profile
+						</button>
+					</div>
+					{#if destinationProfileListItems.length === 0}
+						<div class="column-empty">No destination profiles.</div>
+					{:else}
+						<div class="profile-list">
+							{#each destinationProfileListItems as profile (profile.id)}
+								<button
+									type="button"
+									class="profile-list-item"
+									onclick={() => editDestinationProfile(profile)}
+								>
+									<div class="profile-list-main">
+										<h4>{profile.displayName}</h4>
+										<span>{profile.protocol} / {profile.source}</span>
+									</div>
+									<div class="profile-list-meta">
+										<span class="state-pill" class:active={profile.lifecycleState === 'active'}
+											>{profile.lifecycleState}</span
+										>
+										<span>{profile.versionLabel}</span>
+									</div>
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</section>
 			</div>
 		{/if}
 	</section>
-
-	{#if selectedProfile && selectedConsentDraft}
-		<section
-			id="destination-consent"
-			class="consent-panel"
-			aria-label="Destination attribute release consent settings"
-		>
-			<div>
-				<p class="eyebrow">Destination Consent Settings</p>
-				<h2>{selectedProfile.displayName}</h2>
-				<p class="summary">
-					Set tenant defaults and client overrides for attribute release consent. Flow Editor
-					previews use the same legal basis, challenge mode, and policy version fields without
-					showing raw attribute values.
-				</p>
-			</div>
-
-			<div class="settings-grid">
-				<label>
-					<span>Scope</span>
-					<select
-						value={selectedConsentDraft.scope}
-						onchange={(event) =>
-							updateSelectedConsentDraft({
-								scope: getInputValue(event) as DestinationConsentSettingsDraft['scope']
-							})}
-					>
-						<option value="tenant_default">Tenant default</option>
-						<option value="client_override">Client override</option>
-					</select>
-				</label>
-
-				<label>
-					<span>Client override ID</span>
-					<input
-						value={selectedConsentDraft.clientId}
-						placeholder="client id for override"
-						disabled={selectedConsentDraft.scope === 'tenant_default'}
-						oninput={(event) => updateSelectedConsentDraft({ clientId: getInputValue(event) })}
-					/>
-				</label>
-
-				<label>
-					<span>Consent mode</span>
-					<select
-						value={selectedConsentDraft.consentMode}
-						onchange={(event) =>
-							updateSelectedConsentDraft({
-								consentMode: getInputValue(event) as DestinationConsentSettingsDraft['consentMode']
-							})}
-					>
-						<option value="once">Once</option>
-						<option value="every_time">Every time</option>
-						<option value="until_attributes_change">Until attributes change</option>
-					</select>
-				</label>
-
-				<label>
-					<span>Legal basis</span>
-					<select
-						value={selectedConsentDraft.legalBasis}
-						onchange={(event) =>
-							updateSelectedConsentDraft({
-								legalBasis: getInputValue(event) as DestinationConsentSettingsDraft['legalBasis']
-							})}
-					>
-						<option value="consent">Consent</option>
-						<option value="legal_obligation">Legal obligation</option>
-						<option value="contract">Contract</option>
-						<option value="legitimate_interest">Legitimate interest</option>
-					</select>
-				</label>
-
-				<label>
-					<span>Purpose</span>
-					<input
-						value={selectedConsentDraft.purpose}
-						oninput={(event) => updateSelectedConsentDraft({ purpose: getInputValue(event) })}
-					/>
-				</label>
-
-				<label>
-					<span>Attribute set policy version</span>
-					<input
-						value={selectedConsentDraft.attributeSetPolicyVersion}
-						oninput={(event) =>
-							updateSelectedConsentDraft({ attributeSetPolicyVersion: getInputValue(event) })}
-					/>
-				</label>
-
-				<label>
-					<span>Terms version</span>
-					<input
-						value={selectedConsentDraft.termsVersion}
-						oninput={(event) => updateSelectedConsentDraft({ termsVersion: getInputValue(event) })}
-					/>
-				</label>
-
-				<label>
-					<span>Privacy Policy version</span>
-					<input
-						value={selectedConsentDraft.privacyPolicyVersion}
-						oninput={(event) =>
-							updateSelectedConsentDraft({ privacyPolicyVersion: getInputValue(event) })}
-					/>
-				</label>
-
-				<label>
-					<span>Challenge handling</span>
-					<select
-						value={selectedConsentDraft.challengeExperience}
-						onchange={(event) =>
-							updateSelectedConsentDraft({
-								challengeExperience: getInputValue(
-									event
-								) as DestinationConsentSettingsDraft['challengeExperience']
-							})}
-					>
-						<option value="login_flow">Login flow challenge</option>
-						<option value="step_up_required">Step-up required</option>
-					</select>
-				</label>
-
-				<label class="checkbox-row">
-					<input
-						type="checkbox"
-						checked={selectedConsentDraft.regulatedPurposeGuard}
-						onchange={(event) =>
-							updateSelectedConsentDraft({
-								regulatedPurposeGuard: getCheckboxValue(event)
-							})}
-					/>
-					<span>Require purpose guard for regulated attributes</span>
-				</label>
-			</div>
-
-			<div class="consent-preview">
-				<span>Preview</span>
-				<strong>{summarizeDestinationConsentSettings(selectedConsentDraft)}</strong>
-				<small>Raw attribute values remain {selectedConsentDraft.rawValueDisplay}.</small>
-			</div>
-		</section>
-	{/if}
 </div>
 
 <style>
@@ -2713,66 +1500,26 @@
 	}
 
 	.page-heading,
-	.panel-heading,
-	.profile-heading,
-	.action-row,
-	.profile-actions {
+	.panel-heading {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 18px;
 	}
 
-	.action-row,
-	.profile-actions {
-		align-items: center;
-		justify-content: flex-start;
-	}
-
-	.danger-actions {
-		margin-top: 4px;
-	}
-
-	.danger-button {
-		border-color: color-mix(in srgb, var(--color-danger, #dc2626) 45%, var(--border-color));
-		color: var(--color-danger, #dc2626);
-	}
-
-	.danger-button:hover:not(:disabled),
-	.danger-button:focus-visible:not(:disabled) {
-		border-color: var(--color-danger, #dc2626);
-		background: color-mix(in srgb, var(--color-danger, #dc2626) 10%, transparent);
-	}
-
-	.back-link,
-	.action-row a {
+	.back-link {
 		display: inline-flex;
+		margin-bottom: 10px;
 		color: var(--color-primary);
 		font-size: 13px;
 		font-weight: 700;
 		text-decoration: none;
 	}
 
-	.back-link {
-		margin-bottom: 12px;
-	}
-
-	.eyebrow,
-	.status-panel span,
-	.metrics-grid span,
-	.profile-heading span,
-	.profile-grid small,
-	label span {
-		margin: 0;
-		color: var(--text-muted);
-		font-size: 12px;
-		font-weight: 800;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
 	h1,
 	h2,
+	h3,
+	h4,
 	p {
 		margin: 0;
 	}
@@ -2783,107 +1530,143 @@
 	}
 
 	h2,
-	.status-panel strong,
-	.metrics-grid strong,
-	.profile-heading strong {
+	h3,
+	h4 {
 		color: var(--text-primary);
 	}
 
-	h2 {
-		font-size: 16px;
-		line-height: 1.35;
-	}
-
-	.summary,
-	.profile-grid p,
-	.action-row span {
-		color: var(--text-secondary);
-		font-size: 13px;
-		line-height: 1.45;
-	}
-
 	.summary {
-		max-width: 820px;
-		margin-top: 8px;
+		max-width: 840px;
+		color: var(--text-secondary);
 		font-size: 14px;
+		line-height: 1.5;
+	}
+
+	.eyebrow,
+	.status-panel span {
+		color: var(--text-muted);
+		font-size: 12px;
+		font-weight: 800;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
 	}
 
 	.status-panel,
-	.profiles-panel,
-	.consent-panel,
-	.empty-state,
-	.profile-grid article,
-	.template-card,
-	.csv-detail,
-	.registry-card,
-	.impact-preview,
-	.metrics-grid div,
-	.warning-list div {
+	.profile-list-panel,
+	.empty-state {
 		border: 1px solid var(--border-color);
 		border-radius: 8px;
 		background: var(--bg-card);
 	}
 
 	.status-panel {
-		min-width: 260px;
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 12px;
-		padding: 14px;
-	}
-
-	.status-panel strong,
-	.metrics-grid strong {
-		display: block;
-		margin-top: 4px;
-		font-size: 22px;
-	}
-
-	.template-strip {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 12px;
-	}
-
-	.template-card {
 		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 14px;
+		gap: 16px;
 		padding: 14px;
 	}
 
-	.template-card span,
-	.template-card small {
-		display: block;
-		color: var(--text-muted);
-		font-size: 12px;
-	}
-
-	.template-card strong {
-		display: block;
-		margin: 4px 0;
-		color: var(--text-primary);
-	}
-
-	.profiles-panel,
-	.consent-panel,
-	.csv-detail {
+	.status-panel div {
 		display: grid;
-		gap: 14px;
+		gap: 4px;
+	}
+
+	.status-panel strong {
+		color: var(--text-primary);
+		font-size: 18px;
+	}
+
+	.profile-list-panel {
+		display: grid;
+		gap: 16px;
 		padding: 16px;
 	}
 
-	.filter-bar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
+	.empty-state {
+		padding: 14px;
+		color: var(--text-secondary);
 	}
 
-	.profile-tabs {
+	.profile-list-columns {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+	}
+
+	.profile-list-column {
+		display: grid;
+		align-content: start;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		overflow: hidden;
+	}
+
+	.column-heading {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 14px;
+		border-bottom: 1px solid var(--border-color);
+	}
+
+	.column-empty {
+		padding: 18px 14px;
+		color: var(--text-secondary);
+	}
+
+	.profile-list {
+		display: grid;
+	}
+
+	.profile-list-item {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 16px;
+		align-items: center;
+		width: 100%;
+		min-height: 72px;
+		padding: 14px;
+		border: 0;
+		border-bottom: 1px solid var(--border-color);
+		border-radius: 0;
+		background: transparent;
+		text-align: left;
+	}
+
+	.profile-list-item:hover,
+	.profile-list-item:focus-visible {
+		background: var(--bg-hover);
+	}
+
+	.profile-list-main,
+	.profile-list-meta {
+		display: grid;
+		gap: 4px;
+	}
+
+	.profile-list-main span,
+	.profile-list-meta span {
+		color: var(--text-secondary);
+		font-size: 13px;
+	}
+
+	.profile-list-meta {
+		justify-items: end;
+	}
+
+	.state-pill {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 24px;
+		border-radius: 999px;
+		background: var(--bg-hover);
+		padding: 0 10px;
+		font-weight: 800;
+	}
+
+	.state-pill.active {
+		color: var(--color-success, #10b981);
 	}
 
 	button {
@@ -2894,229 +1677,11 @@
 		color: var(--text-secondary);
 		background: var(--bg-card);
 		font-weight: 800;
-		text-transform: capitalize;
-	}
-
-	button.active {
-		color: var(--text-primary);
-		border-color: var(--color-primary);
-		background: var(--bg-hover);
 	}
 
 	button:disabled {
 		cursor: not-allowed;
 		opacity: 0.55;
-	}
-
-	input,
-	select,
-	textarea {
-		min-height: 36px;
-		width: 100%;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
-		padding: 0 10px;
-	}
-
-	textarea {
-		min-height: 92px;
-		padding: 10px;
-		resize: vertical;
-	}
-
-	label {
-		display: grid;
-		gap: 6px;
-	}
-
-	pre {
-		overflow: auto;
-		margin: 0;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		padding: 12px;
-		color: var(--text-secondary);
-		background: var(--bg-hover);
-	}
-
-	.empty-state {
-		padding: 18px;
-		color: var(--text-secondary);
-	}
-
-	.profile-grid,
-	.metrics-grid {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 12px;
-	}
-
-	.profile-grid article {
-		display: grid;
-		gap: 8px;
-		padding: 14px;
-	}
-
-	.profile-grid article.selected {
-		border-color: var(--color-primary);
-		background: var(--bg-hover);
-	}
-
-	.metrics-grid div {
-		padding: 14px;
-	}
-
-	.settings-grid {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 12px;
-	}
-
-	.parser-grid {
-		grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(0, 1fr));
-	}
-
-	.column-table {
-		display: grid;
-		gap: 8px;
-		overflow-x: auto;
-	}
-
-	.claim-table {
-		display: grid;
-		gap: 8px;
-		overflow-x: auto;
-	}
-
-	.saml-attribute-table {
-		display: grid;
-		gap: 8px;
-		overflow-x: auto;
-	}
-
-	.column-header,
-	.column-row,
-	.claim-header,
-	.claim-row,
-	.destination-column-header,
-	.destination-column-row,
-	.saml-attribute-header,
-	.saml-attribute-row {
-		display: grid;
-		gap: 8px;
-		align-items: center;
-	}
-
-	.column-header,
-	.column-row {
-		grid-template-columns: 1.2fr 1.2fr 0.9fr 0.9fr 90px 90px;
-	}
-
-	.claim-header,
-	.claim-row {
-		grid-template-columns: 1fr 1fr 0.8fr 0.8fr 1.2fr 1fr 90px;
-		min-width: 980px;
-	}
-
-	.destination-column-header,
-	.destination-column-row {
-		grid-template-columns: 1fr 1fr 0.8fr 0.8fr 80px 1fr 1fr 90px;
-		min-width: 1040px;
-	}
-
-	.saml-attribute-header,
-	.saml-attribute-row {
-		grid-template-columns: 1.4fr 1fr 1.3fr 0.8fr 0.8fr 80px 1fr 1fr 90px;
-		min-width: 1280px;
-	}
-
-	.column-header,
-	.claim-header,
-	.destination-column-header,
-	.saml-attribute-header {
-		color: var(--text-muted);
-		font-size: 12px;
-		font-weight: 800;
-		text-transform: uppercase;
-	}
-
-	.mini-check,
-	.checkbox-row,
-	.surface-checks {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.surface-checks {
-		flex-wrap: wrap;
-	}
-
-	.mini-check input,
-	.checkbox-row input {
-		width: auto;
-		min-height: auto;
-	}
-
-	.warning-list {
-		display: grid;
-		gap: 8px;
-	}
-
-	.warning-list div {
-		display: grid;
-		gap: 4px;
-		padding: 12px;
-	}
-
-	.warning-list span,
-	.consent-preview small {
-		color: var(--text-secondary);
-	}
-
-	.consent-preview {
-		display: grid;
-		gap: 4px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-hover);
-		padding: 14px;
-	}
-
-	.consent-preview span {
-		color: var(--text-muted);
-		font-size: 12px;
-		font-weight: 800;
-		text-transform: uppercase;
-	}
-
-	.consent-preview strong {
-		color: var(--text-primary);
-	}
-
-	.impact-preview,
-	.registry-card {
-		display: grid;
-		gap: 10px;
-		padding: 14px;
-	}
-
-	.impact-preview span,
-	.registry-card p {
-		color: var(--text-secondary);
-		font-size: 13px;
-	}
-
-	.impact-preview strong {
-		color: var(--text-primary);
-	}
-
-	.registry-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 12px;
 	}
 
 	@media (max-width: 1020px) {
@@ -3126,28 +1691,16 @@
 		}
 
 		.status-panel,
-		.settings-grid,
-		.parser-grid,
-		.profile-grid,
-		.registry-grid,
-		.metrics-grid {
+		.profile-list-columns {
 			grid-template-columns: 1fr;
 		}
 
-		.column-header,
-		.claim-header,
-		.destination-column-header {
-			display: none;
+		.profile-list-item {
+			grid-template-columns: 1fr;
 		}
 
-		.column-row,
-		.claim-row,
-		.destination-column-row {
-			grid-template-columns: 1fr;
-			min-width: 0;
-			border: 1px solid var(--border-color);
-			border-radius: 8px;
-			padding: 10px;
+		.profile-list-meta {
+			justify-items: start;
 		}
 	}
 </style>

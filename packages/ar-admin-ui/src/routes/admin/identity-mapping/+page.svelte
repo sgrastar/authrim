@@ -12,6 +12,8 @@
 	showEditorToolbarSourceProfile={false}
 	showEditorToolbarModeToggle={false}
 	showEditorMetrics={false}
+	showEditorInspector={false}
+	showControlPlaneStatus={false}
 	laneSelectorMode="policy"
 	showGraphPolicyDraftLabel={false}
 	showCompileDraftButton={false}

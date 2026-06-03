@@ -157,6 +157,11 @@ export interface FieldCatalogEntry {
   uiGroupOrder?: number;
   uiFieldOrder?: number;
   examples?: unknown[];
+  note?: string;
+  allowedValues?: string[];
+  valueMultiplicity?: 'single' | 'multi';
+  nullable?: boolean;
+  required?: boolean;
 }
 
 export interface FieldCatalogBundle {

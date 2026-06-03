@@ -15,8 +15,8 @@ describe('adminIdentityMappingAPI', () => {
 						externalSchemas: [],
 						sourceProfiles: [],
 						destinationProfiles: [],
-						customScopes: [],
-						customClaims: [],
+						attributeGroups: [],
+						attributeFields: [],
 						templates: [],
 						rows: [],
 						summary: { total: 0, pass: 0, attention: 0, blocked: 0, deferred: 0 },
@@ -99,17 +99,20 @@ describe('adminIdentityMappingAPI', () => {
 			'version 1'
 		);
 		await adminIdentityMappingAPI.deleteDestinationProfile('destination profile 1');
-		await adminIdentityMappingAPI.listOidcCustomScopes();
-		await adminIdentityMappingAPI.createOidcCustomScope({
-			scopeKey: 'library',
+		await adminIdentityMappingAPI.listAttributeGroups();
+		await adminIdentityMappingAPI.createAttributeGroup({
+			protocol: 'oidc',
+			groupType: 'scope',
+			groupKey: 'library',
 			displayName: 'Library',
-			allowedClaims: ['library_card']
+			fieldKeys: ['library_card']
 		});
-		await adminIdentityMappingAPI.listOidcCustomClaims();
-		await adminIdentityMappingAPI.createOidcCustomClaim({
-			claimName: 'library_card',
+		await adminIdentityMappingAPI.listAttributeFields();
+		await adminIdentityMappingAPI.createAttributeField({
+			protocol: 'oidc',
+			fieldKey: 'library_card',
 			displayName: 'Library card',
-			allowedSurfaces: ['userinfo']
+			surfaces: ['userinfo']
 		});
 		await adminIdentityMappingAPI.listTemplates();
 		await adminIdentityMappingAPI.getSchemaReadiness();
@@ -142,6 +145,7 @@ describe('adminIdentityMappingAPI', () => {
 			snapshotId: 'snapshot 1',
 			activationScope: { kind: 'tenant', id: 'tenant_a' }
 		});
+		await adminIdentityMappingAPI.deactivatePolicyVersion('policy set 1', 'version 1');
 		await adminIdentityMappingAPI.transitionReviewTask('review task 1', {
 			status: 'resolved',
 			reasonCodes: ['operator_resolved']
@@ -165,10 +169,10 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
 			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
-			'/api/admin/identity-mapping/oidc/custom-scopes',
-			'/api/admin/identity-mapping/oidc/custom-scopes',
-			'/api/admin/identity-mapping/oidc/custom-claims',
-			'/api/admin/identity-mapping/oidc/custom-claims',
+			'/api/admin/identity-mapping/attribute-groups',
+			'/api/admin/identity-mapping/attribute-groups',
+			'/api/admin/identity-mapping/attribute-fields',
+			'/api/admin/identity-mapping/attribute-fields',
 			'/api/admin/identity-mapping/templates',
 			'/api/admin/identity-mapping/schema-readiness',
 			'/api/admin/identity-mapping/federation-trust-sources',
@@ -181,6 +185,7 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/publish',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/compile',
 			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/activate',
+			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/deactivate',
 			'/api/admin/identity-mapping/review-tasks/review%20task%201/transition'
 		]);
 		expect(fetchMock.mock.calls[6][1]).toMatchObject({ method: 'POST' });
@@ -203,7 +208,8 @@ describe('adminIdentityMappingAPI', () => {
 		expect(fetchMock.mock.calls[31][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[32][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[33][1]).toMatchObject({ method: 'POST' });
-		for (const callIndex of [26, 27, 29, 30, 31, 32, 33]) {
+		expect(fetchMock.mock.calls[34][1]).toMatchObject({ method: 'POST' });
+		for (const callIndex of [26, 27, 29, 30, 31, 32, 33, 34]) {
 			expect(requestHeader(fetchMock.mock.calls[callIndex][1], 'Idempotency-Key')).toEqual(
 				expect.any(String)
 			);

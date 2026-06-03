@@ -65,9 +65,13 @@
 	let loading = $state(true);
 	let savingSettings = $state(false);
 	let signingAction = $state('');
+	let drBundleAction = $state('');
 	let error = $state('');
 	let actionMessage = $state('');
 	let copiedKey = $state('');
+	let drBundleFileInput = $state<HTMLInputElement | null>(null);
+	let drBundlePassphrase = $state('');
+	let drBundlePassphraseConfirm = $state('');
 	let draftEntityIdStyle = $state<SAMLEntityIdStyle>('metadata_url');
 	let draftInteractiveLoginUrlPolicy = $state<SAMLInteractiveLoginUrlPolicy>('tenant_host');
 	let draftCertificateSubject = $state<SAMLSigningCertificateSubject>({
@@ -95,6 +99,12 @@
 	);
 	const selectedSAMLLoginUrl = $derived(buildSAMLLoginUrl(draftInteractiveLoginUrlPolicy));
 	const loginRouteSteps = $derived(buildLoginRouteSteps(draftInteractiveLoginUrlPolicy));
+	const canExportDRBundle = $derived(
+		!drBundleAction &&
+			drBundlePassphrase.length >= 12 &&
+			drBundlePassphrase === drBundlePassphraseConfirm
+	);
+	const canImportDRBundle = $derived(!drBundleAction && drBundlePassphrase.length >= 12);
 
 	onMount(() => {
 		void initialize();
@@ -611,6 +621,61 @@
 			signingAction = '';
 		}
 	}
+
+	async function exportLocalSigningDRBundle() {
+		if (drBundleAction) return;
+		drBundleAction = 'export';
+		actionMessage = '';
+		error = '';
+		try {
+			const bundle = await adminSAMLAPI.exportLocalSigningDRBundle(drBundlePassphrase);
+			const tenant = bundle.tenantId || samlSettings?.tenantId || 'tenant';
+			downloadText(
+				`authrim-saml-local-signing-dr-bundle-${tenant}.json`,
+				JSON.stringify(bundle, null, 2),
+				'application/json'
+			);
+			actionMessage = 'SAML signing DR bundle exported';
+			clearDRBundlePassphrase();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to export SAML signing DR bundle';
+		} finally {
+			drBundleAction = '';
+		}
+	}
+
+	async function importLocalSigningDRBundle(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file || drBundleAction) return;
+		drBundleAction = 'import';
+		actionMessage = '';
+		error = '';
+		try {
+			const bundle = JSON.parse(await file.text()) as unknown;
+			samlSettings = await adminSAMLAPI.importLocalSigningDRBundle(bundle, drBundlePassphrase);
+			draftEntityIdStyle = samlSettings.entityIdStyle;
+			draftInteractiveLoginUrlPolicy = samlSettings.interactiveLoginUrlPolicy;
+			draftCertificateSubject = normalizeSubjectForForm(
+				samlSettings.localSigning?.certificateSubject ?? samlSettings.certificateSubject
+			);
+			actionMessage = 'SAML signing DR bundle imported';
+			if (tenantInfo?.components.saml) {
+				metadataDocs = await loadMetadataDocuments(tenantInfo);
+			}
+			clearDRBundlePassphrase();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to import SAML signing DR bundle';
+		} finally {
+			drBundleAction = '';
+			input.value = '';
+		}
+	}
+
+	function clearDRBundlePassphrase() {
+		drBundlePassphrase = '';
+		drBundlePassphraseConfirm = '';
+	}
 </script>
 
 <svelte:head>
@@ -709,6 +774,80 @@
 					<span class="badge badge-neutral">Not deployed</span>
 				</div>
 				<div class="empty-state compact-empty">SAML worker is not deployed for this tenant.</div>
+			</div>
+		{/if}
+
+		{#if samlSettings}
+			<div class="panel">
+				<div class="panel-header compact-panel-header">
+					<div>
+						<h2 class="panel-title">SAML Signing DR Bundle</h2>
+						<p class="form-hint">
+							Export and restore local SAML signing keys, certificates, entity ID settings, and
+							signing rollover state for this tenant.
+						</p>
+					</div>
+					<div class="metadata-badges">
+						<span class="badge badge-warning">Sensitive</span>
+					</div>
+				</div>
+				<div class="entity-warning">
+					<i class="i-ph-warning-circle"></i>
+					<span>
+						This bundle is encrypted with your passphrase, but it contains private signing keys
+						after decryption. Keep it offline and import it only when recreating the same
+						tenant/domain environment.
+					</span>
+				</div>
+				<div class="dr-bundle-fields">
+					<label>
+						<span>Passphrase</span>
+						<input
+							class="form-input"
+							type="password"
+							autocomplete="new-password"
+							bind:value={drBundlePassphrase}
+							placeholder="12+ characters"
+							disabled={!!drBundleAction}
+						/>
+					</label>
+					<label>
+						<span>Confirm passphrase</span>
+						<input
+							class="form-input"
+							type="password"
+							autocomplete="new-password"
+							bind:value={drBundlePassphraseConfirm}
+							placeholder="Required for export"
+							disabled={!!drBundleAction}
+						/>
+					</label>
+				</div>
+				<div class="form-actions">
+					<button
+						class="btn btn-secondary btn-sm"
+						onclick={exportLocalSigningDRBundle}
+						disabled={!canExportDRBundle}
+					>
+						<i class="i-ph-download-simple"></i>
+						{drBundleAction === 'export' ? 'Exporting...' : 'Export DR Bundle'}
+					</button>
+					<button
+						class="btn btn-secondary btn-sm"
+						onclick={() => drBundleFileInput?.click()}
+						disabled={!canImportDRBundle}
+					>
+						<i class="i-ph-upload-simple"></i>
+						{drBundleAction === 'import' ? 'Importing...' : 'Import DR Bundle'}
+					</button>
+					<input
+						bind:this={drBundleFileInput}
+						class="hidden-file-input"
+						type="file"
+						accept="application/json,.json"
+						onchange={importLocalSigningDRBundle}
+					/>
+				</div>
 			</div>
 		{/if}
 
@@ -1744,8 +1883,25 @@
 
 	.form-actions {
 		display: flex;
+		gap: 8px;
 		justify-content: flex-end;
 		margin-top: 16px;
+	}
+
+	.dr-bundle-fields {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 320px));
+		gap: 10px;
+		margin-top: 14px;
+	}
+
+	.dr-bundle-fields label {
+		display: grid;
+		gap: 6px;
+	}
+
+	.hidden-file-input {
+		display: none;
 	}
 
 	.metadata-panel {
