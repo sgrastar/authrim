@@ -38,7 +38,6 @@ import {
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   // Event System
@@ -71,6 +70,7 @@ import {
   getBrowserStateCookieSameSite,
   // Tenant domain resolution
   resolveTenantFromEmailDomain,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -135,6 +135,19 @@ function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
   return channel === 'browser' || channel === 'native' || channel === 'server';
 }
 
+function createCanonicalRuntimeUserStore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): CanonicalRuntimeUserStore {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+}
+
 type DirectAuthClientChannelMetadata = {
   application_type?: unknown;
   allowed_channels?: unknown;
@@ -191,8 +204,8 @@ type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 // ===== Helper Functions =====
 
 /**
- * Get allowed origins from KV (Settings Manager format) with fallback to env
- * Priority: KV (tenant.allowed_origins) > env (ALLOWED_ORIGINS) > ISSUER_URL
+ * Get allowed origins from env or KV (Settings Manager format)
+ * Priority: env (ALLOWED_ORIGINS) > KV (tenant.allowed_origins) > ISSUER_URL
  */
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
@@ -202,7 +215,7 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
+  const allowedOriginsEnv = env.ALLOWED_ORIGINS || allowedOriginsValue || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 
@@ -343,7 +356,7 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
 
 function buildAuthorizeContinuationUrl(
   metadata: Record<string, unknown>,
-  authTime: number,
+  confirmationChallengeId: string,
   fallbackIssuer: string
 ): string {
   const issuer = metadataString(metadata, 'issuer') || fallbackIssuer;
@@ -376,13 +389,7 @@ function buildAuthorizeContinuationUrl(
     }
   }
 
-  params.set('_confirmed', 'true');
-  params.set('_auth_time', String(authTime));
-
-  const sessionUserId = metadataString(metadata, 'sessionUserId');
-  if (sessionUserId) {
-    params.set('_session_user_id', sessionUserId);
-  }
+  params.set('_confirmation_challenge', confirmationChallengeId);
 
   authorizeUrl.search = params.toString();
   return authorizeUrl.toString();
@@ -453,9 +460,25 @@ async function consumeAuthorizationChallengeContinuation(
     };
   }
 
+  const confirmationId = crypto.randomUUID();
+  const confirmationStore = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
+  await confirmationStore.storeChallengeRpc({
+    id: confirmationId,
+    tenantId,
+    type: 'reauth',
+    userId: authenticatedUserId,
+    challenge: confirmationId,
+    ttl: 60,
+    metadata: {
+      purpose: 'authorize_confirmation',
+      authTime,
+      sessionUserId: expectedUserId || authenticatedUserId,
+    },
+  });
+
   return {
     type,
-    redirectUrl: buildAuthorizeContinuationUrl(metadata, authTime, fallbackIssuer),
+    redirectUrl: buildAuthorizeContinuationUrl(metadata, confirmationId, fallbackIssuer),
   };
 }
 
@@ -714,31 +737,26 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       transports?: AuthenticatorTransport[];
     }> = [];
 
-    if (email && hasPIIDatabase(c)) {
+    if (email) {
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+      const runtimeUser = await runtimeUsers.findByEmail(email);
 
-      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(tenantId, email);
+      if (runtimeUser) {
+        const userPasskeys = await authCtx.repositories.passkey.findByUserId(runtimeUser.id);
+        allowCredentials = userPasskeys
+          .map((pk) => {
+            const normalizedId = normalizeStoredCredentialId(pk.credential_id);
+            if (!normalizedId) return null;
 
-      if (userPII) {
-        const userCore = await authCtx.repositories.userCore.findById(userPII.id);
-        if (userCore && userCore.is_active) {
-          const userPasskeys = await authCtx.repositories.passkey.findByUserId(userPII.id);
-
-          allowCredentials = userPasskeys
-            .map((pk) => {
-              const normalizedId = normalizeStoredCredentialId(pk.credential_id);
-              if (!normalizedId) return null;
-
-              return {
-                id: normalizedId,
-                type: 'public-key' as const,
-                transports: pk.transports.length > 0 ? pk.transports : undefined,
-              };
-            })
-            .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
-        }
+            return {
+              id: normalizedId,
+              type: 'public-key' as const,
+              transports: pk.transports.length > 0 ? pk.transports : undefined,
+            };
+          })
+          .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
       }
     }
 
@@ -944,8 +962,8 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       authenticationInfo.newCounter
     );
 
-    // Update last_login_at
-    await authCtx.repositories.userCore.updateLastLogin(passkey.user_id);
+    // Update last_login_at in canonical runtime metadata.
+    await createCanonicalRuntimeUserStore(c, tenantId).touchLastLogin(passkey.user_id);
 
     // Generate auth_code
     const authCode = await generateAuthCode(
@@ -1053,25 +1071,12 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     // Check if user exists or create new
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
-        tenantId,
-        email.toLowerCase()
-      );
-
-      if (userPII) {
-        const userCore = await authCtx.repositories.userCore.findById(userPII.id);
-        if (userCore && userCore.is_active) {
-          user = {
-            id: userPII.id,
-            email: userPII.email,
-            name: userPII.name || null,
-          };
-        }
-      }
+    const existingUser = await runtimeUsers.findByEmail(email.toLowerCase());
+    if (existingUser) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
     if (!user) {
@@ -1080,33 +1085,25 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       const defaultName = display_name || null;
       const preferredUsername = email.split('@')[0];
 
-      await authCtx.repositories.userCore.createUser({
-        id: newUserId,
-        tenant_id: tenantId,
-        email_verified: false,
-        user_type: 'end_user',
-        pii_partition: tenantId,
-        pii_status: 'pending',
-      });
-
-      if (hasPIIDatabase(c)) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        try {
-          await piiCtx.piiRepositories.userPII.createPII({
-            id: newUserId,
-            tenant_id: tenantId,
-            email: email.toLowerCase(),
-            name: defaultName,
+      try {
+        await runtimeUsers.syncUser({
+          userId: newUserId,
+          email: email.toLowerCase(),
+          name: defaultName,
+          active: true,
+          emailVerified: false,
+          userType: 'end_user',
+          sourceRef: 'direct_auth_passkey',
+          customAttributesJson: JSON.stringify({
             preferred_username: preferredUsername,
-          });
-          await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
-        } catch (piiError) {
-          log.error('Failed to create user in PII DB', {
-            action: 'pii_create',
-            errorType: piiError instanceof Error ? piiError.name : 'Unknown',
-          });
-          await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'failed').catch(() => {});
-        }
+          }),
+        });
+      } catch (piiError) {
+        log.error('Failed to create canonical runtime user', {
+          action: 'runtime_user_create',
+          errorType: piiError instanceof Error ? piiError.name : 'Unknown',
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
       user = { id: newUserId, email: email.toLowerCase(), name: defaultName };
@@ -1377,14 +1374,12 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
     // Update email_verified
     const now = Date.now();
-    await authCtx.coreAdapter.execute(
-      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [now, userId, tenantId]
-    );
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    await runtimeUsers.markEmailVerified(userId);
 
     // Check if this is a new user (created in this flow)
-    const userCore = await authCtx.repositories.userCore.findById(userId);
-    const isNewUser = userCore ? now - (userCore.created_at || 0) < 60000 : false; // Created within last minute
+    const runtimeUser = await runtimeUsers.findById(userId, { includeInactive: true });
+    const isNewUser = runtimeUser ? now - Date.parse(runtimeUser.created_at) < 60000 : false;
 
     // Generate auth_code
     const authCode = await generateAuthCode(
@@ -1566,54 +1561,37 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     }
 
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
-        tenantId,
-        email.toLowerCase()
-      );
-
-      if (userPII) {
-        const userCore = await authCtx.repositories.userCore.findById(userPII.id);
-        if (userCore && userCore.is_active) {
-          user = {
-            id: userPII.id,
-            email: userPII.email,
-            name: userPII.name || null,
-          };
-        }
-      }
+    const existingUser = await runtimeUsers.findByEmail(email.toLowerCase());
+    if (existingUser) {
+      user = {
+        id: existingUser.id,
+        email: existingUser.email || email.toLowerCase(),
+        name: existingUser.name || null,
+      };
     }
 
     if (!user) {
       const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
       const preferredUsername = email.split('@')[0];
 
-      await authCtx.repositories.userCore.createUser({
-        id: userId,
-        tenant_id: tenantId,
-        email_verified: false,
-        user_type: 'end_user',
-        pii_partition: tenantId,
-        pii_status: 'pending',
-      });
-
-      if (hasPIIDatabase(c)) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        try {
-          await piiCtx.piiRepositories.userPII.createPII({
-            id: userId,
-            tenant_id: tenantId,
-            email: email.toLowerCase(),
-            name: null,
+      try {
+        await runtimeUsers.syncUser({
+          userId,
+          email: email.toLowerCase(),
+          name: null,
+          active: true,
+          emailVerified: false,
+          userType: 'end_user',
+          sourceRef: 'direct_auth_email',
+          customAttributesJson: JSON.stringify({
             preferred_username: preferredUsername,
-          });
-          await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-        } catch {
-          await authCtx.repositories.userCore.updatePIIStatus(userId, 'failed').catch(() => {});
-        }
+          }),
+        });
+      } catch {
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
       user = { id: userId, email: email.toLowerCase(), name: null };
@@ -1671,14 +1649,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     if (!emailNotifier) {
       log.warn('No email notifier plugin configured', {
         action: 'notifier_check',
-        devCode: code,
       });
-      return c.json({
-        attempt_id: attemptId,
-        expires_in: EMAIL_CODE_TTL,
-        masked_email: maskEmail(email),
-        _dev_code: code, // Only for development
-      });
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
@@ -1837,20 +1809,20 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Get user
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(challengeData.userId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const runtimeUser = await runtimeUsers.findById(challengeData.userId, {
+      includeInactive: true,
+    });
 
-    if (!userCore || !userCore.is_active) {
+    if (!runtimeUser || runtimeUser.active !== 1) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
     // Update email_verified
     const now = Date.now();
-    await authCtx.coreAdapter.execute(
-      'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [now, now, challengeData.userId, tenantId]
-    );
+    await runtimeUsers.markEmailVerifiedAndTouchLastLogin(challengeData.userId, now);
 
-    const isNewUser = userCore ? now - (userCore.created_at || 0) < 60000 : false;
+    const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
 
     // Apply invitation role/org assignment if present
     const inviteId = challengeData.metadata?.invite_id as string | undefined;
@@ -2109,19 +2081,10 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(artifactData.userId);
-    if (!userCore || !userCore.is_active) {
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const runtimeUser = await runtimeUsers.findById(artifactData.userId);
+    if (!runtimeUser) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
-    }
-
-    let userPII: { email: string; name: string | null } = { email: '', name: null };
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiResult = await piiCtx.piiRepositories.userPII.findById(artifactData.userId);
-      if (piiResult) {
-        userPII = { email: piiResult.email, name: piiResult.name || null };
-      }
     }
 
     const sessionTTL = 24 * 60 * 60;
@@ -2153,8 +2116,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       artifactData.userId,
       sessionTTL,
       {
-        email: userPII.email || null,
-        name: userPII.name,
+        email: runtimeUser.email || null,
+        name: runtimeUser.name,
         amr,
         acr,
         authTime,
@@ -2196,8 +2159,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       },
       user: {
         id: artifactData.userId,
-        email: userPII.email,
-        name: userPII.name,
+        email: runtimeUser.email,
+        name: runtimeUser.name,
       },
       ...(authorizationContinuation
         ? {
@@ -2285,19 +2248,11 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     // Get user info
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
 
-    const userCore = await authCtx.repositories.userCore.findById(session.userId);
-    if (!userCore || !userCore.is_active) {
+    const runtimeUser = await runtimeUsers.findById(session.userId);
+    if (!runtimeUser) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
-    }
-
-    let userPII: { email: string; name: string | null } = { email: '', name: null };
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiResult = await piiCtx.piiRepositories.userPII.findById(session.userId);
-      if (piiResult) {
-        userPII = { email: piiResult.email, name: piiResult.name || null };
-      }
     }
 
     // Get existing passkeys for exclusion
@@ -2340,8 +2295,8 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
       rpID,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
       userID: encoder.encode(session.userId),
-      userName: userPII.email,
-      userDisplayName: display_name || userPII.name || userPII.email,
+      userName: runtimeUser.email || session.userId,
+      userDisplayName: display_name || runtimeUser.name || runtimeUser.email || session.userId,
       excludeCredentials,
       authenticatorSelection,
       attestationType: 'none',
@@ -2606,21 +2561,12 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
 
     // Get user info
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
 
-    const userCore = await authCtx.repositories.userCore.findById(session.userId);
-    if (!userCore || !userCore.is_active) {
+    const runtimeUser = await runtimeUsers.findById(session.userId, { includeInactive: true });
+    if (!runtimeUser || runtimeUser.active !== 1) {
       // Return 401 for SDK compatibility
       return c.json({ error: 'user_not_found', error_description: 'User not found' }, 401);
-    }
-
-    let userPII: { email: string | null; name: string | null } = { email: null, name: null };
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiResult = await piiCtx.piiRepositories.userPII.findById(session.userId);
-      if (piiResult) {
-        userPII = { email: piiResult.email, name: piiResult.name || null };
-      }
     }
 
     // Return SDK-compatible response: { session: Session, user: User }
@@ -2633,13 +2579,13 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
         data: session.data,
       },
       user: {
-        id: userCore.id,
-        email: userPII.email,
-        name: userPII.name,
-        emailVerified: userCore.email_verified,
-        createdAt: userCore.created_at,
-        updatedAt: userCore.updated_at,
-        lastLoginAt: userCore.last_login_at,
+        id: runtimeUser.id,
+        email: runtimeUser.email,
+        name: runtimeUser.name,
+        emailVerified: runtimeUser.email_verified === 1,
+        createdAt: runtimeUser.created_at,
+        updatedAt: runtimeUser.updated_at,
+        lastLoginAt: runtimeUser.last_login_at,
       },
     });
   } catch (error) {

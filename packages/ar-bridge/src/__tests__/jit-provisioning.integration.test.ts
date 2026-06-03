@@ -28,7 +28,9 @@ const {
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
   mockCreateAuditLog,
+  mockRuntimeSyncUser,
   MockD1Adapter,
+  MockCanonicalRuntimeUserStore,
   sqlTracker,
   mockJoinOrganization,
   mockAssignRoleToUser,
@@ -86,6 +88,7 @@ const {
     missingRequiredFields: [],
   });
   const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
+  const runtimeSyncUserMock = vi.fn().mockResolvedValue({ accountId: 'account-id' });
 
   // D1Adapter class mock
   class D1AdapterClass {
@@ -113,6 +116,39 @@ const {
     query = vi.fn().mockResolvedValue([]);
   }
 
+  class CanonicalRuntimeUserStoreClass {
+    async findByEmail(email: string) {
+      const piiRow = await piiQueryOneMock(
+        `SELECT owner_id
+           FROM identity_sensitive_values
+          WHERE value_key = 'email'`,
+        [email]
+      );
+      if (!piiRow) {
+        return null;
+      }
+      const userId = piiRow.owner_id ?? piiRow.id;
+      const coreRow = await coreQueryOneMock(
+        `SELECT *
+           FROM identity_accounts
+          WHERE legacy_user_id = ?`,
+        [userId]
+      );
+      if (!coreRow) {
+        return null;
+      }
+      return {
+        id: userId,
+        email: piiRow.email ?? email,
+        email_verified: coreRow.email_verified ?? 0,
+      };
+    }
+
+    async syncUser(input: unknown) {
+      return runtimeSyncUserMock(input);
+    }
+  }
+
   // Mock functions for role/org operations
   const joinOrgMock = vi.fn().mockResolvedValue({ success: true });
   const assignRoleMock = vi.fn().mockResolvedValue(undefined);
@@ -129,7 +165,9 @@ const {
     mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
     mockSyncUserLifecycleState: syncUserLifecycleStateMock,
     mockCreateAuditLog: createAuditLogMock,
+    mockRuntimeSyncUser: runtimeSyncUserMock,
     MockD1Adapter: D1AdapterClass,
+    MockCanonicalRuntimeUserStore: CanonicalRuntimeUserStoreClass,
     sqlTracker: tracker,
     mockJoinOrganization: joinOrgMock,
     mockAssignRoleToUser: assignRoleMock,
@@ -139,6 +177,7 @@ const {
 // Mock @authrim/ar-lib-core
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
   ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
   createLogger: () => ({
     module: () => ({
@@ -280,6 +319,7 @@ describe('JIT Provisioning Integration', () => {
     });
     mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
     mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
+    mockRuntimeSyncUser.mockReset().mockResolvedValue({ accountId: 'account-id' });
     mockSyncUserLifecycleState.mockReset().mockResolvedValue({
       lifecycleState: 'active',
       missingRequiredFields: [],
@@ -651,7 +691,7 @@ describe('JIT Provisioning Integration', () => {
       );
     });
 
-    it('should store email domain hash and version in users_core', async () => {
+    it('should pass email domain hash and version through canonical runtime user sync', async () => {
       vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
       mockCoreQueryOne.mockResolvedValue(null);
       mockPiiQueryOne.mockResolvedValue(null);
@@ -668,18 +708,14 @@ describe('JIT Provisioning Integration', () => {
         tenantId: 'default',
       });
 
-      // Verify users_core INSERT includes email_domain_hash and version
-      const userInsertCalls = sqlTracker.coreDb.filter(
-        (call) =>
-          call.method === 'execute' &&
-          call.sql.toLowerCase().includes('users_core') &&
-          call.sql.toLowerCase().includes('insert')
+      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inlineProfileFields: expect.objectContaining({
+            email_domain_hash: 'generated-hash-xyz',
+            email_domain_hash_version: 2,
+          }),
+        })
       );
-      expect(userInsertCalls.length).toBeGreaterThan(0);
-
-      // Check that the params include the hash
-      const insertCall = userInsertCalls[0];
-      expect(insertCall.params).toContain('generated-hash-xyz');
     });
   });
 

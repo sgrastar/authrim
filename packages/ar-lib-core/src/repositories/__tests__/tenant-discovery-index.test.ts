@@ -38,6 +38,8 @@ function createRow(overrides: Partial<TenantDiscoveryIndexRow> = {}): TenantDisc
     indexed_at: '2026-05-16T00:01:00.000Z',
     status: 'active',
     metadata_json: null,
+    mapping_snapshot_id: null,
+    source_projection_version: null,
     ...overrides,
   };
 }
@@ -56,6 +58,8 @@ describe('TenantDiscoveryIndexRepository', () => {
         index_version: 1,
         source_updated_at: '2026-05-16T00:00:00.000Z',
         indexed_at: '2026-05-16T00:01:00.000Z',
+        mapping_snapshot_id: 'snapshot-1',
+        source_projection_version: 'projection-v1',
       },
       [2, 1, 2]
     );
@@ -64,7 +68,20 @@ describe('TenantDiscoveryIndexRepository', () => {
     expect(adapter.execute).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining('INSERT INTO tenant_discovery_indexes'),
-      expect.arrayContaining(['tenant-a', 'user-a', 'email_exact', 'hash-email', 1, 1])
+      expect.arrayContaining([
+        'tenant-a',
+        'user-a',
+        'email_exact',
+        'hash-email',
+        1,
+        1,
+        '2026-05-16T00:00:00.000Z',
+        '2026-05-16T00:01:00.000Z',
+        'active',
+        null,
+        'snapshot-1',
+        'projection-v1',
+      ])
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,

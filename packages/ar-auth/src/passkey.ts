@@ -18,7 +18,6 @@ import {
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  hasPIIDatabase,
   createErrorResponse,
   AR_ERROR_CODES,
   // Event System
@@ -38,6 +37,7 @@ import {
   // Admin Session Repository
   AdminSessionRepository,
   requireDedicatedAdminDatabaseAdapter,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import {
   persistRegistrationFieldValuesFromEnv,
@@ -67,6 +67,19 @@ import type {
 // WebAuthn transport types (matches PasskeyRepository.AuthenticatorTransport)
 type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
+function createCanonicalRuntimeUserStore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): CanonicalRuntimeUserStore {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+}
+
 /**
  * @simplewebauthn registrationInfo type compatibility layer
  * The library changed its response format across versions, so we need to support both:
@@ -85,8 +98,8 @@ interface RegistrationInfoCompat {
 }
 
 /**
- * Get allowed origins from KV (Settings Manager format) with fallback to env
- * Priority: KV (tenant.allowed_origins) > env (ALLOWED_ORIGINS) > ISSUER_URL
+ * Get allowed origins from env or KV (Settings Manager format)
+ * Priority: env (ALLOWED_ORIGINS) > KV (tenant.allowed_origins) > ISSUER_URL
  */
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
@@ -96,7 +109,7 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
+  const allowedOriginsEnv = env.ALLOWED_ORIGINS || allowedOriginsValue || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 
@@ -214,6 +227,9 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         variables: { field: 'email' },
       });
     }
+    if (userId) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    }
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
@@ -250,93 +266,46 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       });
     }
 
-    // Check if user exists via Repository pattern
-    // PII/Non-PII DB separation: email lookup uses PII DB, ID lookup uses Core DB
+    // Check if user exists in the canonical runtime user store.
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
-    if (userId) {
-      // Search by userId: Core DB has the ID, PII DB has email/name
-      const userCore = await authCtx.repositories.userCore.findById(userId);
-
-      if (userCore && userCore.is_active) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        const userPII = await piiCtx.piiRepositories.userPII.findById(userId);
-        if (userPII) {
-          user = {
-            id: userCore.id,
-            email: userPII.email,
-            name: userPII.name || null,
-          };
-        }
-      }
-    } else {
-      // Search by email: PII store first to get user id
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(tenantId, email);
-
-      if (userPII) {
-        // Verify user is active in Core DB
-        const userCore = await authCtx.repositories.userCore.findById(userPII.id);
-        if (userCore && userCore.is_active) {
-          user = {
-            id: userPII.id,
-            email: userPII.email,
-            name: userPII.name || null,
-          };
-        }
-      }
+    const normalizedEmail = email.toLowerCase();
+    const runtimeUser = await runtimeUsers.findByEmail(normalizedEmail);
+    if (runtimeUser) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
-    // If user doesn't exist, create a new user via Repository
+    // If user doesn't exist, create a new canonical runtime user.
     if (!user) {
       const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
-      const now = Date.now();
       const defaultName = name || null;
       const preferredUsername = email.split('@')[0];
 
-      // Step 1: Create user in Core DB with pii_status='pending'
-      await authCtx.repositories.userCore.createUser({
-        id: newUserId,
-        tenant_id: tenantId,
-        email_verified: false,
-        user_type: 'end_user',
-        pii_partition: tenantId,
-        pii_status: 'pending',
-      });
-
-      // Step 2: Create user in the configured PII store
-      const piiCtx = createPIIContextFromHono(c, tenantId);
       try {
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: newUserId,
-          tenant_id: tenantId,
-          email,
+        await runtimeUsers.syncUser({
+          userId: newUserId,
+          email: normalizedEmail,
           name: defaultName,
-          preferred_username: preferredUsername,
+          active: true,
+          emailVerified: false,
+          userType: 'end_user',
+          sourceRef: 'passkey',
+          customAttributesJson: JSON.stringify({
+            preferred_username: preferredUsername,
+          }),
         });
-
-        // Step 3: Update pii_status to 'active' (only on successful PII store write)
-        await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
       } catch (piiError: unknown) {
         // PII Protection: Don't log full error (may contain PII)
-        log.error('Failed to create user in PII store', {
-          action: 'pii_create',
+        log.error('Failed to create canonical runtime user', {
+          action: 'runtime_user_create',
           errorType: piiError instanceof Error ? piiError.name : 'Unknown',
         });
-        // Update pii_status to 'failed' to indicate PII write failure
-        await authCtx.repositories.userCore
-          .updatePIIStatus(newUserId, 'failed')
-          .catch((statusError: unknown) => {
-            log.error('Failed to update pii_status to failed', {
-              action: 'pii_status_update',
-              errorType: statusError instanceof Error ? statusError.name : 'Unknown',
-            });
-          });
-        // Note: We continue with registration - Core DB user exists, PII can be retried
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      user = { id: newUserId, email, name: defaultName || email.split('@')[0] };
+      user = { id: newUserId, email: normalizedEmail, name: defaultName || email.split('@')[0] };
     }
 
     // Get user's existing passkeys via Repository
@@ -368,8 +337,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       rpID,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
       userID: encoder.encode(user.id as string),
-      userName: email,
-      userDisplayName: (user.name as string) || email,
+      userName: normalizedEmail,
+      userDisplayName: (user.name as string) || normalizedEmail,
       excludeCredentials: excludeCredentials,
       // Use platform authenticator (device-bound) for better security
       authenticatorSelection: {
@@ -394,7 +363,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       userId: user.id as string,
       challenge: options.challenge,
       ttl: 300, // 5 minutes
-      email,
+      email: normalizedEmail,
       metadata:
         Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
@@ -459,6 +428,9 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         // No challenge value needed - DO will return it
       })) as typeof challengeData;
     } catch {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
+    }
+    if ((challengeData as { userId?: string }).userId !== userId) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
@@ -549,6 +521,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     // Step 2: Store passkey via Repository
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
 
     await authCtx.repositories.passkey.create({
       id: passkeyId,
@@ -560,29 +533,11 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       device_name: deviceName || 'Unknown Device',
     });
 
-    // Step 3: Update user's email_verified status via Adapter (direct SQL)
-    await authCtx.coreAdapter.execute(
-      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [now, userId, tenantId]
-    );
+    // Step 3: Update user's email_verified status in canonical contact points.
+    await runtimeUsers.markEmailVerified(userId);
 
-    // Get updated user details via Repository
-    const updatedUserCore = await authCtx.repositories.userCore.findById(userId);
-
-    let updatedUserPII: { email: string | null; name: string | null } = {
-      email: null,
-      name: null,
-    };
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiResult = await piiCtx.piiRepositories.userPII.findById(userId);
-      if (piiResult) {
-        updatedUserPII = {
-          email: piiResult.email,
-          name: piiResult.name || null,
-        };
-      }
-    }
+    // Get updated user details via canonical projection.
+    const updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });
 
     const customFields = challengeData.metadata?.custom_fields;
     if (customFields) {
@@ -607,13 +562,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       message: 'Passkey registered successfully',
       userId: userId,
       user: {
-        id: updatedUserCore!.id,
-        email: updatedUserPII.email,
-        name: updatedUserPII.name,
-        email_verified: updatedUserCore!.email_verified,
-        created_at: updatedUserCore!.created_at,
-        updated_at: updatedUserCore!.updated_at,
-        last_login_at: updatedUserCore!.last_login_at,
+        id: updatedUser!.id,
+        email: updatedUser!.email,
+        name: updatedUser!.name,
+        email_verified: updatedUser!.email_verified,
+        created_at: updatedUser!.created_at,
+        updated_at: updatedUser!.updated_at,
+        last_login_at: updatedUser!.last_login_at,
       },
     });
   } catch (error) {
@@ -658,24 +613,13 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       transports?: AuthenticatorTransport[];
     }> = [];
 
-    // If email provided, get user's passkeys via Repository
-    // PII/Non-PII DB separation: email lookup uses PII DB
-    if (email && hasPIIDatabase(c)) {
+    // If email provided, get user's passkeys via canonical runtime user lookup.
+    if (email) {
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-
-      // Search by email in PII DB
-      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(tenantId, email);
-
-      // Verify user is active in Core DB
-      let user: { id: string } | null = null;
-      if (userPII) {
-        const userCore = await authCtx.repositories.userCore.findById(userPII.id);
-        if (userCore && userCore.is_active) {
-          user = { id: userCore.id };
-        }
-      }
+      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+      const runtimeUser = await runtimeUsers.findByEmail(email);
+      const user = runtimeUser ? { id: runtimeUser.id } : null;
 
       if (user) {
         const userPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
@@ -915,6 +859,28 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const runtimeUser = await runtimeUsers.findById(passkey.user_id);
+    if (!runtimeUser || runtimeUser.active !== 1) {
+      publishEvent(c, {
+        type: AUTH_EVENTS.PASSKEY_FAILED,
+        tenantId,
+        data: {
+          userId: passkey.user_id,
+          method: 'passkey',
+          clientId: 'passkey-auth',
+          errorCode: 'user_inactive',
+        } satisfies AuthEventData,
+      }).catch((err) => {
+        log.error('Failed to publish auth.passkey.failed event', {
+          action: 'event_publish',
+          errorType: err instanceof Error ? err.name : 'Unknown',
+        });
+      });
+
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
+
     const now = Date.now();
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
@@ -952,30 +918,12 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       authenticationInfo.newCounter
     );
 
-    // Step 3: Update user's last_login_at via Repository
-    await authCtx.repositories.userCore.updateLastLogin(passkey.user_id);
-
-    // Get user details via Repository
-    const userCore = await authCtx.repositories.userCore.findById(passkey.user_id);
-
-    let userPII: { email: string | null; name: string | null } = {
-      email: null,
-      name: null,
-    };
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiResult = await piiCtx.piiRepositories.userPII.findById(passkey.user_id);
-      if (piiResult) {
-        userPII = {
-          email: piiResult.email,
-          name: piiResult.name || null,
-        };
-      }
-    }
+    // Step 3: Update user's last_login_at in canonical runtime metadata.
+    await runtimeUsers.touchLastLogin(passkey.user_id);
 
     // Admin/EndUser Separation: Create session in admin_sessions table for admin users
     // This is required because admin-auth middleware reads from admin_sessions (DB_ADMIN)
-    if (userCore?.user_type === 'admin' && c.env.DB_ADMIN) {
+    if (runtimeUser?.account_type === 'admin' && c.env.DB_ADMIN) {
       try {
         const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'passkey-admin');
         const adminSessionRepo = new AdminSessionRepository(adminAdapter);
@@ -1107,13 +1055,13 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       sessionId: sessionData.id,
       userId: passkey.user_id,
       user: {
-        id: userCore!.id,
-        email: userPII.email,
-        name: userPII.name,
-        email_verified: userCore!.email_verified,
-        created_at: userCore!.created_at,
-        updated_at: userCore!.updated_at,
-        last_login_at: userCore!.last_login_at,
+        id: runtimeUser!.id,
+        email: runtimeUser!.email,
+        name: runtimeUser!.name,
+        email_verified: runtimeUser!.email_verified,
+        created_at: runtimeUser!.created_at,
+        updated_at: runtimeUser!.updated_at,
+        last_login_at: runtimeUser!.last_login_at,
       },
     });
   } catch (error) {

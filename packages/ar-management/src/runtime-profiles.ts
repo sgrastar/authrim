@@ -103,8 +103,8 @@ const StorageProfileBodySchema = z
     residencyProfileId: z.string().min(1).optional(),
     slices: z
       .object({
-        users_core: StorageTargetSchema.optional(),
-        users_pii: StorageTargetSchema.optional(),
+        identity_core: StorageTargetSchema.optional(),
+        identity_pii: StorageTargetSchema.optional(),
         custom_claims: StorageTargetSchema.optional(),
         registration_fields: StorageTargetSchema.optional(),
         custom_pii: StorageTargetSchema.optional(),
@@ -115,8 +115,8 @@ const StorageProfileBodySchema = z
       })
       .superRefine((value, ctx) => {
         if (
-          !value.users_core &&
-          !value.users_pii &&
+          !value.identity_core &&
+          !value.identity_pii &&
           !value.custom_claims &&
           !value.registration_fields &&
           !value.custom_pii &&

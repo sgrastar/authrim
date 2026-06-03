@@ -43,7 +43,14 @@ const TENANT_DATABASE_BACKUP_PURGE_CONFIRMATION = 'PURGE_TENANT_DATABASE_BACKUP'
 const TENANT_BACKUP_TABLE_ROW_LIMIT = 50_000;
 const TENANT_BACKUP_ARTIFACT_OBJECT_MAX_BYTES = 40 * 1024 * 1024;
 const TENANT_BACKUP_CORE_TABLES = [
-  'users_core',
+  'identity_subjects',
+  'identity_accounts',
+  'subject_account_links',
+  'profiles',
+  'profile_attribute_values',
+  'structured_attribute_values',
+  'contact_points',
+  'contact_verifications',
   'sessions',
   'passkeys',
   'roles',
@@ -51,10 +58,11 @@ const TENANT_BACKUP_CORE_TABLES = [
   'session_clients',
 ] as const;
 const TENANT_BACKUP_PII_TABLES = [
-  'users_pii',
+  'identity_sensitive_values',
   'subject_identifiers',
   'linked_identities',
   'pii_audit_log',
+  'users_pii_tombstone',
 ] as const;
 
 export interface AdminJobRow {
@@ -166,7 +174,7 @@ type GenericAdminJobType = (typeof GENERIC_ADMIN_JOB_TYPES)[number];
 
 const USER_BULK_UPDATE_COLUMNS = {
   status: {
-    sql: 'status',
+    sql: "json_extract(COALESCE(metadata_json, '{}'), '$.status')",
     normalize(value: unknown): string {
       if (value === 'active' || value === 'suspended' || value === 'locked') return value;
       throw new Error('Invalid status value');
@@ -190,7 +198,7 @@ const USER_BULK_UPDATE_COLUMNS = {
     },
   },
   is_active: {
-    sql: 'is_active',
+    sql: "CASE WHEN lifecycle_state = 'active' THEN 1 ELSE 0 END",
     normalize(value: unknown): number {
       if (value === true || value === 1) return 1;
       if (value === false || value === 0) return 0;
@@ -204,9 +212,11 @@ const USER_BULK_FILTER_COLUMNS = {
   lifecycle_state: USER_BULK_UPDATE_COLUMNS.lifecycle_state,
   is_active: USER_BULK_UPDATE_COLUMNS.is_active,
   user_type: {
-    sql: 'user_type',
+    sql: 'account_type',
     normalize(value: unknown): string {
-      if (value === 'end_user' || value === 'admin' || value === 'm2m') return value;
+      if (value === 'end_user') return 'user';
+      if (value === 'admin') return 'admin';
+      if (value === 'm2m') return 'service_account';
       throw new Error('Invalid user_type filter value');
     },
   },
@@ -698,7 +708,7 @@ export async function countBulkUserUpdateTargets(
   validateBulkUserUpdateConfig(config);
   const filter = buildUserFilterWhere(tenantId, config.filter);
   const row = await adapter.queryOne<{ count: number }>(
-    `SELECT COUNT(*) as count FROM users_core WHERE ${filter.whereSql}`,
+    `SELECT COUNT(*) as count FROM identity_accounts WHERE ${filter.whereSql}`,
     filter.params
   );
   return row?.count ?? 0;
@@ -1476,14 +1486,15 @@ async function processBulkUserUpdateJob(
   const selectionClauses = [filter.whereSql];
   const selectionParams = [...filter.params];
   if (cursor) {
-    selectionClauses.push('id > ?');
+    selectionClauses.push('legacy_user_id > ?');
     selectionParams.push(cursor);
   }
 
   const selected = await adapter.query<{ id: string }>(
-    `SELECT id FROM users_core
+    `SELECT legacy_user_id as id FROM identity_accounts
       WHERE ${selectionClauses.join(' AND ')}
-      ORDER BY id ASC
+        AND legacy_user_id IS NOT NULL
+      ORDER BY legacy_user_id ASC
       LIMIT ?`,
     [...selectionParams, batchSize]
   );
@@ -1512,8 +1523,17 @@ async function processBulkUserUpdateJob(
   const values: unknown[] = [];
   for (const field of config.fields) {
     const column = USER_BULK_UPDATE_COLUMNS[field as keyof typeof USER_BULK_UPDATE_COLUMNS];
-    assignments.push(`${column.sql} = ?`);
-    values.push(column.normalize(config.values[field]));
+    const normalized = column.normalize(config.values[field]);
+    if (field === 'status') {
+      assignments.push(`metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?)`);
+      values.push(normalized);
+    } else if (field === 'is_active') {
+      assignments.push('lifecycle_state = ?');
+      values.push(normalized === 1 ? 'active' : 'deprovisioned');
+    } else {
+      assignments.push(`${column.sql} = ?`);
+      values.push(normalized);
+    }
   }
   assignments.push('updated_at = ?');
   values.push(nowTs);
@@ -1521,7 +1541,7 @@ async function processBulkUserUpdateJob(
   const ids = selected.map((row) => row.id);
   const idPlaceholders = ids.map(() => '?').join(', ');
   const updateResult = await adapter.execute(
-    `UPDATE users_core SET ${assignments.join(', ')} WHERE tenant_id = ? AND id IN (${idPlaceholders})`,
+    `UPDATE identity_accounts SET ${assignments.join(', ')} WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})`,
     [...values, job.tenant_id, ...ids]
   );
   const batchSucceeded = updateResult.rowsAffected ?? selected.length;
@@ -1597,8 +1617,8 @@ async function processReportGenerateJob(
   switch (config.type) {
     case 'user_activity':
       rows = await adapter.query<Record<string, unknown>>(
-        `SELECT status, COUNT(*) as count
-           FROM users_core
+        `SELECT json_extract(COALESCE(metadata_json, '{}'), '$.status') as status, COUNT(*) as count
+           FROM identity_accounts
           WHERE tenant_id = ? AND created_at >= ? AND created_at <= ?
           GROUP BY status
           ORDER BY status ASC`,
@@ -1703,7 +1723,7 @@ async function processOrganizationBulkMembersJob(
 
   for (const userId of config.user_ids) {
     const user = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
+      "SELECT legacy_user_id as id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'",
       [userId, job.tenant_id]
     );
     if (!user) {

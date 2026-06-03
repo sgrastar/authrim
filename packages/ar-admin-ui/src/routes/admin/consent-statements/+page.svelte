@@ -12,7 +12,9 @@
 	// ---------------------------------------------------------------------------
 	// State
 	// ---------------------------------------------------------------------------
-	let activeTab = $state<'statements' | 'versions' | 'localizations' | 'requirements'>('statements');
+	let activeTab = $state<'statements' | 'versions' | 'localizations' | 'requirements'>(
+		'statements'
+	);
 	let loading = $state(true);
 	let error = $state('');
 	let successMessage = $state('');
@@ -71,9 +73,7 @@
 	});
 
 	// Derived
-	const selectedStatement = $derived(
-		statements.find((s) => s.id === selectedStatementId) || null
-	);
+	const selectedStatement = $derived(statements.find((s) => s.id === selectedStatementId) || null);
 
 	const CATEGORIES = [
 		'terms_of_service',
@@ -86,12 +86,7 @@
 		'custom'
 	];
 
-	const LEGAL_BASES = [
-		'consent',
-		'legitimate_interest',
-		'contract',
-		'legal_obligation'
-	];
+	const LEGAL_BASES = ['consent', 'legitimate_interest', 'contract', 'legal_obligation'];
 
 	const VERSION_STATUSES: Record<string, { label: string; color: string }> = {
 		draft: { label: 'Draft', color: 'var(--text-muted)' },
@@ -659,7 +654,9 @@
 								<td>
 									<span
 										class="admin-badge"
-										style="background: {getCategoryBadgeColor(stmt.category)}20; color: {getCategoryBadgeColor(stmt.category)};"
+										style="background: {getCategoryBadgeColor(
+											stmt.category
+										)}20; color: {getCategoryBadgeColor(stmt.category)};"
 									>
 										{stmt.category.replace(/_/g, ' ')}
 									</span>
@@ -669,8 +666,15 @@
 								<td>
 									<button
 										class="admin-badge"
-										style="background: {stmt.is_active ? 'var(--success)' : 'var(--text-muted)'}20; color: {stmt.is_active ? 'var(--success)' : 'var(--text-muted)'}; cursor: pointer;"
-										onclick={(e) => { e.stopPropagation(); toggleStatementActive(stmt); }}
+										style="background: {stmt.is_active
+											? 'var(--success)'
+											: 'var(--text-muted)'}20; color: {stmt.is_active
+											? 'var(--success)'
+											: 'var(--text-muted)'}; cursor: pointer;"
+										onclick={(e) => {
+											e.stopPropagation();
+											toggleStatementActive(stmt);
+										}}
 									>
 										{stmt.is_active ? 'Active' : 'Inactive'}
 									</button>
@@ -680,13 +684,19 @@
 									<div class="admin-actions-cell">
 										<button
 											class="admin-btn admin-btn--ghost admin-btn--sm"
-											onclick={(e) => { e.stopPropagation(); editStatement(stmt); }}
+											onclick={(e) => {
+												e.stopPropagation();
+												editStatement(stmt);
+											}}
 										>
 											Edit
 										</button>
 										<button
 											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
-											onclick={(e) => { e.stopPropagation(); deleteStatement(stmt); }}
+											onclick={(e) => {
+												e.stopPropagation();
+												deleteStatement(stmt);
+											}}
 										>
 											Delete
 										</button>
@@ -715,10 +725,7 @@
 		<div class="admin-section">
 			<div class="admin-section__header">
 				<h2>Versions — {selectedStatement?.slug}</h2>
-				<button
-					class="admin-btn admin-btn--primary"
-					onclick={() => (showVersionForm = true)}
-				>
+				<button class="admin-btn admin-btn--primary" onclick={() => (showVersionForm = true)}>
 					+ New Version
 				</button>
 			</div>
@@ -767,9 +774,7 @@
 						>
 							Cancel
 						</button>
-						<button class="admin-btn admin-btn--primary" onclick={saveVersion}>
-							Create
-						</button>
+						<button class="admin-btn admin-btn--primary" onclick={saveVersion}> Create </button>
 					</div>
 				</div>
 			{/if}
@@ -797,7 +802,10 @@
 								<td>
 									<code class="text-sm">{ver.version}</code>
 									{#if ver.is_current}
-										<span class="admin-badge" style="background: var(--success)20; color: var(--success); margin-left: 4px;">
+										<span
+											class="admin-badge"
+											style="background: var(--success)20; color: var(--success); margin-left: 4px;"
+										>
 											current
 										</span>
 									{/if}
@@ -821,13 +829,19 @@
 											<button
 												class="admin-btn admin-btn--ghost admin-btn--sm"
 												style="color: var(--success);"
-												onclick={(e) => { e.stopPropagation(); confirmActivate(ver.id); }}
+												onclick={(e) => {
+													e.stopPropagation();
+													confirmActivate(ver.id);
+												}}
 											>
 												Activate
 											</button>
 											<button
 												class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
-												onclick={(e) => { e.stopPropagation(); deleteVersion(ver.id); }}
+												onclick={(e) => {
+													e.stopPropagation();
+													deleteVersion(ver.id);
+												}}
 											>
 												Delete
 											</button>
@@ -853,26 +867,25 @@
 			{/if}
 		</div>
 
-			<!-- Activate Confirmation Modal -->
-			{#if showActivateConfirm}
-				<div
-					class="admin-modal-overlay"
-					role="button"
-					tabindex="0"
-					aria-label="Close activate version dialog"
-					onclick={(event) => {
-						if (event.target === event.currentTarget) {
-							showActivateConfirm = false;
-						}
-					}}
-					onkeydown={(event) =>
-						closeOnBackdropKeydown(event, () => (showActivateConfirm = false))}
-				>
-					<div class="admin-modal" role="dialog" aria-modal="true">
-						<h3 class="admin-modal__title">Activate Version</h3>
+		<!-- Activate Confirmation Modal -->
+		{#if showActivateConfirm}
+			<div
+				class="admin-modal-overlay"
+				role="button"
+				tabindex="0"
+				aria-label="Close activate version dialog"
+				onclick={(event) => {
+					if (event.target === event.currentTarget) {
+						showActivateConfirm = false;
+					}
+				}}
+				onkeydown={(event) => closeOnBackdropKeydown(event, () => (showActivateConfirm = false))}
+			>
+				<div class="admin-modal" role="dialog" aria-modal="true">
+					<h3 class="admin-modal__title">Activate Version</h3>
 					<p class="admin-modal__text">
-						Activating this version may require existing users to re-consent.
-						This action has legal implications. Are you sure?
+						Activating this version may require existing users to re-consent. This action has legal
+						implications. Are you sure?
 					</p>
 					<div class="admin-modal__actions">
 						<button
@@ -998,13 +1011,20 @@
 									<code class="text-sm">{loc.language}</code>
 								</td>
 								<td class="text-sm">{loc.title}</td>
-								<td class="text-sm" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">
+								<td
+									class="text-sm"
+									style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;"
+								>
 									{loc.description}
 								</td>
 								<td class="text-sm">
 									{#if loc.document_url}
-										<a href={loc.document_url} target="_blank" rel="noopener noreferrer"
-											style="color: var(--primary);">
+										<a
+											href={loc.document_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											style="color: var(--primary);"
+										>
 											Link
 										</a>
 									{:else}
@@ -1080,9 +1100,11 @@
 								id="req-required"
 								class="admin-input"
 								value={requirementFormData.is_required}
-							onchange={(e) => {
-								requirementFormData.is_required = parseInt((e.currentTarget as HTMLSelectElement).value);
-							}}
+								onchange={(e) => {
+									requirementFormData.is_required = parseInt(
+										(e.currentTarget as HTMLSelectElement).value
+									);
+								}}
 							>
 								<option value={1}>Required</option>
 								<option value={0}>Optional</option>
@@ -1125,9 +1147,12 @@
 									id="req-deletion"
 									type="checkbox"
 									checked={requirementFormData.show_deletion_link === 1}
-							onchange={(e) => {
-								requirementFormData.show_deletion_link = (e.currentTarget as HTMLInputElement).checked ? 1 : 0;
-							}}
+									onchange={(e) => {
+										requirementFormData.show_deletion_link = (e.currentTarget as HTMLInputElement)
+											.checked
+											? 1
+											: 0;
+									}}
 								/>
 								Show Deletion Link
 							</label>
@@ -1162,9 +1187,7 @@
 						>
 							Cancel
 						</button>
-						<button class="admin-btn admin-btn--primary" onclick={saveRequirement}>
-							Save
-						</button>
+						<button class="admin-btn admin-btn--primary" onclick={saveRequirement}> Save </button>
 					</div>
 				</div>
 			{/if}
@@ -1190,7 +1213,11 @@
 								<td>
 									<span
 										class="admin-badge"
-										style="background: {req.is_required ? 'var(--danger)' : 'var(--text-muted)'}20; color: {req.is_required ? 'var(--danger)' : 'var(--text-muted)'};"
+										style="background: {req.is_required
+											? 'var(--danger)'
+											: 'var(--text-muted)'}20; color: {req.is_required
+											? 'var(--danger)'
+											: 'var(--text-muted)'};"
 									>
 										{req.is_required ? 'Required' : 'Optional'}
 									</span>

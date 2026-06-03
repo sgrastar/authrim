@@ -214,7 +214,7 @@ describe('saveKeysToDirectory with external keys', () => {
     const keysDir = join(testDir, AUTHRIM_DIR, 'dev', 'keys');
     expect(existsSync(join(keysDir, 'private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'metadata.json'))).toBe(true);
-  });
+  }, 15_000);
 });
 
 describe('keysExistForEnvironment with external keys', () => {

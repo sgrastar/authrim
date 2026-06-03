@@ -6,6 +6,7 @@ import {
   handleListAggregatePreviewEntities,
   handlePreviewMetadata,
   handleStartAggregateBatchCreate,
+  handleUpdateProvider,
 } from '../providers';
 
 const mocks = vi.hoisted(() => ({
@@ -102,16 +103,17 @@ interface StoredBatch {
 }
 
 function createMockAdapter() {
-  return {
+  const adapter = {
     query: vi.fn().mockResolvedValue([]),
     queryOne: vi.fn().mockResolvedValue(null),
     execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
-    transaction: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+    transaction: vi.fn(async (fn: (tx: typeof adapter) => Promise<unknown>) => fn(adapter)),
     batch: vi.fn().mockResolvedValue([]),
     isHealthy: vi.fn().mockResolvedValue(true),
     getType: vi.fn().mockReturnValue('mock'),
     close: vi.fn().mockResolvedValue(undefined),
   };
+  return adapter;
 }
 
 function createAggregateStoreNamespace(input: {
@@ -279,6 +281,51 @@ describe('SAML aggregate provider API', () => {
     );
   });
 
+  it('loads normalized SAML federation trust sources during aggregate preview', async () => {
+    const adminAdapter = createMockAdapter();
+    adminAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: 'trust-source-1',
+        tenant_id: 'tenant-a',
+        source_type: 'saml_aggregate',
+        display_name: 'Normalized federation',
+        lifecycle_state: 'active',
+        protocol_payload_json: JSON.stringify({
+          metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
+          certificates: [
+            {
+              id: 'cert-1',
+              certificate: expiredCertificate,
+              fingerprintSha256: 'sha256:cert-1',
+              createdAt: 1_700_000_000_000,
+            },
+          ],
+          policy: 'warn',
+        }),
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_000,
+      },
+    ]);
+    mocks.safeFetchText.mockResolvedValue(aggregateXml);
+
+    const response = await handlePreviewMetadata(
+      createContext({
+        body: { metadataUrl: 'https://metadata.example.test/aggregate.xml' },
+        env: {
+          DB_ADMIN: adminAdapter as never,
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({}) as never,
+          SAML_AGGREGATE_METADATA_SIGNATURE_POLICY: 'disabled',
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(adminAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM federation_trust_sources'),
+      ['tenant-a']
+    );
+  });
+
   it('returns a validation error for unsafe XML during metadata preview', async () => {
     const response = await handlePreviewMetadata(
       createContext({
@@ -355,22 +402,173 @@ describe('SAML aggregate provider API', () => {
     );
   });
 
+  it('normalizes SAML IdP JIT linking policy defaults on create', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Example IdP',
+          providerType: 'saml_idp',
+          enabled: true,
+          config: {
+            entityId: 'https://idp.example.test/idp',
+            ssoUrl: 'https://idp.example.test/sso',
+            certificate: 'invalid-test-certificate',
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+            attributeMapping: { email: 'email' },
+            allowedBindings: ['post'],
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as {
+      config: { jitEmailLinkingPolicy?: string; allowSyntheticEmailFallback?: boolean };
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.config).toMatchObject({
+      jitEmailLinkingPolicy: 'email_linking',
+      allowSyntheticEmailFallback: false,
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO identity_providers'),
+      expect.arrayContaining([expect.stringContaining('"jitEmailLinkingPolicy":"email_linking"')])
+    );
+  });
+
+  it('rejects invalid SAML IdP JIT linking policy values on create', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Example IdP',
+          providerType: 'saml_idp',
+          enabled: true,
+          config: {
+            entityId: 'https://idp.example.test/idp',
+            ssoUrl: 'https://idp.example.test/sso',
+            certificate: 'invalid-test-certificate',
+            nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+            attributeMapping: { email: 'email' },
+            allowedBindings: ['post'],
+            jitEmailLinkingPolicy: 'unsafe_email_takeover',
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid SAML IdP JIT linking policy values on update', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'idp-1',
+      name: 'Example IdP',
+      provider_type: 'saml_idp',
+      enabled: 1,
+      config_json: JSON.stringify({
+        entityId: 'https://idp.example.test/idp',
+        ssoUrl: 'https://idp.example.test/sso',
+        certificate: 'invalid-test-certificate',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: { email: 'mail' },
+        allowedBindings: ['post'],
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'idp-1' },
+        body: {
+          config: {
+            jitEmailLinkingPolicy: 'unsafe_email_takeover',
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('normalizes SAML IdP JIT linking policy updates without dropping existing config', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'idp-1',
+      name: 'Example IdP',
+      provider_type: 'saml_idp',
+      enabled: 1,
+      config_json: JSON.stringify({
+        entityId: 'https://idp.example.test/idp',
+        ssoUrl: 'https://idp.example.test/sso',
+        certificate: 'invalid-test-certificate',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: { email: 'mail' },
+        allowedBindings: ['post'],
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'idp-1' },
+        body: {
+          config: {
+            jitEmailLinkingPolicy: 'disabled',
+            allowSyntheticEmailFallback: true,
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as {
+      config: {
+        jitEmailLinkingPolicy?: string;
+        allowSyntheticEmailFallback?: boolean;
+        attributeMapping?: Record<string, string>;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.config).toMatchObject({
+      jitEmailLinkingPolicy: 'disabled',
+      allowSyntheticEmailFallback: true,
+      attributeMapping: { email: 'mail' },
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE identity_providers'),
+      expect.arrayContaining([expect.stringContaining('"jitEmailLinkingPolicy":"disabled"')])
+    );
+  });
+
   it.each(['single tenant', 'multi tenant', 'shared D1', 'tenant D1', 'external DB'])(
     'creates selected aggregate entities through the batch API using the runtime storage resolver: %s',
     async () => {
       const coreAdapter = createMockAdapter();
+      const adminAdapter = createMockAdapter();
       const waitUntil: Array<Promise<unknown>> = [];
       mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(coreAdapter);
       const previewId = 'preview-1';
       const env = {
         DEFAULT_TENANT_ID: 'tenant-a',
+        DB_ADMIN: adminAdapter as never,
         SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
           previewId,
           preview: {
             tenantId: 'tenant-a',
             metadataXml: aggregateXml,
             metadataUrl: 'https://metadata.example.test/aggregate.xml',
-            verification: { status: 'skipped', policy: 'disabled' },
+            verification: {
+              status: 'skipped',
+              policy: 'disabled',
+              trustProfileId: 'trust-source-1',
+            },
           },
         }) as never,
       };
@@ -426,6 +624,10 @@ describe('SAML aggregate provider API', () => {
           expect.any(Number),
           expect.any(Number),
         ])
+      );
+      expect(adminAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO federation_selected_entity_import_events'),
+        expect.arrayContaining(['tenant-a', 'trust-source-1', null, expect.any(String)])
       );
     }
   );

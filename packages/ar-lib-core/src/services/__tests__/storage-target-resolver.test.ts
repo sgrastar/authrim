@@ -10,7 +10,7 @@ describe('storage-target-resolver', () => {
           driver: 'd1',
           resolverRef: 'tenant-database-registry',
           role: 'tenant_core',
-          logicalSource: 'users_core',
+          logicalSource: 'identity_core',
         }
       )
     ).toThrow('unsupported_storage_profile_target_resolver:tenant-database-registry');
@@ -24,7 +24,7 @@ describe('storage-target-resolver', () => {
           driver: 'd1',
           bindingRef: 'TENANT_CORE_DB',
           role: 'tenant_core',
-          logicalSource: 'users_core',
+          logicalSource: 'identity_core',
         }
       )
     ).toThrow('storage_profile_binding_not_configured:TENANT_CORE_DB');

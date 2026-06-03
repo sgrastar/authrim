@@ -65,7 +65,12 @@ vi.mock('@authrim/ar-lib-core', () => {
 // Import after mocks are set up
 import { verifyVPToken } from '../vp-verifier';
 import { checkIssuerTrust, getIssuerPublicKey } from '../issuer-trust';
-import { parseSDJWTVC, verifySDJWTVC } from '@authrim/ar-lib-core';
+import {
+  checkCredentialStatus,
+  getHaipPolicy,
+  parseSDJWTVC,
+  verifySDJWTVC,
+} from '@authrim/ar-lib-core';
 
 // Create mock environment
 const createMockEnv = (): Env => ({
@@ -93,6 +98,16 @@ const defaultOptions = {
 describe('verifyVPToken', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(checkCredentialStatus).mockResolvedValue(true);
+    vi.mocked(getHaipPolicy).mockReturnValue({
+      requireHolderBinding: true,
+      requireIssuerTrust: true,
+      requireStatusCheck: false,
+      allowedAlgorithms: ['ES256', 'ES384', 'ES512'],
+      allowedFormats: ['dc+sd-jwt', 'mso_mdoc'],
+      preferDCQL: true,
+      requireDirectPost: true,
+    });
   });
 
   it('should return error for invalid SD-JWT VC format', async () => {
@@ -331,7 +346,7 @@ describe('verifyVPToken', () => {
   });
 
   describe('Status List Security - Cache Poisoning Prevention', () => {
-    it('should use credential issuer key for status list verification (prevents attacker-hosted lists)', async () => {
+    it('should reject status lists signed by a different issuer', async () => {
       // Security Test: Attacker attempts to host their own Status List
       // The statusKeyResolver in vp-verifier.ts MUST reject status lists
       // signed by a different issuer than the credential issuer
@@ -373,18 +388,40 @@ describe('verifyVPToken', () => {
       });
 
       vi.mocked(getIssuerPublicKey).mockResolvedValue({} as CryptoKey);
+      vi.mocked(checkCredentialStatus).mockImplementation(async (_uri, _index, options) => {
+        await expect(options?.keyResolver?.('did:web:attacker.example.com')).rejects.toThrow(
+          'Status List issuer mismatch'
+        );
+        return false;
+      });
 
       const env = createMockEnv();
       const result = await verifyVPToken(env, 'vp-token-with-status', defaultOptions);
 
-      // The key insight: statusKeyResolver in vp-verifier.ts checks that
-      // statusIssuer === issuerDid, rejecting mismatched issuers
-      expect(result.verified).toBe(true);
+      expect(checkCredentialStatus).toHaveBeenCalledWith(
+        'https://legitimate-issuer.com/status/list-1',
+        0,
+        expect.objectContaining({
+          verifySignature: true,
+        })
+      );
+      expect(result.verified).toBe(false);
       expect(result.issuerDid).toBe('did:web:legitimate-issuer.com');
+      expect(result.statusValid).toBe(false);
+      expect(result.errors).toContain('Credential has been revoked');
     });
 
     it('should include status check errors when status list verification fails', async () => {
       // When status check is required and fails, errors should be reported
+      vi.mocked(getHaipPolicy).mockReturnValue({
+        requireHolderBinding: true,
+        requireIssuerTrust: true,
+        requireStatusCheck: true,
+        allowedAlgorithms: ['ES256', 'ES384', 'ES512'],
+        allowedFormats: ['dc+sd-jwt', 'mso_mdoc'],
+        preferDCQL: true,
+        requireDirectPost: true,
+      });
       vi.mocked(parseSDJWTVC).mockResolvedValue({
         payload: {
           iss: 'did:web:issuer.com',
@@ -421,12 +458,14 @@ describe('verifyVPToken', () => {
       });
 
       vi.mocked(getIssuerPublicKey).mockResolvedValue({} as CryptoKey);
+      vi.mocked(checkCredentialStatus).mockRejectedValue(new Error('network unavailable'));
 
       const env = createMockEnv();
       const result = await verifyVPToken(env, 'vp-token', defaultOptions);
 
-      // Result depends on HAIP policy - status check errors may be in warnings or errors
-      expect(result.verified).toBeDefined();
+      expect(result.verified).toBe(false);
+      expect(result.statusValid).toBe(false);
+      expect(result.errors).toContain('Status check failed: network unavailable');
     });
   });
 

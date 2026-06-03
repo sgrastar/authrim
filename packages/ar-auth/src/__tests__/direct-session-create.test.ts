@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const challengeStore = {
   consumeChallengeRpc: vi.fn(),
+  storeChallengeRpc: vi.fn(),
 };
 
 const sessionStore = {
@@ -12,6 +13,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        if (userId !== 'user_123') return null;
+        return {
+          id: 'user_123',
+          active: 1,
+          account_type: 'user',
+          email: 'user@example.com',
+          name: 'Example User',
+          email_verified: 1,
+          phone_number_verified: 0,
+          created_at: new Date(1700000000000).toISOString(),
+          updated_at: new Date(1700000000000).toISOString(),
+          last_login_at: null,
+        };
+      }
+    },
     getChallengeStoreByChallengeId: vi.fn(async () => challengeStore),
     getSessionStoreForNewSession: vi.fn(async () => ({
       stub: sessionStore,
@@ -83,6 +101,7 @@ describe('managed Direct Auth browser session finish', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStore.createSessionRpc.mockResolvedValue({ id: 'sess_managed_browser' });
+    challengeStore.storeChallengeRpc.mockResolvedValue(undefined);
   });
 
   it('redeems an artifact into a cookie session without returning token material', async () => {
@@ -187,8 +206,9 @@ describe('managed Direct Auth browser session finish', () => {
     expect(redirect.searchParams.get('prompt')).toBe('login');
     expect(redirect.searchParams.get('max_age')).toBe('300');
     expect(redirect.searchParams.get('acr_values')).toBe('urn:authrim:acr:mfa');
-    expect(redirect.searchParams.get('_confirmed')).toBe('true');
-    expect(redirect.searchParams.get('_auth_time')).toMatch(/^\d+$/);
+    expect(redirect.searchParams.get('_confirmation_challenge')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
   });
 
   it('rejects non-browser channels for managed browser session finish', async () => {

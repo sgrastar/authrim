@@ -107,7 +107,7 @@ describe('resolveUserStoreRuntimeSourcesFromEnv', () => {
     expect(resolved.piiCacheMode).toBe('encrypted_short_ttl');
   });
 
-  it('applies deployment storage profiles for users_core and users_pii slices', async () => {
+  it('applies deployment storage profiles for identity_core and identity_pii slices', async () => {
     const extraCore = createMockAdapter('extra-core');
     const extraPii = createMockAdapter('extra-pii');
     const extraPolicy = createMockAdapter('extra-policy');
@@ -131,12 +131,12 @@ describe('resolveUserStoreRuntimeSourcesFromEnv', () => {
             },
           },
           slices: {
-            users_core: {
+            identity_core: {
               driver: 'postgres',
               bindingRef: 'EXTRA_CORE_DB',
               role: 'core',
             },
-            users_pii: {
+            identity_pii: {
               driver: 'postgres',
               bindingRef: 'EXTRA_PII_DB',
               role: 'pii',
@@ -167,12 +167,12 @@ describe('resolveUserStoreRuntimeSourcesFromEnv', () => {
           kind: 'storage',
           label: 'Tenant A External User Store',
           slices: {
-            users_core: {
+            identity_core: {
               driver: 'postgres',
               connectionRef: 'core-primary',
               role: 'core',
             },
-            users_pii: {
+            identity_pii: {
               driver: 'postgres',
               connectionRef: 'pii-primary',
               role: 'pii',

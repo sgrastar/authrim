@@ -78,10 +78,10 @@ describe('UserCustomDataFetcher', () => {
     ]);
   });
 
-  it('fetches PII data from users_pii', async () => {
+  it('fetches PII data from identity_sensitive_values', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
     mockPiiDb.queryOne.mockResolvedValue({
-      custom_attributes_json: JSON.stringify({ ssn: '123-45-6789' }),
+      value_json: JSON.stringify({ ssn: '123-45-6789' }),
     });
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
@@ -97,7 +97,7 @@ describe('UserCustomDataFetcher', () => {
     ];
     mockDb.query.mockResolvedValue([{ field_name: 'department', field_value: 'eng' }]);
     mockPiiDb.queryOne.mockResolvedValue({
-      custom_attributes_json: JSON.stringify({ ssn: '999' }),
+      value_json: JSON.stringify({ ssn: '999' }),
     });
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
@@ -119,7 +119,7 @@ describe('UserCustomDataFetcher', () => {
   it('handles PII JSON parse error gracefully', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
     mockPiiDb.queryOne.mockResolvedValue({
-      custom_attributes_json: 'not-json',
+      value_json: 'not-json',
     });
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);

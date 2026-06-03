@@ -36,6 +36,8 @@ Authrim includes SAML 2.0 IdP and SP support for tenant-scoped deployments. The 
 - Response/assertion signing policy, AuthnRequest signature policy, SLO signature policy, and algorithm allow-list behavior.
 - Optional encrypted assertion and encrypted NameID support with modern defaults and legacy algorithm opt-in.
 - Persistent NameID registry behavior for strict `AllowCreate=false` handling.
+- Federated identity registry and JIT linking policy for inbound SAML ACS:
+  existing link, verified-email linking, JIT create, or existing-link-only modes.
 - Tenant-scoped request correlation for SAML requests, LogoutRequests, ACS, SLO, artifact state, and IdP-initiated multi-SP SLO fanout.
 - Audit events for SAML policy failures, metadata refresh changes, and logout fanout timeouts.
 
@@ -77,12 +79,29 @@ Local Authrim IdP/SP signing keys are managed through the SAML Entity Info page.
 
 When a SAML flow needs interactive login, Authrim can send the browser to either the tenant host or the shared Login UI base URL.
 
-| Policy | Behavior |
-| --- | --- |
-| Tenant host | Uses the tenant's `/login` URL. This is the default SAML behavior and lets the Login UI resolve the tenant from the request host. |
+| Policy      | Behavior                                                                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenant host | Uses the tenant's `/login` URL. This is the default SAML behavior and lets the Login UI resolve the tenant from the request host.                                         |
 | UI base URL | Uses the global Login UI `/login` with a tenant hint. This is useful when a deployment wants a common login entry before returning to tenant-specific login or discovery. |
 
 The Admin UI preview resolves the first visible page using the current tenant discovery configuration. If the common entry is configured as WAYF-only, the preview indicates that the tenant chooser is the first page and that only the tenant dropdown is shown.
+
+## Federated Identity Registry
+
+Inbound SAML ACS resolution stores a stable provider subject in `linked_identities` using the
+IdP entityID, NameIDFormat, and NameID. Provider policy controls whether a first login may link
+to an existing verified local email, create a new JIT user, or require a pre-existing link.
+Resolution failures are audited with sanitized policy metadata only, avoiding raw NameID and
+assertion email values.
+
+The Admin UI exposes these controls on SAML IdP providers:
+
+| Setting                       | Default         | Behavior                                                                                                   |
+| ----------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `jitEmailLinkingPolicy`       | `email_linking` | Existing link, verified email link, then JIT create. Can be restricted to `jit_create_only` or `disabled`. |
+| `allowSyntheticEmailFallback` | `false`         | Allows a non-PII synthetic local email only for legacy IdPs that cannot release email.                     |
+
+See the private runbook for rollout, backfill, validation, and rollback steps.
 
 ## IdP-Initiated Multi-SP SLO
 

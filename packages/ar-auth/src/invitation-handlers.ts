@@ -17,8 +17,8 @@ import {
   AR_ERROR_CODES,
   resolveOptionalCoreAdapterFromHono,
   getLogger,
-  hasPIIDatabase,
   createPIIContextFromHono,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -150,11 +150,15 @@ export async function useInvitationHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // Verify the user_id actually exists in the correct tenant
-    const userRow = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-      [user_id, invitation.tenant_id]
-    );
+    const piiCtx = createPIIContextFromHono(c, invitation.tenant_id);
+    const runtimeUsers = new CanonicalRuntimeUserStore({
+      coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId: invitation.tenant_id,
+    });
+
+    // Verify the user_id actually exists in the correct tenant.
+    const userRow = await runtimeUsers.findById(user_id);
     if (!userRow) {
       log.warn('useInvitation: user_id not found in invitation tenant', {
         user_id,
@@ -164,20 +168,16 @@ export async function useInvitationHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // If invitation is email-restricted, verify the user's email matches (PII DB)
-    if (invitation.invited_email && hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, invitation.tenant_id);
-      const piiRow = await piiCtx.defaultPiiAdapter.queryOne<{ email: string }>(
-        'SELECT email FROM users_pii WHERE id = ? AND tenant_id = ?',
-        [user_id, invitation.tenant_id]
-      );
-
-      // No PII record → cannot verify email; block to prevent misuse
-      if (!piiRow || piiRow.email.toLowerCase() !== invitation.invited_email.toLowerCase()) {
+    // If invitation is email-restricted, verify the user's canonical email matches.
+    if (invitation.invited_email) {
+      if (
+        !userRow.email ||
+        userRow.email.toLowerCase() !== invitation.invited_email.toLowerCase()
+      ) {
         log.warn('useInvitation: invited_email verification failed', {
           invitation_id: invitation.id,
           user_id,
-          reason: !piiRow ? 'no_pii_record' : 'email_mismatch',
+          reason: !userRow.email ? 'no_email_record' : 'email_mismatch',
         });
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }

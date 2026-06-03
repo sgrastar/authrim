@@ -31,10 +31,15 @@ const {
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
   mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockRuntimeUsersById,
+  mockRuntimeUsersByEmail,
+  mockRuntimeSyncUser,
+  mockRuntimeDeleteUser,
   mockGetSigningKey,
   mockGetSigningCertificate,
   mockGetSPConfig,
   mockSessionStoreFetch,
+  mockCreateAuditLog,
 } = vi.hoisted(() => ({
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
@@ -43,6 +48,10 @@ const {
     missingRequiredFields: [],
   }),
   mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+  mockRuntimeUsersById: new Map<string, any>(),
+  mockRuntimeUsersByEmail: new Map<string, any>(),
+  mockRuntimeSyncUser: vi.fn(),
+  mockRuntimeDeleteUser: vi.fn(),
   mockGetSigningKey: vi.fn().mockResolvedValue({
     kid: 'mock-kid',
     privateKeyPem: 'mock-key',
@@ -52,6 +61,7 @@ const {
   mockSessionStoreFetch: vi
     .fn()
     .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
+  mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock modules
@@ -99,7 +109,47 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     validateCustomClaimWrite: mockValidateCustomClaimWrite,
     persistCustomClaimWrite: mockPersistCustomClaimWrite,
     syncUserLifecycleState: mockSyncUserLifecycleState,
+    createAuditLog: mockCreateAuditLog,
     resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        return mockRuntimeUsersById.get(userId) ?? null;
+      }
+
+      async findByEmail(email: string) {
+        return mockRuntimeUsersByEmail.get(email.toLowerCase()) ?? null;
+      }
+
+      async syncUser(input: any) {
+        mockRuntimeSyncUser(input);
+        const user = {
+          id: input.userId,
+          email: input.email,
+          name: input.name ?? null,
+          active: input.active,
+          lifecycle_state: input.active ? 'active' : 'deleted',
+          email_verified: input.emailVerified,
+        };
+        mockRuntimeUsersById.set(input.userId, user);
+        if (input.email) {
+          mockRuntimeUsersByEmail.set(String(input.email).toLowerCase(), user);
+        }
+        return user;
+      }
+
+      async deleteUser(userId: string) {
+        mockRuntimeDeleteUser(userId);
+        const current = mockRuntimeUsersById.get(userId);
+        if (current) {
+          mockRuntimeUsersById.set(userId, {
+            ...current,
+            active: false,
+            lifecycle_state: 'deleted',
+          });
+        }
+        return true;
+      }
+    },
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
       storageProfile: {
         id: 'builtin:storage:standard',
@@ -124,6 +174,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 function createMockAdapter(
   options: {
     queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+    execute?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
   } = {}
 ) {
   return {
@@ -131,7 +182,10 @@ function createMockAdapter(
     queryOne: vi.fn(
       async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
     ),
-    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    execute: vi.fn(
+      async (sql: string, params: unknown[]) =>
+        options.execute?.(sql, params) ?? { rowsAffected: 1, insertId: undefined }
+    ),
     transaction: vi.fn(async (fn: any) => fn()),
     batch: vi.fn().mockResolvedValue([]),
     isHealthy: vi.fn().mockResolvedValue(true),
@@ -358,6 +412,11 @@ describe('SAML Integration', () => {
       lifecycleState: 'active',
       missingRequiredFields: [],
     });
+    mockRuntimeUsersById.clear();
+    mockRuntimeUsersByEmail.clear();
+    mockRuntimeSyncUser.mockReset();
+    mockRuntimeDeleteUser.mockReset();
+    mockCreateAuditLog.mockReset().mockResolvedValue(undefined);
     mockGetSigningKey.mockReset().mockResolvedValue({
       kid: 'mock-kid',
       privateKeyPem: 'mock-key',
@@ -404,6 +463,15 @@ describe('SAML Integration', () => {
       email: 'user@example.com',
       name: 'Test User',
     });
+    mockRuntimeUsersById.set('user-001', {
+      id: 'user-001',
+      email: 'user@example.com',
+      name: 'Test User',
+      active: true,
+      lifecycle_state: 'active',
+      email_verified: true,
+    });
+    mockRuntimeUsersByEmail.set('user@example.com', mockRuntimeUsersById.get('user-001'));
 
     // Mock IdP config
     mockGetIdPConfigByEntityId.mockImplementation(
@@ -445,8 +513,8 @@ describe('SAML Integration', () => {
           bind: vi.fn().mockReturnThis(),
           first: vi.fn().mockImplementation(async () => {
             // PII/Non-PII separation: users_core (non-PII)
-            if (sql.includes('SELECT id FROM users_core WHERE id')) {
-              return { id: 'user-001' };
+            if (sql.includes('FROM users_core WHERE id')) {
+              return { id: 'user-001', email_verified: 1 };
             }
             return null;
           }),
@@ -1131,6 +1199,676 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(302);
       expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
+      expect(mockSyncUserLifecycleState).toHaveBeenCalled();
+    });
+
+    it('should derive synthetic email fallback without embedding raw NameID', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        allowSyntheticEmailFallback: true,
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+        },
+      });
+      const coreAdapter = createMockAdapter();
+      const piiAdapter = createMockAdapter();
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'person@example.com',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+        })
+      );
+
+      expect(res.status).toBe(302);
+      const syncUserInput = mockRuntimeSyncUser.mock.calls.find(
+        ([input]) => input.sourceRef === 'saml:https://idp.example.com'
+      )?.[0];
+      expect(syncUserInput).toEqual(
+        expect.objectContaining({
+          email: expect.stringMatching(/^saml-[0-9a-f]{32}@saml\.local$/),
+          emailVerified: true,
+        })
+      );
+      expect(syncUserInput.email).not.toContain('person');
+      expect(syncUserInput.email).not.toContain('example.com');
+    });
+
+    it('should resolve existing SAML linked identity before email or JIT provisioning', async () => {
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+      const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-123')}`;
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      const coreAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
+            expect(params).toEqual(['linked-user-001', 'default']);
+            return { id: 'linked-user-001', email_verified: 1 };
+          }
+          return null;
+        },
+      });
+      const piiAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')) {
+            expect(params).toEqual(['default', 'https://idp.example.com', providerUserKey]);
+            return { id: 'saml-link-001', user_id: 'linked-user-001' };
+          }
+          return null;
+        },
+      });
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-123',
+          nameIdFormat,
+        })
+      );
+
+      expect(res.status).toBe(302);
+      expect(mockValidateCustomClaimWrite).not.toHaveBeenCalled();
+      expect(piiAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE linked_identities SET last_used_at'),
+        expect.arrayContaining(['default', 'saml-link-001'])
+      );
+    });
+
+    it('should create a SAML linked identity when verified email matches a provisioned user', async () => {
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+      const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-456')}`;
+      const scimUser = {
+        id: 'scim-user-001',
+        email: 'scim@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-001', scimUser);
+      mockRuntimeUsersByEmail.set('scim@example.com', scimUser);
+      const coreAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
+            expect(params).toEqual(['scim-user-001', 'default']);
+            return { id: 'scim-user-001', email_verified: 1 };
+          }
+          return null;
+        },
+      });
+      const piiAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')) {
+            expect(params).toEqual(['default', 'https://idp.example.com', providerUserKey]);
+            return null;
+          }
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            expect(params).toEqual(['default', 'scim@example.com']);
+            return { id: 'scim-user-001' };
+          }
+          return null;
+        },
+      });
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-456',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'scim@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(302);
+      expect(coreAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO users_core'),
+        expect.anything()
+      );
+      expect(piiAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO linked_identities'),
+        expect.arrayContaining([
+          'default',
+          'scim-user-001',
+          'https://idp.example.com',
+          providerUserKey,
+          'scim@example.com',
+        ])
+      );
+    });
+
+    it('should fail closed when email matches but SAML email linking is disabled', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        jitEmailLinkingPolicy: 'jit_create_only',
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+        },
+      });
+      const coreAdapter = createMockAdapter();
+      const scimUser = {
+        id: 'scim-user-001',
+        email: 'scim@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-001', scimUser);
+      mockRuntimeUsersByEmail.set('scim@example.com', scimUser);
+      const piiAdapter = createMockAdapter({
+        queryOne: (sql) => {
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            return { id: 'scim-user-001' };
+          }
+          return null;
+        },
+      });
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-789',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+          attributes: [{ name: 'email', value: 'scim@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(piiAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO linked_identities'),
+        expect.anything()
+      );
+      const failureAudit = mockCreateAuditLog.mock.calls.find(
+        ([, entry]) => entry.action === 'saml.identity_resolution.failed'
+      )?.[1];
+      expect(failureAudit).toBeTruthy();
+      const auditMetadata = JSON.parse(failureAudit.metadata);
+      expect(auditMetadata).toEqual(
+        expect.objectContaining({
+          protocol: 'saml',
+          failure_reason: 'email_linking_disabled',
+          policy: 'jit_create_only',
+        })
+      );
+      expect(failureAudit.metadata).not.toContain('persistent-subject-789');
+      expect(failureAudit.metadata).not.toContain('scim@example.com');
+      expect(failureAudit.metadata).not.toContain('provider_user_key');
+    });
+
+    it('should fail closed when email matches a local user with unverified email', async () => {
+      const scimUser = {
+        id: 'scim-user-002',
+        email: 'unverified@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: false,
+      };
+      mockRuntimeUsersById.set('scim-user-002', scimUser);
+      mockRuntimeUsersByEmail.set('unverified@example.com', scimUser);
+      const coreAdapter = createMockAdapter({
+        queryOne: (sql) => {
+          if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
+            return { id: 'scim-user-002', email_verified: 0 };
+          }
+          return null;
+        },
+      });
+      const piiAdapter = createMockAdapter({
+        queryOne: (sql) => {
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            return { id: 'scim-user-002' };
+          }
+          return null;
+        },
+      });
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-unverified',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+          attributes: [{ name: 'email', value: 'unverified@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(piiAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO linked_identities'),
+        expect.anything()
+      );
+    });
+
+    it('should fail closed when an existing SAML link email conflicts with another user', async () => {
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+      const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-conflict')}`;
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      mockRuntimeUsersByEmail.set('other-user@example.com', {
+        id: 'different-user-001',
+        email: 'other-user@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      const coreAdapter = createMockAdapter({
+        queryOne: (sql) => {
+          if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
+            return { id: 'linked-user-001', email_verified: 1 };
+          }
+          return null;
+        },
+      });
+      const piiAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('SELECT id, user_id, provider_user_id FROM linked_identities')) {
+            expect(params).toEqual(['default', 'https://idp.example.com', providerUserKey]);
+            return { id: 'saml-link-001', user_id: 'linked-user-001' };
+          }
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            return { id: 'different-user-001' };
+          }
+          return null;
+        },
+      });
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-conflict',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'other-user@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockValidateCustomClaimWrite).not.toHaveBeenCalled();
+      expect(piiAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE linked_identities'),
+        expect.anything()
+      );
+    });
+
+    it('should fail closed when email match user has another subject for the same IdP', async () => {
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+      const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-new-link')}`;
+      const previousProviderUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-old-link')}`;
+      const scimUser = {
+        id: 'scim-user-003',
+        email: 'scim-user-003@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-003', scimUser);
+      mockRuntimeUsersByEmail.set('scim-user-003@example.com', scimUser);
+      const coreAdapter = createMockAdapter({
+        queryOne: (sql) => {
+          if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
+            return { id: 'scim-user-003', email_verified: 1 };
+          }
+          return null;
+        },
+      });
+      const piiAdapter = createMockAdapter({
+        queryOne: (sql, params) => {
+          if (sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')) {
+            expect(params).toEqual(['default', 'https://idp.example.com', providerUserKey]);
+            return null;
+          }
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            return { id: 'scim-user-003' };
+          }
+          if (sql.includes('WHERE tenant_id = ? AND user_id = ? AND provider_id = ?')) {
+            expect(params).toEqual(['default', 'scim-user-003', 'https://idp.example.com']);
+            return {
+              id: 'existing-provider-link',
+              user_id: 'scim-user-003',
+              provider_user_id: previousProviderUserKey,
+            };
+          }
+          return null;
+        },
+      });
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-new-link',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'scim-user-003@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(piiAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO linked_identities'),
+        expect.anything()
+      );
+    });
+
+    it('should fail closed when linked identity insert races with another user', async () => {
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+      const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-race')}`;
+      let lookupCount = 0;
+      const scimUser = {
+        id: 'scim-user-004',
+        email: 'scim-user-004@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      };
+      mockRuntimeUsersById.set('scim-user-004', scimUser);
+      mockRuntimeUsersByEmail.set('scim-user-004@example.com', scimUser);
+      const coreAdapter = createMockAdapter({
+        queryOne: (sql) => {
+          if (sql.includes('SELECT id, email_verified FROM users_core WHERE id')) {
+            return { id: 'scim-user-004', email_verified: 1 };
+          }
+          return null;
+        },
+      });
+      const piiAdapter = createMockAdapter({
+        queryOne: (sql) => {
+          if (sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')) {
+            lookupCount += 1;
+            return lookupCount === 1
+              ? null
+              : {
+                  id: 'raced-provider-link',
+                  user_id: 'different-user-004',
+                  provider_user_id: providerUserKey,
+                };
+          }
+          if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
+            return { id: 'scim-user-004' };
+          }
+          return null;
+        },
+        execute: (sql) => {
+          if (sql.includes('INSERT INTO linked_identities')) {
+            throw new Error('UNIQUE constraint failed: linked_identities');
+          }
+          return { rowsAffected: 1, insertId: undefined };
+        },
+      });
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-race',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'scim-user-004@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(lookupCount).toBe(2);
+    });
+
+    it('should clean up JIT-created rows when lifecycle sync fails', async () => {
+      mockSyncUserLifecycleState.mockRejectedValueOnce(new Error('lifecycle sync failed'));
+      const coreAdapter = createMockAdapter();
+      const piiAdapter = createMockAdapter();
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-sync-fail',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+          attributes: [{ name: 'email', value: 'sync-fail@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(500);
+      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'sync-fail@example.com',
+          sourceRef: 'saml:https://idp.example.com',
+        })
+      );
+      expect(mockRuntimeDeleteUser).toHaveBeenCalledWith(expect.any(String));
+      expect(mockRuntimeDeleteUser.mock.calls[0]?.[0]).toBe(
+        mockRuntimeSyncUser.mock.calls[0]?.[0]?.userId
+      );
+      expect(piiAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO linked_identities'),
+        expect.anything()
+      );
+    });
+
+    it('should reject new SAML users when JIT and linking are disabled for the IdP', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        jitEmailLinkingPolicy: 'disabled',
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+        },
+      });
+      const coreAdapter = createMockAdapter();
+      const piiAdapter = createMockAdapter();
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-disabled',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+          attributes: [{ name: 'email', value: 'new-disabled@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockValidateCustomClaimWrite).not.toHaveBeenCalled();
+      expect(coreAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO users_core'),
+        expect.anything()
+      );
+    });
+
+    it('should fail closed when stored IdP JIT linking policy is invalid', async () => {
+      mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        sloUrl: 'https://idp.example.com/slo',
+        certificate: 'mock-certificate',
+        jitEmailLinkingPolicy: 'unsafe_email_takeover',
+        attributeMapping: {
+          email: 'email',
+          name: 'displayName',
+        },
+      } as any);
+      const coreAdapter = createMockAdapter();
+      const piiAdapter = createMockAdapter();
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-invalid-policy',
+          nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+          attributes: [{ name: 'email', value: 'invalid-policy@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockValidateCustomClaimWrite).not.toHaveBeenCalled();
+      expect(coreAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO users_core'),
+        expect.anything()
+      );
+      const failureAudit = mockCreateAuditLog.mock.calls.find(
+        ([, entry]) => entry.action === 'saml.identity_resolution.failed'
+      )?.[1];
+      expect(failureAudit).toBeTruthy();
+      expect(JSON.parse(failureAudit.metadata)).toMatchObject({
+        protocol: 'saml',
+        failure_reason: 'jit_policy_invalid',
+        policy: 'invalid',
+      });
+      expect(failureAudit.metadata).not.toContain('unsafe_email_takeover');
+      expect(failureAudit.metadata).not.toContain('invalid-policy@example.com');
+      expect(failureAudit.metadata).not.toContain('persistent-subject-invalid-policy');
+    });
+
+    it('should create a SAML linked identity for newly JIT-provisioned users', async () => {
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+      const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-new')}`;
+      const coreAdapter = createMockAdapter();
+      const piiAdapter = createMockAdapter();
+      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:storage:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        coreDb: coreAdapter,
+        piiDb: piiAdapter,
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-new',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'new-user@example.com' }],
+        })
+      );
+
+      expect(res.status).toBe(302);
+      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'new-user@example.com',
+          emailVerified: true,
+          sourceRef: 'saml:https://idp.example.com',
+        })
+      );
+      expect(piiAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO linked_identities'),
+        expect.arrayContaining([
+          'default',
+          'https://idp.example.com',
+          providerUserKey,
+          'new-user@example.com',
+        ])
+      );
       expect(mockSyncUserLifecycleState).toHaveBeenCalled();
     });
   });

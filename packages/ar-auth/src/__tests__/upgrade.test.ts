@@ -62,6 +62,69 @@ vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        const core = await hoistedMocks.mockUserCoreRepository.findById(userId);
+        if (!core) return null;
+        return {
+          id: core.id,
+          account_type: core.user_type === 'anonymous' ? 'anonymous' : 'user',
+          active: core.is_active === false ? 0 : 1,
+          email: core.email ?? null,
+          name: core.name ?? null,
+          email_verified: core.email_verified ? 1 : 0,
+          phone_number_verified: core.phone_number_verified ? 1 : 0,
+          created_at: new Date(core.created_at ?? Date.now()).toISOString(),
+          updated_at: new Date(core.updated_at ?? Date.now()).toISOString(),
+          last_login_at: core.last_login_at ?? null,
+        };
+      }
+      async syncUser(input: {
+        userId: string;
+        active?: boolean;
+        userType?: string;
+        email?: string | null;
+      }) {
+        if (input.active === false) {
+          await hoistedMocks.mockDatabaseAdapter.execute(
+            'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
+            [Date.now(), input.userId, 'default']
+          );
+        } else if (input.userId === 'anon-user-123' && input.userType === 'end_user') {
+          if (input.email) {
+            const legacyEmail =
+              input.email === 'verified@example.com' ? 'Verified@Example.com' : input.email;
+            await hoistedMocks.mockUserPIIRepository.createPII({
+              id: input.userId,
+              tenant_id: 'default',
+              email: input.email,
+              name: 'Verified User',
+              preferred_username: legacyEmail.split('@')[0],
+            });
+            await hoistedMocks.mockUserCoreRepository.updatePIIStatus(input.userId, 'active');
+          }
+          await hoistedMocks.mockDatabaseAdapter.execute('UPDATE users_core SET', [
+            'email',
+            input.email === 'verified@example.com' ? 'Verified@Example.com' : input.email,
+            Date.now(),
+            input.userId,
+            'default',
+          ]);
+        } else {
+          await hoistedMocks.mockUserCoreRepository.createUser({
+            id: input.userId,
+            tenant_id: 'default',
+            user_type: 'end_user',
+            pii_status: input.email ? 'pending' : 'none',
+          });
+        }
+        return { created: true, graph: null, profileAttributeCount: 0, contactPointCount: 0 };
+      }
+      async deleteUser(userId: string) {
+        await hoistedMocks.mockDatabaseAdapter.execute('', [userId, 'default']);
+        return true;
+      }
+    },
     getTenantIdFromContext: vi.fn().mockReturnValue('default'),
     getSessionStoreBySessionId: vi.fn().mockReturnValue({
       stub: hoistedMocks.mockSessionStore,
@@ -153,6 +216,9 @@ describe('Upgrade Handlers', () => {
         is_anonymous: true,
         upgrade_eligible: true,
         client_id: 'client-123',
+        pending_upgrade_token: 'upgrade-token',
+        pending_upgrade_method: 'passkey',
+        verified_upgrade_method: 'passkey',
       },
     });
 
@@ -578,6 +644,8 @@ describe('Upgrade Handlers', () => {
             verified_email_at: Date.now(),
             verified_email_user_id: 'otp-user-456',
             upgrade_nonce: 'nonce-123',
+            pending_upgrade_token: 'upgrade-token',
+            pending_upgrade_method: 'email',
           },
         });
         const c = createMockContext({
@@ -585,6 +653,7 @@ describe('Upgrade Handlers', () => {
           dbPii: {},
           body: {
             method: 'email',
+            upgrade_token: 'upgrade-token',
             name: 'Verified User',
             email: 'attacker@example.com',
           },
@@ -636,10 +705,22 @@ describe('Upgrade Handlers', () => {
       });
 
       it('creates a new subject and updates the session user when preserve_sub=false', async () => {
+        mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+          userId: 'anon-user-123',
+          data: {
+            is_anonymous: true,
+            upgrade_eligible: true,
+            client_id: 'client-123',
+            pending_upgrade_token: 'upgrade-token',
+            pending_upgrade_method: 'social',
+            verified_upgrade_method: 'social',
+          },
+        });
         const c = createMockContext({
           method: 'POST',
           body: {
             method: 'social',
+            upgrade_token: 'upgrade-token',
             preserve_sub: false,
             provider_id: 'google',
           },
@@ -706,7 +787,7 @@ describe('Upgrade Handlers', () => {
 
         const c = createMockContext({
           method: 'POST',
-          body: { method: 'passkey' },
+          body: { method: 'passkey', upgrade_token: 'upgrade-token' },
         });
 
         const response = await upgradeCompleteHandler(c);

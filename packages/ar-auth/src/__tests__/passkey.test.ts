@@ -113,6 +113,57 @@ vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        const core = await mockUserCoreRepository.findById(userId);
+        if (!core || core.is_active === false) return null;
+        const pii = await mockUserPIIRepository.findById(userId);
+        return {
+          id: core.id,
+          account_type: core.user_type === 'admin' ? 'admin' : 'user',
+          active: core.is_active === false ? 0 : 1,
+          email: pii?.email ?? null,
+          name: pii?.name ?? null,
+          email_verified: core.email_verified ? 1 : 0,
+          phone_number_verified: core.phone_number_verified ? 1 : 0,
+          created_at: new Date(core.created_at ?? Date.now()).toISOString(),
+          updated_at: new Date(core.updated_at ?? Date.now()).toISOString(),
+          last_login_at: core.last_login_at ?? null,
+        };
+      }
+      async findByEmail(email: string) {
+        const pii = await mockUserPIIRepository.findByTenantAndEmail('default', email);
+        if (!pii) return null;
+        return this.findById(pii.id);
+      }
+      async syncUser(input: { userId: string; email?: string | null; name?: string | null }) {
+        await mockUserCoreRepository.createUser({
+          id: input.userId,
+          tenant_id: 'default',
+          email_verified: false,
+          user_type: 'end_user',
+        });
+        await mockUserPIIRepository.createPII({
+          id: input.userId,
+          tenant_id: 'default',
+          email: input.email,
+          name: input.name,
+        });
+        await mockUserCoreRepository.updatePIIStatus(input.userId, 'active');
+        return { created: true, graph: null, profileAttributeCount: 0, contactPointCount: 0 };
+      }
+      async markEmailVerified(userId: string) {
+        await mockCoreAdapter.execute('', [Date.now(), userId, 'default']);
+        return true;
+      }
+      async touchLastLogin(userId: string) {
+        await mockUserCoreRepository.updateLastLogin(userId);
+        return true;
+      }
+      async deleteUser() {
+        return true;
+      }
+    },
     getSessionStoreForNewSession: () =>
       Promise.resolve({
         stub: mockSessionStoreStub,
@@ -567,20 +618,12 @@ describe('Passkey Handlers', () => {
       ]);
     });
 
-    it('should generate registration options for existing user', async () => {
-      // PII/Non-PII DB Separation via Repository:
-      // 1. Query PII DB for user by email
-      // 2. Query Core DB to verify user exists and is active
-      // 3. Query for existing passkeys via Repository
-
-      // Setup: User found in PII DB
+    it('should reject public passkey registration for an existing user', async () => {
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
         id: 'existing-user-id',
         email: 'existing@example.com',
         name: 'Existing User',
       });
-
-      // Setup: User is active in Core DB
       mockUserCoreRepository.findById.mockResolvedValueOnce({
         id: 'existing-user-id',
         is_active: true,
@@ -591,31 +634,15 @@ describe('Passkey Handlers', () => {
         headers: { origin: 'https://example.com' },
       });
 
-      await passkeyRegisterOptionsHandler(c);
+      const response = await passkeyRegisterOptionsHandler(c);
 
-      // Should not create new user via Repository
+      expect(response.status).toBe(409);
       expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          options: expect.objectContaining({
-            challenge: expect.any(String),
-          }),
-          userId: 'existing-user-id',
-        })
-      );
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
     });
 
     it('should store challenge in ChallengeStore', async () => {
-      // Setup: User found in PII DB and Core DB
-      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
-        id: 'user-123',
-        email: 'test@example.com',
-        name: 'Test',
-      });
-      mockUserCoreRepository.findById.mockResolvedValueOnce({
-        id: 'user-123',
-        is_active: true,
-      });
+      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
 
       const c = createMockContext({
         body: { email: 'test@example.com' },
@@ -628,31 +655,16 @@ describe('Passkey Handlers', () => {
       expect(mockChallengeStoreStub.storeChallengeRpc).toHaveBeenCalled();
     });
 
-    it('should include existing passkeys as excludeCredentials', async () => {
-      // Setup: User found in PII DB and Core DB with existing passkeys
-      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
-        id: 'user-123',
-        email: 'test@example.com',
-        name: 'Test',
-      });
-      mockUserCoreRepository.findById.mockResolvedValueOnce({
-        id: 'user-123',
-        is_active: true,
-      });
-      mockPasskeyRepository.findByUserId.mockResolvedValueOnce([
-        { credential_id: 'existing-cred-1', transports: ['internal'] },
-        { credential_id: 'existing-cred-2', transports: ['usb'] },
-      ]);
-
+    it('should reject caller-supplied userId on public passkey registration', async () => {
       const c = createMockContext({
-        body: { email: 'test@example.com' },
+        body: { email: 'test@example.com', userId: 'user-123' },
         headers: { origin: 'https://example.com' },
       });
 
-      await passkeyRegisterOptionsHandler(c);
+      const response = await passkeyRegisterOptionsHandler(c);
 
-      // Should query for existing passkeys via Repository
-      expect(mockPasskeyRepository.findByUserId).toHaveBeenCalledWith('user-123');
+      expect(response.status).toBe(401);
+      expect(mockPasskeyRepository.findByUserId).not.toHaveBeenCalled();
     });
   });
 
@@ -828,6 +840,7 @@ describe('Passkey Handlers', () => {
 
       mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValueOnce({
         challenge: 'mock-challenge-base64',
+        userId: 'user-123',
         metadata: {
           custom_fields: {
             department: 'Platform',
@@ -838,6 +851,7 @@ describe('Passkey Handlers', () => {
       // Setup: User found after registration via Repository
       mockUserCoreRepository.findById.mockResolvedValue({
         id: 'user-123',
+        is_active: true,
         email_verified: true,
         created_at: Date.now(),
         updated_at: Date.now(),
@@ -938,6 +952,7 @@ describe('Passkey Handlers', () => {
       // Setup: User found via Repository
       mockUserCoreRepository.findById.mockResolvedValue({
         id: 'user-123',
+        is_active: true,
         email_verified: true,
         created_at: Date.now(),
         updated_at: Date.now(),

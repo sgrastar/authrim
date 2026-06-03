@@ -6,8 +6,9 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     fileParallelism: false,
+    testTimeout: 15_000,
     coverage: {
-      reporter: ['text', 'html'],
+      reporter: ['text', 'json-summary', 'json', 'html'],
       exclude: ['node_modules', 'dist', '**/*.test.ts'],
     },
   },

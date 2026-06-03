@@ -212,12 +212,28 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }),
     getRequiredCustomClaimViolationStatuses: (...args: unknown[]) =>
       mockGetRequiredCustomClaimViolationStatuses(...args),
+    CanonicalRuntimeUserStore: class {
+      async findById(userId: string) {
+        const rows = await mockPiiQuery('CANONICAL_RUNTIME_USER_PREVIEW', userId);
+        const row = Array.isArray(rows) ? rows[0] : null;
+        if (!row) {
+          return null;
+        }
+        return {
+          id: userId,
+          email: row.email ?? null,
+          name: row.name ?? null,
+        };
+      }
+    },
   };
 });
 
 import {
   adminCustomClaimsListHandler,
   adminCustomClaimCreateHandler,
+  adminCustomClaimPresetsListHandler,
+  adminCustomClaimPresetApplyHandler,
   adminCustomClaimsReservedNamesHandler,
   adminCustomClaimsStatsHandler,
   adminCustomClaimRequiredViolationsDetectHandler,
@@ -422,6 +438,63 @@ describe('Custom Claims Admin API', () => {
     });
   });
 
+  describe('GET /api/admin/custom-claims/presets', () => {
+    it('should return presets and existing field keys', async () => {
+      mockDbQuery.mockResolvedValueOnce([{ field_key: 'email' }]);
+
+      const c = createMockContext({});
+      const res = await adminCustomClaimPresetsListHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(body.presets[0].id).toBe('oidc_standard');
+      expect(body.existing_field_keys).toEqual(['email']);
+    });
+  });
+
+  describe('POST /api/admin/custom-claims/presets/apply', () => {
+    it('should create missing selected preset fields and skip existing fields', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([{ field_key: 'email' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'existing-email' }]);
+      mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          preset_id: 'oidc_standard',
+          field_keys: ['name', 'email'],
+        },
+      });
+
+      const res = await adminCustomClaimPresetApplyHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(body.created_count).toBe(1);
+      expect(body.created_field_keys).toEqual(['name']);
+      expect(body.skipped_field_keys).toEqual(['email']);
+      expect(mockDbExecute.mock.calls[0][0]).toContain('INSERT INTO custom_claim_schemas');
+      expect(mockDbExecute.mock.calls[0][0]).toContain('ui_group_key');
+    });
+
+    it('should reject unknown preset field keys', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          preset_id: 'oidc_standard',
+          field_keys: ['unknown_claim'],
+        },
+      });
+
+      const res = await adminCustomClaimPresetApplyHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(400);
+    });
+  });
+
   // ===========================================================================
   // CREATE
   // ===========================================================================
@@ -570,6 +643,45 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(400);
+    });
+
+    it('should reject examples_json larger than the storage budget on create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          field_key: 'test_field',
+          display_label: 'Test',
+          field_type: 'string',
+          examples_json: { values: Array.from({ length: 101 }, (_, index) => `value_${index}`) },
+        },
+      });
+
+      const res = await adminCustomClaimCreateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(400);
+      expect(body.error_code).toBe('AR130002');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
+    it('should reject deeply nested examples_json on create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          field_key: 'test_field',
+          display_label: 'Test',
+          field_type: 'string',
+          examples_json: {
+            a: { b: { c: { d: { e: { f: { g: { h: { i: 'too deep' } } } } } } } },
+          },
+        },
+      });
+
+      const res = await adminCustomClaimCreateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(400);
+      expect(mockDbExecute).not.toHaveBeenCalled();
     });
 
     it('should reject required_scopes with more than 50 items', async () => {
@@ -729,7 +841,16 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(201);
-      expect(mockDbExecute.mock.calls[0][1].slice(-5)).toEqual([0, 0, 0, null, 'employee_id']);
+      const insertSql = mockDbExecute.mock.calls[0][0] as string;
+      const insertParams = mockDbExecute.mock.calls[0][1] as unknown[];
+      const columns = insertSql
+        .slice(insertSql.indexOf('(') + 1, insertSql.indexOf(')'))
+        .split(',')
+        .map((column) => column.trim());
+      expect(insertParams[columns.indexOf('show_on_registration')]).toBe(0);
+      expect(insertParams[columns.indexOf('registration_required')]).toBe(0);
+      expect(insertParams[columns.indexOf('registration_order')]).toBe(0);
+      expect(insertParams[columns.indexOf('registration_placeholder')]).toBeNull();
     });
   });
 
@@ -1029,6 +1150,25 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(400);
+    });
+
+    it('should reject examples_json larger than the storage budget on update', async () => {
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow()]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: {
+          examples_json: { values: Array.from({ length: 101 }, (_, index) => `value_${index}`) },
+        },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(400);
+      expect(body.error_code).toBe('AR130002');
+      expect(mockDbExecute).not.toHaveBeenCalled();
     });
 
     it('should clear registration_required when signup visibility is disabled on update', async () => {

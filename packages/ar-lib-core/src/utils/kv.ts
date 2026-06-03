@@ -26,6 +26,7 @@ import {
   getRefreshToken as getRefreshTokenCanonical,
   deleteRefreshToken as deleteRefreshTokenCanonical,
 } from './refresh-token-store';
+import { CanonicalRuntimeUserStore } from '../repositories/identity';
 
 const log = createLogger().module('KV');
 const textEncoder = new TextEncoder();
@@ -169,6 +170,17 @@ function getPiiCacheTtl(env: Env, configuredUserCacheTtl: number): number {
     Number.parseInt(env.PII_CACHE_TTL || String(PII_CACHE_DEFAULT_TTL_SECONDS), 10) ||
     PII_CACHE_DEFAULT_TTL_SECONDS;
   return Math.max(1, Math.min(configuredUserCacheTtl, configuredPiiTtl));
+}
+
+function parseJsonString(value: string | null | undefined): unknown {
+  if (!value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 function buildPiiCacheAdditionalData(
@@ -382,131 +394,53 @@ export async function getCachedUser(
   return user;
 }
 
-/**
- * Fetch user directly from D1 database
- * PII/Non-PII DB separation: fetches from Core DB and PII DB in parallel and merges
- */
 async function getUserFromD1(
   tenantId: string,
   userId: string,
   sources: UserCacheSources
 ): Promise<CachedUser | null> {
-  // Query Core DB for existence and non-PII fields
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.coreDb, 'user-cache-core');
-  const coreResult = await coreAdapter.queryOne<{
-    id: string;
-    pii_status: PIIStatus;
-    email_verified: number;
-    phone_number_verified: number;
-    updated_at: number;
-  }>(
-    `SELECT id, pii_status, email_verified, phone_number_verified, updated_at
-       FROM users_core
-      WHERE id = ? AND tenant_id = ? AND is_active = 1`,
-    [userId, tenantId]
-  );
-
-  if (!coreResult) {
-    return null;
+  if (!sources.piiDb) {
+    throw new Error('PII database is required for canonical runtime user cache');
   }
-
-  // Query PII DB for PII fields (if available)
-  let piiResult: {
-    email: string | null;
-    name: string | null;
-    family_name: string | null;
-    given_name: string | null;
-    middle_name: string | null;
-    nickname: string | null;
-    preferred_username: string | null;
-    picture: string | null;
-    locale: string | null;
-    phone_number: string | null;
-    address_formatted: string | null;
-    address_street_address: string | null;
-    address_locality: string | null;
-    address_region: string | null;
-    address_postal_code: string | null;
-    address_country: string | null;
-    birthdate: string | null;
-    gender: string | null;
-    profile: string | null;
-    website: string | null;
-    zoneinfo: string | null;
-  } | null = null;
-
-  if (sources.piiDb) {
-    const piiAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.piiDb, 'user-cache-pii');
-    piiResult = await piiAdapter.queryOne<{
-      email: string | null;
-      name: string | null;
-      family_name: string | null;
-      given_name: string | null;
-      middle_name: string | null;
-      nickname: string | null;
-      preferred_username: string | null;
-      picture: string | null;
-      locale: string | null;
-      phone_number: string | null;
-      address_formatted: string | null;
-      address_street_address: string | null;
-      address_locality: string | null;
-      address_region: string | null;
-      address_postal_code: string | null;
-      address_country: string | null;
-      birthdate: string | null;
-      gender: string | null;
-      profile: string | null;
-      website: string | null;
-      zoneinfo: string | null;
-    }>(
-      `SELECT email, name, family_name, given_name, middle_name, nickname,
-              preferred_username, picture, locale, phone_number,
-              address_formatted, address_street_address, address_locality,
-              address_region, address_postal_code, address_country,
-              birthdate, gender, profile, website, zoneinfo
-       FROM users_pii WHERE id = ? AND tenant_id = ?`,
-      [userId, tenantId]
-    );
-  }
-
-  // Build address JSON from PII fields
-  const addressJson = piiResult
-    ? JSON.stringify({
-        formatted: piiResult.address_formatted,
-        street_address: piiResult.address_street_address,
-        locality: piiResult.address_locality,
-        region: piiResult.address_region,
-        postal_code: piiResult.address_postal_code,
-        country: piiResult.address_country,
-      })
-    : null;
-
-  // If no email from PII DB, use a placeholder (user may need PII DB configuration)
-  const email = piiResult?.email ?? `${coreResult.id}@unknown`;
+  const piiAdapter: DatabaseAdapter = ensureDatabaseAdapter(sources.piiDb, 'user-cache-pii');
+  const userStore = new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId });
+  const projection = await userStore.findById(userId);
+  if (!projection) return null;
+  const customAttributes = parseJsonString(projection.custom_attributes_json);
+  const customAttributeObject =
+    customAttributes && typeof customAttributes === 'object' && !Array.isArray(customAttributes)
+      ? (customAttributes as Record<string, unknown>)
+      : {};
 
   return {
-    id: coreResult.id,
-    pii_status: coreResult.pii_status,
-    email,
-    email_verified: coreResult.email_verified === 1,
-    name: piiResult?.name ?? null,
-    family_name: piiResult?.family_name ?? null,
-    given_name: piiResult?.given_name ?? null,
-    middle_name: piiResult?.middle_name ?? null,
-    nickname: piiResult?.nickname ?? null,
-    preferred_username: piiResult?.preferred_username ?? null,
-    picture: piiResult?.picture ?? null,
-    locale: piiResult?.locale ?? null,
-    phone_number: piiResult?.phone_number ?? null,
-    phone_number_verified: coreResult.phone_number_verified === 1,
-    address: addressJson,
-    birthdate: piiResult?.birthdate ?? null,
-    gender: piiResult?.gender ?? null,
-    profile: piiResult?.profile ?? null,
-    website: piiResult?.website ?? null,
-    zoneinfo: piiResult?.zoneinfo ?? null,
-    updated_at: coreResult.updated_at,
+    id: projection.id,
+    pii_status:
+      typeof customAttributeObject.pii_status === 'string'
+        ? (customAttributeObject.pii_status as PIIStatus)
+        : 'active',
+    email: projection.email ?? `${projection.id}@unknown`,
+    email_verified: projection.email_verified === 1,
+    name: projection.name,
+    family_name: projection.family_name,
+    given_name: projection.given_name,
+    middle_name: projection.middle_name,
+    nickname: projection.nickname,
+    preferred_username: projection.preferred_username,
+    picture: projection.picture,
+    locale: projection.locale,
+    phone_number: projection.phone_number,
+    phone_number_verified: projection.phone_number_verified === 1,
+    address: projection.address_json,
+    birthdate: projection.birthdate,
+    gender: projection.gender,
+    profile: projection.profile,
+    website: projection.website,
+    zoneinfo: projection.zoneinfo,
+    updated_at:
+      typeof projection.updated_at === 'number'
+        ? projection.updated_at
+        : Date.parse(projection.updated_at) || Date.now(),
   };
 }
 
@@ -555,52 +489,59 @@ export interface UserCoreExistence {
 }
 
 /**
- * Get user core data from Core DB only (NO PII DB access)
- *
- * IMPORTANT: Use this function in auth flows (/authorize, /token) where
- * PII DB access is prohibited by PII/Non-PII separation architecture.
- *
- * This function:
- * - Only queries Core DB (users_core table)
- * - Never accesses PII DB (users_pii table)
- * - Returns only non-PII fields (id, email_verified, phone_number_verified, updated_at)
- *
- * @param env - Cloudflare environment bindings
- * @param userId - User ID to retrieve
- * @returns Promise<UserCoreExistence | null>
+ * Get user core data from Core DB only.
  */
 export async function getCachedUserCore(
-  env: Env,
+  _env: Env,
   tenantId: string,
   userId: string,
   coreDbSource: DatabaseSource
 ): Promise<UserCoreExistence | null> {
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'user-core-cache');
-  const coreResult = await coreAdapter.queryOne<{
+  const account = await coreAdapter.queryOne<{
     id: string;
-    pii_status: PIIStatus;
-    email_verified: number;
-    phone_number_verified: number;
+    account_type: string;
+    lifecycle_state: string;
     updated_at: number;
-    user_type: string | null;
   }>(
-    `SELECT id, pii_status, email_verified, phone_number_verified, updated_at, user_type
-       FROM users_core
-      WHERE id = ? AND tenant_id = ? AND is_active = 1`,
+    `SELECT id, account_type, lifecycle_state, updated_at
+       FROM identity_accounts
+      WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'
+      LIMIT 1`,
     [userId, tenantId]
   );
 
-  if (!coreResult) {
+  if (!account) {
     return null;
   }
+  const contactRows = await coreAdapter.query<{
+    contact_type: string;
+    verification_state: string;
+  }>(
+    `SELECT contact_type, verification_state
+       FROM contact_points
+      WHERE account_id = ? AND tenant_id = ? AND lifecycle_state = 'active'
+        AND contact_type IN ('email', 'phone')`,
+    [account.id, tenantId]
+  );
+  const emailContact = contactRows.find((row) => row.contact_type === 'email');
+  const phoneContact = contactRows.find((row) => row.contact_type === 'phone');
+  const userType =
+    account.account_type === 'admin'
+      ? 'admin'
+      : account.account_type === 'service_account'
+        ? 'm2m'
+        : account.account_type === 'anonymous'
+          ? 'anonymous'
+          : 'end_user';
 
   return {
-    id: coreResult.id,
-    pii_status: coreResult.pii_status,
-    email_verified: coreResult.email_verified === 1,
-    phone_number_verified: coreResult.phone_number_verified === 1,
-    updated_at: coreResult.updated_at,
-    user_type: coreResult.user_type ?? undefined,
+    id: userId,
+    pii_status: 'active',
+    email_verified: emailContact?.verification_state === 'verified',
+    phone_number_verified: phoneContact?.verification_state === 'verified',
+    updated_at: account.updated_at,
+    user_type: userType,
   };
 }
 
@@ -968,11 +909,10 @@ function normalizeClientMetadata(client: ClientMetadata): ClientMetadata {
  *
  * Architecture:
  * - Primary source: D1 database (oauth_clients table)
- * - Cache: CLIENTS_CACHE KV (TTL based on cache mode)
- * - Pattern: Read-Through (cache miss → fetch from D1 → populate cache)
+ * - Primary path is D1. KV can be used only when the configured TTL is positive.
  *
  * Cache mode:
- * - fixed: 24 hours TTL (production)
+ * - fixed: D1 source of truth for client metadata
  * - maintenance: 30 seconds TTL (development/changes)
  *
  * @param env - Cloudflare environment bindings
@@ -990,8 +930,8 @@ export async function getClient(
   // Get cache TTL based on cache mode (client-specific > platform > default)
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientId);
 
-  // Step 1: Try CLIENTS_CACHE (Read-Through Cache with edge memory cache)
-  const cached = await env.CLIENTS_CACHE.get(cacheKey, { cacheTtl });
+  // Step 1: Try CLIENTS_CACHE only when explicitly configured with a positive TTL.
+  const cached = cacheTtl > 0 ? await env.CLIENTS_CACHE.get(cacheKey, { cacheTtl }) : null;
 
   if (cached) {
     try {
@@ -1265,6 +1205,10 @@ export async function putClient(env: Env, clientData: ClientMetadata): Promise<v
   const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientData.client_id);
   const normalizedClientData = normalizeClientMetadata(clientData);
 
+  if (cacheTtl <= 0) {
+    return;
+  }
+
   try {
     await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(normalizedClientData), {
       expirationTtl: cacheTtl,
@@ -1359,7 +1303,7 @@ export async function isTokenRevoked(env: Env, jti: string, tenantId: string): P
 
   try {
     // Use sharded Durable Object instance for token revocation checks
-    const { stub } = await getRevocationStoreByJti(env, jti, tenantId);
+    const { stub, instanceName } = await getRevocationStoreByJti(env, jti, tenantId);
 
     const response = await stub.fetch(`http://internal/check?jti=${encodeURIComponent(jti)}`, {
       method: 'GET',
@@ -1370,7 +1314,27 @@ export async function isTokenRevoked(env: Env, jti: string, tenantId: string): P
     }
 
     const data = await response.json<{ revoked: boolean }>();
-    return data.revoked;
+    if (data.revoked) {
+      return true;
+    }
+
+    const legacyInstanceName = buildDOInstanceName('token-revocation', tenantId);
+    if (legacyInstanceName !== instanceName) {
+      const legacyId = env.TOKEN_REVOCATION_STORE.idFromName(legacyInstanceName);
+      const legacyStub = env.TOKEN_REVOCATION_STORE.get(legacyId);
+      const legacyResponse = await legacyStub.fetch(
+        `http://internal/check?jti=${encodeURIComponent(jti)}`,
+        {
+          method: 'GET',
+        }
+      );
+      if (legacyResponse.ok) {
+        const legacyData = await legacyResponse.json<{ revoked: boolean }>();
+        return legacyData.revoked;
+      }
+    }
+
+    return false;
   } catch (error) {
     // PII Protection: Don't log full error (may contain token details)
     log.error('Failed to check token revocation', {}, error as Error);

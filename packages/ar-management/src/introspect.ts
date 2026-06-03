@@ -302,64 +302,17 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     | IntrospectionResponse['authrim_elevation']
     | undefined;
 
-  // ========== Introspection Response Cache Check ==========
-  // Cache lookup is performed early to skip expensive operations (JWKS, signature verification)
-  // Security: Even on cache hit, revocation status is always checked fresh
+  // ========== Introspection Response Cache Setup ==========
+  // Cache keys may be derived from decoded JWT claims, but cached responses are
+  // never returned until after signature, issuer, audience, expiry, and
+  // revocation validation below has completed for the submitted token.
   const cacheConfig = await getIntrospectionCacheConfig(c.env);
   let cacheKey: string | null = null;
 
   if (cacheConfig.enabled && jti && c.env.AUTHRIM_CONFIG) {
     cacheKey = await getIntrospectCacheKey(jti);
-
-    try {
-      const cachedResponse = await c.env.AUTHRIM_CONFIG.get<IntrospectionResponse>(cacheKey, {
-        type: 'json',
-      });
-
-      if (cachedResponse && cachedResponse.active === true) {
-        // Cache hit! But still verify revocation status for security
-        // This ensures revoked tokens are immediately detected
-        const now = Math.floor(Date.now() / 1000);
-
-        // Check expiration (token may have expired since cached)
-        if (cachedResponse.exp && cachedResponse.exp < now) {
-          // Token expired, delete from cache and return inactive
-          c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
-          return c.json<IntrospectionResponse>({ active: false });
-        }
-
-        // Check revocation (always fresh check for security)
-        if (token_type_hint === 'refresh_token') {
-          if (sub) {
-            const refreshTokenData = await getRefreshToken(
-              c.env,
-              sub,
-              rtv,
-              tokenClientId,
-              jti,
-              tenantId
-            );
-            if (!refreshTokenData) {
-              c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
-              return c.json<IntrospectionResponse>({ active: false });
-            }
-          }
-        } else {
-          const revoked = await isTokenRevoked(c.env, jti, tenantId);
-          if (revoked) {
-            c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
-            return c.json<IntrospectionResponse>({ active: false });
-          }
-        }
-
-        // Token is still valid, return cached response
-        return c.json(cachedResponse);
-      }
-    } catch {
-      // Cache read failed, continue with full validation
-    }
   }
-  // ========== Introspection Response Cache Check END ==========
+  // ========== Introspection Response Cache Setup END ==========
 
   // Load public key for verification
   // Strategy: Try to match kid from token header with JWKS first, fall back to PUBLIC_JWK_JSON
@@ -503,15 +456,22 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // ========== User Status Check (suspended/locked users) ==========
   // RFC 7009: Tokens for suspended/locked users should be inactive
   // This ensures access tokens are immediately invalidated when a user is suspended
-  // Note: Using users_core for PII-separated architecture
   if (sub) {
     try {
-      const user = await authCtx.coreAdapter.queryOne<{ status: string }>(
-        'SELECT status FROM users_core WHERE id = ? AND tenant_id = ?',
+      const user = await authCtx.coreAdapter.queryOne<{
+        lifecycle_state: string;
+        metadata_json: string | null;
+      }>(
+        'SELECT lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
         [sub, tenantId]
       );
       // Return inactive if user is suspended or locked
-      if (user && (user.status === 'suspended' || user.status === 'locked')) {
+      const metadata = user?.metadata_json ? JSON.parse(user.metadata_json) : {};
+      const status = typeof metadata.status === 'string' ? metadata.status : null;
+      if (
+        user &&
+        (user.lifecycle_state !== 'active' || status === 'suspended' || status === 'locked')
+      ) {
         return c.json<IntrospectionResponse>({
           active: false,
         });
@@ -560,11 +520,14 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // Cache TTL is configured via Admin API or environment variables
   if (cacheConfig.enabled && cacheKey && c.env.AUTHRIM_CONFIG) {
     // Fire-and-forget cache write (non-blocking)
-    c.env.AUTHRIM_CONFIG.put(cacheKey, JSON.stringify(response), {
+    const cacheWrite = c.env.AUTHRIM_CONFIG.put(cacheKey, JSON.stringify(response), {
       expirationTtl: cacheConfig.ttlSeconds,
-    }).catch(() => {
-      // Ignore cache write errors - not critical
     });
+    if (cacheWrite && typeof cacheWrite.catch === 'function') {
+      cacheWrite.catch(() => {
+        // Ignore cache write errors - not critical
+      });
+    }
   }
   // ========== Cache active=true Response END ==========
 

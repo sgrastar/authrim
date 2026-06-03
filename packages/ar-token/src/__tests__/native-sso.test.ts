@@ -10,8 +10,21 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { calculateDsHash, parseToken, DEVICE_SECRET_TOKEN_TYPE } from '@authrim/ar-lib-core';
+import {
+  calculateDsHash,
+  parseToken,
+  DEVICE_SECRET_TOKEN_TYPE,
+  type ClientMetadata,
+} from '@authrim/ar-lib-core';
 import { validateNativeSSODeviceSecretBinding } from '../token';
+import {
+  buildNativeSSOTokenExchangeSuccessResponse,
+  isNativeSSOClientEnabled,
+  isNativeSSOIssuanceEligible,
+  normalizeDeviceSecretName,
+  normalizeDeviceSecretPlatform,
+  normalizeNativeSSOAudience,
+} from '../native-sso-token-exchange';
 
 // Helper to create a valid JWT for testing (base64url encoded)
 function createTestJWT(header: object, payload: object): string {
@@ -230,6 +243,127 @@ describe('OIDC Native SSO 1.0 (draft-07) Tests', () => {
         actor_token_type === DEVICE_SECRET_TOKEN_TYPE;
 
       expect(isNativeSSORequest).toBe(false);
+    });
+  });
+
+  describe('Native SSO helper behavior', () => {
+    it('normalizes valid single and multi-value audiences', () => {
+      expect(normalizeNativeSSOAudience('client-a')).toEqual(['client-a']);
+      expect(normalizeNativeSSOAudience(['client-a', 'client-b'])).toEqual([
+        'client-a',
+        'client-b',
+      ]);
+    });
+
+    it('rejects empty or non-string audiences', () => {
+      expect(normalizeNativeSSOAudience('')).toBeNull();
+      expect(normalizeNativeSSOAudience([])).toBeNull();
+      expect(normalizeNativeSSOAudience(['client-a', ''])).toBeNull();
+      expect(normalizeNativeSSOAudience(['client-a', 123])).toBeNull();
+    });
+
+    it('enables native SSO only for explicitly enabled or native application clients', () => {
+      expect(
+        isNativeSSOClientEnabled({
+          application_type: 'web',
+          native_sso_enabled: true,
+        } as ClientMetadata)
+      ).toBe(true);
+      expect(
+        isNativeSSOClientEnabled({
+          application_type: 'native',
+        } as ClientMetadata)
+      ).toBe(true);
+      expect(
+        isNativeSSOClientEnabled({
+          application_type: 'native',
+          native_sso_enabled: false,
+        } as ClientMetadata)
+      ).toBe(false);
+    });
+
+    it('requires native application type, native channel eligibility, and allowed channel for issuance', () => {
+      expect(
+        isNativeSSOIssuanceEligible(
+          {
+            application_type: 'native',
+            allowed_channels: ['native'],
+          } as unknown as ClientMetadata,
+          'native'
+        )
+      ).toBe(true);
+
+      expect(
+        isNativeSSOIssuanceEligible(
+          {
+            application_type: 'web',
+            native_sso_enabled: true,
+          } as ClientMetadata,
+          'native'
+        )
+      ).toBe(false);
+      expect(
+        isNativeSSOIssuanceEligible(
+          {
+            application_type: 'native',
+            native_channel_allowed: false,
+          } as unknown as ClientMetadata,
+          'native'
+        )
+      ).toBe(false);
+      expect(
+        isNativeSSOIssuanceEligible(
+          {
+            application_type: 'native',
+          } as ClientMetadata,
+          'browser'
+        )
+      ).toBe(false);
+    });
+
+    it('normalizes stored device secret metadata inputs', () => {
+      expect(normalizeDeviceSecretPlatform('ios')).toBe('ios');
+      expect(normalizeDeviceSecretPlatform('watchos')).toBeUndefined();
+      expect(normalizeDeviceSecretName('  Alice   iPhone  ')).toBe('Alice iPhone');
+      expect(normalizeDeviceSecretName('   ')).toBeUndefined();
+      expect(normalizeDeviceSecretName(123)).toBeUndefined();
+      expect(normalizeDeviceSecretName('x'.repeat(80))).toHaveLength(64);
+    });
+
+    it('builds success responses with optional refresh token expiry metadata', () => {
+      const response = buildNativeSSOTokenExchangeSuccessResponse({
+        accessToken: 'access-token',
+        expiresIn: 3600,
+        idToken: 'id-token',
+        refreshToken: 'refresh-token',
+        refreshTokenExpiryMetadata: {
+          refresh_token_expires_in: 7200,
+          refresh_token_expires_at: '2026-01-01T00:00:00.000Z',
+          refresh_token_expires_at_unix: 1767225600,
+        },
+        installationMetadata: {
+          installation_id: 'installation-1',
+          client_id: 'native-client',
+          platform: 'ios',
+          display_name: 'Alice iPhone',
+          last_seen_at: '2025-01-01T00:00:00.000Z',
+          last_seen_at_unix: 1735689600,
+        },
+        scope: 'openid profile',
+      });
+
+      expect(response).toMatchObject({
+        access_token: 'access-token',
+        issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        token_type: 'DPoP',
+        expires_in: 3600,
+        id_token: 'id-token',
+        refresh_token: 'refresh-token',
+        refresh_token_expires_in: 7200,
+        installation_id: 'installation-1',
+        client_id: 'native-client',
+        scope: 'openid profile',
+      });
     });
   });
 

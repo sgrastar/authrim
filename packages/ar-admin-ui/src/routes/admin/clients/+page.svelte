@@ -129,15 +129,17 @@
 	}
 
 	function getIntegrationBadges(client: Client): string[] {
-		const badges: string[] = []
-		if (client.token_exchange_allowed) badges.push('Token Exchange')
-		if (client.client_credentials_allowed) badges.push('Client Credentials')
-		if (client.default_audience) badges.push(`Audience: ${client.default_audience}`)
-		return badges
+		const badges: string[] = [];
+		if (client.token_exchange_allowed) badges.push('Token Exchange');
+		if (client.client_credentials_allowed) badges.push('Client Credentials');
+		if (client.default_audience) badges.push(`Audience: ${client.default_audience}`);
+		return badges;
 	}
 
 	function isSystemClient(client: Client): boolean {
-		return client.client_name === 'Login UI' || client.client_name === 'Downstream Grant Introspection';
+		return (
+			client.client_name === 'Login UI' || client.client_name === 'Downstream Grant Introspection'
+		);
 	}
 
 	// Selection handlers

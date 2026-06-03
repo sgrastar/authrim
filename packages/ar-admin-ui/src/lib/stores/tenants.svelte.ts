@@ -34,7 +34,9 @@ function createTenantStore() {
 
 		/** Active tenants suitable for the header selector */
 		get activeTenants(): { id: string; name: string }[] {
-			return tenants.filter((t) => t.is_active).map((t) => ({ id: t.id, name: t.name }));
+			return tenants
+				.filter((t) => t.lifecycle_state === 'active')
+				.map((t) => ({ id: t.id, name: t.name }));
 		},
 
 		/** The current default tenant id */

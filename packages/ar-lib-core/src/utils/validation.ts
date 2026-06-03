@@ -306,6 +306,13 @@ export function validateRedirectUri(
     };
   }
 
+  if (url.hash) {
+    return {
+      valid: false,
+      error: 'redirect_uri must not contain a fragment',
+    };
+  }
+
   // Check protocol
   if (url.protocol === 'https:') {
     // HTTPS is always allowed
@@ -893,30 +900,16 @@ export function normalizeRedirectUri(uri: string): string | null {
 /**
  * Check if a provided redirect_uri matches any registered URI
  *
- * This function performs secure URL comparison with normalization
- * to prevent Open Redirect vulnerabilities.
+ * OAuth 2.0 requires simple string comparison for fully registered redirect URIs.
+ * Do not normalize host casing, ports, paths, queries, or fragments here; a client
+ * must request exactly one of its registered values.
  *
  * @param providedUri - The redirect_uri from the authorization request
  * @param registeredUris - Array of registered redirect_uris for the client
  * @returns true if the providedUri matches any registered URI
  */
 export function isRedirectUriRegistered(providedUri: string, registeredUris: string[]): boolean {
-  const normalizedProvided = normalizeRedirectUri(providedUri);
-
-  // If the provided URI cannot be normalized, it's invalid
-  if (!normalizedProvided) {
-    return false;
-  }
-
-  // Check against each registered URI
-  for (const registered of registeredUris) {
-    const normalizedRegistered = normalizeRedirectUri(registered);
-    if (normalizedRegistered && normalizedProvided === normalizedRegistered) {
-      return true;
-    }
-  }
-
-  return false;
+  return registeredUris.some((registeredUri) => registeredUri === providedUri);
 }
 
 // =============================================================================

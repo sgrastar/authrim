@@ -18,8 +18,7 @@
  * app.get('/userinfo', async (c) => {
  *   // Requires requestContextMiddleware, or pass an explicit tenant ID.
  *   const ctx = createPIIContextFromHono(c);
- *   const userPII = await ctx.piiRepositories.userPII.findByUserId(userId);
- *   // ...
+ *   // Runtime users are materialized through CanonicalRuntimeUserStore.
  * });
  * ```
  */
@@ -31,7 +30,6 @@ import type { DatabaseAdapter } from '../db/adapter';
 import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../db/adapter-source';
 import { PIIPartitionRouter } from '../db/partition-router';
 import {
-  UserCoreRepository,
   ClientRepository,
   SessionRepository,
   PasskeyRepository,
@@ -39,7 +37,6 @@ import {
   SessionClientRepository,
 } from '../repositories/core';
 import {
-  UserPIIRepository,
   TombstoneRepository,
   SubjectIdentifierRepository,
   LinkedIdentityRepository,
@@ -118,7 +115,6 @@ export function createAuthContextFromHono(
   return {
     tenantId: resolvedTenantId,
     repositories: {
-      userCore: new UserCoreRepository(coreAdapter, resolvedTenantId),
       client: new ClientRepository(coreAdapter, resolvedTenantId),
       session: new SessionRepository(coreAdapter, resolvedTenantId),
       passkey: new PasskeyRepository(coreAdapter, resolvedTenantId),
@@ -168,7 +164,6 @@ export function createPIIContextFromHono(
   return {
     tenantId: resolvedTenantId,
     repositories: {
-      userCore: new UserCoreRepository(coreAdapter, resolvedTenantId),
       client: new ClientRepository(coreAdapter, resolvedTenantId),
       session: new SessionRepository(coreAdapter, resolvedTenantId),
       passkey: new PasskeyRepository(coreAdapter, resolvedTenantId),
@@ -181,7 +176,6 @@ export function createPIIContextFromHono(
     userCacheScope: runtimeSources?.userCacheScope,
     piiCacheMode: runtimeSources?.piiCacheMode,
     piiRepositories: {
-      userPII: new UserPIIRepository(piiAdapter, resolvedTenantId),
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),
@@ -221,7 +215,6 @@ export function elevateToPIIContext(authCtx: AuthContext): PIIContext {
   return {
     ...authCtx,
     piiRepositories: {
-      userPII: new UserPIIRepository(piiAdapter, authCtx.tenantId),
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),

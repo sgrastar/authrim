@@ -20,6 +20,8 @@ import {
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
   createAuthContextFromHono,
+  createPIIContextFromHono,
+  CanonicalRuntimeUserStore,
   // Challenge Store for auth_code generation
   getChallengeStoreByChallengeId,
   // Event System
@@ -515,9 +517,15 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       // 11a. User verification (performed before session creation)
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
-      const userCore = await authCtx.repositories.userCore.findById(result.userId);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const runtimeUsers = new CanonicalRuntimeUserStore({
+        coreAdapter: authCtx.coreAdapter,
+        piiAdapter: piiCtx.defaultPiiAdapter,
+        tenantId,
+      });
+      const runtimeUser = await runtimeUsers.findById(result.userId);
 
-      if (!userCore || !userCore.is_active) {
+      if (!runtimeUser) {
         return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
       }
 

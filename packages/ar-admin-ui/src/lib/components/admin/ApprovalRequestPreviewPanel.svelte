@@ -1,12 +1,12 @@
 <script lang="ts">
-	import type { ApprovalRequestPreviewResult } from '$lib/api/admin-approvals'
+	import type { ApprovalRequestPreviewResult } from '$lib/api/admin-approvals';
 
 	interface Props {
-		preview: ApprovalRequestPreviewResult | null
-		loading?: boolean
-		error?: string
-		canApplyResolvedSteps?: boolean
-		onApplyResolvedSteps?: (() => void) | null
+		preview: ApprovalRequestPreviewResult | null;
+		loading?: boolean;
+		error?: string;
+		canApplyResolvedSteps?: boolean;
+		onApplyResolvedSteps?: (() => void) | null;
 	}
 
 	let {
@@ -15,15 +15,15 @@
 		error = '',
 		canApplyResolvedSteps = false,
 		onApplyResolvedSteps = null
-	}: Props = $props()
+	}: Props = $props();
 
 	function formatDateTime(timestamp?: number | null): string {
-		if (!timestamp) return '-'
-		return new Date(timestamp).toLocaleString()
+		if (!timestamp) return '-';
+		return new Date(timestamp).toLocaleString();
 	}
 
 	function formatMethods(methods: string[]): string {
-		return methods.length ? methods.join(', ') : '-'
+		return methods.length ? methods.join(', ') : '-';
 	}
 </script>
 
@@ -58,23 +58,59 @@
 			<div class="preview-card">
 				<h4>Request</h4>
 				<dl class="preview-list">
-					<div><dt>Investigation</dt><dd>{preview.request.investigation_id}</dd></div>
-					<div><dt>Target</dt><dd>{preview.request.target_subject_type}:{preview.request.target_subject_id}</dd></div>
-					<div><dt>Preset</dt><dd>{preview.request.policy_preset}</dd></div>
-					<div><dt>Redaction</dt><dd>{preview.request.redaction_level}</dd></div>
-					<div><dt>Expires</dt><dd>{formatDateTime(preview.request.expires_at)}</dd></div>
-					<div><dt>Remind Cooldown</dt><dd>{preview.request.resolved_policy.notification_cooldown_seconds?.remind ?? '-'}s</dd></div>
-					<div><dt>Resend Cooldown</dt><dd>{preview.request.resolved_policy.notification_cooldown_seconds?.resend ?? '-'}s</dd></div>
+					<div>
+						<dt>Investigation</dt>
+						<dd>{preview.request.investigation_id}</dd>
+					</div>
+					<div>
+						<dt>Target</dt>
+						<dd>{preview.request.target_subject_type}:{preview.request.target_subject_id}</dd>
+					</div>
+					<div>
+						<dt>Preset</dt>
+						<dd>{preview.request.policy_preset}</dd>
+					</div>
+					<div>
+						<dt>Redaction</dt>
+						<dd>{preview.request.redaction_level}</dd>
+					</div>
+					<div>
+						<dt>Expires</dt>
+						<dd>{formatDateTime(preview.request.expires_at)}</dd>
+					</div>
+					<div>
+						<dt>Remind Cooldown</dt>
+						<dd>{preview.request.resolved_policy.notification_cooldown_seconds?.remind ?? '-'}s</dd>
+					</div>
+					<div>
+						<dt>Resend Cooldown</dt>
+						<dd>{preview.request.resolved_policy.notification_cooldown_seconds?.resend ?? '-'}s</dd>
+					</div>
 				</dl>
 			</div>
 			<div class="preview-card">
 				<h4>Scope</h4>
 				<dl class="preview-list">
-					<div><dt>Surface</dt><dd>{preview.request.request_surface}</dd></div>
-					<div><dt>Action</dt><dd>{preview.request.requested_action}</dd></div>
-					<div><dt>Reason</dt><dd>{preview.request.reason_code}</dd></div>
-					<div><dt>Reuse Scope</dt><dd>{preview.request.reuse_scope}</dd></div>
-					<div><dt>Partial Access</dt><dd>{preview.request.partial_access_allowed ? 'Allowed' : 'Blocked'}</dd></div>
+					<div>
+						<dt>Surface</dt>
+						<dd>{preview.request.request_surface}</dd>
+					</div>
+					<div>
+						<dt>Action</dt>
+						<dd>{preview.request.requested_action}</dd>
+					</div>
+					<div>
+						<dt>Reason</dt>
+						<dd>{preview.request.reason_code}</dd>
+					</div>
+					<div>
+						<dt>Reuse Scope</dt>
+						<dd>{preview.request.reuse_scope}</dd>
+					</div>
+					<div>
+						<dt>Partial Access</dt>
+						<dd>{preview.request.partial_access_allowed ? 'Allowed' : 'Blocked'}</dd>
+					</div>
 				</dl>
 			</div>
 		</div>
@@ -101,8 +137,14 @@
 
 					<div class="preview-step-grid">
 						<div><strong>Resolved Method</strong><span>{step.method ?? '-'}</span></div>
-						<div><strong>Transport Channel</strong><span>{step.transport_channel ?? '-'}</span></div>
-						<div><strong>Acceptable Methods</strong><span>{formatMethods(step.acceptable_methods)}</span></div>
+						<div>
+							<strong>Transport Channel</strong><span>{step.transport_channel ?? '-'}</span>
+						</div>
+						<div>
+							<strong>Acceptable Methods</strong><span
+								>{formatMethods(step.acceptable_methods)}</span
+							>
+						</div>
 						<div><strong>Selection Source</strong><span>{step.selection_source}</span></div>
 						<div><strong>Relation Type</strong><span>{step.relation_type ?? '-'}</span></div>
 						<div><strong>Relation Source</strong><span>{step.relation_source ?? '-'}</span></div>

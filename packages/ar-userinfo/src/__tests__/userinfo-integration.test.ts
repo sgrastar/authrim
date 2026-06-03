@@ -31,6 +31,15 @@ const mockIsUserInfoEncryptionRequired = vi.hoisted(() => vi.fn());
 const mockGetClientPublicKey = vi.hoisted(() => vi.fn());
 const mockValidateJWEOptions = vi.hoisted(() => vi.fn());
 const mockGetCachedUser = vi.hoisted(() => vi.fn());
+const mockCanonicalFindByLegacyUserId = vi.hoisted(() => vi.fn());
+const mockCanonicalRuntimeUserProjectionRepository = vi.hoisted(() =>
+  vi.fn().mockImplementation(function () {
+    return {
+      findByLegacyUserId: mockCanonicalFindByLegacyUserId,
+    };
+  })
+);
+const mockCanonicalSensitiveValueResolver = vi.hoisted(() => vi.fn());
 
 // Mock shared module
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -50,6 +59,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getClientPublicKey: mockGetClientPublicKey,
     validateJWEOptions: mockValidateJWEOptions,
     getCachedUser: mockGetCachedUser,
+    CanonicalRuntimeUserProjectionRepository: mockCanonicalRuntimeUserProjectionRepository,
+    CanonicalSensitiveValueResolver: mockCanonicalSensitiveValueResolver,
     rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
     RateLimitProfiles: { moderate: {} },
     requestContextMiddleware:
@@ -92,7 +103,7 @@ const sampleUser: CachedUser = {
   profile: null,
   website: null,
   gender: null,
-  birthdate: null,
+  birthdate: '1990-01-01',
   zoneinfo: null,
   locale: null,
   updated_at: 1700000000000,
@@ -101,6 +112,40 @@ const sampleUser: CachedUser = {
     country: 'Japan',
   }),
 };
+
+function sampleCanonicalProjection(overrides: Record<string, unknown> = {}) {
+  return {
+    id: sampleUser.id,
+    tenant_id: 'tenant-a',
+    subject_id: `subject:${sampleUser.id}`,
+    account_id: `account:${sampleUser.id}`,
+    email: sampleUser.email,
+    email_verified: 1,
+    name: sampleUser.name,
+    given_name: sampleUser.given_name,
+    family_name: sampleUser.family_name,
+    middle_name: sampleUser.middle_name,
+    nickname: sampleUser.nickname,
+    preferred_username: sampleUser.preferred_username,
+    profile: sampleUser.profile,
+    picture: sampleUser.picture,
+    website: sampleUser.website,
+    gender: sampleUser.gender,
+    birthdate: sampleUser.birthdate,
+    zoneinfo: sampleUser.zoneinfo,
+    locale: sampleUser.locale,
+    phone_number: sampleUser.phone_number,
+    phone_number_verified: 1,
+    address_json: sampleUser.address,
+    password_hash: null,
+    external_id: null,
+    active: 1,
+    custom_attributes_json: null,
+    created_at: new Date(1_700_000_000_000).toISOString(),
+    updated_at: new Date(sampleUser.updated_at).toISOString(),
+    ...overrides,
+  };
+}
 
 // Create mock environment
 function createMockEnv(): Env {
@@ -153,6 +198,7 @@ describe('UserInfo Integration Tests', () => {
     );
     // Default mock for getCachedUser (PII/Non-PII DB separation)
     vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
+    mockCanonicalFindByLegacyUserId.mockResolvedValue(sampleCanonicalProjection());
   });
 
   describe('HTTP Method Support', () => {
@@ -724,7 +770,11 @@ describe('UserInfo Integration Tests', () => {
       });
       vi.mocked(getClient).mockResolvedValue({
         client_id: 'client-123',
-        claims_parameter_policy: { birthdate: 'claims_allowed', address: 'claims_allowed' },
+        claims_parameter_policy: {
+          birthdate: 'claims_allowed',
+          address: 'claims_allowed',
+          '::age_over_18': 'claims_allowed',
+        },
       } as any);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
@@ -842,8 +892,7 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Mock getCachedUser to return null (user not found)
-      vi.mocked(getCachedUser).mockResolvedValue(null);
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(null);
 
       const req = new Request('http://localhost/userinfo', {
         headers: { Authorization: 'Bearer token' },

@@ -246,7 +246,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           policy: 'deletion_before_purge',
-          tables: { core: ['users_core'], pii: ['users_pii'] },
+          tables: { core: ['identity_accounts'], pii: ['identity_sensitive_values'] },
           reason: 'tenant deletion pre-purge backup',
         }),
         created_at: 1,
@@ -274,20 +274,20 @@ describe('generic admin job executor', () => {
       { requestPath: '/internal/admin-jobs/tenant-database/export' }
     );
     expect(mockTenantCoreAdapter.query).toHaveBeenCalledWith(
-      'SELECT * FROM users_core WHERE tenant_id = ? LIMIT ?',
+      'SELECT * FROM identity_accounts WHERE tenant_id = ? LIMIT ?',
       ['tenant-a', 50001]
     );
     expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
-      'SELECT * FROM users_pii WHERE tenant_id = ? LIMIT ?',
+      'SELECT * FROM identity_sensitive_values WHERE tenant_id = ? LIMIT ?',
       ['tenant-a', 50001]
     );
     expect(put).toHaveBeenCalledWith(
-      'exports/tenant-a/tenant-backup/job-backup/core/users_core.jsonl',
+      'exports/tenant-a/tenant-backup/job-backup/core/identity_accounts.jsonl',
       expect.any(String),
       expect.any(Object)
     );
     expect(put).toHaveBeenCalledWith(
-      'exports/tenant-a/tenant-backup/job-backup/pii/users_pii.jsonl',
+      'exports/tenant-a/tenant-backup/job-backup/pii/identity_sensitive_values.jsonl',
       expect.any(String),
       expect.any(Object)
     );
@@ -309,8 +309,8 @@ describe('generic admin job executor', () => {
         object_key: 'exports/tenant-a/tenant-backup/job-backup/manifest.json',
       },
       table_artifacts: [
-        expect.objectContaining({ plane: 'core', table: 'users_core', row_count: 1 }),
-        expect.objectContaining({ plane: 'pii', table: 'users_pii', row_count: 1 }),
+        expect.objectContaining({ plane: 'core', table: 'identity_accounts', row_count: 1 }),
+        expect.objectContaining({ plane: 'pii', table: 'identity_sensitive_values', row_count: 1 }),
       ],
     });
   });
@@ -324,7 +324,7 @@ describe('generic admin job executor', () => {
       id: 'user-1',
       status: 'active',
     });
-    const tableObjectKey = 'exports/tenant-a/tenant-backup/job-backup/core/users_core.jsonl';
+    const tableObjectKey = 'exports/tenant-a/tenant-backup/job-backup/core/identity_accounts.jsonl';
     const tableEnvelope = await encryptObjectArtifact(tableContent, {
       rootKeyHex: tenantRootKey,
       plane: 'EXPORT_ARTIFACTS',
@@ -352,11 +352,11 @@ describe('generic admin job executor', () => {
       started_at: '2026-05-16T00:00:00.000Z',
       completed_at: '2026-05-16T00:00:01.000Z',
       retention_days: 30,
-      restore_order: [{ plane: 'core', table: 'users_core' }],
+      restore_order: [{ plane: 'core', table: 'identity_accounts' }],
       tables: [
         {
           plane: 'core',
-          table: 'users_core',
+          table: 'identity_accounts',
           row_count: 1,
           plaintext_bytes: new TextEncoder().encode(tableContent).byteLength,
           plaintext_sha256: tableChecksum,
@@ -470,7 +470,7 @@ describe('generic admin job executor', () => {
       table_validations: [
         {
           plane: 'core',
-          table: 'users_core',
+          table: 'identity_accounts',
           row_count: 1,
           checksum_sha256: tableChecksum,
           status: 'valid',
@@ -527,7 +527,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           retention_days: 0,
-          tables: { core: ['users_core'], pii: [] },
+          tables: { core: ['identity_accounts'], pii: [] },
         }),
         created_at: 1,
         attempt_count: 0,
@@ -561,7 +561,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           export_format: 'parquet',
-          tables: { core: ['users_core'], pii: [] },
+          tables: { core: ['identity_accounts'], pii: [] },
         }),
         created_at: 1,
         attempt_count: 0,
@@ -755,7 +755,7 @@ describe('generic admin job executor', () => {
     expect(mockAdapter.execute).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining(
-        'UPDATE users_core SET status = ?, updated_at = ? WHERE tenant_id = ? AND id IN (?)'
+        "UPDATE identity_accounts SET metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?), updated_at = ? WHERE tenant_id = ? AND legacy_user_id IN (?)"
       ),
       expect.arrayContaining(['suspended', expect.any(Number), 'tenant-a', 'user-1'])
     );
@@ -830,11 +830,10 @@ describe('generic admin job executor', () => {
 
     await processPendingGenericAdminJobs({} as never, logger);
 
-    expect(mockAdapter.query).toHaveBeenLastCalledWith(expect.stringContaining('FROM users_core'), [
-      'tenant-a',
-      expect.any(Number),
-      expect.any(Number),
-    ]);
+    expect(mockAdapter.query).toHaveBeenLastCalledWith(
+      expect.stringContaining('FROM identity_accounts'),
+      ['tenant-a', expect.any(Number), expect.any(Number)]
+    );
     expect(mockAdapter.execute).toHaveBeenLastCalledWith(
       expect.stringContaining('SET status = ?, progress = ?, result = ?'),
       expect.arrayContaining([

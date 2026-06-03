@@ -58,10 +58,12 @@ async function getUserCountByVersion(
     email_domain_hash_version: number | null;
     count: number;
   }>(
-    `SELECT email_domain_hash_version, COUNT(*) as count
-     FROM users_core
-     WHERE tenant_id = ?
-     GROUP BY email_domain_hash_version`,
+    `SELECT CAST(value_json AS INTEGER) as email_domain_hash_version, COUNT(*) as count
+       FROM profile_attribute_values
+      WHERE tenant_id = ?
+        AND catalog_entry_id = 'email_domain_hash_version'
+        AND lifecycle_state = 'active'
+      GROUP BY value_json`,
     [tenantId]
   );
   const counts: Record<number, number> = {};

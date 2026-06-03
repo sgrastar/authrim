@@ -615,13 +615,13 @@ export interface SAMLIdPConfig {
     allowedClassRefs?: string[];
   };
   /**
-   * Reserved JIT account-linking policy for future federated identity registry work.
-   * Current ACS behavior still performs email-based lookup when an email is present.
+   * Federated identity registry policy for resolving first SAML logins.
+   * Default email_linking resolves existing link, verified local email, then JIT create.
    */
   jitEmailLinkingPolicy?: SAMLJitEmailLinkingPolicy;
   /**
-   * Legacy compatibility escape hatch. When false/omitted, ACS rejects assertions
-   * that cannot produce an email instead of synthesizing `${NameID}@saml.local`.
+   * Legacy compatibility escape hatch. When false/omitted, ACS rejects assertions that
+   * cannot produce an email. When true, ACS uses a non-PII synthetic local email.
    */
   allowSyntheticEmailFallback?: boolean;
   /**

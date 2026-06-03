@@ -492,16 +492,6 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
       });
 
-      it('should route /api/admin/saml-federation-trust-profiles to OP_SAML', async () => {
-        const req = new Request('https://example.com/api/admin/saml-federation-trust-profiles', {
-          headers: { 'X-Tenant-Id': 'default' },
-        });
-        await app.fetch(req, mockEnv);
-
-        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
-        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
-      });
-
       it('should route /api/admin/saml-metadata/preview to OP_SAML', async () => {
         const envWithAdminOrigin = {
           ...mockEnv,

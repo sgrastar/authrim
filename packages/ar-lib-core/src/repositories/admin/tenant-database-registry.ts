@@ -109,8 +109,8 @@ export type TenantRuntimeCacheNamespace =
   | 'settings'
   | 'policy'
   | 'runtime_registry'
-  | 'users_core'
-  | 'users_pii'
+  | 'identity_core'
+  | 'identity_pii'
   | 'clients'
   | 'consent'
   | 'rebac';

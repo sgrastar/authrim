@@ -110,6 +110,36 @@ const LOGGING_DELIVERY_PRODUCER_COMPONENTS: WorkerComponent[] = [
   'ar-vc',
 ];
 
+const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
+  binding: 'DB' | 'DB_PII' | 'DB_ADMIN';
+  label: string;
+  tables: string[];
+}> = [
+  {
+    binding: 'DB',
+    label: 'core runtime schema',
+    tables: [
+      'users_core',
+      'identity_subjects',
+      'identity_accounts',
+      'profiles',
+      'contact_points',
+      'custom_claim_schemas',
+      'user_custom_fields',
+    ],
+  },
+  {
+    binding: 'DB_PII',
+    label: 'PII runtime schema',
+    tables: ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'],
+  },
+  {
+    binding: 'DB_ADMIN',
+    label: 'admin runtime schema',
+    tables: ['admin_users', 'admin_machine_principals', 'mapping_policy_sets'],
+  },
+];
+
 const DIAGNOSTIC_R2_COMPONENTS: WorkerComponent[] = [
   'ar-auth',
   'ar-token',
@@ -228,6 +258,10 @@ function countValue(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
   return 0;
+}
+
+function sqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function resolveKeysDirectory(
@@ -577,7 +611,7 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
     inspectStorageProfileTarget(
       config,
       check,
-      'storage profile builtin:storage:external-postgres / users_core',
+      'storage profile builtin:storage:external-postgres / identity core',
       {
         driver: 'postgres',
         connectionRef: 'core-primary',
@@ -586,7 +620,7 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
     inspectStorageProfileTarget(
       config,
       check,
-      'storage profile builtin:storage:external-postgres / users_pii',
+      'storage profile builtin:storage:external-postgres / identity PII',
       {
         driver: 'postgres',
         connectionRef: 'pii-primary',
@@ -1106,6 +1140,87 @@ async function validateLiveTenantD1Slots(
   return finishCheck(check, 'Tenant D1 slot resources and DB_ADMIN metadata are consistent');
 }
 
+async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<ValidationCheck> {
+  const check = makeCheck(
+    'live-runtime-d1-schema',
+    'Live D1 databases contain runtime schema tables required by current workers'
+  );
+
+  for (const requirement of LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS) {
+    const database = lock.d1[requirement.binding];
+    if (!database?.name) {
+      pushDetail(check, 'fail', `${requirement.binding}: missing from lock.json`);
+      continue;
+    }
+
+    try {
+      const tableList = requirement.tables.map(sqlString).join(', ');
+      const rows = await queryD1Rows<{ name: string }>(
+        database.name,
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${tableList}) ORDER BY name;`
+      );
+      const existingTables = new Set(
+        rows.map((row) => row.name).filter((name): name is string => typeof name === 'string')
+      );
+      const missingTables = requirement.tables.filter((table) => !existingTables.has(table));
+
+      if (missingTables.length > 0) {
+        pushDetail(
+          check,
+          'fail',
+          `${requirement.binding} (${database.name}) missing ${requirement.label} table(s): ${missingTables.join(', ')}`
+        );
+      } else {
+        pushDetail(
+          check,
+          'pass',
+          `${requirement.binding} (${database.name}) has ${requirement.label} tables`
+        );
+      }
+    } catch (error) {
+      pushDetail(
+        check,
+        'fail',
+        `${requirement.binding} (${database.name}) schema query failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  const coreDatabase = lock.d1.DB;
+  if (coreDatabase?.name) {
+    try {
+      const foreignKeys = await queryD1Rows<{ table?: string; from?: string; to?: string }>(
+        coreDatabase.name,
+        'PRAGMA foreign_key_list(user_custom_fields);'
+      );
+      const legacyUsersCoreReferences = foreignKeys.filter(
+        (row) => row.table === 'users_core' && row.from === 'user_id'
+      );
+      if (legacyUsersCoreReferences.length > 0) {
+        pushDetail(
+          check,
+          'fail',
+          `DB (${coreDatabase.name}) user_custom_fields still references legacy users_core(id)`
+        );
+      } else {
+        pushDetail(
+          check,
+          'pass',
+          `DB (${coreDatabase.name}) user_custom_fields has no legacy users_core FK`
+        );
+      }
+    } catch (error) {
+      pushDetail(
+        check,
+        'fail',
+        `DB (${coreDatabase.name}) user_custom_fields FK query failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return finishCheck(check, 'Live D1 runtime schema tables are present');
+}
+
 export async function validateGeneratedEnvironment(
   options: GeneratedEnvValidationOptions
 ): Promise<GeneratedEnvValidationResult> {
@@ -1194,6 +1309,7 @@ export async function validateGeneratedEnvironment(
     checks.push(
       await validateLiveCloudflareD1(lock),
       await validateLiveCloudflareR2(lock),
+      await validateLiveRuntimeD1Schema(lock),
       await validateLiveTenantD1Slots(config, lock)
     );
   }

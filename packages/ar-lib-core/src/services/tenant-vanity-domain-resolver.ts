@@ -146,7 +146,7 @@ export async function resolveTenantFromVanityHost(
        WHERE tenant_vanity_domains.active_hostname = ?
          AND tenant_vanity_domains.is_active = 1
          AND tenant_vanity_domains.status = 'active'
-         AND tenants.is_active = 1
+         AND tenants.lifecycle_state = 'active'
        LIMIT 1`,
       [hostname]
     );

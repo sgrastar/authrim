@@ -19,6 +19,10 @@ vi.mock('jose', () => ({
 
 // Shared mock data for IssuedCredentialRepository
 let mockDeferredCredential: unknown = null;
+const routeCoreMocks = vi.hoisted(() => ({
+  createCredential: vi.fn(),
+  allocateIndex: vi.fn(),
+}));
 
 // Mock @authrim/ar-lib-core - keep real implementations for region sharding functions
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -26,16 +30,25 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     createSDJWTVC: vi.fn().mockResolvedValue({
-      combined: 'mock-sd-jwt-vc~disclosure1~disclosure2~',
-      issuerSignedJwt: 'mock-jwt',
+      combined: 'header.payload.signature~disclosure1~disclosure2~',
+      issuerSignedJwt: 'header.payload.signature',
       disclosures: ['disclosure1', 'disclosure2'],
     }),
+    loadFeatureConfig: vi.fn().mockResolvedValue({ enabled: false }),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
     D1Adapter: class {
       constructor() {}
     },
+    D1StatusListRepository: class {
+      constructor() {}
+    },
+    StatusListManager: class {
+      constructor() {}
+      allocateIndex = routeCoreMocks.allocateIndex;
+    },
     IssuedCredentialRepository: class {
       constructor() {}
+      createCredential = routeCoreMocks.createCredential;
       findDeferredByIdAndUser = vi.fn().mockImplementation(async () => mockDeferredCredential);
       updateStatus = vi.fn().mockResolvedValue(undefined);
       parseClaims = vi
@@ -72,10 +85,28 @@ interface TokenValidationResult {
 }
 
 // Mock token validation service
-const mockValidateVCIAccessToken = vi.fn<() => Promise<TokenValidationResult>>();
+const tokenValidationMocks = vi.hoisted(() => ({
+  mockValidateVCIAccessToken: vi.fn(),
+  mockValidateProofOfPossession: vi.fn(),
+}));
+const mockValidateVCIAccessToken = tokenValidationMocks.mockValidateVCIAccessToken as ReturnType<
+  typeof vi.fn<() => Promise<TokenValidationResult>>
+>;
+const mockValidateProofOfPossession =
+  tokenValidationMocks.mockValidateProofOfPossession as ReturnType<
+    typeof vi.fn<
+      (
+        env: Env,
+        proof: { proof_type: string; jwt?: string },
+        expectedNonce: string,
+        expectedAudience: string
+      ) => Promise<{ valid: boolean; holderPublicKey?: object; error?: string }>
+    >
+  >;
 vi.mock('../../services/token-validation', () => ({
-  validateVCIAccessToken: (): Promise<TokenValidationResult> => mockValidateVCIAccessToken(),
-  validateProofOfPossession: vi.fn().mockResolvedValue({ valid: true }),
+  validateVCIAccessToken: (): Promise<TokenValidationResult> =>
+    tokenValidationMocks.mockValidateVCIAccessToken() as Promise<TokenValidationResult>,
+  validateProofOfPossession: tokenValidationMocks.mockValidateProofOfPossession,
 }));
 
 // Mock crypto utilities
@@ -499,11 +530,18 @@ describe('Credential Offer Route', () => {
 describe('Credential Route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    routeCoreMocks.allocateIndex.mockResolvedValue({
+      listId: 'status-list-1',
+      listInternalId: 'status-list-internal-1',
+      index: 42,
+    });
+    routeCoreMocks.createCredential.mockResolvedValue(undefined);
     // Reset mock to default invalid response (no token provided tests should fail auth)
     mockValidateVCIAccessToken.mockResolvedValue({
       valid: false,
       error: 'Invalid access token',
     });
+    mockValidateProofOfPossession.mockResolvedValue({ valid: true });
   });
 
   it('should reject request without access token', async () => {
@@ -546,9 +584,13 @@ describe('Credential Route', () => {
   });
 
   it('should reject unsupported credential format', async () => {
-    // Mock a valid token validation (need to bypass the actual validation)
-    // Since validateAccessToken is not exported, we can't directly mock it
-    // For now, this test documents expected behavior
+    mockValidateVCIAccessToken.mockResolvedValue({
+      valid: true,
+      userId: 'user-123',
+      tenantId: 'tenant-1',
+      vct: 'https://authrim.com/credentials/identity/v1',
+      claims: {},
+    });
 
     const c = createMockContext({
       req: {
@@ -559,10 +601,201 @@ describe('Credential Route', () => {
       },
     });
 
-    // Token validation fails first, so returns 400 with invalid_grant
     const response = await credentialRoute(c);
-    // AR_ERROR_CODES.TOKEN_INVALID uses status 400
+    const data = (await response.json()) as { error: string; error_description: string };
+
     expect(response.status).toBe(400);
+    expect(data.error).toBe('unsupported_credential_format');
+    expect(data.error_description).toBeDefined();
+  });
+
+  it('should reject valid token results that are missing required subject claims', async () => {
+    mockValidateVCIAccessToken.mockResolvedValue({
+      valid: true,
+      tenantId: 'tenant-1',
+      claims: {},
+    });
+    const parseBody = vi.fn().mockResolvedValue({
+      format: 'dc+sd-jwt',
+    });
+
+    const c = createMockContext({
+      req: {
+        header: vi.fn().mockReturnValue('Bearer valid-token'),
+        json: parseBody,
+      },
+    });
+
+    const response = await credentialRoute(c);
+    const data = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_grant');
+    expect(parseBody).not.toHaveBeenCalled();
+  });
+
+  it('should reject proof requests when no c_nonce is stored for the user', async () => {
+    mockValidateVCIAccessToken.mockResolvedValue({
+      valid: true,
+      userId: 'user-123',
+      tenantId: 'tenant-1',
+      claims: {},
+    });
+    const kvGet = vi.fn().mockResolvedValue(null);
+    const kvDelete = vi.fn().mockResolvedValue(undefined);
+
+    const c = createMockContext({
+      env: {
+        AUTHRIM_CONFIG: {
+          get: kvGet,
+          delete: kvDelete,
+        } as unknown as KVNamespace,
+      },
+      req: {
+        header: vi.fn().mockReturnValue('Bearer valid-token'),
+        json: vi.fn().mockResolvedValue({
+          format: 'dc+sd-jwt',
+          proof: {
+            proof_type: 'jwt',
+            jwt: 'proof.jwt',
+          },
+        }),
+      },
+    });
+
+    const response = await credentialRoute(c);
+    const data = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_proof');
+    expect(kvGet).toHaveBeenCalledWith('cnonce:user-123');
+    expect(mockValidateProofOfPossession).not.toHaveBeenCalled();
+    expect(kvDelete).not.toHaveBeenCalled();
+  });
+
+  it('should reject invalid proof of possession without consuming the stored c_nonce', async () => {
+    mockValidateVCIAccessToken.mockResolvedValue({
+      valid: true,
+      userId: 'user-123',
+      tenantId: 'tenant-1',
+      claims: {},
+    });
+    mockValidateProofOfPossession.mockResolvedValue({
+      valid: false,
+      error: 'Invalid nonce',
+    });
+    const kvGet = vi.fn().mockResolvedValue('stored-c-nonce');
+    const kvDelete = vi.fn().mockResolvedValue(undefined);
+
+    const c = createMockContext({
+      env: {
+        AUTHRIM_CONFIG: {
+          get: kvGet,
+          delete: kvDelete,
+        } as unknown as KVNamespace,
+      },
+      req: {
+        header: vi.fn().mockReturnValue('Bearer valid-token'),
+        json: vi.fn().mockResolvedValue({
+          format: 'dc+sd-jwt',
+          proof: {
+            proof_type: 'jwt',
+            jwt: 'proof.jwt',
+          },
+        }),
+      },
+    });
+
+    const response = await credentialRoute(c);
+    const data = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_proof');
+    expect(mockValidateProofOfPossession).toHaveBeenCalledWith(
+      c.env,
+      { proof_type: 'jwt', jwt: 'proof.jwt' },
+      'stored-c-nonce',
+      'did:web:authrim.com'
+    );
+    expect(kvDelete).not.toHaveBeenCalled();
+  });
+
+  it('should issue a credential, rotate c_nonce, and store issuance metadata', async () => {
+    mockValidateVCIAccessToken.mockResolvedValue({
+      valid: true,
+      userId: 'user-123',
+      tenantId: 'tenant-1',
+      vct: 'https://authrim.com/credentials/identity/v1',
+      claims: {
+        given_name: 'Alice',
+        email: 'alice@example.com',
+      },
+    });
+    mockValidateProofOfPossession.mockResolvedValue({
+      valid: true,
+      holderPublicKey: { kty: 'EC', crv: 'P-256', x: 'holder-x' },
+    });
+    const kvGet = vi.fn().mockResolvedValue('stored-c-nonce');
+    const kvPut = vi.fn().mockResolvedValue(undefined);
+    const kvDelete = vi.fn().mockResolvedValue(undefined);
+
+    const c = createMockContext({
+      env: {
+        AUTHRIM_CONFIG: {
+          get: kvGet,
+          put: kvPut,
+          delete: kvDelete,
+        } as unknown as KVNamespace,
+      },
+      req: {
+        header: vi.fn().mockReturnValue('Bearer valid-token'),
+        json: vi.fn().mockResolvedValue({
+          format: 'dc+sd-jwt',
+          proof: {
+            proof_type: 'jwt',
+            jwt: 'proof.jwt',
+          },
+        }),
+      },
+    });
+
+    const response = await credentialRoute(c);
+    const data = (await response.json()) as {
+      credential: string;
+      c_nonce: string;
+      c_nonce_expires_in: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      credential: 'header.payload.signature~disclosure1~disclosure2~',
+      c_nonce: 'mock-c-nonce-12345',
+      c_nonce_expires_in: 300,
+    });
+    expect(mockValidateProofOfPossession).toHaveBeenCalledWith(
+      c.env,
+      { proof_type: 'jwt', jwt: 'proof.jwt' },
+      'stored-c-nonce',
+      'did:web:authrim.com'
+    );
+    expect(kvDelete).toHaveBeenCalledWith('cnonce:user-123');
+    expect(kvPut).toHaveBeenCalledWith('cnonce:user-123', 'mock-c-nonce-12345', {
+      expirationTtl: 300,
+    });
+    expect(routeCoreMocks.allocateIndex).toHaveBeenCalledWith('tenant-1', 'revocation');
+    expect(routeCoreMocks.createCredential).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: 'tenant-1',
+        user_id: 'user-123',
+        credential_type: 'https://authrim.com/credentials/identity/v1',
+        format: 'dc+sd-jwt',
+        status: 'active',
+        status_list_id: 'status-list-1',
+        status_list_internal_id: 'status-list-internal-1',
+        status_list_index: 42,
+        holder_binding: { kty: 'EC', crv: 'P-256', x: 'holder-x' },
+      })
+    );
   });
 });
 
@@ -735,7 +968,7 @@ describe('Deferred Credential Route', () => {
     };
 
     expect(response.status).toBe(200);
-    expect(data.credential).toBe('mock-sd-jwt-vc~disclosure1~disclosure2~');
+    expect(data.credential).toBe('header.payload.signature~disclosure1~disclosure2~');
     expect(data.c_nonce).toBeDefined();
     expect(data.c_nonce_expires_in).toBeDefined();
   });

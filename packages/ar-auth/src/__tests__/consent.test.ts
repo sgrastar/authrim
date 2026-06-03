@@ -10,6 +10,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { consentGetHandler, consentPostHandler } from '../consent';
 
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    getConsentUserInfo: vi.fn(async (_db, subjectId: string) => {
+      if (subjectId !== 'user-123') return null;
+      return {
+        id: 'user-123',
+        email: 'user@example.com',
+        name: 'Example User',
+        picture: undefined,
+      };
+    }),
+  };
+});
+
 // Helper to create mock D1Database
 function createMockDB(options: {
   firstResult?: any;
@@ -517,6 +533,18 @@ describe('Consent Handlers', () => {
 
       // Should save consent to database
       expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('oauth_client_consents'));
+      const jsonBody = c.json.mock.calls[0][0] as { redirect_url: string };
+      const redirectUrl = new URL(jsonBody.redirect_url, 'https://example.com');
+      const confirmationChallenge = redirectUrl.searchParams.get('_consent_confirmation_challenge');
+      expect(confirmationChallenge).toBeTruthy();
+      expect(redirectUrl.searchParams.get('_consent_confirmed')).toBeNull();
+      expect(challengeStore._challenges.get(confirmationChallenge!)).toMatchObject({
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+        },
+      });
     });
 
     it('should handle form-encoded requests', async () => {

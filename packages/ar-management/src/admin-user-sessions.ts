@@ -6,7 +6,7 @@ import {
   getTenantIdFromContext,
   createPIIContextFromHono,
   createAuthContextFromHono,
-  hasPIIDatabase,
+  CanonicalRuntimeUserStore,
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -30,6 +30,19 @@ function resolveAvatarContentType(filename: string): string | null {
   }
   const extension = filename.split('.').pop()?.toLowerCase();
   return extension ? (AVATAR_CONTENT_TYPES[extension] ?? null) : null;
+}
+
+function createRuntimeUserStore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): CanonicalRuntimeUserStore {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
 }
 
 /**
@@ -72,17 +85,17 @@ export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
  * Upload user avatar
  * POST /admin/users/:id/avatar
  *
- * PII Separation: picture field is stored in PII DB (users_pii).
+ * PII Separation: picture field is stored in the canonical PII value store.
  */
 export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createRuntimeUserStore(c, tenantId);
 
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const runtimeUser = await runtimeUsers.findById(userId);
 
-    if (!userCore || !userCore.is_active) {
+    if (!runtimeUser) {
       return c.json(
         {
           error: 'not_found',
@@ -166,11 +179,14 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
 
     const avatarUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/${filePath}`;
 
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-      await piiCtx.piiRepositories.userPII.updatePII(userId, { picture: avatarUrl }, piiAdapter);
-    }
+    await runtimeUsers.syncUser({
+      userId,
+      active: true,
+      emailVerified: runtimeUser.email_verified === 1,
+      phoneNumberVerified: runtimeUser.phone_number_verified === 1,
+      piiFields: { picture: true },
+      sensitiveValues: { picture: avatarUrl },
+    });
 
     await invalidateUserCache(c.env, tenantId, userId);
 
@@ -195,17 +211,17 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
  * Delete user avatar
  * DELETE /admin/users/:id/avatar
  *
- * PII Separation: picture field is stored in PII DB (users_pii).
+ * PII Separation: picture field is stored in the canonical PII value store.
  */
 export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createRuntimeUserStore(c, tenantId);
 
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const runtimeUser = await runtimeUsers.findById(userId);
 
-    if (!userCore || !userCore.is_active) {
+    if (!runtimeUser) {
       return c.json(
         {
           error: 'not_found',
@@ -215,13 +231,7 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    let pictureUrl: string | null = null;
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-      const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
-      pictureUrl = userPII?.picture ?? null;
-    }
+    const pictureUrl = runtimeUser.picture ?? null;
 
     if (!pictureUrl) {
       return c.json(
@@ -242,11 +252,14 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
       logSanitizedError('R2 delete error', error);
     }
 
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-      await piiCtx.piiRepositories.userPII.updatePII(userId, { picture: null }, piiAdapter);
-    }
+    await runtimeUsers.syncUser({
+      userId,
+      active: true,
+      emailVerified: runtimeUser.email_verified === 1,
+      phoneNumberVerified: runtimeUser.phone_number_verified === 1,
+      piiFields: { picture: true },
+      sensitiveValues: { picture: null },
+    });
 
     await invalidateUserCache(c.env, tenantId, userId);
 
@@ -331,34 +344,27 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
     const total = totalResult?.count || 0;
     const totalPages = Math.ceil(total / limit);
 
-    const userPIIMap = new Map<string, { email: string | null; name: string | null }>();
-    if (hasPIIDatabase(c) && sessions.length > 0) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
+    const userContactMap = new Map<string, { email: string | null; name: string | null }>();
+    if (sessions.length > 0) {
+      const runtimeUsers = createRuntimeUserStore(c, tenantId);
       const userIds = [...new Set(sessions.map((s) => s.user_id).filter(Boolean))];
-      if (userIds.length > 0) {
-        const placeholders = userIds.map(() => '?').join(',');
-        const piiResults = await piiCtx.defaultPiiAdapter.query<{
-          id: string;
-          email: string | null;
-          name: string | null;
-        }>(
-          `SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-          [tenantId, ...userIds]
-        );
-
-        for (const pii of piiResults) {
-          userPIIMap.set(pii.id, { email: pii.email, name: pii.name });
-        }
-      }
+      await Promise.all(
+        userIds.map(async (id) => {
+          const user = await runtimeUsers.findById(id, { includeInactive: true });
+          if (user) {
+            userContactMap.set(id, { email: user.email, name: user.name });
+          }
+        })
+      );
     }
 
     const formattedSessions = sessions.map((session) => {
-      const userPII = userPIIMap.get(session.user_id);
+      const userContact = userContactMap.get(session.user_id);
       return {
         id: session.id,
         user_id: session.user_id,
-        user_email: userPII?.email ?? null,
-        user_name: userPII?.name ?? null,
+        user_email: userContact?.email ?? null,
+        user_name: userContact?.name ?? null,
         created_at: new Date(session.created_at * 1000).toISOString(),
         last_accessed_at: session.last_accessed_at
           ? new Date(session.last_accessed_at * 1000).toISOString()
@@ -446,14 +452,12 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
     let userEmail: string | null = null;
     let userName: string | null = null;
     const userId = sessionData?.userId || session?.user_id;
-    if (userId && hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userPII = await piiCtx.defaultPiiAdapter.queryOne<{
-        email: string | null;
-        name: string | null;
-      }>('SELECT email, name FROM users_pii WHERE id = ? AND tenant_id = ?', [userId, tenantId]);
-      userEmail = userPII?.email || null;
-      userName = userPII?.name || null;
+    if (userId) {
+      const runtimeUser = await createRuntimeUserStore(c, tenantId).findById(userId, {
+        includeInactive: true,
+      });
+      userEmail = runtimeUser?.email || null;
+      userName = runtimeUser?.name || null;
     }
 
     const result = {
@@ -561,22 +565,17 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
  * Revoke all sessions for a user
  * POST /admin/users/:id/revoke-all-sessions
  *
- * Note: With sharded SessionStore, we can only delete sessions from D1.
- * Sessions in SessionStore will expire naturally. For immediate invalidation,
- * consider implementing a userId -> sessionIds index in a future phase.
+ * Deletes persisted session rows and invalidates any sharded SessionStore entries
+ * that can be located from the persistence index.
  */
 export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUser = await createRuntimeUserStore(c, tenantId).findById(userId);
 
-    const userCore = await authCtx.coreAdapter.queryOne<{ id: string; is_active: number }>(
-      'SELECT id, is_active FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
-
-    if (!userCore || !userCore.is_active) {
+    if (!runtimeUser) {
       return c.json(
         {
           error: 'not_found',
@@ -587,13 +586,34 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     }
 
     const log = getLogger(c).module('ADMIN');
-    log.warn(
-      'Revoking all sessions for user - sharded SessionStore sessions will expire naturally',
-      {
-        action: 'revoke_all_sessions',
-        userId,
-      }
+    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+      'SELECT id FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
+
+    let storeRevokedCount = 0;
+    for (const session of sessions) {
+      if (!isShardedSessionId(session.id)) {
+        continue;
+      }
+      try {
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, session.id, tenantId);
+        const deleted = await sessionStore.invalidateSessionRpc(session.id);
+        if (deleted) {
+          storeRevokedCount += 1;
+        } else {
+          log.warn('Failed to delete session from SessionStore', {
+            action: 'session_delete',
+            sessionId: session.id,
+          });
+        }
+      } catch {
+        log.warn('Failed to route to session store', {
+          action: 'session_delete',
+          sessionId: session.id,
+        });
+      }
+    }
 
     const deleteResult = await authCtx.coreAdapter.execute(
       'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?',
@@ -606,22 +626,24 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
       action: 'revoke_all_sessions',
       userId,
       revokedCount: dbRevokedCount,
+      storeRevokedCount,
     });
 
     await createAuditLogFromContext(c, 'user.sessions_revoked', 'user', userId, {
       revoked_count: dbRevokedCount,
+      store_revoked_count: storeRevokedCount,
     });
     scheduleAdminAuditLog(c, 'user.sessions_revoked', userId, 'success', {
       revoked_count: dbRevokedCount,
+      store_revoked_count: storeRevokedCount,
     });
 
     return c.json({
       success: true,
-      message:
-        'All user sessions revoked from D1. Active sessions in memory will expire naturally.',
+      message: 'All located user sessions were revoked.',
       userId,
       revokedCount: dbRevokedCount,
-      note: 'Sessions in sharded SessionStore cannot be bulk-deleted by userId',
+      storeRevokedCount,
     });
   } catch (error) {
     logSanitizedError('Admin revoke all sessions error', error);

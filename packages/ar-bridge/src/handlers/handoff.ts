@@ -23,7 +23,7 @@ import {
   getTenantIdFromContext,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  hasPIIDatabase,
+  CanonicalRuntimeUserStore,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -391,23 +391,20 @@ async function createHandoffSession(
   const asSession: Session = asSessionResult;
 
   // 7. Get user information
-  const userCore = await authCtx.repositories.userCore.findById(handoffData.userId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+  const runtimeUser = await runtimeUsers.findById(handoffData.userId);
 
-  if (!userCore || !userCore.is_active) {
+  if (!runtimeUser) {
     log.warn('User not found or inactive', {
       userId: handoffData.userId,
       client_id,
     });
     return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
-  }
-
-  let userPII: { email: string | null; name: string | null } = { email: null, name: null };
-  if (hasPIIDatabase(c)) {
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    const piiResult = await piiCtx.piiRepositories.userPII.findById(handoffData.userId);
-    if (piiResult) {
-      userPII = { email: piiResult.email, name: piiResult.name || null };
-    }
   }
 
   // 8. Issue a new RP-specific Access Token (Session)
@@ -423,8 +420,8 @@ async function createHandoffSession(
     handoffData.userId,
     rpTokenTTL,
     {
-      email: userPII.email,
-      name: userPII.name,
+      email: runtimeUser.email,
+      name: runtimeUser.name,
       amr: asSession.data?.amr || ['external_idp'],
       acr: asSession.data?.acr || 'urn:mace:incommon:iap:bronze',
       client_id,
@@ -449,9 +446,9 @@ async function createHandoffSession(
     userId: handoffData.userId,
     user: {
       id: handoffData.userId,
-      email: userPII.email,
-      name: userPII.name,
-      emailVerified: userCore.email_verified,
+      email: runtimeUser.email,
+      name: runtimeUser.name,
+      emailVerified: runtimeUser.email_verified === 1,
     },
   };
 }

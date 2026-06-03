@@ -46,7 +46,10 @@ describe('tenant-vanity-domain-resolver', () => {
     const result = await resolveTenantFromVanityHost(adapter, kv, 'Login.Example.com');
 
     expect(result).toBe('tenant-123');
-    expect(adapter.queryOne).toHaveBeenCalledOnce();
+    expect(adapter.queryOne).toHaveBeenCalledWith(
+      expect.stringContaining("tenants.lifecycle_state = 'active'"),
+      ['login.example.com']
+    );
     expect(kv.put).toHaveBeenCalledOnce();
   });
 

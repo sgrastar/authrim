@@ -91,6 +91,7 @@ export * from './utils/refresh-token-sharding';
 export * from './utils/refresh-token-store';
 export * from './utils/oauth-config';
 export * from './utils/oidc-claims';
+export * from './utils/canonical-runtime-claims';
 export * from './utils/dcr-config';
 export * from './utils/encryption-config';
 export * from './utils/settings-manager';
@@ -193,6 +194,9 @@ export * from './services/object-artifact-crypto';
 export * from './services/object-artifact-store';
 export * from './services/object-catalog';
 export * from './services/sensitive-detail-chunk-store';
+export * from './services/identity-identifier-bridge';
+export * from './services/identity-resolution';
+export * from './services/identity-release-consent';
 export * from './services/logging-runtime-policy';
 export * from './services/logging-runtime-emitter';
 export * from './services/pii-compensation-policy';
@@ -418,6 +422,11 @@ export * from './db';
 
 // Repositories (PII/Non-PII separation)
 export * from './repositories';
+export {
+  CanonicalRuntimeUserStore,
+  type CanonicalRuntimeUserCreateInput,
+  type CanonicalRuntimeUserStoreOptions,
+} from './repositories/identity';
 
 // Context (PII/Non-PII separation)
 export * from './context';

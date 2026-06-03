@@ -72,6 +72,167 @@ function createMockAdapter(
       if (sql.includes('FROM users_pii')) {
         return queryResults.get('users_pii') || [];
       }
+      if (sql.includes('FROM identity_accounts')) {
+        const userId = String(params?.[0] ?? 'user-claims');
+        return [
+          {
+            id: `account:${userId}`,
+            tenant_id: String(params?.[1] ?? 'tenant-claims'),
+            account_type: 'user',
+            lifecycle_state: 'active',
+            legacy_user_id: userId,
+            primary_subject_id: `subject:${userId}`,
+            display_label: null,
+            metadata_json: null,
+            created_at: 1,
+            updated_at: 1,
+            deleted_at: null,
+          },
+        ];
+      }
+      if (sql.includes('FROM identity_subjects')) {
+        return [
+          {
+            id: String(params?.[0] ?? 'subject:user-claims'),
+            tenant_id: String(params?.[1] ?? 'tenant-claims'),
+            subject_type: 'person',
+            lifecycle_state: 'active',
+            display_label: null,
+            created_at: 1,
+            updated_at: 1,
+            deleted_at: null,
+          },
+        ];
+      }
+      if (sql.includes('FROM profiles')) {
+        const pii = queryResults.get('users_pii')?.[0] as Record<string, unknown> | undefined;
+        return [
+          {
+            id: 'profile:user-claims',
+            tenant_id: String(params?.[1] ?? 'tenant-claims'),
+            subject_id: String(params?.[0] ?? 'subject:user-claims'),
+            profile_type: 'default',
+            lifecycle_state: 'active',
+            locale: pii?.locale ?? null,
+            zoneinfo: pii?.zoneinfo ?? null,
+            created_at: 1,
+            updated_at: 1,
+            deleted_at: null,
+          },
+        ];
+      }
+      if (sql.includes('FROM profile_attribute_values')) {
+        const pii = queryResults.get('users_pii')?.[0] as Record<string, unknown> | undefined;
+        const attrs: unknown[] = [];
+        for (const field of ['given_name', 'family_name', 'birthdate']) {
+          if (pii?.[field]) {
+            attrs.push({
+              id: `attr:${field}`,
+              tenant_id: String(params?.[1] ?? 'tenant-claims'),
+              profile_id: String(params?.[0] ?? 'profile:user-claims'),
+              catalog_entry_id: `field.canonical.${field}`,
+              value_type: 'reference',
+              value_json: null,
+              value_storage_ref: `canonical-sensitive://tenant-claims/user-claims/${field}`,
+              classification: 'sensitive',
+              purpose: 'profile',
+              is_primary: 0,
+              display_order: attrs.length,
+              lifecycle_state: 'active',
+              created_at: 1,
+              updated_at: 1,
+              deleted_at: null,
+            });
+          }
+        }
+        if (pii?.address_country || pii?.address_region) {
+          attrs.push({
+            id: 'attr:address',
+            tenant_id: String(params?.[1] ?? 'tenant-claims'),
+            profile_id: String(params?.[0] ?? 'profile:user-claims'),
+            catalog_entry_id: 'field.canonical.address',
+            value_type: 'json',
+            value_json: JSON.stringify({
+              country: pii.address_country,
+              region: pii.address_region,
+            }),
+            value_storage_ref: null,
+            classification: 'sensitive',
+            purpose: 'profile',
+            is_primary: 0,
+            display_order: attrs.length,
+            lifecycle_state: 'active',
+            created_at: 1,
+            updated_at: 1,
+            deleted_at: null,
+          });
+        }
+        if (pii?.metadata) {
+          attrs.push({
+            id: 'attr:metadata',
+            tenant_id: String(params?.[1] ?? 'tenant-claims'),
+            profile_id: String(params?.[0] ?? 'profile:user-claims'),
+            catalog_entry_id: 'metadata',
+            value_type: 'json',
+            value_json: pii.metadata,
+            value_storage_ref: null,
+            classification: 'internal',
+            purpose: 'profile',
+            is_primary: 0,
+            display_order: attrs.length,
+            lifecycle_state: 'active',
+            created_at: 1,
+            updated_at: 1,
+            deleted_at: null,
+          });
+        }
+        return attrs;
+      }
+      if (sql.includes('FROM contact_points')) {
+        const pii = queryResults.get('users_pii')?.[0] as Record<string, unknown> | undefined;
+        return [
+          ...(pii?.email
+            ? [
+                {
+                  id: 'contact:email',
+                  tenant_id: String(params?.[1] ?? 'tenant-claims'),
+                  subject_id: String(params?.[0] ?? 'subject:user-claims'),
+                  account_id: 'account:user-claims',
+                  contact_type: 'email',
+                  purpose: 'primary',
+                  normalized_hash: 'email',
+                  value_storage_ref: 'canonical-sensitive://tenant-claims/user-claims/email',
+                  is_primary: 1,
+                  verification_state: 'verified',
+                  lifecycle_state: 'active',
+                  created_at: 1,
+                  updated_at: 1,
+                  deleted_at: null,
+                },
+              ]
+            : []),
+          ...(pii?.phone_number
+            ? [
+                {
+                  id: 'contact:phone',
+                  tenant_id: String(params?.[1] ?? 'tenant-claims'),
+                  subject_id: String(params?.[0] ?? 'subject:user-claims'),
+                  account_id: 'account:user-claims',
+                  contact_type: 'phone',
+                  purpose: 'primary',
+                  normalized_hash: 'phone',
+                  value_storage_ref: 'canonical-sensitive://tenant-claims/user-claims/phone_number',
+                  is_primary: 1,
+                  verification_state: 'unverified',
+                  lifecycle_state: 'active',
+                  created_at: 1,
+                  updated_at: 1,
+                  deleted_at: null,
+                },
+              ]
+            : []),
+        ];
+      }
       if (sql.includes('COUNT(*)') && sql.includes('consent_statement_localizations')) {
         return queryResults.get('localization_count') || [{ cnt: 0 }];
       }
@@ -79,6 +240,15 @@ function createMockAdapter(
         return queryResults.get('version_content_type') || [];
       }
       return [];
+    }),
+    queryOne: vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM identity_sensitive_values')) {
+        const pii = queryResults.get('users_pii')?.[0] as Record<string, unknown> | undefined;
+        const value = pii?.[String(params?.[2])];
+        return value === undefined ? null : { value_json: JSON.stringify(value) };
+      }
+      const rows = await (createMockAdapter({ queryResults }).query as any)(sql, params);
+      return rows[0] ?? null;
     }),
     execute: vi.fn(async () => {
       if (options.executeError) throw options.executeError;
@@ -712,16 +882,8 @@ describe('Consent Statements Utility', () => {
       });
 
       const queryCalls = (adapter.query as any).mock.calls as Array<[string, unknown[]]>;
-      expect(queryCalls).toContainEqual([
-        'SELECT email_verified FROM users_core WHERE id = ? AND tenant_id = ?',
-        ['user-claims', 'tenant-claims'],
-      ]);
-      expect(queryCalls).toContainEqual([
-        `SELECT email, locale, given_name, family_name, birthdate, phone_number,
-              address_country, address_region, zoneinfo, metadata
-       FROM users_pii WHERE id = ? AND tenant_id = ?`,
-        ['user-claims', 'tenant-claims'],
-      ]);
+      expect(queryCalls.some(([sql]) => sql.includes('FROM profile_attribute_values'))).toBe(true);
+      expect(queryCalls.some(([sql]) => sql.includes('FROM contact_points'))).toBe(true);
     });
   });
 });

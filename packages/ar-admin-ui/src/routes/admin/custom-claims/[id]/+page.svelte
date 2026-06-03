@@ -160,8 +160,7 @@
 				is_exportable: editForm.is_exportable,
 				is_vc_claim: editForm.is_vc_claim,
 				show_on_registration: editForm.show_on_registration,
-				registration_required:
-					editForm.show_on_registration && editForm.registration_required,
+				registration_required: editForm.show_on_registration && editForm.registration_required,
 				registration_order: editForm.registration_order,
 				registration_placeholder: editForm.registration_placeholder || null
 			});
@@ -250,9 +249,7 @@
 </script>
 
 <svelte:head>
-	<title
-		>{schema?.display_label ?? 'Schema'} — Schema Settings — Admin Dashboard — Authrim</title
-	>
+	<title>{schema?.display_label ?? 'Schema'} — Schema Settings — Admin Dashboard — Authrim</title>
 </svelte:head>
 
 <div class="admin-page">

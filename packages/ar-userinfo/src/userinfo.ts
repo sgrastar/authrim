@@ -1,9 +1,10 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalRuntimeUserProjectionRepository,
+  CanonicalSensitiveValueResolver,
   introspectTokenFromContext,
   getClientCached,
-  getCachedUser,
   createPIIContextFromHono,
   resolveCustomClaimRuntimeSourcesFromEnv,
   encryptJWT,
@@ -21,6 +22,7 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  canonicalProjectionToOIDCClaimsUser,
   canServeUserInfoWithPIIStatus,
   resolveOIDCPIIRequirement,
 } from '@authrim/ar-lib-core';
@@ -156,15 +158,15 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const parsedClaims = parseClaimsRequest(claimsParam);
   const claimsRequest = parsedClaims.ok ? parsedClaims.request : undefined;
 
-  // Fetch user data from KV cache (falls back to D1 on cache miss)
-  // This dramatically reduces D1 calls under high load
   const piiCtx = createPIIContextFromHono(c, tenantId);
-  const user = await getCachedUser(c.env, tenantId, sub, {
-    coreDb: piiCtx.coreAdapter,
-    piiDb: piiCtx.defaultPiiAdapter,
-    cacheScope: piiCtx.userCacheScope,
-    piiCacheMode: piiCtx.piiCacheMode,
-  });
+  const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+    piiCtx.coreAdapter,
+    tenantId,
+    new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
+  );
+  const projection = await canonicalProjectionRepository.findByLegacyUserId(sub);
+  const user = projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
+  const piiStatus = undefined;
 
   if (!user) {
     // Security: Generic message to prevent user enumeration
@@ -183,8 +185,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     claimsRequest,
     targets: ['userinfo'],
   });
-  if (user.pii_status) {
-    const piiAccess = canServeUserInfoWithPIIStatus(user.pii_status, {
+  if (piiStatus) {
+    const piiAccess = canServeUserInfoWithPIIStatus(piiStatus, {
       requiresPII: piiRequirement.requiresPII,
     });
     if (!piiAccess.ok) {

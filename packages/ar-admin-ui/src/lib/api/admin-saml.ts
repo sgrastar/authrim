@@ -94,6 +94,8 @@ export interface SAMLAttributeReleaseRule {
 	required?: boolean;
 }
 
+export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
+
 export interface SAMLProviderConfig {
 	description?: string;
 	providerName?: string;
@@ -115,6 +117,8 @@ export interface SAMLProviderConfig {
 		mode: 'observe' | 'require_any';
 		allowedClassRefs?: string[];
 	};
+	jitEmailLinkingPolicy?: SAMLJitEmailLinkingPolicy;
+	allowSyntheticEmailFallback?: boolean;
 	authnContextClassRefMode?: 'legacy_static' | 'session';
 	defaultAuthnContextClassRef?: string;
 	passkeyAuthnContextClassRef?: string;
@@ -202,6 +206,28 @@ export interface SAMLAttributePreset {
 	attributeReleasePolicy: {
 		attributes: SAMLAttributeReleaseRule[];
 	};
+}
+
+export interface SAMLLocalSigningDRBundle {
+	kind: 'authrim.saml_local_signing_secret_dr_bundle.encrypted.v1';
+	version: 1;
+	tenantId: string;
+	generatedAt: string;
+	encrypted: true;
+	sensitive: true;
+	warning: string;
+	kdf: {
+		name: 'PBKDF2';
+		hash: 'SHA-256';
+		iterations: number;
+		salt: string;
+	};
+	cipher: {
+		name: 'AES-GCM';
+		iv: string;
+	};
+	payload: string;
+	payloadEncoding: 'base64';
 }
 
 export interface CreateSAMLAttributePresetRequest {
@@ -339,6 +365,120 @@ export interface SAMLTrustCertificatePreview {
 	warnings: string[];
 }
 
+function isFederationCertificate(
+	value: unknown
+): value is SAMLFederationTrustProfile['certificates'][number] {
+	if (!value || typeof value !== 'object') return false;
+	const certificate = value as Partial<SAMLFederationTrustProfile['certificates'][number]>;
+	return (
+		typeof certificate.id === 'string' &&
+		typeof certificate.certificate === 'string' &&
+		typeof certificate.fingerprintSha256 === 'string' &&
+		typeof certificate.createdAt === 'number'
+	);
+}
+
+function stringArray(value: unknown): string[] {
+	return Array.isArray(value)
+		? value.filter((item): item is string => typeof item === 'string')
+		: [];
+}
+
+function profileFromTrustSource(source: {
+	id: string;
+	tenantId: string;
+	displayName: string;
+	lifecycleState: string;
+	protocolPayload?: Record<string, unknown> | null;
+	createdAt?: number;
+	updatedAt?: number;
+}): SAMLFederationTrustProfile | null {
+	const payload = source.protocolPayload ?? {};
+	const certificates = Array.isArray(payload.certificates)
+		? payload.certificates.filter(isFederationCertificate)
+		: [];
+	const metadataUrlPatterns = stringArray(payload.metadataUrlPatterns);
+	if (certificates.length === 0 && metadataUrlPatterns.length === 0) {
+		return null;
+	}
+	const policy = payload.policy;
+	return {
+		id: source.id,
+		tenantId: source.tenantId,
+		name: source.displayName,
+		description: typeof payload.description === 'string' ? payload.description : undefined,
+		metadataUrlPatterns,
+		certificates,
+		policy: policy === 'strict' || policy === 'warn' || policy === 'disabled' ? policy : undefined,
+		enabled: source.lifecycleState === 'active',
+		createdAt: source.createdAt ?? 0,
+		updatedAt: source.updatedAt ?? 0
+	};
+}
+
+async function buildFederationTrustSourceRequest(
+	request: SAMLFederationTrustProfileRequest,
+	trustSourceId?: string
+) {
+	const now = Date.now();
+	const certificates = await Promise.all(
+		request.certificates.map(async (certificate) => {
+			const preview = await adminSAMLAPI.previewTrustCertificate({
+				certificate: certificate.certificate
+			});
+			return {
+				id: crypto.randomUUID(),
+				name: certificate.name,
+				certificate: preview.certificate,
+				fingerprintSha256: preview.fingerprintSha256,
+				createdAt: now
+			};
+		})
+	);
+	const lifecycleState: 'draft' | 'active' = request.enabled === false ? 'draft' : 'active';
+	return {
+		sourceType: 'saml_aggregate' as const,
+		sourceKey: trustSourceId
+			? `saml-profile:${trustSourceId}`
+			: `saml-profile:${crypto.randomUUID()}`,
+		displayName: request.name,
+		lifecycleState,
+		protocolPayload: {
+			description: request.description ?? null,
+			metadataUrlPatterns: request.metadataUrlPatterns,
+			policy: request.policy ?? 'warn',
+			certificates
+		},
+		anchors: certificates.map((certificate) => ({
+			anchorType: 'x509_sha256',
+			anchorHash: certificate.fingerprintSha256,
+			anchorRef: certificate.id
+		})),
+		scopeBindings: [{ scopeType: 'tenant', priority: 0 }]
+	};
+}
+
+function profileFromRequestResult(
+	id: string,
+	tenantId: string | undefined,
+	request: SAMLFederationTrustProfileRequest,
+	sourceRequest: Awaited<ReturnType<typeof buildFederationTrustSourceRequest>>,
+	createdAt = Date.now()
+): SAMLFederationTrustProfile {
+	return {
+		id,
+		tenantId: tenantId ?? 'default',
+		name: request.name,
+		description: request.description,
+		metadataUrlPatterns: request.metadataUrlPatterns,
+		certificates: sourceRequest.protocolPayload.certificates,
+		policy: request.policy,
+		enabled: request.enabled !== false,
+		createdAt,
+		updatedAt: Date.now()
+	};
+}
+
 export interface SAMLMetadataBatchStatus {
 	batchId: string;
 	tenantId: string;
@@ -414,6 +554,40 @@ export const adminSAMLAPI = {
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to update SAML local signing settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async exportLocalSigningDRBundle(passphrase: string): Promise<SAMLLocalSigningDRBundle> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-settings/local-signing/dr-bundle`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ passphrase })
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to export SAML signing DR bundle');
+		}
+
+		return (await response.json()) as SAMLLocalSigningDRBundle;
+	},
+
+	async importLocalSigningDRBundle(bundle: unknown, passphrase: string): Promise<SAMLSettings> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-settings/local-signing/dr-bundle/import`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ bundle, passphrase })
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to import SAML signing DR bundle');
 		}
 
 		return (await response.json()) as SAMLSettings;
@@ -636,43 +810,62 @@ export const adminSAMLAPI = {
 	},
 
 	async listFederationTrustProfiles(): Promise<{ profiles: SAMLFederationTrustProfile[] }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-federation-trust-profiles`, {
-			method: 'GET'
-		});
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			{ method: 'GET' }
+		);
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to list federation trust profiles');
 		}
 
-		return await response.json();
+		const body = (await response.json()) as {
+			federationTrustSources: Array<Parameters<typeof profileFromTrustSource>[0]>;
+		};
+		return {
+			profiles: body.federationTrustSources
+				.filter((source) =>
+					['saml_aggregate', 'saml_metadata', 'saml_federation'].includes(
+						(source as { sourceType?: string }).sourceType ?? ''
+					)
+				)
+				.map(profileFromTrustSource)
+				.filter((profile): profile is SAMLFederationTrustProfile => profile !== null)
+		};
 	},
 
 	async createFederationTrustProfile(
 		request: SAMLFederationTrustProfileRequest
 	): Promise<SAMLFederationTrustProfile> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-federation-trust-profiles`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(request)
-		});
+		const sourceRequest = await buildFederationTrustSourceRequest(request);
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(sourceRequest)
+			}
+		);
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to create federation trust profile');
 		}
 
-		return await response.json();
+		const body = (await response.json()) as { id: string; tenantId?: string };
+		return profileFromRequestResult(body.id, body.tenantId, request, sourceRequest);
 	},
 
 	async updateFederationTrustProfile(
 		id: string,
 		request: SAMLFederationTrustProfileRequest
 	): Promise<SAMLFederationTrustProfile> {
+		const sourceRequest = await buildFederationTrustSourceRequest(request, id);
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/saml-federation-trust-profiles/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
 			{
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(request)
+				body: JSON.stringify(sourceRequest)
 			}
 		);
 
@@ -680,12 +873,13 @@ export const adminSAMLAPI = {
 			throw await handleAPIError(response, 'Failed to update federation trust profile');
 		}
 
-		return await response.json();
+		const body = (await response.json()) as { id: string; tenantId?: string };
+		return profileFromRequestResult(body.id, body.tenantId, request, sourceRequest);
 	},
 
 	async deleteFederationTrustProfile(id: string): Promise<{ success: boolean }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/saml-federation-trust-profiles/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
 			{ method: 'DELETE' }
 		);
 

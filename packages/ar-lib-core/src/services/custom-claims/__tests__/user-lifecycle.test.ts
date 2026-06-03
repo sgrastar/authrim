@@ -60,16 +60,20 @@ function createMockCoreDb(state: {
           return { results: [] };
         }),
         first: vi.fn(async () => {
-          if (sql.includes('SELECT lifecycle_state FROM users_core')) {
+          if (sql.includes('SELECT id, lifecycle_state FROM identity_accounts')) {
             const [userId] = args;
-            return { lifecycle_state: state.lifecycleStates.get(userId) ?? null };
+            return {
+              id: `account-${userId}`,
+              lifecycle_state: state.lifecycleStates.get(userId) ?? null,
+            };
           }
 
           return null;
         }),
         run: vi.fn(async () => {
-          if (sql.includes('UPDATE users_core SET lifecycle_state = ?')) {
-            const [lifecycleState, _updatedAt, userId] = args;
+          if (sql.includes('UPDATE identity_accounts SET lifecycle_state = ?')) {
+            const [lifecycleState, _updatedAt, accountId] = args;
+            const userId = String(accountId).replace(/^account-/, '');
             state.lifecycleStates.set(userId, lifecycleState);
           }
 

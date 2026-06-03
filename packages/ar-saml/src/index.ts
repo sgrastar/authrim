@@ -64,16 +64,14 @@ import {
   handleGetSAMLSettings,
   handleUpdateSAMLSettings,
   handleUpdateSAMLLocalSigning,
+  handleExportSAMLLocalSigningDRBundle,
+  handleImportSAMLLocalSigningDRBundle,
   handleListAttributePresets,
   handleCreateAttributePreset,
   handleDeleteAttributePreset,
   handlePreviewMetadata,
   handleImportMetadata,
   handleRefreshMetadata,
-  handleListFederationTrustProfiles,
-  handleCreateFederationTrustProfile,
-  handleUpdateFederationTrustProfile,
-  handleDeleteFederationTrustProfile,
   handlePreviewFederationTrustCertificate,
   handleListAggregatePreviewEntities,
   handleStartAggregateBatchCreate,
@@ -197,6 +195,11 @@ app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
 app.get('/api/admin/saml-settings', handleGetSAMLSettings);
 app.put('/api/admin/saml-settings', handleUpdateSAMLSettings);
 app.post('/api/admin/saml-settings/local-signing', handleUpdateSAMLLocalSigning);
+app.post('/api/admin/saml-settings/local-signing/dr-bundle', handleExportSAMLLocalSigningDRBundle);
+app.post(
+  '/api/admin/saml-settings/local-signing/dr-bundle/import',
+  handleImportSAMLLocalSigningDRBundle
+);
 
 /**
  * List SAML Providers
@@ -253,11 +256,6 @@ app.post(
 );
 app.get('/api/admin/saml-metadata/batches/:batchId', handleGetAggregateBatchStatus);
 app.post('/api/admin/saml-metadata/certificate-preview', handlePreviewFederationTrustCertificate);
-
-app.get('/api/admin/saml-federation-trust-profiles', handleListFederationTrustProfiles);
-app.post('/api/admin/saml-federation-trust-profiles', handleCreateFederationTrustProfile);
-app.put('/api/admin/saml-federation-trust-profiles/:id', handleUpdateFederationTrustProfile);
-app.delete('/api/admin/saml-federation-trust-profiles/:id', handleDeleteFederationTrustProfile);
 
 /**
  * Import Metadata

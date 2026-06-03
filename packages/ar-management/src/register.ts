@@ -22,7 +22,6 @@ import {
   validateExternalUrl,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  hasPIIDatabase,
   createErrorResponse,
   createCompatibilityErrorResponse,
   AR_ERROR_CODES,
@@ -42,6 +41,7 @@ import {
   getDCRSetting,
   // Write-Through cache for client metadata
   putClient,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
@@ -1322,57 +1322,48 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         country: 'USA',
       };
 
-      // Create fixed test user with complete profile (PII/Non-PII DB separation) via Adapter
-      const existingTestUser = await authCtx.repositories.userCore.findById(testUserId);
-      if (!existingTestUser) {
-        await authCtx.repositories.userCore.createUser({
-          id: testUserId,
-          tenant_id: tenantId,
-          email_verified: true,
-          phone_number_verified: true,
-          is_active: true,
-          pii_partition: tenantId,
-          pii_status: 'active',
-        });
-      }
-
-      // Insert into users_pii (PII database) via PIIContext
-      if (hasPIIDatabase(c)) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        const piiAdapter = piiCtx.getPiiAdapter(tenantId);
-        const existingTestUserPII = await piiCtx.piiRepositories.userPII.findByUserId(
-          testUserId,
-          piiAdapter
-        );
-        if (!existingTestUserPII) {
-          await piiCtx.piiRepositories.userPII.createPII(
-            {
-              id: testUserId,
-              tenant_id: tenantId,
-              email: 'test@example.com',
-              name: 'John Doe',
-              given_name: 'John',
-              family_name: 'Doe',
-              nickname: 'Johnny',
-              preferred_username: 'test',
-              picture: 'https://example.com/avatar.jpg',
-              website: 'https://example.com',
-              gender: 'male',
-              birthdate: '1990-01-01',
-              zoneinfo: 'America/New_York',
-              locale: 'en-US',
-              phone_number: '+1-555-0100',
-              address_formatted: testAddress.formatted,
-              address_street_address: testAddress.street_address,
-              address_locality: testAddress.locality,
-              address_region: testAddress.region,
-              address_postal_code: testAddress.postal_code,
-              address_country: testAddress.country,
-            },
-            piiAdapter
-          );
-        }
-      }
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      await new CanonicalRuntimeUserStore({
+        coreAdapter: authCtx.coreAdapter,
+        piiAdapter: piiCtx.defaultPiiAdapter,
+        tenantId,
+      }).syncUser({
+        userId: testUserId,
+        email: 'test@example.com',
+        name: 'John Doe',
+        active: true,
+        emailVerified: true,
+        phoneNumberVerified: true,
+        userType: 'end_user',
+        sourceRef: 'oidc-conformance-registration',
+        piiFields: {
+          given_name: true,
+          family_name: true,
+          nickname: true,
+          preferred_username: true,
+          picture: true,
+          website: true,
+          gender: true,
+          birthdate: true,
+          zoneinfo: true,
+          locale: true,
+          phone_number: true,
+        },
+        sensitiveValues: {
+          given_name: 'John',
+          family_name: 'Doe',
+          nickname: 'Johnny',
+          preferred_username: 'test',
+          picture: 'https://example.com/avatar.jpg',
+          website: 'https://example.com',
+          gender: 'male',
+          birthdate: '1990-01-01',
+          zoneinfo: 'America/New_York',
+          locale: 'en-US',
+          phone_number: '+1-555-0100',
+        },
+        addressJson: JSON.stringify(testAddress),
+      });
 
       log.info('Test user created/verified: user-oidc-conformance-test', { action: 'register' });
     }

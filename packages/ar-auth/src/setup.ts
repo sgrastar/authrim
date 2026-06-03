@@ -16,6 +16,8 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalIdentityRepository,
+  CanonicalRuntimeUserWriter,
   // Setup utilities
   isSetupDisabled,
   validateSetupToken,
@@ -84,8 +86,8 @@ function toBase64URLString(input: CredentialIDLike): string {
 }
 
 /**
- * Get allowed origins from KV (priority) or environment variables
- * Priority: KV > env > ISSUER_URL
+ * Get allowed origins from environment variables or KV
+ * Priority: env (ALLOWED_ORIGINS) > KV > ISSUER_URL
  */
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
@@ -95,7 +97,7 @@ async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<stri
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
 
-  const allowedOriginsEnv = allowedOriginsValue || env.ALLOWED_ORIGINS || env.ISSUER_URL;
+  const allowedOriginsEnv = env.ALLOWED_ORIGINS || allowedOriginsValue || env.ISSUER_URL;
   return parseAllowedOrigins(allowedOriginsEnv);
 }
 
@@ -340,15 +342,15 @@ async function rollbackUserCreation(
 
     // Fallback to legacy DB
     const authCtx = createAuthContextFromHono(c, tenantId);
-
-    // Delete from users_core
-    await authCtx.repositories.userCore.delete(userId);
-
-    // Delete from the configured PII user store
     const piiCtx = createPIIContextFromHono(c, tenantId);
-    await piiCtx.piiRepositories.userPII.delete(userId);
 
-    moduleLogger.info('User rollback completed (legacy)', {
+    const writer = new CanonicalRuntimeUserWriter(
+      new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId),
+      piiCtx.defaultPiiAdapter
+    );
+    await writer.deleteRuntimeUser(userId);
+
+    moduleLogger.info('User rollback completed (canonical runtime)', {
       action: 'rollback_completed',
       userId: userId.substring(0, 8) + '...',
       database: 'DB_CORE',
@@ -579,31 +581,36 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       // Set email as verified for initial admin
       await adminUserRepo.setEmailVerified(userId);
     } else {
-      // Fallback to legacy DB (users_core + users_pii)
+      // Fallback to canonical runtime user store when DB_ADMIN is unavailable.
       const authCtx = createAuthContextFromHono(c, tenantId);
-
-      // Create user in users_core (non-PII)
-      // Note: user_type is 'end_user' | 'admin' | 'm2m' - admin for initial setup
-      await authCtx.repositories.userCore.createUser({
-        id: userId,
-        tenant_id: tenantId,
-        email_verified: true, // Admin email is trusted
-        user_type: 'admin',
-        pii_partition: tenantId,
-        pii_status: 'pending',
-      });
-      createdUserId = userId;
-
-      // Create user in the configured PII store
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const preferredUsername = email.split('@')[0];
-      await piiCtx.piiRepositories.userPII.createPII({
-        id: userId,
-        tenant_id: tenantId,
-        email: email.toLowerCase(),
-        name: name || null,
-        preferred_username: preferredUsername,
+
+      const writer = new CanonicalRuntimeUserWriter(
+        new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId),
+        piiCtx.defaultPiiAdapter
+      );
+      await writer.createFromRuntimeUser({
+        userId,
+        tenantId,
+        active: true,
+        emailVerified: true,
+        phoneNumberVerified: false,
+        userType: 'admin',
+        displayName: name || email.toLowerCase(),
+        sourceRef: 'setup:/api/admin-init-setup/initialize',
+        piiFields: {
+          email: true,
+          name: true,
+          preferred_username: true,
+        },
+        sensitiveValues: {
+          email: email.toLowerCase(),
+          name: name || null,
+          preferred_username: preferredUsername,
+        },
       });
+      createdUserId = userId;
     }
 
     // Assign super_admin role

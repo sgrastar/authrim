@@ -427,7 +427,8 @@ export async function getOrCreateCNonce(
   userId: string
 ): Promise<{ nonce: string; expiresIn: number }> {
   const kvKey = `cnonce:${userId}`;
-  const expiresIn = parseInt(env.C_NONCE_EXPIRY_SECONDS || '300', 10);
+  const parsedExpiresIn = parseInt(env.C_NONCE_EXPIRY_SECONDS || '300', 10);
+  const expiresIn = Number.isNaN(parsedExpiresIn) || parsedExpiresIn <= 0 ? 300 : parsedExpiresIn;
 
   // Try to get existing nonce
   const existing = await env.AUTHRIM_CONFIG.get(kvKey);

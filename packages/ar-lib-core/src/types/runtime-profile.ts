@@ -22,8 +22,8 @@ export type StorageDeploymentProfile = 'shared-d1' | 'tenant-d1' | 'external-dur
 export type StorageDriver = 'd1' | 'postgres' | 'mysql';
 export type StorageLogicalSource =
   | 'control'
-  | 'users_core'
-  | 'users_pii'
+  | 'identity_core'
+  | 'identity_pii'
   | 'transient_auth'
   | 'audit'
   | 'custom_claims'
@@ -33,8 +33,8 @@ export type StorageLogicalSource =
   | 'consent'
   | 'authorization';
 export type StorageSlice =
-  | 'users_core'
-  | 'users_pii'
+  | 'identity_core'
+  | 'identity_pii'
   | 'custom_claims'
   | 'registration_fields'
   | 'custom_pii'
@@ -229,8 +229,18 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
     logicalSources: {
       control: { driver: 'd1', bindingRef: 'DB_ADMIN', role: 'control', logicalSource: 'control' },
-      users_core: { driver: 'd1', bindingRef: 'DB', role: 'core', logicalSource: 'users_core' },
-      users_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii', logicalSource: 'users_pii' },
+      identity_core: {
+        driver: 'd1',
+        bindingRef: 'DB',
+        role: 'core',
+        logicalSource: 'identity_core',
+      },
+      identity_pii: {
+        driver: 'd1',
+        bindingRef: 'DB_PII',
+        role: 'pii',
+        logicalSource: 'identity_pii',
+      },
       transient_auth: {
         driver: 'd1',
         bindingRef: 'DB',
@@ -267,8 +277,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
       externalDurableMirror: 'disabled',
     },
     slices: {
-      users_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
-      users_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
+      identity_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
+      identity_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
       custom_claims: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       registration_fields: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       custom_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
@@ -301,8 +311,18 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
     logicalSources: {
       control: { driver: 'd1', bindingRef: 'DB_ADMIN', role: 'control', logicalSource: 'control' },
-      users_core: { driver: 'd1', bindingRef: 'DB', role: 'core', logicalSource: 'users_core' },
-      users_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii', logicalSource: 'users_pii' },
+      identity_core: {
+        driver: 'd1',
+        bindingRef: 'DB',
+        role: 'core',
+        logicalSource: 'identity_core',
+      },
+      identity_pii: {
+        driver: 'd1',
+        bindingRef: 'DB_PII',
+        role: 'pii',
+        logicalSource: 'identity_pii',
+      },
       transient_auth: {
         driver: 'd1',
         bindingRef: 'DB',
@@ -339,8 +359,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
       externalDurableMirror: 'disabled',
     },
     slices: {
-      users_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
-      users_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
+      identity_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
+      identity_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
       custom_claims: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       registration_fields: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       custom_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
@@ -373,17 +393,17 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
     logicalSources: {
       control: { driver: 'd1', bindingRef: 'DB_ADMIN', role: 'control', logicalSource: 'control' },
-      users_core: {
+      identity_core: {
         driver: 'd1',
         resolverRef: 'tenant-database-registry',
         role: 'tenant_core',
-        logicalSource: 'users_core',
+        logicalSource: 'identity_core',
       },
-      users_pii: {
+      identity_pii: {
         driver: 'd1',
         resolverRef: 'tenant-database-registry',
         role: 'tenant_pii',
-        logicalSource: 'users_pii',
+        logicalSource: 'identity_pii',
       },
       transient_auth: {
         driver: 'd1',
@@ -441,17 +461,17 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
       externalDurableMirror: 'disabled',
     },
     slices: {
-      users_core: {
+      identity_core: {
         driver: 'd1',
         resolverRef: 'tenant-database-registry',
         role: 'tenant_core',
-        logicalSource: 'users_core',
+        logicalSource: 'identity_core',
       },
-      users_pii: {
+      identity_pii: {
         driver: 'd1',
         resolverRef: 'tenant-database-registry',
         role: 'tenant_pii',
-        logicalSource: 'users_pii',
+        logicalSource: 'identity_pii',
       },
       custom_claims: {
         driver: 'd1',
@@ -469,7 +489,7 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
         driver: 'd1',
         resolverRef: 'tenant-database-registry',
         role: 'tenant_pii',
-        logicalSource: 'users_pii',
+        logicalSource: 'identity_pii',
       },
       passkeys: {
         driver: 'd1',
@@ -507,8 +527,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     version: 1,
     residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
     slices: {
-      users_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
-      users_pii: { driver: 'd1', bindingRef: 'DB', role: 'pii' },
+      identity_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
+      identity_pii: { driver: 'd1', bindingRef: 'DB', role: 'pii' },
       custom_claims: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       registration_fields: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       custom_pii: { driver: 'd1', bindingRef: 'DB', role: 'pii' },
@@ -538,8 +558,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     version: 1,
     residencyProfileId: EU_RESIDENCY_PROFILE_ID,
     slices: {
-      users_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
-      users_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
+      identity_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
+      identity_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
       custom_claims: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       registration_fields: { driver: 'd1', bindingRef: 'DB', role: 'core' },
       custom_pii: { driver: 'd1', bindingRef: 'DB_PII', role: 'pii' },
@@ -569,8 +589,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     version: 1,
     residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
     slices: {
-      users_core: { driver: 'postgres', connectionRef: 'core-primary', role: 'core' },
-      users_pii: { driver: 'postgres', connectionRef: 'pii-primary', role: 'pii' },
+      identity_core: { driver: 'postgres', connectionRef: 'core-primary', role: 'core' },
+      identity_pii: { driver: 'postgres', connectionRef: 'pii-primary', role: 'pii' },
       custom_claims: { driver: 'postgres', connectionRef: 'core-primary', role: 'core' },
       registration_fields: { driver: 'postgres', connectionRef: 'core-primary', role: 'core' },
       custom_pii: { driver: 'postgres', connectionRef: 'pii-primary', role: 'pii' },
@@ -613,17 +633,17 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
     residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
     logicalSources: {
       control: { driver: 'd1', bindingRef: 'DB_ADMIN', role: 'control', logicalSource: 'control' },
-      users_core: {
+      identity_core: {
         driver: 'postgres',
         connectionRef: 'core-primary',
         role: 'core',
-        logicalSource: 'users_core',
+        logicalSource: 'identity_core',
       },
-      users_pii: {
+      identity_pii: {
         driver: 'postgres',
         connectionRef: 'pii-primary',
         role: 'pii',
-        logicalSource: 'users_pii',
+        logicalSource: 'identity_pii',
       },
       transient_auth: {
         driver: 'd1',
@@ -681,8 +701,8 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
       externalDurableMirror: 'future',
     },
     slices: {
-      users_core: { driver: 'postgres', connectionRef: 'core-primary', role: 'core' },
-      users_pii: { driver: 'postgres', connectionRef: 'pii-primary', role: 'pii' },
+      identity_core: { driver: 'postgres', connectionRef: 'core-primary', role: 'core' },
+      identity_pii: { driver: 'postgres', connectionRef: 'pii-primary', role: 'pii' },
       custom_claims: { driver: 'postgres', connectionRef: 'core-primary', role: 'custom' },
       registration_fields: { driver: 'postgres', connectionRef: 'core-primary', role: 'custom' },
       custom_pii: { driver: 'postgres', connectionRef: 'pii-primary', role: 'pii' },

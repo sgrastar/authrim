@@ -27,7 +27,7 @@ import {
   generateId,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  hasPIIDatabase,
+  CanonicalRuntimeUserStore,
   createErrorResponse,
   AR_ERROR_CODES,
   isAnonymousAuthEnabled,
@@ -41,6 +41,19 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 
+function createCanonicalRuntimeUserStore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): CanonicalRuntimeUserStore {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+}
+
 /**
  * Upgrade method types
  */
@@ -51,6 +64,7 @@ type UpgradeMethod = 'email' | 'passkey' | 'social' | 'phone';
  */
 interface UpgradeRequest {
   method: UpgradeMethod;
+  upgrade_token?: string;
   preserve_sub?: boolean;
   migrate_data?: boolean;
   // Method-specific params
@@ -120,7 +134,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const { session } = sessionResult;
+    const { session, sessionId } = sessionResult;
     const clientId = (session.data?.client_id as string) || '';
 
     const body = await c.req.json<UpgradeRequest>();
@@ -146,6 +160,17 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
+
+    const upgradeToken = generateId();
+    const { stub: sessionStore } = getSessionStoreBySessionId(
+      c.env,
+      sessionId,
+      getTenantIdFromContext(c)
+    );
+    await sessionStore.updateSessionDataRpc(sessionId, {
+      pending_upgrade_token: upgradeToken,
+      pending_upgrade_method: method,
+    });
 
     // Return instructions for the chosen method
     const methodInstructions: Record<UpgradeMethod, object> = {
@@ -178,7 +203,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       success: true,
       user_id: session.userId,
-      upgrade_token: generateId(), // Token to track upgrade flow
+      upgrade_token: upgradeToken,
       instructions: methodInstructions[method],
     });
   } catch (error) {
@@ -219,6 +244,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     const body = await c.req.json<{
       method: UpgradeMethod;
+      upgrade_token?: string;
       preserve_sub?: boolean;
       migrate_data?: boolean;
       email?: string;
@@ -227,7 +253,35 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       external_user_id?: string;
     }>();
 
-    const { method, name, provider_id } = body;
+    const { method, name, provider_id, upgrade_token } = body;
+
+    if (!method || !['email', 'passkey', 'social', 'phone'].includes(method)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const pendingUpgradeToken = session.data?.pending_upgrade_token as string | undefined;
+    const pendingUpgradeMethod = session.data?.pending_upgrade_method as string | undefined;
+    if (
+      !upgrade_token ||
+      upgrade_token !== pendingUpgradeToken ||
+      method !== pendingUpgradeMethod
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const clientContract = await loadClientContractCached(
+      c,
+      c.env.AUTHRIM_CONFIG,
+      c.env,
+      tenantId,
+      clientId
+    );
+    if (
+      clientContract?.anonymousAuth?.allowedUpgradeMethods &&
+      !clientContract.anonymousAuth.allowedUpgradeMethods.includes(method)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
 
     // Security: For email upgrade, email MUST have been verified via OTP flow
     // The verified email is stored in session data by email-code.ts
@@ -286,24 +340,19 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         otpUserId = verifiedEmailUserId;
       }
     } else {
-      // For non-email methods, email is optional from request body
+      if (session.data?.verified_upgrade_method !== method) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      // For non-email methods, email is optional from request body after method proof.
       email = body.email;
     }
-
-    // Load client contract for default settings
-    const clientContract = await loadClientContractCached(
-      c,
-      c.env.AUTHRIM_CONFIG,
-      c.env,
-      tenantId,
-      clientId
-    );
 
     // Determine if we should preserve sub (client default or explicit request)
     const preserveSub =
       body.preserve_sub ?? clientContract?.anonymousAuth?.preserveSubOnUpgrade ?? true;
 
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     const now = Date.now();
 
     let finalUserId: string;
@@ -313,74 +362,43 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       // Keep the same user ID (sub)
       finalUserId = anonymousUserId;
 
-      // Update user type from 'anonymous' to 'end_user'
-      await authCtx.coreAdapter.execute(
-        `UPDATE users_core SET
-          user_type = 'end_user',
-          email_verified = CASE WHEN ? = 'email' THEN 1 ELSE email_verified END,
-          pii_status = CASE WHEN ? IS NOT NULL THEN 'pending' ELSE pii_status END,
-          updated_at = ?
-        WHERE id = ? AND tenant_id = ?`,
-        [method, email, now, anonymousUserId, tenantId]
-      );
-
-      // Create PII record if email provided
-      if (email && hasPIIDatabase(c)) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        try {
-          await piiCtx.piiRepositories.userPII.createPII({
-            id: anonymousUserId,
-            tenant_id: tenantId,
-            email: email.toLowerCase(),
-            name: name || null,
-            preferred_username: email.split('@')[0],
-          });
-
-          // Update pii_status to 'active'
-          await authCtx.repositories.userCore.updatePIIStatus(anonymousUserId, 'active');
-        } catch (piiError: unknown) {
-          log.warn('Failed to create PII', { action: 'create_pii' });
-          await authCtx.repositories.userCore.updatePIIStatus(anonymousUserId, 'failed');
-        }
-      }
+      await runtimeUsers.syncUser({
+        userId: anonymousUserId,
+        email: email?.toLowerCase() ?? null,
+        name: name || null,
+        active: true,
+        emailVerified: method === 'email',
+        userType: 'end_user',
+        sourceRef: 'anonymous_upgrade',
+        customAttributesJson: email
+          ? JSON.stringify({ preferred_username: email.split('@')[0] })
+          : null,
+      });
     } else {
       // Create new user with new sub
       finalUserId = generateId();
       previousUserId = anonymousUserId;
 
-      // Create new user in Core DB
-      await authCtx.repositories.userCore.createUser({
-        id: finalUserId,
-        tenant_id: tenantId,
-        email_verified: method === 'email',
-        user_type: 'end_user',
-        pii_partition: tenantId,
-        pii_status: email ? 'pending' : 'none',
+      await runtimeUsers.syncUser({
+        userId: finalUserId,
+        email: email?.toLowerCase() ?? null,
+        name: name || null,
+        active: true,
+        emailVerified: method === 'email',
+        userType: 'end_user',
+        sourceRef: 'anonymous_upgrade',
+        customAttributesJson: email
+          ? JSON.stringify({ preferred_username: email.split('@')[0] })
+          : null,
       });
 
-      // Create PII record for new user
-      if (email && hasPIIDatabase(c)) {
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        try {
-          await piiCtx.piiRepositories.userPII.createPII({
-            id: finalUserId,
-            tenant_id: tenantId,
-            email: email.toLowerCase(),
-            name: name || null,
-            preferred_username: email.split('@')[0],
-          });
-          await authCtx.repositories.userCore.updatePIIStatus(finalUserId, 'active');
-        } catch (piiError: unknown) {
-          log.warn('Failed to create PII for new user', { action: 'create_pii_new_user' });
-          await authCtx.repositories.userCore.updatePIIStatus(finalUserId, 'failed');
-        }
-      }
-
       // Deactivate old anonymous user
-      await authCtx.coreAdapter.execute(
-        'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
-        [now, anonymousUserId, tenantId]
-      );
+      await runtimeUsers.syncUser({
+        userId: anonymousUserId,
+        active: false,
+        userType: 'anonymous',
+        sourceRef: 'anonymous_upgrade',
+      });
     }
 
     // Record upgrade history
@@ -443,6 +461,9 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       verified_email_at: undefined,
       verified_email_user_id: undefined,
       upgrade_nonce: undefined,
+      pending_upgrade_token: undefined,
+      pending_upgrade_method: undefined,
+      verified_upgrade_method: undefined,
       // Clear device identification data (privacy)
       device_id_hash: undefined,
       // Mirror the lifecycle snapshot into session data so the UI can recover
@@ -455,12 +476,10 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     // Cleanup: Delete orphaned OTP user (created during email verification)
     // This user was only a placeholder for the email verification flow
     if (otpUserId) {
-      authCtx.coreAdapter
-        .execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [otpUserId, tenantId])
-        .catch((error) => {
-          // Non-critical: orphaned user can be cleaned up later
-          log.warn('Failed to cleanup OTP user', { action: 'cleanup_otp_user' });
-        });
+      runtimeUsers.deleteUser(otpUserId).catch((_error: unknown) => {
+        // Non-critical: orphaned user can be cleaned up later
+        log.warn('Failed to cleanup OTP user', { action: 'cleanup_otp_user' });
+      });
     }
 
     // If user ID changed, we need to update the session's user ID
@@ -484,7 +503,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         upgradeMethod: string;
         preserveSub: boolean;
       },
-    }).catch((err) => {
+    }).catch((_err: unknown) => {
       log.warn('Failed to publish user.upgraded event', { action: 'event_publish' });
     });
 
@@ -534,11 +553,11 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
-
     // Check if user is anonymous
-    const user = await authCtx.repositories.userCore.findById(session.userId);
-    const isAnonymous = user?.user_type === 'anonymous';
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const user = await runtimeUsers.findById(session.userId, { includeInactive: true });
+    const isAnonymous = user?.account_type === 'anonymous';
     let missingRequiredCustomClaims: Array<{
       field_key: string;
       label: string;

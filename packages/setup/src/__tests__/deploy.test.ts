@@ -164,7 +164,15 @@ describe('deployUiWorkerComponent', () => {
     expect(result.success).toBe(true);
     expect(vi.mocked(execa)).toHaveBeenCalledWith(
       'pnpm',
-      ['exec', 'wrangler', 'secret', 'put', 'ADMIN_UI_BFF_PRIVATE_KEY_PEM', '--env', 'test'],
+      [
+        'exec',
+        'wrangler',
+        'secret',
+        'put',
+        'ADMIN_UI_BFF_PRIVATE_KEY_PEM',
+        '--name',
+        'test-ar-admin-ui',
+      ],
       expect.objectContaining({
         cwd: join(rootDir, 'packages', 'ar-admin-ui'),
         input: '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
@@ -172,7 +180,7 @@ describe('deployUiWorkerComponent', () => {
     );
     expect(vi.mocked(execa)).toHaveBeenCalledWith(
       'pnpm',
-      ['exec', 'wrangler', 'secret', 'put', 'ADMIN_UI_BFF_SCOPES', '--env', 'test'],
+      ['exec', 'wrangler', 'secret', 'put', 'ADMIN_UI_BFF_SCOPES', '--name', 'test-ar-admin-ui'],
       expect.objectContaining({
         cwd: join(rootDir, 'packages', 'ar-admin-ui'),
         input: 'admin-ui:proxy',

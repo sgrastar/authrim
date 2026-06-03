@@ -5,10 +5,15 @@ import type { Env } from '@authrim/ar-lib-core';
 const mocked = vi.hoisted(() => {
   const state = {
     tenants: [
-      { id: 'default', tenant_code: 'default', name: 'Default Tenant', is_active: 1 },
-      { id: 'acme', tenant_code: 'acme', name: 'Acme Tenant', is_active: 1 },
-      { id: 'beta', tenant_code: 'beta', name: 'Beta Tenant', is_active: 1 },
-      { id: 'inactive', tenant_code: 'inactive', name: 'Inactive Tenant', is_active: 0 },
+      { id: 'default', tenant_code: 'default', name: 'Default Tenant', lifecycle_state: 'active' },
+      { id: 'acme', tenant_code: 'acme', name: 'Acme Tenant', lifecycle_state: 'active' },
+      { id: 'beta', tenant_code: 'beta', name: 'Beta Tenant', lifecycle_state: 'active' },
+      {
+        id: 'inactive',
+        tenant_code: 'inactive',
+        name: 'Inactive Tenant',
+        lifecycle_state: 'suspended',
+      },
     ],
     users: [
       { id: 'user-1', tenant_id: 'acme', email: 'user@gmail.com', is_active: 1 },
@@ -42,13 +47,15 @@ const mocked = vi.hoisted(() => {
           .filter((user) => user.email === email && user.is_active === 1)
           .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
       }
-      if (query.includes('FROM tenants') && query.includes('WHERE is_active = 1')) {
+      if (query.includes('FROM tenants') && query.includes("WHERE lifecycle_state = 'active'")) {
         if (!query.includes('LIMIT 2')) {
           return state.tenants
-            .filter((tenant) => tenant.is_active === 1)
+            .filter((tenant) => tenant.lifecycle_state === 'active')
             .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)) as T[];
         }
-        return state.tenants.filter((tenant) => tenant.is_active === 1).slice(0, 2) as T[];
+        return state.tenants
+          .filter((tenant) => tenant.lifecycle_state === 'active')
+          .slice(0, 2) as T[];
       }
       if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
         return state.clients.filter((client) => client.client_id === params[0]) as T[];
@@ -67,9 +74,10 @@ const mocked = vi.hoisted(() => {
         return (state.tenants.find((tenant) => tenant.tenant_code === params[0]) ??
           null) as T | null;
       }
-      if (query.includes('FROM tenants WHERE id = ? AND is_active = 1')) {
-        return (state.tenants.find((tenant) => tenant.id === params[0] && tenant.is_active === 1) ??
-          null) as T | null;
+      if (query.includes("FROM tenants WHERE id = ? AND lifecycle_state = 'active'")) {
+        return (state.tenants.find(
+          (tenant) => tenant.id === params[0] && tenant.lifecycle_state === 'active'
+        ) ?? null) as T | null;
       }
       if (query.includes('FROM tenant_invitations')) {
         const token = params[0];
@@ -114,6 +122,23 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ),
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
     resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
+    CanonicalRuntimeUserStore: class {
+      private tenantId: string;
+
+      constructor(options: { tenantId: string }) {
+        this.tenantId = options.tenantId;
+      }
+
+      async findByEmail(email: string) {
+        const user = mocked.state.users.find(
+          (candidate) =>
+            candidate.email === email &&
+            candidate.tenant_id === this.tenantId &&
+            candidate.is_active === 1
+        );
+        return user ? { id: user.id, tenant_id: user.tenant_id, email: user.email } : null;
+      }
+    },
   };
 });
 

@@ -1,6 +1,9 @@
 import type { Context } from 'hono';
 import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalRuntimeUserProjectionRepository,
+  CanonicalSensitiveValueResolver,
+  CanonicalIdentityRepository,
   createAuthContextFromHono,
   createPIIContextFromHono,
   getRuntimeUserStoreSourcesFromHonoContext,
@@ -46,6 +49,7 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
   canIssueTokenWithPIIStatus,
   resolveOIDCPIIRequirement,
@@ -53,7 +57,6 @@ import {
 import {
   revokeToken,
   getCachedUser,
-  getCachedUserCore,
   // Native SSO (OIDC Native SSO 1.0)
   DeviceInstallationRepository,
   DeviceSecretRepository,
@@ -160,6 +163,35 @@ const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callba
 type DirectAuthChannel = 'browser' | 'native' | 'server';
 type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
 type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+
+async function loadOIDCClaimsUser(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  piiCtx: ReturnType<typeof createPIIContextFromHono>
+): Promise<
+  Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
+> {
+  const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+    piiCtx.coreAdapter,
+    tenantId,
+    new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
+  );
+  const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+  return projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
+}
+
+async function findCanonicalRuntimeAccount(
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  options?: { includeInactive?: boolean }
+) {
+  return new CanonicalIdentityRepository(coreAdapter, tenantId).findAccountByLegacyUserId(
+    userId,
+    options
+  );
+}
 
 function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
   return channel === 'browser' || channel === 'native' || channel === 'server';
@@ -649,6 +681,33 @@ async function dpopValidationErrorResponse(
   return response;
 }
 
+async function isDPoPRequiredForTokenRequest(
+  c: Context<{ Bindings: Env }>,
+  clientMetadata: ClientMetadata
+): Promise<boolean> {
+  let fapiRequiresDpop = false;
+  try {
+    const settings = await getSystemSettingsCached(c, c.env);
+    if (settings) {
+      const fapi = settings.fapi || {};
+      fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
+    }
+  } catch (error) {
+    getLogger(c)
+      .module('TOKEN')
+      .error('Failed to load FAPI settings for DPoP', {}, error as Error);
+  }
+
+  const requestPath = new URL(c.req.url).pathname;
+  const clientRequiresDpop = isDPoPRequiredForRequest(
+    (clientMetadata.dpop_mode as DPoPMode) || 'disabled',
+    requestPath,
+    Boolean(clientMetadata.dpop_bound_access_tokens)
+  );
+
+  return fapiRequiresDpop || clientRequiresDpop;
+}
+
 // ===== Module-level Logger for Helper Functions =====
 // Used by functions that don't have access to Hono Context
 const moduleLogger = createLogger().module('TOKEN');
@@ -688,7 +747,7 @@ interface CachedJWKS {
   source: 'env' | 'do'; // Track where keys came from
 }
 const cachedJWKSMap = new Map<string, CachedJWKS>(); // tenantId → CachedJWKS
-const JWKS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - aligned with signing key cache
+const JWKS_CACHE_TTL = 0; // Verification keys must reflect emergency revocation immediately.
 
 /**
  * Get verification key from JWKS with caching
@@ -1560,6 +1619,8 @@ async function handleAuthorizationCodeGrant(
     if (!client_secret || !(await verifyClientSecretHash(client_secret, storedHash))) {
       return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
     }
+  } else if (!isPublicClientMetadata(clientMetadata as ClientMetadata)) {
+    return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
   }
   // Public clients (no client_secret_hash and no client_assertion) are allowed
 
@@ -1605,14 +1666,13 @@ async function handleAuthorizationCodeGrant(
     targets: ['userinfo', 'id_token'],
   });
   try {
-    const subjectCore = await getCachedUserCore(
-      c.env,
+    const subjectAccount = await findCanonicalRuntimeAccount(
+      authCtx.coreAdapter,
       tenantId,
-      authCodeData.sub,
-      authCtx.coreAdapter
+      authCodeData.sub
     );
-    if (subjectCore?.pii_status) {
-      const piiAccess = canIssueTokenWithPIIStatus(subjectCore.pii_status, {
+    if (!subjectAccount && tokenPIIRequirement.requiresPII) {
+      const piiAccess = canIssueTokenWithPIIStatus('failed', {
         requiresPII: tokenPIIRequirement.requiresPII,
       });
       if (!piiAccess.ok) {
@@ -1705,13 +1765,12 @@ async function handleAuthorizationCodeGrant(
   // Anonymous user claims (architecture-decisions.md §17)
   let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(
-      c.env,
+    const userAccount = await findCanonicalRuntimeAccount(
+      authCtx.coreAdapter,
       tenantId,
-      authCodeData.sub,
-      authCtx.coreAdapter
+      authCodeData.sub
     );
-    if (userCore?.user_type === 'anonymous') {
+    if (userAccount?.account_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
         upgrade_eligible: true, // Anonymous users can always upgrade
@@ -2060,12 +2119,7 @@ async function handleAuthorizationCodeGrant(
   if (shouldEvaluateIdTokenClaims && parsedClaimsRequest.request) {
     try {
       const piiCtx = createPIIContextFromHono(c, tenantId);
-      const user = await getCachedUser(c.env, tenantId, authCodeData.sub, {
-        coreDb: authCtx.coreAdapter,
-        piiDb: piiCtx.defaultPiiAdapter,
-        cacheScope: piiCtx.userCacheScope,
-        piiCacheMode: piiCtx.piiCacheMode,
-      });
+      const user = await loadOIDCClaimsUser(c, tenantId, authCodeData.sub, piiCtx);
       const availableClaims: Record<string, unknown> = {
         ...(user ? buildStandardUserClaims(user) : {}),
         sub: authCodeData.sub,
@@ -2571,6 +2625,10 @@ async function handleRefreshTokenGrant(
 
   // Cast to ClientMetadata for type safety
   const typedClient = clientMetadata as unknown as ClientMetadata;
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  if ((await isDPoPRequiredForTokenRequest(c, typedClient)) && !dpopProof) {
+    return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
+  }
 
   // Profile-based grant_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §5.2: unauthorized_client - client not allowed to use this grant type
@@ -2619,6 +2677,8 @@ async function handleRefreshTokenGrant(
     ) {
       return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
     }
+  } else if (!isPublicClientMetadata(typedClient)) {
+    return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
   }
   // Public clients (no client_secret_hash and no client_assertion) are allowed
 
@@ -2775,13 +2835,12 @@ async function handleRefreshTokenGrant(
   // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
   let anonymousClaimsRefresh: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userCore = await getCachedUserCore(
-      c.env,
+    const userAccount = await findCanonicalRuntimeAccount(
+      authCtx.coreAdapter,
       tenantId,
-      refreshTokenData.sub,
-      authCtx.coreAdapter
+      refreshTokenData.sub
     );
-    if (userCore?.user_type === 'anonymous') {
+    if (userAccount?.account_type === 'anonymous') {
       anonymousClaimsRefresh = {
         user_type: 'anonymous',
         upgrade_eligible: true,
@@ -2793,7 +2852,6 @@ async function handleRefreshTokenGrant(
 
   // DPoP support (RFC 9449)
   // Extract and validate DPoP proof if present
-  const dpopProof = extractDPoPProof(c.req.raw.headers);
   const refreshTokenDpopJkt = getDPoPJktFromCnfClaim(refreshTokenPayload);
   const isBrowserPublicClientRequest = isBrowserPublicTokenRequest(c, formData, typedClient);
   const isNativePublicClientRequest = isNativePublicTokenRequest(formData, typedClient);
@@ -3545,6 +3603,45 @@ async function handleDeviceCodeGrant(
     );
   }
 
+  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
+  if (!clientMetadata) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  if (
+    (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
+    !dpopProof
+  ) {
+    return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
+  }
+
+  let dpopJkt: string | undefined;
+  if (dpopProof) {
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      'POST',
+      c.req.url,
+      undefined,
+      c.env,
+      metadata.client_id,
+      getTenantIdFromContext(c)
+    );
+
+    if (!dpopValidation.valid) {
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+        clientMetadata,
+      });
+    }
+    dpopJkt = dpopValidation.jkt;
+  }
+
+  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata);
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
+
   // Delete the device code (one-time use)
   await deviceCodeStore.fetch(
     new Request('https://internal/delete', {
@@ -3576,14 +3673,6 @@ async function handleDeviceCodeGrant(
   const configManager = createOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
   const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
-  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
-  if (!clientMetadata) {
-    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
-  }
-  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata);
-  if (!audienceResolution.ok) {
-    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
-  }
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
@@ -3670,6 +3759,7 @@ async function handleDeviceCodeGrant(
     client_id,
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
+    ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -3735,6 +3825,7 @@ async function handleDeviceCodeGrant(
       sub: metadata.sub!,
       scope: metadata.scope,
       client_id,
+      ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
     };
     const result = await createRefreshToken(
       refreshTokenClaims,
@@ -3828,7 +3919,7 @@ async function handleDeviceCodeGrant(
 
   return c.json({
     access_token: accessToken,
-    token_type: 'Bearer',
+    token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: expiresIn,
     id_token: idToken,
     refresh_token: refreshToken,
@@ -4029,6 +4120,46 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     );
   }
 
+  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
+  if (!clientMetadata) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  if (
+    (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
+    !dpopProof
+  ) {
+    return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
+  }
+
+  let dpopJkt: string | undefined;
+  if (dpopProof) {
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      'POST',
+      getRequestIssuer(c) + '/token',
+      undefined,
+      c.env,
+      metadata.client_id,
+      getTenantIdFromContext(c)
+    );
+
+    if (dpopValidation.valid && dpopValidation.jkt) {
+      dpopJkt = dpopValidation.jkt;
+    } else if (!dpopValidation.valid) {
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+        clientMetadata,
+      });
+    }
+  }
+
+  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata);
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
+
   // Mark tokens as issued (one-time use enforcement)
   const markIssuedResponse = await cibaRequestStore.fetch(
     new Request('https://internal/mark-token-issued', {
@@ -4058,17 +4189,14 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
 
-  // Verify user exists in Core DB (PII/Non-PII separation: NO PII DB access in token endpoint)
-  // Note: metadata.sub is guaranteed to exist due to the check at line 2340
-  // Use getCachedUserCore() instead of getCachedUser() to avoid unnecessary PII DB access
-  const userCore = await getCachedUserCore(
-    c.env,
+  // Verify user exists in canonical runtime account tables without reading PII.
+  const userAccount = await findCanonicalRuntimeAccount(
+    authCtx.coreAdapter,
     getTenantIdFromContext(c),
-    metadata.sub,
-    authCtx.coreAdapter
+    metadata.sub
   );
 
-  if (!userCore) {
+  if (!userAccount) {
     // Security: Internal error - don't leak user existence
     return c.json(
       {
@@ -4079,47 +4207,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     );
   }
 
-  // Get client metadata for encryption settings - request-level cached
-  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
-
-  if (!clientMetadata) {
-    // Security: Generic message to prevent client_id enumeration
-    // RFC 6749: invalid_client should return 401
-    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
-  }
-  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata);
-  if (!audienceResolution.ok) {
-    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
-  }
-
   // Get signing key from KeyManager
   const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
-
-  // Extract DPoP proof if present
-  const dpopProof = extractDPoPProof(c.req.raw.headers);
-  let dpopJkt: string | undefined;
-
-  // Validate DPoP proof if provided
-  if (dpopProof) {
-    const dpopValidation = await validateDPoPProof(
-      dpopProof,
-      'POST',
-      getRequestIssuer(c) + '/token',
-      undefined,
-      c.env,
-      metadata.client_id,
-      getTenantIdFromContext(c)
-    );
-
-    if (dpopValidation.valid && dpopValidation.jkt) {
-      dpopJkt = dpopValidation.jkt;
-    } else if (!dpopValidation.valid) {
-      return dpopValidationErrorResponse(c, dpopValidation, {
-        fallbackDescription: 'DPoP validation failed',
-        clientMetadata,
-      });
-    }
-  }
 
   // Token expiration times (KV > env > default priority)
   const configManager = createOAuthConfigManager(c.env);
@@ -4714,6 +4803,10 @@ async function handleTokenExchangeGrant(
 
   // Cast to ClientMetadata for type safety
   const typedClient = clientMetadata as unknown as ClientMetadata;
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  if ((await isDPoPRequiredForTokenRequest(c, typedClient)) && !dpopProof) {
+    return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
+  }
 
   // Profile-based grant_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §5.2: unauthorized_client - client not allowed to use this grant type
@@ -4753,7 +4846,7 @@ async function handleTokenExchangeGrant(
       );
     }
 
-    if (!extractDPoPProof(c.req.raw.headers)) {
+    if (!dpopProof) {
       return nativeSSOError(
         c,
         'invalid_request',
@@ -5388,7 +5481,6 @@ async function handleTokenExchangeGrant(
 
   // DPoP support
   let dpopJkt: string | undefined;
-  const dpopProof = extractDPoPProof(c.req.raw.headers);
   if (dpopProof) {
     const dpopValidation = await validateDPoPProof(
       dpopProof,
@@ -6418,6 +6510,10 @@ async function handleClientCredentialsGrant(
 
   // Cast to ClientMetadata for type safety
   const typedClient = clientMetadata as unknown as ClientMetadata;
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  if ((await isDPoPRequiredForTokenRequest(c, typedClient)) && !dpopProof) {
+    return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
+  }
 
   // Profile-based grant_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §5.2: unauthorized_client - client not allowed to use this grant type
@@ -6526,7 +6622,6 @@ async function handleClientCredentialsGrant(
 
   // DPoP support
   let dpopJkt: string | undefined;
-  const dpopProof = extractDPoPProof(c.req.raw.headers);
   if (dpopProof) {
     const dpopValidation = await validateDPoPProof(
       dpopProof,

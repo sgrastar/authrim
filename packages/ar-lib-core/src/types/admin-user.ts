@@ -577,6 +577,8 @@ export const ADMIN_PERMISSIONS = {
   SAML_PROVIDERS_SIGNING_PUBLISH_NEXT: 'admin:saml_providers:signing:publish_next',
   SAML_PROVIDERS_SIGNING_PROMOTE: 'admin:saml_providers:signing:promote',
   SAML_PROVIDERS_SIGNING_RETIRE_BACKUP: 'admin:saml_providers:signing:retire_backup',
+  SAML_PROVIDERS_SIGNING_DR_BUNDLE_EXPORT: 'admin:saml_providers:signing:dr_bundle:export',
+  SAML_PROVIDERS_SIGNING_DR_BUNDLE_IMPORT: 'admin:saml_providers:signing:dr_bundle:import',
   SAML_PROVIDERS_ALL: 'admin:saml_providers:*',
   SAML_ATTRIBUTE_PRESETS_READ: 'admin:saml_attribute_presets:read',
   SAML_ATTRIBUTE_PRESETS_WRITE: 'admin:saml_attribute_presets:write',

@@ -32,6 +32,7 @@ import type {
   SAMLMetadataEntityListResponse,
   SAMLMetadataVerificationSummary,
   SAMLCertificateValidationSummary,
+  SAMLJitEmailLinkingPolicy,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
@@ -84,6 +85,10 @@ import {
   publishSAMLNextSigningCertificate,
   retireSAMLBackupSigningCertificate,
 } from './signing-rollover';
+import {
+  buildEncryptedSAMLLocalSigningSecretDRBundle,
+  restoreEncryptedSAMLLocalSigningSecretDRBundle,
+} from './local-signing-dr-bundle';
 import { previewTrustCertificate } from './certificate-preview';
 import {
   getSAMLLocalEntityIds,
@@ -170,6 +175,39 @@ interface SAMLMetadataConfigFields {
   metadataCriticalFields?: SAMLMetadataAnalysis['criticalFields'];
   metadataRefreshStatus?: SAMLMetadataRefreshStatus;
   metadataLastFetched?: number;
+}
+
+const SAML_JIT_EMAIL_LINKING_POLICIES = new Set<SAMLJitEmailLinkingPolicy>([
+  'email_linking',
+  'jit_create_only',
+  'disabled',
+]);
+
+function normalizeSAMLIdPJitLinkingPolicyConfig(
+  config: SAMLIdPConfig
+): SAMLIdPConfig | ResponseValidationError {
+  const policy = config.jitEmailLinkingPolicy ?? 'email_linking';
+  if (!SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
+    return { field: 'jitEmailLinkingPolicy' };
+  }
+
+  return {
+    ...config,
+    jitEmailLinkingPolicy: policy,
+    allowSyntheticEmailFallback: config.allowSyntheticEmailFallback === true,
+  };
+}
+
+interface ResponseValidationError {
+  field: string;
+}
+
+function isResponseValidationError(value: unknown): value is ResponseValidationError {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as ResponseValidationError).field === 'string'
+  );
 }
 
 function collectProviderCertificates(config: SAMLIdPConfig | SAMLSPConfig): string[] {
@@ -667,18 +705,137 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
   }
 }
 
+export async function handleExportSAMLLocalSigningDRBundle(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(
+      c,
+      ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_DR_BUNDLE_EXPORT
+    );
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as { passphrase?: unknown };
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const bundle = await buildEncryptedSAMLLocalSigningSecretDRBundle(
+      c.env,
+      tenantId,
+      body.passphrase
+    );
+
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.local_signing.dr_bundle.exported',
+      resource: 'saml_settings',
+      resourceId: tenantId,
+      severity: 'warning',
+      metadata: {
+        encrypted: true,
+        kdf: bundle.kdf.name,
+        kdf_iterations: bundle.kdf.iterations,
+      },
+    });
+
+    return c.json(bundle);
+  } catch (error) {
+    if (isSAMLDRBundleValidationError(error)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'passphrase' },
+      });
+    }
+    log.error('Export SAML local signing DR bundle error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext): Promise<Response> {
+  const log = getLogger(c).module('SAML');
+
+  try {
+    const forbidden = await requireSAMLAdminPermission(
+      c,
+      ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_DR_BUNDLE_IMPORT
+    );
+    if (forbidden) {
+      return forbidden;
+    }
+
+    const body = (await c.req.json()) as { bundle?: unknown; passphrase?: unknown };
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const result = await restoreEncryptedSAMLLocalSigningSecretDRBundle(
+      c.env,
+      tenantId,
+      body.bundle,
+      body.passphrase
+    );
+
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.local_signing.dr_bundle.imported',
+      resource: 'saml_settings',
+      resourceId: tenantId,
+      severity: 'warning',
+      metadata: {
+        imported_key_count: result.importedKeys,
+        restored_roles: result.restoredRoles,
+      },
+    });
+
+    const settings = await getSAMLPublicSettings(c.env, tenantId);
+    const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
+    return c.json({
+      tenantId,
+      ...settings,
+      metadata: buildSAMLMetadataPublicationSettings(c.env),
+      localSigning: {
+        certificateSubject: settings.certificateSubject,
+        idpSigningKeyPolicy: settings.signingKeyPolicies.idp ?? {},
+        spSigningKeyPolicy: settings.signingKeyPolicies.sp ?? {},
+      },
+      generated: {
+        issuerUrl: entityIds.issuerUrl,
+        idpEntityId: entityIds.idpEntityId,
+        spEntityId: entityIds.spEntityId,
+        idpMetadataUrl: entityIds.idpMetadataUrl,
+        spMetadataUrl: entityIds.spMetadataUrl,
+      },
+      imported: result,
+    });
+  } catch (error) {
+    if (isSAMLDRBundleValidationError(error)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'bundle' },
+      });
+    }
+    log.error('Import SAML local signing DR bundle error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+function isSAMLDRBundleValidationError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.includes('SAML DR bundle') ||
+    error.message.includes('encrypted SAML DR bundle') ||
+    error.message.includes('decrypt SAML DR bundle') ||
+    error.message.includes('passphrase')
+  );
+}
+
 interface SAMLMetadataPreviewRequest extends MetadataImportRequest {
   samlProfile?: SAMLSPProfile;
   attributePresetId?: SAMLAttributePresetId;
 }
 
-interface SAMLFederationTrustProfileRequest {
-  name?: string;
+interface NormalizedSAMLFederationTrustPayload {
   description?: string;
   metadataUrlPatterns?: string[];
-  certificates?: Array<{ id?: string; name?: string; certificate: string }>;
+  certificates?: SAMLFederationTrustProfile['certificates'];
   policy?: 'strict' | 'warn' | 'disabled';
-  enabled?: boolean;
 }
 
 interface SAMLMetadataBatchCreateRequest {
@@ -1047,7 +1204,12 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     const normalizedConfig =
       body.providerType === 'saml_sp'
         ? normalizeSAMLSPAttributePresetConfig(config as SAMLSPConfig)
-        : config;
+        : normalizeSAMLIdPJitLinkingPolicyConfig(config as SAMLIdPConfig);
+    if (isResponseValidationError(normalizedConfig)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: normalizedConfig.field },
+      });
+    }
     const normalizedConfigWithValidation =
       await withProviderCertificateValidation(normalizedConfig);
     const providerEnabled =
@@ -1216,7 +1378,12 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     const newConfig =
       existing.provider_type === 'saml_sp'
         ? normalizeSAMLSPAttributePresetConfig(mergedConfig as SAMLSPConfig)
-        : mergedConfig;
+        : normalizeSAMLIdPJitLinkingPolicyConfig(mergedConfig as SAMLIdPConfig);
+    if (isResponseValidationError(newConfig)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: newConfig.field },
+      });
+    }
     const newConfigWithValidation = await withProviderCertificateValidation(newConfig);
     const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
     const nextEnabled =
@@ -1631,151 +1798,6 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     }
 
     log.error('Refresh metadata error', { providerId: id }, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-}
-
-export async function handleListFederationTrustProfiles(c: AdminSAMLContext): Promise<Response> {
-  try {
-    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_LIST);
-    if (forbidden) return forbidden;
-    const tenantId = resolveSAMLTenantIdFromContext(c);
-    return c.json({ profiles: await listFederationTrustProfiles(c.env, tenantId) });
-  } catch (error) {
-    getLogger(c)
-      .module('SAML')
-      .error('List federation trust profiles error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-}
-
-export async function handleCreateFederationTrustProfile(c: AdminSAMLContext): Promise<Response> {
-  try {
-    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
-    if (forbidden) return forbidden;
-    const tenantId = resolveSAMLTenantIdFromContext(c);
-    const profile = await buildTrustProfileFromRequest(
-      tenantId,
-      (await c.req.json()) as SAMLFederationTrustProfileRequest
-    );
-    await upsertFederationTrustProfile(c.env, profile);
-    await createSAMLAdminAudit(c, {
-      tenantId,
-      action: 'saml.federation_trust_profile.created',
-      resource: 'saml_federation_trust_profile',
-      resourceId: profile.id,
-      metadata: {
-        name: profile.name,
-        policy: profile.policy,
-        enabled: profile.enabled,
-        certificate_count: profile.certificates.length,
-      },
-    });
-    return c.json(profile, 201);
-  } catch (error) {
-    if (error instanceof SAMLMetadataValidationError) {
-      await recordSAMLAdminFailure(c, {
-        action: 'saml.federation_trust_profile.created',
-        resource: 'saml_federation_trust_profile',
-        resourceId: 'unknown',
-        error,
-      });
-      return createSAMLMetadataValidationErrorResponse(c, error);
-    }
-    await recordSAMLAdminFailure(c, {
-      action: 'saml.federation_trust_profile.created',
-      resource: 'saml_federation_trust_profile',
-      resourceId: 'unknown',
-      error,
-    });
-    getLogger(c)
-      .module('SAML')
-      .error('Create federation trust profile error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-}
-
-export async function handleUpdateFederationTrustProfile(c: AdminSAMLContext): Promise<Response> {
-  const id = c.req.param('id');
-  try {
-    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
-    if (forbidden) return forbidden;
-    if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    const tenantId = resolveSAMLTenantIdFromContext(c);
-    const existing = await getFederationTrustProfile(c.env, tenantId, id);
-    if (!existing) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    const profile = await buildTrustProfileFromRequest(
-      tenantId,
-      (await c.req.json()) as SAMLFederationTrustProfileRequest,
-      existing
-    );
-    await upsertFederationTrustProfile(c.env, profile);
-    await createSAMLAdminAudit(c, {
-      tenantId,
-      action: 'saml.federation_trust_profile.updated',
-      resource: 'saml_federation_trust_profile',
-      resourceId: profile.id,
-      metadata: {
-        previous_name: existing.name,
-        next_name: profile.name,
-        policy: profile.policy,
-        enabled: profile.enabled,
-        certificate_count: profile.certificates.length,
-      },
-    });
-    return c.json(profile);
-  } catch (error) {
-    if (error instanceof SAMLMetadataValidationError) {
-      await recordSAMLAdminFailure(c, {
-        action: 'saml.federation_trust_profile.updated',
-        resource: 'saml_federation_trust_profile',
-        resourceId: id ?? 'unknown',
-        error,
-      });
-      return createSAMLMetadataValidationErrorResponse(c, error);
-    }
-    await recordSAMLAdminFailure(c, {
-      action: 'saml.federation_trust_profile.updated',
-      resource: 'saml_federation_trust_profile',
-      resourceId: id ?? 'unknown',
-      error,
-    });
-    getLogger(c)
-      .module('SAML')
-      .error('Update federation trust profile error', { id }, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-}
-
-export async function handleDeleteFederationTrustProfile(c: AdminSAMLContext): Promise<Response> {
-  const id = c.req.param('id');
-  try {
-    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE);
-    if (forbidden) return forbidden;
-    const tenantId = resolveSAMLTenantIdFromContext(c);
-    const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'saml-federation-trust');
-    await adapter.execute(
-      'DELETE FROM saml_federation_trust_profiles WHERE tenant_id = ? AND id = ?',
-      [tenantId, id]
-    );
-    await createSAMLAdminAudit(c, {
-      tenantId,
-      action: 'saml.federation_trust_profile.deleted',
-      resource: 'saml_federation_trust_profile',
-      resourceId: id ?? 'unknown',
-      severity: 'warning',
-    });
-    return c.json({ success: true });
-  } catch (error) {
-    await recordSAMLAdminFailure(c, {
-      action: 'saml.federation_trust_profile.deleted',
-      resource: 'saml_federation_trust_profile',
-      resourceId: id ?? 'unknown',
-      error,
-    });
-    getLogger(c)
-      .module('SAML')
-      .error('Delete federation trust profile error', { id }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -2367,53 +2389,14 @@ function getRequestIp(c: Context<{ Bindings: Env }>): string {
   );
 }
 
-async function buildTrustProfileFromRequest(
-  tenantId: string,
-  body: SAMLFederationTrustProfileRequest,
-  existing?: SAMLFederationTrustProfile
-): Promise<SAMLFederationTrustProfile> {
-  const now = Date.now();
-  const certificates = await Promise.all(
-    (body.certificates ?? existing?.certificates ?? []).map(async (certificate) => ({
-      id: certificate.id || crypto.randomUUID(),
-      name: certificate.name,
-      certificate: certificate.certificate,
-      fingerprintSha256:
-        'fingerprintSha256' in certificate && typeof certificate.fingerprintSha256 === 'string'
-          ? certificate.fingerprintSha256
-          : await fingerprintCertificateSha256(certificate.certificate),
-      createdAt:
-        'createdAt' in certificate && typeof certificate.createdAt === 'number'
-          ? certificate.createdAt
-          : now,
-    }))
-  );
-
-  if (!body.name && !existing?.name) {
-    throw new SAMLMetadataValidationError('Federation trust profile name is required');
-  }
-  if ((body.metadataUrlPatterns ?? existing?.metadataUrlPatterns ?? []).length === 0) {
-    throw new SAMLMetadataValidationError('At least one metadata URL pattern is required');
-  }
-  if (certificates.length === 0) {
-    throw new SAMLMetadataValidationError('At least one trust certificate is required');
-  }
-
-  return {
-    id: existing?.id ?? crypto.randomUUID(),
-    tenantId,
-    name: body.name ?? existing!.name,
-    description: body.description ?? existing?.description,
-    metadataUrlPatterns: body.metadataUrlPatterns ?? existing!.metadataUrlPatterns,
-    certificates,
-    policy: body.policy ?? existing?.policy,
-    enabled: body.enabled ?? existing?.enabled ?? true,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  };
+async function listFederationTrustProfiles(
+  env: Env,
+  tenantId: string
+): Promise<SAMLFederationTrustProfile[]> {
+  return listNormalizedSamlFederationTrustProfiles(env, tenantId);
 }
 
-async function listFederationTrustProfiles(
+async function listNormalizedSamlFederationTrustProfiles(
   env: Env,
   tenantId: string
 ): Promise<SAMLFederationTrustProfile[]> {
@@ -2421,80 +2404,109 @@ async function listFederationTrustProfiles(
   const rows = await adapter.query<{
     id: string;
     tenant_id: string;
-    name: string;
-    description: string | null;
-    metadata_url_patterns_json: string;
-    certificates_json: string;
-    policy: string | null;
-    enabled: number;
+    source_type: string;
+    display_name: string;
+    lifecycle_state: string;
+    protocol_payload_json: string | null;
     created_at: number;
     updated_at: number;
   }>(
-    `SELECT id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
-            policy, enabled, created_at, updated_at
-       FROM saml_federation_trust_profiles
+    `SELECT id, tenant_id, source_type, display_name, lifecycle_state, protocol_payload_json,
+            created_at, updated_at
+       FROM federation_trust_sources
        WHERE tenant_id = ?
-       ORDER BY name ASC`,
+         AND source_type IN ('saml_aggregate', 'saml_metadata', 'saml_federation')
+         AND lifecycle_state IN ('active', 'draft')
+       ORDER BY display_name ASC`,
     [tenantId]
   );
 
-  return rows.map((row) => ({
-    id: row.id,
-    tenantId: row.tenant_id,
-    name: row.name,
-    description: row.description ?? undefined,
-    metadataUrlPatterns: JSON.parse(row.metadata_url_patterns_json),
-    certificates: JSON.parse(row.certificates_json),
-    policy:
-      row.policy === 'strict' || row.policy === 'warn' || row.policy === 'disabled'
-        ? row.policy
-        : undefined,
-    enabled: row.enabled === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return rows.flatMap((row) => {
+    const payload = parseNormalizedSamlFederationPayload(row.protocol_payload_json);
+    if (payload.metadataUrlPatterns.length === 0 || payload.certificates.length === 0) {
+      return [];
+    }
+    return [
+      {
+        id: row.id,
+        tenantId: row.tenant_id,
+        name: row.display_name,
+        description: payload.description,
+        metadataUrlPatterns: payload.metadataUrlPatterns,
+        certificates: payload.certificates,
+        policy: payload.policy,
+        enabled: row.lifecycle_state === 'active',
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    ];
+  });
 }
 
-async function getFederationTrustProfile(
-  env: Env,
-  tenantId: string,
-  id: string
-): Promise<SAMLFederationTrustProfile | null> {
+function parseNormalizedSamlFederationPayload(
+  value: string | null
+): Required<NormalizedSAMLFederationTrustPayload> {
+  const parsed = value ? (JSON.parse(value) as NormalizedSAMLFederationTrustPayload) : {};
+  return {
+    description: typeof parsed.description === 'string' ? parsed.description : '',
+    metadataUrlPatterns: Array.isArray(parsed.metadataUrlPatterns)
+      ? parsed.metadataUrlPatterns.filter(
+          (pattern): pattern is string => typeof pattern === 'string'
+        )
+      : [],
+    certificates: Array.isArray(parsed.certificates)
+      ? parsed.certificates.filter(isSamlFederationTrustCertificate)
+      : [],
+    policy: normalizeFederationTrustPolicy(parsed.policy) ?? 'warn',
+  };
+}
+
+function normalizeFederationTrustPolicy(value: unknown): SAMLFederationTrustProfile['policy'] {
+  return value === 'strict' || value === 'warn' || value === 'disabled' ? value : undefined;
+}
+
+async function hashStableJson(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(stableJson(value));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortForStableJson(value));
+}
+
+function sortForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortForStableJson);
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
+  return Object.keys(value)
+    .sort()
+    .reduce<Record<string, unknown>>((sorted, key) => {
+      const item = (value as Record<string, unknown>)[key];
+      if (item !== undefined) {
+        sorted[key] = sortForStableJson(item);
+      }
+      return sorted;
+    }, {});
+}
+
+function isSamlFederationTrustCertificate(
+  value: unknown
+): value is SAMLFederationTrustProfile['certificates'][number] {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const certificate = value as Partial<SAMLFederationTrustProfile['certificates'][number]>;
   return (
-    (await listFederationTrustProfiles(env, tenantId)).find((profile) => profile.id === id) ?? null
-  );
-}
-
-async function upsertFederationTrustProfile(
-  env: Env,
-  profile: SAMLFederationTrustProfile
-): Promise<void> {
-  const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
-  await adapter.execute(
-    `INSERT INTO saml_federation_trust_profiles
-       (id, tenant_id, name, description, metadata_url_patterns_json, certificates_json,
-        policy, enabled, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       description = excluded.description,
-       metadata_url_patterns_json = excluded.metadata_url_patterns_json,
-       certificates_json = excluded.certificates_json,
-       policy = excluded.policy,
-       enabled = excluded.enabled,
-       updated_at = excluded.updated_at`,
-    [
-      profile.id,
-      profile.tenantId,
-      profile.name,
-      profile.description ?? null,
-      JSON.stringify(profile.metadataUrlPatterns),
-      JSON.stringify(profile.certificates),
-      profile.policy ?? null,
-      profile.enabled ? 1 : 0,
-      profile.createdAt,
-      profile.updatedAt,
-    ]
+    typeof certificate.id === 'string' &&
+    typeof certificate.certificate === 'string' &&
+    typeof certificate.fingerprintSha256 === 'string' &&
+    typeof certificate.createdAt === 'number'
   );
 }
 
@@ -2685,12 +2697,27 @@ async function processAggregateBatchCreate(
           providerType,
           name,
         });
+        await recordFederationSelectedEntityImportEvent(env, {
+          tenantId: input.tenantId,
+          trustSourceId: preview.verification.trustProfileId,
+          providerId,
+          importAction: 'create_provider',
+          outcome: 'success',
+          reasonCodes: ['federation.selected_entity.imported'],
+        });
         existingEntityKeys.add(entityKey);
       } catch (error) {
         await recordAggregateBatchResult(env, input.batchId, {
           entityId,
           success: false,
           error: error instanceof Error ? error.message : 'Import failed',
+        });
+        await recordFederationSelectedEntityImportEvent(env, {
+          tenantId: input.tenantId,
+          trustSourceId: preview.verification.trustProfileId,
+          importAction: 'create_provider',
+          outcome: 'failed',
+          reasonCodes: ['federation.selected_entity.import_failed'],
         });
       }
     }
@@ -2702,6 +2729,44 @@ async function processAggregateBatchCreate(
       input.batchId,
       error instanceof Error ? error.message : 'Batch failed'
     );
+  }
+}
+
+async function recordFederationSelectedEntityImportEvent(
+  env: Env,
+  input: {
+    tenantId: string;
+    trustSourceId?: string;
+    providerId?: string;
+    importAction: string;
+    outcome: string;
+    reasonCodes: string[];
+  }
+): Promise<void> {
+  if (!input.trustSourceId) {
+    return;
+  }
+  try {
+    const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
+    await adapter.execute(
+      `INSERT INTO federation_selected_entity_import_events (
+        id, tenant_id, trust_source_id, metadata_entity_summary_id, provider_id,
+        import_action, outcome, reason_codes_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        crypto.randomUUID(),
+        input.tenantId,
+        input.trustSourceId,
+        null,
+        input.providerId ?? null,
+        input.importAction,
+        input.outcome,
+        stableJson(input.reasonCodes),
+        Date.now(),
+      ]
+    );
+  } catch {
+    // Best-effort operational evidence must not fail the provider import itself.
   }
 }
 

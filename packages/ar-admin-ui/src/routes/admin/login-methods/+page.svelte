@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-		import {
-			adminLoginMethodsAPI,
-			type LoginMethodExternalProvider,
-			type LoginMethodProviderType
-		} from '$lib/api/admin-login-methods';
+	import {
+		adminLoginMethodsAPI,
+		type LoginMethodExternalProvider,
+		type LoginMethodProviderType
+	} from '$lib/api/admin-login-methods';
 	import type { CategorySettings } from '$lib/api/admin-settings';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
@@ -157,7 +157,9 @@
 		if (editingIndex === null) {
 			providers = [...providers, normalized];
 		} else {
-			providers = providers.map((provider, index) => (index === editingIndex ? normalized : provider));
+			providers = providers.map((provider, index) =>
+				index === editingIndex ? normalized : provider
+			);
 		}
 		resetForm();
 	}
@@ -168,7 +170,11 @@
 		successMessage = '';
 		saving = true;
 		try {
-			const result = await adminLoginMethodsAPI.updateProviders(settings, providers, currentTenantId);
+			const result = await adminLoginMethodsAPI.updateProviders(
+				settings,
+				providers,
+				currentTenantId
+			);
 			settings = { ...settings, version: result.version };
 			initialProvidersJson = JSON.stringify(providers);
 			successMessage = 'Login method settings saved.';
@@ -191,8 +197,14 @@
 			<p>Custom external login providers for tenant <code>{currentTenantId}</code></p>
 		</div>
 		<div class="actions">
-			<button class="btn secondary" disabled={!hasChanges || saving} onclick={loadData}>Discard</button>
-			<button class="btn primary" disabled={!canEdit || !hasChanges || saving} onclick={saveProviders}>
+			<button class="btn secondary" disabled={!hasChanges || saving} onclick={loadData}
+				>Discard</button
+			>
+			<button
+				class="btn primary"
+				disabled={!canEdit || !hasChanges || saving}
+				onclick={saveProviders}
+			>
 				{saving ? 'Saving...' : 'Save'}
 			</button>
 		</div>
@@ -235,7 +247,12 @@
 								</div>
 							</div>
 							<div class="row-actions">
-								<button class="icon-btn" disabled={!canEdit} title="Edit" onclick={() => editProvider(index)}>
+								<button
+									class="icon-btn"
+									disabled={!canEdit}
+									title="Edit"
+									onclick={() => editProvider(index)}
+								>
 									<span class="i-ph-pencil-simple"></span>
 								</button>
 								<button
@@ -246,7 +263,12 @@
 								>
 									<span class="i-ph-copy"></span>
 								</button>
-								<button class="icon-btn danger" disabled={!canEdit} title="Remove" onclick={() => removeProvider(index)}>
+								<button
+									class="icon-btn danger"
+									disabled={!canEdit}
+									title="Remove"
+									onclick={() => removeProvider(index)}
+								>
 									<span class="i-ph-trash"></span>
 								</button>
 							</div>
@@ -282,7 +304,8 @@
 					<select
 						value={form.type}
 						disabled={!canEdit}
-						onchange={(event) => setProviderType(event.currentTarget.value as LoginMethodProviderType)}
+						onchange={(event) =>
+							setProviderType(event.currentTarget.value as LoginMethodProviderType)}
 					>
 						<option value="vc">VC</option>
 						<option value="custom">Custom</option>
@@ -309,11 +332,19 @@
 				</label>
 				<label>
 					<span>Button Text</span>
-					<input bind:value={form.buttonText} disabled={!canEdit} placeholder="Continue with wallet" />
+					<input
+						bind:value={form.buttonText}
+						disabled={!canEdit}
+						placeholder="Continue with wallet"
+					/>
 				</label>
 				<label>
 					<span>Icon URL</span>
-					<input bind:value={form.iconUrl} disabled={!canEdit} placeholder="https://example.com/icon.png" />
+					<input
+						bind:value={form.iconUrl}
+						disabled={!canEdit}
+						placeholder="https://example.com/icon.png"
+					/>
 				</label>
 				<label>
 					<span>Button Color</span>

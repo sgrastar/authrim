@@ -5,7 +5,7 @@
  * - GET    /api/admin/tenants          - List all tenants
  * - POST   /api/admin/tenants          - Create tenant
  * - GET    /api/admin/tenants/:id      - Get tenant
- * - PATCH  /api/admin/tenants/:id      - Update tenant (name, description, is_active)
+ * - PATCH  /api/admin/tenants/:id      - Update tenant (name, description, lifecycle_state)
  * - DELETE /api/admin/tenants/:id      - Delete tenant (primary tenant not allowed)
  * - POST   /api/admin/tenants/:id/set-default - Set as default tenant
  *
@@ -24,7 +24,6 @@ import {
   getLogger,
   getPrimaryTenantId,
   getTenantIdFromContext,
-  seedCustomClaimSchemas,
   // Contract provisioning
   TENANT_POLICY_PRESETS,
   type TenantContract,
@@ -41,7 +40,7 @@ import { createOpaqueTenantKey } from './logging-tenant-key';
 
 /**
  * Invalidate the tenant existence KV cache for a given tenant.
- * Called after create, is_active change, and deactivate to ensure
+ * Called after create, lifecycle_state change, and deactivate to ensure
  * request-context middleware picks up the new state promptly.
  */
 async function invalidateTenantExistsCache(
@@ -162,7 +161,7 @@ export const TENANT_TABLES_TO_DELETE = [
   'token_claim_rules',
   // Refresh token sharding
   'refresh_token_shard_configs',
-  // Users (tenant-specific user data, not users_core which is shared)
+  // Users (tenant-specific user data, separate from shared canonical identity tables)
   'user_custom_fields',
   'user_token_families',
   'users',
@@ -180,10 +179,62 @@ interface TenantRow {
   tenant_code: string;
   name: string;
   description: string | null;
-  is_active: number;
+  lifecycle_state: TenantLifecycleState;
   is_default: number;
   created_at: number;
   updated_at: number;
+}
+
+type TenantLifecycleState =
+  | 'provisioning'
+  | 'active'
+  | 'suspended'
+  | 'frozen'
+  | 'migration_read_only'
+  | 'deleting'
+  | 'deleted'
+  | 'restore_pending'
+  | 'restore_validating';
+
+const TENANT_LIFECYCLE_STATES = [
+  'provisioning',
+  'active',
+  'suspended',
+  'frozen',
+  'migration_read_only',
+  'deleting',
+  'deleted',
+  'restore_pending',
+  'restore_validating',
+] as const satisfies readonly TenantLifecycleState[];
+
+const TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES = [
+  'active',
+  'suspended',
+  'frozen',
+  'migration_read_only',
+] as const satisfies readonly TenantLifecycleState[];
+
+const TENANT_INTERNAL_LIFECYCLE_STATES = [
+  'provisioning',
+  'deleting',
+  'deleted',
+  'restore_pending',
+  'restore_validating',
+] as const satisfies readonly TenantLifecycleState[];
+
+function isRuntimeActiveLifecycleState(state: TenantLifecycleState): boolean {
+  return state === 'active';
+}
+
+function isInternalLifecycleState(state: TenantLifecycleState): boolean {
+  return (TENANT_INTERNAL_LIFECYCLE_STATES as readonly TenantLifecycleState[]).includes(state);
+}
+
+function isOperatorMutableLifecycleState(state: TenantLifecycleState): boolean {
+  return (TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES as readonly TenantLifecycleState[]).includes(
+    state
+  );
 }
 
 interface TenantDatabaseSlotRow {
@@ -243,7 +294,7 @@ function formatTenant(row: TenantRow) {
     tenant_code: row.tenant_code,
     name: row.name,
     description: row.description,
-    is_active: row.is_active === 1,
+    lifecycle_state: row.lifecycle_state,
     is_default: row.is_default === 1,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -254,7 +305,9 @@ function formatTenantWithProvisioning(row: TenantRow, metadata: TenantProvisioni
   return {
     ...formatTenant(row),
     ...(metadata ?? {
-      provisioning_status: row.is_active === 1 ? 'active' : 'inactive',
+      provisioning_status: isRuntimeActiveLifecycleState(row.lifecycle_state)
+        ? 'active'
+        : 'inactive',
       provisioning_error: null,
       provisioning_slot_id: null,
       provisioning_updated_at: null,
@@ -294,7 +347,7 @@ async function getTenantProvisioningMetadata(
       result?: string;
     } | null = null;
 
-    if (row.is_active !== 1) {
+    if (!isRuntimeActiveLifecycleState(row.lifecycle_state)) {
       const latestTerminalEvent = await adminAdapter.queryOne<{
         slot_id: string;
         error_code: string | null;
@@ -323,7 +376,7 @@ async function getTenantProvisioningMetadata(
       ]);
     }
 
-    if (failure && row.is_active !== 1) {
+    if (failure && !isRuntimeActiveLifecycleState(row.lifecycle_state)) {
       return {
         provisioning_status: 'provisioning_failed',
         provisioning_error: failure.error_code ?? null,
@@ -335,7 +388,9 @@ async function getTenantProvisioningMetadata(
 
     if (!failure && !provisioningSlot) {
       return {
-        provisioning_status: row.is_active === 1 ? 'active' : 'inactive',
+        provisioning_status: isRuntimeActiveLifecycleState(row.lifecycle_state)
+          ? 'active'
+          : 'inactive',
         provisioning_error: null,
         provisioning_slot_id: null,
         provisioning_updated_at: null,
@@ -344,7 +399,9 @@ async function getTenantProvisioningMetadata(
 
     if (!provisioningSlot || !['reset_required', 'unavailable'].includes(provisioningSlot.state)) {
       return {
-        provisioning_status: row.is_active === 1 ? 'active' : 'inactive',
+        provisioning_status: isRuntimeActiveLifecycleState(row.lifecycle_state)
+          ? 'active'
+          : 'inactive',
         provisioning_error: null,
         provisioning_slot_id: null,
         provisioning_updated_at: null,
@@ -423,249 +480,8 @@ const UpdateTenantSchema = z.object({
     )
     .optional(),
   description: z.string().max(500).nullable().optional(),
-  is_active: z.boolean().optional(),
+  lifecycle_state: z.enum(TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES).optional(),
 });
-
-// =============================================================================
-// Default claim seeding
-// =============================================================================
-
-/**
- * Default OIDC claim schemas to seed for each new tenant.
- * All claims default to include_in_id_token=0 (OIDC compliant).
- * System claims cannot be deleted or renamed via the admin API.
- *
- * display_order ranges:
- *   1-13  : profile scope claims
- *   20-21 : email scope claims
- *   30-31 : phone scope claims
- *   40-45 : address scope claims (individual fields, not JSON object)
- */
-const DEFAULT_CLAIM_SCHEMAS = [
-  // Profile scope
-  {
-    field_key: 'name',
-    display_label: 'Full Name',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 1,
-  },
-  {
-    field_key: 'given_name',
-    display_label: 'First Name',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 2,
-  },
-  {
-    field_key: 'family_name',
-    display_label: 'Last Name',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 3,
-  },
-  {
-    field_key: 'middle_name',
-    display_label: 'Middle Name',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 4,
-  },
-  {
-    field_key: 'nickname',
-    display_label: 'Nickname',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 5,
-  },
-  {
-    field_key: 'preferred_username',
-    display_label: 'Preferred Username',
-    field_type: 'string',
-    is_pii: 0,
-    display_order: 6,
-  },
-  {
-    field_key: 'profile',
-    display_label: 'Profile URL',
-    field_type: 'string',
-    is_pii: 0,
-    display_order: 7,
-  },
-  {
-    field_key: 'picture',
-    display_label: 'Picture URL',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 8,
-  },
-  {
-    field_key: 'website',
-    display_label: 'Website',
-    field_type: 'string',
-    is_pii: 0,
-    display_order: 9,
-  },
-  {
-    field_key: 'birthdate',
-    display_label: 'Birthdate',
-    field_type: 'date',
-    is_pii: 1,
-    display_order: 10,
-  },
-  {
-    field_key: 'zoneinfo',
-    display_label: 'Time Zone',
-    field_type: 'string',
-    is_pii: 0,
-    display_order: 11,
-  },
-  {
-    field_key: 'locale',
-    display_label: 'Locale',
-    field_type: 'string',
-    is_pii: 0,
-    display_order: 12,
-  },
-  {
-    field_key: 'updated_at',
-    display_label: 'Last Updated',
-    field_type: 'number',
-    is_pii: 0,
-    display_order: 13,
-  },
-  // Email scope
-  {
-    field_key: 'email',
-    display_label: 'Email',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 20,
-  },
-  {
-    field_key: 'email_verified',
-    display_label: 'Email Verified',
-    field_type: 'boolean',
-    is_pii: 0,
-    display_order: 21,
-  },
-  // Phone scope
-  {
-    field_key: 'phone_number',
-    display_label: 'Phone Number',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 30,
-  },
-  {
-    field_key: 'phone_number_verified',
-    display_label: 'Phone Number Verified',
-    field_type: 'boolean',
-    is_pii: 0,
-    display_order: 31,
-  },
-  // Address scope (individual fields; address_country is non-PII for regulatory flexibility)
-  {
-    field_key: 'address_formatted',
-    display_label: 'Address (Formatted)',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 40,
-  },
-  {
-    field_key: 'address_street_address',
-    display_label: 'Street Address',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 41,
-  },
-  {
-    field_key: 'address_locality',
-    display_label: 'City / Locality',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 42,
-  },
-  {
-    field_key: 'address_region',
-    display_label: 'State / Region',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 43,
-  },
-  {
-    field_key: 'address_postal_code',
-    display_label: 'Postal Code',
-    field_type: 'string',
-    is_pii: 1,
-    display_order: 44,
-  },
-  {
-    field_key: 'address_country',
-    display_label: 'Country',
-    field_type: 'string',
-    is_pii: 0,
-    display_order: 45,
-  },
-] as const;
-
-/**
- * Seeds default OIDC claim schemas for a newly created tenant.
- * Skips any field_key that already exists for the tenant (idempotent).
- *
- * @param throwOnError - When true, per-claim errors are rethrown instead of logged.
- *   Use true during initial provisioning (hard-fail), false for soft-failure mode.
- */
-export async function seedDefaultClaimsForTenant(
-  tenantId: string,
-  adapter: DatabaseAdapter,
-  log: ReturnType<typeof getLogger>,
-  options: { throwOnError?: boolean } = {}
-): Promise<void> {
-  const { throwOnError = false } = options;
-
-  for (const claim of DEFAULT_CLAIM_SCHEMAS) {
-    try {
-      await seedCustomClaimSchemas({
-        db: adapter,
-        tenantId,
-        schemas: [
-          {
-            field_key: claim.field_key,
-            display_label: claim.display_label,
-            field_type: claim.field_type,
-            is_pii: claim.is_pii,
-            is_searchable: [
-              'name',
-              'given_name',
-              'family_name',
-              'email',
-              'preferred_username',
-              'phone_number',
-            ].includes(claim.field_key)
-              ? 1
-              : 0,
-            is_exportable: ['email_verified', 'phone_number_verified', 'updated_at'].includes(
-              claim.field_key
-            )
-              ? 0
-              : 1,
-            display_order: claim.display_order,
-          },
-        ],
-      });
-    } catch (err) {
-      if (throwOnError) throw err;
-      log
-        .module('ADMIN-TENANTS')
-        .error(
-          `Failed to seed default claim '${claim.field_key}' for tenant '${tenantId}'`,
-          {},
-          err as Error
-        );
-    }
-  }
-}
 
 // =============================================================================
 // Tenant Provisioning Helpers
@@ -1057,14 +873,14 @@ async function upsertTenantRow(
     tenantCode: string;
     name: string;
     description: string | null;
-    isActive: boolean;
+    lifecycleState: TenantLifecycleState;
     nowTs: number;
   }
 ): Promise<void> {
   const tenantKey = createOpaqueTenantKey();
   await adapter.execute(
     `INSERT INTO tenants (
-       id, tenant_code, tenant_key, name, description, is_active, is_default,
+       id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
        default_tenant_guard, created_at, updated_at
      )
      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
@@ -1072,7 +888,7 @@ async function upsertTenantRow(
        tenant_code = excluded.tenant_code,
        name = excluded.name,
        description = excluded.description,
-       is_active = excluded.is_active,
+       lifecycle_state = excluded.lifecycle_state,
        updated_at = excluded.updated_at`,
     [
       input.id,
@@ -1080,7 +896,7 @@ async function upsertTenantRow(
       tenantKey,
       input.name,
       input.description,
-      input.isActive ? 1 : 0,
+      input.lifecycleState,
       getDefaultTenantGuard(false),
       input.nowTs,
       input.nowTs,
@@ -1118,7 +934,7 @@ async function runTenantD1PoolProvisioning(
       tenantCode: input.tenantCode,
       name: input.name,
       description: input.description,
-      isActive: false,
+      lifecycleState: 'provisioning',
       nowTs,
     });
 
@@ -1144,7 +960,7 @@ async function runTenantD1PoolProvisioning(
       tenantCode: input.tenantCode,
       name: input.name,
       description: input.description,
-      isActive: true,
+      lifecycleState: 'active',
       nowTs,
     });
     tenantDbWritten = true;
@@ -1156,7 +972,6 @@ async function runTenantD1PoolProvisioning(
       actor,
       result: 'started',
     });
-    await seedDefaultClaimsForTenant(input.id, tenantAdapter, getLogger(c), { throwOnError: true });
     await c.env.AUTHRIM_CONFIG!.put(
       contractKey,
       JSON.stringify(buildDefaultTenantContract(input.id))
@@ -1187,10 +1002,10 @@ async function runTenantD1PoolProvisioning(
       result: 'succeeded',
     });
 
-    await adapter.execute('UPDATE tenants SET is_active = 1, updated_at = ? WHERE id = ?', [
-      nowTs,
-      input.id,
-    ]);
+    await adapter.execute(
+      "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ?",
+      [nowTs, input.id]
+    );
     await activateTenantDatabaseSlot(adminAdapter, slot.slot_id, input.id);
     await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id);
     await recordTenantSlotAudit(adminAdapter, {
@@ -1218,10 +1033,10 @@ async function runTenantD1PoolProvisioning(
       tenantDbWritten ? 'reset_required' : 'available'
     );
     if (tenantDbWritten || !options.deleteTenantRowBeforeTenantDbWrite) {
-      await adapter.execute('UPDATE tenants SET is_active = 0, updated_at = ? WHERE id = ?', [
-        Math.floor(Date.now() / 1000),
-        input.id,
-      ]);
+      await adapter.execute(
+        "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ?",
+        [Math.floor(Date.now() / 1000), input.id]
+      );
     }
     await cleanupTenantD1ProvisioningArtifacts(c, adminAdapter, input.id);
     const cleanupTasks: Promise<unknown>[] = [
@@ -1249,7 +1064,7 @@ async function runTenantD1PoolProvisioning(
   }
 
   const tenant = await adapter.queryOne<TenantRow>(
-    'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+    'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
     [input.id]
   );
   return { ok: true, tenant: tenant! };
@@ -1291,7 +1106,7 @@ export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const query = [
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants',
       tenantFilters.length > 0 ? `WHERE ${tenantFilters.join(' AND ')}` : '',
       'ORDER BY is_default DESC, name ASC',
     ]
@@ -1461,10 +1276,10 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     const tenantKey = createOpaqueTenantKey();
     await adapter.execute(
       `INSERT INTO tenants (
-         id, tenant_code, tenant_key, name, description, is_active, is_default,
+         id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
          default_tenant_guard, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?)`,
       [
         id,
         tenantCode,
@@ -1478,22 +1293,20 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     );
 
     const created = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
     // Provisioning — all-or-nothing (hard-fail with compensation on error)
     const contractKey = buildContractKey(c.env, 'tenant', id);
     try {
-      // 1. Seed default OIDC claim schemas (hard-fail: rethrow on any error)
-      await seedDefaultClaimsForTenant(id, adapter, getLogger(c), { throwOnError: true });
-      // 2. Write TenantContract to KV
+      // 1. Write TenantContract to KV
       await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
-      // 3. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui, login-methods, login-entry)
+      // 2. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui, login-methods, login-entry)
       await seedTenantDefaultSettings(c, id);
-      // 4. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
+      // 3. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
       await initTenantKeyManager(c.env.KEY_MANAGER, id);
-      // 5. Invalidate tenant-exists cache so request-context middleware sees the new tenant
+      // 4. Invalidate tenant-exists cache so request-context middleware sees the new tenant
       await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
     } catch (error) {
       const log = getLogger(c).module('ADMIN-TENANTS');
@@ -1548,7 +1361,7 @@ export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const adapter = createAdapter(c);
     const tenant = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -1570,7 +1383,7 @@ export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
 
 /**
  * PATCH /api/admin/tenants/:id
- * Update tenant (name, description, is_active)
+ * Update tenant (name, description, lifecycle_state)
  * Note: id and is_default cannot be changed via this endpoint
  */
 export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
@@ -1603,7 +1416,7 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     // Check tenant exists
     const existing = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -1617,12 +1430,32 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
       ? getDefaultTenantId(c.env)
       : getPrimaryTenantId(c.env);
 
-    if (id === protectedTenantId && updates.is_active === false) {
-      const reason = isSingleTenantMode(c.env)
-        ? 'The initial tenant must remain active in single-tenant mode'
-        : 'Cannot deactivate the primary tenant';
+    if (
+      (id === protectedTenantId || existing.is_default === 1) &&
+      updates.lifecycle_state &&
+      updates.lifecycle_state !== 'active'
+    ) {
+      const reason =
+        existing.is_default === 1
+          ? 'Cannot deactivate the default tenant'
+          : isSingleTenantMode(c.env)
+            ? 'The initial tenant must remain active in single-tenant mode'
+            : 'Cannot deactivate the primary tenant';
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'is_active', reason },
+        variables: { field: 'lifecycle_state', reason },
+      });
+    }
+
+    if (
+      updates.lifecycle_state !== undefined &&
+      updates.lifecycle_state !== existing.lifecycle_state &&
+      isInternalLifecycleState(existing.lifecycle_state)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'lifecycle_state',
+          reason: 'Lifecycle state requires a dedicated operation',
+        },
       });
     }
 
@@ -1653,9 +1486,9 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
       fields.push('description = ?');
       values.push(updates.description ?? null);
     }
-    if (updates.is_active !== undefined) {
-      fields.push('is_active = ?');
-      values.push(updates.is_active ? 1 : 0);
+    if (updates.lifecycle_state !== undefined) {
+      fields.push('lifecycle_state = ?');
+      values.push(updates.lifecycle_state);
     }
 
     if (fields.length === 0) {
@@ -1669,13 +1502,13 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     await adapter.execute(`UPDATE tenants SET ${fields.join(', ')} WHERE id = ?`, values);
 
-    // Invalidate cache if is_active changed (tenant may have been activated or deactivated)
-    if (updates.is_active !== undefined) {
+    // Invalidate cache if lifecycle_state changed (tenant may have been activated or deactivated)
+    if (updates.lifecycle_state !== undefined) {
       await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
     }
 
     const updated = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -1719,7 +1552,7 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
   try {
     const adapter = createAdapter(c);
     const tenant = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -1858,7 +1691,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
   try {
     const adapter = createAdapter(c);
     const tenant = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -1882,7 +1715,10 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
     const adminAdapter = requireAdminDatabaseAdapter(c.env, 'tenant-d1-provisioning-cleanup');
     await cleanupTenantD1ProvisioningArtifacts(c, adminAdapter, id);
     await Promise.allSettled([
-      adapter.execute('DELETE FROM tenants WHERE id = ?', [id]),
+      adapter.execute(
+        "UPDATE tenants SET lifecycle_state = 'deleted', updated_at = ? WHERE id = ?",
+        [Math.floor(Date.now() / 1000), id]
+      ),
       c.env.AUTHRIM_CONFIG?.delete(buildContractKey(c.env, 'tenant', id)),
       c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
       c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
@@ -1941,10 +1777,11 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const adapter = createAdapter(c);
 
-    const existing = await adapter.queryOne<{ id: string; is_default: number }>(
-      'SELECT id, is_default FROM tenants WHERE id = ?',
-      [id]
-    );
+    const existing = await adapter.queryOne<{
+      id: string;
+      is_default: number;
+      lifecycle_state: TenantLifecycleState;
+    }>('SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?', [id]);
 
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
@@ -1958,44 +1795,60 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const nowTs = Math.floor(Date.now() / 1000);
+    if (existing.is_default === 1) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'id', reason: 'Cannot delete the default tenant' },
+      });
+    }
 
-    // Immediately deactivate the tenant to block new requests
-    await adapter.execute('UPDATE tenants SET is_active = 0, updated_at = ? WHERE id = ?', [
-      nowTs,
-      id,
-    ]);
-
-    // Invalidate cache so subsequent requests to this tenant return 404 immediately
-    await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
+    if (!isOperatorMutableLifecycleState(existing.lifecycle_state)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'lifecycle_state',
+          reason: 'Lifecycle state requires a dedicated operation',
+        },
+      });
+    }
 
     // Get admin identity for job attribution
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const adminAuth = (c as any).get('adminAuth') as { adminId?: string } | null;
     const createdBy = adminAuth?.adminId ?? 'unknown';
 
+    const nowTs = Math.floor(Date.now() / 1000);
     const jobId = crypto.randomUUID();
     // Estimate completion: max 1 hour (next hourly cron tick)
     const estimatedCompletion = nowTs + 3600;
 
-    await adapter.execute(
-      `INSERT INTO admin_jobs (
-        id, tenant_id, job_type, status, progress, config,
-        created_by, created_at, updated_at, estimated_completion
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        jobId,
-        getTenantIdFromContext(c),
-        'tenants/delete',
-        'pending',
-        JSON.stringify({ stage: 'queued' }),
-        JSON.stringify({ tenant_id: id }),
-        createdBy,
-        nowTs,
-        nowTs,
-        estimatedCompletion,
-      ]
-    );
+    await adapter.transaction(async (tx) => {
+      // Immediately move the tenant out of the runtime-active lifecycle to block new requests.
+      await tx.execute(
+        "UPDATE tenants SET lifecycle_state = 'deleting', updated_at = ? WHERE id = ?",
+        [nowTs, id]
+      );
+
+      await tx.execute(
+        `INSERT INTO admin_jobs (
+          id, tenant_id, job_type, status, progress, config,
+          created_by, created_at, updated_at, estimated_completion
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          jobId,
+          getTenantIdFromContext(c),
+          'tenants/delete',
+          'pending',
+          JSON.stringify({ stage: 'queued' }),
+          JSON.stringify({ tenant_id: id }),
+          createdBy,
+          nowTs,
+          nowTs,
+          estimatedCompletion,
+        ]
+      );
+    });
+
+    // Invalidate cache so subsequent requests to this tenant return 404 immediately.
+    await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
 
     await createAuditLogFromContext(c, 'tenant.delete_queued', 'tenant', id, {
       tenant_id: id,
@@ -2040,8 +1893,8 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
   try {
     const adapter = createAdapter(c);
 
-    const existing = await adapter.queryOne<{ id: string; is_active: number }>(
-      'SELECT id, is_active FROM tenants WHERE id = ?',
+    const existing = await adapter.queryOne<{ id: string; lifecycle_state: TenantLifecycleState }>(
+      'SELECT id, lifecycle_state FROM tenants WHERE id = ?',
       [id]
     );
 
@@ -2051,9 +1904,9 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
       });
     }
 
-    if (existing.is_active === 0) {
+    if (!isRuntimeActiveLifecycleState(existing.lifecycle_state)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'id', reason: 'Cannot set an inactive tenant as default' },
+        variables: { field: 'id', reason: 'Cannot set a non-active tenant as default' },
       });
     }
 
@@ -2071,7 +1924,7 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
     });
 
     const updated = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, is_active, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
       [id]
     );
 

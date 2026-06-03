@@ -1,6 +1,10 @@
 import { Context } from 'hono';
-import type { Env, UserCore, UserPII } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalIdentityRepository,
+  CanonicalRuntimeUserProjectionRepository,
+  CanonicalRuntimeUserWriter,
+  CanonicalSensitiveValueResolver,
   invalidateUserCache,
   getTenantIdFromContext,
   createPIIContextFromHono,
@@ -22,6 +26,7 @@ import {
   getRequiredCustomClaimViolationStatuses,
   resolveCustomClaimRuntimeSourcesFromEnv,
   runPIIWriteWithCompensation,
+  type CanonicalRuntimeUserProjection,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_USER_CREATE_RESERVED_FIELDS,
@@ -34,6 +39,284 @@ import {
   toMilliseconds,
 } from './admin-shared';
 
+type AdminRuntimeUserCore = {
+  email_verified: boolean | number;
+  phone_number_verified: boolean | number;
+  user_type: string;
+  is_active?: boolean | number;
+};
+
+type AdminRuntimeUserPII = {
+  email: string | null;
+  phone_number: string | null;
+  name: string | null;
+  given_name: string | null;
+  family_name: string | null;
+  nickname: string | null;
+  preferred_username: string | null;
+  picture: string | null;
+};
+
+function createCanonicalRuntimeUserWriter(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string
+): CanonicalRuntimeUserWriter {
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserWriter(
+    new CanonicalIdentityRepository(coreAdapter, tenantId),
+    piiCtx.defaultPiiAdapter
+  );
+}
+
+function createCanonicalRuntimeUserProjectionRepository(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string
+): CanonicalRuntimeUserProjectionRepository | null {
+  if (!hasPIIDatabase(c)) {
+    return null;
+  }
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserProjectionRepository(
+    coreAdapter,
+    tenantId,
+    new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
+  );
+}
+
+function userTypeFromAccountType(accountType: string): string {
+  if (accountType === 'admin') {
+    return 'admin';
+  }
+  if (accountType === 'service_account') {
+    return 'm2m';
+  }
+  if (accountType === 'anonymous') {
+    return 'anonymous';
+  }
+  return 'end_user';
+}
+
+function addressPartsFromProjection(projection: CanonicalRuntimeUserProjection): {
+  formatted: string | null;
+  street_address: string | null;
+  locality: string | null;
+  region: string | null;
+  postal_code: string | null;
+  country: string | null;
+} {
+  if (!projection.address_json) {
+    return {
+      formatted: null,
+      street_address: null,
+      locality: null,
+      region: null,
+      postal_code: null,
+      country: null,
+    };
+  }
+  try {
+    const parsed = JSON.parse(projection.address_json);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const address = parsed as Record<string, unknown>;
+      return {
+        formatted: typeof address.formatted === 'string' ? address.formatted : null,
+        street_address: typeof address.street_address === 'string' ? address.street_address : null,
+        locality: typeof address.locality === 'string' ? address.locality : null,
+        region: typeof address.region === 'string' ? address.region : null,
+        postal_code: typeof address.postal_code === 'string' ? address.postal_code : null,
+        country: typeof address.country === 'string' ? address.country : null,
+      };
+    }
+  } catch {
+    // Ignore malformed canonical address payloads.
+  }
+  return {
+    formatted: null,
+    street_address: null,
+    locality: null,
+    region: null,
+    postal_code: null,
+    country: null,
+  };
+}
+
+function buildAddressJsonFromAdminBody(body: {
+  address_formatted?: string | null;
+  address_street_address?: string | null;
+  address_locality?: string | null;
+  address_region?: string | null;
+  address_postal_code?: string | null;
+  address_country?: string | null;
+}): string | undefined {
+  const address = {
+    formatted: body.address_formatted ?? null,
+    street_address: body.address_street_address ?? null,
+    locality: body.address_locality ?? null,
+    region: body.address_region ?? null,
+    postal_code: body.address_postal_code ?? null,
+    country: body.address_country ?? null,
+  };
+  const hasAddress = Object.values(address).some((value) => value !== null);
+  return hasAddress ? JSON.stringify(address) : undefined;
+}
+
+function buildCanonicalPiiDeletionPatch(): Record<string, null> {
+  return {
+    email: null,
+    phone_number: null,
+    name: null,
+    given_name: null,
+    family_name: null,
+    middle_name: null,
+    nickname: null,
+    preferred_username: null,
+    profile: null,
+    picture: null,
+    website: null,
+    gender: null,
+    birthdate: null,
+    zoneinfo: null,
+    locale: null,
+  };
+}
+
+function formatCanonicalAdminUser(projection: CanonicalRuntimeUserProjection) {
+  const address = addressPartsFromProjection(projection);
+  const createdAt = Date.parse(projection.created_at);
+  const updatedAt = Date.parse(projection.updated_at);
+  return {
+    id: projection.id,
+    tenant_id: projection.tenant_id,
+    email: projection.email,
+    name: projection.name,
+    given_name: projection.given_name,
+    family_name: projection.family_name,
+    nickname: projection.nickname,
+    preferred_username: projection.preferred_username,
+    picture: projection.picture,
+    phone_number: projection.phone_number,
+    website: projection.website,
+    gender: projection.gender,
+    birthdate: projection.birthdate,
+    locale: projection.locale,
+    zoneinfo: projection.zoneinfo,
+    address_formatted: address.formatted,
+    address_street_address: address.street_address,
+    address_locality: address.locality,
+    address_region: address.region,
+    address_postal_code: address.postal_code,
+    address_country: address.country,
+    declared_residence: null,
+    pii_class: 'PROFILE',
+    email_verified: projection.email_verified,
+    phone_number_verified: projection.phone_number_verified,
+    user_type: userTypeFromAccountType(projection.account_type),
+    is_active: projection.active,
+    pii_partition: 'default',
+    pii_status: projection.active ? 'active' : 'deleted',
+    created_at: Number.isFinite(createdAt) ? createdAt : null,
+    updated_at: Number.isFinite(updatedAt) ? updatedAt : null,
+    last_login_at: null,
+    status: projection.active ? 'active' : 'inactive',
+    suspended_at: null,
+    suspended_until: null,
+    locked_at: null,
+    locked_until: null,
+    lifecycle_state: projection.lifecycle_state,
+  };
+}
+
+const ADMIN_RUNTIME_PII_FIELDS = {
+  email: true,
+  phone_number: true,
+  name: true,
+  given_name: true,
+  family_name: true,
+  nickname: true,
+  preferred_username: true,
+  picture: true,
+} as const;
+
+async function maybeCreateCanonicalRuntimeUserForAdmin(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  userCore: Pick<AdminRuntimeUserCore, 'email_verified' | 'phone_number_verified' | 'user_type'>,
+  userPII: AdminRuntimeUserPII | null
+): Promise<void> {
+  await createCanonicalRuntimeUserWriter(c, coreAdapter, tenantId).createFromRuntimeUser({
+    userId,
+    tenantId,
+    active: true,
+    emailVerified: Boolean(userCore.email_verified),
+    phoneNumberVerified: Boolean(userCore.phone_number_verified),
+    userType: userCore.user_type,
+    displayName: userPII?.name ?? userPII?.preferred_username ?? userPII?.email ?? null,
+    sourceRef: 'admin:/users',
+    piiFields: userPII ? ADMIN_RUNTIME_PII_FIELDS : {},
+    sensitiveValues: userPII
+      ? {
+          email: userPII.email,
+          phone_number: userPII.phone_number,
+          name: userPII.name,
+          given_name: userPII.given_name,
+          family_name: userPII.family_name,
+          nickname: userPII.nickname,
+          preferred_username: userPII.preferred_username,
+          picture: userPII.picture,
+        }
+      : {},
+  });
+}
+
+async function maybeSyncCanonicalRuntimeUserForAdmin(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string,
+  userCore: Pick<
+    AdminRuntimeUserCore,
+    'email_verified' | 'phone_number_verified' | 'user_type' | 'is_active'
+  >,
+  userPII: AdminRuntimeUserPII | null
+): Promise<void> {
+  await createCanonicalRuntimeUserWriter(c, coreAdapter, tenantId).syncFromRuntimeUser({
+    userId,
+    tenantId,
+    active: Boolean(userCore.is_active),
+    emailVerified: Boolean(userCore.email_verified),
+    phoneNumberVerified: Boolean(userCore.phone_number_verified),
+    userType: userCore.user_type,
+    displayName: userPII?.name ?? userPII?.preferred_username ?? userPII?.email ?? null,
+    sourceRef: 'admin:/users',
+    piiFields: userPII ? ADMIN_RUNTIME_PII_FIELDS : {},
+    sensitiveValues: userPII
+      ? {
+          email: userPII.email,
+          phone_number: userPII.phone_number,
+          name: userPII.name,
+          given_name: userPII.given_name,
+          family_name: userPII.family_name,
+          nickname: userPII.nickname,
+          preferred_username: userPII.preferred_username,
+          picture: userPII.picture,
+        }
+      : {},
+  });
+}
+
+async function maybeDeleteCanonicalRuntimeUserForAdmin(
+  c: Context<{ Bindings: Env }>,
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string
+): Promise<void> {
+  await createCanonicalRuntimeUserWriter(c, coreAdapter, tenantId).deleteRuntimeUser(userId);
+}
+
 /**
  * Get admin statistics.
  * GET /admin/stats
@@ -42,6 +325,14 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const todayStart = new Date().setHours(0, 0, 0, 0);
 
@@ -55,11 +346,11 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
       recentUsersCoreResult,
     ] = await Promise.all([
       authCtx.coreAdapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND last_login_at > ? AND is_active = 1',
+        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND updated_at > ? AND lifecycle_state = 'active'",
         [tenantId, thirtyDaysAgo]
       ),
       authCtx.coreAdapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1',
+        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active'",
         [tenantId]
       ),
       authCtx.coreAdapter.queryOne<{ count: number }>(
@@ -67,19 +358,19 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
         [tenantId]
       ),
       authCtx.coreAdapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND created_at >= ? AND is_active = 1',
+        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND created_at >= ? AND lifecycle_state = 'active'",
         [tenantId, todayStart]
       ),
       authCtx.coreAdapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND last_login_at >= ? AND is_active = 1',
+        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND updated_at >= ? AND lifecycle_state = 'active'",
         [tenantId, todayStart]
       ),
       authCtx.coreAdapter.query<{ pii_status: string; count: number }>(
-        'SELECT pii_status, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_status',
+        "SELECT 'active' as pii_status, COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active'",
         [tenantId]
       ),
       authCtx.coreAdapter.query<{ id: string; created_at: number }>(
-        'SELECT id, created_at FROM users_core WHERE tenant_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 10',
+        "SELECT legacy_user_id as id, created_at FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active' AND legacy_user_id IS NOT NULL ORDER BY created_at DESC LIMIT 10",
         [tenantId]
       ),
     ]);
@@ -105,42 +396,19 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
       timestamp: number;
     }[] = [];
 
-    if (hasPIIDatabase(c) && recentUsersCoreResult.length > 0) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userIds = recentUsersCoreResult.map((u) => u.id);
-      const placeholders = userIds.map(() => '?').join(',');
-      const piiResults = await piiCtx.defaultPiiAdapter.query<{
-        id: string;
-        email: string | null;
-        name: string | null;
-      }>(`SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`, [
-        tenantId,
-        ...userIds,
-      ]);
-
-      const piiMap = new Map<string, { email: string | null; name: string | null }>();
-      for (const pii of piiResults) {
-        piiMap.set(pii.id, { email: pii.email, name: pii.name });
-      }
-
-      recentActivity = recentUsersCoreResult.map((user) => {
-        const pii = piiMap.get(user.id);
-        return {
-          type: 'user_registration',
-          userId: user.id,
-          email: pii?.email ?? null,
-          name: pii?.name ?? null,
-          timestamp: toMilliseconds(user.created_at) ?? 0,
-        };
-      });
-    } else {
-      recentActivity = recentUsersCoreResult.map((user) => ({
-        type: 'user_registration',
-        userId: user.id,
-        email: null,
-        name: null,
-        timestamp: toMilliseconds(user.created_at) ?? 0,
-      }));
+    if (recentUsersCoreResult.length > 0) {
+      recentActivity = await Promise.all(
+        recentUsersCoreResult.map(async (user) => {
+          const projection = await projectionRepository.findByLegacyUserId(user.id);
+          return {
+            type: 'user_registration',
+            userId: user.id,
+            email: projection?.email ?? null,
+            name: projection?.name ?? null,
+            timestamp: toMilliseconds(user.created_at) ?? 0,
+          };
+        })
+      );
     }
 
     return c.json({
@@ -179,151 +447,64 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     const piiStatus = c.req.query('pii_status');
     const lifecycleState = c.req.query('lifecycle_state');
     const offset = (page - 1) * limit;
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
 
-    let matchingUserIds: string[] | null = null;
-
-    if (search && hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const escapedSearch = escapeLikePattern(search);
-      const piiSearchResult = await piiCtx.defaultPiiAdapter.query<{ id: string }>(
-        "SELECT id FROM users_pii WHERE tenant_id = ? AND (email LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')",
-        [tenantId, `%${escapedSearch}%`, `%${escapedSearch}%`]
-      );
-      matchingUserIds = piiSearchResult.map((r) => r.id);
-
-      if (matchingUserIds.length === 0) {
-        return c.json({
-          users: [],
-          pagination: {
-            page,
-            limit,
-            total: 0,
-            totalPages: 0,
-            hasNext: false,
-            hasPrev: false,
-          },
-        });
+    const accountRows = await authCtx.coreAdapter.query<{ legacy_user_id: string }>(
+      `SELECT legacy_user_id
+         FROM identity_accounts
+        WHERE tenant_id = ?
+          AND legacy_user_id IS NOT NULL
+          AND lifecycle_state = 'active'
+        ORDER BY created_at DESC`,
+      [tenantId]
+    );
+    const projections: CanonicalRuntimeUserProjection[] = [];
+    for (const row of accountRows) {
+      const projection = await projectionRepository.findByLegacyUserId(row.legacy_user_id);
+      if (projection) {
+        projections.push(projection);
       }
     }
 
-    let coreQuery = 'SELECT * FROM users_core WHERE tenant_id = ? AND is_active = 1';
-    let countQuery =
-      'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1';
-    const coreBindings: unknown[] = [tenantId];
-    const countBindings: unknown[] = [tenantId];
-
-    if (matchingUserIds !== null) {
-      const placeholders = matchingUserIds.map(() => '?').join(',');
-      coreQuery += ` AND id IN (${placeholders})`;
-      countQuery += ` AND id IN (${placeholders})`;
-      coreBindings.push(...matchingUserIds);
-      countBindings.push(...matchingUserIds);
-    }
-
-    if (verified !== undefined) {
-      coreQuery += ' AND email_verified = ?';
-      countQuery += ' AND email_verified = ?';
-      const verifiedValue = verified === 'true' ? 1 : 0;
-      coreBindings.push(verifiedValue);
-      countBindings.push(verifiedValue);
-    }
-
-    if (piiStatus !== undefined) {
-      const validStatuses = ['none', 'pending', 'active', 'failed', 'deleted'];
-      if (validStatuses.includes(piiStatus)) {
-        coreQuery += ' AND pii_status = ?';
-        countQuery += ' AND pii_status = ?';
-        coreBindings.push(piiStatus);
-        countBindings.push(piiStatus);
+    const escapedSearch = search ? escapeLikePattern(search).toLowerCase() : '';
+    const filteredUsers = projections.filter((projection) => {
+      if (search) {
+        const haystack = [projection.email, projection.name, projection.preferred_username]
+          .filter(Boolean)
+          .join('\n')
+          .toLowerCase();
+        if (!haystack.includes(escapedSearch.replace(/\\/g, ''))) {
+          return false;
+        }
       }
-    }
+      if (verified !== undefined && Boolean(projection.email_verified) !== (verified === 'true')) {
+        return false;
+      }
+      if (piiStatus !== undefined && piiStatus !== (projection.active ? 'active' : 'deleted')) {
+        return false;
+      }
+      if (
+        lifecycleState !== undefined &&
+        VALID_USER_LIFECYCLE_STATES.has(lifecycleState) &&
+        projection.lifecycle_state !== lifecycleState
+      ) {
+        return false;
+      }
+      return true;
+    });
 
-    if (lifecycleState !== undefined && VALID_USER_LIFECYCLE_STATES.has(lifecycleState)) {
-      coreQuery += ' AND lifecycle_state = ?';
-      countQuery += ' AND lifecycle_state = ?';
-      coreBindings.push(lifecycleState);
-      countBindings.push(lifecycleState);
-    }
-
-    coreQuery += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    coreBindings.push(limit, offset);
-
-    const [totalResult, coreUsers] = await Promise.all([
-      authCtx.coreAdapter.queryOne<{ count: number }>(countQuery, countBindings),
-      authCtx.coreAdapter.query<UserCore>(coreQuery, coreBindings),
-    ]);
-
-    const total = totalResult?.count || 0;
+    const total = filteredUsers.length;
     const totalPages = Math.ceil(total / limit);
-    let formattedUsers: unknown[] = [];
-
-    if (coreUsers.length > 0 && hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userIds = coreUsers.map((u) => u.id);
-      const placeholders = userIds.map(() => '?').join(',');
-      const piiResults = await piiCtx.defaultPiiAdapter.query<UserPII>(
-        `SELECT * FROM users_pii WHERE tenant_id = ? AND id IN (${placeholders})`,
-        [tenantId, ...userIds]
-      );
-
-      const piiMap = new Map<string, UserPII>();
-      for (const pii of piiResults) {
-        piiMap.set(pii.id, pii);
-      }
-
-      formattedUsers = coreUsers.map((core) => {
-        const pii = piiMap.get(core.id);
-        return {
-          id: core.id,
-          tenant_id: core.tenant_id,
-          email: pii?.email ?? null,
-          name: pii?.name ?? null,
-          given_name: pii?.given_name ?? null,
-          family_name: pii?.family_name ?? null,
-          nickname: pii?.nickname ?? null,
-          preferred_username: pii?.preferred_username ?? null,
-          picture: pii?.picture ?? null,
-          phone_number: pii?.phone_number ?? null,
-          email_verified: Boolean(core.email_verified),
-          phone_number_verified: Boolean(core.phone_number_verified),
-          user_type: core.user_type,
-          is_active: Boolean(core.is_active),
-          pii_partition: core.pii_partition,
-          pii_status: core.pii_status,
-          created_at: toMilliseconds(core.created_at),
-          updated_at: toMilliseconds(core.updated_at),
-          last_login_at: toMilliseconds(core.last_login_at),
-          status: core.status ?? 'active',
-          suspended_at: toMilliseconds(core.suspended_at),
-          suspended_until: toMilliseconds(core.suspended_until),
-          locked_at: toMilliseconds(core.locked_at),
-          locked_until: toMilliseconds(core.locked_until),
-          lifecycle_state: core.lifecycle_state ?? 'active',
-        };
-      });
-    } else if (coreUsers.length > 0) {
-      formattedUsers = coreUsers.map((core) => ({
-        id: core.id,
-        tenant_id: core.tenant_id,
-        email: null,
-        name: null,
-        email_verified: Boolean(core.email_verified),
-        phone_number_verified: Boolean(core.phone_number_verified),
-        user_type: core.user_type,
-        is_active: Boolean(core.is_active),
-        pii_partition: core.pii_partition,
-        pii_status: core.pii_status,
-        created_at: toMilliseconds(core.created_at),
-        updated_at: toMilliseconds(core.updated_at),
-        last_login_at: toMilliseconds(core.last_login_at),
-        status: core.status ?? 'active',
-        suspended_at: toMilliseconds(core.suspended_at),
-        suspended_until: toMilliseconds(core.suspended_until),
-        locked_at: toMilliseconds(core.locked_at),
-        locked_until: toMilliseconds(core.locked_until),
-        lifecycle_state: core.lifecycle_state ?? 'active',
-      }));
-    }
+    const formattedUsers = filteredUsers
+      .slice(offset, offset + limit)
+      .map(formatCanonicalAdminUser);
 
     return c.json({
       users: formattedUsers,
@@ -351,9 +532,19 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const projection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
 
-    if (!userCore) {
+    if (!projection) {
       return c.json(
         {
           error: 'not_found',
@@ -361,13 +552,6 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
         },
         404
       );
-    }
-
-    let userPII: UserPII | null = null;
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-      userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
     }
 
     const passkeys = await authCtx.repositories.passkey.findByUserId(userId);
@@ -396,46 +580,7 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     });
     const missingRequiredFields = requiredViolations.users[0]?.missingRequiredFields ?? [];
 
-    const formattedUser = {
-      id: userCore.id,
-      tenant_id: userCore.tenant_id,
-      email: userPII?.email ?? null,
-      name: userPII?.name ?? null,
-      given_name: userPII?.given_name ?? null,
-      family_name: userPII?.family_name ?? null,
-      nickname: userPII?.nickname ?? null,
-      preferred_username: userPII?.preferred_username ?? null,
-      picture: userPII?.picture ?? null,
-      phone_number: userPII?.phone_number ?? null,
-      website: userPII?.website ?? null,
-      gender: userPII?.gender ?? null,
-      birthdate: userPII?.birthdate ?? null,
-      locale: userPII?.locale ?? null,
-      zoneinfo: userPII?.zoneinfo ?? null,
-      address_formatted: userPII?.address_formatted ?? null,
-      address_street_address: userPII?.address_street_address ?? null,
-      address_locality: userPII?.address_locality ?? null,
-      address_region: userPII?.address_region ?? null,
-      address_postal_code: userPII?.address_postal_code ?? null,
-      address_country: userPII?.address_country ?? null,
-      declared_residence: userPII?.declared_residence ?? null,
-      pii_class: userPII?.pii_class ?? null,
-      email_verified: userCore.email_verified,
-      phone_number_verified: userCore.phone_number_verified,
-      user_type: userCore.user_type,
-      is_active: userCore.is_active,
-      pii_partition: userCore.pii_partition,
-      pii_status: userCore.pii_status,
-      created_at: toMilliseconds(userCore.created_at),
-      updated_at: toMilliseconds(userCore.updated_at),
-      last_login_at: toMilliseconds(userCore.last_login_at),
-      status: userCore.status,
-      suspended_at: toMilliseconds(userCore.suspended_at),
-      suspended_until: toMilliseconds(userCore.suspended_until),
-      locked_at: toMilliseconds(userCore.locked_at),
-      locked_until: toMilliseconds(userCore.locked_until),
-      lifecycle_state: userCore.lifecycle_state ?? 'active',
-    };
+    const formattedUser = formatCanonicalAdminUser(projection);
 
     const formattedPasskeys = passkeys.map((p) => ({
       id: p.id,
@@ -517,19 +662,30 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const emailExists = await piiCtx.piiRepositories.userPII.emailExists(tenantId, email);
+    if (!hasPIIDatabase(c)) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const emailExists = await piiCtx.defaultPiiAdapter.queryOne<{ id: string }>(
+      `SELECT owner_id as id
+         FROM identity_sensitive_values
+        WHERE tenant_id = ?
+          AND owner_type = 'runtime_user'
+          AND value_key = 'email'
+          AND value_json = ?
+          AND lifecycle_state = 'active'
+        LIMIT 1`,
+      [tenantId, JSON.stringify(email)]
+    );
 
-      if (emailExists) {
-        return c.json(
-          {
-            error: 'conflict',
-            error_description: 'Unable to create user with the provided information',
-          },
-          409
-        );
-      }
+    if (emailExists) {
+      return c.json(
+        {
+          error: 'conflict',
+          error_description: 'Unable to create user with the provided information',
+        },
+        409
+      );
     }
 
     const customFieldValidation = await validateCustomClaimWrite({
@@ -558,23 +714,18 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
 
     const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
 
-    await authCtx.repositories.userCore.createUser({
-      id: userId,
-      tenant_id: tenantId,
-      email_verified: email_verified ?? false,
-      phone_number_verified: phone_number_verified ?? false,
-      user_type: (user_type as 'end_user' | 'admin' | 'm2m') || 'end_user',
-      pii_partition: 'default',
-      pii_status: 'pending',
-    });
-
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      try {
-        await piiCtx.piiRepositories.userPII.createPII({
-          id: userId,
-          tenant_id: tenantId,
-          pii_class: 'PROFILE',
+    try {
+      await maybeCreateCanonicalRuntimeUserForAdmin(
+        c,
+        authCtx.coreAdapter,
+        tenantId,
+        userId,
+        {
+          email_verified: email_verified ?? false,
+          phone_number_verified: phone_number_verified ?? false,
+          user_type: typeof user_type === 'string' ? user_type : 'end_user',
+        },
+        {
           email,
           phone_number: phone_number ?? null,
           name: name ?? null,
@@ -583,19 +734,8 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           nickname: nickname ?? null,
           preferred_username: preferred_username ?? null,
           picture: picture ?? null,
-        });
-
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-      } catch (piiError) {
-        logSanitizedError('PII insert failed', piiError);
-        await authCtx.repositories.userCore.updatePIIStatus(userId, 'failed');
-        throw piiError;
-      }
-    } else {
-      await authCtx.repositories.userCore.updatePIIStatus(userId, 'none');
-    }
-
-    try {
+        }
+      );
       await persistCustomClaimWrite({
         db: customClaimSources.nonPiiDb,
         dbPii: customClaimSources.piiDb,
@@ -613,7 +753,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       });
     } catch (customFieldError) {
       logSanitizedError(
-        'Custom claim persistence failed during admin user create',
+        'Custom claim or canonical runtime persistence failed during admin user create',
         customFieldError
       );
 
@@ -626,17 +766,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           userId,
         ]);
 
-        if (customClaimSources.piiDb) {
-          await ensureDatabaseAdapter(
-            customClaimSources.piiDb,
-            'admin-user-create-rollback-pii'
-          ).execute('DELETE FROM users_pii WHERE id = ? AND tenant_id = ?', [userId, tenantId]);
-        }
-
-        await authCtx.coreAdapter.execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [
-          userId,
-          tenantId,
-        ]);
+        await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
       } catch (cleanupError) {
         logSanitizedError(
           'Failed to rollback admin user create after custom claim persistence failure',
@@ -647,35 +777,13 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       throw customFieldError;
     }
 
-    const userCore = await authCtx.repositories.userCore.findById(userId);
-
-    let userPII: UserPII | null = null;
-    if (hasPIIDatabase(c) && userCore) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-      userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
-    }
-
-    const createdUser = {
-      id: userCore?.id,
-      tenant_id: userCore?.tenant_id,
-      email: userPII?.email ?? null,
-      name: userPII?.name ?? null,
-      given_name: userPII?.given_name ?? null,
-      family_name: userPII?.family_name ?? null,
-      nickname: userPII?.nickname ?? null,
-      preferred_username: userPII?.preferred_username ?? null,
-      picture: userPII?.picture ?? null,
-      phone_number: userPII?.phone_number ?? null,
-      email_verified: userCore?.email_verified ?? false,
-      phone_number_verified: userCore?.phone_number_verified ?? false,
-      user_type: userCore?.user_type,
-      is_active: userCore?.is_active ?? false,
-      pii_partition: userCore?.pii_partition,
-      pii_status: userCore?.pii_status,
-      created_at: toMilliseconds(userCore?.created_at),
-      updated_at: toMilliseconds(userCore?.updated_at),
-    };
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    const createdProjection = await projectionRepository?.findByLegacyUserId(userId);
+    const createdUser = createdProjection ? formatCanonicalAdminUser(createdProjection) : null;
 
     const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {
@@ -689,10 +797,10 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     });
 
     await createAuditLogFromContext(c, 'user.created', 'user', userId, {
-      user_type: userCore?.user_type,
+      user_type,
     });
     scheduleAdminAuditLog(c, 'user.created', userId, 'success', {
-      user_type: userCore?.user_type,
+      user_type,
     });
 
     return c.json(
@@ -738,9 +846,19 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     }>();
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_UPDATE_RESERVED_FIELDS);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const existingProjection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
 
-    if (!userCore) {
+    if (!existingProjection) {
       return c.json(
         {
           error: 'not_found',
@@ -748,41 +866,6 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
         },
         404
       );
-    }
-
-    const coreUpdateData: Record<string, unknown> = {};
-    const piiUpdateData: Record<string, unknown> = {};
-
-    if (body.email_verified !== undefined) {
-      coreUpdateData.email_verified = body.email_verified;
-    }
-    if (body.phone_number_verified !== undefined) {
-      coreUpdateData.phone_number_verified = body.phone_number_verified;
-    }
-    if (body.user_type !== undefined) {
-      coreUpdateData.user_type = body.user_type;
-    }
-
-    if (body.name !== undefined) {
-      piiUpdateData.name = body.name;
-    }
-    if (body.given_name !== undefined) {
-      piiUpdateData.given_name = body.given_name;
-    }
-    if (body.family_name !== undefined) {
-      piiUpdateData.family_name = body.family_name;
-    }
-    if (body.nickname !== undefined) {
-      piiUpdateData.nickname = body.nickname;
-    }
-    if (body.preferred_username !== undefined) {
-      piiUpdateData.preferred_username = body.preferred_username;
-    }
-    if (body.phone_number !== undefined) {
-      piiUpdateData.phone_number = body.phone_number;
-    }
-    if (body.picture !== undefined) {
-      piiUpdateData.picture = body.picture;
     }
 
     const customFieldValidation = await validateCustomClaimWrite({
@@ -817,8 +900,16 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       customFieldValidation.piiKeysToDelete.length > 0;
 
     if (
-      Object.keys(coreUpdateData).length === 0 &&
-      Object.keys(piiUpdateData).length === 0 &&
+      body.email_verified === undefined &&
+      body.phone_number_verified === undefined &&
+      body.user_type === undefined &&
+      body.name === undefined &&
+      body.given_name === undefined &&
+      body.family_name === undefined &&
+      body.nickname === undefined &&
+      body.preferred_username === undefined &&
+      body.phone_number === undefined &&
+      body.picture === undefined &&
       !hasCustomFieldChanges
     ) {
       return c.json(
@@ -830,79 +921,56 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const hasPiiFieldChanges = Object.keys(piiUpdateData).length > 0;
-    const hasPiiCustomFieldChanges =
-      Object.keys(customFieldValidation.piiValues).length > 0 ||
-      customFieldValidation.piiKeysToDelete.length > 0;
-    const requiresPiiCompensation =
-      hasPIIDatabase(c) && (hasPiiFieldChanges || hasPiiCustomFieldChanges);
-
-    await runPIIWriteWithCompensation({
-      userId,
-      userCore: authCtx.repositories.userCore,
-      requiresPIIWrite: requiresPiiCompensation,
-      write: async () => {
-        if (Object.keys(coreUpdateData).length > 0) {
-          await authCtx.repositories.userCore.update(userId, coreUpdateData);
-        }
-
-        if (hasPiiFieldChanges && hasPIIDatabase(c)) {
-          const piiCtx = createPIIContextFromHono(c, tenantId);
-          const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-          await piiCtx.piiRepositories.userPII.updatePII(userId, piiUpdateData, piiAdapter);
-        }
-
-        if (hasCustomFieldChanges) {
-          await persistCustomClaimWrite({
-            db: customClaimSources.nonPiiDb,
-            dbPii: customClaimSources.piiDb,
-            tenantId,
-            userId,
-            validation: customFieldValidation,
-          });
-          await syncUserLifecycleState({
-            db: customClaimSources.nonPiiDb,
-            dbPii: customClaimSources.piiDb,
-            schemaDb: customClaimSources.schemaDb,
-            stateDb: authCtx.coreAdapter,
-            tenantId,
-            userId,
-          });
-        }
-      },
-    });
-
-    await invalidateUserCache(c.env, tenantId, userId);
-    const updatedCore = await authCtx.repositories.userCore.findById(userId);
-
-    let updatedPII: UserPII | null = null;
-    if (hasPIIDatabase(c) && updatedCore) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(updatedCore.pii_partition);
-      updatedPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
+    if (hasCustomFieldChanges) {
+      await persistCustomClaimWrite({
+        db: customClaimSources.nonPiiDb,
+        dbPii: customClaimSources.piiDb,
+        tenantId,
+        userId,
+        validation: customFieldValidation,
+      });
+      await syncUserLifecycleState({
+        db: customClaimSources.nonPiiDb,
+        dbPii: customClaimSources.piiDb,
+        schemaDb: customClaimSources.schemaDb,
+        stateDb: authCtx.coreAdapter,
+        tenantId,
+        userId,
+      });
     }
 
-    const updatedUser = {
-      id: updatedCore?.id,
-      tenant_id: updatedCore?.tenant_id,
-      email: updatedPII?.email ?? null,
-      name: updatedPII?.name ?? null,
-      given_name: updatedPII?.given_name ?? null,
-      family_name: updatedPII?.family_name ?? null,
-      nickname: updatedPII?.nickname ?? null,
-      preferred_username: updatedPII?.preferred_username ?? null,
-      picture: updatedPII?.picture ?? null,
-      phone_number: updatedPII?.phone_number ?? null,
-      email_verified: updatedCore?.email_verified ?? false,
-      phone_number_verified: updatedCore?.phone_number_verified ?? false,
-      user_type: updatedCore?.user_type,
-      is_active: updatedCore?.is_active ?? false,
-      pii_partition: updatedCore?.pii_partition,
-      pii_status: updatedCore?.pii_status,
-      created_at: toMilliseconds(updatedCore?.created_at),
-      updated_at: toMilliseconds(updatedCore?.updated_at),
-      last_login_at: toMilliseconds(updatedCore?.last_login_at),
-    };
+    await maybeSyncCanonicalRuntimeUserForAdmin(
+      c,
+      authCtx.coreAdapter,
+      tenantId,
+      userId,
+      {
+        email_verified: body.email_verified ?? Boolean(existingProjection.email_verified),
+        phone_number_verified:
+          body.phone_number_verified ?? Boolean(existingProjection.phone_number_verified),
+        user_type:
+          typeof body.user_type === 'string'
+            ? body.user_type
+            : userTypeFromAccountType(existingProjection.account_type),
+        is_active: Boolean(existingProjection.active),
+      },
+      {
+        email: existingProjection.email ?? '',
+        phone_number: body.phone_number ?? existingProjection.phone_number,
+        name: body.name ?? existingProjection.name,
+        given_name: body.given_name ?? existingProjection.given_name,
+        family_name: body.family_name ?? existingProjection.family_name,
+        nickname: body.nickname ?? existingProjection.nickname,
+        preferred_username: body.preferred_username ?? existingProjection.preferred_username,
+        picture: body.picture ?? existingProjection.picture,
+      }
+    );
+
+    await invalidateUserCache(c.env, tenantId, userId);
+    const updatedProjection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
+    const updatedUser = updatedProjection ? formatCanonicalAdminUser(updatedProjection) : null;
 
     const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {
@@ -916,10 +984,10 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     });
 
     await createAuditLogFromContext(c, 'user.updated', 'user', userId, {
-      user_type: updatedCore?.user_type,
+      user_type: updatedUser?.user_type,
     });
     scheduleAdminAuditLog(c, 'user.updated', userId, 'success', {
-      user_type: updatedCore?.user_type,
+      user_type: updatedUser?.user_type,
     });
 
     return c.json({
@@ -946,9 +1014,19 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const projection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
 
-    if (!userCore) {
+    if (!projection) {
       return c.json(
         {
           error: 'not_found',
@@ -960,15 +1038,12 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
 
     if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
-      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-      const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
-      const emailBlindIndex = userPII?.email_blind_index ?? null;
 
       await piiCtx.piiRepositories.tombstone.createTombstone(
         {
           id: userId,
           tenant_id: tenantId,
-          email_blind_index: emailBlindIndex,
+          email_blind_index: null,
           deleted_by: 'admin',
           deletion_reason: 'admin_action',
           retention_days: 90,
@@ -977,17 +1052,11 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
             timestamp: new Date().toISOString(),
           },
         },
-        piiAdapter
+        piiCtx.defaultPiiAdapter
       );
-
-      await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
     }
 
-    await authCtx.repositories.userCore.update(userId, {
-      is_active: false,
-      pii_status: 'deleted',
-    });
-
+    await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
     await invalidateUserCache(c.env, tenantId, userId);
 
     const log = getLogger(c).module('ADMIN-USER');
@@ -1029,35 +1098,25 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const projection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
 
-    if (!userCore) {
+    if (!projection) {
       return c.json(
         {
           error: 'not_found',
           error_description: 'The requested resource was not found',
         },
         404
-      );
-    }
-
-    if (userCore.pii_status !== 'failed') {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: `User PII status is '${userCore.pii_status}', not 'failed'. Retry is only available for users with failed PII status.`,
-        },
-        400
-      );
-    }
-
-    if (!hasPIIDatabase(c)) {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Configured PII store is not available',
-        },
-        500
       );
     }
 
@@ -1094,59 +1153,54 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-    const existingPii = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
-    if (existingPii) {
-      await authCtx.repositories.userCore.update(userId, {
-        pii_status: 'active',
-      });
-
-      return c.json({
-        success: true,
-        message: 'PII already exists. Status updated to active.',
-        user_id: userId,
-        pii_status: 'active',
-      });
-    }
-
-    await piiCtx.piiRepositories.userPII.createPII(
-      {
-        id: userId,
-        tenant_id: tenantId,
+    const addressJson = buildAddressJsonFromAdminBody(body);
+    await createCanonicalRuntimeUserWriter(c, authCtx.coreAdapter, tenantId).syncFromRuntimeUser({
+      userId,
+      tenantId,
+      active: Boolean(projection.active),
+      emailVerified: Boolean(projection.email_verified),
+      phoneNumberVerified: Boolean(projection.phone_number_verified),
+      userType: userTypeFromAccountType(projection.account_type),
+      displayName: body.name ?? projection.name ?? body.email,
+      sourceRef: 'admin:/users/retry-pii',
+      piiFields: {
+        email: true,
+        phone_number: body.phone_number !== undefined,
+        name: body.name !== undefined,
+        given_name: body.given_name !== undefined,
+        family_name: body.family_name !== undefined,
+        nickname: body.nickname !== undefined,
+        preferred_username: body.preferred_username !== undefined,
+        picture: body.picture !== undefined,
+        website: body.website !== undefined,
+        gender: body.gender !== undefined,
+        birthdate: body.birthdate !== undefined,
+        locale: body.locale !== undefined,
+        zoneinfo: body.zoneinfo !== undefined,
+      },
+      sensitiveValues: {
         email: body.email,
+        phone_number: body.phone_number,
         name: body.name,
         given_name: body.given_name,
         family_name: body.family_name,
         nickname: body.nickname,
         preferred_username: body.preferred_username,
-        phone_number: body.phone_number,
         picture: body.picture,
         website: body.website,
         gender: body.gender,
         birthdate: body.birthdate,
         locale: body.locale,
         zoneinfo: body.zoneinfo,
-        address_formatted: body.address_formatted,
-        address_street_address: body.address_street_address,
-        address_locality: body.address_locality,
-        address_region: body.address_region,
-        address_postal_code: body.address_postal_code,
-        address_country: body.address_country,
-        declared_residence: body.declared_residence,
       },
-      piiAdapter
-    );
-
-    await authCtx.repositories.userCore.update(userId, {
-      pii_status: 'active',
+      ...(addressJson !== undefined ? { addressJson } : {}),
     });
 
     await invalidateUserCache(c.env, tenantId, userId);
 
     return c.json({
       success: true,
-      message: 'PII created successfully',
+      message: 'Canonical PII values updated successfully',
       user_id: userId,
       pii_status: 'active',
     });
@@ -1172,45 +1226,25 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userCore = await authCtx.repositories.userCore.findById(userId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const projection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
 
-    if (!userCore) {
+    if (!projection) {
       return c.json(
         {
           error: 'not_found',
           error_description: 'The requested resource was not found',
         },
         404
-      );
-    }
-
-    if (userCore.pii_status === 'deleted') {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'User PII is already deleted',
-        },
-        400
-      );
-    }
-
-    if (userCore.pii_status === 'none') {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'User has no PII data (pii_status is none)',
-        },
-        400
-      );
-    }
-
-    if (!hasPIIDatabase(c)) {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Configured PII store is not available',
-        },
-        500
       );
     }
 
@@ -1224,15 +1258,12 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     const deletionReason = body.reason ?? 'user_request';
     const retentionDays = body.retention_days ?? 90;
     const piiCtx = createPIIContextFromHono(c, tenantId);
-    const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
-    const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
-    const emailBlindIndex = userPII?.email_blind_index ?? null;
 
     await piiCtx.piiRepositories.tombstone.createTombstone(
       {
         id: userId,
         tenant_id: tenantId,
-        email_blind_index: emailBlindIndex,
+        email_blind_index: null,
         deleted_by: 'admin',
         deletion_reason: deletionReason,
         retention_days: retentionDays,
@@ -1242,15 +1273,38 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
           user_active: true,
         },
       },
-      piiAdapter
+      piiCtx.defaultPiiAdapter
     );
 
-    await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
-    await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(piiCtx.tenantId, userId, piiAdapter);
-    await piiCtx.piiRepositories.identifier.deleteByUserId(piiCtx.tenantId, userId, piiAdapter);
-
-    await authCtx.repositories.userCore.update(userId, {
-      pii_status: 'deleted',
+    await createCanonicalRuntimeUserWriter(c, authCtx.coreAdapter, tenantId).syncFromRuntimeUser({
+      userId,
+      tenantId,
+      active: Boolean(projection.active),
+      emailVerified: false,
+      phoneNumberVerified: false,
+      userType: userTypeFromAccountType(projection.account_type),
+      displayName: null,
+      sourceRef: 'admin:/users/pii',
+      piiFields: {
+        email: true,
+        phone_number: true,
+        name: true,
+        given_name: true,
+        family_name: true,
+        middle_name: true,
+        nickname: true,
+        preferred_username: true,
+        profile: true,
+        picture: true,
+        website: true,
+        gender: true,
+        birthdate: true,
+        zoneinfo: true,
+        locale: true,
+      },
+      sensitiveValues: buildCanonicalPiiDeletionPatch(),
+      addressJson: null,
+      customAttributesJson: null,
     });
 
     await invalidateUserCache(c.env, tenantId, userId);

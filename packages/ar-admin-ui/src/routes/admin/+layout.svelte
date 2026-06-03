@@ -89,6 +89,14 @@
 			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
+		identityMapping: {
+			parent: { href: '/admin/identity-mapping', icon: 'i-ph-graph', label: 'Identity Mapping' },
+			children: [
+				{ href: '/admin/identity-mapping/profiles', label: 'Source & Destination' },
+				{ href: '/admin/identity-mapping/mapping-policies', label: 'Mapping Policies' },
+				{ href: '/admin/identity-mapping/resolution-center', label: 'Resolution Center' }
+			]
+		},
 		branding: [
 			{ path: '/admin/login-methods', label: 'Login Methods', icon: 'i-ph-sign-in' },
 			{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' },
@@ -169,6 +177,16 @@
 		// Tenant
 		...navTenant.authentication,
 		...navTenant.identitySchema,
+		{
+			path: navTenant.identityMapping.parent.href,
+			label: navTenant.identityMapping.parent.label,
+			icon: navTenant.identityMapping.parent.icon
+		},
+		...navTenant.identityMapping.children.map((c) => ({
+			path: c.href,
+			label: c.label,
+			icon: 'i-ph-arrow-right'
+		})),
 		...navTenant.branding,
 		...navTenant.configuration,
 		// Platform
@@ -446,6 +464,10 @@
 						active={isActive(item.path)}
 					/>
 				{/each}
+				<NavItemGroup
+					parent={navTenant.identityMapping.parent}
+					children={navTenant.identityMapping.children}
+				/>
 
 				<NavGroupLabel label="Branding" />
 				{#each navTenant.branding as item (item.path)}

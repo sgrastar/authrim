@@ -37,6 +37,7 @@ import {
   ensureSetupMachineAccessInD1,
   ensureInitialTenantInD1,
   queryD1Rows,
+  seedDefaultCanonicalCatalog,
   seedRuntimeProfiles,
   getWorkerDeployments,
   listR2Buckets,
@@ -1230,13 +1231,33 @@ export function createApiRoutes(): Hono {
 
         addProgress(`Provisioning Cloudflare resources for ${env}...`);
 
-        if (storageProfileId || databaseConfig) {
+        if (
+          storageProfileId ||
+          databaseConfig ||
+          createQueues !== undefined ||
+          createR2 !== undefined
+        ) {
           const baseConfig = state.config ?? createDefaultConfig(env);
           state.config = AuthrimConfigSchema.parse({
             ...baseConfig,
             database: databaseConfig
               ? { ...baseConfig.database, ...databaseConfig }
               : baseConfig.database,
+            features: {
+              ...baseConfig.features,
+              queue: {
+                enabled:
+                  createQueues === undefined
+                    ? baseConfig.features?.queue?.enabled === true
+                    : createQueues === true,
+              },
+              r2: {
+                enabled:
+                  createR2 === undefined
+                    ? baseConfig.features?.r2?.enabled === true
+                    : createR2 === true,
+              },
+            },
             profiles: {
               ...baseConfig.profiles,
               defaults: {
@@ -1871,6 +1892,7 @@ export function createApiRoutes(): Hono {
         let initialAdminRolesResult = null;
         let setupMachineAccessResult = null;
         let adminUiBffMachineAccessResult = null;
+        let defaultCanonicalCatalogSeedResult = null;
         let runtimeProfileSeedResult = null;
         if (runMigrations && !dryRun && workersSuccess) {
           const bootstrapConfig = cfg ? AuthrimConfigSchema.parse(cfg) : createDefaultConfig(env);
@@ -1942,6 +1964,22 @@ export function createApiRoutes(): Hono {
               }
             }
 
+            addProgress('🔧 Seeding default canonical field catalog...');
+            defaultCanonicalCatalogSeedResult = await seedDefaultCanonicalCatalog(
+              env,
+              bootstrapConfig,
+              addProgress
+            );
+            if (defaultCanonicalCatalogSeedResult.success) {
+              addProgress(
+                `✅ Default canonical field catalog ready (${defaultCanonicalCatalogSeedResult.seededCount} fields)`
+              );
+            } else {
+              addProgress(
+                `⚠️ Default canonical field catalog seed failed: ${defaultCanonicalCatalogSeedResult.error || 'unknown error'}`
+              );
+            }
+
             addProgress('🔧 Seeding runtime profiles...');
             runtimeProfileSeedResult = await seedRuntimeProfiles(env, bootstrapConfig, addProgress);
             if (runtimeProfileSeedResult.success) {
@@ -1997,6 +2035,9 @@ export function createApiRoutes(): Hono {
         const runtimeProfileSeedSuccess = runtimeProfileSeedResult
           ? runtimeProfileSeedResult.success
           : true;
+        const defaultCanonicalCatalogSeedSuccess = defaultCanonicalCatalogSeedResult
+          ? defaultCanonicalCatalogSeedResult.success
+          : true;
 
         const bootstrapSuccess =
           migrationsSuccess &&
@@ -2004,6 +2045,7 @@ export function createApiRoutes(): Hono {
           initialAdminRolesSuccess &&
           setupMachineAccessSuccess &&
           adminUiBffMachineAccessSuccess &&
+          defaultCanonicalCatalogSeedSuccess &&
           runtimeProfileSeedSuccess;
 
         if (workersSuccess && bootstrapSuccess) {
@@ -2142,6 +2184,7 @@ export function createApiRoutes(): Hono {
           migrationsSuccess &&
           initialTenantSuccess &&
           initialAdminRolesSuccess &&
+          defaultCanonicalCatalogSeedSuccess &&
           runtimeProfileSeedSuccess
         ) {
           state.status = 'complete';
@@ -2164,6 +2207,8 @@ export function createApiRoutes(): Hono {
             state.error = `Initial tenant bootstrap failed: ${initialTenantResult?.error || 'unknown error'}`;
           } else if (!initialAdminRolesSuccess) {
             state.error = `Initial admin role bootstrap failed: ${initialAdminRolesResult?.error || 'unknown error'}`;
+          } else if (!defaultCanonicalCatalogSeedSuccess) {
+            state.error = `Default canonical field catalog seed failed: ${defaultCanonicalCatalogSeedResult?.error || 'unknown error'}`;
           } else if (!runtimeProfileSeedSuccess) {
             state.error = `Runtime profile seed failed: ${runtimeProfileSeedResult?.error || 'unknown error'}`;
           }
@@ -2180,12 +2225,14 @@ export function createApiRoutes(): Hono {
             migrationsSuccess &&
             initialTenantSuccess &&
             initialAdminRolesSuccess &&
+            defaultCanonicalCatalogSeedSuccess &&
             runtimeProfileSeedSuccess,
           summary,
           uiWorkersResult: uiWorkersSummary,
           migrationsResult,
           initialTenantResult,
           initialAdminRolesResult,
+          defaultCanonicalCatalogSeedResult,
           runtimeProfileSeedResult,
           logPath: state.logPath,
         });

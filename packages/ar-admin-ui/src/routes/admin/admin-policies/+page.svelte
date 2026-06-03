@@ -31,17 +31,17 @@
 	let createError = '';
 
 	// Edit dialog state (unused, kept for future implementation)
-		let _showEditDialog = false;
+	let _showEditDialog = false;
 	let editingPolicy: AdminPolicy | null = null;
 	let editForm: AdminPolicyUpdateInput = {};
-		let _editLoading = false;
-		let _editError = '';
+	let _editLoading = false;
+	let _editError = '';
 
 	// Delete confirmation state (unused, kept for future implementation)
-		let _showDeleteDialog = false;
+	let _showDeleteDialog = false;
 	let deletingPolicy: AdminPolicy | null = null;
-		let _deleteLoading = false;
-		let _deleteError = '';
+	let _deleteLoading = false;
+	let _deleteError = '';
 
 	// Simulation dialog state
 	let showSimulationDialog = false;
@@ -117,7 +117,7 @@
 		_showEditDialog = true;
 	}
 
-		async function _handleEdit() {
+	async function _handleEdit() {
 		if (!editingPolicy) return;
 
 		_editLoading = true;
@@ -152,7 +152,7 @@
 		_showDeleteDialog = true;
 	}
 
-		async function _handleDelete() {
+	async function _handleDelete() {
 		if (!deletingPolicy) return;
 
 		_deleteLoading = true;
@@ -225,7 +225,9 @@
 <div class="container mx-auto px-4 py-8">
 	<!-- Breadcrumb -->
 	<nav class="mb-4 text-sm">
-		<a href="/admin/admin-access-control" class="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+		<a
+			href="/admin/admin-access-control"
+			class="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
 			>Admin Access Control</a
 		>
 		<span class="mx-2 text-gray-400 dark:text-gray-500">/</span>
@@ -236,7 +238,9 @@
 	<div class="flex items-center justify-between mb-6">
 		<div>
 			<h1 class="text-3xl font-bold mb-2 dark:text-white">Admin Policies</h1>
-			<p class="text-gray-600 dark:text-gray-400">Combined RBAC/ABAC/ReBAC access control policies</p>
+			<p class="text-gray-600 dark:text-gray-400">
+				Combined RBAC/ABAC/ReBAC access control policies
+			</p>
 		</div>
 		<div class="flex space-x-3">
 			<button
@@ -258,7 +262,9 @@
 
 	<!-- Error Message -->
 	{#if error}
-		<div class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded">
+		<div
+			class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded"
+		>
 			{error}
 		</div>
 	{/if}
@@ -266,7 +272,8 @@
 	<!-- Filter Bar -->
 	<div class="mb-6 flex gap-4">
 		<div class="flex-1 relative">
-			<span class="absolute left-3 top-3 i-ph-magnifying-glass text-gray-400 dark:text-gray-500"></span>
+			<span class="absolute left-3 top-3 i-ph-magnifying-glass text-gray-400 dark:text-gray-500"
+			></span>
 			<input
 				type="text"
 				bind:value={searchQuery}
@@ -302,7 +309,9 @@
 			<div class="text-gray-500 dark:text-gray-400">Loading policies...</div>
 		</div>
 	{:else if filteredPolicies.length === 0}
-		<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-12 text-center">
+		<div
+			class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-12 text-center"
+		>
 			<div class="text-gray-400 dark:text-gray-500 text-5xl mb-4 i-ph-shield-check"></div>
 			<h3 class="text-xl font-semibold mb-2 dark:text-white">No policies found</h3>
 			<p class="text-gray-600 dark:text-gray-400 mb-4">
@@ -404,20 +413,20 @@
 </div>
 
 <!-- Create Dialog (simplified for space) -->
-	{#if showCreateDialog}
+{#if showCreateDialog}
+	<div
+		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+		role="button"
+		tabindex="0"
+		aria-label="Close create policy dialog"
+		on:click|self={() => (showCreateDialog = false)}
+		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
+	>
 		<div
-			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-			role="button"
-			tabindex="0"
-			aria-label="Close create policy dialog"
-			on:click|self={() => (showCreateDialog = false)}
-			on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
+			class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
+			role="dialog"
+			aria-modal="true"
 		>
-			<div
-				class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
-				role="dialog"
-				aria-modal="true"
-			>
 			<h2 class="text-xl font-semibold mb-4">Create Policy</h2>
 			{#if createError}
 				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
@@ -486,21 +495,20 @@
 {/if}
 
 <!-- Simulation Dialog (simplified) -->
-	{#if showSimulationDialog}
+{#if showSimulationDialog}
+	<div
+		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+		role="button"
+		tabindex="0"
+		aria-label="Close policy simulation dialog"
+		on:click|self={() => (showSimulationDialog = false)}
+		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showSimulationDialog = false))}
+	>
 		<div
-			class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-			role="button"
-			tabindex="0"
-			aria-label="Close policy simulation dialog"
-			on:click|self={() => (showSimulationDialog = false)}
-			on:keydown={(event) =>
-				closeOnBackdropKeydown(event, () => (showSimulationDialog = false))}
+			class="bg-white rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto"
+			role="dialog"
+			aria-modal="true"
 		>
-			<div
-				class="bg-white rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto"
-				role="dialog"
-				aria-modal="true"
-			>
 			<h2 class="text-xl font-semibold mb-4">Policy Simulation</h2>
 			<p class="text-sm text-gray-600 mb-4">Test policy evaluation with custom user context</p>
 			{#if simulationError}

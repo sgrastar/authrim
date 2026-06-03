@@ -322,7 +322,7 @@ export async function getPlatformPartitionStats(c: Context<{ Bindings: Env }>) {
   }
 
   const sql =
-    'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE is_active = 1 GROUP BY pii_partition';
+    "SELECT 'default' as pii_partition, COUNT(*) as count FROM identity_accounts WHERE lifecycle_state = 'active'";
 
   return queryPartitionStats(c, availablePartitions, coreAdapter, sql, [], 'all');
 }
@@ -331,7 +331,7 @@ async function getPartitionStatsForTenant(c: Context<{ Bindings: Env }>, tenantI
   const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);
   const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
   const sql =
-    'SELECT pii_partition, COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1 GROUP BY pii_partition';
+    "SELECT 'default' as pii_partition, COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active'";
 
   return queryPartitionStats(c, availablePartitions, coreAdapter, sql, [tenantId], tenantId);
 }
@@ -374,7 +374,7 @@ async function queryPartitionStats(
       byPartition: {},
       availablePartitions,
       tenantId,
-      note: 'users_core table may not exist yet. Run migrations first.',
+      note: 'identity_accounts table may not exist yet. Run migrations first.',
     });
   }
 }

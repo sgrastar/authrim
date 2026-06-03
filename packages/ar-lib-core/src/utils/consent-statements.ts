@@ -27,6 +27,7 @@ import type {
   ConsentEnforcement,
   ConsentRecordStatus,
 } from '../types/consent-statements';
+import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
 
 // =============================================================================
 // Version Validation (D2)
@@ -629,7 +630,7 @@ export async function getConsentItemsForScreen(
 
 /**
  * Get user claims for conditional rule evaluation.
- * Combines users_core + users_pii (if DB_PII available via same adapter).
+ * Reads canonical runtime-user projection when the caller supplies a combined adapter.
  */
 export async function getUserClaimsForRules(
   adapter: DatabaseAdapter,
@@ -638,65 +639,36 @@ export async function getUserClaimsForRules(
 ): Promise<Record<string, unknown>> {
   const claims: Record<string, unknown> = {};
 
-  // Get core user data
-  const coreRows = await adapter.query<{
-    email_verified: number | null;
-  }>(`SELECT email_verified FROM users_core WHERE id = ? AND tenant_id = ?`, [userId, tenantId]);
-
-  if (coreRows.length > 0) {
-    const core = coreRows[0];
-    if (core.email_verified !== null) claims.email_verified = core.email_verified === 1;
-  }
-
-  // Try to get PII data (may fail if separate DB)
   try {
-    const piiRows = await adapter.query<{
-      email: string | null;
-      locale: string | null;
-      given_name: string | null;
-      family_name: string | null;
-      birthdate: string | null;
-      phone_number: string | null;
-      address_country: string | null;
-      address_region: string | null;
-      zoneinfo: string | null;
-      metadata: string | null;
-    }>(
-      `SELECT email, locale, given_name, family_name, birthdate, phone_number,
-              address_country, address_region, zoneinfo, metadata
-       FROM users_pii WHERE id = ? AND tenant_id = ?`,
-      [userId, tenantId]
-    );
+    const user = await new CanonicalRuntimeUserStore({
+      coreAdapter: adapter,
+      piiAdapter: adapter,
+      tenantId,
+    }).findById(userId, { includeInactive: true });
 
-    if (piiRows.length > 0) {
-      const pii = piiRows[0];
-      if (pii.email) claims.email = pii.email;
-      if (pii.locale) claims.locale = pii.locale;
-      if (pii.given_name) claims.given_name = pii.given_name;
-      if (pii.family_name) claims.family_name = pii.family_name;
-      if (pii.birthdate) claims.birthdate = pii.birthdate;
-      if (pii.phone_number) claims.phone_number = pii.phone_number;
-      if (pii.zoneinfo) claims.zoneinfo = pii.zoneinfo;
-
-      // Build address object
-      if (pii.address_country || pii.address_region) {
-        claims.address = {
-          country: pii.address_country ?? undefined,
-          region: pii.address_region ?? undefined,
-        };
+    if (user) {
+      claims.email_verified = user.email_verified === 1;
+      if (user.email) claims.email = user.email;
+      if (user.locale) claims.locale = user.locale;
+      if (user.given_name) claims.given_name = user.given_name;
+      if (user.family_name) claims.family_name = user.family_name;
+      if (user.birthdate) claims.birthdate = user.birthdate;
+      if (user.phone_number) claims.phone_number = user.phone_number;
+      if (user.zoneinfo) claims.zoneinfo = user.zoneinfo;
+      if (user.custom_attributes_json) {
+        const custom = JSON.parse(user.custom_attributes_json) as Record<string, unknown>;
+        Object.assign(claims, custom);
       }
-
-      // Parse metadata
-      if (pii.metadata) {
-        try {
-          claims.metadata = JSON.parse(pii.metadata);
-        } catch {
-          // Ignore invalid metadata JSON
-        }
+      if (user.address_json) {
+        const address = JSON.parse(user.address_json) as Record<string, unknown>;
+        claims.address = {
+          country: typeof address.country === 'string' ? address.country : undefined,
+          region: typeof address.region === 'string' ? address.region : undefined,
+        };
       }
     }
   } catch {
-    // PII DB may be separate or columns may not exist — non-fatal
+    // PII DB may be separate from the supplied adapter — non-fatal.
   }
 
   return claims;

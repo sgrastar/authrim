@@ -1,30 +1,30 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
-	import { Modal } from '$lib/components'
+	import { onMount } from 'svelte';
+	import { Modal } from '$lib/components';
 	import {
 		adminOperationalLogsAPI,
 		type OperationalLogDetail,
 		type OperationalLogSummary
-	} from '$lib/api/admin-operational-logs'
+	} from '$lib/api/admin-operational-logs';
 
-	let loading = $state(true)
-	let error = $state('')
-	let logs = $state<OperationalLogSummary[]>([])
-	let total = $state(0)
+	let loading = $state(true);
+	let error = $state('');
+	let logs = $state<OperationalLogSummary[]>([]);
+	let total = $state(0);
 
-	let subjectTypeFilter = $state('')
-	let subjectIdFilter = $state('')
-	let actionFilter = $state('')
-	let actorIdFilter = $state('')
+	let subjectTypeFilter = $state('');
+	let subjectIdFilter = $state('');
+	let actionFilter = $state('');
+	let actorIdFilter = $state('');
 
-	let showDetailModal = $state(false)
-	let detailLoading = $state(false)
-	let detailError = $state('')
-	let selectedLog = $state<OperationalLogDetail | null>(null)
+	let showDetailModal = $state(false);
+	let detailLoading = $state(false);
+	let detailError = $state('');
+	let selectedLog = $state<OperationalLogDetail | null>(null);
 
 	async function loadLogs() {
-		loading = true
-		error = ''
+		loading = true;
+		error = '';
 		try {
 			const response = await adminOperationalLogsAPI.list({
 				subjectType: subjectTypeFilter || undefined,
@@ -32,43 +32,43 @@
 				action: actionFilter.trim() || undefined,
 				actorId: actorIdFilter.trim() || undefined,
 				limit: 100
-			})
-			logs = response.items
-			total = response.total
+			});
+			logs = response.items;
+			total = response.total;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load operational logs'
+			error = err instanceof Error ? err.message : 'Failed to load operational logs';
 		} finally {
-			loading = false
+			loading = false;
 		}
 	}
 
 	onMount(() => {
-		loadLogs()
-	})
+		loadLogs();
+	});
 
 	async function openDetail(log: OperationalLogSummary) {
-		showDetailModal = true
-		detailLoading = true
-		detailError = ''
-		selectedLog = null
+		showDetailModal = true;
+		detailLoading = true;
+		detailError = '';
+		selectedLog = null;
 		try {
-			selectedLog = await adminOperationalLogsAPI.get(log.id)
+			selectedLog = await adminOperationalLogsAPI.get(log.id);
 		} catch (err) {
-			detailError = err instanceof Error ? err.message : 'Failed to load operational log detail'
+			detailError = err instanceof Error ? err.message : 'Failed to load operational log detail';
 		} finally {
-			detailLoading = false
+			detailLoading = false;
 		}
 	}
 
 	function closeDetail() {
-		showDetailModal = false
-		detailLoading = false
-		detailError = ''
-		selectedLog = null
+		showDetailModal = false;
+		detailLoading = false;
+		detailError = '';
+		selectedLog = null;
 	}
 
 	function formatDateTime(value: number): string {
-		return new Date(value * 1000).toLocaleString()
+		return new Date(value * 1000).toLocaleString();
 	}
 </script>
 
@@ -93,7 +93,12 @@
 		<div class="filter-row">
 			<div class="form-group">
 				<label class="form-label" for="subject-type">Subject Type</label>
-				<select id="subject-type" class="form-select" bind:value={subjectTypeFilter} onchange={loadLogs}>
+				<select
+					id="subject-type"
+					class="form-select"
+					bind:value={subjectTypeFilter}
+					onchange={loadLogs}
+				>
 					<option value="">All</option>
 					<option value="user">User</option>
 					<option value="client">Client</option>
@@ -102,7 +107,12 @@
 			</div>
 			<div class="form-group">
 				<label class="form-label" for="subject-id">Subject ID</label>
-				<input id="subject-id" class="form-input" bind:value={subjectIdFilter} onchange={loadLogs} />
+				<input
+					id="subject-id"
+					class="form-input"
+					bind:value={subjectIdFilter}
+					onchange={loadLogs}
+				/>
 			</div>
 			<div class="form-group">
 				<label class="form-label" for="action">Action</label>
@@ -174,12 +184,30 @@
 		<div class="alert alert-error">{detailError}</div>
 	{:else if selectedLog}
 		<div class="detail-grid">
-			<div><strong>Action</strong><div>{selectedLog.action}</div></div>
-			<div><strong>Subject</strong><div>{selectedLog.subject_type}:{selectedLog.subject_id}</div></div>
-			<div><strong>Actor</strong><div>{selectedLog.actor_id}</div></div>
-			<div><strong>Request ID</strong><div>{selectedLog.request_id ?? '-'}</div></div>
-			<div><strong>Created</strong><div>{formatDateTime(selectedLog.created_at)}</div></div>
-			<div><strong>Expires</strong><div>{formatDateTime(selectedLog.expires_at)}</div></div>
+			<div>
+				<strong>Action</strong>
+				<div>{selectedLog.action}</div>
+			</div>
+			<div>
+				<strong>Subject</strong>
+				<div>{selectedLog.subject_type}:{selectedLog.subject_id}</div>
+			</div>
+			<div>
+				<strong>Actor</strong>
+				<div>{selectedLog.actor_id}</div>
+			</div>
+			<div>
+				<strong>Request ID</strong>
+				<div>{selectedLog.request_id ?? '-'}</div>
+			</div>
+			<div>
+				<strong>Created</strong>
+				<div>{formatDateTime(selectedLog.created_at)}</div>
+			</div>
+			<div>
+				<strong>Expires</strong>
+				<div>{formatDateTime(selectedLog.expires_at)}</div>
+			</div>
 		</div>
 
 		<div class="panel detail-panel">

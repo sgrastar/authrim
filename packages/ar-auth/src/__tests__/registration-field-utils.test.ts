@@ -157,8 +157,15 @@ describe('registration-field-utils', () => {
       ['Sales', 'string', 'tenant-1', 'user-1', 'department']
     );
     expect(piiAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE users_pii SET custom_attributes_json = ?'),
-      [JSON.stringify({ ssn: '123-45-6789' }), expect.any(Number), 'user-1', 'tenant-1']
+      expect.stringContaining('INSERT INTO identity_sensitive_values'),
+      [
+        'sensitive-value:user-1:custom_attributes_json',
+        'tenant-1',
+        'user-1',
+        JSON.stringify({ ssn: '123-45-6789' }),
+        expect.any(Number),
+        expect.any(Number),
+      ]
     );
   });
 });

@@ -29,6 +29,7 @@ import {
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
+  createPIIContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
   generateBrowserState,
@@ -57,6 +58,7 @@ import {
   // Cookie Configuration
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 
 const CHALLENGE_TTL = 5 * 60; // 5 minutes in seconds
@@ -69,6 +71,19 @@ const SESSION_TTL = 24 * 60 * 60; // 24 hours in seconds
  */
 const MIN_RESPONSE_TIME_MS = 500;
 const JITTER_MS = 100;
+
+function createCanonicalRuntimeUserStore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): CanonicalRuntimeUserStore {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+}
 
 function isConflictInsertError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -396,6 +411,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Get auth context
       const authCtx = createAuthContextFromHono(c, tenantId);
+      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
       const now = Date.now();
 
       // Check for existing anonymous device
@@ -457,14 +473,13 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         const expiresInDays = clientContract?.anonymousAuth?.expiresInDays;
         const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
 
-        // Create anonymous user in Core DB (pii_status='none' - no PII)
-        await authCtx.repositories.userCore.createUser({
-          id: newUserId,
-          tenant_id: tenantId,
-          email_verified: false,
-          user_type: 'anonymous',
-          pii_partition: 'none', // No PII for anonymous users
-          pii_status: 'none',
+        // Create anonymous user in canonical runtime tables. No sensitive values are written.
+        await runtimeUsers.syncUser({
+          userId: newUserId,
+          active: true,
+          emailVerified: false,
+          userType: 'anonymous',
+          sourceRef: 'anonymous_login',
         });
 
         const deviceId = generateId();
@@ -514,15 +529,9 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           isNewUser = false;
 
           // Cleanup our orphaned user (fire-and-forget)
-          authCtx.coreAdapter
-            .execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [newUserId, tenantId])
-            .catch((err) => {
-              log.error(
-                'Failed to cleanup orphaned user',
-                { action: 'cleanup_user' },
-                err as Error
-              );
-            });
+          runtimeUsers.deleteUser(newUserId).catch((err: unknown) => {
+            log.error('Failed to cleanup orphaned user', { action: 'cleanup_user' }, err as Error);
+          });
 
           // Also delete our device record if it was inserted
           if (insertedDeviceRecord) {
@@ -578,18 +587,13 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Update last_login_at (fire-and-forget)
-      authCtx.coreAdapter
-        .execute(
-          'UPDATE users_core SET last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-          [now, now, userId, tenantId]
-        )
-        .catch((error) => {
-          log.error(
-            'Failed to update user login timestamp',
-            { action: 'user_update' },
-            error as Error
-          );
-        });
+      runtimeUsers.touchLastLogin(userId, now).catch((error: unknown) => {
+        log.error(
+          'Failed to update user login timestamp',
+          { action: 'user_update' },
+          error as Error
+        );
+      });
 
       // Set session cookie (SameSite determined dynamically based on origin configuration)
       setCookie(c, 'authrim_session', sessionId, {

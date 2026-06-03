@@ -125,6 +125,8 @@ const mocks = vi.hoisted(() => {
 
     // User
     mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
+    mockFindCanonicalRuntimeUserProjection: vi.fn(),
+    mockFindCanonicalRuntimeAccount: vi.fn(),
 
     // Native SSO
     mockDeviceSecretRepository: {
@@ -207,6 +209,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     buildAuthCodeShardInstanceName: mocks.mockBuildAuthCodeShardInstanceName,
     generateRegionAwareJti: mocks.mockGenerateRegionAwareJti,
     D1Adapter: mocks.mockD1Adapter,
+    CanonicalRuntimeUserProjectionRepository: vi.fn(
+      function CanonicalRuntimeUserProjectionRepositoryMock() {
+        return {
+          findByLegacyUserId: mocks.mockFindCanonicalRuntimeUserProjection,
+        };
+      }
+    ),
+    CanonicalSensitiveValueResolver: vi.fn(function CanonicalSensitiveValueResolverMock() {
+      return {};
+    }),
+    CanonicalIdentityRepository: vi.fn(function CanonicalIdentityRepositoryMock() {
+      return {
+        findAccountByLegacyUserId: mocks.mockFindCanonicalRuntimeAccount,
+      };
+    }),
     requireDedicatedAdminDatabaseAdapter: mocks.mockRequireDedicatedAdminDatabaseAdapter,
     getIDTokenRBACClaims: mocks.mockGetIDTokenRBACClaims,
     getAccessTokenRBACClaims: mocks.mockGetAccessTokenRBACClaims,
@@ -431,6 +448,53 @@ function resetAllMocks() {
   mocks.mockIsCustomClaimsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockIsIdLevelPermissionsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockGetCachedUserCore.mockReset().mockResolvedValue(null);
+  mocks.mockFindCanonicalRuntimeUserProjection
+    .mockReset()
+    .mockImplementation(async (userId: string) => ({
+      id: userId,
+      tenant_id: 'default',
+      subject_id: `subject-${userId}`,
+      account_id: `account-${userId}`,
+      account_type: 'end_user',
+      lifecycle_state: 'active',
+      email: 'user@example.com',
+      email_verified: 1,
+      name: 'Test User',
+      given_name: 'Test',
+      family_name: 'User',
+      middle_name: null,
+      nickname: null,
+      preferred_username: null,
+      profile: null,
+      picture: null,
+      website: null,
+      gender: null,
+      birthdate: null,
+      zoneinfo: null,
+      locale: null,
+      phone_number: null,
+      phone_number_verified: 0,
+      address_json: null,
+      password_hash: null,
+      external_id: null,
+      last_login_at: null,
+      active: 1,
+      custom_attributes_json: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }));
+  mocks.mockFindCanonicalRuntimeAccount.mockReset().mockImplementation(async (userId: string) => ({
+    id: `account-${userId}`,
+    tenant_id: 'default',
+    subject_id: `subject-${userId}`,
+    legacy_user_id: userId,
+    account_type: 'end_user',
+    lifecycle_state: 'active',
+    display_label: null,
+    metadata_json: '{}',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }));
 }
 
 // ============================================================================
@@ -818,6 +882,29 @@ describe('Client Authentication Tests', () => {
       expect(mockEnv.AUTH_CODE_STORE.get).not.toHaveBeenCalled();
     });
 
+    it('should reject a Direct Auth artifact redeem request when channel is unsupported', async () => {
+      const client = createPublicClient();
+      const ctx = createMockContext({
+        body: {
+          grant_type: DIRECT_AUTH_GRANT_TYPE,
+          direct_auth_artifact: 'direct-artifact-001',
+          client_id: client.client_id,
+          code_verifier: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~',
+          channel: 'desktop',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_request');
+      expect(body.error_description).toContain('channel must be browser, native, or server');
+      expect(mocks.mockGetChallengeStoreByChallengeId).not.toHaveBeenCalled();
+      expect(mockEnv.AUTH_CODE_STORE.get).not.toHaveBeenCalled();
+    });
+
     it('should reject a Direct Auth artifact when client binding mismatches', async () => {
       const client = createPublicClient();
       const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
@@ -853,6 +940,45 @@ describe('Client Authentication Tests', () => {
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_grant');
       expect(body.error_description).toContain('client binding mismatch');
+      expect(mockEnv.AUTH_CODE_STORE.get).not.toHaveBeenCalled();
+    });
+
+    it('should reject a Direct Auth artifact when provider binding mismatches', async () => {
+      const client = createPublicClient();
+      const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
+      const codeChallenge = await createPkceChallenge(codeVerifier);
+      const consumeArtifactRpcMock = vi.fn().mockResolvedValue({
+        challenge: codeChallenge,
+        userId: 'user-001',
+        metadata: {
+          client_id: client.client_id,
+          channel: 'browser',
+          provider_slug: 'google',
+        },
+      });
+
+      mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
+        consumeChallengeRpc: consumeArtifactRpcMock,
+      });
+
+      const ctx = createMockContext({
+        body: {
+          grant_type: DIRECT_AUTH_GRANT_TYPE,
+          direct_auth_artifact: 'direct-artifact-001',
+          client_id: client.client_id,
+          code_verifier: codeVerifier,
+          channel: 'browser',
+          provider_id: 'github',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+      expect(body.error_description).toContain('provider binding mismatch');
       expect(mockEnv.AUTH_CODE_STORE.get).not.toHaveBeenCalled();
     });
 
@@ -3653,6 +3779,102 @@ describe('Client Authentication Tests', () => {
         600,
         expect.any(String)
       );
+    });
+
+    it('limits Admin API machine token scope to the principal and credential permission intersection', async () => {
+      mockAdminMachineAccess({
+        principalPermissions: ['admin:ai_grants:*', 'admin:sessions:read'],
+        credentialPermissions: ['admin:ai_grants:create', 'admin:sessions:*'],
+      });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-permission-intersection',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({ valid: true, client_id: 'setup-tool' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope:
+              'admin:ai_grants:create admin:ai_grants:delete admin:sessions:read admin:sessions:revoke',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+      const body = await parseJsonResponse<{ access_token?: string; scope?: string }>(response);
+
+      expect(response.status).toBe(200);
+      expect(body.access_token).toBe('mock-access-token');
+      expect(body.scope).toBe('admin:ai_grants:create admin:sessions:read');
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          aud: 'authrim:admin-api',
+          sub: 'machine:amp_setup',
+          scope: 'admin:ai_grants:create admin:sessions:read',
+          tenant_scope: ['default'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+    });
+
+    it('rejects Admin API machine token requests outside the intersected permissions', async () => {
+      mockAdminMachineAccess({
+        principalPermissions: ['admin:clients:*'],
+        credentialPermissions: ['admin:tenants:*'],
+      });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-permission-empty-intersection',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({ valid: true, client_id: 'setup-tool' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:clients.read admin:tenants.read',
+          },
+          env: {
+            ...mockEnv,
+            ENABLE_CLIENT_CREDENTIALS: 'true',
+          },
+        })
+      );
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_scope');
+      expect(body.error_description).toBe(
+        'None of the requested scopes are allowed for this machine client'
+      );
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
     });
 
     it('allows Admin API machine access even when general client_credentials is disabled', async () => {

@@ -34,6 +34,7 @@ import {
   createOAuthConfigManager,
   getLogger,
   resolveAuthCorePersistenceAdapterFromEnv,
+  CanonicalRuntimeUserStore,
   type ObjectCatalogListResult,
   type ObjectCatalogPhysicalRecord,
   type ObjectRepresentation,
@@ -320,7 +321,13 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const introspection = await introspectTokenFromContext(c);
-    if (introspection.valid && introspection.claims?.sub) {
+    const scope = typeof introspection.claims?.scope === 'string' ? introspection.claims.scope : '';
+    const scopes = scope.split(/\s+/).filter((value) => value.length > 0);
+    if (
+      introspection.valid &&
+      introspection.claims?.sub &&
+      (scopes.includes('data_export') || scopes.includes('authrim:data_export'))
+    ) {
       return introspection.claims.sub as string;
     }
     return null;
@@ -1359,8 +1366,8 @@ function toISOString(timestamp: number): string {
  * Collect user data for export
  */
 async function collectExportData(
-  coreAdapter: { query: <T>(sql: string, params?: unknown[]) => Promise<T[]> },
-  piiAdapter: { query: <T>(sql: string, params?: unknown[]) => Promise<T[]> } | null,
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null,
   userId: string,
   tenantId: string,
   sections: DataExportSection[]
@@ -1378,81 +1385,35 @@ async function collectExportData(
 
   // Collect profile data
   if (sections.includes('profile')) {
-    // Core user data
-    const coreUser = await coreAdapter.query<{
-      id: string;
-      email_domain_hash: string | null;
-      created_at: number;
-      updated_at: number;
-      email_verified: number | null;
-      phone_number_verified: number | null;
-    }>(
-      `SELECT id, email_domain_hash, created_at, updated_at, email_verified, phone_number_verified
-       FROM users_core WHERE id = ? AND tenant_id = ?`,
-      [userId, tenantId]
-    );
-
-    // PII data (if available)
-    let piiData: {
-      email?: string;
-      phone_number?: string;
-      name?: string;
-      given_name?: string;
-      family_name?: string;
-      middle_name?: string;
-      nickname?: string;
-      preferred_username?: string;
-      picture?: string;
-      website?: string;
-      gender?: string;
-      birthdate?: string;
-      zoneinfo?: string;
-      locale?: string;
-    } = {};
     if (piiAdapter) {
-      const piiUser = await piiAdapter.query<{
-        email?: string;
-        phone_number?: string;
-        name?: string;
-        given_name?: string;
-        family_name?: string;
-        middle_name?: string;
-        nickname?: string;
-        preferred_username?: string;
-        picture?: string;
-        website?: string;
-        gender?: string;
-        birthdate?: string;
-        zoneinfo?: string;
-        locale?: string;
-      }>('SELECT * FROM users_pii WHERE id = ? AND tenant_id = ?', [userId, tenantId]);
-      if (piiUser.length > 0) {
-        piiData = piiUser[0];
+      const runtimeUser = await new CanonicalRuntimeUserStore({
+        coreAdapter,
+        piiAdapter,
+        tenantId,
+      }).findById(userId, { includeInactive: true });
+      if (runtimeUser) {
+        exportedData.profile = {
+          id: runtimeUser.id,
+          email: runtimeUser.email ?? '',
+          emailVerified: runtimeUser.email_verified === 1,
+          phoneNumber: runtimeUser.phone_number ?? undefined,
+          phoneNumberVerified: runtimeUser.phone_number_verified === 1,
+          name: runtimeUser.name ?? undefined,
+          givenName: runtimeUser.given_name ?? undefined,
+          familyName: runtimeUser.family_name ?? undefined,
+          middleName: runtimeUser.middle_name ?? undefined,
+          nickname: runtimeUser.nickname ?? undefined,
+          preferredUsername: runtimeUser.preferred_username ?? undefined,
+          picture: runtimeUser.picture ?? undefined,
+          website: runtimeUser.website ?? undefined,
+          gender: runtimeUser.gender ?? undefined,
+          birthdate: runtimeUser.birthdate ?? undefined,
+          zoneinfo: runtimeUser.zoneinfo ?? undefined,
+          locale: runtimeUser.locale ?? undefined,
+          createdAt: runtimeUser.created_at,
+          updatedAt: runtimeUser.updated_at,
+        };
       }
-    }
-
-    if (coreUser.length > 0) {
-      exportedData.profile = {
-        id: coreUser[0].id,
-        email: piiData.email ?? '',
-        emailVerified: coreUser[0].email_verified === 1,
-        phoneNumber: piiData.phone_number,
-        phoneNumberVerified: coreUser[0].phone_number_verified === 1,
-        name: piiData.name,
-        givenName: piiData.given_name,
-        familyName: piiData.family_name,
-        middleName: piiData.middle_name,
-        nickname: piiData.nickname,
-        preferredUsername: piiData.preferred_username,
-        picture: piiData.picture,
-        website: piiData.website,
-        gender: piiData.gender,
-        birthdate: piiData.birthdate,
-        zoneinfo: piiData.zoneinfo,
-        locale: piiData.locale,
-        createdAt: toISOString(coreUser[0].created_at),
-        updatedAt: toISOString(coreUser[0].updated_at),
-      };
     }
   }
 

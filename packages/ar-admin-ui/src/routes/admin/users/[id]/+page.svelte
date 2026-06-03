@@ -588,193 +588,198 @@
 		<!-- Overview Tab -->
 		{#if activeTab === 'overview'}
 			<!-- User Details -->
-		<div class="panel">
-			<div class="panel-header">
-				<h2 class="panel-title">User Information</h2>
-				{#if !isEditing}
-					<button class="btn btn-primary btn-sm" onclick={startEditing}>Edit</button>
+			<div class="panel">
+				<div class="panel-header">
+					<h2 class="panel-title">User Information</h2>
+					{#if !isEditing}
+						<button class="btn btn-primary btn-sm" onclick={startEditing}>Edit</button>
+					{/if}
+				</div>
+
+				{#if isEditing}
+					<!-- Edit Form -->
+					<form
+						onsubmit={(e) => {
+							e.preventDefault();
+							saveChanges();
+						}}
+					>
+						<div class="form-grid">
+							<div class="form-group">
+								<label for="email" class="form-label">Email</label>
+								<input id="email" type="email" class="form-input" bind:value={editForm.email} />
+							</div>
+							<div class="form-group">
+								<label for="name" class="form-label">Name</label>
+								<input id="name" type="text" class="form-input" bind:value={editForm.name} />
+							</div>
+							<div class="form-group">
+								<label for="given_name" class="form-label">Given Name</label>
+								<input
+									id="given_name"
+									type="text"
+									class="form-input"
+									bind:value={editForm.given_name}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="family_name" class="form-label">Family Name</label>
+								<input
+									id="family_name"
+									type="text"
+									class="form-input"
+									bind:value={editForm.family_name}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="nickname" class="form-label">Nickname</label>
+								<input
+									id="nickname"
+									type="text"
+									class="form-input"
+									bind:value={editForm.nickname}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="preferred_username" class="form-label">Preferred Username</label>
+								<input
+									id="preferred_username"
+									type="text"
+									class="form-input"
+									bind:value={editForm.preferred_username}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="phone_number" class="form-label">Phone Number</label>
+								<input
+									id="phone_number"
+									type="tel"
+									class="form-input"
+									bind:value={editForm.phone_number}
+								/>
+							</div>
+							<div class="form-group form-group-full">
+								<ToggleSwitch
+									bind:checked={editForm.email_verified}
+									label="Email Verified"
+									description="Mark the user's email address as verified"
+								/>
+							</div>
+							<div class="form-group form-group-full">
+								<ToggleSwitch
+									bind:checked={editForm.phone_number_verified}
+									label="Phone Verified"
+									description="Mark the user's phone number as verified"
+								/>
+							</div>
+						</div>
+						<div class="action-buttons" style="margin-top: 20px;">
+							<button type="submit" class="btn btn-primary" disabled={saving}>
+								{saving ? 'Saving...' : 'Save Changes'}
+							</button>
+							<button
+								type="button"
+								class="btn btn-secondary"
+								onclick={cancelEditing}
+								disabled={saving}
+							>
+								Cancel
+							</button>
+						</div>
+					</form>
+				{:else}
+					<!-- Display Mode -->
+					<dl class="info-grid">
+						<div class="info-item">
+							<dt>ID</dt>
+							<dd class="info-value mono">{user.id}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Email</dt>
+							<dd class="info-value">{sanitizeText(user.email || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Name</dt>
+							<dd class="info-value">{sanitizeText(user.name || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Given Name</dt>
+							<dd class="info-value">{sanitizeText(user.given_name || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Family Name</dt>
+							<dd class="info-value">{sanitizeText(user.family_name || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Nickname</dt>
+							<dd class="info-value">{sanitizeText(user.nickname || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Preferred Username</dt>
+							<dd class="info-value">{sanitizeText(user.preferred_username || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Phone Number</dt>
+							<dd class="info-value">{sanitizeText(user.phone_number || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>User Type</dt>
+							<dd class="info-value">{user.user_type}</dd>
+						</div>
+						<div class="info-item">
+							<dt>Email Verified</dt>
+							<dd class="info-value">
+								{#if user.email_verified}
+									<span class="verify-yes">✓ Yes</span>
+								{:else}
+									<span class="verify-no">✗ No</span>
+								{/if}
+							</dd>
+						</div>
+						<div class="info-item">
+							<dt>Phone Verified</dt>
+							<dd class="info-value">
+								{#if user.phone_number_verified}
+									<span class="verify-yes">✓ Yes</span>
+								{:else}
+									<span class="verify-no">✗ No</span>
+								{/if}
+							</dd>
+						</div>
+					</dl>
 				{/if}
 			</div>
 
-			{#if isEditing}
-				<!-- Edit Form -->
-				<form
-					onsubmit={(e) => {
-						e.preventDefault();
-						saveChanges();
-					}}
-				>
-					<div class="form-grid">
-						<div class="form-group">
-							<label for="email" class="form-label">Email</label>
-							<input id="email" type="email" class="form-input" bind:value={editForm.email} />
-						</div>
-						<div class="form-group">
-							<label for="name" class="form-label">Name</label>
-							<input id="name" type="text" class="form-input" bind:value={editForm.name} />
-						</div>
-						<div class="form-group">
-							<label for="given_name" class="form-label">Given Name</label>
-							<input
-								id="given_name"
-								type="text"
-								class="form-input"
-								bind:value={editForm.given_name}
-							/>
-						</div>
-						<div class="form-group">
-							<label for="family_name" class="form-label">Family Name</label>
-							<input
-								id="family_name"
-								type="text"
-								class="form-input"
-								bind:value={editForm.family_name}
-							/>
-						</div>
-						<div class="form-group">
-							<label for="nickname" class="form-label">Nickname</label>
-							<input id="nickname" type="text" class="form-input" bind:value={editForm.nickname} />
-						</div>
-						<div class="form-group">
-							<label for="preferred_username" class="form-label">Preferred Username</label>
-							<input
-								id="preferred_username"
-								type="text"
-								class="form-input"
-								bind:value={editForm.preferred_username}
-							/>
-						</div>
-						<div class="form-group">
-							<label for="phone_number" class="form-label">Phone Number</label>
-							<input
-								id="phone_number"
-								type="tel"
-								class="form-input"
-								bind:value={editForm.phone_number}
-							/>
-						</div>
-						<div class="form-group form-group-full">
-							<ToggleSwitch
-								bind:checked={editForm.email_verified}
-								label="Email Verified"
-								description="Mark the user's email address as verified"
-							/>
-						</div>
-						<div class="form-group form-group-full">
-							<ToggleSwitch
-								bind:checked={editForm.phone_number_verified}
-								label="Phone Verified"
-								description="Mark the user's phone number as verified"
-							/>
-						</div>
-					</div>
-					<div class="action-buttons" style="margin-top: 20px;">
-						<button type="submit" class="btn btn-primary" disabled={saving}>
-							{saving ? 'Saving...' : 'Save Changes'}
-						</button>
-						<button
-							type="button"
-							class="btn btn-secondary"
-							onclick={cancelEditing}
-							disabled={saving}
-						>
-							Cancel
-						</button>
-					</div>
-				</form>
-			{:else}
-				<!-- Display Mode -->
+			<!-- Timestamps -->
+			<div class="panel">
+				<h2 class="panel-title">Timestamps</h2>
 				<dl class="info-grid">
 					<div class="info-item">
-						<dt>ID</dt>
-						<dd class="info-value mono">{user.id}</dd>
+						<dt>Created At</dt>
+						<dd class="info-value">{formatTimestamp(user.created_at)}</dd>
 					</div>
 					<div class="info-item">
-						<dt>Email</dt>
-						<dd class="info-value">{sanitizeText(user.email || '-')}</dd>
+						<dt>Updated At</dt>
+						<dd class="info-value">{formatTimestamp(user.updated_at)}</dd>
 					</div>
 					<div class="info-item">
-						<dt>Name</dt>
-						<dd class="info-value">{sanitizeText(user.name || '-')}</dd>
+						<dt>Last Login At</dt>
+						<dd class="info-value">{formatTimestamp(user.last_login_at)}</dd>
 					</div>
-					<div class="info-item">
-						<dt>Given Name</dt>
-						<dd class="info-value">{sanitizeText(user.given_name || '-')}</dd>
-					</div>
-					<div class="info-item">
-						<dt>Family Name</dt>
-						<dd class="info-value">{sanitizeText(user.family_name || '-')}</dd>
-					</div>
-					<div class="info-item">
-						<dt>Nickname</dt>
-						<dd class="info-value">{sanitizeText(user.nickname || '-')}</dd>
-					</div>
-					<div class="info-item">
-						<dt>Preferred Username</dt>
-						<dd class="info-value">{sanitizeText(user.preferred_username || '-')}</dd>
-					</div>
-					<div class="info-item">
-						<dt>Phone Number</dt>
-						<dd class="info-value">{sanitizeText(user.phone_number || '-')}</dd>
-					</div>
-					<div class="info-item">
-						<dt>User Type</dt>
-						<dd class="info-value">{user.user_type}</dd>
-					</div>
-					<div class="info-item">
-						<dt>Email Verified</dt>
-						<dd class="info-value">
-							{#if user.email_verified}
-								<span class="verify-yes">✓ Yes</span>
-							{:else}
-								<span class="verify-no">✗ No</span>
-							{/if}
-						</dd>
-					</div>
-					<div class="info-item">
-						<dt>Phone Verified</dt>
-						<dd class="info-value">
-							{#if user.phone_number_verified}
-								<span class="verify-yes">✓ Yes</span>
-							{:else}
-								<span class="verify-no">✗ No</span>
-							{/if}
-						</dd>
-					</div>
+					{#if user.suspended_at}
+						<div class="info-item">
+							<dt>Suspended At</dt>
+							<dd class="info-value warning">{formatTimestamp(user.suspended_at)}</dd>
+						</div>
+					{/if}
+					{#if user.locked_at}
+						<div class="info-item">
+							<dt>Locked At</dt>
+							<dd class="info-value danger">{formatTimestamp(user.locked_at)}</dd>
+						</div>
+					{/if}
 				</dl>
-			{/if}
-		</div>
-
-		<!-- Timestamps -->
-		<div class="panel">
-			<h2 class="panel-title">Timestamps</h2>
-			<dl class="info-grid">
-				<div class="info-item">
-					<dt>Created At</dt>
-					<dd class="info-value">{formatTimestamp(user.created_at)}</dd>
-				</div>
-				<div class="info-item">
-					<dt>Updated At</dt>
-					<dd class="info-value">{formatTimestamp(user.updated_at)}</dd>
-				</div>
-				<div class="info-item">
-					<dt>Last Login At</dt>
-					<dd class="info-value">{formatTimestamp(user.last_login_at)}</dd>
-				</div>
-				{#if user.suspended_at}
-					<div class="info-item">
-						<dt>Suspended At</dt>
-						<dd class="info-value warning">{formatTimestamp(user.suspended_at)}</dd>
-					</div>
-				{/if}
-				{#if user.locked_at}
-					<div class="info-item">
-						<dt>Locked At</dt>
-						<dd class="info-value danger">{formatTimestamp(user.locked_at)}</dd>
-					</div>
-				{/if}
-			</dl>
-		</div>
+			</div>
 
 			<!-- Passkeys -->
 			<div class="panel">
@@ -806,67 +811,67 @@
 		<!-- Roles Tab -->
 		{#if activeTab === 'roles'}
 			<!-- Role Assignments -->
-		<div class="panel">
-			<div class="panel-header">
-				<h2 class="panel-title">Role Assignments</h2>
-				<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}>Assign Role</button>
-			</div>
-
-			{#if rolesError}
-				<div class="alert alert-error">{rolesError}</div>
-			{/if}
-
-			{#if rolesLoading}
-				<div class="loading-state">
-					<i class="i-ph-circle-notch loading-spinner"></i>
-					<p>Loading roles...</p>
+			<div class="panel">
+				<div class="panel-header">
+					<h2 class="panel-title">Role Assignments</h2>
+					<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}>Assign Role</button>
 				</div>
-			{:else if userRoles.length > 0}
-				<div class="data-table-container">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th>Role</th>
-								<th>Scope</th>
-								<th>Scope Target</th>
-								<th>Expires</th>
-								<th class="text-right">Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each userRoles as role (role.id)}
+
+				{#if rolesError}
+					<div class="alert alert-error">{rolesError}</div>
+				{/if}
+
+				{#if rolesLoading}
+					<div class="loading-state">
+						<i class="i-ph-circle-notch loading-spinner"></i>
+						<p>Loading roles...</p>
+					</div>
+				{:else if userRoles.length > 0}
+					<div class="data-table-container">
+						<table class="data-table">
+							<thead>
 								<tr>
-									<td>
-										<span style="font-weight: 500;">
-											{role.role_display_name || role.role_name}
-										</span>
-										{#if role.is_system_role}
-											<span class="badge-system">System</span>
-										{/if}
-									</td>
-									<td>
-										<span class={getScopeBadgeClass(role.scope)}>{role.scope}</span>
-									</td>
-									<td class="muted">{role.scope_target || '-'}</td>
-									<td class="muted"
-										>{role.expires_at ? formatTimestamp(role.expires_at) : 'Never'}</td
-									>
-									<td class="text-right">
-										<button class="btn btn-danger btn-sm" onclick={() => confirmRemoveRole(role)}>
-											Remove
-										</button>
-									</td>
+									<th>Role</th>
+									<th>Scope</th>
+									<th>Scope Target</th>
+									<th>Expires</th>
+									<th class="text-right">Actions</th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{:else}
-				<div class="empty-state">
-					<p class="empty-state-description">No roles assigned to this user</p>
-				</div>
-			{/if}
-		</div>
+							</thead>
+							<tbody>
+								{#each userRoles as role (role.id)}
+									<tr>
+										<td>
+											<span style="font-weight: 500;">
+												{role.role_display_name || role.role_name}
+											</span>
+											{#if role.is_system_role}
+												<span class="badge-system">System</span>
+											{/if}
+										</td>
+										<td>
+											<span class={getScopeBadgeClass(role.scope)}>{role.scope}</span>
+										</td>
+										<td class="muted">{role.scope_target || '-'}</td>
+										<td class="muted"
+											>{role.expires_at ? formatTimestamp(role.expires_at) : 'Never'}</td
+										>
+										<td class="text-right">
+											<button class="btn btn-danger btn-sm" onclick={() => confirmRemoveRole(role)}>
+												Remove
+											</button>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{:else}
+					<div class="empty-state">
+						<p class="empty-state-description">No roles assigned to this user</p>
+					</div>
+				{/if}
+			</div>
 		{/if}
 
 		<!-- Consents Tab -->
@@ -951,28 +956,28 @@
 		<!-- Actions Tab -->
 		{#if activeTab === 'actions'}
 			<div class="panel">
-			<h2 class="panel-title">Actions</h2>
-			<div class="action-buttons">
-				{#if user.status === 'active'}
-					<button class="btn btn-warning" onclick={() => openConfirmDialog('suspend')}>
-						Suspend User
+				<h2 class="panel-title">Actions</h2>
+				<div class="action-buttons">
+					{#if user.status === 'active'}
+						<button class="btn btn-warning" onclick={() => openConfirmDialog('suspend')}>
+							Suspend User
+						</button>
+						<button class="btn btn-danger" onclick={() => openConfirmDialog('lock')}>
+							Lock Account
+						</button>
+					{:else if user.status === 'suspended' || user.status === 'locked'}
+						<button class="btn btn-success" onclick={() => openConfirmDialog('activate')}>
+							Activate User
+						</button>
+					{/if}
+					<button class="btn btn-purple" onclick={() => openConfirmDialog('revoke-sessions')}>
+						Revoke All Sessions
 					</button>
-					<button class="btn btn-danger" onclick={() => openConfirmDialog('lock')}>
-						Lock Account
+					<button class="btn btn-danger" onclick={() => openConfirmDialog('delete')}>
+						Delete User
 					</button>
-				{:else if user.status === 'suspended' || user.status === 'locked'}
-					<button class="btn btn-success" onclick={() => openConfirmDialog('activate')}>
-						Activate User
-					</button>
-				{/if}
-				<button class="btn btn-purple" onclick={() => openConfirmDialog('revoke-sessions')}>
-					Revoke All Sessions
-				</button>
-				<button class="btn btn-danger" onclick={() => openConfirmDialog('delete')}>
-					Delete User
-				</button>
+				</div>
 			</div>
-		</div>
 		{/if}
 	{/if}
 </div>
@@ -1222,8 +1227,8 @@
 >
 	<p class="modal-description">
 		Are you sure you want to withdraw consent for statement
-		<strong>{statementToWithdraw?.id}</strong> (version {statementToWithdraw?.version})?
-		This action will be recorded in the consent history.
+		<strong>{statementToWithdraw?.id}</strong> (version {statementToWithdraw?.version})? This action
+		will be recorded in the consent history.
 	</p>
 
 	{#snippet footer()}

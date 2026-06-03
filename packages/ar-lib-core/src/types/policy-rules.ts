@@ -35,7 +35,7 @@ export type ConditionOperator =
  * These are the fields that can be used in rule conditions:
  * - email_domain_hash: Blind index of email domain
  * - idp_claim: Claim from IdP (evaluated in memory from raw_attributes)
- * - email_verified: Boolean flag from users_core
+ * - email_verified: Boolean flag from the canonical identity core plane
  * - provider_id: External IdP provider identifier
  * - user_type: User type classification
  */
@@ -263,7 +263,7 @@ export interface OrgDomainMappingRow extends Omit<
  * Contains all attributes available for condition evaluation
  */
 export interface RuleEvaluationContext {
-  /** Hashed email domain (from users_core or computed) */
+  /** Hashed email domain (from canonical identity data or computed) */
   email_domain_hash?: string;
   /** Email domain hash key version */
   email_domain_hash_version?: number;

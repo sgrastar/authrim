@@ -68,6 +68,22 @@
 		authorization: 'Authorization Plane'
 	};
 
+	const storageSliceLabels: Record<string, string> = {
+		identity_core: 'Identity Core Plane',
+		identity_pii: 'Identity PII Plane',
+		custom_claims: 'Custom Claims',
+		registration_fields: 'Registration Fields',
+		custom_pii: 'Custom PII',
+		passkeys: 'Passkeys',
+		linked_identities: 'Linked Identities',
+		consent: 'Consent',
+		authorization: 'Authorization'
+	};
+
+	function formatStorageSliceLabel(slice: string): string {
+		return storageSliceLabels[slice] ?? slice;
+	}
+
 	function getStorageTenantPolicy(profileId: string): StorageProfileTenantOverridePolicy | null {
 		return storagePolicy?.tenantOverrideEligibility?.[profileId] ?? null;
 	}
@@ -89,7 +105,7 @@
 		if (slices.length === 0) {
 			return 'No storage slices configured';
 		}
-		return slices.join(', ');
+		return slices.map(formatStorageSliceLabel).join(', ');
 	}
 
 	function describeTenantOverrideCompatibility(
@@ -320,12 +336,13 @@
 		error = '';
 
 		try {
-			const [auditProfilesResult, storageProfilesResult, residencyProfilesResult, defaultsResult] = await Promise.all([
-				adminRuntimeProfilesAPI.list('audit', true),
-				adminRuntimeProfilesAPI.list('storage', true),
-				adminRuntimeProfilesAPI.list('residency', true),
-				adminRuntimeProfilesAPI.getDefaults()
-			]);
+			const [auditProfilesResult, storageProfilesResult, residencyProfilesResult, defaultsResult] =
+				await Promise.all([
+					adminRuntimeProfilesAPI.list('audit', true),
+					adminRuntimeProfilesAPI.list('storage', true),
+					adminRuntimeProfilesAPI.list('residency', true),
+					adminRuntimeProfilesAPI.getDefaults()
+				]);
 
 			auditProfiles = auditProfilesResult.profiles.audit ?? [];
 			storageProfiles = storageProfilesResult.profiles.storage ?? [];
@@ -432,7 +449,9 @@
 			}
 			const selectedActivation = getActivationStatus(auditActivationStatus, defaultAuditProfileId);
 			if (selectedActivation && !selectedActivation.activatable) {
-				throw new Error(selectedActivation.blockingReasons[0] ?? 'Selected audit profile is not activatable');
+				throw new Error(
+					selectedActivation.blockingReasons[0] ?? 'Selected audit profile is not activatable'
+				);
 			}
 			const selectedResidencyActivation = getActivationStatus(
 				residencyActivationStatus,
@@ -525,11 +544,11 @@
 						<div class="summary-label">Auth core slices</div>
 						<div class="chip-row">
 							{#if storagePolicy?.authCoreSlices?.length}
-									{#each storagePolicy.authCoreSlices as slice (slice)}
-									<span class="badge">{slice}</span>
+								{#each storagePolicy.authCoreSlices as slice (slice)}
+									<span class="badge">{formatStorageSliceLabel(slice)}</span>
 								{/each}
 							{:else}
-								<span class="badge">users_core</span>
+								<span class="badge">Identity Core Plane</span>
 							{/if}
 						</div>
 					</div>
@@ -559,8 +578,8 @@
 							{/each}
 						</div>
 						<div class="helper-text">
-							Stale threshold: {storagePolicy.tenantDatabaseStatsStatus.staleAfterHours} hours.
-							Cutoff: {storagePolicy.tenantDatabaseStatsStatus.cutoffIso}.
+							Stale threshold: {storagePolicy.tenantDatabaseStatsStatus.staleAfterHours} hours. Cutoff:
+							{storagePolicy.tenantDatabaseStatsStatus.cutoffIso}.
 						</div>
 					{:else if storagePolicy?.tenantDatabaseStatsStatus?.unavailableReason}
 						<p class="helper-text">
@@ -605,10 +624,10 @@
 
 				<div class="policy-grid">
 					{#if storagePolicy}
-							{#each Object.values(storagePolicy.slicePolicies) as policy (policy.slice)}
+						{#each Object.values(storagePolicy.slicePolicies) as policy (policy.slice)}
 							<article class="policy-card">
 								<div class="policy-card-header">
-									<strong>{policy.slice}</strong>
+									<strong>{formatStorageSliceLabel(policy.slice)}</strong>
 									<span
 										class:badge-primary={policy.tenantOverrideAllowed}
 										class:badge-muted={!policy.tenantOverrideAllowed}
@@ -621,9 +640,6 @@
 									<div>{boundaryClassLabels[policy.boundaryClass]}</div>
 									<div>D1 default: {policy.d1Default ? 'Yes' : 'No'}</div>
 									<div>Non-D1 option required: {policy.nonD1OptionRequired ? 'Yes' : 'No'}</div>
-									{#if policy.compatibilityShorthand}
-										<div>`users_core` is treated as auth-core shorthand.</div>
-									{/if}
 								</div>
 							</article>
 						{/each}
@@ -680,7 +696,9 @@
 							<div class="helper-text">{formatStorageProfileSummary(profile)}</div>
 							{#if capabilityStatus && !capabilityStatus.mvpReady}
 								<div class="reference-status-list">
-									{#each capabilityStatus.capabilities.filter((item) => item.state === 'unsupported' || item.state === 'partial').slice(0, 3) as item (item.id)}
+									{#each capabilityStatus.capabilities
+										.filter((item) => item.state === 'unsupported' || item.state === 'partial')
+										.slice(0, 3) as item (item.id)}
 										<div class="helper-text warning-text">
 											{item.label}: {item.state}
 										</div>
@@ -740,7 +758,9 @@
 						<article class="policy-card">
 							<div class="policy-card-header">
 								<strong>Hyperdrive Bindings</strong>
-								<span class="badge badge-muted">{referenceCatalog.bindingRefs.hyperdrive.length}</span>
+								<span class="badge badge-muted"
+									>{referenceCatalog.bindingRefs.hyperdrive.length}</span
+								>
 							</div>
 							<div class="chip-row">
 								{#if referenceCatalog.bindingRefs.hyperdrive.length}
@@ -784,7 +804,9 @@
 						{#each storageProfiles as profile (profile.id)}
 							<option
 								value={profile.id}
-								disabled={isActivationBlocked(getActivationStatus(storageActivationStatus, profile.id))}
+								disabled={isActivationBlocked(
+									getActivationStatus(storageActivationStatus, profile.id)
+								)}
 							>
 								{profile.label} ({profile.id})
 							</option>
@@ -798,8 +820,8 @@
 				{/if}
 				{#if isActivationBlocked(getActivationStatus(storageActivationStatus, defaultStorageProfileId))}
 					<div class="alert alert-error">
-						{getActivationStatus(storageActivationStatus, defaultStorageProfileId)?.blockingReasons?.[0] ??
-							'Selected storage profile cannot be activated.'}
+						{getActivationStatus(storageActivationStatus, defaultStorageProfileId)
+							?.blockingReasons?.[0] ?? 'Selected storage profile cannot be activated.'}
 					</div>
 				{/if}
 
@@ -809,7 +831,9 @@
 						{#each auditProfiles as profile (profile.id)}
 							<option
 								value={profile.id}
-								disabled={isActivationBlocked(getActivationStatus(auditActivationStatus, profile.id))}
+								disabled={isActivationBlocked(
+									getActivationStatus(auditActivationStatus, profile.id)
+								)}
 							>
 								{profile.label} ({profile.id})
 							</option>
@@ -823,8 +847,8 @@
 				{/if}
 				{#if isActivationBlocked(getActivationStatus(auditActivationStatus, defaultAuditProfileId))}
 					<div class="alert alert-error">
-						{getActivationStatus(auditActivationStatus, defaultAuditProfileId)?.blockingReasons?.[0] ??
-							'Selected audit profile cannot be activated.'}
+						{getActivationStatus(auditActivationStatus, defaultAuditProfileId)
+							?.blockingReasons?.[0] ?? 'Selected audit profile cannot be activated.'}
 					</div>
 				{/if}
 
@@ -834,7 +858,9 @@
 						{#each residencyProfiles as profile (profile.id)}
 							<option
 								value={profile.id}
-								disabled={isActivationBlocked(getActivationStatus(residencyActivationStatus, profile.id))}
+								disabled={isActivationBlocked(
+									getActivationStatus(residencyActivationStatus, profile.id)
+								)}
 							>
 								{profile.label} ({profile.id})
 							</option>
@@ -843,13 +869,15 @@
 				</div>
 				{#if defaultsActivationStatus.residency}
 					<div class="helper-text">
-						Current default residency activation: {activationLabel(defaultsActivationStatus.residency)}
+						Current default residency activation: {activationLabel(
+							defaultsActivationStatus.residency
+						)}
 					</div>
 				{/if}
 				{#if isActivationBlocked(getActivationStatus(residencyActivationStatus, defaultResidencyProfileId))}
 					<div class="alert alert-error">
-						{getActivationStatus(residencyActivationStatus, defaultResidencyProfileId)?.blockingReasons?.[0] ??
-							'Selected residency profile cannot be activated.'}
+						{getActivationStatus(residencyActivationStatus, defaultResidencyProfileId)
+							?.blockingReasons?.[0] ?? 'Selected residency profile cannot be activated.'}
 					</div>
 				{/if}
 				<button class="btn btn-primary" onclick={saveDefault} disabled={saving}>
@@ -984,11 +1012,9 @@
 										<label for="primaryBindingRef">Binding Ref</label>
 										<input
 											id="primaryBindingRef"
-											list={
-												parsedProfileDraft.primary.type === 'd1'
-													? 'runtime-d1-binding-refs'
-													: 'runtime-hyperdrive-binding-refs'
-											}
+											list={parsedProfileDraft.primary.type === 'd1'
+												? 'runtime-d1-binding-refs'
+												: 'runtime-hyperdrive-binding-refs'}
 											value={String(parsedProfileDraft.primary.bindingRef ?? '')}
 											oninput={(event) =>
 												updatePrimaryField(
@@ -1016,7 +1042,10 @@
 											id="primaryDataset"
 											value={String(parsedProfileDraft.primary.dataset ?? '')}
 											oninput={(event) =>
-												updatePrimaryField('dataset', (event.currentTarget as HTMLInputElement).value)}
+												updatePrimaryField(
+													'dataset',
+													(event.currentTarget as HTMLInputElement).value
+												)}
 										/>
 									</div>
 								</div>
@@ -1034,7 +1063,11 @@
 							<div class="status-header">
 								<h3>Archive</h3>
 								{#if parsedProfileDraft.archive}
-									<button class="btn btn-secondary btn-sm" type="button" onclick={removeArchiveTemplate}>
+									<button
+										class="btn btn-secondary btn-sm"
+										type="button"
+										onclick={removeArchiveTemplate}
+									>
 										Remove
 									</button>
 								{/if}
@@ -1048,7 +1081,10 @@
 											list="runtime-r2-binding-refs"
 											value={String(parsedProfileDraft.archive.bucketRef ?? '')}
 											oninput={(event) =>
-												updateArchiveField('bucketRef', (event.currentTarget as HTMLInputElement).value)}
+												updateArchiveField(
+													'bucketRef',
+													(event.currentTarget as HTMLInputElement).value
+												)}
 										/>
 									</div>
 									<div class="field">
@@ -1057,11 +1093,16 @@
 											id="archivePrefix"
 											value={String(parsedProfileDraft.archive.prefix ?? '')}
 											oninput={(event) =>
-												updateArchiveField('prefix', (event.currentTarget as HTMLInputElement).value)}
+												updateArchiveField(
+													'prefix',
+													(event.currentTarget as HTMLInputElement).value
+												)}
 										/>
 									</div>
 								</div>
-								<div class="helper-text">{formatAuditTargetSummary(parsedProfileDraft.archive)}</div>
+								<div class="helper-text">
+									{formatAuditTargetSummary(parsedProfileDraft.archive)}
+								</div>
 							{:else}
 								<p class="helper-text">No archive target configured.</p>
 							{/if}
@@ -1080,7 +1121,11 @@
 										<div class="reference-status-card">
 											<div class="status-header">
 												<strong>{formatSinkLabel(sink, index)}</strong>
-												<button class="btn btn-secondary btn-sm" type="button" onclick={() => removeSink(index)}>
+												<button
+													class="btn btn-secondary btn-sm"
+													type="button"
+													onclick={() => removeSink(index)}
+												>
 													Remove
 												</button>
 											</div>
@@ -1090,7 +1135,11 @@
 													id={`sink-type-${index}`}
 													value={sink.type === 'logpush' ? 'logpush' : 'http'}
 													onchange={(event) =>
-														replaceSinkType(index, (event.currentTarget as HTMLSelectElement).value as EditableAuditSinkType)}
+														replaceSinkType(
+															index,
+															(event.currentTarget as HTMLSelectElement)
+																.value as EditableAuditSinkType
+														)}
 												>
 													<option value="http">HTTP</option>
 													<option value="logpush">Logpush</option>
@@ -1104,7 +1153,11 @@
 															id={`sink-destination-${index}`}
 															value={String(sink.destinationRef ?? '')}
 															oninput={(event) =>
-																updateSinkField(index, 'destinationRef', (event.currentTarget as HTMLInputElement).value)}
+																updateSinkField(
+																	index,
+																	'destinationRef',
+																	(event.currentTarget as HTMLInputElement).value
+																)}
 														/>
 													</div>
 													<div class="field">
@@ -1113,7 +1166,11 @@
 															id={`sink-dataset-${index}`}
 															value={String(sink.dataset ?? '')}
 															oninput={(event) =>
-																updateSinkField(index, 'dataset', (event.currentTarget as HTMLInputElement).value)}
+																updateSinkField(
+																	index,
+																	'dataset',
+																	(event.currentTarget as HTMLInputElement).value
+																)}
 														/>
 													</div>
 												</div>
@@ -1125,7 +1182,11 @@
 															id={`sink-url-${index}`}
 															value={String(sink.url ?? '')}
 															oninput={(event) =>
-																updateSinkField(index, 'url', (event.currentTarget as HTMLInputElement).value)}
+																updateSinkField(
+																	index,
+																	'url',
+																	(event.currentTarget as HTMLInputElement).value
+																)}
 														/>
 													</div>
 													<div class="field">
@@ -1134,7 +1195,11 @@
 															id={`sink-urlref-${index}`}
 															value={String(sink.urlRef ?? '')}
 															oninput={(event) =>
-																updateSinkField(index, 'urlRef', (event.currentTarget as HTMLInputElement).value)}
+																updateSinkField(
+																	index,
+																	'urlRef',
+																	(event.currentTarget as HTMLInputElement).value
+																)}
 														/>
 													</div>
 													<div class="field">
@@ -1143,7 +1208,11 @@
 															id={`sink-tokenref-${index}`}
 															value={String(sink.authTokenRef ?? '')}
 															oninput={(event) =>
-																updateSinkField(index, 'authTokenRef', (event.currentTarget as HTMLInputElement).value)}
+																updateSinkField(
+																	index,
+																	'authTokenRef',
+																	(event.currentTarget as HTMLInputElement).value
+																)}
 														/>
 													</div>
 												</div>
@@ -1342,7 +1411,9 @@
 								{/each}
 							</ul>
 						{:else}
-							<p class="helper-text">This profile is ready to be activated as the environment default.</p>
+							<p class="helper-text">
+								This profile is ready to be activated as the environment default.
+							</p>
 						{/if}
 					</div>
 

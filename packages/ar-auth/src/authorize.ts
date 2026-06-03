@@ -1,6 +1,9 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalRuntimeUserProjectionRepository,
+  CanonicalSensitiveValueResolver,
+  CanonicalRuntimeUserStore,
   validateResponseType,
   validateClientId,
   validateRedirectUri,
@@ -59,6 +62,7 @@ import {
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
+  canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
@@ -103,6 +107,71 @@ const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
 const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
 const HTTPS_REQUEST_URI_MAX_REDIRECTS = 5;
+
+function splitScopes(scope: string | undefined | null): string[] {
+  return (scope ?? '')
+    .split(/\s+/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+function getClientAllowedScopes(clientMetadata: {
+  allowed_scopes?: string[] | null;
+  requestable_scopes?: string[] | null;
+  scope?: string | null;
+}): string[] {
+  if (
+    Array.isArray(clientMetadata.requestable_scopes) &&
+    clientMetadata.requestable_scopes.length
+  ) {
+    return clientMetadata.requestable_scopes;
+  }
+  if (Array.isArray(clientMetadata.allowed_scopes) && clientMetadata.allowed_scopes.length) {
+    return clientMetadata.allowed_scopes;
+  }
+  return splitScopes(clientMetadata.scope);
+}
+
+function isClientPublic(clientMetadata: {
+  client_secret_hash?: string | null;
+  client_secret?: string | null;
+  token_endpoint_auth_method?: string | null;
+}): boolean {
+  return (
+    clientMetadata.token_endpoint_auth_method === 'none' ||
+    (!clientMetadata.client_secret_hash && !clientMetadata.client_secret)
+  );
+}
+
+function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
+  return splitScopes(responseType).includes('code');
+}
+
+async function deriveOidcSid(sessionId: string, clientId: string, issuer: string): Promise<string> {
+  const data = new TextEncoder().encode(`${issuer}\u0000${clientId}\u0000${sessionId}`);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+async function loadOIDCClaimsUser(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  piiCtx: ReturnType<typeof createPIIContextFromHono>
+): Promise<
+  Awaited<ReturnType<typeof getCachedUser>> | ReturnType<typeof canonicalProjectionToOIDCClaimsUser>
+> {
+  const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+    piiCtx.coreAdapter,
+    tenantId,
+    new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
+  );
+  const projection = await canonicalProjectionRepository.findByLegacyUserId(userId);
+  return projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
+}
 
 function clampHandoffArtifactTtlSeconds(value: number): number {
   return Math.min(
@@ -356,13 +425,16 @@ function createLocalAuthorizationErrorResponse(
   description: string,
   title = 'Invalid Authorization Request'
 ): Response {
+  const safeTitle = escapeHtml(title);
+  const safeError = escapeHtml(error);
+  const safeDescription = escapeHtml(description);
   return c.html(
     `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title}</title>
+  <title>${safeTitle}</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -405,11 +477,11 @@ function createLocalAuthorizationErrorResponse(
 </head>
 <body>
   <div class="container">
-    <h1>${title}</h1>
-    <p>${description}</p>
+    <h1>${safeTitle}</h1>
+    <p>${safeDescription}</p>
     <div class="error-code">
-      <strong>Error:</strong> ${error}<br>
-      <strong>Description:</strong> ${description}
+      <strong>Error:</strong> ${safeError}<br>
+      <strong>Description:</strong> ${safeDescription}
     </div>
   </div>
 </body>
@@ -443,6 +515,33 @@ async function cleanupFailedUIChallenge(
       error as Error
     );
   }
+}
+
+async function createAuthorizeConfirmationChallenge(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  metadata: {
+    authTime?: number;
+    sessionUserId?: string;
+  }
+): Promise<string> {
+  const confirmationId = crypto.randomUUID();
+  const confirmationStore = await getChallengeStoreByChallengeId(c.env, confirmationId, tenantId);
+  await confirmationStore.storeChallengeRpc({
+    id: confirmationId,
+    tenantId,
+    type: 'reauth',
+    userId,
+    challenge: confirmationId,
+    ttl: 60,
+    metadata: {
+      purpose: 'authorize_confirmation',
+      authTime: metadata.authTime,
+      sessionUserId: metadata.sessionUserId ?? userId,
+    },
+  });
+  return confirmationId;
 }
 
 /**
@@ -482,6 +581,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let _confirmed: string | undefined;
   let _auth_time: string | undefined;
   let _session_user_id: string | undefined;
+  let _confirmation_challenge: string | undefined;
+  let _consent_confirmation_challenge: string | undefined;
+  let confirmedConsentUserId: string | undefined;
   // Phase 2-B RBAC extensions
   let org_id: string | undefined; // Target organization ID
   let acting_as: string | undefined; // Acting on behalf of user ID
@@ -516,15 +618,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       display = typeof body.display === 'string' ? body.display : undefined;
       ui_locales = typeof body.ui_locales === 'string' ? body.ui_locales : undefined;
       login_hint = typeof body.login_hint === 'string' ? body.login_hint : undefined;
-      _confirmed = typeof body._confirmed === 'string' ? body._confirmed : undefined;
-      _auth_time = typeof body._auth_time === 'string' ? body._auth_time : undefined;
-      _session_user_id =
-        typeof body._session_user_id === 'string' ? body._session_user_id : undefined;
+      _confirmation_challenge =
+        typeof body._confirmation_challenge === 'string' ? body._confirmation_challenge : undefined;
+      _consent_confirmation_challenge =
+        typeof body._consent_confirmation_challenge === 'string'
+          ? body._consent_confirmation_challenge
+          : undefined;
       // Phase 2-B RBAC extensions
       org_id = typeof body.org_id === 'string' ? body.org_id : undefined;
       acting_as = typeof body.acting_as === 'string' ? body.acting_as : undefined;
-      _consent_confirmed =
-        typeof body._consent_confirmed === 'string' ? body._consent_confirmed : undefined;
       // Custom Redirect URIs (Authrim Extension)
       error_uri = typeof body.error_uri === 'string' ? body.error_uri : undefined;
       cancel_uri = typeof body.cancel_uri === 'string' ? body.cancel_uri : undefined;
@@ -560,16 +662,109 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ui_locales = c.req.query('ui_locales');
     login_hint = c.req.query('login_hint');
     handoff = c.req.query('handoff');
-    _confirmed = c.req.query('_confirmed');
-    _auth_time = c.req.query('_auth_time');
-    _session_user_id = c.req.query('_session_user_id');
+    _confirmation_challenge = c.req.query('_confirmation_challenge');
+    _consent_confirmation_challenge = c.req.query('_consent_confirmation_challenge');
     // Phase 2-B RBAC extensions
     org_id = c.req.query('org_id');
     acting_as = c.req.query('acting_as');
-    _consent_confirmed = c.req.query('_consent_confirmed');
     // Custom Redirect URIs (Authrim Extension)
     error_uri = c.req.query('error_uri') ?? undefined;
     cancel_uri = c.req.query('cancel_uri') ?? undefined;
+  }
+
+  if (_confirmation_challenge) {
+    const tenantId = getTenantIdFromContext(c);
+    const confirmationStore = await getChallengeStoreByChallengeId(
+      c.env,
+      _confirmation_challenge,
+      tenantId
+    );
+    let confirmationData: {
+      userId?: string;
+      metadata?: {
+        purpose?: string;
+        authTime?: number;
+        sessionUserId?: string;
+      };
+    };
+
+    try {
+      confirmationData = (await confirmationStore.consumeChallengeRpc({
+        id: _confirmation_challenge,
+        tenantId,
+        type: 'reauth',
+        challenge: _confirmation_challenge,
+      })) as typeof confirmationData;
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid or expired confirmation challenge',
+        },
+        400
+      );
+    }
+
+    if (confirmationData.metadata?.purpose !== 'authorize_confirmation') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid confirmation challenge',
+        },
+        400
+      );
+    }
+
+    _confirmed = 'true';
+    if (typeof confirmationData.metadata.authTime === 'number') {
+      _auth_time = confirmationData.metadata.authTime.toString();
+    }
+    _session_user_id = confirmationData.metadata.sessionUserId || confirmationData.userId;
+  }
+
+  if (_consent_confirmation_challenge) {
+    const tenantId = getTenantIdFromContext(c);
+    const confirmationStore = await getChallengeStoreByChallengeId(
+      c.env,
+      _consent_confirmation_challenge,
+      tenantId
+    );
+    let confirmationData: {
+      userId?: string;
+      metadata?: {
+        purpose?: string;
+      };
+    };
+
+    try {
+      confirmationData = (await confirmationStore.consumeChallengeRpc({
+        id: _consent_confirmation_challenge,
+        tenantId,
+        type: 'consent',
+        challenge: _consent_confirmation_challenge,
+      })) as typeof confirmationData;
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid or expired consent confirmation challenge',
+        },
+        400
+      );
+    }
+
+    if (confirmationData.metadata?.purpose !== 'authorize_consent_confirmation') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid consent confirmation challenge',
+        },
+        400
+      );
+    }
+
+    _consent_confirmed = 'true';
+    confirmedConsentUserId = confirmationData.userId;
   }
 
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
@@ -1381,6 +1576,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (requestObjectClaims.display) display = requestObjectClaims.display as string;
         if (requestObjectClaims.ui_locales) ui_locales = requestObjectClaims.ui_locales as string;
         if (requestObjectClaims.login_hint) login_hint = requestObjectClaims.login_hint as string;
+        if (requestObjectClaims.authorization_details) {
+          authorization_details =
+            typeof requestObjectClaims.authorization_details === 'string'
+              ? requestObjectClaims.authorization_details
+              : JSON.stringify(requestObjectClaims.authorization_details);
+        }
       }
     } catch (error) {
       log.error(
@@ -1887,7 +2088,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     <div class="error-code">
       <strong>Error:</strong> invalid_request<br>
       <strong>Description:</strong> redirect_uri is not registered for this client<br>
-      <strong>Provided URI:</strong> ${redirect_uri || '(none)'}
+      <strong>Provided URI:</strong> ${escapeHtml(redirect_uri || '(none)')}
     </div>
     <p>Please contact the application developer to register the redirect URI or use a registered redirect URI.</p>
   </div>
@@ -1944,7 +2145,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     <p>The custom redirect URI provided is not allowed for this client.</p>
     <div class="error-code">
       <strong>Error:</strong> invalid_request<br>
-      <strong>Description:</strong> ${errorMessages}
+      <strong>Description:</strong> ${escapeHtml(errorMessages)}
     </div>
     <p>Please ensure custom redirect URIs are same-origin with redirect_uri or pre-registered in allowed_redirect_origins.</p>
   </div>
@@ -1975,6 +2176,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const scopeValidation = validateScope(scope);
   if (!scopeValidation.valid) {
     return sendError('invalid_scope', scopeValidation.error);
+  }
+
+  const requestedScopes = splitScopes(scope);
+  const clientAllowedScopes = getClientAllowedScopes(clientMetadata);
+  if (requestedScopes.length > 0 && clientAllowedScopes.length > 0) {
+    const clientAllowedScopeSet = new Set(clientAllowedScopes);
+    const disallowedScopes = requestedScopes.filter((s) => !clientAllowedScopeSet.has(s));
+    if (disallowedScopes.length > 0) {
+      return sendError(
+        'invalid_scope',
+        `Client is not authorized to request scope(s): ${disallowedScopes.join(', ')}. ` +
+          `Allowed scopes: ${clientAllowedScopes.join(', ')}`
+      );
+    }
   }
 
   // ==========================================================================
@@ -2126,6 +2341,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (!base64urlPattern.test(code_challenge)) {
       return sendError('invalid_request', 'Invalid code_challenge format');
     }
+  }
+
+  const requiresPkce =
+    responseTypeIssuesAuthorizationCode(response_type) &&
+    (clientMetadata.require_pkce === true || isClientPublic(clientMetadata));
+  if (requiresPkce && (!code_challenge || code_challenge_method !== 'S256')) {
+    return sendError('invalid_request', 'PKCE with S256 is required for this client');
   }
 
   // Process authentication-related parameters (OIDC Core 3.1.2.1)
@@ -2534,58 +2756,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         }
       }
 
-      // Handoff Token SSO (Authrim Extension)
-      // When handoff=true, return handoff_token instead of authorization code
-      // This enables SSO in third-party cookie blocked environments
-      if (handoff === 'true') {
-        // redirect_uri is required and validated at this point
-        if (!redirect_uri) {
-          return sendError('invalid_request', 'redirect_uri is required for handoff flow');
-        }
-
-        log.info('Handoff SSO: Issuing handoff token', {
-          action: 'handoff_sso',
-          sessionId,
-          userId: sessionUserId,
-        });
-
-        // Generate handoff token
-        const handoffToken = crypto.randomUUID();
-        const handoffStore = await getChallengeStoreByChallengeId(
-          c.env,
-          handoffToken,
-          getTenantIdFromContext(c)
-        );
-
-        const handoffArtifactTtlSeconds = resolveHandoffArtifactTtlSeconds(
-          c,
-          clientMetadata as unknown as Record<string, unknown>
-        );
-
-        await handoffStore.storeChallengeRpc({
-          id: `handoff:${handoffToken}`,
-          tenantId: getTenantIdFromContext(c),
-          type: 'handoff',
-          userId: sessionUserId!,
-          challenge: sessionId!,
-          ttl: handoffArtifactTtlSeconds,
-          metadata: {
-            client_id: validClientId,
-            state,
-            aud: 'handoff',
-            created_at: Date.now(),
-          },
-        });
-
-        // Redirect to callback with handoff_token
-        const callbackUrl = new URL(redirect_uri);
-        callbackUrl.searchParams.set('handoff_token', handoffToken);
-        if (state) {
-          callbackUrl.searchParams.set('state', state);
-        }
-
-        return c.redirect(callbackUrl.toString(), 302);
-      }
+      // Handoff token issuance is handled after consent checks below.
     }
 
     // Note: prompt=login is handled in the OIDC compliance section above
@@ -2778,6 +2949,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const sub = sessionUserId;
+  if (_consent_confirmed === 'true' && confirmedConsentUserId && confirmedConsentUserId !== sub) {
+    return sendError('invalid_request', 'Consent confirmation does not match the active session');
+  }
 
   // Check if consent is required (unless already confirmed)
   // Note: _consent_confirmed is already parsed at the top of this function
@@ -3169,8 +3343,56 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // Handoff Token SSO (Authrim Extension)
+  // Issue only after all prompt=none, session, max_age, and consent checks have passed.
+  if (prompt?.split(' ').includes('none') && handoff === 'true') {
+    log.info('Handoff SSO: Issuing handoff token', {
+      action: 'handoff_sso',
+      sessionId,
+      userId: sessionUserId,
+    });
+
+    const handoffToken = crypto.randomUUID();
+    const handoffStore = await getChallengeStoreByChallengeId(
+      c.env,
+      handoffToken,
+      getTenantIdFromContext(c)
+    );
+
+    const handoffArtifactTtlSeconds = resolveHandoffArtifactTtlSeconds(
+      c,
+      clientMetadata as unknown as Record<string, unknown>
+    );
+
+    await handoffStore.storeChallengeRpc({
+      id: `handoff:${handoffToken}`,
+      tenantId: getTenantIdFromContext(c),
+      type: 'handoff',
+      userId: sessionUserId!,
+      challenge: sessionId!,
+      ttl: handoffArtifactTtlSeconds,
+      metadata: {
+        client_id: validClientId,
+        state,
+        aud: 'handoff',
+        created_at: Date.now(),
+      },
+    });
+
+    const callbackUrl = new URL(validRedirectUri);
+    callbackUrl.searchParams.set('handoff_token', handoffToken);
+    if (state) {
+      callbackUrl.searchParams.set('state', state);
+    }
+
+    return c.redirect(callbackUrl.toString(), 302);
+  }
+
   // Record authentication time
   const currentAuthTime = authTime || Math.floor(Date.now() / 1000);
+  const oidcSid = sessionId
+    ? await deriveOidcSid(sessionId, validClientId, getRequestIssuer(c))
+    : undefined;
   log.debug('Final authTime for code', {
     action: 'auth_time_final',
     authTime,
@@ -3179,47 +3401,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   });
 
   // Handle acr_values parameter (Authentication Context Class Reference)
-  // OIDC Core 3.1.2.1: acr_values is a space-separated string of ACR values in order of preference
+  // Only emit an ACR that came from the authenticated session. A requested
+  // acr_values parameter is not proof that the authentication actually met it.
   let selectedAcr = sessionAcr;
   if (acr_values && !selectedAcr) {
-    // Load supported ACR values from settings (KV > env > default)
-    // Default ACR values per OIDC Core specification
-    const defaultSupportedAcr = [
-      'urn:mace:incommon:iap:silver', // Basic authentication
-      'urn:mace:incommon:iap:bronze', // Minimal authentication
-      'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport', // Password over TLS
-      'urn:oasis:names:tc:SAML:2.0:ac:classes:Password', // Simple password
-      '0', // No authentication context (fallback)
-    ];
-
-    let supportedAcrValues: string[] = defaultSupportedAcr;
-
-    // Try to load custom ACR values from FAPI/OIDC config (already loaded earlier)
-    if (oidcConfig.supportedAcrValues && Array.isArray(oidcConfig.supportedAcrValues)) {
-      supportedAcrValues = oidcConfig.supportedAcrValues;
-    } else if (c.env.SUPPORTED_ACR_VALUES) {
-      // Fallback to environment variable (comma-separated)
-      supportedAcrValues = c.env.SUPPORTED_ACR_VALUES.split(',').map((v: string) => v.trim());
-    }
-
-    // Match requested ACR values against supported values (in order of client preference)
-    const requestedAcrList = acr_values.split(' ');
-    const matchedAcr = requestedAcrList.find((acr) => supportedAcrValues.includes(acr));
-
-    if (matchedAcr) {
-      selectedAcr = matchedAcr;
-      log.debug('Selected ACR from client request', { action: 'acr_selected', acr: selectedAcr });
-    } else {
-      // No match found - use the first supported ACR as default
-      // Per OIDC Core: The OP SHOULD process the request, but MAY return a different acr
-      selectedAcr = supportedAcrValues[0];
-      log.debug('No matching ACR found, using default', {
-        action: 'acr_fallback',
-        requested: requestedAcrList,
-        supported: supportedAcrValues,
-        defaultAcr: selectedAcr,
-      });
-    }
+    log.debug('Ignoring requested acr_values without verified session ACR', {
+      action: 'acr_unverified_request_ignored',
+    });
   }
 
   // Type narrowing: scope is guaranteed to be a string at this point
@@ -3379,7 +3567,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         acr: selectedAcr,
         amr: sessionAmr,
         dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
-        sid: sessionId, // OIDC Session Management: Session ID for RP-Initiated Logout
+        sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
         authorizationDetails: authorization_details, // RFC 9396 RAR
       });
     } catch (error) {
@@ -3478,7 +3666,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         nonce, // Include nonce (required for implicit/hybrid flows)
         c_hash: cHash,
         at_hash: atHash,
-        ...(sessionId && { sid: sessionId }), // OIDC Session Management: Session ID for RP-Initiated Logout
+        ...(oidcSid && { sid: oidcSid }), // OIDC Session Management: derived RP-specific session identifier
       };
 
       // Add acr claim if acr_values was requested (OIDC Core 2: SHOULD return acr)
@@ -3501,12 +3689,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       if (isIdTokenOnly || hasRequestedIdTokenClaims || hasIdTokenSAORules) {
         // Fetch user data from cache (Read-Through Cache) or D1
         const piiCtx = createPIIContextFromHono(c, tenantId);
-        const user = await getCachedUser(c.env, tenantId, sub, {
-          coreDb: piiCtx.coreAdapter,
-          piiDb: piiCtx.defaultPiiAdapter,
-          cacheScope: piiCtx.userCacheScope,
-          piiCacheMode: piiCtx.piiCacheMode,
-        });
+        const user = await loadOIDCClaimsUser(c, tenantId, sub, piiCtx);
 
         const userData: Record<string, unknown> = {
           ...(user ? buildStandardUserClaims(user) : {}),
@@ -4505,79 +4688,73 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   let userId: string;
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
 
   if (isCertificationTest) {
     // Use fixed test user for OIDC Conformance Tests
     userId = 'user-oidc-conformance-test';
     log.info('Using OIDC Conformance Test user', { action: 'login_test_user' });
 
-    // Verify test user exists in Core DB (should have been created during DCR)
-    const existingUser = await authCtx.repositories.userCore.findById(userId);
+    // Verify test user exists in canonical runtime tables (should be created during DCR).
+    const existingUser = await runtimeUsers.findById(userId, { includeInactive: true });
 
     if (!existingUser) {
       log.warn('Test user not found, creating it now', { action: 'login_test_user_create' });
 
-      // Step 1: Create user in Core DB with pii_status='pending'
-      await authCtx.repositories.userCore
-        .createUser({
-          id: userId,
-          tenant_id: tenantId,
-          email_verified: true,
-          phone_number_verified: true,
-          user_type: 'end_user',
-          pii_partition: tenantId,
-          pii_status: 'pending',
-        })
-        .catch((error: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to create test user in Core DB', {
-            action: 'login_test_user_core',
-            errorName: error instanceof Error ? error.name : 'Unknown error',
-          });
-        });
-
-      // Step 2: Insert into the configured PII store
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      await piiCtx.piiRepositories.userPII
-        .createPII({
-          id: userId,
-          tenant_id: tenantId,
-          pii_class: 'PROFILE',
+      await runtimeUsers
+        .syncUser({
+          userId,
           email: 'test@example.com',
           name: 'John Doe',
-          given_name: 'John',
-          family_name: 'Doe',
-          nickname: 'Johnny',
-          preferred_username: 'test',
-          picture: 'https://example.com/avatar.jpg',
-          website: 'https://example.com',
-          gender: 'male',
-          birthdate: '1990-01-01',
-          zoneinfo: 'America/New_York',
-          locale: 'en-US',
-          phone_number: '+1-555-0100',
-          address_formatted: '1234 Main St, Anytown, ST 12345, USA',
-          address_street_address: '1234 Main St',
-          address_locality: 'Anytown',
-          address_region: 'ST',
-          address_postal_code: '12345',
-          address_country: 'USA',
+          active: true,
+          emailVerified: true,
+          userType: 'end_user',
+          sourceRef: 'oidc_conformance',
+          piiFields: {
+            given_name: true,
+            family_name: true,
+            nickname: true,
+            preferred_username: true,
+            picture: true,
+            website: true,
+            gender: true,
+            birthdate: true,
+            zoneinfo: true,
+            locale: true,
+            phone_number: true,
+          },
+          sensitiveValues: {
+            given_name: 'John',
+            family_name: 'Doe',
+            nickname: 'Johnny',
+            preferred_username: 'test',
+            picture: 'https://example.com/avatar.jpg',
+            website: 'https://example.com',
+            gender: 'male',
+            birthdate: '1990-01-01',
+            zoneinfo: 'America/New_York',
+            locale: 'en-US',
+            phone_number: '+1-555-0100',
+          },
+          phoneNumberVerified: true,
+          addressJson: JSON.stringify({
+            formatted: '1234 Main St, Anytown, ST 12345, USA',
+            street_address: '1234 Main St',
+            locality: 'Anytown',
+            region: 'ST',
+            postal_code: '12345',
+            country: 'USA',
+          }),
         })
         .catch((error: unknown) => {
           // PII Protection: Don't log full error
-          log.error('Failed to create test user in PII store', {
-            action: 'login_test_user_pii',
-            errorName: error instanceof Error ? error.name : 'Unknown error',
-          });
-        });
-
-      // Step 3: Update pii_status to 'active'
-      await authCtx.repositories.userCore
-        .updatePIIStatus(userId, 'active')
-        .catch((error: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to update pii_status', {
-            action: 'login_pii_status_update',
+          log.error('Failed to create test user in canonical runtime store', {
+            action: 'login_test_user_canonical',
             errorName: error instanceof Error ? error.name : 'Unknown error',
           });
         });
@@ -4614,52 +4791,22 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     // Use the email from login form, or fall back to a dummy email
     const userEmail = loginUsername || `${userId}@example.com`;
 
-    // Step 1: Create user in Core DB with pii_status='pending'
-    await authCtx.repositories.userCore
-      .createUser({
-        id: userId,
-        tenant_id: tenantId,
-        email_verified: false,
-        user_type: 'end_user',
-        pii_partition: tenantId,
-        pii_status: 'pending',
+    await runtimeUsers
+      .syncUser({
+        userId,
+        email: userEmail,
+        active: true,
+        emailVerified: false,
+        userType: 'end_user',
+        sourceRef: 'oidc_stub_login',
       })
       .catch((error: unknown) => {
         // PII Protection: Don't log full error
-        log.error('Failed to create user in Core DB', {
-          action: 'login_user_core_create',
+        log.error('Failed to create stub user in canonical runtime store', {
+          action: 'login_user_canonical_create',
           errorName: error instanceof Error ? error.name : 'Unknown error',
         });
       });
-
-    // Step 2: Insert into the configured PII store
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    try {
-      await piiCtx.piiRepositories.userPII.createPII({
-        id: userId,
-        tenant_id: tenantId,
-        email: userEmail,
-      });
-
-      // Step 3: Update pii_status to 'active' (only on successful PII store write)
-      await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
-    } catch (error: unknown) {
-      // PII Protection: Don't log full error
-      log.error('Failed to create user in PII store', {
-        action: 'login_user_pii_create',
-        errorName: error instanceof Error ? error.name : 'Unknown error',
-      });
-      // Update pii_status to 'failed' to indicate PII write failure
-      await authCtx.repositories.userCore
-        .updatePIIStatus(userId, 'failed')
-        .catch((statusError: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to update pii_status to failed', {
-            action: 'login_pii_status_failed',
-            errorName: statusError instanceof Error ? statusError.name : 'Unknown error',
-          });
-        });
-    }
   }
 
   // Calculate auth_time BEFORE creating session to ensure consistency
@@ -4740,14 +4887,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   if (metadata.prompt) params.set('prompt', metadata.prompt as string);
   if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
 
-  // Add a flag to indicate login is complete
-  params.set('_confirmed', 'true');
-
-  // Pass auth_time to ensure consistency between initial login and prompt=none requests
-  // This is critical for OIDC conformance: auth_time in ID tokens must be identical
-  // when the user is authenticated once and then prompt=none is used
-  // Use the same loginAuthTime that was stored in the session
-  params.set('_auth_time', loginAuthTime.toString());
+  const confirmationId = await createAuthorizeConfirmationChallenge(c, tenantId, userId, {
+    authTime: loginAuthTime,
+    sessionUserId: userId,
+  });
+  params.set('_confirmation_challenge', confirmationId);
   log.debug('Setting auth_time for authorization redirect', {
     action: 'auth_time_set',
     authTime: loginAuthTime,
@@ -4940,18 +5084,23 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
   }
   if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
 
-  // Add a flag to indicate this is a re-authentication confirmation
-  params.set('_confirmed', 'true');
-
-  // Preserve original auth_time and sessionUserId for consistency
+  const confirmationId = await createAuthorizeConfirmationChallenge(
+    c,
+    getTenantIdFromContext(c),
+    challengeData.userId,
+    {
+      authTime: typeof metadata.authTime === 'number' ? metadata.authTime : undefined,
+      sessionUserId:
+        typeof metadata.sessionUserId === 'string' ? metadata.sessionUserId : challengeData.userId,
+    }
+  );
+  params.set('_confirmation_challenge', confirmationId);
   if (metadata.authTime) {
-    params.set('_auth_time', metadata.authTime.toString());
     log.debug('Passing auth_time to confirmation redirect', {
       action: 'confirm_auth_time',
       authTime: metadata.authTime,
     });
   }
-  if (metadata.sessionUserId) params.set('_session_user_id', metadata.sessionUserId as string);
 
   // Redirect to /authorize with original parameters
   const redirectUrl = `/authorize?${params.toString()}`;

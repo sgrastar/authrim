@@ -110,7 +110,7 @@ export interface DatabaseAdapter {
    * @example
    * ```typescript
    * const users = await adapter.query<UserCore>(
-   *   'SELECT * FROM users_core WHERE tenant_id = ?',
+   *   'SELECT * FROM identity_accounts WHERE tenant_id = ?',
    *   [tenantId]
    * );
    * ```
@@ -127,7 +127,7 @@ export interface DatabaseAdapter {
    * @example
    * ```typescript
    * const user = await adapter.queryOne<UserCore>(
-   *   'SELECT * FROM users_core WHERE id = ?',
+   *   'SELECT * FROM identity_accounts WHERE id = ?',
    *   [userId]
    * );
    * ```
@@ -144,7 +144,7 @@ export interface DatabaseAdapter {
    * @example
    * ```typescript
    * const result = await adapter.execute(
-   *   'INSERT INTO users_core (id, tenant_id) VALUES (?, ?)',
+   *   'INSERT INTO identity_accounts (id, tenant_id) VALUES (?, ?)',
    *   [userId, tenantId]
    * );
    * console.log(`Inserted ${result.rowsAffected} rows`);
@@ -164,7 +164,7 @@ export interface DatabaseAdapter {
    * @example
    * ```typescript
    * const result = await adapter.transaction(async (tx) => {
-   *   await tx.execute('INSERT INTO users_core (id, tenant_id) VALUES (?, ?)', [userId, tenantId]);
+   *   await tx.execute('INSERT INTO identity_accounts (id, tenant_id) VALUES (?, ?)', [accountId, tenantId]);
    *   await tx.execute('INSERT INTO passkeys (id, user_id) VALUES (?, ?)', [passkeyId, userId]);
    *   return { userId };
    * });
@@ -184,8 +184,8 @@ export interface DatabaseAdapter {
    * @example
    * ```typescript
    * const results = await adapter.batch([
-   *   { sql: 'INSERT INTO users_core (id, tenant_id) VALUES (?, ?)', params: [userId1, tenantId] },
-   *   { sql: 'INSERT INTO users_core (id, tenant_id) VALUES (?, ?)', params: [userId2, tenantId] },
+   *   { sql: 'INSERT INTO identity_accounts (id, tenant_id) VALUES (?, ?)', params: [accountId1, tenantId] },
+   *   { sql: 'INSERT INTO identity_accounts (id, tenant_id) VALUES (?, ?)', params: [accountId2, tenantId] },
    * ]);
    * ```
    */

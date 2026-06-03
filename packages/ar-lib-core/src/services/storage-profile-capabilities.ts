@@ -61,7 +61,8 @@ const TENANT_D1_CAPABILITIES: StorageProfileCapabilityStatusEntry[] = [
     label: 'User core and PII store resolution',
     state: 'supported',
     criticality: 'user_critical',
-    detail: 'Request context resolves users_core and users_pii through the tenant DB registry.',
+    detail:
+      'Request context resolves canonical identity core and PII storage through the tenant DB registry.',
   },
   {
     id: 'tenant_database_health_and_stats',
@@ -133,7 +134,7 @@ const EXTERNAL_DURABLE_CAPABILITIES: StorageProfileCapabilityStatusEntry[] = [
     state: 'partial',
     criticality: 'security_critical',
     detail:
-      'users_core and users_pii resolve through external database adapters, but the full route matrix is not production-certified yet.',
+      'Canonical identity core and PII storage resolve through external database adapters, but the full route matrix is not production-certified yet.',
   },
   {
     id: 'external_custom_claims',

@@ -66,6 +66,20 @@ const DOMAIN_REGEX = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
  */
 const MAX_DOMAIN_LENGTH = 253;
 
+async function getDomainHashForMappingDomain(
+  c: Context,
+  domain: string,
+  version: number
+): Promise<string> {
+  const hashConfig = await getEmailDomainHashConfig(c.env);
+  const hashResult = await generateEmailDomainHashWithVersion(
+    `user@${domain.toLowerCase().trim()}`,
+    hashConfig,
+    version
+  );
+  return hashResult.hash;
+}
+
 /**
  * Validate domain format
  * @param domain Domain string to validate
@@ -505,6 +519,17 @@ export async function verifyDomainOwnership(c: Context) {
       );
     }
 
+    const domainHash = await getDomainHashForMappingDomain(c, domain, mapping.domain_hash_version);
+    if (domainHash !== mapping.domain_hash) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'domain does not match the requested mapping',
+        },
+        400
+      );
+    }
+
     // Generate verification token and expiry
     const token = await generateVerificationToken();
     const expiresAt = calculateVerificationExpiry();
@@ -627,10 +652,13 @@ export async function confirmDomainVerification(c: Context) {
       verification_status: string | null;
       verification_expires_at: number | null;
       verification_method: string | null;
+      domain_hash: string;
+      domain_hash_version: number;
     }>(
-      `SELECT id, org_id, verification_token, verification_status, verification_expires_at, verification_method
-       FROM org_domain_mappings
-       WHERE id = ? AND tenant_id = ?`,
+      `SELECT id, org_id, verification_token, verification_status, verification_expires_at,
+              verification_method, domain_hash, domain_hash_version
+	       FROM org_domain_mappings
+	       WHERE id = ? AND tenant_id = ?`,
       [body.mapping_id, tenantId]
     );
 
@@ -641,6 +669,17 @@ export async function confirmDomainVerification(c: Context) {
           error_description: `Domain mapping ${body.mapping_id} not found`,
         },
         404
+      );
+    }
+
+    const domainHash = await getDomainHashForMappingDomain(c, domain, row.domain_hash_version);
+    if (domainHash !== row.domain_hash) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'domain does not match the requested mapping',
+        },
+        400
       );
     }
 

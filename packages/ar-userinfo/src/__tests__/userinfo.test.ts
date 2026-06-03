@@ -25,10 +25,33 @@ const mockIsUserInfoEncryptionRequired = vi.hoisted(() => vi.fn());
 const mockGetClientPublicKey = vi.hoisted(() => vi.fn());
 const mockValidateJWEOptions = vi.hoisted(() => vi.fn());
 const mockGetCachedUser = vi.hoisted(() => vi.fn());
+const mockGetCachedUserCore = vi.hoisted(() => vi.fn());
+const mockCanonicalFindByLegacyUserId = vi.hoisted(() => vi.fn());
+const mockCanonicalRuntimeUserProjectionRepository = vi.hoisted(() =>
+  vi.fn().mockImplementation(function () {
+    return {
+      findByLegacyUserId: mockCanonicalFindByLegacyUserId,
+    };
+  })
+);
+const mockCanonicalSensitiveValueResolver = vi.hoisted(() => vi.fn());
 const mockCreateOAuthConfigManager = vi.hoisted(() =>
   vi.fn(() => ({
     isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
   }))
+);
+const mockLoadFeatureConfig = vi.hoisted(() => vi.fn().mockResolvedValue({ enabled: false }));
+const mockResolveCustomClaimRuntimeSourcesFromEnv = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    schemaDb: null,
+    nonPiiDb: null,
+    piiDb: null,
+  })
+);
+const mockCreateCustomClaimSchemaResolverFromSources = vi.hoisted(() =>
+  vi.fn().mockReturnValue({
+    resolveClaimsForTarget: vi.fn().mockResolvedValue({ claims: {} }),
+  })
 );
 
 // Mock the shared module
@@ -44,7 +67,13 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getClientPublicKey: mockGetClientPublicKey,
     validateJWEOptions: mockValidateJWEOptions,
     getCachedUser: mockGetCachedUser,
+    getCachedUserCore: mockGetCachedUserCore,
+    CanonicalRuntimeUserProjectionRepository: mockCanonicalRuntimeUserProjectionRepository,
+    CanonicalSensitiveValueResolver: mockCanonicalSensitiveValueResolver,
     createOAuthConfigManager: mockCreateOAuthConfigManager,
+    loadFeatureConfig: mockLoadFeatureConfig,
+    resolveCustomClaimRuntimeSourcesFromEnv: mockResolveCustomClaimRuntimeSourcesFromEnv,
+    createCustomClaimSchemaResolverFromSources: mockCreateCustomClaimSchemaResolverFromSources,
   };
 });
 
@@ -58,6 +87,7 @@ import {
   getClientPublicKey,
   validateJWEOptions,
   getCachedUser,
+  getCachedUserCore,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -160,6 +190,40 @@ const sampleUser = {
   updated_at: 1700000000000,
 };
 
+function sampleCanonicalProjection(overrides: Record<string, unknown> = {}) {
+  return {
+    id: sampleUser.id,
+    tenant_id: 'default',
+    subject_id: `subject:${sampleUser.id}`,
+    account_id: `account:${sampleUser.id}`,
+    email: sampleUser.email,
+    email_verified: 1,
+    name: sampleUser.name,
+    given_name: sampleUser.given_name,
+    family_name: sampleUser.family_name,
+    middle_name: sampleUser.middle_name,
+    nickname: sampleUser.nickname,
+    preferred_username: sampleUser.preferred_username,
+    profile: sampleUser.profile,
+    picture: sampleUser.picture,
+    website: sampleUser.website,
+    gender: sampleUser.gender,
+    birthdate: sampleUser.birthdate,
+    zoneinfo: sampleUser.zoneinfo,
+    locale: sampleUser.locale,
+    phone_number: sampleUser.phone_number,
+    phone_number_verified: 1,
+    address_json: sampleUser.address,
+    password_hash: null,
+    external_id: null,
+    active: 1,
+    custom_attributes_json: null,
+    created_at: new Date(1_700_000_000_000).toISOString(),
+    updated_at: new Date(sampleUser.updated_at).toISOString(),
+    ...overrides,
+  };
+}
+
 describe('UserInfo Endpoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -171,6 +235,26 @@ describe('UserInfo Endpoint', () => {
     // Default mock for getCachedUser - returns sample user
     // Tests that need different behavior can override this
     vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
+    vi.mocked(getCachedUserCore).mockResolvedValue({
+      id: 'user-123',
+      pii_status: 'active',
+      email_verified: true,
+      phone_number_verified: true,
+      updated_at: 1700000000000,
+    });
+    mockCanonicalFindByLegacyUserId.mockResolvedValue(sampleCanonicalProjection());
+    mockCreateOAuthConfigManager.mockReturnValue({
+      isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
+    });
+    mockLoadFeatureConfig.mockResolvedValue({ enabled: false });
+    mockResolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
+      schemaDb: null,
+      nonPiiDb: null,
+      piiDb: null,
+    });
+    mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
+      resolveClaimsForTarget: vi.fn().mockResolvedValue({ claims: {} }),
+    });
   });
 
   describe('Token Validation', () => {
@@ -252,6 +336,62 @@ describe('UserInfo Endpoint', () => {
       );
     });
 
+    it('should return server_error when invalid introspection has no error details', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer malformed-token' },
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: false,
+      });
+
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Unknown error',
+        },
+        500
+      );
+      expect(c.header).not.toHaveBeenCalledWith('WWW-Authenticate', expect.any(String));
+    });
+
+    it('should reject tokens without openid scope when configured as required', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      mockCreateOAuthConfigManager.mockReturnValue({
+        isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(true),
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'profile email',
+          client_id: 'client-123',
+        },
+      });
+
+      await userinfoHandler(c);
+
+      expect(c.header).toHaveBeenCalledWith(
+        'WWW-Authenticate',
+        'Bearer error="insufficient_scope", scope="openid"'
+      );
+      expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
+      expect(c.header).toHaveBeenCalledWith('Pragma', 'no-cache');
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'insufficient_scope',
+          error_description: 'Access token must have openid scope for UserInfo endpoint',
+        },
+        403
+      );
+      expect(getCachedUser).not.toHaveBeenCalled();
+    });
+
     it('should return 401 when token does not contain sub claim', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
@@ -314,8 +454,7 @@ describe('UserInfo Endpoint', () => {
         },
       });
 
-      // Mock getCachedUser to return null (user not found in PII/Non-PII DB)
-      vi.mocked(getCachedUser).mockResolvedValue(null);
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(null);
 
       await userinfoHandler(c);
 
@@ -329,7 +468,7 @@ describe('UserInfo Endpoint', () => {
       );
     });
 
-    it('passes runtime-resolved tenant adapters and cache scope to getCachedUser', async () => {
+    it('passes runtime-resolved tenant adapters to canonical projection', async () => {
       const createAdapter = (name: string) => ({
         query: vi.fn(),
         queryOne: vi.fn(),
@@ -386,24 +525,12 @@ describe('UserInfo Endpoint', () => {
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
-      vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
-
       await userinfoHandler(c);
 
-      expect(getCachedUser).toHaveBeenCalledWith(
-        c.env,
+      expect(mockCanonicalRuntimeUserProjectionRepository).toHaveBeenCalledWith(
+        runtimeCoreAdapter,
         'tenant-a',
-        'user-123',
-        expect.objectContaining({
-          coreDb: runtimeCoreAdapter,
-          piiDb: runtimePiiAdapter,
-          cacheScope: {
-            storageProfileId: 'builtin:storage:tenant-d1',
-            sourceGeneration: 'core:2:pii:2',
-            schemaVersion: 'core:87:pii:12',
-          },
-          piiCacheMode: 'no_cross_request_pii',
-        })
+        expect.any(Object)
       );
     });
   });
@@ -514,7 +641,67 @@ describe('UserInfo Endpoint', () => {
       expect(responseBody).not.toHaveProperty('name');
     });
 
-    it('should fail when requested scopes require PII but pii_status is failed', async () => {
+    it('should prefer canonical runtime projection when cutover flag is enabled', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile email',
+          client_id: 'client-123',
+        },
+      });
+      mockCanonicalFindByLegacyUserId.mockResolvedValue({
+        id: 'user-123',
+        tenant_id: 'default',
+        subject_id: 'subject:user-123',
+        account_id: 'account:user-123',
+        email: 'canonical@example.com',
+        email_verified: 1,
+        name: 'Canonical User',
+        given_name: 'Canonical',
+        family_name: 'User',
+        middle_name: null,
+        nickname: null,
+        preferred_username: null,
+        profile: null,
+        picture: null,
+        website: null,
+        gender: null,
+        birthdate: null,
+        zoneinfo: null,
+        locale: 'ja-JP',
+        phone_number: null,
+        phone_number_verified: 0,
+        address_json: null,
+        password_hash: null,
+        external_id: null,
+        active: 1,
+        custom_attributes_json: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-02T00:00:00.000Z',
+      });
+
+      await userinfoHandler(c);
+
+      const responseBody = vi.mocked(c.json).mock.calls[0][0];
+      expect(responseBody).toMatchObject({
+        sub: 'user-123',
+        email: 'canonical@example.com',
+        email_verified: true,
+        name: 'Canonical User',
+        locale: 'ja-JP',
+        updated_at: 1767312000,
+      });
+      expect(mockCanonicalFindByLegacyUserId).toHaveBeenCalledWith('user-123');
+      expect(getCachedUserCore).not.toHaveBeenCalled();
+      expect(getCachedUser).not.toHaveBeenCalled();
+    });
+
+    it('returns canonical claims without consulting legacy pii_status', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
       });
@@ -527,20 +714,64 @@ describe('UserInfo Endpoint', () => {
           client_id: 'client-123',
         },
       });
-      vi.mocked(getCachedUser).mockResolvedValue({
-        ...sampleUser,
-        pii_status: 'failed',
+      mockCanonicalFindByLegacyUserId.mockResolvedValue({
+        id: 'user-123',
+        tenant_id: 'default',
+        subject_id: 'subject:user-123',
+        account_id: 'account:user-123',
+        email: 'canonical@example.com',
+        email_verified: 1,
+        name: 'Canonical User',
+        given_name: 'Canonical',
+        family_name: 'User',
+        middle_name: null,
+        nickname: null,
+        preferred_username: null,
+        profile: null,
+        picture: null,
+        website: null,
+        gender: null,
+        birthdate: null,
+        zoneinfo: null,
+        locale: null,
+        phone_number: null,
+        phone_number_verified: 0,
+        address_json: null,
+        password_hash: null,
+        external_id: null,
+        active: 1,
+        custom_attributes_json: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-02T00:00:00.000Z',
       });
-
       await userinfoHandler(c);
 
       expect(c.json).toHaveBeenCalledWith(
-        {
-          error: 'temporarily_unavailable',
-          error_description: 'Requested claims require PII that is not currently available.',
-        },
-        503
+        expect.objectContaining({ sub: 'user-123', email: 'canonical@example.com' })
       );
+      expect(getCachedUserCore).not.toHaveBeenCalled();
+      expect(getCachedUser).not.toHaveBeenCalled();
+    });
+
+    it('does not use legacy cached user pii_status for canonical userinfo', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid email',
+          client_id: 'client-123',
+        },
+      });
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'user-123', email: 'test@example.com' })
+      );
+      expect(getCachedUser).not.toHaveBeenCalled();
     });
 
     it('should return phone claims with phone scope', async () => {
@@ -772,6 +1003,78 @@ describe('UserInfo Endpoint', () => {
       const responseBody = vi.mocked(c.json).mock.calls[0][0];
       expect(responseBody.sub).toBe('user-123');
       expect(responseBody.name).toBe('Test User');
+    });
+  });
+
+  describe('Custom Claims', () => {
+    it('should add custom claims without overwriting standard UserInfo claims', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      const resolveClaimsForTarget = vi.fn().mockResolvedValue({
+        claims: {
+          department: 'security',
+          name: 'Overridden Name',
+        },
+      });
+      mockLoadFeatureConfig.mockResolvedValue({ enabled: true });
+      mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
+        resolveClaimsForTarget,
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue(null);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      await userinfoHandler(c);
+
+      const responseBody = vi.mocked(c.json).mock.calls[0][0];
+      expect(responseBody.sub).toBe('user-123');
+      expect(responseBody.name).toBe('Test User');
+      expect(responseBody.department).toBe('security');
+      expect(mockResolveCustomClaimRuntimeSourcesFromEnv).toHaveBeenCalledWith(c.env, 'default');
+      expect(resolveClaimsForTarget).toHaveBeenCalledWith(
+        'default',
+        'user-123',
+        ['openid', 'profile'],
+        'userinfo'
+      );
+    });
+
+    it('should continue with standard claims when custom claim resolution fails', async () => {
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      const resolveClaimsForTarget = vi.fn().mockRejectedValue(new Error('resolver unavailable'));
+      mockLoadFeatureConfig.mockResolvedValue({ enabled: true });
+      mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
+        resolveClaimsForTarget,
+      });
+
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue(null);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      await userinfoHandler(c);
+
+      const responseBody = vi.mocked(c.json).mock.calls[0][0];
+      expect(responseBody.sub).toBe('user-123');
+      expect(responseBody.name).toBe('Test User');
+      expect(responseBody.department).toBeUndefined();
     });
   });
 
@@ -1021,11 +1324,9 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Mock getCachedUser with phone_number_verified: false (CachedUser format uses boolean)
-      vi.mocked(getCachedUser).mockResolvedValue({
-        ...sampleUser,
-        phone_number_verified: false,
-      });
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(
+        sampleCanonicalProjection({ phone_number_verified: 0 })
+      );
 
       await userinfoHandler(c);
 
@@ -1082,11 +1383,9 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Mock getCachedUser with malformed address JSON (CachedUser format uses address string)
-      vi.mocked(getCachedUser).mockResolvedValue({
-        ...sampleUser,
-        address: 'invalid-json{{{',
-      });
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(
+        sampleCanonicalProjection({ address_json: 'invalid-json{{{' })
+      );
 
       await userinfoHandler(c);
 
@@ -1111,11 +1410,10 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Override getCachedUser to return user with null fields
-      vi.mocked(getCachedUser).mockResolvedValue({
-        id: 'user-123',
-        email: 'user-123@unknown', // Fallback email when PII not available
-        email_verified: false,
+      mockCanonicalFindByLegacyUserId.mockResolvedValue({
+        ...sampleCanonicalProjection(),
+        email: 'user-123@unknown',
+        email_verified: 0,
         name: null,
         family_name: null,
         given_name: null,
@@ -1126,13 +1424,14 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
         locale: null,
         phone_number: null,
         phone_number_verified: false,
-        address: null,
+        address_json: null,
         birthdate: null,
         gender: null,
         profile: null,
         website: null,
         zoneinfo: null,
-        updated_at: 0,
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
       });
 
       await userinfoHandler(c);
@@ -1161,8 +1460,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
         },
       });
 
-      // Mock getCachedUser to return null (user not found in PII/Non-PII DB)
-      vi.mocked(getCachedUser).mockResolvedValue(null);
+      mockCanonicalFindByLegacyUserId.mockResolvedValue(null);
 
       await userinfoHandler(c1);
 

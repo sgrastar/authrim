@@ -115,10 +115,7 @@
 			const selectedTenantId = resolveSelectedTenantId();
 			const tenantInfo = await getTenantInfo(selectedTenantId);
 			const uiConfigResult = await adminUiConfigAPI.get();
-			const tenantSettingsResult = await adminSettingsAPI.getSettings(
-				'tenant',
-				selectedTenantId
-			);
+			const tenantSettingsResult = await adminSettingsAPI.getSettings('tenant', selectedTenantId);
 			const nextUiConfigForm: UIConfigForm = {
 				baseUrl: uiConfigResult.config.baseUrl ?? '',
 				paths: { ...uiConfigResult.config.paths }
@@ -267,7 +264,10 @@
 			throw new Error(`Invalid origin "${value}".`);
 		}
 
-		if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalHost(parsed.hostname))) {
+		if (
+			parsed.protocol !== 'https:' &&
+			!(parsed.protocol === 'http:' && isLocalHost(parsed.hostname))
+		) {
 			throw new Error(`Origin "${value}" must use HTTPS, except for localhost.`);
 		}
 
@@ -347,7 +347,8 @@
 			}, 3000);
 		} catch (err) {
 			if (err instanceof SettingsConflictError) {
-				trustedOriginsError = 'Trusted origins were modified by another user. Please reload and try again.';
+				trustedOriginsError =
+					'Trusted origins were modified by another user. Please reload and try again.';
 			} else {
 				trustedOriginsError =
 					err instanceof Error ? err.message : 'Failed to update trusted origins.';
@@ -599,9 +600,9 @@
 					{/if}
 				</div>
 				<p class="setting-description">
-					This is the tenant-wide source of truth for WebAuthn and browser-side direct auth.
-					Client pages can still add redirect URI origins as shortcuts, but they write back to
-					this same setting.
+					This is the tenant-wide source of truth for WebAuthn and browser-side direct auth. Client
+					pages can still add redirect URI origins as shortcuts, but they write back to this same
+					setting.
 				</p>
 				<textarea
 					id="trusted-origins"
@@ -644,12 +645,10 @@
 				</button>
 				<button
 					onclick={saveTrustedOrigins}
-					disabled={
-						!hasTrustedOriginsChanges ||
+					disabled={!hasTrustedOriginsChanges ||
 						trustedOriginsSaving ||
 						!canEditTrustedOrigins ||
-						Boolean(trustedOriginsDraft.error)
-					}
+						Boolean(trustedOriginsDraft.error)}
 					class="btn btn-primary"
 				>
 					{trustedOriginsSaving ? 'Saving...' : 'Save Trusted Origins'}

@@ -171,7 +171,8 @@
 		successMessage = '';
 
 		try {
-			const { genericPatches, tokenExchangeEnabled } = splitRuntimeFeatureFlagPatches(pendingPatches);
+			const { genericPatches, tokenExchangeEnabled } =
+				splitRuntimeFeatureFlagPatches(pendingPatches);
 			let appliedCount = 0;
 
 			if (genericPatches.length > 0) {
@@ -183,7 +184,11 @@
 				appliedCount += result.applied.length + result.cleared.length + result.disabled.length;
 			}
 
-			if (data.category === 'feature-flags' && scopeContext.level === 'platform' && tokenExchangeEnabled !== undefined) {
+			if (
+				data.category === 'feature-flags' &&
+				scopeContext.level === 'platform' &&
+				tokenExchangeEnabled !== undefined
+			) {
 				await adminTokenExchangeSettingsAPI.updateConfig({
 					enabled: tokenExchangeEnabled
 				});

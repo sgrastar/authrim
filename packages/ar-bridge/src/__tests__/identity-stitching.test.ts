@@ -14,7 +14,9 @@ const {
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
   mockCreateAuditLog,
+  mockRuntimeSyncUser,
   MockD1Adapter,
+  MockCanonicalRuntimeUserStore,
   sqlTracker,
 } = vi.hoisted(() => {
   // Storage for tracking SQL calls - differentiate between DB and DB_PII
@@ -40,6 +42,7 @@ const {
     missingRequiredFields: [],
   });
   const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
+  const runtimeSyncUserMock = vi.fn().mockResolvedValue({ accountId: 'account-id' });
 
   // Create a class that wraps the mock functions and tracks calls
   // The class determines binding type from the db option's _isPii marker
@@ -69,6 +72,39 @@ const {
     query = vi.fn().mockResolvedValue([]);
   }
 
+  class CanonicalRuntimeUserStoreClass {
+    async findByEmail(email: string) {
+      const piiRow = await piiQueryOneMock(
+        `SELECT owner_id
+           FROM identity_sensitive_values
+          WHERE value_key = 'email'`,
+        [email]
+      );
+      if (!piiRow) {
+        return null;
+      }
+      const userId = piiRow.owner_id ?? piiRow.id;
+      const coreRow = await coreQueryOneMock(
+        `SELECT *
+           FROM identity_accounts
+          WHERE legacy_user_id = ?`,
+        [userId]
+      );
+      if (!coreRow) {
+        return null;
+      }
+      return {
+        id: userId,
+        email: piiRow.email ?? email,
+        email_verified: coreRow.email_verified ?? 0,
+      };
+    }
+
+    async syncUser(input: unknown) {
+      return runtimeSyncUserMock(input);
+    }
+  }
+
   return {
     mockCoreQueryOne: coreQueryOneMock,
     mockCoreExecute: coreExecuteMock,
@@ -77,7 +113,9 @@ const {
     mockPersistCustomClaimWrite: persistCustomClaimWriteMock,
     mockSyncUserLifecycleState: syncUserLifecycleStateMock,
     mockCreateAuditLog: createAuditLogMock,
+    mockRuntimeSyncUser: runtimeSyncUserMock,
     MockD1Adapter: D1AdapterClass,
+    MockCanonicalRuntimeUserStore: CanonicalRuntimeUserStoreClass,
     sqlTracker: tracker,
   };
 });
@@ -85,6 +123,7 @@ const {
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
   ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
   createLogger: () => ({
     module: () => ({
@@ -225,6 +264,7 @@ describe('Identity Stitching Service', () => {
     mockPiiQueryOne.mockReset().mockResolvedValue(null);
     mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
     mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
+    mockRuntimeSyncUser.mockReset().mockResolvedValue({ accountId: 'account-id' });
     mockSyncUserLifecycleState.mockReset().mockResolvedValue({
       lifecycleState: 'active',
       missingRequiredFields: [],
@@ -352,13 +392,13 @@ describe('Identity Stitching Service', () => {
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 
-        // Mock findUserByEmail - PII/Non-PII DB separation pattern:
-        // 1. DB_PII returns user with email (PII DB)
+        // Mock findUserByEmail - canonical runtime store preserves the PII/Non-PII DB split:
+        // 1. DB_PII resolves the email to a runtime user owner (PII DB)
         mockPiiQueryOne.mockResolvedValueOnce({
           id: 'existing-user-by-email',
           email: 'test@example.com',
         });
-        // 2. DB returns user core with email_verified: 1 (Core DB)
+        // 2. DB resolves non-PII account state (Core DB)
         mockCoreQueryOne.mockResolvedValueOnce({
           id: 'existing-user-by-email',
           email_verified: 1,
@@ -442,13 +482,13 @@ describe('Identity Stitching Service', () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
 
-        // Mock findUserByEmail - PII/Non-PII DB separation pattern:
-        // 1. DB_PII returns user with email (PII DB)
+        // Mock findUserByEmail - canonical runtime store preserves the PII/Non-PII DB split:
+        // 1. DB_PII resolves the email to a runtime user owner (PII DB)
         mockPiiQueryOne.mockResolvedValueOnce({
           id: 'existing-user-unverified',
           email: 'test@example.com',
         });
-        // 2. DB returns user core with email_verified: 0 (Core DB)
+        // 2. DB resolves non-PII account state (Core DB)
         mockCoreQueryOne.mockResolvedValueOnce({
           id: 'existing-user-unverified',
           email_verified: 0, // Not verified

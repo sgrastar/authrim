@@ -13,6 +13,7 @@ import {
   resolveTenantCandidatesFromEmailDomain,
   usesNakedDomainIssuer,
   validateTenantRequestBinding,
+  CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import { getLogger } from '@authrim/ar-lib-core';
 import { SignJWT, jwtVerify } from 'jose';
@@ -57,7 +58,7 @@ interface TenantLookupRow {
   id: string;
   tenant_code: string;
   name: string;
-  is_active: number;
+  lifecycle_state: string;
 }
 
 interface InvitationLookupRow {
@@ -119,16 +120,6 @@ interface DiscoveryConfigResponse {
 
 interface ClientLookupRow {
   client_id: string;
-  tenant_id: string;
-}
-
-interface ExactEmailUserRow {
-  id: string;
-  tenant_id: string;
-}
-
-interface ActiveUserTenantRow {
-  id: string;
   tenant_id: string;
 }
 
@@ -373,9 +364,9 @@ function appendLoginHint(url: string, loginHint?: string): string {
 async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandidate | null> {
   const adapter = await getDiscoveryCoreAdapter(env);
   const tenants = await adapter.query<TenantLookupRow>(
-    `SELECT id, tenant_code, name, is_active
+    `SELECT id, tenant_code, name, lifecycle_state
      FROM tenants
-     WHERE is_active = 1
+     WHERE lifecycle_state = 'active'
      ORDER BY id ASC
      LIMIT 2`,
     []
@@ -391,9 +382,9 @@ async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandid
 async function getActiveTenantWayfCandidates(env: Env): Promise<DiscoveryCandidate[]> {
   const adapter = await getDiscoveryCoreAdapter(env);
   const tenants = await adapter.query<TenantLookupRow>(
-    `SELECT id, tenant_code, name, is_active
+    `SELECT id, tenant_code, name, lifecycle_state
      FROM tenants
-     WHERE is_active = 1
+     WHERE lifecycle_state = 'active'
      ORDER BY name ASC, id ASC`,
     []
   );
@@ -576,7 +567,7 @@ async function getDiscoveryUiConfig(
 async function getTenantRowById(env: Env, tenantId: string): Promise<TenantLookupRow | null> {
   const adapter = await getDiscoveryCoreAdapter(env);
   return adapter.queryOne<TenantLookupRow>(
-    'SELECT id, tenant_code, name, is_active FROM tenants WHERE id = ? AND is_active = 1',
+    "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE id = ? AND lifecycle_state = 'active'",
     [tenantId]
   );
 }
@@ -587,7 +578,7 @@ async function getTenantRowByTenantCode(
 ): Promise<TenantLookupRow | null> {
   const adapter = await getDiscoveryCoreAdapter(env);
   return adapter.queryOne<TenantLookupRow>(
-    'SELECT id, tenant_code, name, is_active FROM tenants WHERE tenant_code = ? AND is_active = 1',
+    "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE tenant_code = ? AND lifecycle_state = 'active'",
     [tenantCode]
   );
 }
@@ -597,7 +588,7 @@ async function getTenantRowsByExactEmail(env: Env, email: string): Promise<Tenan
 
   try {
     const activeTenants = await coreAdapter.query<TenantLookupRow>(
-      'SELECT id, tenant_code, name, is_active FROM tenants WHERE is_active = 1 ORDER BY id ASC',
+      "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC",
       []
     );
     const matchedTenants = await Promise.all(
@@ -611,18 +602,16 @@ async function getTenantRowsByExactEmail(env: Env, email: string): Promise<Tenan
           userStoreSources.piiDb,
           `discovery-pii-${tenant.id}`
         );
-        const piiUser = await piiAdapter.queryOne<ExactEmailUserRow>(
-          'SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?',
-          [email, tenant.id]
+        const userCoreAdapter = ensureDatabaseAdapter(
+          userStoreSources.coreDb,
+          `discovery-user-core-${tenant.id}`
         );
-        if (!piiUser) {
-          return null;
-        }
-
-        const activeUser = await coreAdapter.queryOne<ActiveUserTenantRow>(
-          'SELECT id, tenant_id FROM users_core WHERE id = ? AND tenant_id = ? AND is_active = 1',
-          [piiUser.id, piiUser.tenant_id]
-        );
+        const runtimeUsers = new CanonicalRuntimeUserStore({
+          coreAdapter: userCoreAdapter,
+          piiAdapter,
+          tenantId: tenant.id,
+        });
+        const activeUser = await runtimeUsers.findByEmail(email);
 
         return activeUser ? tenant : null;
       })

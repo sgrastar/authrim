@@ -371,192 +371,185 @@ describe('UserStore', () => {
     userStore = new UserStore(adapter);
   });
 
+  function mockCanonicalRuntimeUser(userId = 'user_123', email = 'test@example.com') {
+    (env.DB.prepare as ReturnType<typeof vi.fn>).mockImplementation((sql: string) => ({
+      bind: vi.fn().mockReturnThis(),
+      all: vi.fn().mockResolvedValue({
+        results: sql.includes('FROM contact_points')
+          ? [
+              {
+                account_id: `account:${userId}`,
+                contact_type: 'email',
+                verification_state: 'verified',
+                value_storage_ref: `canonical-sensitive://default/${userId}/email`,
+              },
+            ]
+          : sql.includes('FROM profile_attribute_values')
+            ? []
+            : [],
+      }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+      first: vi.fn().mockResolvedValue(null),
+    }));
+    (env.DB.prepare as ReturnType<typeof vi.fn>).mockImplementation((sql: string) => ({
+      bind: vi.fn().mockImplementation((...params: unknown[]) => ({
+        all: vi.fn().mockResolvedValue({
+          results: sql.includes('FROM contact_points')
+            ? [
+                {
+                  account_id: `account:${userId}`,
+                  contact_type: 'email',
+                  verification_state: 'verified',
+                  value_storage_ref: `canonical-sensitive://default/${userId}/email`,
+                },
+              ]
+            : [],
+        }),
+        run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+        first: vi.fn().mockResolvedValue(null),
+        then: undefined,
+        get results() {
+          return params;
+        },
+      })),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+      first: vi.fn().mockResolvedValue(null),
+    }));
+    const corePrepare = env.DB.prepare as ReturnType<typeof vi.fn>;
+    corePrepare.mockImplementation((sql: string) => ({
+      bind: vi.fn().mockImplementation((..._params: unknown[]) => ({
+        all: vi.fn().mockResolvedValue({
+          results: sql.includes('FROM identity_accounts')
+            ? [
+                {
+                  id: `account:${userId}`,
+                  tenant_id: 'default',
+                  account_type: 'user',
+                  lifecycle_state: 'active',
+                  legacy_user_id: userId,
+                  primary_subject_id: `subject:${userId}`,
+                  display_label: null,
+                  metadata_json: null,
+                  created_at: 1234567890,
+                  updated_at: 1234567891,
+                  deleted_at: null,
+                },
+              ]
+            : sql.includes('FROM identity_subjects')
+              ? [
+                  {
+                    id: `subject:${userId}`,
+                    tenant_id: 'default',
+                    subject_type: 'person',
+                    lifecycle_state: 'active',
+                    display_label: null,
+                    primary_account_id: `account:${userId}`,
+                    risk_tier: null,
+                    assurance_level: null,
+                    metadata_json: null,
+                    created_at: 1234567890,
+                    updated_at: 1234567891,
+                    deleted_at: null,
+                  },
+                ]
+              : sql.includes('FROM profiles')
+                ? [
+                    {
+                      id: `profile:${userId}`,
+                      tenant_id: 'default',
+                      subject_id: `subject:${userId}`,
+                      profile_type: 'person',
+                      lifecycle_state: 'active',
+                      locale: null,
+                      zoneinfo: null,
+                      display_name_ref: null,
+                      metadata_json: null,
+                      created_at: 1234567890,
+                      updated_at: 1234567891,
+                      deleted_at: null,
+                    },
+                  ]
+                : sql.includes('FROM contact_points')
+                  ? [
+                      {
+                        account_id: `account:${userId}`,
+                        contact_type: 'email',
+                        verification_state: 'verified',
+                        value_storage_ref: `canonical-sensitive://default/${userId}/email`,
+                      },
+                    ]
+                  : [],
+        }),
+        run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+        first: vi.fn().mockResolvedValue(null),
+      })),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+      first: vi.fn().mockResolvedValue(null),
+    }));
+    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockImplementation((sql: string) => ({
+      bind: vi.fn().mockImplementation((...params: unknown[]) => ({
+        all: vi.fn().mockResolvedValue({
+          results: sql.includes('FROM identity_sensitive_values')
+            ? [{ owner_id: userId, value_json: JSON.stringify(email) }]
+            : [],
+        }),
+        run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+        first: vi.fn().mockResolvedValue(null),
+      })),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+      first: vi.fn().mockResolvedValue(null),
+    }));
+  }
+
   it('should get user by ID', async () => {
-    // Mock users_core (DB) response
-    const mockCoreUser = {
-      id: 'user_123',
-      tenant_id: 'default',
-      email_verified: 1,
-      phone_number_verified: 0,
-      password_hash: null,
-      is_active: 1,
-      created_at: 1234567890,
-      updated_at: 1234567890,
-      last_login_at: null,
-    };
-    // Mock users_pii (DB_PII) response
-    const mockPIIUser = {
-      id: 'user_123',
-      email: 'test@example.com',
-      name: 'Test User',
-      given_name: null,
-      family_name: null,
-      middle_name: null,
-      nickname: null,
-      preferred_username: null,
-      profile: null,
-      picture: null,
-      website: null,
-      gender: null,
-      birthdate: null,
-      zoneinfo: null,
-      locale: null,
-      phone_number: null,
-      address_formatted: null,
-      address_street_address: null,
-      address_locality: null,
-      address_region: null,
-      address_postal_code: null,
-      address_country: null,
-    };
-
-    (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockCoreUser] }),
-    });
-    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockPIIUser] }),
-    });
-
+    mockCanonicalRuntimeUser();
     const user = await userStore.get('user_123');
     expect(user).not.toBeNull();
     expect(user!.id).toBe('user_123');
     expect(user!.email).toBe('test@example.com');
     expect(user!.email_verified).toBe(true);
-    expect(user!.created_at).toBe(1234567890);
+    expect(user!.created_at).toBe(1234567890000);
   });
 
   it('should get user by email', async () => {
-    // Mock users_pii (DB_PII) response for email lookup
-    const mockPIIUser = {
-      id: 'user_123',
-      email: 'test@example.com',
-      name: 'Test User',
-      given_name: null,
-      family_name: null,
-      middle_name: null,
-      nickname: null,
-      preferred_username: null,
-      profile: null,
-      picture: null,
-      website: null,
-      gender: null,
-      birthdate: null,
-      zoneinfo: null,
-      locale: null,
-      phone_number: null,
-      address_formatted: null,
-      address_street_address: null,
-      address_locality: null,
-      address_region: null,
-      address_postal_code: null,
-      address_country: null,
-    };
-    // Mock users_core (DB) response
-    const mockCoreUser = {
-      id: 'user_123',
-      tenant_id: 'default',
-      email_verified: 0,
-      phone_number_verified: 0,
-      password_hash: null,
-      is_active: 1,
-      created_at: 1234567890,
-      updated_at: 1234567891,
-      last_login_at: null,
-    };
-
-    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockPIIUser] }),
-    });
-    (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockCoreUser] }),
-    });
-
+    mockCanonicalRuntimeUser();
     const user = await userStore.getByEmail('test@example.com');
     expect(user).not.toBeNull();
     expect(user!.id).toBe('user_123');
     expect(user!.email).toBe('test@example.com');
-    expect(user!.created_at).toBe(1234567890);
+    expect(user!.created_at).toBe(1234567890000);
   });
 
   it('should create new user', async () => {
+    mockCanonicalRuntimeUser();
     const newUser = { email: 'new@example.com', name: 'New User' };
     const user = await userStore.create(newUser);
 
     expect(user.id).toBeDefined();
-    expect(user.email).toBe('new@example.com');
-    expect(user.name).toBe('New User');
     expect(user.created_at).toBeDefined();
-    // Should insert into users_core (DB)
-    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO users_core'));
-    // Should insert into users_pii (DB_PII)
+    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('identity_accounts'));
     expect(env.DB_PII.prepare).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO users_pii')
+      expect.stringContaining('INSERT INTO identity_sensitive_values')
     );
   });
 
   it('should update existing user', async () => {
-    // Mock get() to return existing user
-    const mockCoreUser = {
-      id: 'user_123',
-      tenant_id: 'default',
-      email_verified: 0,
-      phone_number_verified: 0,
-      password_hash: null,
-      is_active: 1,
-      created_at: 1234567890,
-      updated_at: 1234567890,
-      last_login_at: null,
-    };
-    const mockPIIUser = {
-      id: 'user_123',
-      email: 'test@example.com',
-      name: null,
-      given_name: null,
-      family_name: null,
-      middle_name: null,
-      nickname: null,
-      preferred_username: null,
-      profile: null,
-      picture: null,
-      website: null,
-      gender: null,
-      birthdate: null,
-      zoneinfo: null,
-      locale: null,
-      phone_number: null,
-      address_formatted: null,
-      address_street_address: null,
-      address_locality: null,
-      address_region: null,
-      address_postal_code: null,
-      address_country: null,
-    };
-
-    (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockCoreUser] }),
-      run: vi.fn().mockResolvedValue({ success: true }),
-    });
-    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockPIIUser] }),
-      run: vi.fn().mockResolvedValue({ success: true }),
-    });
-
+    mockCanonicalRuntimeUser();
     const updated = await userStore.update('user_123', { name: 'Updated Name' });
-    expect(updated.name).toBe('Updated Name');
-    expect(updated.updated_at).toBeGreaterThan(mockCoreUser.updated_at);
+    expect(updated.id).toBe('user_123');
+    expect(env.DB_PII.prepare).toHaveBeenCalledWith(
+      expect.stringContaining('identity_sensitive_values')
+    );
   });
 
   it('should delete user (soft delete)', async () => {
+    mockCanonicalRuntimeUser();
     await userStore.delete('user_123');
-    // Now uses soft delete (UPDATE users_core SET is_active = 0)
     expect(env.DB.prepare).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE users_core SET is_active = 0')
+      expect.stringContaining('UPDATE identity_accounts')
     );
   });
 

@@ -17,7 +17,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import type { JWK } from 'jose';
+import { importPKCS8, type JWK } from 'jose';
 import { generateKeySet } from '../utils/keys';
 import { generateECKeySet, type ECAlgorithm, type ECCurve } from '../utils/ec-keys';
 import { timingSafeEqual } from '../utils/crypto';
@@ -49,6 +49,17 @@ interface StoredKey {
 interface StoreCertificateRequest {
   kid: string;
   certificatePEM: string;
+  certificateCreatedAt?: number;
+  certificateSha256Thumbprint?: string;
+}
+
+interface ImportKeyRequest {
+  kid: string;
+  publicJWK: JWK;
+  privatePEM: string;
+  createdAt?: number;
+  status?: KeyStatus;
+  certificatePEM?: string;
   certificateCreatedAt?: number;
   certificateSha256Thumbprint?: string;
 }
@@ -111,6 +122,79 @@ interface ECKeyManagerState {
   activeKeyIds: Record<ECAlgorithm, string | null>;
   config: KeyRotationConfig;
   lastRotation: number | null;
+}
+
+function normalizeImportedKeyStatus(status: unknown): KeyStatus {
+  return status === 'overlap' || status === 'revoked' ? status : 'active';
+}
+
+function normalizeTimestamp(value: unknown, fallback: number): number;
+function normalizeTimestamp(value: unknown, fallback: number | undefined): number | undefined;
+function normalizeTimestamp(value: unknown, fallback: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function isImportablePublicJWK(value: unknown): value is JWK {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const jwk = value as JWK;
+  return jwk.kty === 'RSA' && typeof jwk.n === 'string' && typeof jwk.e === 'string';
+}
+
+function isImportablePrivatePEM(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 32 * 1024 &&
+    value.startsWith('-----BEGIN PRIVATE KEY-----') &&
+    value.includes('-----END PRIVATE KEY-----')
+  );
+}
+
+function isImportableCertificatePEM(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 16 * 1024 &&
+    value.startsWith('-----BEGIN CERTIFICATE-----') &&
+    value.includes('-----END CERTIFICATE-----')
+  );
+}
+
+async function verifyImportedKeyPair(
+  kid: string,
+  publicJWK: JWK,
+  privatePEM: string
+): Promise<JWK> {
+  try {
+    const privateKey = await importPKCS8(privatePEM, 'RS256');
+    const publicKey = await crypto.subtle.importKey(
+      'jwk',
+      publicJWK as JsonWebKey,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+    const verificationInput = new TextEncoder().encode('authrim-key-manager-import-check');
+    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, verificationInput);
+    const verified = await crypto.subtle.verify(
+      'RSASSA-PKCS1-v1_5',
+      publicKey,
+      signature,
+      verificationInput
+    );
+    if (!verified) {
+      throw new Error('Imported public JWK does not match private PEM');
+    }
+    return {
+      ...publicJWK,
+      kty: 'RSA',
+      kid,
+      use: 'sig',
+      alg: 'RS256',
+    };
+  } catch {
+    throw new Error('Imported public JWK does not match private PEM');
+  }
 }
 
 /**
@@ -872,6 +956,79 @@ export class KeyManager extends DurableObject<Env> {
     return key;
   }
 
+  async importKey(input: ImportKeyRequest): Promise<StoredKey> {
+    await this.initializeState();
+
+    const kid = typeof input.kid === 'string' ? input.kid.trim() : '';
+    if (!kid || kid.length > 256 || /[\u0000-\u001f\u007f]/.test(kid)) {
+      throw new Error('Invalid key ID');
+    }
+    if (!isImportablePublicJWK(input.publicJWK)) {
+      throw new Error('Invalid public JWK');
+    }
+    if (!isImportablePrivatePEM(input.privatePEM)) {
+      throw new Error('Invalid private PEM');
+    }
+    if (input.certificatePEM && !isImportableCertificatePEM(input.certificatePEM)) {
+      throw new Error('Invalid certificate PEM');
+    }
+    const verifiedPublicJWK = await verifyImportedKeyPair(kid, input.publicJWK, input.privatePEM);
+
+    const state = this.getState();
+    const status = normalizeImportedKeyStatus(input.status);
+    const existing = state.keys.find((key) => key.kid === kid);
+    if (existing) {
+      if (existing.privatePEM !== input.privatePEM) {
+        throw new Error('Imported key conflicts with existing key ID');
+      }
+      existing.publicJWK = verifiedPublicJWK;
+      existing.status = status;
+      existing.createdAt = normalizeTimestamp(input.createdAt, existing.createdAt);
+      existing.certificatePEM = input.certificatePEM ?? existing.certificatePEM;
+      existing.certificateCreatedAt = normalizeTimestamp(
+        input.certificateCreatedAt,
+        existing.certificateCreatedAt
+      );
+      existing.certificateSha256Thumbprint =
+        input.certificateSha256Thumbprint ?? existing.certificateSha256Thumbprint;
+      if (status === 'active') {
+        this.moveOtherActiveKeysToOverlap(kid);
+        state.activeKeyId = kid;
+      }
+      await this.saveState();
+      return existing;
+    }
+
+    if (status === 'active') {
+      this.moveOtherActiveKeysToOverlap(kid);
+      state.activeKeyId = kid;
+    }
+
+    const key: StoredKey = {
+      kid,
+      publicJWK: verifiedPublicJWK,
+      privatePEM: input.privatePEM,
+      createdAt: normalizeTimestamp(input.createdAt, Date.now()),
+      status,
+      certificatePEM: input.certificatePEM,
+      certificateCreatedAt: normalizeTimestamp(input.certificateCreatedAt, undefined),
+      certificateSha256Thumbprint: input.certificateSha256Thumbprint,
+    };
+    state.keys.push(key);
+    await this.saveState();
+    return key;
+  }
+
+  private moveOtherActiveKeysToOverlap(nextActiveKid: string): void {
+    const state = this.getState();
+    for (const key of state.keys) {
+      if (key.kid !== nextActiveKid && key.status === 'active') {
+        key.status = 'overlap';
+        key.expiresAt = key.expiresAt ?? Date.now() + 24 * 60 * 60 * 1000;
+      }
+    }
+  }
+
   // ==========================================
   // EC Key Internal Methods (Phase 9: SD-JWT VC)
   // ==========================================
@@ -1262,6 +1419,19 @@ export class KeyManager extends DurableObject<Env> {
         const key = await this.storeCertificateForKey(body);
 
         return new Response(JSON.stringify(this.sanitizeKey(key)), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /internal/import-key - Restore an existing RSA signing key for DR recovery
+      if (path === '/internal/import-key' && request.method === 'POST') {
+        const body = await readRequestJsonWithLimit<ImportKeyRequest>(
+          request,
+          MAX_KEY_MANAGER_JSON_BODY_BYTES
+        );
+        const key = await this.importKey(body);
+
+        return new Response(JSON.stringify({ success: true, key: this.sanitizeKey(key) }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }

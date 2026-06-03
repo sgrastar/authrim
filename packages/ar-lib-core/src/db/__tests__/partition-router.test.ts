@@ -30,7 +30,7 @@ describe('PIIPartitionRouter', () => {
     clearPartitionSettingsCache();
     coreAdapter = new MockDatabaseAdapter();
     defaultPiiAdapter = new MockDatabaseAdapter();
-    coreAdapter.initTable('users_core', 'id');
+    coreAdapter.initTable('identity_accounts', 'id');
     router = new PIIPartitionRouter(coreAdapter, defaultPiiAdapter);
   });
 
@@ -108,26 +108,9 @@ describe('PIIPartitionRouter', () => {
   });
 
   describe('resolvePartitionForUser', () => {
-    beforeEach(() => {
-      coreAdapter.seed('users_core', [
-        {
-          id: 'user-eu',
-          tenant_id: 'tenant-a',
-          pii_partition: 'eu',
-          is_active: 1,
-        },
-        {
-          id: 'user-default',
-          tenant_id: 'tenant-a',
-          pii_partition: 'default',
-          is_active: 1,
-        },
-      ]);
-    });
-
-    it('should return partition from users_core', async () => {
+    it('should use the default partition for existing canonical runtime users', async () => {
       const partition = await router.resolvePartitionForUser('tenant-a', 'user-eu');
-      expect(partition).toBe('eu');
+      expect(partition).toBe(DEFAULT_PARTITION);
     });
 
     it('should return default for user with default partition', async () => {
