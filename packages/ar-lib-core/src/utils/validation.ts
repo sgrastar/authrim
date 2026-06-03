@@ -909,7 +909,7 @@ export function normalizeRedirectUri(uri: string): string | null {
  * @returns true if the providedUri matches any registered URI
  */
 export function isRedirectUriRegistered(providedUri: string, registeredUris: string[]): boolean {
-  return registeredUris.includes(providedUri);
+  return registeredUris.some((registeredUri) => registeredUri === providedUri);
 }
 
 // =============================================================================
