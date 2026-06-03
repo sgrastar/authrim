@@ -921,11 +921,11 @@
 	function buildOverviewLayerEdges(): MappingEdge[] {
 		if (laneSelectorMode !== 'policy' || viewMode !== 'overview') return [];
 		const layerEdges: MappingEdge[] = [];
-		const seen = new Set<string>();
+		const seen: string[] = [];
 		const addLayerEdge = (from: string, to: string, outbound = false) => {
 			const id = `overview-layer-edge-${from}-${to}`;
-			if (seen.has(id)) return;
-			seen.add(id);
+			if (seen.includes(id)) return;
+			seen.push(id);
 			layerEdges.push({ id, from, to, outbound });
 		};
 
@@ -1024,10 +1024,10 @@
 				graphNodes.push(transformNode);
 				graphRules[transformNode.ruleId] = ruleForPolicyTransform(rule, transformNode, targetNode);
 
-				const addedInputNodeIds = new Set<string>();
+				const addedInputNodeIds: string[] = [];
 				for (const { edge, fromNode } of resolvedEdges) {
-					if (addedInputNodeIds.has(fromNode.id)) continue;
-					addedInputNodeIds.add(fromNode.id);
+					if (addedInputNodeIds.includes(fromNode.id)) continue;
+					addedInputNodeIds.push(fromNode.id);
 					graphEdges.push({
 						id: `policy-edge-${edge.id}-in`,
 						from: fromNode.id,
@@ -1144,14 +1144,19 @@
 	}
 
 	function selectedPolicyRules(): PolicySelectorRule[] {
-		const rulesByKey = new Map<string, PolicySelectorRule>();
+		const rulesByKey: PolicySelectorRule[] = [];
 		for (const rule of [
 			...rulesForPolicyOption(selectedInboundPolicy, 'inbound'),
 			...rulesForPolicyOption(selectedOutboundPolicy, 'outbound')
 		]) {
-			rulesByKey.set(rule.id, rule);
+			const existingIndex = rulesByKey.findIndex((candidate) => candidate.id === rule.id);
+			if (existingIndex >= 0) {
+				rulesByKey[existingIndex] = rule;
+			} else {
+				rulesByKey.push(rule);
+			}
 		}
-		return [...rulesByKey.values()];
+		return rulesByKey;
 	}
 
 	function rulesForPolicyOption(
@@ -1186,17 +1191,6 @@
 			if (path && node.caption === path) return true;
 			return false;
 		});
-	}
-
-	function firstMappedNode(
-		candidates: MappingNode[],
-		refs: Record<string, unknown>[]
-	): MappingNode | undefined {
-		for (const ref of refs) {
-			const node = nodeFromPolicyRef(candidates, ref);
-			if (node) return node;
-		}
-		return undefined;
 	}
 
 	function ruleForPolicyEdge(
