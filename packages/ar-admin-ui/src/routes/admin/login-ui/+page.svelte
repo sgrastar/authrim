@@ -20,6 +20,7 @@
 	import { InheritanceIndicator } from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	const CATEGORY = 'login-ui';
 
@@ -134,10 +135,10 @@
 			loginUiAvailable = tenantInfo.components.login_ui;
 			loginUiConfigured = !!uiConfigResult.config.baseUrl;
 			loginUiStatusMessage = !loginUiAvailable
-				? 'Built-in Login UI is not deployed for this environment. You can still configure a global Login UI URL below.'
+				? $LL.admin_login_ui_status_not_deployed()
 				: loginUiConfigured
 					? ''
-					: 'Global Login UI URL is not configured yet. Configure it below.';
+					: $LL.admin_login_ui_status_not_configured();
 
 			// Fetch meta
 			const metaResult = await adminSettingsAPI.getMeta(CATEGORY);
@@ -154,7 +155,7 @@
 
 			settings = settingsResult;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load settings';
+			error = err instanceof Error ? err.message : $LL.admin_login_ui_error_load();
 		} finally {
 			loading = false;
 		}
@@ -166,7 +167,7 @@
 			settingsContext.current.tenantId?.trim() ||
 			settingsContext.availableTenants[0]?.id?.trim();
 		if (!selectedTenantId) {
-			throw new Error('Tenant context is required to load Login UI settings');
+			throw new Error($LL.admin_login_ui_error_tenant_required());
 		}
 		return selectedTenantId;
 	}
@@ -239,7 +240,7 @@
 	function normalizeTrustedOriginEntry(value: string): string {
 		const trimmed = value.trim().replace(/\/$/, '');
 		if (!trimmed) {
-			throw new Error('Origin cannot be empty.');
+			throw new Error($LL.admin_login_ui_error_origin_empty());
 		}
 
 		// Admin UI exposes web_origin_registry semantics; the current backend stores
@@ -250,9 +251,7 @@
 					trimmed
 				)
 			) {
-				throw new Error(
-					`Invalid wildcard origin "${value}". Use a host-only pattern such as https://*.example.com.`
-				);
+				throw new Error($LL.admin_login_ui_error_wildcard_origin({ origin: value }));
 			}
 			return trimmed;
 		}
@@ -261,18 +260,18 @@
 		try {
 			parsed = new URL(trimmed);
 		} catch {
-			throw new Error(`Invalid origin "${value}".`);
+			throw new Error($LL.admin_login_ui_error_origin_invalid({ origin: value }));
 		}
 
 		if (
 			parsed.protocol !== 'https:' &&
 			!(parsed.protocol === 'http:' && isLocalHost(parsed.hostname))
 		) {
-			throw new Error(`Origin "${value}" must use HTTPS, except for localhost.`);
+			throw new Error($LL.admin_login_ui_error_origin_https({ origin: value }));
 		}
 
 		if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
-			throw new Error(`Origin "${value}" must not include a path, query, or fragment.`);
+			throw new Error($LL.admin_login_ui_error_origin_path({ origin: value }));
 		}
 
 		return parsed.origin;
@@ -299,7 +298,8 @@
 		} catch (err) {
 			return {
 				origins: [],
-				error: err instanceof Error ? err.message : 'Invalid trusted origins.'
+				error:
+					err instanceof Error ? err.message : $LL.admin_login_ui_error_invalid_trusted_origins()
 			};
 		}
 	}
@@ -312,7 +312,7 @@
 	async function saveTrustedOrigins() {
 		if (!tenantSettings) return;
 		if (!canEditTrustedOrigins) {
-			trustedOriginsError = 'You do not have permission to edit trusted origins.';
+			trustedOriginsError = $LL.admin_login_ui_error_no_trusted_origin_permission();
 			return;
 		}
 
@@ -340,18 +340,17 @@
 
 			await adminSettingsAPI.updateSettings('tenant', request, resolveSelectedTenantId());
 
-			trustedOriginsSuccessMessage = 'Trusted origins updated.';
+			trustedOriginsSuccessMessage = $LL.admin_login_ui_trusted_origins_updated();
 			await loadData();
 			setTimeout(() => {
 				trustedOriginsSuccessMessage = '';
 			}, 3000);
 		} catch (err) {
 			if (err instanceof SettingsConflictError) {
-				trustedOriginsError =
-					'Trusted origins were modified by another user. Please reload and try again.';
+				trustedOriginsError = $LL.admin_login_ui_trusted_origins_conflict();
 			} else {
 				trustedOriginsError =
-					err instanceof Error ? err.message : 'Failed to update trusted origins.';
+					err instanceof Error ? err.message : $LL.admin_login_ui_error_update_trusted_origins();
 			}
 		} finally {
 			trustedOriginsSaving = false;
@@ -360,7 +359,7 @@
 
 	async function saveUiConfig() {
 		if (!canEditGlobalUiConfig) {
-			uiConfigError = 'You do not have permission to edit Login UI configuration.';
+			uiConfigError = $LL.admin_login_ui_error_no_config_permission();
 			return;
 		}
 
@@ -373,13 +372,13 @@
 				baseUrl: uiConfigForm.baseUrl.trim() || null,
 				paths: { ...uiConfigForm.paths }
 			});
-			uiConfigSuccessMessage = 'Global Login UI configuration updated.';
+			uiConfigSuccessMessage = $LL.admin_login_ui_config_updated();
 			await loadData();
 			setTimeout(() => {
 				uiConfigSuccessMessage = '';
 			}, 3000);
 		} catch (err) {
-			uiConfigError = err instanceof Error ? err.message : 'Failed to update UI config';
+			uiConfigError = err instanceof Error ? err.message : $LL.admin_login_ui_error_update_config();
 		} finally {
 			uiConfigSaving = false;
 		}
@@ -390,7 +389,7 @@
 		if (!settings || pendingPatches.length === 0) return;
 
 		if (!canEditLoginUiSettings) {
-			error = 'You do not have permission to edit settings at this scope level';
+			error = $LL.admin_login_ui_error_no_settings_permission();
 			return;
 		}
 
@@ -409,7 +408,7 @@
 			pendingPatches = [];
 
 			const appliedCount = result.applied.length + result.cleared.length + result.disabled.length;
-			successMessage = `Successfully updated ${appliedCount} setting${appliedCount !== 1 ? 's' : ''}`;
+			successMessage = $LL.admin_login_ui_updated_settings({ count: appliedCount });
 
 			await loadData();
 
@@ -418,9 +417,9 @@
 			}, 3000);
 		} catch (err) {
 			if (err instanceof SettingsConflictError) {
-				error = `Settings were modified by another user. Please reload and try again.`;
+				error = $LL.admin_login_ui_settings_conflict();
 			} else {
-				error = err instanceof Error ? err.message : 'Failed to save settings';
+				error = err instanceof Error ? err.message : $LL.admin_login_ui_error_save_settings();
 			}
 		} finally {
 			saving = false;
@@ -441,20 +440,28 @@
 	}
 </script>
 
+<svelte:head>
+	<title>{$LL.admin_login_ui_page_title()}</title>
+</svelte:head>
+
 <div class="settings-detail-page">
 	<!-- Header -->
 	<div class="settings-detail-header">
 		<div class="settings-header-row">
-			<h1 class="page-title">Login UI</h1>
+			<h1 class="page-title">{$LL.admin_login_ui_title()}</h1>
 			<!-- Scope Badge -->
 			<span class="scope-badge {currentLevel}">
-				{currentLevel === 'platform' ? 'Platform' : currentLevel === 'tenant' ? 'Tenant' : 'Client'}
+				{currentLevel === 'platform'
+					? $LL.admin_login_ui_scope_platform()
+					: currentLevel === 'tenant'
+						? $LL.admin_login_ui_scope_tenant()
+						: $LL.admin_login_ui_scope_client()}
 			</span>
 			{#if !canEditGlobalUiConfig && !canEditLoginUiSettings}
-				<span class="readonly-badge">Read-only</span>
+				<span class="readonly-badge">{$LL.admin_login_ui_readonly()}</span>
 			{/if}
 		</div>
-		<p class="page-description">Customize the appearance of the login page for end users.</p>
+		<p class="page-description">{$LL.admin_login_ui_description()}</p>
 	</div>
 
 	{#if !loginUiAvailable && !loading}
@@ -487,12 +494,14 @@
 		<section class="panel">
 			<div class="section-header">
 				<div>
-					<h2 class="section-title">Global UI Configuration</h2>
+					<h2 class="section-title">{$LL.admin_login_ui_global_config_title()}</h2>
 					<p class="section-description">
-						Configure the global Login UI base URL and page paths used by the authorization flow.
+						{$LL.admin_login_ui_global_config_description()}
 					</p>
 				</div>
-				<span class="config-source-badge">Source: {uiConfig.source}</span>
+				<span class="config-source-badge"
+					>{$LL.admin_login_ui_source({ source: uiConfig.source })}</span
+				>
 			</div>
 
 			<div class="settings-form-card">
@@ -500,13 +509,15 @@
 					<div class="setting-item-content">
 						<div class="setting-info">
 							<div class="setting-label-row">
-								<label for="ui-config-base-url" class="setting-label">Global UI Base URL</label>
+								<label for="ui-config-base-url" class="setting-label"
+									>{$LL.admin_login_ui_global_base_url()}</label
+								>
 								{#if hasUiConfigChanges}
-									<span class="setting-modified">Modified</span>
+									<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
 								{/if}
 							</div>
 							<p class="setting-description">
-								Base URL for the shared Login UI deployment. Must use HTTPS except localhost.
+								{$LL.admin_login_ui_global_base_url_description()}
 							</p>
 						</div>
 
@@ -566,14 +577,14 @@
 					disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
 					class="btn btn-secondary"
 				>
-					Discard Changes
+					{$LL.admin_login_ui_discard_changes()}
 				</button>
 				<button
 					onclick={saveUiConfig}
 					disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
 					class="btn btn-primary"
 				>
-					{uiConfigSaving ? 'Saving...' : 'Save Global UI Configuration'}
+					{uiConfigSaving ? $LL.admin_login_ui_saving() : $LL.admin_login_ui_save_global_config()}
 				</button>
 			</div>
 		</section>
@@ -583,26 +594,25 @@
 		<section class="panel">
 			<div class="section-header">
 				<div>
-					<h2 class="section-title">Trusted Origins</h2>
+					<h2 class="section-title">{$LL.admin_login_ui_trusted_origins_title()}</h2>
 					<p class="section-description">
-						Tenant-wide origins allowed to call browser-based auth endpoints such as passkey
-						registration and direct auth. Enter one origin or wildcard pattern per line.
+						{$LL.admin_login_ui_trusted_origins_description()}
 					</p>
 				</div>
-				<span class="config-source-badge">Tenant Setting</span>
+				<span class="config-source-badge">{$LL.admin_login_ui_tenant_setting()}</span>
 			</div>
 
 			<div class="textarea-setting" class:modified={hasTrustedOriginsChanges}>
 				<div class="setting-label-row">
-					<label for="trusted-origins" class="setting-label">Allowed Browser Origins</label>
+					<label for="trusted-origins" class="setting-label"
+						>{$LL.admin_login_ui_allowed_browser_origins()}</label
+					>
 					{#if hasTrustedOriginsChanges}
-						<span class="setting-modified">Modified</span>
+						<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
 					{/if}
 				</div>
 				<p class="setting-description">
-					This is the tenant-wide source of truth for WebAuthn and browser-side direct auth. Client
-					pages can still add redirect URI origins as shortcuts, but they write back to this same
-					setting.
+					{$LL.admin_login_ui_allowed_browser_origins_description()}
 				</p>
 				<textarea
 					id="trusted-origins"
@@ -616,8 +626,7 @@
 					}}
 				></textarea>
 				<p class="settings-range-hint">
-					Use host-only origins. Paths are not allowed. `http://localhost` is allowed for local
-					development.
+					{$LL.admin_login_ui_allowed_browser_origins_hint()}
 				</p>
 				{#if trustedOriginsDraft.error}
 					<p class="trusted-origins-validation">{trustedOriginsDraft.error}</p>
@@ -626,7 +635,7 @@
 
 			{#if trustedOriginsDraft.origins.length > 0}
 				<div class="trusted-origins-preview">
-					<p class="trusted-origins-preview-label">Normalized entries</p>
+					<p class="trusted-origins-preview-label">{$LL.admin_login_ui_normalized_entries()}</p>
 					<div class="trusted-origins-list">
 						{#each trustedOriginsDraft.origins as origin (origin)}
 							<span class="trusted-origin-chip">{origin}</span>
@@ -641,7 +650,7 @@
 					disabled={!hasTrustedOriginsChanges || trustedOriginsSaving || !canEditTrustedOrigins}
 					class="btn btn-secondary"
 				>
-					Discard Changes
+					{$LL.admin_login_ui_discard_changes()}
 				</button>
 				<button
 					onclick={saveTrustedOrigins}
@@ -651,7 +660,9 @@
 						Boolean(trustedOriginsDraft.error)}
 					class="btn btn-primary"
 				>
-					{trustedOriginsSaving ? 'Saving...' : 'Save Trusted Origins'}
+					{trustedOriginsSaving
+						? $LL.admin_login_ui_saving()
+						: $LL.admin_login_ui_save_trusted_origins()}
 				</button>
 			</div>
 		</section>
@@ -661,9 +672,9 @@
 	{#if error}
 		<div class="alert alert-error">
 			{error}
-			{#if error.includes('another user')}
+			{#if error === $LL.admin_login_ui_settings_conflict()}
 				<button onclick={loadData} class="btn btn-sm btn-danger" style="margin-left: 12px;">
-					Reload
+					{$LL.admin_login_ui_reload()}
 				</button>
 			{/if}
 		</div>
@@ -676,7 +687,7 @@
 
 	{#if loading}
 		<div class="loading-state">
-			<p class="text-secondary">Loading settings...</p>
+			<p class="text-secondary">{$LL.admin_login_ui_loading_settings()}</p>
 		</div>
 	{:else if meta && settings}
 		<!-- Settings form -->
@@ -697,10 +708,10 @@
 									compact={true}
 								/>
 								{#if locked && !isLockedByEnv(key)}
-									<span class="setting-locked">Locked</span>
+									<span class="setting-locked">{$LL.admin_login_ui_locked()}</span>
 								{/if}
 								{#if hasPendingChange}
-									<span class="setting-modified">Modified</span>
+									<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
 								{/if}
 							</div>
 							<p class="setting-description">
@@ -752,11 +763,14 @@
 							{#if settingMeta.min !== undefined || settingMeta.max !== undefined}
 								<p class="settings-range-hint">
 									{#if settingMeta.min !== undefined && settingMeta.max !== undefined}
-										Range: {settingMeta.min} - {settingMeta.max}
+										{$LL.admin_login_ui_range({
+											min: settingMeta.min,
+											max: settingMeta.max
+										})}
 									{:else if settingMeta.min !== undefined}
-										Min: {settingMeta.min}
+										{$LL.admin_login_ui_min({ min: settingMeta.min })}
 									{:else if settingMeta.max !== undefined}
-										Max: {settingMeta.max}
+										{$LL.admin_login_ui_max({ max: settingMeta.max })}
 									{/if}
 								</p>
 							{/if}
@@ -773,59 +787,51 @@
 				disabled={!hasChanges || saving || !canEditLoginUiSettings}
 				class="btn btn-secondary"
 			>
-				Discard Changes
+				{$LL.admin_login_ui_discard_changes()}
 			</button>
 			<button
 				onclick={saveChanges}
 				disabled={!hasChanges || saving || !canEditLoginUiSettings}
 				class="btn btn-primary"
 			>
-				{saving ? 'Saving...' : `Save Changes${hasChanges ? ` (${pendingPatches.length})` : ''}`}
+				{saving
+					? $LL.admin_login_ui_saving()
+					: `${$LL.admin_login_ui_save_changes()}${hasChanges ? ` (${pendingPatches.length})` : ''}`}
 			</button>
 		</div>
 
 		<!-- Coming Soon Section -->
 		<div class="coming-soon-section">
-			<h2 class="coming-soon-title">Coming Soon</h2>
-			<p class="coming-soon-description">The following features are currently in development:</p>
+			<h2 class="coming-soon-title">{$LL.admin_login_ui_coming_soon_title()}</h2>
+			<p class="coming-soon-description">{$LL.admin_login_ui_coming_soon_description()}</p>
 			<div class="coming-soon-list">
 				<div class="coming-soon-item">
-					<span class="coming-soon-label">Favicon URL</span>
-					<span class="coming-soon-desc">URL to the favicon image displayed in browser tabs</span>
+					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_favicon()}</span>
+					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_favicon_desc()}</span>
 				</div>
 				<div class="coming-soon-item">
-					<span class="coming-soon-label">Background Image URL</span>
-					<span class="coming-soon-desc">URL to the background image displayed on the Login UI</span
-					>
+					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_background()}</span>
+					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_background_desc()}</span>
 				</div>
 				<div class="coming-soon-item">
-					<span class="coming-soon-label">Custom CSS</span>
-					<span class="coming-soon-desc"
-						>Custom CSS to apply to the Login UI (restricted properties only)</span
-					>
+					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_css()}</span>
+					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_custom_css_desc()}</span>
 				</div>
 				<div class="coming-soon-item">
-					<span class="coming-soon-label">Header Text</span>
-					<span class="coming-soon-desc">Header text displayed above the login form</span>
+					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_header()}</span>
+					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_header_desc()}</span>
 				</div>
 				<div class="coming-soon-item">
-					<span class="coming-soon-label">Footer Text</span>
-					<span class="coming-soon-desc"
-						>Footer text displayed below the login form (e.g., copyright notice)</span
-					>
+					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer()}</span>
+					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_footer_desc()}</span>
 				</div>
 				<div class="coming-soon-item">
-					<span class="coming-soon-label">Footer Links</span>
-					<span class="coming-soon-desc"
-						>JSON array of footer links. Format: [&#123;"label":"Privacy
-						Policy","url":"https://..."&#125;]</span
-					>
+					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer_links()}</span>
+					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_footer_links_desc()}</span>
 				</div>
 				<div class="coming-soon-item">
-					<span class="coming-soon-label">Custom Blocks</span>
-					<span class="coming-soon-desc"
-						>JSON array of custom content blocks. Format:
-						[&#123;"position":"above-form"|"below-form"|"above-header"|"below-footer","type":"text"|"html"|"image"|"link","content":"..."&#125;]</span
+					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_blocks()}</span>
+					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_custom_blocks_desc()}</span
 					>
 				</div>
 			</div>

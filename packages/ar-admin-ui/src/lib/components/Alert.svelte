@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
 
@@ -54,7 +55,7 @@
 					type="button"
 					class="alert-dismiss"
 					onclick={handleDismiss}
-					aria-label="Dismiss alert"
+					aria-label={$LL.common_dismiss_alert()}
 				>
 					<i class="i-ph-x"></i>
 				</button>

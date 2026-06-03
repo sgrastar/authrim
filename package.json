@@ -57,6 +57,7 @@
     "setup:smoke-generated-auth-flow": "tsx test/environment-validation/smoke-generated-auth-flow.ts",
     "setup:smoke-generated-approvals": "tsx test/environment-validation/smoke-generated-approvals.ts",
     "setup:smoke-generated-server-surfaces": "tsx test/environment-validation/smoke-generated-server-surfaces.ts",
+    "admin-ui:issue-session": "tsx tools/admin-ui-session/issue-session.ts",
     "test:remote:logging": "tsx test/remote-logging/smoke-remote-logging-output.ts",
     "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts",
     "setup:local-capacity": "tsx test/environment-validation/local-capacity.ts",

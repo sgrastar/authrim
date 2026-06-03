@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
 	import type { Snippet } from 'svelte';
 
 	interface Props {
@@ -13,7 +14,8 @@
 
 <!-- Mobile overlay -->
 {#if mobileOpen}
-	<button class="mobile-overlay" onclick={onMobileClose} aria-label="Close menu"></button>
+	<button class="mobile-overlay" onclick={onMobileClose} aria-label={$LL.admin_header_close_menu()}
+	></button>
 {/if}
 
 <nav
@@ -22,7 +24,7 @@
 	class:open={mobileOpen}
 	onmouseenter={() => (isExpanded = true)}
 	onmouseleave={() => (isExpanded = false)}
-	aria-label="Main navigation"
+	aria-label={$LL.admin_nav_main_navigation()}
 >
 	<!-- Header with logo -->
 	<div class="nav-header">
@@ -31,7 +33,11 @@
 		</div>
 		<span class="nav-logo-text">Authrim</span>
 		{#if mobileOpen}
-			<button class="mobile-close-btn" onclick={onMobileClose} aria-label="Close menu">
+			<button
+				class="mobile-close-btn"
+				onclick={onMobileClose}
+				aria-label={$LL.admin_header_close_menu()}
+			>
 				<i class="i-ph-x"></i>
 			</button>
 		{/if}

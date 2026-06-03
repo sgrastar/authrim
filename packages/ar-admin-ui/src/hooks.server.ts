@@ -16,6 +16,7 @@
  */
 
 import { env as dynamicEnv } from '$env/dynamic/public';
+import { resolveLocale } from '$i18n/locales';
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 
@@ -923,7 +924,10 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
  * Adds comprehensive security headers to all responses.
  */
 export const securityHeaders: Handle = async ({ event, resolve }) => {
-	const response = await resolve(event);
+	const locale = resolveLocale(event.cookies?.get('preferredLanguage'));
+	const response = await resolve(event, {
+		transformPageChunk: ({ html }) => html.replace('<html lang="en">', `<html lang="${locale}">`)
+	});
 	const platformEnv = getPlatformEnv(event);
 	const contentType = response.headers.get('content-type') || '';
 

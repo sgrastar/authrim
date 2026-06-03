@@ -10,6 +10,7 @@
 		type UserListParams
 	} from '$lib/api/admin-users';
 	import { Modal } from '$lib/components';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let users: User[] = $state([]);
 	let pagination: Pagination | null = $state(null);
@@ -65,7 +66,7 @@
 			selectedIds.clear();
 		} catch (err) {
 			console.error('Failed to load users:', err);
-			error = 'Failed to load users';
+			error = $LL.admin_users_error_load();
 		} finally {
 			loading = false;
 		}
@@ -114,7 +115,20 @@
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleDateString();
+		return new Date(timestamp).toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+	}
+
+	function formatStatus(status: string): string {
+		switch (status) {
+			case 'active':
+				return $LL.admin_users_status_active();
+			case 'suspended':
+				return $LL.admin_users_status_suspended();
+			case 'locked':
+				return $LL.admin_users_status_locked();
+			default:
+				return status;
+		}
 	}
 
 	function getStatusBadgeClass(status: string): string {
@@ -189,11 +203,11 @@
 			selectedIds.clear();
 			await loadUsers();
 		} else if (failedCount < idsToDelete.length) {
-			bulkDeleteError = `${failedCount} user(s) failed to delete. Others were deleted successfully.`;
+			bulkDeleteError = $LL.admin_users_delete_partial_error({ count: failedCount });
 			selectedIds.clear();
 			await loadUsers();
 		} else {
-			bulkDeleteError = 'Failed to delete users. Please try again.';
+			bulkDeleteError = $LL.admin_users_delete_error();
 		}
 	}
 
@@ -203,26 +217,26 @@
 </script>
 
 <svelte:head>
-	<title>Users - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_users_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Users</h1>
-			<p class="page-description">Manage user accounts and access</p>
+			<h1 class="page-title">{$LL.admin_users_heading()}</h1>
+			<p class="page-description">{$LL.admin_users_description()}</p>
 		</div>
 		<div class="page-actions">
 			{#if hasSelection}
 				<button class="btn btn-danger" onclick={openBulkDeleteDialog}>
 					<i class="i-ph-trash"></i>
-					Delete Selected ({selectedIds.size})
+					{$LL.admin_users_delete_selected({ count: selectedIds.size })}
 				</button>
 			{/if}
 			<a href="/admin/users/new" class="btn btn-primary">
 				<i class="i-ph-plus"></i>
-				Create User
+				{$LL.admin_users_create()}
 			</a>
 		</div>
 	</div>
@@ -231,38 +245,38 @@
 	<div class="panel">
 		<div class="filter-row">
 			<div class="form-group">
-				<label for="search" class="form-label">Search</label>
+				<label for="search" class="form-label">{$LL.admin_users_search_label()}</label>
 				<input
 					id="search"
 					type="text"
 					class="form-input"
-					placeholder="Search by email or name..."
+					placeholder={$LL.admin_users_search_placeholder()}
 					bind:value={searchQuery}
 					oninput={handleSearch}
 				/>
 			</div>
 
 			<div class="form-group">
-				<label for="status" class="form-label">Status</label>
+				<label for="status" class="form-label">{$LL.admin_users_status_label()}</label>
 				<select
 					id="status"
 					class="form-select"
 					bind:value={statusFilter}
 					onchange={handleStatusChange}
 				>
-					<option value="">All</option>
-					<option value="active">Active</option>
-					<option value="suspended">Suspended</option>
-					<option value="locked">Locked</option>
+					<option value="">{$LL.admin_users_all()}</option>
+					<option value="active">{$LL.admin_users_status_active()}</option>
+					<option value="suspended">{$LL.admin_users_status_suspended()}</option>
+					<option value="locked">{$LL.admin_users_status_locked()}</option>
 				</select>
 			</div>
 
 			<div class="form-group">
-				<label for="verified" class="form-label">Email Verified</label>
+				<label for="verified" class="form-label">{$LL.admin_users_verified_label()}</label>
 				<select id="verified" class="form-select" onchange={handleVerifiedChange}>
-					<option value="">All</option>
-					<option value="true">Verified</option>
-					<option value="false">Unverified</option>
+					<option value="">{$LL.admin_users_all()}</option>
+					<option value="true">{$LL.admin_users_verified()}</option>
+					<option value="false">{$LL.admin_users_unverified()}</option>
 				</select>
 			</div>
 		</div>
@@ -271,14 +285,14 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading users...</p>
+			<p>{$LL.admin_users_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if users.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p>No users found</p>
+				<p>{$LL.admin_users_empty()}</p>
 			</div>
 		</div>
 	{:else}
@@ -293,15 +307,15 @@
 								class="checkbox"
 								checked={isAllSelected}
 								onchange={toggleSelectAll}
-								aria-label="Select all users"
+								aria-label={$LL.admin_users_select_all()}
 							/>
 						</th>
-						<th>Email</th>
-						<th>Name</th>
-						<th>Status</th>
-						<th>Verified</th>
-						<th>Created</th>
-						<th>Last Login</th>
+						<th>{$LL.admin_users_email()}</th>
+						<th>{$LL.admin_users_name()}</th>
+						<th>{$LL.admin_users_status()}</th>
+						<th>{$LL.admin_users_verified_label()}</th>
+						<th>{$LL.admin_users_created()}</th>
+						<th>{$LL.admin_users_lastLogin()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -319,13 +333,13 @@
 									class="checkbox"
 									checked={selectedIds.has(user.id)}
 									onchange={(e) => toggleSelect(user.id, e)}
-									aria-label="Select {user.email || user.id}"
+									aria-label={$LL.admin_users_select_user({ user: user.email || user.id })}
 								/>
 							</td>
 							<td>{user.email || '-'}</td>
 							<td>{user.name || '-'}</td>
 							<td>
-								<span class={getStatusBadgeClass(user.status)}>{user.status}</span>
+								<span class={getStatusBadgeClass(user.status)}>{formatStatus(user.status)}</span>
 							</td>
 							<td>
 								{#if user.email_verified}
@@ -346,10 +360,11 @@
 		{#if pagination && pagination.totalPages > 1}
 			<div class="pagination">
 				<p class="pagination-info">
-					Showing {(pagination.page - 1) * pagination.limit + 1} to {Math.min(
-						pagination.page * pagination.limit,
-						pagination.total
-					)} of {pagination.total} users
+					{$LL.admin_users_pagination({
+						start: (pagination.page - 1) * pagination.limit + 1,
+						end: Math.min(pagination.page * pagination.limit, pagination.total),
+						total: pagination.total
+					})}
 				</p>
 				<div class="pagination-buttons">
 					<button
@@ -357,14 +372,14 @@
 						onclick={() => goToPage(currentPage - 1)}
 						disabled={!pagination.hasPrev}
 					>
-						Previous
+						{$LL.common_previous()}
 					</button>
 					<button
 						class="btn btn-secondary btn-sm"
 						onclick={() => goToPage(currentPage + 1)}
 						disabled={!pagination.hasNext}
 					>
-						Next
+						{$LL.common_next()}
 					</button>
 				</div>
 			</div>
@@ -376,19 +391,19 @@
 <Modal
 	open={showBulkDeleteDialog}
 	onClose={closeBulkDeleteDialog}
-	title="Delete {selectedIds.size} User{selectedIds.size === 1 ? '' : 's'}"
+	title={$LL.admin_users_delete_title({ count: selectedIds.size })}
 	size="md"
 >
 	<div class="alert alert-error" style="margin-bottom: 16px;">
-		<p style="margin: 0; font-weight: 500;">This action cannot be undone</p>
+		<p style="margin: 0; font-weight: 500;">{$LL.admin_users_delete_warning_title()}</p>
 		<p style="margin: 8px 0 0 0; font-size: 0.875rem;">
-			The selected users will be permanently deleted.
+			{$LL.admin_users_delete_warning_desc()}
 		</p>
 	</div>
 
 	<div style="margin-bottom: 16px;">
 		<p style="font-weight: 500; margin: 0 0 8px 0; color: var(--text-primary);">
-			Users to be deleted:
+			{$LL.admin_users_delete_list_title()}
 		</p>
 		<div class="panel" style="max-height: 200px; overflow-y: auto; padding: 0;">
 			{#each getSelectedUsers() as user (user.id)}
@@ -416,9 +431,14 @@
 			<p
 				style="font-size: 0.75rem; color: var(--text-secondary); margin: 8px 0 0 0; text-align: center;"
 			>
-				Deleting {bulkDeleteProgress.current} of {bulkDeleteProgress.total}...
+				{$LL.admin_users_deleting_progress({
+					current: bulkDeleteProgress.current,
+					total: bulkDeleteProgress.total
+				})}
 				{#if bulkDeleteProgress.failed > 0}
-					<span style="color: var(--danger);">({bulkDeleteProgress.failed} failed)</span>
+					<span style="color: var(--danger);">
+						{$LL.admin_users_delete_failed_count({ count: bulkDeleteProgress.failed })}
+					</span>
 				{/if}
 			</p>
 		</div>
@@ -429,12 +449,12 @@
 	{/if}
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeBulkDeleteDialog} disabled={bulkDeleting}>
-			Cancel
+			{$LL.common_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={executeBulkDelete} disabled={bulkDeleting}>
 			{bulkDeleting
-				? 'Deleting...'
-				: `Delete ${selectedIds.size} User${selectedIds.size === 1 ? '' : 's'}`}
+				? $LL.admin_users_deleting()
+				: $LL.admin_users_delete_action({ count: selectedIds.size })}
 		</button>
 	{/snippet}
 </Modal>

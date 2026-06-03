@@ -7,6 +7,7 @@
 	import StatCard from '$lib/components/StatCard.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Alert from '$lib/components/Alert.svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let stats = $state<DashboardStats | null>(null);
 	let cacheMode = $state<PlatformCacheModeResponse | null>(null);
@@ -30,7 +31,7 @@
 				stats = statsResult.value;
 			} else {
 				console.error('Failed to load dashboard stats:', statsResult.reason);
-				error = 'Failed to load statistics';
+				error = $LL.admin_dashboard_error_statistics();
 			}
 
 			if (cacheModeResult.status === 'fulfilled') {
@@ -51,10 +52,10 @@
 		const minutes = Math.floor(diff / 60000);
 		const hours = Math.floor(diff / 3600000);
 
-		if (minutes < 1) return 'Just now';
-		if (minutes < 60) return `${minutes} min ago`;
-		if (hours < 24) return `${hours} hours ago`;
-		return date.toLocaleDateString();
+		if (minutes < 1) return $LL.common_just_now();
+		if (minutes < 60) return $LL.common_minutes_ago({ count: minutes });
+		if (hours < 24) return $LL.common_hours_ago({ count: hours });
+		return date.toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function getActivityIcon(type: string): {
@@ -79,7 +80,7 @@
 </script>
 
 <svelte:head>
-	<title>Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_dashboard_page_title()}</title>
 </svelte:head>
 
 <div class="dashboard">
@@ -87,9 +88,9 @@
 	<div class="page-header">
 		<div class="page-header-row">
 			<div>
-				<h1 class="page-title">Welcome back</h1>
+				<h1 class="page-title">{$LL.admin_dashboard_welcome_title()}</h1>
 				<p class="page-description">
-					Here's what's happening with your authentication infrastructure
+					{$LL.admin_dashboard_description()}
 				</p>
 			</div>
 		</div>
@@ -98,10 +99,10 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch animate-spin"></i>
-			<p>Loading statistics...</p>
+			<p>{$LL.admin_dashboard_loading_statistics()}</p>
 		</div>
 	{:else if error}
-		<Alert variant="error" title="Error loading dashboard">
+		<Alert variant="error" title={$LL.admin_dashboard_error_title()}>
 			{error}
 		</Alert>
 	{:else if stats}
@@ -113,15 +114,15 @@
 						<i class="i-ph-warning-circle"></i>
 					</div>
 					<div class="cache-warning-text">
-						<strong>Cache Maintenance Mode Active</strong>
+						<strong>{$LL.admin_dashboard_cache_maintenance_title()}</strong>
 						<p>
-							Cache TTL is set to 30 seconds. This may impact performance in production.
-							<a href="/admin/settings/cache-mode">Configure cache settings</a>
+							{$LL.admin_dashboard_cache_maintenance_desc()}
+							<a href="/admin/settings/cache-mode">{$LL.admin_dashboard_cache_settings_link()}</a>
 						</p>
 					</div>
 					<a href="/admin/settings/cache-mode" class="cache-warning-action">
 						<i class="i-ph-gear"></i>
-						Settings
+						{$LL.admin_dashboard_settings_action()}
 					</a>
 				</div>
 			</div>
@@ -131,27 +132,27 @@
 		<div class="stats-grid">
 			<StatCard
 				value={stats.stats.activeUsers}
-				label="Active Users"
+				label={$LL.admin_dashboard_activeUsers()}
 				icon="i-ph-users"
 				iconColor="pink"
 				change={{ value: '+12%', positive: true }}
 			/>
 			<StatCard
 				value={stats.stats.totalUsers}
-				label="Total Users"
+				label={$LL.admin_dashboard_totalUsers()}
 				icon="i-ph-users"
 				iconColor="purple"
 			/>
 			<StatCard
 				value={stats.stats.registeredClients}
-				label="OAuth Clients"
+				label={$LL.admin_dashboard_clients()}
 				icon="i-ph-monitor"
 				iconColor="green"
 				change={{ value: '+5', positive: true }}
 			/>
 			<StatCard
 				value={stats.stats.loginsToday}
-				label="Today's Logins"
+				label={$LL.admin_dashboard_todayLogins()}
 				icon="i-ph-sign-in"
 				iconColor="orange"
 			/>
@@ -162,12 +163,12 @@
 			<!-- Recent Activity -->
 			<Card>
 				{#snippet header()}
-					<h3 class="card-title">Recent Activity</h3>
-					<Button variant="ghost" size="sm">View all</Button>
+					<h3 class="card-title">{$LL.admin_dashboard_recentActivity()}</h3>
+					<Button variant="ghost" size="sm">{$LL.admin_dashboard_view_all()}</Button>
 				{/snippet}
 
 				{#if stats.recentActivity.length === 0}
-					<p class="empty-state">No recent activity</p>
+					<p class="empty-state">{$LL.admin_dashboard_no_recent_activity()}</p>
 				{:else}
 					<ul class="activity-list">
 						{#each stats.recentActivity as activity (activity.userId + activity.timestamp)}
@@ -179,14 +180,20 @@
 								<div class="activity-content">
 									<div class="activity-text">
 										{#if activity.type === 'user_registration'}
-											New user <strong>{activity.email || activity.name || 'Unknown'}</strong> registered
+											{$LL.admin_dashboard_activity_new_user()}
+											<strong>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong>
+											{$LL.admin_dashboard_activity_registered()}
 										{:else if activity.type === 'login'}
-											User <strong>{activity.email || activity.name || 'Unknown'}</strong> logged in
+											{$LL.admin_dashboard_activity_user()}
+											<strong>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong>
+											{$LL.admin_dashboard_activity_logged_in()}
 										{:else if activity.type === 'client_registration'}
-											New client <strong>{activity.name || 'Unknown'}</strong> registered
+											{$LL.admin_dashboard_activity_new_client()}
+											<strong>{activity.name || $LL.admin_dashboard_unknown()}</strong>
+											{$LL.admin_dashboard_activity_registered()}
 										{:else}
 											{activity.type} -
-											<strong>{activity.email || activity.name || 'Unknown'}</strong>
+											<strong>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong>
 										{/if}
 									</div>
 									<div class="activity-time">{formatTimestamp(activity.timestamp)}</div>
@@ -200,25 +207,25 @@
 			<!-- Quick Actions -->
 			<Card>
 				{#snippet header()}
-					<h3 class="card-title">Quick Actions</h3>
+					<h3 class="card-title">{$LL.admin_dashboard_quick_actions()}</h3>
 				{/snippet}
 
 				<div class="quick-actions">
 					<a href="/admin/users" class="quick-action-btn">
 						<i class="i-ph-magnifying-glass"></i>
-						Search Users
+						{$LL.admin_dashboard_search_users()}
 					</a>
 					<a href="/admin/clients/new" class="quick-action-btn">
 						<i class="i-ph-plus"></i>
-						Register New Client
+						{$LL.admin_dashboard_register_new_client()}
 					</a>
 					<a href="/admin/audit-logs" class="quick-action-btn">
 						<i class="i-ph-file-text"></i>
-						View Audit Logs
+						{$LL.admin_dashboard_view_audit_logs()}
 					</a>
 					<a href="/admin/settings" class="quick-action-btn">
 						<i class="i-ph-gear"></i>
-						Manage Settings
+						{$LL.admin_dashboard_manage_settings()}
 					</a>
 				</div>
 			</Card>

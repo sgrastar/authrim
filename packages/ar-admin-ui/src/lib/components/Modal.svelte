@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 	import type { Snippet } from 'svelte';
 
@@ -117,7 +118,12 @@
 					{@render header()}
 				{:else}
 					<h2 id={titleId} class="modal-title">{title}</h2>
-					<button type="button" class="modal-close-btn" onclick={onClose} aria-label="Close modal">
+					<button
+						type="button"
+						class="modal-close-btn"
+						onclick={onClose}
+						aria-label={$LL.common_close()}
+					>
 						<svg
 							width="20"
 							height="20"

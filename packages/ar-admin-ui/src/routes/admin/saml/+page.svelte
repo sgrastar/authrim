@@ -7,6 +7,7 @@
 		type SAMLProvider
 	} from '$lib/api/admin-saml';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let providers = $state<SAMLProvider[]>([]);
 	let federationTrustProfiles = $state<SAMLFederationTrustProfile[]>([]);
@@ -34,7 +35,7 @@
 			providers = providerResult.providers;
 			federationTrustProfiles = trustProfileResult.profiles;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load SAML data';
+			error = err instanceof Error ? err.message : $LL.admin_saml_error_load();
 		} finally {
 			loading = false;
 		}
@@ -57,7 +58,9 @@
 	}
 
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
-		return type === 'saml_sp' ? 'SP' : 'IdP';
+		return type === 'saml_sp'
+			? $LL.admin_saml_provider_type_sp()
+			: $LL.admin_saml_provider_type_idp();
 	}
 
 	function providerTypeBadge(type: SAMLProvider['providerType']) {
@@ -66,19 +69,23 @@
 
 	function metadataStatus(provider: SAMLProvider) {
 		const diff = provider.config.metadataRefreshStatus?.diff;
-		if (provider.config.certificateValidation?.allExpired) return 'Expired';
-		if (!provider.config.metadataUrl) return provider.config.metadataXml ? 'Uploaded' : 'Manual';
-		if (!diff) return 'Not checked';
-		if (diff.expired) return 'Expired';
-		if (diff.changed) return 'Changed';
-		return 'Current';
+		if (provider.config.certificateValidation?.allExpired) return $LL.admin_saml_metadata_expired();
+		if (!provider.config.metadataUrl) {
+			return provider.config.metadataXml
+				? $LL.admin_saml_metadata_uploaded()
+				: $LL.admin_saml_metadata_manual();
+		}
+		if (!diff) return $LL.admin_saml_metadata_not_checked();
+		if (diff.expired) return $LL.admin_saml_metadata_expired();
+		if (diff.changed) return $LL.admin_saml_metadata_changed();
+		return $LL.admin_saml_metadata_current();
 	}
 
 	function metadataStatusBadge(provider: SAMLProvider) {
 		const status = metadataStatus(provider);
-		if (status === 'Current') return 'badge badge-success';
-		if (status === 'Expired') return 'badge badge-danger';
-		if (status === 'Changed') return 'badge badge-warning';
+		if (status === $LL.admin_saml_metadata_current()) return 'badge badge-success';
+		if (status === $LL.admin_saml_metadata_expired()) return 'badge badge-danger';
+		if (status === $LL.admin_saml_metadata_changed()) return 'badge badge-warning';
 		return 'badge badge-neutral';
 	}
 
@@ -103,14 +110,14 @@
 		if (!value) return '-';
 		const date = typeof value === 'number' ? new Date(value) : new Date(value);
 		if (Number.isNaN(date.getTime())) return '-';
-		return date.toLocaleDateString();
+		return date.toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function formatDateTime(value: string | number | undefined) {
 		if (!value) return '-';
 		const date = typeof value === 'number' ? new Date(value) : new Date(value);
 		if (Number.isNaN(date.getTime())) return '-';
-		return date.toLocaleString();
+		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function trustProfilePolicy(profile: SAMLFederationTrustProfile) {
@@ -119,29 +126,29 @@
 </script>
 
 <svelte:head>
-	<title>SAML - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_saml_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">SAML</h1>
+			<h1 class="page-title">{$LL.admin_saml_title()}</h1>
 			<p class="page-description">
-				Register external SAML IdPs for sign-in and SAML SPs that trust Authrim as their IdP.
+				{$LL.admin_saml_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={navigateToLocalMetadata}>
 				<i class="i-ph-identification-card"></i>
-				SAML Entity Info
+				{$LL.admin_saml_entity_info()}
 			</button>
 			<button class="btn btn-primary" onclick={navigateToNew}>
 				<i class="i-ph-plus"></i>
-				Add Provider/Federation
+				{$LL.admin_saml_add_provider_federation()}
 			</button>
 			<button class="btn btn-secondary" onclick={loadSAML} disabled={loading}>
 				<i class="i-ph-arrow-clockwise"></i>
-				Refresh
+				{$LL.admin_saml_refresh()}
 			</button>
 		</div>
 	</div>
@@ -157,18 +164,20 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_saml_loading()}</p>
 		</div>
 	{:else}
 		{#if providers.length === 0}
 			<div class="panel">
 				<div class="empty-state">
-					<p class="empty-state-description">No SAML providers configured.</p>
+					<p class="empty-state-description">{$LL.admin_saml_empty_providers()}</p>
 					<p class="empty-state-hint">
-						Add an IdP for external SAML sign-in, or add an SP that trusts Authrim as its IdP.
+						{$LL.admin_saml_empty_hint()}
 					</p>
 					<div class="empty-actions">
-						<button class="btn btn-primary" onclick={navigateToNew}>Add Provider/Federation</button>
+						<button class="btn btn-primary" onclick={navigateToNew}>
+							{$LL.admin_saml_add_provider_federation()}
+						</button>
 					</div>
 				</div>
 			</div>
@@ -177,12 +186,12 @@
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th>Name</th>
-							<th>Type</th>
-							<th>Status</th>
-							<th>Metadata</th>
-							<th>Entity ID</th>
-							<th>Valid Until</th>
+							<th>{$LL.admin_saml_name()}</th>
+							<th>{$LL.admin_saml_type()}</th>
+							<th>{$LL.admin_saml_status()}</th>
+							<th>{$LL.admin_saml_metadata()}</th>
+							<th>{$LL.admin_saml_entity_id()}</th>
+							<th>{$LL.admin_saml_valid_until()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -213,7 +222,7 @@
 								</td>
 								<td>
 									<span class={provider.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
-										{provider.enabled ? 'Enabled' : 'Disabled'}
+										{provider.enabled ? $LL.admin_saml_enabled() : $LL.admin_saml_disabled()}
 									</span>
 								</td>
 								<td>
@@ -241,10 +250,9 @@
 		<div class="panel federation-trust-panel">
 			<div class="panel-header compact-panel-header">
 				<div>
-					<h2 class="panel-title">Federation Trust Profiles</h2>
+					<h2 class="panel-title">{$LL.admin_saml_federation_trust_profiles()}</h2>
 					<p class="form-hint">
-						Trust anchors used to verify signed aggregate metadata before importing federation
-						entities.
+						{$LL.admin_saml_federation_trust_desc()}
 					</p>
 				</div>
 				<div class="panel-header-actions">
@@ -253,17 +261,19 @@
 			</div>
 
 			{#if federationTrustProfiles.length === 0}
-				<div class="empty-state compact-empty">No federation trust profiles configured.</div>
+				<div class="empty-state compact-empty">
+					{$LL.admin_saml_empty_federation_trust_profiles()}
+				</div>
 			{:else}
 				<div class="data-table-container compact-table trust-profile-table">
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>Profile</th>
-								<th>Status</th>
-								<th>Policy</th>
-								<th>Metadata URL Pattern</th>
-								<th>Updated</th>
+								<th>{$LL.admin_saml_profile()}</th>
+								<th>{$LL.admin_saml_status()}</th>
+								<th>{$LL.admin_saml_policy()}</th>
+								<th>{$LL.admin_saml_metadata_url_pattern()}</th>
+								<th>{$LL.admin_saml_updated()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -283,7 +293,7 @@
 									</td>
 									<td>
 										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
-											{profile.enabled ? 'Enabled' : 'Disabled'}
+											{profile.enabled ? $LL.admin_saml_enabled() : $LL.admin_saml_disabled()}
 										</span>
 									</td>
 									<td>
