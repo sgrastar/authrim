@@ -208,6 +208,28 @@ export interface SAMLAttributePreset {
 	};
 }
 
+export interface SAMLLocalSigningDRBundle {
+	kind: 'authrim.saml_local_signing_secret_dr_bundle.encrypted.v1';
+	version: 1;
+	tenantId: string;
+	generatedAt: string;
+	encrypted: true;
+	sensitive: true;
+	warning: string;
+	kdf: {
+		name: 'PBKDF2';
+		hash: 'SHA-256';
+		iterations: number;
+		salt: string;
+	};
+	cipher: {
+		name: 'AES-GCM';
+		iv: string;
+	};
+	payload: string;
+	payloadEncoding: 'base64';
+}
+
 export interface CreateSAMLAttributePresetRequest {
 	label: string;
 	description?: string;
@@ -532,6 +554,40 @@ export const adminSAMLAPI = {
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to update SAML local signing settings');
+		}
+
+		return (await response.json()) as SAMLSettings;
+	},
+
+	async exportLocalSigningDRBundle(passphrase: string): Promise<SAMLLocalSigningDRBundle> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-settings/local-signing/dr-bundle`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ passphrase })
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to export SAML signing DR bundle');
+		}
+
+		return (await response.json()) as SAMLLocalSigningDRBundle;
+	},
+
+	async importLocalSigningDRBundle(bundle: unknown, passphrase: string): Promise<SAMLSettings> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-settings/local-signing/dr-bundle/import`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ bundle, passphrase })
+			}
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to import SAML signing DR bundle');
 		}
 
 		return (await response.json()) as SAMLSettings;

@@ -44,6 +44,11 @@ interface ExtractedField {
 	type?: string;
 	required?: boolean;
 	privacy?: MappingNode['privacy'];
+	examples?: unknown[];
+	note?: string | null;
+	allowedValues?: string[];
+	valueMultiplicity?: 'single' | 'multi' | null;
+	nullable?: boolean | null;
 }
 
 const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
@@ -268,7 +273,12 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 					uiGroupLabel: entry.uiGroupLabel,
 					uiGroupOrder: entry.uiGroupOrder,
 					uiFieldOrder: entry.uiFieldOrder,
-					examples: entry.examples
+					examples: entry.examples,
+					note: entry.note,
+					allowedValues: entry.allowedValues,
+					valueMultiplicity: entry.valueMultiplicity,
+					nullable: entry.nullable,
+					required: entry.required
 				})
 			);
 	}
@@ -296,6 +306,11 @@ function canonicalTargetNode(input: {
 	uiGroupOrder?: number;
 	uiFieldOrder?: number;
 	examples?: unknown[];
+	note?: string | null;
+	allowedValues?: string[];
+	valueMultiplicity?: 'single' | 'multi' | null;
+	nullable?: boolean | null;
+	required?: boolean | null;
 }): MappingNode {
 	return {
 		id: `canonical-${slug(input.id)}`,
@@ -310,10 +325,14 @@ function canonicalTargetNode(input: {
 		uiGroupOrder: input.uiGroupOrder,
 		uiFieldOrder: input.uiFieldOrder,
 		examples: input.examples,
+		note: input.note,
+		allowedValues: input.allowedValues,
+		valueMultiplicity: input.valueMultiplicity,
+		nullable: input.nullable,
 		inputCardinality: input.cardinality === 'multi' ? 'many' : 'one',
 		locked: input.stableFieldId === 'field.canonical.subject_id',
 		privacy: privacyFrom(input.classification),
-		required: isRequiredCanonicalTarget(input.stableFieldId)
+		required: input.required ?? isRequiredCanonicalTarget(input.stableFieldId)
 	};
 }
 
@@ -343,7 +362,12 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 			caption: field.caption,
 			type: displayValueType(field.type),
 			privacy: field.privacy,
-			required: field.required
+			required: field.required,
+			examples: field.examples,
+			note: field.note,
+			allowedValues: field.allowedValues,
+			valueMultiplicity: field.valueMultiplicity,
+			nullable: field.nullable
 		};
 	});
 }
@@ -399,7 +423,12 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 				caption: stringValue(item.description) ?? type ?? 'schema field',
 				type,
 				required: required.has(key) || item.required === true,
-				privacy: privacyFrom(`${key} ${stringValue(item.classification) ?? ''}`)
+				privacy: privacyFrom(`${key} ${stringValue(item.classification) ?? ''}`),
+				examples: examplesFromRecord(item),
+				note: noteFromRecord(item),
+				allowedValues: allowedValuesFromRecord(item),
+				valueMultiplicity: valueMultiplicityFromRecord(item),
+				nullable: nullableFromRecord(item)
 			}
 		];
 	});
@@ -414,7 +443,12 @@ function fieldsFromClaims(value: unknown, required: Set<string>): ExtractedField
 		caption: isRecord(claim) ? (stringValue(claim.description) ?? 'claim') : 'claim',
 		type: isRecord(claim) ? stringValue(claim.type) : undefined,
 		required: required.has(key),
-		privacy: privacyFrom(key)
+		privacy: privacyFrom(key),
+		examples: isRecord(claim) ? examplesFromRecord(claim) : undefined,
+		note: isRecord(claim) ? noteFromRecord(claim) : null,
+		allowedValues: isRecord(claim) ? allowedValuesFromRecord(claim) : undefined,
+		valueMultiplicity: isRecord(claim) ? valueMultiplicityFromRecord(claim) : null,
+		nullable: isRecord(claim) ? nullableFromRecord(claim) : null
 	}));
 }
 
@@ -426,8 +460,67 @@ function fieldsFromProperties(value: unknown, required: Set<string>): ExtractedF
 		caption: isRecord(property) ? (stringValue(property.description) ?? 'property') : 'property',
 		type: isRecord(property) ? stringValue(property.type) : undefined,
 		required: required.has(key),
-		privacy: privacyFrom(key)
+		privacy: privacyFrom(key),
+		examples: isRecord(property) ? examplesFromRecord(property) : undefined,
+		note: isRecord(property) ? noteFromRecord(property) : null,
+		allowedValues: isRecord(property) ? allowedValuesFromRecord(property) : undefined,
+		valueMultiplicity: isRecord(property) ? valueMultiplicityFromRecord(property) : null,
+		nullable: isRecord(property) ? nullableFromRecord(property) : null
 	}));
+}
+
+function allowedValuesFromRecord(record: Record<string, unknown>): string[] | undefined {
+	const value = record.allowedValues ?? record.allowed_values ?? record.enum ?? record.enums;
+	if (!Array.isArray(value)) return undefined;
+	const values = Array.from(
+		new Set(
+			value
+				.map(String)
+				.map((item) => item.trim())
+				.filter(Boolean)
+		)
+	);
+	return values.length > 0 ? values : undefined;
+}
+
+function valueMultiplicityFromRecord(record: Record<string, unknown>): 'single' | 'multi' | null {
+	const value =
+		record.valueMultiplicity ??
+		record.value_multiplicity ??
+		record.multiplicity ??
+		record.cardinality;
+	if (value === 'single' || value === 'multi') return value;
+	if (value === 'one') return 'single';
+	if (value === 'many' || value === 'multiple') return 'multi';
+	return null;
+}
+
+function nullableFromRecord(record: Record<string, unknown>): boolean | null {
+	if (typeof record.nullable === 'boolean') return record.nullable;
+	if (typeof record.notNullable === 'boolean') return !record.notNullable;
+	if (typeof record.not_null === 'boolean') return !record.not_null;
+	return null;
+}
+
+function examplesFromRecord(record: Record<string, unknown>): unknown[] | undefined {
+	for (const key of ['examples', 'sampleValues', 'sample_values', 'samples']) {
+		const value = record[key];
+		if (Array.isArray(value)) return value;
+	}
+	const sampleValue =
+		record.sampleValue ?? record.sample_value ?? record.example ?? record.defaultExample;
+	return sampleValue === undefined ? undefined : [sampleValue];
+}
+
+function noteFromRecord(record: Record<string, unknown>): string | null {
+	return (
+		stringValue(record.note) ??
+		stringValue(record.notes) ??
+		stringValue(record.helpText) ??
+		stringValue(record.help_text) ??
+		stringValue(record.description) ??
+		null
+	);
 }
 
 function ruleForNode(node: MappingNode): RuleDetail {
@@ -439,14 +532,14 @@ function ruleForNode(node: MappingNode): RuleDetail {
 		risk,
 		source:
 			node.role === 'source' ? `${node.adapter ?? 'source'} / ${node.label}` : 'Not connected',
-		target: node.role === 'target' ? node.label : 'No canonical target selected',
+		target: node.role === 'target' ? node.label : 'No schema field selected',
 		destination:
 			node.role === 'destination'
 				? `${node.adapter ?? 'destination'} / ${node.label}`
 				: 'Not connected',
 		transform: isLocked ? 'managed by subject identifier strategy' : 'not configured',
 		validation: isLocked
-			? 'locked canonical identifier; configure strategy instead'
+			? 'locked subject identifier; configure strategy instead'
 			: node.required
 				? 'required by loaded schema'
 				: 'loaded from control-plane schema',
@@ -481,7 +574,7 @@ function ruleForNode(node: MappingNode): RuleDetail {
 				]
 			: [
 					'This node is generated from the current identity mapping API response.',
-					'No mapping rule is inferred until an operator connects source, canonical target, and destination.'
+					'No mapping rule is inferred until an operator connects source, identity schema field, and destination.'
 				]
 	};
 }

@@ -1,0 +1,39 @@
+import type { DestinationTemplate } from './types';
+
+export const oidcDestinationTemplates: DestinationTemplate[] = [
+	{
+		id: 'template_destination_oidc_standard',
+		destinationType: 'oidc',
+		category: 'General settings',
+		profileKey: 'standard_oidc_claims',
+		displayName: 'Standard OIDC claims',
+		version: 'v1',
+		updatedAt: '2026-06-02',
+		description: 'OpenID Connect Core and profile claims for ID Token and UserInfo output.',
+		schema: {
+			destinationType: 'oidc',
+			subjectContract: {
+				required: true,
+				strategySource: 'tenant_default_with_client_override'
+			},
+			claims: [
+				{
+					claimName: 'sub',
+					label: 'Subject',
+					valueType: 'string',
+					classification: 'internal',
+					surfaces: ['id_token', 'userinfo'],
+					requiredScopes: ['openid']
+				},
+				{
+					claimName: 'email',
+					label: 'Email',
+					valueType: 'email',
+					classification: 'pii',
+					surfaces: ['userinfo'],
+					requiredScopes: ['email']
+				}
+			]
+		}
+	}
+];

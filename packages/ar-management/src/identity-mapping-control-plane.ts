@@ -368,25 +368,25 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   },
   {
     id: 'UIM-SCH-094',
-    objectName: 'oidc_custom_scope_registry',
-    area: 'OIDC custom scope registry',
+    objectName: 'attribute_group_registry',
+    area: 'Attribute group registry',
     introducedPr: 'destination profile PR',
     expectedConnectionPr: 'Destination profile PR',
-    runtimePath: 'OIDC destination profile validation',
+    runtimePath: 'Destination profile group validation',
     status: 'api_connected',
-    gate: 'registry API + over-release validation tests',
-    schemaObject: 'oidc_custom_scope_registry',
+    gate: 'attribute group API + over-release validation tests',
+    schemaObject: 'attribute_group_registry',
   },
   {
     id: 'UIM-SCH-095',
-    objectName: 'oidc_custom_claim_registry',
-    area: 'OIDC custom claim registry',
+    objectName: 'attribute_field_registry',
+    area: 'Attribute field registry',
     introducedPr: 'destination profile PR',
     expectedConnectionPr: 'Destination profile PR',
-    runtimePath: 'OIDC destination profile custom claim validation',
+    runtimePath: 'Destination profile field validation',
     status: 'api_connected',
-    gate: 'registry API + reserved claim validation tests',
-    schemaObject: 'oidc_custom_claim_registry',
+    gate: 'attribute field API + reserved OIDC claim validation tests',
+    schemaObject: 'attribute_field_registry',
   },
 ];
 
@@ -426,9 +426,27 @@ interface MappingPolicyVersionListRow extends MappingPolicyVersionRow {
 
 interface MappingPolicyRuleSummaryRow {
   policy_version_id: string;
+  rule_id: string;
+  rule_key: string;
   rule_kind: string;
+  action: string;
+  priority: number;
+  metadata_json: string | null;
+  edge_id: string | null;
   source_ref_json: string | null;
   target_ref_json: string | null;
+  edge_kind: string | null;
+  display_order: number | null;
+}
+
+interface MappingPolicyTransformSummaryRow {
+  policy_version_id: string;
+  rule_id: string;
+  transform_id: string;
+  edge_id: string | null;
+  step_order: number;
+  operation: string;
+  parameters_json: string | null;
 }
 
 interface FieldCatalogVersionRow {
@@ -461,11 +479,13 @@ interface FieldCatalogListRow {
   cardinality: string | null;
   classification: string | null;
   aliases_json: string | null;
+  validation_json: string | null;
   ui_group_key: string | null;
   ui_group_label: string | null;
   ui_group_order: number | null;
   ui_field_order: number | null;
   examples_json: string | null;
+  note: string | null;
 }
 
 interface ProtocolSchemaCatalogRow {
@@ -560,30 +580,33 @@ interface DestinationProfileRow {
   release_impact_json: string | null;
 }
 
-interface OidcCustomScopeRegistryRow {
+interface AttributeGroupRegistryRow {
   id: string;
   tenant_id: string;
   owner_scope_type: string;
   owner_scope_id: string | null;
-  scope_key: string;
+  protocol: string;
+  group_type: string;
+  group_key: string;
   display_name: string;
   description: string | null;
-  allowed_claims_json: string;
+  field_keys_json: string;
   lifecycle_state: string;
   created_at: number;
   updated_at: number;
 }
 
-interface OidcCustomClaimRegistryRow {
+interface AttributeFieldRegistryRow {
   id: string;
   tenant_id: string;
   owner_scope_type: string;
   owner_scope_id: string | null;
-  claim_name: string;
+  protocol: string;
+  field_key: string;
   display_name: string;
   value_type: string;
   classification: string;
-  allowed_surfaces_json: string;
+  surfaces_json: string;
   lifecycle_state: string;
   created_at: number;
   updated_at: number;
@@ -726,23 +749,26 @@ interface UpdateDestinationProfileRequest {
   releaseImpact?: Record<string, unknown>;
 }
 
-interface CreateOidcCustomScopeRequest {
+interface CreateAttributeGroupRequest {
   ownerScopeType?: 'platform' | 'tenant';
   ownerScopeId?: string | null;
-  scopeKey: string;
+  protocol: 'oidc' | 'saml' | 'vc';
+  groupType: string;
+  groupKey: string;
   displayName: string;
   description?: string | null;
-  allowedClaims: string[];
+  fieldKeys: string[];
 }
 
-interface CreateOidcCustomClaimRequest {
+interface CreateAttributeFieldRequest {
   ownerScopeType?: 'platform' | 'tenant';
   ownerScopeId?: string | null;
-  claimName: string;
+  protocol: 'oidc' | 'saml' | 'vc';
+  fieldKey: string;
   displayName: string;
   valueType?: string;
   classification?: string;
-  allowedSurfaces?: Array<'id_token' | 'userinfo'>;
+  surfaces?: string[];
 }
 
 interface PolicyVersionRuleInput {
@@ -1314,9 +1340,9 @@ export class IdentityMappingControlPlaneRepository {
           `INSERT INTO field_catalog_entries (
             id, tenant_id, catalog_version_id, stable_field_id, namespace, path, target_taxonomy,
             value_type, cardinality, classification, aliases_json, validation_json,
-            ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json,
+            ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json, note,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             createId('catalog_entry'),
             tenantId,
@@ -1329,12 +1355,13 @@ export class IdentityMappingControlPlaneRepository {
             entry.cardinality,
             entry.classification,
             stableJson(entry.aliases ?? []),
-            stableJson({}),
+            stableJson(catalogEntryValidation(entry)),
             entry.uiGroupKey ?? null,
             entry.uiGroupLabel ?? null,
             entry.uiGroupOrder ?? 0,
             entry.uiFieldOrder ?? 0,
             entry.examples ? stableJson(entry.examples) : null,
+            (entry as FieldCatalogEntry & { note?: string }).note ?? null,
             now,
             now,
           ]
@@ -1394,11 +1421,13 @@ export class IdentityMappingControlPlaneRepository {
           e.cardinality,
           e.classification,
           e.aliases_json,
+          e.validation_json,
           e.ui_group_key,
           e.ui_group_label,
           e.ui_group_order,
           e.ui_field_order,
-          e.examples_json
+          e.examples_json,
+          e.note
          FROM field_catalogs c
          LEFT JOIN field_catalog_versions v ON v.catalog_id = c.id
          LEFT JOIN field_catalog_entries e ON e.catalog_version_id = v.id
@@ -1432,6 +1461,11 @@ export class IdentityMappingControlPlaneRepository {
           uiGroupOrder: number;
           uiFieldOrder: number;
           examples: unknown[];
+          note: string | null;
+          allowedValues: string[];
+          valueMultiplicity: 'single' | 'multi' | null;
+          nullable: boolean | null;
+          required: boolean | null;
         }>;
       }
     >();
@@ -1449,6 +1483,7 @@ export class IdentityMappingControlPlaneRepository {
         entries: [],
       };
       if (row.entry_id && row.stable_field_id && row.namespace && row.path) {
+        const validation = parseJsonObject(row.validation_json ?? '{}', {});
         catalog.entries.push({
           id: row.entry_id,
           stableFieldId: row.stable_field_id,
@@ -1464,6 +1499,14 @@ export class IdentityMappingControlPlaneRepository {
           uiGroupOrder: row.ui_group_order ?? 0,
           uiFieldOrder: row.ui_field_order ?? 0,
           examples: parseJsonUnknownArray(row.examples_json),
+          note: row.note,
+          allowedValues: parseStringArray(validation.allowedValues),
+          valueMultiplicity:
+            validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
+              ? validation.valueMultiplicity
+              : null,
+          nullable: typeof validation.nullable === 'boolean' ? validation.nullable : null,
+          required: typeof validation.required === 'boolean' ? validation.required : null,
         });
       }
       catalogs.set(row.id, catalog);
@@ -1479,6 +1522,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('schema must be an object');
     }
     assertProfileSchemaBudget(input.schema, 'protocolSchema.schema');
+    assertProfileFieldConstraints(input.schema, 'protocolSchema.schema');
     const now = this.now();
     const id = createId('protocol_schema');
     await this.adapter.execute(
@@ -1534,6 +1578,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('schema must be an object');
     }
     assertProfileSchemaBudget(input.schema, 'externalSchema.schema');
+    assertProfileFieldConstraints(input.schema, 'externalSchema.schema');
     const now = this.now();
     const id = createId('external_schema');
     await this.adapter.execute(
@@ -1664,6 +1709,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('schema or parseDraftId is required');
     }
     assertProfileSchemaBudget(schema, 'sourceProfile.schema');
+    assertProfileFieldConstraints(schema, 'sourceProfile.schema');
     assertNoSourceProfileRawSamples(schema, 'sourceProfile.schema');
     assertNoSensitiveMetadata(input.sourceMetadata, 'sourceProfile.sourceMetadata');
     const profileId = createId('source_profile');
@@ -1847,6 +1893,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('schema or parseDraftId is required');
     }
     assertProfileSchemaBudget(schema, 'sourceProfile.schema');
+    assertProfileFieldConstraints(schema, 'sourceProfile.schema');
     assertNoSourceProfileRawSamples(schema, 'sourceProfile.schema');
     assertNoSensitiveMetadata(input.sourceMetadata, 'sourceProfile.sourceMetadata');
     const versionId = createId('source_profile_version');
@@ -2010,29 +2057,35 @@ export class IdentityMappingControlPlaneRepository {
     return { id: profileId, deleted: true };
   }
 
-  async createOidcCustomScope(tenantId: string, input: CreateOidcCustomScopeRequest) {
-    validateRequiredString(input.scopeKey, 'scopeKey');
+  async createAttributeGroup(tenantId: string, input: CreateAttributeGroupRequest) {
+    validateRequiredString(input.protocol, 'protocol');
+    validateRequiredString(input.groupType, 'groupType');
+    validateRequiredString(input.groupKey, 'groupKey');
     validateRequiredString(input.displayName, 'displayName');
-    if (!Array.isArray(input.allowedClaims)) {
-      throw badRequest('allowedClaims must be an array');
+    validateAttributeProtocol(input.protocol);
+    validateAttributeKey(input.groupKey, 'groupKey');
+    if (!Array.isArray(input.fieldKeys)) {
+      throw badRequest('fieldKeys must be an array');
     }
     const owner = normalizeRegistryOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
     const now = this.now();
-    const id = createId('oidc_scope');
+    const id = createId('attribute_group');
     await this.adapter.execute(
-      `INSERT INTO oidc_custom_scope_registry (
-        id, tenant_id, owner_scope_type, owner_scope_id, scope_key, display_name,
-        description, allowed_claims_json, lifecycle_state, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO attribute_group_registry (
+        id, tenant_id, owner_scope_type, owner_scope_id, protocol, group_type, group_key,
+        display_name, description, field_keys_json, lifecycle_state, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         owner.tenantId,
         owner.ownerScopeType,
         owner.ownerScopeId,
-        input.scopeKey,
+        input.protocol,
+        input.groupType,
+        input.groupKey,
         input.displayName,
         input.description ?? null,
-        stableJson(input.allowedClaims.map(String).filter(Boolean)),
+        stableJson(input.fieldKeys.map(String).filter(Boolean)),
         'active',
         now,
         now,
@@ -2043,20 +2096,22 @@ export class IdentityMappingControlPlaneRepository {
       tenantId: owner.tenantId,
       ownerScopeType: owner.ownerScopeType,
       ownerScopeId: owner.ownerScopeId,
-      scopeKey: input.scopeKey,
+      protocol: input.protocol,
+      groupType: input.groupType,
+      groupKey: input.groupKey,
       displayName: input.displayName,
       description: input.description ?? null,
-      allowedClaims: input.allowedClaims.map(String).filter(Boolean),
+      fieldKeys: input.fieldKeys.map(String).filter(Boolean),
       lifecycleState: 'active',
     };
   }
 
-  async listOidcCustomScopes(tenantId: string) {
-    const rows = await this.adapter.query<OidcCustomScopeRegistryRow>(
+  async listAttributeGroups(tenantId: string) {
+    const rows = await this.adapter.query<AttributeGroupRegistryRow>(
       `SELECT *
-         FROM oidc_custom_scope_registry
+         FROM attribute_group_registry
         WHERE tenant_id IN (?, ?)
-        ORDER BY owner_scope_type ASC, scope_key ASC`,
+        ORDER BY owner_scope_type ASC, protocol ASC, group_type ASC, group_key ASC`,
       [tenantId, 'platform']
     );
     return rows.map((row) => ({
@@ -2064,36 +2119,47 @@ export class IdentityMappingControlPlaneRepository {
       tenantId: row.tenant_id,
       ownerScopeType: row.owner_scope_type,
       ownerScopeId: row.owner_scope_id,
-      scopeKey: row.scope_key,
+      protocol: row.protocol,
+      groupType: row.group_type,
+      groupKey: row.group_key,
       displayName: row.display_name,
       description: row.description,
-      allowedClaims: JSON.parse(row.allowed_claims_json) as string[],
+      fieldKeys: JSON.parse(row.field_keys_json) as string[],
       lifecycleState: row.lifecycle_state,
     }));
   }
 
-  async createOidcCustomClaim(tenantId: string, input: CreateOidcCustomClaimRequest) {
-    validateRequiredString(input.claimName, 'claimName');
+  async createAttributeField(tenantId: string, input: CreateAttributeFieldRequest) {
+    validateRequiredString(input.protocol, 'protocol');
+    validateRequiredString(input.fieldKey, 'fieldKey');
     validateRequiredString(input.displayName, 'displayName');
-    validateOidcClaimName(input.claimName);
-    if (OIDC_RESERVED_NON_PROFILE_CLAIMS.has(input.claimName)) {
-      throw badRequest('claimName is reserved by the OIDC token envelope');
+    validateAttributeProtocol(input.protocol);
+    validateAttributeKey(input.fieldKey, 'fieldKey');
+    if (input.protocol === 'oidc') {
+      validateOidcClaimName(input.fieldKey);
+      if (OIDC_RESERVED_NON_PROFILE_CLAIMS.has(input.fieldKey)) {
+        throw badRequest('fieldKey is reserved by the OIDC token envelope');
+      }
     }
     const owner = normalizeRegistryOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
     const now = this.now();
-    const surfaces = normalizeOidcSurfaces(input.allowedSurfaces ?? ['id_token', 'userinfo']);
-    const id = createId('oidc_claim');
+    const surfaces =
+      input.protocol === 'oidc'
+        ? normalizeOidcSurfaces(input.surfaces ?? ['id_token', 'userinfo'])
+        : Array.from(new Set((input.surfaces ?? []).map(String).filter(Boolean))).sort();
+    const id = createId('attribute_field');
     await this.adapter.execute(
-      `INSERT INTO oidc_custom_claim_registry (
-        id, tenant_id, owner_scope_type, owner_scope_id, claim_name, display_name,
-        value_type, classification, allowed_surfaces_json, lifecycle_state, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO attribute_field_registry (
+        id, tenant_id, owner_scope_type, owner_scope_id, protocol, field_key, display_name,
+        value_type, classification, surfaces_json, lifecycle_state, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         owner.tenantId,
         owner.ownerScopeType,
         owner.ownerScopeId,
-        input.claimName,
+        input.protocol,
+        input.fieldKey,
         input.displayName,
         input.valueType ?? 'string',
         input.classification ?? 'internal',
@@ -2108,21 +2174,22 @@ export class IdentityMappingControlPlaneRepository {
       tenantId: owner.tenantId,
       ownerScopeType: owner.ownerScopeType,
       ownerScopeId: owner.ownerScopeId,
-      claimName: input.claimName,
+      protocol: input.protocol,
+      fieldKey: input.fieldKey,
       displayName: input.displayName,
       valueType: input.valueType ?? 'string',
       classification: input.classification ?? 'internal',
-      allowedSurfaces: surfaces,
+      surfaces,
       lifecycleState: 'active',
     };
   }
 
-  async listOidcCustomClaims(tenantId: string) {
-    const rows = await this.adapter.query<OidcCustomClaimRegistryRow>(
+  async listAttributeFields(tenantId: string) {
+    const rows = await this.adapter.query<AttributeFieldRegistryRow>(
       `SELECT *
-         FROM oidc_custom_claim_registry
+         FROM attribute_field_registry
         WHERE tenant_id IN (?, ?)
-        ORDER BY owner_scope_type ASC, claim_name ASC`,
+        ORDER BY owner_scope_type ASC, protocol ASC, field_key ASC`,
       [tenantId, 'platform']
     );
     return rows.map((row) => ({
@@ -2130,11 +2197,12 @@ export class IdentityMappingControlPlaneRepository {
       tenantId: row.tenant_id,
       ownerScopeType: row.owner_scope_type,
       ownerScopeId: row.owner_scope_id,
-      claimName: row.claim_name,
+      protocol: row.protocol,
+      fieldKey: row.field_key,
       displayName: row.display_name,
       valueType: row.value_type,
       classification: row.classification,
-      allowedSurfaces: JSON.parse(row.allowed_surfaces_json) as string[],
+      surfaces: JSON.parse(row.surfaces_json) as string[],
       lifecycleState: row.lifecycle_state,
     }));
   }
@@ -2150,6 +2218,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('schema must be an object');
     }
     assertProfileSchemaBudget(input.schema, 'destinationProfile.schema');
+    assertProfileFieldConstraints(input.schema, 'destinationProfile.schema');
     assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
 
     const owner = normalizeProfileOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
@@ -2172,11 +2241,11 @@ export class IdentityMappingControlPlaneRepository {
     if (duplicate) {
       throw conflict('destination profile key already exists for this owner scope');
     }
-    const customScopes = await this.listOidcCustomScopes(tenantId);
+    const attributeGroups = await this.listAttributeGroups(tenantId);
     const validation = validateDestinationProfileSchema(
       input.destinationType,
       input.schema,
-      customScopes
+      attributeGroups
     );
     if (validation.errorCount > 0) {
       throw badRequest(`destination profile schema is invalid: ${validation.errors.join('; ')}`);
@@ -2356,6 +2425,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('schema is required');
     }
     assertProfileSchemaBudget(input.schema, 'destinationProfile.schema');
+    assertProfileFieldConstraints(input.schema, 'destinationProfile.schema');
     assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
 
     const owner = normalizeProfileOwner(
@@ -2395,11 +2465,11 @@ export class IdentityMappingControlPlaneRepository {
       throw conflict('destination profile key already exists for this owner scope');
     }
 
-    const customScopes = await this.listOidcCustomScopes(tenantId);
+    const attributeGroups = await this.listAttributeGroups(tenantId);
     const validation = validateDestinationProfileSchema(
       destinationType,
       input.schema,
-      customScopes
+      attributeGroups
     );
     if (validation.errorCount > 0) {
       throw badRequest(`destination profile schema is invalid: ${validation.errors.join('; ')}`);
@@ -2702,6 +2772,143 @@ export class IdentityMappingControlPlaneRepository {
     }));
   }
 
+  async deletePolicySet(tenantId: string, policySetId: string) {
+    const policySet = await this.getPolicySet(tenantId, policySetId);
+    if (!policySet) {
+      throw notFound('policy set not found');
+    }
+    const activeActivation = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM mapping_policy_activations
+        WHERE tenant_id = ?
+          AND policy_set_id = ?
+          AND lifecycle_state = ?
+        LIMIT 1`,
+      [tenantId, policySetId, 'active']
+    );
+    if (activeActivation) {
+      throw conflict('active policy must be deactivated before deletion');
+    }
+
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `DELETE FROM mapping_transform_steps
+          WHERE tenant_id = ?
+            AND rule_id IN (
+              SELECT r.id
+                FROM mapping_rules r
+                JOIN mapping_policy_versions v
+                  ON v.tenant_id = r.tenant_id
+                 AND v.id = r.policy_version_id
+               WHERE v.tenant_id = ?
+                 AND v.policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_rule_edges
+          WHERE tenant_id = ?
+            AND rule_id IN (
+              SELECT r.id
+                FROM mapping_rules r
+                JOIN mapping_policy_versions v
+                  ON v.tenant_id = r.tenant_id
+                 AND v.id = r.policy_version_id
+               WHERE v.tenant_id = ?
+                 AND v.policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_validation_rules
+          WHERE tenant_id = ?
+            AND rule_id IN (
+              SELECT r.id
+                FROM mapping_rules r
+                JOIN mapping_policy_versions v
+                  ON v.tenant_id = r.tenant_id
+                 AND v.id = r.policy_version_id
+               WHERE v.tenant_id = ?
+                 AND v.policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_release_rules
+          WHERE tenant_id = ?
+            AND policy_version_id IN (
+              SELECT id
+                FROM mapping_policy_versions
+               WHERE tenant_id = ?
+                 AND policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_conflict_rules
+          WHERE tenant_id = ?
+            AND policy_version_id IN (
+              SELECT id
+                FROM mapping_policy_versions
+               WHERE tenant_id = ?
+                 AND policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM dependency_graph_snapshots
+          WHERE tenant_id = ?
+            AND policy_version_id IN (
+              SELECT id
+                FROM mapping_policy_versions
+               WHERE tenant_id = ?
+                 AND policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM compiled_mapping_snapshots
+          WHERE tenant_id = ?
+            AND policy_version_id IN (
+              SELECT id
+                FROM mapping_policy_versions
+               WHERE tenant_id = ?
+                 AND policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_rules
+          WHERE tenant_id = ?
+            AND policy_version_id IN (
+              SELECT id
+                FROM mapping_policy_versions
+               WHERE tenant_id = ?
+                 AND policy_set_id = ?
+            )`,
+        [tenantId, tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_policy_activations WHERE tenant_id = ? AND policy_set_id = ?`,
+        [tenantId, policySetId]
+      );
+      await tx.execute(
+        `DELETE FROM mapping_policy_versions WHERE tenant_id = ? AND policy_set_id = ?`,
+        [tenantId, policySetId]
+      );
+      await tx.execute(`DELETE FROM mapping_policy_sets WHERE tenant_id = ? AND id = ?`, [
+        tenantId,
+        policySetId,
+      ]);
+    });
+
+    return {
+      id: policySetId,
+      tenantId,
+      deleted: true,
+    };
+  }
+
   async listPolicyVersions(tenantId: string, policySetId: string) {
     const rows = await this.adapter.query<MappingPolicyVersionListRow>(
       `SELECT v.*,
@@ -2725,17 +2932,45 @@ export class IdentityMappingControlPlaneRepository {
     );
     const ruleRows = await this.adapter.query<MappingPolicyRuleSummaryRow>(
       `SELECT v.id AS policy_version_id,
+              r.id AS rule_id,
+              r.rule_key,
               r.rule_kind,
+              r.action,
+              r.priority,
+              r.metadata_json,
+              e.id AS edge_id,
               e.source_ref_json,
-              e.target_ref_json
+              e.target_ref_json,
+              e.edge_kind,
+              e.display_order
          FROM mapping_policy_versions v
          JOIN mapping_rules r
            ON r.tenant_id = v.tenant_id
           AND r.policy_version_id = v.id
          LEFT JOIN mapping_rule_edges e
-           ON e.tenant_id = r.tenant_id
+          ON e.tenant_id = r.tenant_id
           AND e.rule_id = r.id
-        WHERE v.tenant_id = ? AND v.policy_set_id = ?`,
+        WHERE v.tenant_id = ? AND v.policy_set_id = ?
+        ORDER BY v.id, r.priority ASC, r.created_at ASC, e.display_order ASC`,
+      [tenantId, policySetId]
+    );
+    const transformRows = await this.adapter.query<MappingPolicyTransformSummaryRow>(
+      `SELECT v.id AS policy_version_id,
+              r.id AS rule_id,
+              t.id AS transform_id,
+              t.edge_id,
+              t.step_order,
+              t.operation,
+              t.parameters_json
+         FROM mapping_policy_versions v
+         JOIN mapping_rules r
+           ON r.tenant_id = v.tenant_id
+          AND r.policy_version_id = v.id
+         JOIN mapping_transform_steps t
+           ON t.tenant_id = r.tenant_id
+          AND t.rule_id = r.id
+        WHERE v.tenant_id = ? AND v.policy_set_id = ?
+        ORDER BY v.id, r.priority ASC, t.step_order ASC`,
       [tenantId, policySetId]
     );
     const summariesByVersion = new Map<
@@ -2745,6 +2980,31 @@ export class IdentityMappingControlPlaneRepository {
         outbound: boolean;
         sourceProfileIds: Set<string>;
         destinationProfileIds: Set<string>;
+        rules: Map<
+          string,
+          {
+            id: string;
+            ruleKey: string;
+            ruleKind: string;
+            action: string;
+            priority: number;
+            metadata: Record<string, unknown>;
+            edges: Array<{
+              id: string;
+              sourceRef: Record<string, unknown>;
+              targetRef: Record<string, unknown>;
+              edgeKind: string;
+              displayOrder: number;
+            }>;
+            transforms: Array<{
+              id: string;
+              edgeId: string | null;
+              stepOrder: number;
+              operation: string;
+              parameters: Record<string, unknown>;
+            }>;
+          }
+        >;
       }
     >();
     for (const row of ruleRows) {
@@ -2754,6 +3014,7 @@ export class IdentityMappingControlPlaneRepository {
         outbound: false,
         sourceProfileIds: new Set<string>(),
         destinationProfileIds: new Set<string>(),
+        rules: new Map(),
       };
       if (row.rule_kind.includes('inbound')) summary.inbound = true;
       if (row.rule_kind.includes('outbound') || row.rule_kind.includes('release')) {
@@ -2770,7 +3031,39 @@ export class IdentityMappingControlPlaneRepository {
           summary.destinationProfileIds.add(profileId);
         }
       }
+      const rule = summary.rules.get(row.rule_id) ?? {
+        id: row.rule_id,
+        ruleKey: row.rule_key,
+        ruleKind: row.rule_kind,
+        action: row.action,
+        priority: row.priority,
+        metadata: parseJsonObject(row.metadata_json ?? '{}', {}),
+        edges: [],
+        transforms: [],
+      };
+      if (row.edge_id && row.source_ref_json && row.target_ref_json) {
+        rule.edges.push({
+          id: row.edge_id,
+          sourceRef: parseJsonObject(row.source_ref_json, {}),
+          targetRef: parseJsonObject(row.target_ref_json, {}),
+          edgeKind: row.edge_kind ?? 'direct',
+          displayOrder: row.display_order ?? 0,
+        });
+      }
+      summary.rules.set(row.rule_id, rule);
       summariesByVersion.set(row.policy_version_id, summary);
+    }
+    for (const row of transformRows) {
+      const summary = summariesByVersion.get(row.policy_version_id);
+      const rule = summary?.rules.get(row.rule_id);
+      if (!summary || !rule) continue;
+      rule.transforms.push({
+        id: row.transform_id,
+        edgeId: row.edge_id,
+        stepOrder: row.step_order,
+        operation: row.operation,
+        parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
+      });
     }
     return rows.map((row) => ({
       id: row.id,
@@ -2790,6 +3083,7 @@ export class IdentityMappingControlPlaneRepository {
       },
       sourceProfileIds: [...(summariesByVersion.get(row.id)?.sourceProfileIds ?? [])],
       destinationProfileIds: [...(summariesByVersion.get(row.id)?.destinationProfileIds ?? [])],
+      rules: [...(summariesByVersion.get(row.id)?.rules.values() ?? [])],
       latestSnapshot: row.snapshot_id
         ? {
             id: row.snapshot_id,
@@ -3057,6 +3351,37 @@ export class IdentityMappingControlPlaneRepository {
       lifecycleState: 'active',
       activatedAt: now,
       holderId,
+    };
+  }
+
+  async deactivatePolicyVersion(tenantId: string, policySetId: string, policyVersionId: string) {
+    const now = this.now();
+    await this.adapter.transaction(async (tx) => {
+      await tx.execute(
+        `UPDATE mapping_policy_activations
+            SET lifecycle_state = ?, active_until = ?, updated_at = ?
+          WHERE tenant_id = ? AND policy_set_id = ? AND policy_version_id = ? AND lifecycle_state = ?`,
+        ['retired', now, now, tenantId, policySetId, policyVersionId, 'active']
+      );
+      await tx.execute(
+        `UPDATE compiled_mapping_snapshots
+            SET lifecycle_state = ?, activated_at = ?
+          WHERE tenant_id = ? AND policy_version_id = ? AND lifecycle_state = ?`,
+        ['retired', now, tenantId, policyVersionId, 'active']
+      );
+      await tx.execute(
+        `UPDATE mapping_policy_versions
+            SET lifecycle_state = ?, updated_at = ?
+          WHERE tenant_id = ? AND policy_set_id = ? AND id = ? AND lifecycle_state = ?`,
+        ['published', now, tenantId, policySetId, policyVersionId, 'active']
+      );
+    });
+    return {
+      id: policyVersionId,
+      tenantId,
+      policySetId,
+      lifecycleState: 'published',
+      deactivatedAt: now,
     };
   }
 
@@ -5570,6 +5895,25 @@ export class IdentityMappingControlPlaneRepository {
   }
 }
 
+function catalogEntryValidation(entry: FieldCatalogEntry): Record<string, unknown> {
+  const input = entry as FieldCatalogEntry & {
+    allowedValues?: unknown;
+    valueMultiplicity?: unknown;
+    nullable?: unknown;
+    required?: unknown;
+  };
+  return {
+    ...(parseStringArray(input.allowedValues).length > 0
+      ? { allowedValues: parseStringArray(input.allowedValues) }
+      : {}),
+    ...(input.valueMultiplicity === 'single' || input.valueMultiplicity === 'multi'
+      ? { valueMultiplicity: input.valueMultiplicity }
+      : {}),
+    ...(typeof input.nullable === 'boolean' ? { nullable: input.nullable } : {}),
+    ...(typeof input.required === 'boolean' ? { required: input.required } : {}),
+  };
+}
+
 export async function adminIdentityMappingCatalogsListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     catalogs: await repository.listCatalogs(tenantId),
@@ -5717,29 +6061,29 @@ export async function adminIdentityMappingDestinationProfileDeleteHandler(c: Adm
   );
 }
 
-export async function adminIdentityMappingOidcCustomScopesListHandler(c: AdminContext) {
+export async function adminIdentityMappingAttributeGroupsListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
-    customScopes: await repository.listOidcCustomScopes(tenantId),
+    attributeGroups: await repository.listAttributeGroups(tenantId),
   }));
 }
 
-export async function adminIdentityMappingOidcCustomScopeCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'oidc-custom-scope.create', async (repository, tenantId, body) => {
+export async function adminIdentityMappingAttributeGroupCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'attribute-group.create', async (repository, tenantId, body) => {
     assertPlatformOwnerScopeAllowed(c, body);
-    return repository.createOidcCustomScope(tenantId, body as CreateOidcCustomScopeRequest);
+    return repository.createAttributeGroup(tenantId, body as CreateAttributeGroupRequest);
   });
 }
 
-export async function adminIdentityMappingOidcCustomClaimsListHandler(c: AdminContext) {
+export async function adminIdentityMappingAttributeFieldsListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
-    customClaims: await repository.listOidcCustomClaims(tenantId),
+    attributeFields: await repository.listAttributeFields(tenantId),
   }));
 }
 
-export async function adminIdentityMappingOidcCustomClaimCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'oidc-custom-claim.create', async (repository, tenantId, body) => {
+export async function adminIdentityMappingAttributeFieldCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'attribute-field.create', async (repository, tenantId, body) => {
     assertPlatformOwnerScopeAllowed(c, body);
-    return repository.createOidcCustomClaim(tenantId, body as CreateOidcCustomClaimRequest);
+    return repository.createAttributeField(tenantId, body as CreateAttributeFieldRequest);
   });
 }
 
@@ -5770,6 +6114,12 @@ export async function adminIdentityMappingPolicyVersionsListHandler(c: AdminCont
 export async function adminIdentityMappingPolicyCreateHandler(c: AdminContext) {
   return handleMutation(c, 'policy.create', async (repository, tenantId, body) =>
     repository.createPolicySet(tenantId, body as CreatePolicySetRequest)
+  );
+}
+
+export async function adminIdentityMappingPolicyDeleteHandler(c: AdminContext) {
+  return handleMutation(c, 'policy.delete', async (repository, tenantId) =>
+    repository.deletePolicySet(tenantId, requiredParam(c, 'policySetId'))
   );
 }
 
@@ -5811,6 +6161,16 @@ export async function adminIdentityMappingPolicyVersionActivateHandler(c: AdminC
       requiredParam(c, 'policySetId'),
       requiredParam(c, 'policyVersionId'),
       body as ActivatePolicyRequest
+    )
+  );
+}
+
+export async function adminIdentityMappingPolicyVersionDeactivateHandler(c: AdminContext) {
+  return handleMutation(c, 'policy.version.deactivate', async (repository, tenantId) =>
+    repository.deactivatePolicyVersion(
+      tenantId,
+      requiredParam(c, 'policySetId'),
+      requiredParam(c, 'policyVersionId')
     )
   );
 }
@@ -6297,10 +6657,22 @@ function validateOidcClaimName(value: string): void {
   }
 }
 
+function validateAttributeProtocol(value: string): void {
+  if (!['oidc', 'saml', 'vc'].includes(value)) {
+    throw badRequest('protocol must be oidc, saml, or vc');
+  }
+}
+
+function validateAttributeKey(value: string, fieldName: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_:.~-]{0,127}$/.test(value)) {
+    throw badRequest(`${fieldName} must be a valid attribute key`);
+  }
+}
+
 function normalizeOidcSurfaces(value: unknown[]): string[] {
   const surfaces = value.map(String).filter((surface) => OIDC_SURFACES.has(surface));
   if (surfaces.length === 0) {
-    throw badRequest('allowedSurfaces must include id_token or userinfo');
+    throw badRequest('surfaces must include id_token or userinfo');
   }
   return Array.from(new Set(surfaces)).sort();
 }
@@ -6308,11 +6680,16 @@ function normalizeOidcSurfaces(value: unknown[]): string[] {
 function validateDestinationProfileSchema(
   destinationType: string,
   schema: Record<string, unknown>,
-  customScopes: Array<{ scopeKey: string; allowedClaims: string[] }>
+  attributeGroups: Array<{
+    protocol: string;
+    groupType: string;
+    groupKey: string;
+    fieldKeys: string[];
+  }>
 ) {
   switch (destinationType) {
     case 'oidc':
-      return validateOidcDestinationProfileSchema(schema, customScopes);
+      return validateOidcDestinationProfileSchema(schema, attributeGroups);
     case 'csv':
       return validateCsvDestinationProfileSchema(schema);
     case 'saml':
@@ -6324,7 +6701,12 @@ function validateDestinationProfileSchema(
 
 function validateOidcDestinationProfileSchema(
   schema: Record<string, unknown>,
-  customScopes: Array<{ scopeKey: string; allowedClaims: string[] }>
+  attributeGroups: Array<{
+    protocol: string;
+    groupType: string;
+    groupKey: string;
+    fieldKeys: string[];
+  }>
 ) {
   const claims = Array.isArray(schema.claims)
     ? schema.claims.filter(isRecord)
@@ -6337,8 +6719,10 @@ function validateOidcDestinationProfileSchema(
   }
 
   const claimNames = new Set<string>();
-  const customScopeClaims = new Map(
-    customScopes.map((scope) => [scope.scopeKey, scope.allowedClaims])
+  const attributeGroupFields = new Map(
+    attributeGroups
+      .filter((group) => group.protocol === 'oidc' && group.groupType === 'scope')
+      .map((group) => [group.groupKey, group.fieldKeys])
   );
   let piiClaimCount = 0;
   let regulatedClaimCount = 0;
@@ -6362,6 +6746,7 @@ function validateOidcDestinationProfileSchema(
     if (OIDC_RESERVED_NON_PROFILE_CLAIMS.has(claimName)) {
       errors.push(`${claimName} is reserved by the OIDC token envelope`);
     }
+    validateFieldConstraintDefinition(claim, `claim ${claimName}`, errors);
     const surfaces = Array.isArray(claim.surfaces) ? claim.surfaces.map(String) : [];
     if (surfaces.length === 0 || surfaces.some((surface) => !OIDC_SURFACES.has(surface))) {
       errors.push(`${claimName} must target id_token or userinfo`);
@@ -6370,8 +6755,8 @@ function validateOidcDestinationProfileSchema(
       ? claim.requiredScopes.map(String).filter(Boolean)
       : [];
     for (const scope of requiredScopes) {
-      if (!OIDC_STANDARD_SCOPES.has(scope) && !customScopeClaims.has(scope)) {
-        warnings.push(`${claimName} references unknown custom scope ${scope}`);
+      if (!OIDC_STANDARD_SCOPES.has(scope) && !attributeGroupFields.has(scope)) {
+        warnings.push(`${claimName} references unknown attribute group ${scope}`);
       }
     }
     const classification = String(claim.classification ?? 'internal');
@@ -6384,7 +6769,7 @@ function validateOidcDestinationProfileSchema(
       blockingWarningCount += 1;
       warnings.push(`${claimName} releases sensitive data without required scopes`);
     }
-    if (isOverReleasedOidcClaim(claimName, requiredScopes, customScopeClaims)) {
+    if (isOverReleasedOidcClaim(claimName, requiredScopes, attributeGroupFields)) {
       overReleaseWarningCount += 1;
       warnings.push(`${claimName} is not covered by its configured scopes`);
     }
@@ -6477,6 +6862,7 @@ function validateCsvDestinationProfileSchema(schema: Record<string, unknown>) {
     }
     if (seenNames.has(columnName)) errors.push(`${columnName} appears more than once`);
     seenNames.add(columnName);
+    validateFieldConstraintDefinition(column, `column ${columnName}`, errors);
     const classification = String(column.classification ?? 'internal');
     if (classification === 'pii') piiColumnCount += 1;
     if (classification === 'regulated') regulatedColumnCount += 1;
@@ -6532,6 +6918,7 @@ function validateSamlDestinationProfileSchema(schema: Record<string, unknown>) {
     }
     if (seenNames.has(name)) errors.push(`${name} appears more than once`);
     seenNames.add(name);
+    validateFieldConstraintDefinition(attribute, `SAML attribute ${name}`, errors);
     const classification = String(attribute.classification ?? 'internal');
     if (classification === 'pii') piiAttributeCount += 1;
     if (classification === 'regulated') regulatedAttributeCount += 1;
@@ -6648,6 +7035,56 @@ function assertNoSourceProfileRawSamples(value: unknown, path: string): void {
       throw badRequest(`${path}.${key} is not allowed in source profile schema`);
     }
     assertNoSourceProfileRawSamples(item, `${path}.${key}`);
+  }
+}
+
+function assertProfileFieldConstraints(value: unknown, path: string): void {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertProfileFieldConstraints(item, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+  validateFieldConstraintDefinition(value, path);
+  for (const [key, item] of Object.entries(value)) {
+    assertProfileFieldConstraints(item, `${path}.${key}`);
+  }
+}
+
+function validateFieldConstraintDefinition(
+  definition: Record<string, unknown>,
+  path: string,
+  errors?: string[]
+): void {
+  const report = (message: string) => {
+    if (errors) {
+      errors.push(message);
+      return;
+    }
+    throw badRequest(message);
+  };
+
+  if (definition.allowedValues !== undefined) {
+    if (!Array.isArray(definition.allowedValues)) {
+      report(`${path}.allowedValues must be an array of strings`);
+    }
+  }
+  if (
+    definition.valueMultiplicity !== undefined &&
+    definition.valueMultiplicity !== 'single' &&
+    definition.valueMultiplicity !== 'multi'
+  ) {
+    report(`${path}.valueMultiplicity must be single or multi`);
+  }
+  if (definition.nullable !== undefined && typeof definition.nullable !== 'boolean') {
+    report(`${path}.nullable must be boolean`);
+  }
+  if (definition.required !== undefined && typeof definition.required !== 'boolean') {
+    report(`${path}.required must be boolean`);
   }
 }
 
@@ -6947,6 +7384,20 @@ function parseJsonArray(value: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      value
+        .map(String)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function parseJsonUnknownArray(value: string | null): unknown[] {

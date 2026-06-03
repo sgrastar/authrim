@@ -30,6 +30,10 @@ export interface MappingNode {
 	uiGroupOrder?: number;
 	uiFieldOrder?: number;
 	examples?: unknown[];
+	note?: string | null;
+	allowedValues?: string[];
+	valueMultiplicity?: 'single' | 'multi' | null;
+	nullable?: boolean | null;
 	inputCardinality?: 'one' | 'many';
 	locked?: boolean;
 	privacy?: 'PII' | 'non-PII' | 'Other';

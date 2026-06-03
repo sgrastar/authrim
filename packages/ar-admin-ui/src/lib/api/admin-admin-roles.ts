@@ -631,6 +631,14 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 				key: 'admin:saml_providers:signing:retire_backup',
 				description: 'Retire backup SAML signing certificate'
 			},
+			{
+				key: 'admin:saml_providers:signing:dr_bundle:export',
+				description: 'Export encrypted SAML signing DR bundle'
+			},
+			{
+				key: 'admin:saml_providers:signing:dr_bundle:import',
+				description: 'Import encrypted SAML signing DR bundle'
+			},
 			{ key: 'admin:saml_providers:*', description: 'Full SAML provider management' },
 			{ key: 'admin:saml_attribute_presets:read', description: 'View SAML attribute presets' }
 		]

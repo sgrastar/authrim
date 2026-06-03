@@ -864,6 +864,14 @@ adminRolesRouter.get('/permissions/list', async (c) => {
       description: 'Retire backup SAML signing certificate',
     },
     {
+      key: ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_DR_BUNDLE_EXPORT,
+      description: 'Export encrypted SAML signing DR bundle',
+    },
+    {
+      key: ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_DR_BUNDLE_IMPORT,
+      description: 'Import encrypted SAML signing DR bundle',
+    },
+    {
       key: ADMIN_PERMISSIONS.SAML_ATTRIBUTE_PRESETS_READ,
       description: 'View SAML attribute presets',
     },

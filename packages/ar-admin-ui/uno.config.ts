@@ -188,6 +188,7 @@ export default defineConfig({
 		'i-ph-sun',
 		'i-ph-bell',
 		'i-ph-list',
+		'i-ph-folder',
 		'i-ph-magnifying-glass',
 		'i-ph-plus',
 		'i-ph-trending-up',

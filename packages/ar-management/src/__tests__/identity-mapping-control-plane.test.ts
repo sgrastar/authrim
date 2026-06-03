@@ -8,9 +8,9 @@ import type {
   TransactionContext,
 } from '@authrim/ar-lib-core';
 import {
+  adminIdentityMappingAttributeFieldCreateHandler,
+  adminIdentityMappingAttributeGroupCreateHandler,
   adminIdentityMappingDestinationProfileCreateHandler,
-  adminIdentityMappingOidcCustomClaimCreateHandler,
-  adminIdentityMappingOidcCustomScopeCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
   adminIdentityMappingPoliciesListHandler,
   adminIdentityMappingPolicyCreateHandler,
@@ -87,6 +87,8 @@ const catalogEntry = {
   uiGroupOrder: 20,
   uiFieldOrder: 10,
   examples: ['john@example.com'],
+  note: 'Primary verified email address.',
+  required: true,
 };
 
 describe('IdentityMappingControlPlaneRepository catalog operations', () => {
@@ -118,7 +120,15 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       expect.stringContaining('INSERT INTO custom_field_catalog_entries'),
     ]);
     expect(adapter.executes[2].params).toEqual(
-      expect.arrayContaining(['contact', 'Contact', 20, 10, '["john@example.com"]'])
+      expect.arrayContaining([
+        'contact',
+        'Contact',
+        20,
+        10,
+        '["john@example.com"]',
+        'Primary verified email address.',
+        '{"required":true}',
+      ])
     );
   });
 
@@ -173,6 +183,9 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
           ui_group_order: 20,
           ui_field_order: 10,
           examples_json: '["john@example.com"]',
+          note: 'Primary verified email address.',
+          validation_json:
+            '{"allowedValues":["student","faculty"],"valueMultiplicity":"multi","nullable":false,"required":true}',
         },
       ],
     });
@@ -199,10 +212,84 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
             uiGroupOrder: 20,
             uiFieldOrder: 10,
             examples: ['john@example.com'],
+            note: 'Primary verified email address.',
+            allowedValues: ['student', 'faculty'],
+            valueMultiplicity: 'multi',
+            nullable: false,
+            required: true,
           },
         ],
       }),
     ]);
+  });
+
+  it('deletes inactive policy sets with their control-plane children', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'mapping_policy_1',
+          tenant_id: 'tenant_a',
+          policy_key: 'library',
+          display_name: 'Library policy',
+          description: null,
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          lifecycle_state: 'draft',
+          created_at: 1000,
+          updated_at: 1000,
+        },
+        null,
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const result = await repository.deletePolicySet('tenant_a', 'mapping_policy_1');
+
+    expect(result).toEqual({
+      id: 'mapping_policy_1',
+      tenantId: 'tenant_a',
+      deleted: true,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('DELETE FROM mapping_transform_steps'),
+      expect.stringContaining('DELETE FROM mapping_rule_edges'),
+      expect.stringContaining('DELETE FROM mapping_validation_rules'),
+      expect.stringContaining('DELETE FROM mapping_release_rules'),
+      expect.stringContaining('DELETE FROM mapping_conflict_rules'),
+      expect.stringContaining('DELETE FROM dependency_graph_snapshots'),
+      expect.stringContaining('DELETE FROM compiled_mapping_snapshots'),
+      expect.stringContaining('DELETE FROM mapping_rules'),
+      expect.stringContaining('DELETE FROM mapping_policy_activations'),
+      expect.stringContaining('DELETE FROM mapping_policy_versions'),
+      expect.stringContaining('DELETE FROM mapping_policy_sets'),
+    ]);
+  });
+
+  it('rejects deleting active policy sets', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'mapping_policy_1',
+          tenant_id: 'tenant_a',
+          policy_key: 'library',
+          display_name: 'Library policy',
+          description: null,
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          lifecycle_state: 'active',
+          created_at: 1000,
+          updated_at: 1000,
+        },
+        { id: 'mapping_activation_1' },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(repository.deletePolicySet('tenant_a', 'mapping_policy_1')).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 });
 
@@ -472,18 +559,20 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository destination profiles', () => {
-  it('creates OIDC custom registries and validates destination profile release contracts', async () => {
+  it('creates OIDC attribute registries and validates destination profile release contracts', async () => {
     const adapter = createAdapter({
       queryRows: [
         {
-          id: 'scope_library',
+          id: 'attribute_group_library',
           tenant_id: 'tenant_a',
           owner_scope_type: 'tenant',
           owner_scope_id: null,
-          scope_key: 'library',
+          protocol: 'oidc',
+          group_type: 'scope',
+          group_key: 'library',
           display_name: 'Library',
           description: null,
-          allowed_claims_json: '["library_card"]',
+          field_keys_json: '["library_card"]',
           lifecycle_state: 'active',
           created_at: 1000,
           updated_at: 1000,
@@ -506,16 +595,19 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    await repository.createOidcCustomScope('tenant_a', {
-      scopeKey: 'library',
+    await repository.createAttributeGroup('tenant_a', {
+      protocol: 'oidc',
+      groupType: 'scope',
+      groupKey: 'library',
       displayName: 'Library',
-      allowedClaims: ['library_card'],
+      fieldKeys: ['library_card'],
     });
-    await repository.createOidcCustomClaim('tenant_a', {
-      claimName: 'library_card',
+    await repository.createAttributeField('tenant_a', {
+      protocol: 'oidc',
+      fieldKey: 'library_card',
       displayName: 'Library card',
       classification: 'pii',
-      allowedSurfaces: ['userinfo'],
+      surfaces: ['userinfo'],
     });
     const created = await repository.createDestinationProfile('tenant_a', {
       destinationType: 'oidc',
@@ -557,8 +649,8 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     await repository.activateDestinationProfileVersion('tenant_a', created.id, created.version.id);
 
     expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO oidc_custom_scope_registry'),
-      expect.stringContaining('INSERT INTO oidc_custom_claim_registry'),
+      expect.stringContaining('INSERT INTO attribute_group_registry'),
+      expect.stringContaining('INSERT INTO attribute_field_registry'),
       expect.stringContaining('INSERT INTO destination_profiles'),
       expect.stringContaining('INSERT INTO destination_profile_versions'),
       expect.stringContaining('UPDATE destination_profile_versions'),
@@ -592,6 +684,36 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
               classification: 'pii',
               surfaces: ['userinfo'],
               requiredScopes: ['email'],
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+
+  it('rejects invalid destination field value constraints', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'oidc',
+        profileKey: 'bad_value_constraints',
+        displayName: 'Bad value constraints',
+        schema: {
+          destinationType: 'oidc',
+          claims: [
+            {
+              claimName: 'sub',
+              classification: 'internal',
+              surfaces: ['id_token'],
+              requiredScopes: ['openid'],
+              allowedValues: ['active'],
+              valueMultiplicity: 'many',
+              nullable: false,
             },
           ],
         },
@@ -964,15 +1086,42 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         [
           {
             policy_version_id: 'policy_version_1',
+            rule_id: 'rule_1',
+            rule_key: 'email-inbound',
             rule_kind: 'inbound_mapping',
+            action: 'map',
+            priority: 0,
+            metadata_json: JSON.stringify({ source: 'test' }),
+            edge_id: 'edge_1',
             source_ref_json: JSON.stringify({ profileId: 'source-profile-workforce' }),
             target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            edge_kind: 'direct',
+            display_order: 0,
           },
           {
             policy_version_id: 'policy_version_1',
+            rule_id: 'rule_2',
+            rule_key: 'email-outbound',
             rule_kind: 'outbound_release',
+            action: 'map',
+            priority: 0,
+            metadata_json: JSON.stringify({ source: 'test' }),
+            edge_id: 'edge_2',
             source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
             target_ref_json: JSON.stringify({ profileId: 'destination-profile-oidc' }),
+            edge_kind: 'transform_input',
+            display_order: 0,
+          },
+        ],
+        [
+          {
+            policy_version_id: 'policy_version_1',
+            rule_id: 'rule_2',
+            transform_id: 'transform_1',
+            edge_id: 'edge_2',
+            step_order: 0,
+            operation: 'trim',
+            parameters_json: JSON.stringify({ mode: 'whitespace' }),
           },
         ],
       ],
@@ -990,6 +1139,37 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         directions: { inbound: true, outbound: true },
         sourceProfileIds: ['source-profile-workforce'],
         destinationProfileIds: ['destination-profile-oidc'],
+        rules: [
+          expect.objectContaining({
+            id: 'rule_1',
+            ruleKind: 'inbound_mapping',
+            edges: [
+              expect.objectContaining({
+                id: 'edge_1',
+                sourceRef: { profileId: 'source-profile-workforce' },
+                targetRef: { nodeId: 'canonical-email' },
+              }),
+            ],
+            transforms: [],
+          }),
+          expect.objectContaining({
+            id: 'rule_2',
+            ruleKind: 'outbound_release',
+            edges: [
+              expect.objectContaining({
+                id: 'edge_2',
+                edgeKind: 'transform_input',
+              }),
+            ],
+            transforms: [
+              expect.objectContaining({
+                id: 'transform_1',
+                operation: 'trim',
+                parameters: { mode: 'whitespace' },
+              }),
+            ],
+          }),
+        ],
         latestSnapshot: expect.objectContaining({
           id: 'snapshot_1',
           catalogVersionId: 'catalog_version_1',
@@ -1081,6 +1261,30 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       code: 'conflict',
     });
     expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('deactivates an active mapping policy version', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const result = await repository.deactivatePolicyVersion(
+      'tenant_a',
+      'policy_1',
+      'policy_version_1'
+    );
+
+    expect(result).toMatchObject({
+      id: 'policy_version_1',
+      tenantId: 'tenant_a',
+      policySetId: 'policy_1',
+      lifecycleState: 'published',
+      deactivatedAt: 1000,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('UPDATE mapping_policy_activations'),
+      expect.stringContaining('UPDATE compiled_mapping_snapshots'),
+      expect.stringContaining('UPDATE mapping_policy_versions'),
+    ]);
   });
 
   it('prevents idempotency-key reuse with a different request hash', async () => {
@@ -2632,7 +2836,7 @@ describe('identity mapping control plane Admin API handlers', () => {
     );
   });
 
-  it('rejects tenant admins creating platform-scoped OIDC custom registries', async () => {
+  it('rejects tenant admins creating platform-scoped attribute registries', async () => {
     const adapter = createAdapter({});
     const app = new Hono<{ Bindings: Env }>();
     app.use('*', async (c, next) => {
@@ -2644,16 +2848,16 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.post(
-      '/api/admin/identity-mapping/oidc/custom-scopes',
-      adminIdentityMappingOidcCustomScopeCreateHandler
+      '/api/admin/identity-mapping/attribute-groups',
+      adminIdentityMappingAttributeGroupCreateHandler
     );
     app.post(
-      '/api/admin/identity-mapping/oidc/custom-claims',
-      adminIdentityMappingOidcCustomClaimCreateHandler
+      '/api/admin/identity-mapping/attribute-fields',
+      adminIdentityMappingAttributeFieldCreateHandler
     );
 
-    const scopeResponse = await app.request(
-      '/api/admin/identity-mapping/oidc/custom-scopes',
+    const groupResponse = await app.request(
+      '/api/admin/identity-mapping/attribute-groups',
       {
         method: 'POST',
         headers: {
@@ -2663,15 +2867,17 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
         body: JSON.stringify({
           ownerScopeType: 'platform',
-          scopeKey: 'library',
+          protocol: 'oidc',
+          groupType: 'scope',
+          groupKey: 'library',
           displayName: 'Library',
-          allowedClaims: ['library_card'],
+          fieldKeys: ['library_card'],
         }),
       },
       { DB_ADMIN: adapter } as unknown as Env
     );
-    const claimResponse = await app.request(
-      '/api/admin/identity-mapping/oidc/custom-claims',
+    const fieldResponse = await app.request(
+      '/api/admin/identity-mapping/attribute-fields',
       {
         method: 'POST',
         headers: {
@@ -2681,20 +2887,21 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
         body: JSON.stringify({
           ownerScopeType: 'platform',
-          claimName: 'library_card',
+          protocol: 'oidc',
+          fieldKey: 'library_card',
           displayName: 'Library card',
           classification: 'pii',
-          allowedSurfaces: ['userinfo'],
+          surfaces: ['userinfo'],
         }),
       },
       { DB_ADMIN: adapter } as unknown as Env
     );
 
-    expect(scopeResponse.status).toBe(403);
-    expect(claimResponse.status).toBe(403);
+    expect(groupResponse.status).toBe(403);
+    expect(fieldResponse.status).toBe(403);
     const executedSql = adapter.executes.map((item) => item.sql).join('\n');
-    expect(executedSql).not.toContain('INSERT INTO oidc_custom_scope_registry');
-    expect(executedSql).not.toContain('INSERT INTO oidc_custom_claim_registry');
+    expect(executedSql).not.toContain('INSERT INTO attribute_group_registry');
+    expect(executedSql).not.toContain('INSERT INTO attribute_field_registry');
   });
 
   it('lists review tasks through the Admin API response shape', async () => {

@@ -93,8 +93,7 @@
 			parent: { href: '/admin/identity-mapping', icon: 'i-ph-graph', label: 'Identity Mapping' },
 			children: [
 				{ href: '/admin/identity-mapping/profiles', label: 'Source & Destination' },
-				{ href: '/admin/identity-mapping/edit', label: 'Mapping Rules' },
-				{ href: '/admin/identity-mapping/operations', label: 'Activation & Rollback' },
+				{ href: '/admin/identity-mapping/mapping-policies', label: 'Mapping Policies' },
 				{ href: '/admin/identity-mapping/resolution-center', label: 'Resolution Center' }
 			]
 		},

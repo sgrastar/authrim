@@ -29,12 +29,40 @@ export interface IdentityMappingPolicyVersionSummary {
 	};
 	sourceProfileIds?: string[];
 	destinationProfileIds?: string[];
+	rules?: IdentityMappingPolicyVersionRuleSummary[];
 	latestSnapshot?: {
 		id: string;
 		catalogVersionId?: string | null;
 		lifecycleState?: string | null;
 		compiledAt?: number | null;
 	} | null;
+}
+
+export interface IdentityMappingPolicyVersionRuleSummary {
+	id: string;
+	ruleKey: string;
+	ruleKind: string;
+	action: string;
+	priority: number;
+	metadata?: Record<string, unknown>;
+	edges: IdentityMappingPolicyVersionRuleEdgeSummary[];
+	transforms: IdentityMappingPolicyVersionTransformSummary[];
+}
+
+export interface IdentityMappingPolicyVersionRuleEdgeSummary {
+	id: string;
+	sourceRef: Record<string, unknown>;
+	targetRef: Record<string, unknown>;
+	edgeKind: string;
+	displayOrder: number;
+}
+
+export interface IdentityMappingPolicyVersionTransformSummary {
+	id: string;
+	edgeId?: string | null;
+	stepOrder: number;
+	operation: string;
+	parameters: Record<string, unknown>;
 }
 
 export interface IdentityMappingCatalogSummary {
@@ -64,6 +92,11 @@ export interface IdentityMappingCatalogEntrySummary {
 	uiGroupOrder?: number;
 	uiFieldOrder?: number;
 	examples?: unknown[];
+	note?: string | null;
+	allowedValues?: string[];
+	valueMultiplicity?: 'single' | 'multi' | null;
+	nullable?: boolean | null;
+	required?: boolean | null;
 }
 
 export interface IdentityMappingProtocolSchemaSummary {
@@ -107,6 +140,11 @@ export interface IdentityMappingSourceProfileColumn {
 	warnings?: string[];
 	emptyRate?: number;
 	observedNonEmptyRows?: number;
+	examples?: unknown[];
+	note?: string | null;
+	allowedValues?: string[];
+	valueMultiplicity?: 'single' | 'multi' | null;
+	nullable?: boolean | null;
 }
 
 export interface IdentityMappingSourceProfileSchema {
@@ -191,48 +229,56 @@ export interface IdentityMappingDestinationProfileUpdateRequest {
 	releaseImpact?: Record<string, unknown>;
 }
 
-export interface IdentityMappingOidcCustomScope {
+export type IdentityMappingAttributeProtocol = 'oidc' | 'saml' | 'vc';
+
+export interface IdentityMappingAttributeGroup {
 	id: string;
 	tenantId: string;
 	ownerScopeType: IdentityMappingRegistryOwnerScope;
 	ownerScopeId?: string | null;
-	scopeKey: string;
+	protocol: IdentityMappingAttributeProtocol;
+	groupType: string;
+	groupKey: string;
 	displayName: string;
 	description?: string | null;
-	allowedClaims: string[];
+	fieldKeys: string[];
 	lifecycleState: string;
 }
 
-export interface IdentityMappingOidcCustomScopeCreateRequest {
-	scopeKey: string;
+export interface IdentityMappingAttributeGroupCreateRequest {
+	protocol: IdentityMappingAttributeProtocol;
+	groupType: string;
+	groupKey: string;
 	displayName: string;
 	description?: string | null;
 	ownerScopeType?: IdentityMappingRegistryOwnerScope;
 	ownerScopeId?: string | null;
-	allowedClaims: string[];
+	fieldKeys: string[];
 }
 
-export interface IdentityMappingOidcCustomClaim {
+export interface IdentityMappingAttributeField {
 	id: string;
 	tenantId: string;
 	ownerScopeType: IdentityMappingRegistryOwnerScope;
 	ownerScopeId?: string | null;
-	claimName: string;
+	protocol: IdentityMappingAttributeProtocol;
+	fieldKey: string;
 	displayName: string;
 	valueType: string;
 	classification: string;
-	allowedSurfaces: IdentityMappingOidcSurface[];
+	surfaces: string[];
 	lifecycleState: string;
 }
 
-export interface IdentityMappingOidcCustomClaimCreateRequest {
-	claimName: string;
+export interface IdentityMappingAttributeFieldCreateRequest {
+	protocol: IdentityMappingAttributeProtocol;
+	fieldKey: string;
 	displayName: string;
 	valueType?: string;
 	classification?: string;
 	ownerScopeType?: IdentityMappingRegistryOwnerScope;
 	ownerScopeId?: string | null;
-	allowedSurfaces?: IdentityMappingOidcSurface[];
+	surfaces?: string[];
 }
 
 export interface IdentityMappingCsvParseRequest {
@@ -484,6 +530,17 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to create identity mapping policy');
 	},
 
+	async deletePolicy(policySetId: string): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}`,
+			{
+				method: 'DELETE',
+				headers: mutationHeaders()
+			}
+		);
+		return parseJson(response, 'Failed to delete identity mapping policy');
+	},
+
 	async createPolicyVersion(
 		policySetId: string,
 		request: IdentityMappingPolicyVersionCreateRequest
@@ -567,6 +624,21 @@ export const adminIdentityMappingAPI = {
 			}
 		);
 		return parseJson(response, 'Failed to activate identity mapping policy version');
+	},
+
+	async deactivatePolicyVersion(
+		policySetId: string,
+		policyVersionId: string
+	): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/deactivate`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify({})
+			}
+		);
+		return parseJson(response, 'Failed to deactivate identity mapping policy version');
 	},
 
 	async listCatalogs(): Promise<{ catalogs: IdentityMappingCatalogSummary[] }> {
@@ -762,46 +834,46 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to delete identity mapping destination profile');
 	},
 
-	async listOidcCustomScopes(): Promise<{ customScopes: IdentityMappingOidcCustomScope[] }> {
+	async listAttributeGroups(): Promise<{ attributeGroups: IdentityMappingAttributeGroup[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-scopes`
+			`${API_BASE_URL}/api/admin/identity-mapping/attribute-groups`
 		);
-		return parseJson(response, 'Failed to load OIDC custom scopes');
+		return parseJson(response, 'Failed to load attribute groups');
 	},
 
-	async createOidcCustomScope(
-		request: IdentityMappingOidcCustomScopeCreateRequest
-	): Promise<{ result: IdentityMappingOidcCustomScope }> {
+	async createAttributeGroup(
+		request: IdentityMappingAttributeGroupCreateRequest
+	): Promise<{ result: IdentityMappingAttributeGroup }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-scopes`,
+			`${API_BASE_URL}/api/admin/identity-mapping/attribute-groups`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to create OIDC custom scope');
+		return parseJson(response, 'Failed to create attribute group');
 	},
 
-	async listOidcCustomClaims(): Promise<{ customClaims: IdentityMappingOidcCustomClaim[] }> {
+	async listAttributeFields(): Promise<{ attributeFields: IdentityMappingAttributeField[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-claims`
+			`${API_BASE_URL}/api/admin/identity-mapping/attribute-fields`
 		);
-		return parseJson(response, 'Failed to load OIDC custom claims');
+		return parseJson(response, 'Failed to load attribute fields');
 	},
 
-	async createOidcCustomClaim(
-		request: IdentityMappingOidcCustomClaimCreateRequest
-	): Promise<{ result: IdentityMappingOidcCustomClaim }> {
+	async createAttributeField(
+		request: IdentityMappingAttributeFieldCreateRequest
+	): Promise<{ result: IdentityMappingAttributeField }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/oidc/custom-claims`,
+			`${API_BASE_URL}/api/admin/identity-mapping/attribute-fields`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to create OIDC custom claim');
+		return parseJson(response, 'Failed to create attribute field');
 	},
 
 	async listTemplates(): Promise<{ templates: IdentityMappingTemplateSummary[] }> {

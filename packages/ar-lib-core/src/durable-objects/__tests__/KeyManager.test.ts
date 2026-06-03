@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { exportJWK, exportPKCS8, generateKeyPair } from 'jose';
 import { KeyManager } from '../KeyManager.ts';
 import type { Env } from '../../types/env';
 
@@ -301,6 +302,75 @@ describe('KeyManager Durable Object', () => {
       );
       const activeData = (await activeResponse.json()) as Record<string, unknown>;
       expect(activeData.certificatePEM).toBe(firstCertificate);
+    });
+
+    it('should restore an imported key through the internal import endpoint', async () => {
+      const { publicKey, privateKey } = await generateKeyPair('RS256', {
+        modulusLength: 2048,
+        extractable: true,
+      });
+      const publicJWK = {
+        ...(await exportJWK(publicKey)),
+        kty: 'RSA',
+        kid: 'restored-saml-key',
+        use: 'sig',
+        alg: 'RS256',
+      };
+      const privatePEM = await exportPKCS8(privateKey);
+      const response = await keyManager.fetch(
+        createRequest('/internal/import-key', 'POST', 'test-secret-token', {
+          kid: 'restored-saml-key',
+          publicJWK,
+          privatePEM,
+          certificatePEM: [
+            '-----BEGIN CERTIFICATE-----',
+            'restored-certificate',
+            '-----END CERTIFICATE-----',
+          ].join('\n'),
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const data = (await response.json()) as { key: Record<string, unknown> };
+      expect(data.key.kid).toBe('restored-saml-key');
+      expect(data.key).not.toHaveProperty('privatePEM');
+
+      const activeResponse = await keyManager.fetch(
+        createRequest('/internal/active-with-private', 'GET', 'test-secret-token')
+      );
+      const activeData = (await activeResponse.json()) as {
+        kid: string;
+        privatePEM: string;
+        certificatePEM: string;
+      };
+      expect(activeData.kid).toBe('restored-saml-key');
+      expect(activeData.privatePEM).toBe(privatePEM);
+      expect(activeData.certificatePEM).toContain('restored-certificate');
+    });
+
+    it('should reject imported keys when the public JWK does not match the private key', async () => {
+      const { privateKey } = await generateKeyPair('RS256', {
+        modulusLength: 2048,
+        extractable: true,
+      });
+      const response = await keyManager.fetch(
+        createRequest('/internal/import-key', 'POST', 'test-secret-token', {
+          kid: 'restored-saml-key',
+          publicJWK: {
+            kty: 'RSA',
+            kid: 'restored-saml-key',
+            n: 'mismatched-modulus',
+            e: 'AQAB',
+          },
+          privatePEM: await exportPKCS8(privateKey),
+        })
+      );
+
+      expect(response.status).toBe(500);
+      const activeResponse = await keyManager.fetch(
+        createRequest('/internal/active-with-private', 'GET', 'test-secret-token')
+      );
+      expect(activeResponse.status).toBe(404);
     });
   });
 

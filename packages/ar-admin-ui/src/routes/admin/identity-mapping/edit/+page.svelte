@@ -3,8 +3,10 @@
 </script>
 
 <IdentityMappingPageShell
-	pageTitle="Edit"
-	headTitle="Identity Mapping Edit"
+	pageTitle="Mapping Policy Editor"
+	headTitle="Mapping Policy Editor"
+	backHref="/admin/identity-mapping/mapping-policies"
+	backLabel="Back to Mapping Policies"
 	pageDescription="Edit inbound mappings and outbound release projections against registered source and destination profiles."
 	editorAllowedViewModes={['inbound', 'outbound']}
 	editorInitialViewMode="inbound"

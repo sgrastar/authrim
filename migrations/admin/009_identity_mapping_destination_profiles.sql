@@ -64,51 +64,57 @@ CREATE INDEX IF NOT EXISTS idx_destination_profile_versions_state
 CREATE UNIQUE INDEX IF NOT EXISTS ux_destination_profile_versions_label
   ON destination_profile_versions(tenant_id, profile_id, version_label);
 
--- UIM-SCH-094 oidc_custom_scope_registry
-CREATE TABLE IF NOT EXISTS oidc_custom_scope_registry (
+-- UIM-SCH-094 attribute_group_registry
+CREATE TABLE IF NOT EXISTS attribute_group_registry (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
   owner_scope_type TEXT NOT NULL DEFAULT 'tenant',
   owner_scope_id TEXT,
-  scope_key TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  group_type TEXT NOT NULL,
+  group_key TEXT NOT NULL,
   display_name TEXT NOT NULL,
   description TEXT,
-  allowed_claims_json TEXT NOT NULL,
+  field_keys_json TEXT NOT NULL,
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, owner_scope_type, owner_scope_id, scope_key)
+  UNIQUE (tenant_id, owner_scope_type, owner_scope_id, protocol, group_type, group_key)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_oidc_custom_scope_registry_scope_key
-  ON oidc_custom_scope_registry(
+CREATE UNIQUE INDEX IF NOT EXISTS ux_attribute_group_registry_key
+  ON attribute_group_registry(
     tenant_id,
     owner_scope_type,
     COALESCE(owner_scope_id, ''),
-    scope_key
+    protocol,
+    group_type,
+    group_key
   );
 
--- UIM-SCH-095 oidc_custom_claim_registry
-CREATE TABLE IF NOT EXISTS oidc_custom_claim_registry (
+-- UIM-SCH-095 attribute_field_registry
+CREATE TABLE IF NOT EXISTS attribute_field_registry (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
   owner_scope_type TEXT NOT NULL DEFAULT 'tenant',
   owner_scope_id TEXT,
-  claim_name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  field_key TEXT NOT NULL,
   display_name TEXT NOT NULL,
   value_type TEXT NOT NULL DEFAULT 'string',
   classification TEXT NOT NULL DEFAULT 'internal',
-  allowed_surfaces_json TEXT NOT NULL,
+  surfaces_json TEXT NOT NULL,
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, owner_scope_type, owner_scope_id, claim_name)
+  UNIQUE (tenant_id, owner_scope_type, owner_scope_id, protocol, field_key)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_oidc_custom_claim_registry_claim_name
-  ON oidc_custom_claim_registry(
+CREATE UNIQUE INDEX IF NOT EXISTS ux_attribute_field_registry_key
+  ON attribute_field_registry(
     tenant_id,
     owner_scope_type,
     COALESCE(owner_scope_id, ''),
-    claim_name
+    protocol,
+    field_key
   );
