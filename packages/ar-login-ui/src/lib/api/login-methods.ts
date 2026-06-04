@@ -22,6 +22,12 @@ export interface EmailCodeMethod {
 	steps: string[];
 }
 
+export interface DirectoryPasswordMethod {
+	enabled: boolean;
+	label: string;
+	steps: string[];
+}
+
 export type ExternalProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
 export type ExternalProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
 
@@ -47,6 +53,7 @@ export interface ExternalMethod {
 export interface LoginMethods {
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
+	directoryPassword: DirectoryPasswordMethod;
 	external: ExternalMethod;
 }
 

@@ -41,6 +41,12 @@ interface EmailCodeMethod {
   steps: string[];
 }
 
+interface DirectoryPasswordMethod {
+  enabled: boolean;
+  label: string;
+  steps: string[];
+}
+
 type ExternalLoginProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
 type ExternalLoginStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
 
@@ -65,6 +71,7 @@ interface ExternalLoginMethod {
 interface LoginMethods {
   passkey: PasskeyMethod;
   emailCode: EmailCodeMethod;
+  directoryPassword: DirectoryPasswordMethod;
   external: ExternalLoginMethod;
 }
 
@@ -240,6 +247,8 @@ interface LoginUIKVSettings {
 interface LoginMethodKVSettings {
   'login-methods.cache_ttl'?: number;
   'login-methods.external_providers'?: string | ExternalLoginProviderConfig[];
+  'login-methods.directory_password.enabled'?: boolean | string;
+  'login-methods.directory_password.label'?: string;
 }
 
 interface ExternalLoginProviderConfig {
@@ -632,6 +641,49 @@ async function fetchConfiguredExternalLoginProviders(
   }
 }
 
+interface DirectoryPasswordResolved {
+  enabled: boolean;
+  label: string;
+}
+
+async function resolveDirectoryPasswordMethod(
+  env: Env,
+  tenantId: string
+): Promise<DirectoryPasswordResolved> {
+  const defaults: DirectoryPasswordResolved = {
+    enabled: false,
+    label: 'Organization ID',
+  };
+
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    if (!kvJson) return defaults;
+
+    const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
+    return {
+      enabled: normalizeBoolean(
+        kvSettings['login-methods.directory_password.enabled'],
+        defaults.enabled
+      ),
+      label:
+        truncateString(kvSettings['login-methods.directory_password.label'], 80) ||
+        defaults.label,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return fallback;
+}
+
 function mergeExternalLoginProviders(
   providerGroups: ExternalLoginProvider[][]
 ): ExternalLoginProvider[] {
@@ -717,11 +769,18 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
 
     // Fetch data in parallel
-    const [settings, bridgeProviders, samlProviders, configuredProviders] = await Promise.all([
+    const [
+      settings,
+      bridgeProviders,
+      samlProviders,
+      configuredProviders,
+      directoryPassword,
+    ] = await Promise.all([
       getSystemSettings(env),
       fetchExternalLoginProviders(env),
       fetchSAMLLoginProviders(env, tenantId),
       fetchConfiguredExternalLoginProviders(env, tenantId),
+      resolveDirectoryPasswordMethod(env, tenantId),
     ]);
     const externalProviders = mergeExternalLoginProviders([
       bridgeProviders,
@@ -731,10 +790,11 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
 
     const passkeyEnabled = settings.advanced?.passkeyEnabled !== false;
     const emailCodeEnabled = settings.advanced?.magicLinkEnabled !== false;
+    const directoryPasswordEnabled = directoryPassword.enabled;
     const externalEnabled = externalProviders.length > 0;
 
     // Check if at least one method is available
-    if (!passkeyEnabled && !emailCodeEnabled && !externalEnabled) {
+    if (!passkeyEnabled && !emailCodeEnabled && !directoryPasswordEnabled && !externalEnabled) {
       log.warn('No login method available', {});
       const errorResponse: LoginMethodsErrorResponse = {
         error: {
@@ -754,6 +814,11 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
       emailCode: {
         enabled: emailCodeEnabled,
         steps: emailCodeEnabled ? ['email', 'code'] : [],
+      },
+      directoryPassword: {
+        enabled: directoryPasswordEnabled,
+        label: directoryPassword.label,
+        steps: directoryPasswordEnabled ? ['username', 'password'] : [],
       },
       external: {
         enabled: externalEnabled,

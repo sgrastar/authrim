@@ -11,6 +11,8 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 export interface LoginMethodsSettings {
   'login-methods.cache_ttl': number;
   'login-methods.external_providers': string;
+  'login-methods.directory_password.enabled': boolean;
+  'login-methods.directory_password.label': string;
 }
 
 export const LOGIN_METHODS_SETTINGS_META: Record<keyof LoginMethodsSettings, SettingMeta> = {
@@ -34,6 +36,22 @@ export const LOGIN_METHODS_SETTINGS_META: Record<keyof LoginMethodsSettings, Set
     description: 'JSON array of custom external login providers displayed by Login UI',
     visibility: 'page',
   },
+  'login-methods.directory_password.enabled': {
+    key: 'login-methods.directory_password.enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Directory Password',
+    description: 'Enable organization directory password login via Authrim Wordwarden',
+    visibility: 'admin',
+  },
+  'login-methods.directory_password.label': {
+    key: 'login-methods.directory_password.label',
+    type: 'string',
+    default: 'Organization ID',
+    label: 'Directory Password Label',
+    description: 'Public label shown for directory password login',
+    visibility: 'page',
+  },
 };
 
 export const LOGIN_METHODS_CATEGORY_META: CategoryMeta = {
@@ -46,4 +64,6 @@ export const LOGIN_METHODS_CATEGORY_META: CategoryMeta = {
 export const LOGIN_METHODS_DEFAULTS: LoginMethodsSettings = {
   'login-methods.cache_ttl': 300,
   'login-methods.external_providers': '[]',
+  'login-methods.directory_password.enabled': false,
+  'login-methods.directory_password.label': 'Organization ID',
 };
