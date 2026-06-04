@@ -14,6 +14,7 @@
 		type AssignableAdminRoleScopeType
 	} from '$lib/api/admin-admin-roles';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let admin: AdminUserDetail | null = $state(null);
 	let availableRoles: AdminRole[] = $state([]);
@@ -47,7 +48,7 @@
 
 	async function loadAdmin() {
 		if (!adminId) {
-			error = 'Admin ID is required';
+			error = $LL.admin_admins_id_required();
 			loading = false;
 			return;
 		}
@@ -58,8 +59,7 @@
 		try {
 			admin = await adminAdminsAPI.get(adminId);
 		} catch (err) {
-			console.error('Failed to load admin:', err);
-			error = err instanceof Error ? err.message : 'Failed to load admin user';
+			error = err instanceof Error ? err.message : $LL.admin_admins_detail_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -69,8 +69,8 @@
 		try {
 			const response = await adminAdminRolesAPI.list();
 			availableRoles = response.items;
-		} catch (err) {
-			console.error('Failed to load roles:', err);
+		} catch {
+			// Role assignment controls can still render without the role list.
 		}
 	}
 
@@ -102,7 +102,7 @@
 			await loadAdmin();
 			isEditing = false;
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to update admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_update_failed());
 		} finally {
 			saving = false;
 		}
@@ -111,30 +111,30 @@
 	async function handleDelete() {
 		if (!admin) return;
 		const message = hasPlatformAdminRole(admin)
-			? `Warning: this account has a platform administrator role. Deleting it can lock out platform administration if no other active platform admin remains.\n\nDelete ${admin.email}?`
-			: `Are you sure you want to delete ${admin.email}?`;
+			? $LL.admin_admins_delete_platform_confirm({ email: admin.email })
+			: $LL.admin_admins_delete_confirm({ email: admin.email });
 		if (!confirm(message)) return;
 
 		try {
 			await adminAdminsAPI.delete(admin.id);
 			goto('/admin/admins');
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to delete admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_delete_failed());
 		}
 	}
 
 	async function handleSuspend() {
 		if (!admin) return;
 		const message = hasPlatformAdminRole(admin)
-			? `Warning: this account has a platform administrator role. Suspending it can lock out platform administration if no other active platform admin remains.\n\nSuspend ${admin.email}?`
-			: `Are you sure you want to suspend ${admin.email}?`;
+			? $LL.admin_admins_suspend_platform_confirm({ email: admin.email })
+			: $LL.admin_admins_suspend_confirm({ email: admin.email });
 		if (!confirm(message)) return;
 
 		try {
 			await adminAdminsAPI.suspend(admin.id);
 			await loadAdmin();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to suspend admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_suspend_failed());
 		}
 	}
 
@@ -145,7 +145,7 @@
 			await adminAdminsAPI.activate(admin.id);
 			await loadAdmin();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to activate admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_activate_failed());
 		}
 	}
 
@@ -156,7 +156,7 @@
 			await adminAdminsAPI.unlock(admin.id);
 			await loadAdmin();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to unlock admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_unlock_failed());
 		}
 	}
 
@@ -219,7 +219,7 @@
 			closeRoleDialog();
 			await loadAdmin();
 		} catch (err) {
-			roleError = err instanceof Error ? err.message : 'Failed to assign role';
+			roleError = err instanceof Error ? err.message : $LL.admin_admins_assign_role_failed();
 		} finally {
 			assigningRole = false;
 		}
@@ -244,7 +244,8 @@
 			closeAssignmentEditDialog();
 			await loadAdmin();
 		} catch (err) {
-			assignmentEditError = err instanceof Error ? err.message : 'Failed to update role assignment';
+			assignmentEditError =
+				err instanceof Error ? err.message : $LL.admin_admins_assignment_update_failed();
 		} finally {
 			savingAssignment = false;
 		}
@@ -254,21 +255,24 @@
 		if (!admin) return;
 		const isPlatformAdminRole = role.name === 'super_admin';
 		const message = isPlatformAdminRole
-			? `Warning: "${role.name}" is a platform administrator role. Removing it can lock out platform administration if no other active platform admin remains.\n\nRemove this role from ${admin.email}?`
-			: `Remove role "${role.name}" from ${admin.email}?`;
+			? $LL.admin_admins_remove_platform_role_confirm({
+					role: role.name,
+					email: admin.email
+				})
+			: $LL.admin_admins_remove_role_confirm({ role: role.name, email: admin.email });
 		if (!confirm(message)) return;
 
 		try {
 			await adminAdminsAPI.removeRoleAssignment(admin.id, role.assignment_id);
 			await loadAdmin();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to remove role');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_role_remove_failed());
 		}
 	}
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp).toLocaleString(undefined);
 	}
 
 	function timestampToDateTimeLocal(timestamp: number | null): string {
@@ -279,9 +283,14 @@
 	}
 
 	function formatScope(role: AdminRoleAssignment): string {
-		if (role.scope_type === 'global') return 'Global';
-		if (role.scope_type === 'tenant') return `Tenant: ${role.scope_id || admin?.tenant_id || '-'}`;
-		return `Unsupported scope: ${role.scope_type}${role.scope_id ? `:${role.scope_id}` : ''}`;
+		if (role.scope_type === 'global') return $LL.admin_admins_scope_global();
+		if (role.scope_type === 'tenant')
+			return $LL.admin_admins_scope_tenant_with_id({
+				id: role.scope_id || admin?.tenant_id || '-'
+			});
+		return $LL.admin_admins_scope_unsupported({
+			scope: `${role.scope_type}${role.scope_id ? `:${role.scope_id}` : ''}`
+		});
 	}
 
 	function getStatusBadgeClass(status: string): string {
@@ -297,6 +306,19 @@
 		}
 	}
 
+	function statusLabel(status: string): string {
+		switch (status) {
+			case 'active':
+				return $LL.admin_admins_active();
+			case 'suspended':
+				return $LL.admin_admins_suspended();
+			case 'locked':
+				return $LL.admin_admins_locked();
+			default:
+				return status;
+		}
+	}
+
 	function hasPlatformAdminRole(adminUser: AdminUserDetail): boolean {
 		return adminUser.roles.some((role) => role.name === 'super_admin');
 	}
@@ -308,27 +330,31 @@
 </script>
 
 <svelte:head>
-	<title>{admin?.email || 'Admin User'} - Authrim</title>
+	<title>
+		{$LL.admin_admins_detail_head_title({
+			email: admin?.email || $LL.admin_admins_detail_title_fallback()
+		})}
+	</title>
 </svelte:head>
 
 <div class="page-container">
 	<!-- Breadcrumb -->
 	<nav class="breadcrumb">
-		<a href="/admin/admins">Admin Users</a>
+		<a href="/admin/admins">{$LL.admin_admins_title()}</a>
 		<span>/</span>
-		<span>{admin?.email || 'Loading...'}</span>
+		<span>{admin?.email || $LL.admin_admins_detail_loading_fallback()}</span>
 	</nav>
 
 	{#if loading}
 		<div class="loading-container">
 			<div class="spinner"></div>
-			<p>Loading admin user...</p>
+			<p>{$LL.admin_admins_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="error-container">
 			<p class="error-text">{error}</p>
 			<button class="btn btn-secondary" onclick={() => goto('/admin/admins')}>
-				Back to Admin Users
+				{$LL.admin_admins_back_to_admin_users()}
 			</button>
 		</div>
 	{:else if admin}
@@ -337,23 +363,29 @@
 			<div class="header-content">
 				<h1>{admin.email}</h1>
 				<div class="header-badges">
-					<span class={getStatusBadgeClass(admin.status)}>{admin.status}</span>
+					<span class={getStatusBadgeClass(admin.status)}>{statusLabel(admin.status)}</span>
 					{#if admin.mfa_enabled}
-						<span class="badge badge-info">MFA Enabled</span>
+						<span class="badge badge-info">{$LL.admin_admins_mfa_enabled()}</span>
 					{/if}
 				</div>
 			</div>
 			<div class="header-actions">
 				{#if !isEditing}
-					<button class="btn btn-secondary" onclick={startEdit}>Edit</button>
+					<button class="btn btn-secondary" onclick={startEdit}>{$LL.admin_admins_edit()}</button>
 					{#if admin.status === 'active'}
-						<button class="btn btn-warning" onclick={handleSuspend}>Suspend</button>
+						<button class="btn btn-warning" onclick={handleSuspend}
+							>{$LL.admin_admins_suspend()}</button
+						>
 					{:else if admin.status === 'suspended'}
-						<button class="btn btn-success" onclick={handleActivate}>Activate</button>
+						<button class="btn btn-success" onclick={handleActivate}
+							>{$LL.admin_admins_activate()}</button
+						>
 					{:else if admin.status === 'locked'}
-						<button class="btn btn-primary" onclick={handleUnlock}>Unlock</button>
+						<button class="btn btn-primary" onclick={handleUnlock}
+							>{$LL.admin_admins_unlock()}</button
+						>
 					{/if}
-					<button class="btn btn-danger" onclick={handleDelete}>Delete</button>
+					<button class="btn btn-danger" onclick={handleDelete}>{$LL.admin_admins_delete()}</button>
 				{/if}
 			</div>
 		</div>
@@ -362,58 +394,62 @@
 			<!-- Basic Info Card -->
 			<div class="card">
 				<div class="card-header">
-					<h2>Basic Information</h2>
+					<h2>{$LL.admin_admins_basic_information()}</h2>
 				</div>
 				<div class="card-body">
 					{#if isEditing}
 						<div class="form-group">
-							<label for="email">Email</label>
+							<label for="email">{$LL.admin_admins_email()}</label>
 							<input type="email" id="email" class="input" bind:value={editData.email} />
 						</div>
 						<div class="form-group">
-							<label for="name">Name</label>
+							<label for="name">{$LL.admin_admins_name()}</label>
 							<input type="text" id="name" class="input" bind:value={editData.name} />
 						</div>
 						<div class="form-actions">
 							<button class="btn btn-secondary" onclick={cancelEdit} disabled={saving}>
-								Cancel
+								{$LL.admin_admins_cancel()}
 							</button>
 							<button class="btn btn-primary" onclick={saveEdit} disabled={saving}>
-								{saving ? 'Saving...' : 'Save'}
+								{saving ? $LL.admin_admins_saving() : $LL.admin_admins_save()}
 							</button>
 						</div>
 					{:else}
 						<div class="info-grid">
 							<div class="info-row">
-								<span class="info-label">Email</span>
+								<span class="info-label">{$LL.admin_admins_email()}</span>
 								<span class="info-value">{admin.email}</span>
 							</div>
 							<div class="info-row">
-								<span class="info-label">Name</span>
+								<span class="info-label">{$LL.admin_admins_name()}</span>
 								<span class="info-value">{admin.name || '-'}</span>
 							</div>
 							<div class="info-row">
-								<span class="info-label">Email Verified</span>
-								<span class="info-value">{admin.email_verified ? 'Yes' : 'No'}</span>
+								<span class="info-label">{$LL.admin_admins_email_verified()}</span>
+								<span class="info-value"
+									>{admin.email_verified ? $LL.admin_admins_yes() : $LL.admin_admins_no()}</span
+								>
 							</div>
 							<div class="info-row">
-								<span class="info-label">Status</span>
+								<span class="info-label">{$LL.admin_admins_status()}</span>
 								<span class="info-value">
-									<span class={getStatusBadgeClass(admin.status)}>{admin.status}</span>
+									<span class={getStatusBadgeClass(admin.status)}>{statusLabel(admin.status)}</span>
 								</span>
 							</div>
 							<div class="info-row">
-								<span class="info-label">MFA Enabled</span>
-								<span class="info-value">{admin.mfa_enabled ? 'Yes' : 'No'}</span>
+								<span class="info-label">{$LL.admin_admins_mfa_enabled()}</span>
+								<span class="info-value"
+									>{admin.mfa_enabled ? $LL.admin_admins_yes() : $LL.admin_admins_no()}</span
+								>
 							</div>
 							{#if admin.mfa_method}
 								<div class="info-row">
-									<span class="info-label">MFA Method</span>
+									<span class="info-label">{$LL.admin_admins_mfa_method()}</span>
 									<span class="info-value">{admin.mfa_method}</span>
 								</div>
 							{/if}
 							<div class="info-row">
-								<span class="info-label">Passkeys</span>
+								<span class="info-label">{$LL.admin_admins_passkeys()}</span>
 								<span class="info-value">{admin.passkey_count}</span>
 							</div>
 						</div>
@@ -424,28 +460,28 @@
 			<!-- Login Info Card -->
 			<div class="card">
 				<div class="card-header">
-					<h2>Login Information</h2>
+					<h2>{$LL.admin_admins_login_information()}</h2>
 				</div>
 				<div class="card-body">
 					<div class="info-grid">
 						<div class="info-row">
-							<span class="info-label">Last Login</span>
+							<span class="info-label">{$LL.admin_admins_last_login()}</span>
 							<span class="info-value">{formatDate(admin.last_login_at)}</span>
 						</div>
 						<div class="info-row">
-							<span class="info-label">Last Login IP</span>
+							<span class="info-label">{$LL.admin_admins_last_login_ip()}</span>
 							<span class="info-value">{admin.last_login_ip || '-'}</span>
 						</div>
 						<div class="info-row">
-							<span class="info-label">Failed Login Count</span>
+							<span class="info-label">{$LL.admin_admins_failed_login_count()}</span>
 							<span class="info-value">{admin.failed_login_count}</span>
 						</div>
 						<div class="info-row">
-							<span class="info-label">Created At</span>
+							<span class="info-label">{$LL.admin_admins_created_at()}</span>
 							<span class="info-value">{formatDate(admin.created_at)}</span>
 						</div>
 						<div class="info-row">
-							<span class="info-label">Updated At</span>
+							<span class="info-label">{$LL.admin_admins_updated_at()}</span>
 							<span class="info-value">{formatDate(admin.updated_at)}</span>
 						</div>
 					</div>
@@ -455,12 +491,14 @@
 			<!-- Roles Card -->
 			<div class="card full-width">
 				<div class="card-header">
-					<h2>Assigned Roles</h2>
-					<button class="btn btn-sm btn-primary" onclick={openRoleDialog}>Add Role</button>
+					<h2>{$LL.admin_admins_assigned_roles()}</h2>
+					<button class="btn btn-sm btn-primary" onclick={openRoleDialog}
+						>{$LL.admin_admins_add_role()}</button
+					>
 				</div>
 				<div class="card-body">
 					{#if admin.roles.length === 0}
-						<p class="text-muted">No roles assigned</p>
+						<p class="text-muted">{$LL.admin_admins_no_roles_assigned()}</p>
 					{:else}
 						<div class="roles-list">
 							{#each admin.roles as role (role.id)}
@@ -471,19 +509,27 @@
 									</div>
 									<div class="role-meta">
 										<span class="scope-chip">{formatScope(role)}</span>
-										<span class="text-muted">Assigned: {formatDate(role.assigned_at)}</span>
+										<span class="text-muted"
+											>{$LL.admin_admins_assigned_at({
+												date: formatDate(role.assigned_at)
+											})}</span
+										>
 										{#if role.expires_at}
-											<span class="text-muted">Expires: {formatDate(role.expires_at)}</span>
+											<span class="text-muted"
+												>{$LL.admin_admins_expires_at({
+													date: formatDate(role.expires_at)
+												})}</span
+											>
 										{/if}
 									</div>
 									<button
 										class="btn btn-sm btn-secondary"
 										onclick={() => openAssignmentEditDialog(role)}
 									>
-										Edit
+										{$LL.admin_admins_edit()}
 									</button>
 									<button class="btn btn-sm btn-danger" onclick={() => handleRemoveRole(role)}>
-										Remove
+										{$LL.admin_admins_remove()}
 									</button>
 								</div>
 							{/each}
@@ -496,17 +542,22 @@
 </div>
 
 <!-- Role Assignment Dialog -->
-<Modal open={showRoleDialog} onClose={closeRoleDialog} title="Assign Role" size="md">
+<Modal
+	open={showRoleDialog}
+	onClose={closeRoleDialog}
+	title={$LL.admin_admins_assign_role_title()}
+	size="md"
+>
 	{#if roleError}
 		<div class="alert alert-danger">{roleError}</div>
 	{/if}
 	{#if assignableRoles.length === 0}
-		<p class="text-muted">No available roles to assign</p>
+		<p class="text-muted">{$LL.admin_admins_no_available_roles()}</p>
 	{:else}
 		<div class="form-group">
-			<label for="role">Select Role</label>
+			<label for="role">{$LL.admin_admins_select_role()}</label>
 			<select id="role" class="select" bind:value={selectedRoleId}>
-				<option value="">-- Select a role --</option>
+				<option value="">{$LL.admin_admins_select_role_placeholder()}</option>
 				{#each assignableRoles as role (role.id)}
 					<option value={role.id}>{role.display_name || role.name}</option>
 				{/each}
@@ -514,19 +565,19 @@
 		</div>
 		<div class="form-row">
 			<div class="form-group">
-				<label for="roleScopeType">Scope Type</label>
+				<label for="roleScopeType">{$LL.admin_admins_scope_type()}</label>
 				<select
 					id="roleScopeType"
 					class="select"
 					bind:value={selectedScopeType}
 					onchange={handleNewScopeTypeChange}
 				>
-					<option value="tenant">Tenant</option>
-					<option value="global">Global</option>
+					<option value="tenant">{$LL.admin_admins_scope_tenant()}</option>
+					<option value="global">{$LL.admin_admins_scope_global()}</option>
 				</select>
 			</div>
 			<div class="form-group">
-				<label for="roleScopeId">Scope ID</label>
+				<label for="roleScopeId">{$LL.admin_admins_scope_id()}</label>
 				<input
 					id="roleScopeId"
 					class="input"
@@ -538,7 +589,7 @@
 			</div>
 		</div>
 		<div class="form-group">
-			<label for="roleExpiresAt">Expires At</label>
+			<label for="roleExpiresAt">{$LL.admin_admins_expires_at_label()}</label>
 			<input
 				id="roleExpiresAt"
 				class="input"
@@ -550,14 +601,14 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeRoleDialog} disabled={assigningRole}>
-			Cancel
+			{$LL.admin_admins_cancel()}
 		</button>
 		<button
 			class="btn btn-primary"
 			onclick={handleAssignRole}
 			disabled={assigningRole || !selectedRoleId}
 		>
-			{assigningRole ? 'Assigning...' : 'Assign'}
+			{assigningRole ? $LL.admin_admins_assigning() : $LL.admin_admins_assign()}
 		</button>
 	{/snippet}
 </Modal>
@@ -566,7 +617,7 @@
 <Modal
 	open={showAssignmentEditDialog && !!editingAssignment}
 	onClose={closeAssignmentEditDialog}
-	title="Edit Role Assignment"
+	title={$LL.admin_admins_edit_assignment_title()}
 	size="md"
 >
 	{#if assignmentEditError}
@@ -575,24 +626,24 @@
 	{#if editingAssignment}
 		<div class="form-group">
 			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label>Role</label>
+			<label>{$LL.admin_admins_role()}</label>
 			<div class="readonly-value">{editingAssignment.display_name || editingAssignment.name}</div>
 		</div>
 		<div class="form-row">
 			<div class="form-group">
-				<label for="editScopeType">Scope Type</label>
+				<label for="editScopeType">{$LL.admin_admins_scope_type()}</label>
 				<select
 					id="editScopeType"
 					class="select"
 					bind:value={editScopeType}
 					onchange={handleEditScopeTypeChange}
 				>
-					<option value="tenant">Tenant</option>
-					<option value="global">Global</option>
+					<option value="tenant">{$LL.admin_admins_scope_tenant()}</option>
+					<option value="global">{$LL.admin_admins_scope_global()}</option>
 				</select>
 			</div>
 			<div class="form-group">
-				<label for="editScopeId">Scope ID</label>
+				<label for="editScopeId">{$LL.admin_admins_scope_id()}</label>
 				<input
 					id="editScopeId"
 					class="input"
@@ -604,7 +655,7 @@
 			</div>
 		</div>
 		<div class="form-group">
-			<label for="editExpiresAt">Expires At</label>
+			<label for="editExpiresAt">{$LL.admin_admins_expires_at_label()}</label>
 			<input id="editExpiresAt" class="input" type="datetime-local" bind:value={editExpiresAt} />
 		</div>
 	{/if}
@@ -615,14 +666,14 @@
 			onclick={closeAssignmentEditDialog}
 			disabled={savingAssignment}
 		>
-			Cancel
+			{$LL.admin_admins_cancel()}
 		</button>
 		<button
 			class="btn btn-primary"
 			onclick={handleUpdateAssignment}
 			disabled={savingAssignment || !editingAssignment}
 		>
-			{savingAssignment ? 'Saving...' : 'Save'}
+			{savingAssignment ? $LL.admin_admins_saving() : $LL.admin_admins_save()}
 		</button>
 	{/snippet}
 </Modal>

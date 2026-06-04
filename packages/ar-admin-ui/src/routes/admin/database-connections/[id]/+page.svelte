@@ -8,6 +8,7 @@
 		type DatabaseConnectionProvider,
 		type ResourceStatus
 	} from '$lib/api/admin-database-connections';
+	import { LL } from '$i18n/i18n-svelte';
 
 	const connectionId = $derived($page.params.id ?? 'new');
 	const isNew = $derived(connectionId === 'new');
@@ -59,7 +60,8 @@
 			status = connection.status;
 			configJson = JSON.stringify(connection.config ?? {}, null, 2);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load database connection';
+			error =
+				err instanceof Error ? err.message : $LL.admin_database_connections_detail_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -70,7 +72,7 @@
 		if (!trimmed) return {};
 		const parsed = JSON.parse(trimmed);
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error('JSON must be an object');
+			throw new Error($LL.admin_database_connections_json_object_error());
 		}
 		return parsed as Record<string, unknown>;
 	}
@@ -83,18 +85,26 @@
 	function requiredString(value: string, label: string): string {
 		const trimmed = value.trim();
 		if (!trimmed) {
-			throw new Error(`${label} is required.`);
+			throw new Error($LL.admin_database_connections_required({ label }));
 		}
 		return trimmed;
 	}
 
 	function buildCreateConfig(): Record<string, unknown> {
 		if (provider === 'd1') {
-			return { bindingRef: requiredString(d1BindingRef, 'D1 binding reference') };
+			return {
+				bindingRef: requiredString(
+					d1BindingRef,
+					$LL.admin_database_connections_d1_binding_ref_required()
+				)
+			};
 		}
 		if (provider === 'hyperdrive') {
 			return {
-				bindingRef: requiredString(hyperdriveBindingRef, 'Hyperdrive binding reference'),
+				bindingRef: requiredString(
+					hyperdriveBindingRef,
+					$LL.admin_database_connections_hyperdrive_binding_ref_required()
+				),
 				dialect: hyperdriveDialect
 			};
 		}
@@ -106,7 +116,7 @@
 		}
 		const parsedCustomConfig = parseJsonField(customConfig);
 		return {
-			type: requiredString(customType, 'Custom connection type'),
+			type: requiredString(customType, $LL.admin_database_connections_custom_type_required()),
 			...(Object.keys(parsedCustomConfig).length > 0 ? { config: parsedCustomConfig } : {})
 		};
 	}
@@ -130,7 +140,7 @@
 		try {
 			if (isNew) {
 				const created = await adminDatabaseConnectionsAPI.create({
-					name: requiredString(name, 'Name'),
+					name: requiredString(name, $LL.admin_database_connections_name_required()),
 					display_name: displayName.trim() || name.trim(),
 					description: description.trim() || null,
 					provider,
@@ -138,7 +148,7 @@
 					credential: buildCreateCredential(),
 					status
 				});
-				success = 'Database connection created.';
+				success = $LL.admin_database_connections_created();
 				connection = created;
 				name = created.name;
 				displayName = created.display_name;
@@ -158,9 +168,9 @@
 				config: parseJsonField(configJson),
 				status
 			});
-			success = 'Database connection updated.';
+			success = $LL.admin_database_connections_updated();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save database connection';
+			error = err instanceof Error ? err.message : $LL.admin_database_connections_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -180,9 +190,12 @@
 			);
 			credentialJson = '';
 			elevationGrantId = '';
-			success = 'Database credential updated.';
+			success = $LL.admin_database_connections_credential_updated_success();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update database credential';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_database_connections_credential_update_failed();
 		} finally {
 			saving = false;
 		}
@@ -195,9 +208,10 @@
 		success = '';
 		try {
 			const result = await adminDatabaseConnectionsAPI.test(connection.id);
-			success = result.message || `Connection test status: ${result.status}`;
+			success =
+				result.message || $LL.admin_database_connections_test_status({ status: result.status });
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to test database connection';
+			error = err instanceof Error ? err.message : $LL.admin_database_connections_test_failed();
 		} finally {
 			saving = false;
 		}
@@ -205,7 +219,8 @@
 
 	async function deleteConnection() {
 		if (!connection || readOnly) return;
-		if (!confirm(`Delete database connection "${connection.display_name}"?`)) return;
+		if (!confirm($LL.admin_database_connections_delete_confirm({ name: connection.display_name })))
+			return;
 		saving = true;
 		error = '';
 		success = '';
@@ -213,7 +228,7 @@
 			await adminDatabaseConnectionsAPI.delete(connection.id, elevationGrantId.trim() || undefined);
 			await goto('/admin/database-connections');
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete database connection';
+			error = err instanceof Error ? err.message : $LL.admin_database_connections_delete_failed();
 		} finally {
 			saving = false;
 		}
@@ -225,33 +240,41 @@
 </script>
 
 <svelte:head>
-	<title>{isNew ? 'Create Database Connection' : 'Database Connection'} - Authrim</title>
+	<title>
+		{isNew
+			? $LL.admin_database_connections_detail_page_title_create()
+			: $LL.admin_database_connections_detail_page_title()}
+	</title>
 </svelte:head>
 
 <div class="page-shell">
 	<header class="page-header">
 		<div class="page-title-group">
 			<button class="link-button" onclick={() => goto('/admin/database-connections')}
-				><i class="i-ph-arrow-left"></i>Connections</button
+				><i class="i-ph-arrow-left"></i>{$LL.admin_database_connections_back_connections()}</button
 			>
 			<h1 class="page-title">
-				{isNew ? 'Create Connection' : connection?.display_name || 'Database Connection'}
+				{isNew
+					? $LL.admin_database_connections_create_title()
+					: connection?.display_name || $LL.admin_database_connections_detail_title()}
 			</h1>
 			<p class="page-description">
 				{isNew
-					? 'Register a database target for runtime profiles, audits, and tenant storage routing.'
-					: 'View and manage database connection metadata.'}
+					? $LL.admin_database_connections_create_description()
+					: $LL.admin_database_connections_detail_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			{#if !isNew && connection}
 				<button class="btn btn-secondary" onclick={testConnection} disabled={saving}
-					>Test connection</button
+					>{$LL.admin_database_connections_test_connection()}</button
 				>
 			{/if}
 			{#if !readOnly}
 				<button class="btn btn-primary" onclick={save} disabled={saving || !name}>
-					{isNew ? 'Create connection' : 'Save changes'}
+					{isNew
+						? $LL.admin_database_connections_create_connection()
+						: $LL.admin_database_connections_save_changes()}
 				</button>
 			{/if}
 		</div>
@@ -261,15 +284,17 @@
 	{#if success}<div class="alert alert-success">{success}</div>{/if}
 
 	{#if loading}
-		<div class="panel"><p class="text-muted">Loading...</p></div>
+		<div class="panel"><p class="text-muted">{$LL.admin_database_connections_loading()}</p></div>
 	{:else if !isNew && !connection}
-		<div class="panel"><p class="text-muted">Database connection not found.</p></div>
+		<div class="panel"><p class="text-muted">{$LL.admin_database_connections_not_found()}</p></div>
 	{:else}
 		<div class="panel">
 			<div class="panel-header">
-				<h2 class="panel-title">Connection</h2>
+				<h2 class="panel-title">{$LL.admin_database_connections_connection()}</h2>
 				<div class="header-actions">
-					{#if readOnly}<span class="badge badge-muted">setup-managed</span>{/if}
+					{#if readOnly}<span class="badge badge-muted"
+							>{$LL.admin_database_connections_setup_managed()}</span
+						>{/if}
 					{#if connection}
 						<span class="badge {connection.status === 'active' ? 'badge-success' : 'badge-neutral'}"
 							>{connection.status}</span
@@ -280,55 +305,55 @@
 
 			<div class="form-grid">
 				<label class="form-label-group">
-					<span>Name</span>
+					<span>{$LL.admin_database_connections_name()}</span>
 					<input bind:value={name} disabled={!isNew} />
-					<small>Stable identifier used by API and routing records.</small>
+					<small>{$LL.admin_database_connections_name_help()}</small>
 				</label>
 				<label class="form-label-group">
-					<span>Display name</span>
+					<span>{$LL.admin_database_connections_display_name()}</span>
 					<input bind:value={displayName} disabled={readOnly} />
 				</label>
 				<label class="form-label-group">
-					<span>Provider</span>
+					<span>{$LL.admin_database_connections_provider()}</span>
 					<select bind:value={provider} disabled={!isNew}>
 						<option value="d1">D1</option>
 						<option value="hyperdrive">Hyperdrive</option>
 						<option value="postgres">PostgreSQL</option>
 						<option value="mysql">MySQL</option>
-						<option value="custom">Custom</option>
+						<option value="custom">{$LL.admin_database_connections_custom_type()}</option>
 					</select>
 				</label>
 				<label class="form-label-group">
-					<span>Status</span>
+					<span>{$LL.admin_database_connections_status()}</span>
 					<select bind:value={status} disabled={readOnly}>
-						<option value="active">Active</option>
-						<option value="disabled">Disabled</option>
+						<option value="active">{$LL.admin_database_connections_active()}</option>
+						<option value="disabled">{$LL.admin_database_connections_disabled()}</option>
 					</select>
 				</label>
 				<label class="form-label-group wide">
-					<span>Description</span>
+					<span>{$LL.admin_database_connections_description_label()}</span>
 					<input bind:value={description} disabled={readOnly} />
 				</label>
 
 				{#if isNew}
 					<div class="form-section wide">
-						<h3 class="form-section-title">Provider settings</h3>
+						<h3 class="form-section-title">{$LL.admin_database_connections_provider_settings()}</h3>
 						<p class="form-section-description">
-							These fields become the connection config stored by the API.
+							{$LL.admin_database_connections_provider_settings_help()}
 						</p>
 						{#if provider === 'd1'}
 							<label class="form-label-group nested-single">
-								<span>D1 binding reference</span>
+								<span>{$LL.admin_database_connections_d1_binding_ref()}</span>
 								<input bind:value={d1BindingRef} />
 							</label>
 						{:else if provider === 'hyperdrive'}
 							<div class="form-grid nested">
 								<label class="form-label-group">
-									<span>Hyperdrive binding reference</span>
+									<span>{$LL.admin_database_connections_hyperdrive_binding_ref()}</span>
 									<input bind:value={hyperdriveBindingRef} />
 								</label>
 								<label class="form-label-group">
-									<span>SQL dialect</span>
+									<span>{$LL.admin_database_connections_sql_dialect()}</span>
 									<select bind:value={hyperdriveDialect}>
 										<option value="postgres">PostgreSQL</option>
 										<option value="mysql">MySQL</option>
@@ -338,22 +363,22 @@
 						{:else if provider === 'postgres' || provider === 'mysql'}
 							<div class="form-grid nested">
 								<label class="form-label-group">
-									<span>Schema</span>
+									<span>{$LL.admin_database_connections_schema()}</span>
 									<input bind:value={sqlSchema} />
 								</label>
 								<label class="form-label-group">
-									<span>Pool name</span>
+									<span>{$LL.admin_database_connections_pool_name()}</span>
 									<input bind:value={sqlPoolName} />
 								</label>
 							</div>
 						{:else}
 							<div class="form-grid nested">
 								<label class="form-label-group">
-									<span>Custom type</span>
+									<span>{$LL.admin_database_connections_custom_type()}</span>
 									<input bind:value={customType} />
 								</label>
 								<label class="form-label-group wide">
-									<span>Advanced fields</span>
+									<span>{$LL.admin_database_connections_advanced_fields()}</span>
 									<textarea rows="5" bind:value={customConfig}></textarea>
 								</label>
 							</div>
@@ -362,15 +387,15 @@
 
 					{#if provider === 'postgres' || provider === 'mysql' || provider === 'custom'}
 						<div class="form-section wide">
-							<h3 class="form-section-title">Credentials</h3>
+							<h3 class="form-section-title">{$LL.admin_database_connections_credentials()}</h3>
 							{#if provider === 'postgres' || provider === 'mysql'}
 								<label class="form-label-group nested-single">
-									<span>Connection string</span>
+									<span>{$LL.admin_database_connections_connection_string()}</span>
 									<textarea rows="3" bind:value={sqlConnectionString} autocomplete="off"></textarea>
 								</label>
 							{:else}
 								<label class="form-label-group nested-single">
-									<span>Credential object</span>
+									<span>{$LL.admin_database_connections_credential_object()}</span>
 									<textarea rows="5" bind:value={customCredential} autocomplete="off"></textarea>
 								</label>
 							{/if}
@@ -378,7 +403,7 @@
 					{/if}
 				{:else}
 					<label class="form-label-group wide">
-						<span>Config</span>
+						<span>{$LL.admin_database_connections_config()}</span>
 						<textarea rows="8" bind:value={configJson} disabled={readOnly}></textarea>
 					</label>
 				{/if}
@@ -388,25 +413,35 @@
 		{#if connection}
 			<div class="panel">
 				<div class="panel-header">
-					<h2 class="panel-title">Metadata</h2>
+					<h2 class="panel-title">{$LL.admin_database_connections_metadata()}</h2>
 					{#if !readOnly}
 						<button class="btn btn-danger btn-sm" onclick={deleteConnection} disabled={saving}
-							>Delete</button
+							>{$LL.admin_database_connections_delete()}</button
 						>
 					{/if}
 				</div>
 				<div class="stat-grid">
-					<div class="stat-card"><span>Provider</span><strong>{connection.provider}</strong></div>
 					<div class="stat-card">
-						<span>Credential</span><strong>{connection.has_credential ? 'Set' : 'Not set'}</strong>
+						<span>{$LL.admin_database_connections_provider()}</span><strong
+							>{connection.provider}</strong
+						>
 					</div>
 					<div class="stat-card">
-						<span>Credential Updated</span><strong
+						<span>{$LL.admin_database_connections_credential()}</span><strong
+							>{connection.has_credential
+								? $LL.admin_database_connections_set()
+								: $LL.admin_database_connections_not_set()}</strong
+						>
+					</div>
+					<div class="stat-card">
+						<span>{$LL.admin_database_connections_credential_updated()}</span><strong
 							>{formatDate(connection.credential_updated_at)}</strong
 						>
 					</div>
 					<div class="stat-card">
-						<span>Updated By</span><strong>{connection.updated_by || '-'}</strong>
+						<span>{$LL.admin_database_connections_updated_by()}</span><strong
+							>{connection.updated_by || '-'}</strong
+						>
 					</div>
 				</div>
 			</div>
@@ -415,15 +450,15 @@
 		{#if connection && !readOnly}
 			<div class="panel">
 				<div class="panel-header">
-					<h2 class="panel-title">Update Credential</h2>
+					<h2 class="panel-title">{$LL.admin_database_connections_update_credential()}</h2>
 				</div>
 				<div class="form-grid">
 					<label class="form-label-group wide">
-						<span>Elevation grant ID</span>
+						<span>{$LL.admin_database_connections_elevation_grant_id()}</span>
 						<input bind:value={elevationGrantId} />
 					</label>
 					<label class="form-label-group wide">
-						<span>New credential object</span>
+						<span>{$LL.admin_database_connections_new_credential_object()}</span>
 						<textarea rows="4" bind:value={credentialJson}></textarea>
 					</label>
 				</div>
@@ -433,7 +468,7 @@
 						onclick={rotateCredential}
 						disabled={saving || !credentialJson}
 					>
-						Update credential
+						{$LL.admin_database_connections_update_credential_button()}
 					</button>
 				</div>
 			</div>

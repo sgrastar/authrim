@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminRolesAPI,
@@ -11,6 +12,11 @@
 		PERMISSION_DEFINITIONS,
 		canEditRole
 	} from '$lib/api/admin-roles';
+	import {
+		formatPermissionCategory,
+		formatPermissionDescription,
+		formatPermissionLabel
+	} from '$lib/admin/roles-i18n';
 
 	// Role data
 	let role: RoleDetail | null = $state(null);
@@ -49,7 +55,7 @@
 	async function loadRole() {
 		const roleId = $page.params.id;
 		if (!roleId) {
-			loadError = 'Role ID is required';
+			loadError = $LL.admin_roles_role_id_required();
 			loading = false;
 			return;
 		}
@@ -63,7 +69,7 @@
 
 			// Check if role can be edited
 			if (!canEditRole(role)) {
-				loadError = 'This role cannot be edited. Only custom roles can be modified.';
+				loadError = $LL.admin_roles_edit_not_allowed();
 				loading = false;
 				return;
 			}
@@ -73,8 +79,7 @@
 			selectedPermissions.clear();
 			(role.effectivePermissions || []).forEach((p) => selectedPermissions.add(p));
 		} catch (err) {
-			console.error('Failed to load role:', err);
-			loadError = err instanceof Error ? err.message : 'Failed to load role';
+			loadError = err instanceof Error ? err.message : $LL.admin_roles_detail_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -138,7 +143,7 @@
 			await adminRolesAPI.update(role.id, data);
 			goto(`/admin/roles/${role.id}`);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update role';
+			error = err instanceof Error ? err.message : $LL.admin_roles_update_failed();
 		} finally {
 			submitting = false;
 		}
@@ -154,22 +159,30 @@
 </script>
 
 <svelte:head>
-	<title>Edit {role?.display_name || role?.name || 'Role'} - Admin Dashboard - Authrim</title>
+	<title>
+		{$LL.admin_roles_edit_head_title({
+			role: role?.display_name || role?.name || $LL.admin_roles_tab_roles()
+		})}
+	</title>
 </svelte:head>
 
 <div class="admin-page">
-	<a href={role ? `/admin/roles/${role.id}` : '/admin/roles'} class="back-link">← Back to Role</a>
+	<a href={role ? `/admin/roles/${role.id}` : '/admin/roles'} class="back-link">
+		← {$LL.admin_roles_back_to_role()}
+	</a>
 
 	{#if loading}
-		<div class="loading-state">Loading role...</div>
+		<div class="loading-state">{$LL.admin_roles_edit_loading()}</div>
 	{:else if loadError}
 		<div class="alert alert-error">
 			<span>{loadError}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadRole}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={loadRole}>{$LL.admin_roles_retry()}</button>
 		</div>
 	{:else if role}
-		<h1 class="page-title">Edit Role: {role.display_name || role.name}</h1>
-		<p class="modal-description">Modify the description and permissions for this custom role.</p>
+		<h1 class="page-title">
+			{$LL.admin_roles_edit_title({ role: role.display_name || role.name })}
+		</h1>
+		<p class="modal-description">{$LL.admin_roles_edit_description()}</p>
 
 		{#if error}
 			<div class="alert alert-error">{error}</div>
@@ -183,10 +196,10 @@
 		>
 			<!-- Basic Info Section -->
 			<div class="panel">
-				<h2 class="panel-title">Basic Information</h2>
+				<h2 class="panel-title">{$LL.admin_roles_basic_information()}</h2>
 
 				<div class="form-group">
-					<label for="name" class="form-label">Role Name</label>
+					<label for="name" class="form-label">{$LL.admin_roles_role_name()}</label>
 					<input
 						type="text"
 						id="name"
@@ -194,15 +207,15 @@
 						disabled
 						class="form-input form-input-disabled"
 					/>
-					<span class="form-hint">Role names cannot be changed after creation.</span>
+					<span class="form-hint">{$LL.admin_roles_name_immutable()}</span>
 				</div>
 
 				<div class="form-group">
-					<label for="description" class="form-label">Description</label>
+					<label for="description" class="form-label">{$LL.admin_roles_description_label()}</label>
 					<textarea
 						id="description"
 						bind:value={description}
-						placeholder="Describe what this role is for..."
+						placeholder={$LL.admin_roles_description_placeholder()}
 						rows="3"
 						class="form-input"
 					></textarea>
@@ -211,9 +224,12 @@
 
 			<!-- Permissions Section -->
 			<div class="panel">
-				<h2 class="panel-title">Permissions <span class="text-danger">*</span></h2>
+				<h2 class="panel-title">
+					{$LL.admin_roles_permissions()}
+					<span class="text-danger">{$LL.admin_roles_required()}</span>
+				</h2>
 				<p class="form-hint" style="margin-bottom: 16px;">
-					Select the permissions this role should have. At least one permission is required.
+					{$LL.admin_roles_permissions_hint()}
 				</p>
 
 				<div class="permission-editor-grid">
@@ -227,7 +243,9 @@
 										indeterminate={isCategoryPartiallySelected(category.permissions)}
 										onchange={() => toggleCategory(category.permissions)}
 									/>
-									<span class="permission-category-name">{category.categoryLabel}</span>
+									<span class="permission-category-name">
+										{formatPermissionCategory(category.category, $LL)}
+									</span>
 								</label>
 							</div>
 							<div class="permission-category-body">
@@ -239,8 +257,12 @@
 											onchange={() => togglePermission(perm.id)}
 										/>
 										<span class="permission-checkbox-info">
-											<span class="permission-checkbox-label">{perm.label}</span>
-											<span class="permission-checkbox-desc">{perm.description}</span>
+											<span class="permission-checkbox-label">
+												{formatPermissionLabel(perm.id, $LL)}
+											</span>
+											<span class="permission-checkbox-desc">
+												{formatPermissionDescription(perm.id, $LL)}
+											</span>
 										</span>
 									</label>
 								{/each}
@@ -251,7 +273,7 @@
 
 				{#if selectedPermissions.size > 0}
 					<div class="permission-selected-count">
-						{selectedPermissions.size} permission(s) selected
+						{$LL.admin_roles_selected_count({ count: selectedPermissions.size })}
 					</div>
 				{/if}
 			</div>
@@ -264,14 +286,14 @@
 					onclick={navigateBack}
 					disabled={submitting}
 				>
-					Cancel
+					{$LL.admin_roles_cancel()}
 				</button>
 				<button
 					type="submit"
 					class="btn btn-primary"
 					disabled={!isValid || !hasChanges || submitting}
 				>
-					{submitting ? 'Saving...' : 'Save Changes'}
+					{submitting ? $LL.admin_roles_saving() : $LL.admin_roles_save_changes()}
 				</button>
 			</div>
 		</form>

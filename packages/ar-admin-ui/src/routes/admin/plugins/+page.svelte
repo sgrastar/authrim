@@ -9,6 +9,7 @@
 		PLUGIN_CATEGORIES
 	} from '$lib/api/admin-plugins';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let plugins: PluginWithStatus[] = $state([]);
 	let loading = $state(true);
@@ -95,7 +96,7 @@
 			}
 		} catch (err) {
 			console.error('Failed to load plugins:', err);
-			error = 'Failed to load plugins';
+			error = $LL.admin_plugins_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -122,7 +123,7 @@
 			}
 			await loadPlugins();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update plugin';
+			error = err instanceof Error ? err.message : $LL.admin_plugins_update_failed();
 		}
 	}
 
@@ -138,7 +139,7 @@
 				...healthStatus,
 				[plugin.id]: {
 					status: 'unhealthy',
-					message: err instanceof Error ? err.message : 'Health check failed'
+					message: err instanceof Error ? err.message : $LL.admin_plugins_health_check_failed()
 				}
 			};
 		} finally {
@@ -180,7 +181,7 @@
 			}
 		} catch (err) {
 			console.error('Failed to load plugin config:', err);
-			error = err instanceof Error ? err.message : 'Failed to load plugin configuration';
+			error = err instanceof Error ? err.message : $LL.admin_plugins_load_config_failed();
 		} finally {
 			loadingConfig = false;
 		}
@@ -231,7 +232,7 @@
 			pluginConfig = { ...refreshed.config };
 			editedConfig = { ...refreshed.config };
 			isEditMode = false;
-			successMessage = 'Configuration saved successfully';
+			successMessage = $LL.admin_plugins_config_saved();
 
 			// Clear success message after 3 seconds
 			setTimeout(() => {
@@ -239,7 +240,7 @@
 			}, 3000);
 		} catch (err) {
 			console.error('Failed to save config:', err);
-			error = err instanceof Error ? err.message : 'Failed to save configuration';
+			error = err instanceof Error ? err.message : $LL.admin_plugins_save_config_failed();
 		} finally {
 			savingConfig = false;
 		}
@@ -251,7 +252,7 @@
 
 	async function sendTestEmail() {
 		if (!selectedPlugin || !testEmailAddress.trim()) {
-			error = 'Enter a recipient email address';
+			error = $LL.admin_plugins_recipient_required();
 			return;
 		}
 
@@ -267,10 +268,10 @@
 				tenantId: getSelectedTenantId()
 			});
 			testEmailMessage = result.messageId
-				? `Test email sent (${result.messageId})`
-				: 'Test email sent';
+				? $LL.admin_plugins_test_email_sent_with_id({ messageId: result.messageId })
+				: $LL.admin_plugins_test_email_sent();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to send test email';
+			error = err instanceof Error ? err.message : $LL.admin_plugins_test_email_failed();
 		} finally {
 			sendingTestEmail = false;
 		}
@@ -309,6 +310,46 @@
 		filterCategory = '';
 		filterEnabled = undefined;
 		loadPlugins();
+	}
+
+	function formatCategory(id: string): string {
+		switch (id) {
+			case 'authentication':
+				return $LL.admin_plugins_category_authentication();
+			case 'mfa':
+				return $LL.admin_plugins_category_mfa();
+			case 'integration':
+				return $LL.admin_plugins_category_integration();
+			case 'notification':
+				return $LL.admin_plugins_category_notification();
+			case 'analytics':
+				return $LL.admin_plugins_category_analytics();
+			case 'security':
+				return $LL.admin_plugins_category_security();
+			case 'compliance':
+				return $LL.admin_plugins_category_compliance();
+			default:
+				return id;
+		}
+	}
+
+	function formatConfigured(configSource: string | undefined): string {
+		return configSource
+			? $LL.admin_plugins_configured_via({ source: configSource })
+			: $LL.admin_plugins_needs_configuration();
+	}
+
+	function formatHealthStatus(status: string): string {
+		switch (status) {
+			case 'healthy':
+				return $LL.admin_plugins_health_healthy();
+			case 'unhealthy':
+				return $LL.admin_plugins_health_unhealthy();
+			case 'degraded':
+				return $LL.admin_plugins_health_degraded();
+			default:
+				return $LL.admin_plugins_health_unknown();
+		}
 	}
 
 	function getSourceIcon(type: string): string {
@@ -382,10 +423,9 @@
 <div class="admin-page">
 	<div class="page-header">
 		<div class="page-header-info">
-			<h1 class="page-title">Plugins</h1>
+			<h1 class="page-title">{$LL.admin_plugins_page_title()}</h1>
 			<p class="modal-description">
-				Manage installed plugins to extend Authrim's functionality with custom authentication flows,
-				event handlers, claims providers, and integrations.
+				{$LL.admin_plugins_description()}
 			</p>
 		</div>
 	</div>
@@ -393,24 +433,24 @@
 	<!-- Filters -->
 	<div class="filter-bar">
 		<div class="form-group">
-			<label for="filter-category" class="form-label">Category</label>
+			<label for="filter-category" class="form-label">{$LL.admin_plugins_category()}</label>
 			<select id="filter-category" class="form-select" bind:value={filterCategory}>
-				<option value="">All Categories</option>
+				<option value="">{$LL.admin_plugins_all_categories()}</option>
 				{#each PLUGIN_CATEGORIES as category (category.id)}
-					<option value={category.id}>{category.name}</option>
+					<option value={category.id}>{formatCategory(category.id)}</option>
 				{/each}
 			</select>
 		</div>
 		<div class="form-group">
-			<label for="filter-status" class="form-label">Status</label>
+			<label for="filter-status" class="form-label">{$LL.admin_plugins_status()}</label>
 			<select id="filter-status" class="form-select" bind:value={filterEnabled}>
-				<option value={undefined}>All</option>
-				<option value={true}>Enabled</option>
-				<option value={false}>Disabled</option>
+				<option value={undefined}>{$LL.admin_plugins_all()}</option>
+				<option value={true}>{$LL.admin_plugins_enabled()}</option>
+				<option value={false}>{$LL.admin_plugins_disabled()}</option>
 			</select>
 		</div>
-		<button class="btn-filter" onclick={applyFilters}>Apply</button>
-		<button class="btn-clear" onclick={clearFilters}>Clear</button>
+		<button class="btn-filter" onclick={applyFilters}>{$LL.admin_plugins_apply()}</button>
+		<button class="btn-clear" onclick={clearFilters}>{$LL.admin_plugins_clear()}</button>
 	</div>
 
 	{#if error && !showDetailDialog}
@@ -418,14 +458,14 @@
 	{/if}
 
 	{#if loading}
-		<div class="loading-state">Loading...</div>
+		<div class="loading-state">{$LL.admin_plugins_loading()}</div>
 	{:else if plugins.length === 0}
 		<div class="empty-state">
-			<p>No plugins found.</p>
+			<p>{$LL.admin_plugins_empty()}</p>
 			<p class="text-muted">
 				{filterCategory || filterEnabled !== undefined
-					? 'Try adjusting your filters.'
-					: 'Plugins can be added via npm packages or local configuration.'}
+					? $LL.admin_plugins_adjust_filters()
+					: $LL.admin_plugins_empty_hint()}
 			</p>
 		</div>
 	{:else}
@@ -460,7 +500,7 @@
 							class="plugin-status-btn {plugin.enabled ? 'enabled' : 'disabled'}"
 							onclick={(e) => toggleEnabled(plugin, e)}
 						>
-							{plugin.enabled ? 'Enabled' : 'Disabled'}
+							{plugin.enabled ? $LL.admin_plugins_enabled() : $LL.admin_plugins_disabled()}
 						</button>
 					</div>
 
@@ -477,7 +517,9 @@
 						</span>
 						<span class="plugin-meta-item">v{plugin.version}</span>
 						<span class="plugin-meta-item">
-							{plugin.configured ? `configured via ${plugin.configSource}` : 'needs configuration'}
+							{plugin.configured
+								? formatConfigured(plugin.configSource)
+								: $LL.admin_plugins_needs_configuration()}
 						</span>
 						{#if plugin.meta?.category}
 							<span class="badge-category">{plugin.meta.category}</span>
@@ -498,22 +540,24 @@
 						{#if healthStatus[plugin.id]}
 							<span class={getHealthStatusClass(healthStatus[plugin.id].status)}>
 								<span class={getHealthDotClass(healthStatus[plugin.id].status)}></span>
-								{healthStatus[plugin.id].status}
+								{formatHealthStatus(healthStatus[plugin.id].status)}
 							</span>
 						{:else if plugin.lastHealthCheck}
 							<span class={getHealthStatusClass(plugin.lastHealthCheck.status)}>
 								<span class={getHealthDotClass(plugin.lastHealthCheck.status)}></span>
-								{plugin.lastHealthCheck.status}
+								{formatHealthStatus(plugin.lastHealthCheck.status)}
 							</span>
 						{:else}
-							<span class="health-status unknown">No health data</span>
+							<span class="health-status unknown">{$LL.admin_plugins_no_health_data()}</span>
 						{/if}
 						<button
 							class="health-check-btn"
 							onclick={(e) => checkHealth(plugin, e)}
 							disabled={checkingHealth[plugin.id]}
 						>
-							{checkingHealth[plugin.id] ? 'Checking...' : 'Check Health'}
+							{checkingHealth[plugin.id]
+								? $LL.admin_plugins_checking()
+								: $LL.admin_plugins_check_health()}
 						</button>
 					</div>
 				</div>
@@ -546,8 +590,7 @@
 
 	{#if selectedPlugin?.trustLevel === 'community'}
 		<div class="warning-banner">
-			⚠️ This is a community plugin. Authrim does not guarantee its security, reliability, or
-			compatibility.
+			{$LL.admin_plugins_community_warning()}
 		</div>
 	{/if}
 
@@ -557,7 +600,7 @@
 
 	<div class="plugin-info-grid">
 		<div class="plugin-info-item">
-			<div class="plugin-info-label">Source</div>
+			<div class="plugin-info-label">{$LL.admin_plugins_source()}</div>
 			<div class="plugin-info-value">
 				{getSourceIcon(selectedPlugin?.source.type ?? '')}
 				{selectedPlugin?.source.type}
@@ -567,17 +610,19 @@
 			</div>
 		</div>
 		<div class="plugin-info-item">
-			<div class="plugin-info-label">Status</div>
+			<div class="plugin-info-label">{$LL.admin_plugins_status()}</div>
 			<div class="plugin-info-value">
-				{selectedPlugin?.enabled ? '✓ Enabled' : '○ Disabled'}
+				{selectedPlugin?.enabled ? $LL.admin_plugins_enabled() : $LL.admin_plugins_disabled()}
 				<div class="plugin-info-subvalue">
 					{selectedPlugin?.configured
-						? `Configured via ${selectedPlugin.configSource}`
-						: 'Missing required configuration'}
+						? formatConfigured(selectedPlugin.configSource)
+						: $LL.admin_plugins_missing_required_configuration()}
 				</div>
 				{#if selectedPlugin && !selectedPlugin.configured && selectedPlugin.missingRequiredFields.length > 0}
 					<div class="plugin-info-subvalue">
-						Required: {selectedPlugin.missingRequiredFields.join(', ')}
+						{$LL.admin_plugins_required({
+							fields: selectedPlugin.missingRequiredFields.join(', ')
+						})}
 					</div>
 				{/if}
 			</div>
@@ -586,7 +631,7 @@
 
 	{#if selectedPlugin && selectedPlugin.capabilities.length > 0}
 		<div class="plugin-section">
-			<div class="plugin-section-title">Capabilities</div>
+			<div class="plugin-section-title">{$LL.admin_plugins_capabilities()}</div>
 			<div class="plugin-capabilities">
 				{#each selectedPlugin.capabilities as cap (cap)}
 					<span class="badge-capability">{cap}</span>
@@ -598,7 +643,7 @@
 	{#if selectedPlugin?.meta?.author}
 		{@const authorUrl = safePluginUrl(selectedPlugin.meta.author.url)}
 		<div class="plugin-section">
-			<div class="plugin-section-title">Author</div>
+			<div class="plugin-section-title">{$LL.admin_plugins_author()}</div>
 			<div class="plugin-info-value">
 				{selectedPlugin.meta.author.name}
 				{#if authorUrl}
@@ -620,7 +665,7 @@
 					rel="noopener noreferrer"
 					class="plugin-doc-link"
 				>
-					📖 Documentation ↗
+					{$LL.admin_plugins_documentation()} ↗
 				</a>
 			</div>
 		{/if}
@@ -636,7 +681,7 @@
 
 	<div class="plugin-section">
 		<div class="plugin-config-header">
-			<div class="plugin-config-title">Configuration</div>
+			<div class="plugin-config-title">{$LL.admin_plugins_configuration()}</div>
 			{#if pluginSchema && !loadingConfig}
 				{#if isEditMode}
 					<div class="plugin-config-actions">
@@ -645,20 +690,22 @@
 							onclick={cancelEditing}
 							disabled={savingConfig}
 						>
-							Cancel
+							{$LL.admin_plugins_cancel()}
 						</button>
 						<button class="btn btn-primary btn-sm" onclick={saveConfig} disabled={savingConfig}>
-							{savingConfig ? 'Saving...' : 'Save'}
+							{savingConfig ? $LL.admin_plugins_saving() : $LL.admin_plugins_save()}
 						</button>
 					</div>
 				{:else}
-					<button class="btn btn-primary btn-sm" onclick={startEditing}>Edit</button>
+					<button class="btn btn-primary btn-sm" onclick={startEditing}
+						>{$LL.admin_plugins_edit()}</button
+					>
 				{/if}
 			{/if}
 		</div>
 
 		{#if loadingConfig}
-			<div class="text-muted">Loading configuration...</div>
+			<div class="text-muted">{$LL.admin_plugins_loading_configuration()}</div>
 		{:else if pluginSchema && pluginSchema.properties}
 			<!-- Schema-based form -->
 			<div class="plugin-config-form">
@@ -721,7 +768,7 @@
 				{/each}
 			</div>
 		{:else if Object.keys(pluginConfig).length === 0}
-			<div class="text-muted">No configuration available.</div>
+			<div class="text-muted">{$LL.admin_plugins_no_configuration()}</div>
 		{:else}
 			<!-- Fallback: JSON view when no schema -->
 			<pre class="plugin-config-json">{JSON.stringify(pluginConfig, null, 2)}</pre>
@@ -731,10 +778,12 @@
 	{#if selectedPlugin?.capabilities.includes('notifier.email')}
 		<div class="plugin-section">
 			<div class="plugin-config-header">
-				<div class="plugin-config-title">Send Test Email</div>
+				<div class="plugin-config-title">{$LL.admin_plugins_send_test_email_title()}</div>
 			</div>
 			<div class="plugin-config-field">
-				<label class="plugin-config-label" for="plugin-test-email">Recipient Email</label>
+				<label class="plugin-config-label" for="plugin-test-email"
+					>{$LL.admin_plugins_recipient_email()}</label
+				>
 				<input
 					id="plugin-test-email"
 					type="email"
@@ -743,7 +792,7 @@
 					placeholder="you@example.com"
 				/>
 				<div class="plugin-config-hint">
-					Uses the current tenant-scoped plugin settings. Unsaved edits in this dialog are included.
+					{$LL.admin_plugins_test_email_hint()}
 				</div>
 			</div>
 			<div class="plugin-test-actions">
@@ -752,10 +801,10 @@
 					onclick={sendTestEmail}
 					disabled={sendingTestEmail || !selectedPlugin?.enabled}
 				>
-					{sendingTestEmail ? 'Sending...' : 'Send Test Email'}
+					{sendingTestEmail ? $LL.admin_plugins_sending() : $LL.admin_plugins_send_test_email()}
 				</button>
 				{#if !selectedPlugin?.enabled}
-					<span class="text-muted">Enable the plugin before sending a test email.</span>
+					<span class="text-muted">{$LL.admin_plugins_enable_before_test()}</span>
 				{/if}
 			</div>
 			{#if testEmailMessage}
@@ -765,6 +814,8 @@
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeDetailDialog}>Close</button>
+		<button class="btn btn-secondary" onclick={closeDetailDialog}
+			>{$LL.admin_plugins_close()}</button
+		>
 	{/snippet}
 </Modal>

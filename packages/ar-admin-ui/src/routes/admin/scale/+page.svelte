@@ -19,6 +19,7 @@
 	} from '$lib/api/admin-infrastructure';
 	import WorldMap from '$lib/components/WorldMap.svelte';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// =========================================================================
 	// Types
@@ -173,7 +174,7 @@
 		const items: DiffItem[] = [];
 		if (scaleState.unifiedScale !== initialScaleState.unifiedScale) {
 			items.push({
-				label: 'Scale',
+				label: $LL.admin_scale_diff_scale(),
 				oldValue: initialScaleState.unifiedScale,
 				newValue: scaleState.unifiedScale
 			});
@@ -252,7 +253,7 @@
 			}
 			// Else: keep initial default values (selectedRegions = DEFAULT_REGIONS, regionDistribution = 25% each)
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load configuration';
+			error = err instanceof Error ? err.message : $LL.admin_scale_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -366,11 +367,11 @@
 				);
 			}
 
-			showSuccess('Scale configuration saved. Changes affect new sessions only.');
+			showSuccess($LL.admin_scale_saved());
 			initialScaleState = { ...scaleState };
 			await loadAllConfigs();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save configuration';
+			error = err instanceof Error ? err.message : $LL.admin_scale_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -387,12 +388,16 @@
 	}
 </script>
 
+<svelte:head>
+	<title>{$LL.admin_scale_head_title()}</title>
+</svelte:head>
+
 <div class="scale-page">
 	<!-- Header -->
 	<div class="page-header">
-		<h1 class="page-title">Scale Configuration</h1>
+		<h1 class="page-title">{$LL.admin_scale_title()}</h1>
 		<p class="page-description">
-			Configure system capacity and geographic distribution. Changes affect new sessions only.
+			{$LL.admin_scale_description()}
 		</p>
 	</div>
 
@@ -401,11 +406,16 @@
 		<div class="current-badge">
 			<i class="i-ph-gauge current-badge-icon"></i>
 			{#if loading}
-				<span class="loading-text">Loading...</span>
+				<span class="loading-text">{$LL.admin_scale_loading()}</span>
 			{:else}
-				<span class="current-badge-label">Current:</span>
-				<span class="current-badge-shards">{initialScaleState.unifiedScale} Shards</span>
-				<span class="current-badge-lps">(~{initialLPS} Login/sec)</span>
+				<span class="current-badge-label">{$LL.admin_scale_current()}</span>
+				<span class="current-badge-shards"
+					>{$LL.admin_scale_shards_unit_title({
+						count: initialScaleState.unifiedScale
+					})}</span
+				>
+				<span class="current-badge-lps">{$LL.admin_scale_login_per_sec({ count: initialLPS })}</span
+				>
 			{/if}
 		</div>
 	</div>
@@ -427,7 +437,7 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch animate-spin"></i>
-			<span>Loading configuration...</span>
+			<span>{$LL.admin_scale_load_configuration()}</span>
 		</div>
 	{:else}
 		<!-- Section 1: Scale Configuration (Compact Control Panel) -->
@@ -435,12 +445,11 @@
 			<div class="scale-panel-header">
 				<div class="scale-panel-title">
 					<i class="i-ph-sliders-horizontal"></i>
-					<span>System Scale</span>
+					<span>{$LL.admin_scale_system_scale()}</span>
 					<span class="help-tooltip scale-tooltip">
 						<i class="i-ph-question help-icon-cyber"></i>
 						<span class="tooltip-content tooltip-below">
-							Set shards based on your service's maximum expected load. Too few may cause errors
-							under high traffic; too many may increase response latency.
+							{$LL.admin_scale_system_scale_help()}
 						</span>
 					</span>
 				</div>
@@ -455,7 +464,7 @@
 					/>
 					<div class="scale-readout">
 						<span class="shard-count">{scaleState.unifiedScale}</span>
-						<span class="shard-label">shards</span>
+						<span class="shard-label">{$LL.admin_scale_shards_unit()}</span>
 					</div>
 				</div>
 				<div class="scale-lps-badge">
@@ -495,21 +504,21 @@
 		<!-- Section 3: Region Distribution -->
 		<section class="config-section">
 			<h2 class="section-title">
-				Region Distribution
+				{$LL.admin_scale_region_distribution()}
 				<span class="help-tooltip">
 					<span class="help-icon-circle">
 						<i class="i-ph-question help-icon-inner"></i>
 					</span>
 					<span class="tooltip-content">
-						Configure where authentication data (sessions, tokens) is stored. Set percentages based
-						on your users' geographic distribution. Example: If 50% of users are in Asia, set APAC
-						to ~50%.
+						{$LL.admin_scale_region_distribution_help()}
 					</span>
 				</span>
 			</h2>
 			<p class="section-description">
 				<i class="i-ph-info info-icon"></i>
-				Select regions and configure <strong>request routing ratio</strong>.
+				{$LL.admin_scale_region_distribution_description({
+					ratio: $LL.admin_scale_request_routing_ratio()
+				})}
 			</p>
 
 			<div class="region-distribution-list">
@@ -549,7 +558,7 @@
 				{/each}
 			</div>
 			{#if selectedRegions.length > 1}
-				<p class="slider-note">Note: Adjusting one slider will auto-balance others.</p>
+				<p class="slider-note">{$LL.admin_scale_slider_note()}</p>
 			{/if}
 		</section>
 
@@ -557,59 +566,68 @@
 		<section class="config-section advanced-section">
 			<button class="advanced-toggle" onclick={() => (advancedOpen = !advancedOpen)}>
 				<i class={advancedOpen ? 'i-ph-caret-down' : 'i-ph-caret-right'}></i>
-				<span>Advanced Settings</span>
+				<span>{$LL.admin_scale_advanced_settings()}</span>
 			</button>
 
 			{#if advancedOpen}
 				<div class="advanced-content">
 					<!-- Estimation Model -->
 					<div class="advanced-group">
-						<h4>Estimation Model</h4>
+						<h4>{$LL.admin_scale_estimation_model()}</h4>
 						<p class="advanced-description">
-							Based on load tests (Dec 2025).<br />
-							Login/sec: shards × 4.7 (Full Login Flow)<br />
-							Component RPS: shards × 28 (individual endpoints)<br />
-							Reference: 32 shards ≈ 150 LPS, ~900 RPS per component<br />
-							Actual results vary by authentication flow, token TTL, and usage patterns.
+							{#each $LL
+								.admin_scale_estimation_model_description()
+								.split('\n') as line, index (index)}
+								{#if index > 0}<br />{/if}{line}
+							{/each}
 						</p>
 					</div>
 
 					<!-- Client-based Coefficient -->
 					<div class="advanced-group">
-						<h4>Client-based Coefficient</h4>
-						<p class="advanced-description">Applies to: PAR, DeviceCode, CIBA, DPoP</p>
+						<h4>{$LL.admin_scale_client_based_coefficient()}</h4>
+						<p class="advanced-description">{$LL.admin_scale_client_based_applies_to()}</p>
 						<select bind:value={scaleState.clientBasedCoeff} class="coeff-select">
-							<option value={0.25}>0.25 (Low traffic)</option>
-							<option value={0.5}>0.5 (Default)</option>
-							<option value={1.0}>1.0 (High traffic)</option>
+							<option value={0.25}>{$LL.admin_scale_coeff_low()}</option>
+							<option value={0.5}>{$LL.admin_scale_coeff_default()}</option>
+							<option value={1.0}>{$LL.admin_scale_coeff_high()}</option>
 						</select>
 						<p class="coeff-result">
-							Current: {Math.max(
-								4,
-								Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff)
-							)} shards (~{estimateComponentRPS(
-								Math.max(4, Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff))
-							)} RPS)
+							{$LL.admin_scale_coeff_current({
+								shards: Math.max(
+									4,
+									Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff)
+								),
+								rps: estimateComponentRPS(
+									Math.max(4, Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff))
+								)
+							})}
 						</p>
 					</div>
 
 					<!-- Individual Shard Settings -->
 					<div class="advanced-group">
-						<h4>Individual Shard Settings (Calculated)</h4>
+						<h4>{$LL.admin_scale_individual_shard_settings()}</h4>
 						<p class="advanced-description warning">
 							<i class="i-ph-warning"></i>
-							AuthCode and RefreshToken MUST have identical values.
+							{$LL.admin_scale_auth_refresh_sync_warning()}
 						</p>
 						<div class="shard-grid">
 							<div class="shard-item">
 								<span class="shard-label">AuthCode</span>
 								<span class="shard-value">{calculatedShards.authCode}</span>
-								<i class="i-ph-lock-simple lock-icon" title="Synced with RefreshToken"></i>
+								<i
+									class="i-ph-lock-simple lock-icon"
+									title={$LL.admin_scale_synced_with_refresh_token()}
+								></i>
 							</div>
 							<div class="shard-item">
 								<span class="shard-label">RefreshToken</span>
 								<span class="shard-value">{calculatedShards.refreshToken}</span>
-								<i class="i-ph-lock-simple lock-icon" title="Synced with AuthCode"></i>
+								<i
+									class="i-ph-lock-simple lock-icon"
+									title={$LL.admin_scale_synced_with_auth_code()}
+								></i>
 							</div>
 							<div class="shard-item">
 								<span class="shard-label">Revocation</span>
@@ -650,10 +668,10 @@
 			<button class="btn btn-primary" onclick={handleSaveClick} disabled={saving || !hasChanges}>
 				{#if saving}
 					<i class="i-ph-circle-notch animate-spin"></i>
-					<span>Saving...</span>
+					<span>{$LL.admin_scale_saving()}</span>
 				{:else}
 					<i class="i-ph-floppy-disk"></i>
-					<span>Save Changes</span>
+					<span>{$LL.admin_scale_save_changes()}</span>
 				{/if}
 			</button>
 		</div>
@@ -663,10 +681,10 @@
 	<Modal
 		open={showDiffDialog}
 		onClose={() => (showDiffDialog = false)}
-		title="Confirm Changes"
+		title={$LL.admin_scale_confirm_changes()}
 		size="sm"
 	>
-		<p class="dialog-subtitle">You are about to change:</p>
+		<p class="dialog-subtitle">{$LL.admin_scale_dialog_subtitle()}</p>
 
 		<ul class="diff-list">
 			{#each diffItems as item (item.label)}
@@ -681,12 +699,16 @@
 
 		<p class="dialog-warning">
 			<i class="i-ph-warning"></i>
-			Changes affect new sessions only.
+			{$LL.admin_scale_changes_new_sessions_only()}
 		</p>
 
 		{#snippet footer()}
-			<button class="btn btn-secondary" onclick={() => (showDiffDialog = false)}>Cancel</button>
-			<button class="btn btn-primary" onclick={saveAllChanges}>Save Changes</button>
+			<button class="btn btn-secondary" onclick={() => (showDiffDialog = false)}
+				>{$LL.admin_scale_cancel()}</button
+			>
+			<button class="btn btn-primary" onclick={saveAllChanges}
+				>{$LL.admin_scale_save_changes()}</button
+			>
 		{/snippet}
 	</Modal>
 </div>

@@ -6,8 +6,9 @@
 		type IdentityMappingDestinationProfileSummary,
 		type IdentityMappingSourceProfileSummary
 	} from '$lib/api/admin-identity-mapping';
+	import { LL } from '$i18n/i18n-svelte';
 
-	type ProfileKind = 'inbound' | 'outbound' | 'template';
+	type ProfileKind = 'source' | 'destination' | 'template';
 
 	interface ProfileItem {
 		id: string;
@@ -32,13 +33,15 @@
 	});
 
 	const sourceProfileListItems = $derived(
-		profiles.filter((profile) => profile.kind === 'inbound' && profile.sourceProfileId)
+		profiles.filter((profile) => profile.kind === 'source' && profile.sourceProfileId)
 	);
 	const destinationProfileListItems = $derived(
-		profiles.filter((profile) => profile.kind === 'outbound' && profile.destinationProfileId)
+		profiles.filter((profile) => profile.kind === 'destination' && profile.destinationProfileId)
 	);
-	const inboundCount = $derived(profiles.filter((profile) => profile.kind === 'inbound').length);
-	const outboundCount = $derived(profiles.filter((profile) => profile.kind === 'outbound').length);
+	const sourceCount = $derived(profiles.filter((profile) => profile.kind === 'source').length);
+	const destinationCount = $derived(
+		profiles.filter((profile) => profile.kind === 'destination').length
+	);
 
 	async function loadProfiles() {
 		loading = true;
@@ -53,7 +56,8 @@
 				...loadedDestinationProfiles.destinationProfiles.map(destinationProfileToProfile)
 			];
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to load mapping profiles';
+			errorMessage =
+				error instanceof Error ? error.message : $LL.admin_identity_mapping_profiles_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -62,7 +66,7 @@
 	function sourceProfileToProfile(profile: IdentityMappingSourceProfileSummary): ProfileItem {
 		return {
 			id: `source:${profile.id}`,
-			kind: 'inbound',
+			kind: 'source',
 			protocol: profile.sourceType.toUpperCase(),
 			displayName: profile.displayName,
 			versionLabel: profile.version?.versionLabel ?? 'draft',
@@ -78,7 +82,7 @@
 	): ProfileItem {
 		return {
 			id: `destination:${profile.id}`,
-			kind: 'outbound',
+			kind: 'destination',
 			protocol: profile.destinationType.toUpperCase(),
 			displayName: profile.displayName,
 			versionLabel: profile.version?.versionLabel ?? 'draft',
@@ -113,29 +117,27 @@
 </script>
 
 <svelte:head>
-	<title>Source & Destination Profiles - Authrim Admin</title>
+	<title>{$LL.admin_identity_mapping_profiles_head_title()}</title>
 </svelte:head>
 
 <div class="profiles-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">Back to Identity Mapping</a>
-			<p class="eyebrow">Identity Mapping</p>
-			<h1>Source &amp; Destination Profiles</h1>
+			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
+			<h1>{$LL.admin_identity_mapping_profiles_title()}</h1>
 			<p class="summary">
-				Register source profiles from CSV files or manual column definitions, then select them in
-				the Flow Editor. SAML, SCIM, OIDC, VC, DID, MCP, A2A, and client-credential sources will use
-				this same surface as their adapters are added.
+				{$LL.admin_identity_mapping_profiles_description()}
 			</p>
 		</div>
 		<div class="status-panel">
 			<div>
-				<span>Inbound</span>
-				<strong>{inboundCount}</strong>
+				<span>{$LL.admin_identity_mapping_source()}</span>
+				<strong>{sourceCount}</strong>
 			</div>
 			<div>
-				<span>Outbound</span>
-				<strong>{outboundCount}</strong>
+				<span>{$LL.admin_identity_mapping_destination()}</span>
+				<strong>{destinationCount}</strong>
 			</div>
 		</div>
 	</div>
@@ -143,25 +145,31 @@
 	<section class="profile-list-panel" aria-labelledby="profile-list-heading">
 		<div class="panel-heading">
 			<div>
-				<p class="eyebrow">Profile inventory</p>
-				<h2 id="profile-list-heading">Source and destination profile lists</h2>
+				<p class="eyebrow">{$LL.admin_identity_mapping_profiles_inventory()}</p>
+				<h2 id="profile-list-heading">{$LL.admin_identity_mapping_profiles_lists_title()}</h2>
 			</div>
-			<button type="button" onclick={loadProfiles} disabled={loading}>Refresh</button>
+			<button type="button" onclick={loadProfiles} disabled={loading}>
+				{$LL.admin_identity_mapping_refresh()}
+			</button>
 		</div>
 
 		{#if loading}
-			<div class="empty-state">Loading source and destination profiles.</div>
+			<div class="empty-state">{$LL.admin_identity_mapping_profiles_loading()}</div>
 		{:else if errorMessage}
 			<div class="empty-state">{errorMessage}</div>
 		{:else}
 			<div class="profile-list-columns">
 				<section class="profile-list-column" aria-labelledby="source-profile-list-heading">
 					<div class="column-heading">
-						<h3 id="source-profile-list-heading">Source profiles</h3>
-						<button type="button" onclick={createSourceProfile}>Create source profile</button>
+						<h3 id="source-profile-list-heading">
+							{$LL.admin_identity_mapping_source_profiles()}
+						</h3>
+						<button type="button" onclick={createSourceProfile}>
+							{$LL.admin_identity_mapping_profiles_create_source()}
+						</button>
 					</div>
 					{#if sourceProfileListItems.length === 0}
-						<div class="column-empty">No source profiles.</div>
+						<div class="column-empty">{$LL.admin_identity_mapping_profiles_no_source()}</div>
 					{:else}
 						<div class="profile-list">
 							{#each sourceProfileListItems as profile (profile.id)}
@@ -188,13 +196,17 @@
 
 				<section class="profile-list-column" aria-labelledby="destination-profile-list-heading">
 					<div class="column-heading">
-						<h3 id="destination-profile-list-heading">Destination profiles</h3>
+						<h3 id="destination-profile-list-heading">
+							{$LL.admin_identity_mapping_destination_profiles()}
+						</h3>
 						<button type="button" onclick={createDestinationProfile}>
-							Create destination profile
+							{$LL.admin_identity_mapping_profiles_create_destination()}
 						</button>
 					</div>
 					{#if destinationProfileListItems.length === 0}
-						<div class="column-empty">No destination profiles.</div>
+						<div class="column-empty">
+							{$LL.admin_identity_mapping_profiles_no_destination()}
+						</div>
 					{:else}
 						<div class="profile-list">
 							{#each destinationProfileListItems as profile (profile.id)}

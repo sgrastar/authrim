@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// ==========================================================================
 	// State
@@ -25,7 +26,7 @@
 			try {
 				await tenantStore.reload();
 			} catch (err) {
-				error = err instanceof Error ? err.message : 'Failed to load tenants';
+				error = err instanceof Error ? err.message : $LL.admin_tenants_load_failed();
 			} finally {
 				loading = false;
 			}
@@ -33,31 +34,52 @@
 			loading = false;
 		}
 	});
+
+	function lifecycleLabel(state: string): string {
+		switch (state) {
+			case 'active':
+				return $LL.admin_tenants_active();
+			case 'suspended':
+				return $LL.admin_tenants_suspended();
+			case 'frozen':
+				return $LL.admin_tenants_frozen();
+			case 'migration_read_only':
+				return $LL.admin_tenants_migration_read_only();
+			case 'provisioning':
+				return $LL.admin_tenants_provisioning();
+			case 'deleting':
+				return $LL.admin_tenants_deleting();
+			case 'deleted':
+				return $LL.admin_tenants_deleted();
+			case 'restore_pending':
+				return $LL.admin_tenants_restore_pending();
+			case 'restore_validating':
+				return $LL.admin_tenants_restore_validating();
+			default:
+				return state;
+		}
+	}
 </script>
 
 <svelte:head>
-	<title>Tenants — Admin Dashboard</title>
+	<title>{$LL.admin_tenants_head_title()}</title>
 </svelte:head>
 
 <div class="page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Tenants</h1>
-			<p class="page-description">Manage tenants for this Authrim instance.</p>
+			<h1 class="page-title">{$LL.admin_tenants_title()}</h1>
+			<p class="page-description">{$LL.admin_tenants_description()}</p>
 		</div>
 		{#if !singleTenantMode}
 			<a href="/admin/tenants/new" class="btn btn-primary">
 				<i class="i-ph-plus"></i>
-				Add Tenant
+				{$LL.admin_tenants_add()}
 			</a>
 		{:else}
-			<button
-				class="btn btn-primary"
-				disabled
-				title="Unavailable in single-tenant mode. Configure an API custom domain to enable multiple tenants."
-			>
+			<button class="btn btn-primary" disabled title={$LL.admin_tenants_add_disabled_title()}>
 				<i class="i-ph-plus"></i>
-				Add Tenant
+				{$LL.admin_tenants_add()}
 			</button>
 		{/if}
 	</div>
@@ -66,11 +88,10 @@
 		<div class="alert alert-info">
 			<i class="i-ph-info"></i>
 			<div>
-				<strong>Single-tenant mode</strong>
+				<strong>{$LL.admin_tenants_single_mode_title()}</strong>
 				<p>
-					{singleTenantReason ??
-						'API custom domain is not configured. This deployment runs in single-tenant mode.'}
-					Configure an API custom domain in setup to enable additional tenants.
+					{singleTenantReason ?? $LL.admin_tenants_single_mode_fallback()}
+					{$LL.admin_tenants_single_mode_setup_hint()}
 				</p>
 			</div>
 		</div>
@@ -80,9 +101,12 @@
 		<div class="alert alert-info">
 			<i class="i-ph-database"></i>
 			<div>
-				<strong>Tenant D1 slots</strong>
+				<strong>{$LL.admin_tenants_d1_slots()}</strong>
 				<p>
-					Available {tenantD1Pool.available_slots ?? 0} / {tenantD1Pool.capacity ?? 0}
+					{$LL.admin_tenants_d1_slots_available({
+						available: tenantD1Pool.available_slots ?? 0,
+						capacity: tenantD1Pool.capacity ?? 0
+					})}
 				</p>
 			</div>
 		</div>
@@ -98,24 +122,24 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch animate-spin"></i>
-			Loading tenants...
+			{$LL.admin_tenants_loading()}
 		</div>
 	{:else if tenants.length === 0}
 		<div class="empty-state">
 			<i class="i-ph-buildings"></i>
-			<p>No tenants found.</p>
+			<p>{$LL.admin_tenants_empty()}</p>
 		</div>
 	{:else}
 		<div class="table-container">
 			<table class="table">
 				<thead>
 					<tr>
-						<th>ID</th>
-						<th>Code</th>
-						<th>Name</th>
-						<th>Description</th>
-						<th>Status</th>
-						<th>Default</th>
+						<th>{$LL.admin_tenants_id()}</th>
+						<th>{$LL.admin_tenants_code()}</th>
+						<th>{$LL.admin_tenants_name()}</th>
+						<th>{$LL.admin_tenants_description_label()}</th>
+						<th>{$LL.admin_tenants_status()}</th>
+						<th>{$LL.admin_tenants_default()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -127,7 +151,7 @@
 							tabindex="0"
 							onkeydown={(e) =>
 								e.key === 'Enter' && goto(`/admin/tenants/${encodeURIComponent(tenant.id)}`)}
-							aria-label="View tenant {tenant.name}"
+							aria-label={$LL.admin_tenants_view_aria({ name: tenant.name })}
 						>
 							<td class="tenant-id">{tenant.id}</td>
 							<td class="tenant-id">{tenant.tenant_code}</td>
@@ -135,22 +159,26 @@
 							<td class="tenant-description">{tenant.description ?? '—'}</td>
 							<td>
 								{#if tenant.lifecycle_state === 'active'}
-									<span class="badge badge-active">Active</span>
+									<span class="badge badge-active">{$LL.admin_tenants_active()}</span>
 								{:else}
-									<span class="badge badge-inactive">{tenant.lifecycle_state}</span>
+									<span class="badge badge-inactive">{lifecycleLabel(tenant.lifecycle_state)}</span>
 								{/if}
 							</td>
 							<td>
 								{#if tenant.is_default}
 									<span
 										class="default-star is-default"
-										title="Default tenant"
-										aria-label="Default tenant"
+										title={$LL.admin_tenants_default_tenant()}
+										aria-label={$LL.admin_tenants_default_tenant()}
 									>
 										<i class="i-ph-star-fill"></i>
 									</span>
 								{:else}
-									<span class="default-star" title="Not default" aria-label="Not default">
+									<span
+										class="default-star"
+										title={$LL.admin_tenants_not_default()}
+										aria-label={$LL.admin_tenants_not_default()}
+									>
 										<i class="i-ph-star"></i>
 									</span>
 								{/if}

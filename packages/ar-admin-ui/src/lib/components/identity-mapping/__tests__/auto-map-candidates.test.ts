@@ -211,7 +211,7 @@ describe('identity mapping auto-map candidates', () => {
 		expect(candidates).toEqual([]);
 	});
 
-	it('keeps inbound mapping conservative for common CSV ambiguity cases', () => {
+	it('keeps source mapping conservative for common CSV ambiguity cases', () => {
 		const candidates = suggestAutoMapConnections({
 			fromNodes: [
 				node('src-employee-id', 'Employee Id', 'source'),

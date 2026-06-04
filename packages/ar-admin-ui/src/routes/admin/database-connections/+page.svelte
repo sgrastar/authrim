@@ -5,6 +5,7 @@
 		adminDatabaseConnectionsAPI,
 		type DatabaseConnection
 	} from '$lib/api/admin-database-connections';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let items = $state<DatabaseConnection[]>([]);
 	let loading = $state(true);
@@ -17,7 +18,7 @@
 			const response = await adminDatabaseConnectionsAPI.list();
 			items = response.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load database connections';
+			error = err instanceof Error ? err.message : $LL.admin_database_connections_load_failed();
 			items = [];
 		} finally {
 			loading = false;
@@ -48,18 +49,22 @@
 </script>
 
 <svelte:head>
-	<title>Database Connections - Authrim</title>
+	<title>{$LL.admin_database_connections_page_title()}</title>
 </svelte:head>
 
 <div class="page-shell">
 	<header class="page-header">
 		<div class="page-title-group">
-			<h1 class="page-title">Database Connections</h1>
-			<p class="page-description">Manage platform database connection profiles</p>
+			<h1 class="page-title">{$LL.admin_database_connections_title()}</h1>
+			<p class="page-description">{$LL.admin_database_connections_description()}</p>
 		</div>
 		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={load} disabled={loading}>Refresh</button>
-			<button class="btn btn-primary" onclick={createConnection}>Create connection</button>
+			<button class="btn btn-secondary" onclick={load} disabled={loading}>
+				{$LL.admin_database_connections_refresh()}
+			</button>
+			<button class="btn btn-primary" onclick={createConnection}>
+				{$LL.admin_database_connections_create_connection()}
+			</button>
 		</div>
 	</header>
 
@@ -67,13 +72,13 @@
 
 	<div class="panel">
 		<div class="panel-header">
-			<h2 class="panel-title">Connections</h2>
+			<h2 class="panel-title">{$LL.admin_database_connections_connections()}</h2>
 			<span class="badge badge-neutral">{items.length}</span>
 		</div>
 		{#if loading}
-			<p class="text-muted">Loading...</p>
+			<p class="text-muted">{$LL.admin_database_connections_loading()}</p>
 		{:else if items.length === 0}
-			<p class="text-muted">No database connections.</p>
+			<p class="text-muted">{$LL.admin_database_connections_empty()}</p>
 		{:else}
 			<div class="item-list">
 				{#each items as item (item.id)}
@@ -83,7 +88,10 @@
 							<small>{item.name}</small>
 						</div>
 						<span class="text-muted text-sm">{formatConfigSummary(item)}</span>
-						<div class="tenant-badges" aria-label="Tenant assignments">
+						<div
+							class="tenant-badges"
+							aria-label={$LL.admin_database_connections_tenant_assignments_aria()}
+						>
 							{#if tenantAssignments(item).length === 0}
 								<span class="text-muted text-sm">-</span>
 							{:else}
@@ -99,7 +107,7 @@
 						</div>
 						<span class="badge badge-neutral">{item.provider}</span>
 						{#if item.read_only}
-							<span class="badge badge-muted">setup</span>
+							<span class="badge badge-muted">{$LL.admin_database_connections_setup()}</span>
 						{:else}
 							<span class="badge {item.status === 'active' ? 'badge-success' : 'badge-neutral'}"
 								>{item.status}</span

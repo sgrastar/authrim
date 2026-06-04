@@ -109,7 +109,7 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		...input.sourceProfiles.map(sourceProfileToProfile),
 		...input.externalSchemas.map(externalSchemaToProfile),
 		...input.protocolSchemas
-			.filter((schema) => isInboundProtocol(schema.protocol))
+			.filter((schema) => isSourceProtocol(schema.protocol))
 			.map(protocolSchemaToSourceProfile)
 	];
 	const destinationProfiles = [
@@ -155,8 +155,8 @@ function buildSample(
 		snapshot: sourceProfile.versionLabel,
 		status: sourceProfile.lifecycleState,
 		reviewGates: `${sourceNodes.length} source fields`,
-		inboundAdapter: sourceProfile.adapter,
-		outboundAdapter: destinationAdapter,
+		sourceAdapter: sourceProfile.adapter,
+		destinationAdapter: destinationAdapter,
 		activeRuleId,
 		metrics: [
 			`0 / ${sourceNodes.length}`,
@@ -249,7 +249,7 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 		return catalogEntries
 			.filter(
 				(entry) =>
-					entry.targetTaxonomy !== 'outbound-only' && entry.targetTaxonomy !== 'review-only'
+					entry.targetTaxonomy !== 'destination-only' && entry.targetTaxonomy !== 'review-only'
 			)
 			.sort(
 				(a, b) =>
@@ -670,7 +670,7 @@ function adapterFrom(value: string): MappingAdapter {
 	return defaultAdapters.find((adapter) => normalized.includes(adapter.toLowerCase())) ?? 'CSV';
 }
 
-function isInboundProtocol(protocol: string): boolean {
+function isSourceProtocol(protocol: string): boolean {
 	return ['csv', 'scim', 'saml', 'oidc'].includes(protocol.toLowerCase());
 }
 

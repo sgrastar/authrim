@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminRoleRulesAPI,
 		type RoleAssignmentRule,
@@ -10,6 +11,7 @@
 		createAssignRoleAction
 	} from '$lib/api/admin-role-rules';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import { formatScope } from '$lib/admin/roles-i18n';
 
 	let rules: RoleAssignmentRule[] = $state([]);
 	let loading = $state(true);
@@ -51,8 +53,7 @@
 			rules = response.rules;
 			total = response.total;
 		} catch (err) {
-			console.error('Failed to load role assignment rules:', err);
-			error = 'Failed to load role assignment rules';
+			error = err instanceof Error ? err.message : $LL.admin_roles_rules_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -81,7 +82,7 @@
 
 	async function confirmCreate() {
 		if (!newName.trim() || !newRoleId.trim() || !newClaimName.trim() || !newClaimValue.trim()) {
-			createError = 'Name, Role ID, Claim Name, and Claim Value are required';
+			createError = $LL.admin_roles_rules_required();
 			return;
 		}
 
@@ -105,7 +106,7 @@
 			showCreateDialog = false;
 			await loadRules();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create rule';
+			createError = err instanceof Error ? err.message : $LL.admin_roles_rules_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -136,7 +137,7 @@
 			ruleToDelete = null;
 			await loadRules();
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete rule';
+			deleteError = err instanceof Error ? err.message : $LL.admin_roles_rules_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -171,9 +172,9 @@
 			testResult = result;
 		} catch (err) {
 			if (err instanceof SyntaxError) {
-				testError = 'Invalid JSON format for claims';
+				testError = $LL.admin_roles_rules_invalid_json();
 			} else {
-				testError = err instanceof Error ? err.message : 'Failed to test rule';
+				testError = err instanceof Error ? err.message : $LL.admin_roles_rules_test_failed();
 			}
 		} finally {
 			testing = false;
@@ -188,14 +189,17 @@
 			});
 			await loadRules();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update rule';
+			error = err instanceof Error ? err.message : $LL.admin_roles_rules_update_failed();
 		}
 	}
 
 	function formatCondition(condition: RuleCondition | CompoundCondition): string {
 		if ('operator' in condition && ('and' === condition.operator || 'or' === condition.operator)) {
 			const compound = condition as CompoundCondition;
-			return `${compound.operator.toUpperCase()}(${compound.conditions.length} conditions)`;
+			return $LL.admin_roles_condition_count({
+				operator: compound.operator.toUpperCase(),
+				count: compound.conditions.length
+			});
 		}
 		const simple = condition as RuleCondition;
 		const value = Array.isArray(simple.value) ? simple.value.join(', ') : simple.value;
@@ -218,11 +222,9 @@
 
 <div class="rules-container">
 	<div class="rules-header">
-		<p class="rules-description">
-			Configure automatic role assignment rules based on IdP claims. When users authenticate via
-			external identity providers, their claims are evaluated against these rules.
-		</p>
-		<button class="btn btn-primary" onclick={openCreateDialog}>Add Rule</button>
+		<p class="rules-description">{$LL.admin_roles_rules_description()}</p>
+		<button class="btn btn-primary" onclick={openCreateDialog}>{$LL.admin_roles_rules_add()}</button
+		>
 	</div>
 
 	{#if error}
@@ -232,32 +234,32 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading rules...</p>
+			<p>{$LL.admin_roles_rules_loading()}</p>
 		</div>
 	{:else if rules.length === 0}
 		<div class="empty-state">
-			<p>No role assignment rules configured.</p>
-			<p class="text-muted">
-				Add a rule to automatically assign roles to users based on their IdP claims.
-			</p>
-			<button class="btn btn-primary" onclick={openCreateDialog}>Add Your First Rule</button>
+			<p>{$LL.admin_roles_rules_empty()}</p>
+			<p class="text-muted">{$LL.admin_roles_rules_empty_hint()}</p>
+			<button class="btn btn-primary" onclick={openCreateDialog}>
+				{$LL.admin_roles_rules_add_first()}
+			</button>
 		</div>
 	{:else}
 		<div class="summary-bar">
-			Showing {rules.length} of {total} rules
+			{$LL.admin_roles_rules_result_count({ shown: rules.length, total })}
 		</div>
 
 		<div class="data-table-container">
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Name</th>
-						<th>Condition</th>
-						<th>Role</th>
-						<th>Scope</th>
-						<th>Priority</th>
-						<th>Status</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_roles_name()}</th>
+						<th>{$LL.admin_roles_rules_condition()}</th>
+						<th>{$LL.admin_roles_rules_role()}</th>
+						<th>{$LL.admin_roles_scope()}</th>
+						<th>{$LL.admin_roles_rules_priority()}</th>
+						<th>{$LL.admin_roles_rules_status()}</th>
+						<th class="text-right">{$LL.admin_roles_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -274,29 +276,35 @@
 							</td>
 							<td class="mono">{rule.role_id}</td>
 							<td>
-								<span class={getScopeBadgeClass(rule.scope_type)}>{rule.scope_type}</span>
+								<span class={getScopeBadgeClass(rule.scope_type)}>
+									{formatScope(rule.scope_type, $LL)}
+								</span>
 							</td>
 							<td>
 								{rule.priority}
 								{#if rule.stop_processing}
-									<span class="stop-indicator">⬛ stops</span>
+									<span class="stop-indicator">⬛ {$LL.admin_roles_rules_stops()}</span>
 								{/if}
 							</td>
 							<td>
 								<span class="badge {rule.is_active ? 'badge-success' : 'badge-neutral'}">
-									{rule.is_active ? 'Active' : 'Inactive'}
+									{rule.is_active
+										? $LL.admin_roles_rules_active()
+										: $LL.admin_roles_rules_inactive()}
 								</span>
 							</td>
 							<td class="text-right">
 								<div class="action-buttons">
 									<button class="btn btn-secondary btn-sm" onclick={(e) => openTestDialog(rule, e)}>
-										Test
+										{$LL.admin_roles_rules_test()}
 									</button>
 									<button class="btn btn-secondary btn-sm" onclick={(e) => toggleActive(rule, e)}>
-										{rule.is_active ? 'Disable' : 'Enable'}
+										{rule.is_active
+											? $LL.admin_roles_rules_disable()
+											: $LL.admin_roles_rules_enable()}
 									</button>
 									<button class="btn btn-danger btn-sm" onclick={(e) => openDeleteDialog(rule, e)}>
-										Delete
+										{$LL.admin_roles_delete()}
 									</button>
 								</div>
 							</td>
@@ -312,7 +320,7 @@
 <Modal
 	open={showCreateDialog}
 	onClose={closeCreateDialog}
-	title="Add Role Assignment Rule"
+	title={$LL.admin_roles_rules_add_title()}
 	size="md"
 >
 	{#if createError}
@@ -320,71 +328,71 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="rule-name" class="form-label">Rule Name</label>
+		<label for="rule-name" class="form-label">{$LL.admin_roles_rules_name()}</label>
 		<input
 			type="text"
 			id="rule-name"
 			class="form-input"
 			bind:value={newName}
-			placeholder="e.g., Assign Admin for IT Staff"
+			placeholder={$LL.admin_roles_rules_name_placeholder()}
 		/>
 	</div>
 
 	<div class="form-group">
-		<label for="rule-desc" class="form-label">Description (optional)</label>
+		<label for="rule-desc" class="form-label">{$LL.admin_roles_rules_description_optional()}</label>
 		<input
 			type="text"
 			id="rule-desc"
 			class="form-input"
 			bind:value={newDescription}
-			placeholder="Brief description of the rule"
+			placeholder={$LL.admin_roles_rules_description_placeholder()}
 		/>
 	</div>
 
 	<div class="form-group">
-		<label for="role-id" class="form-label">Role ID to Assign</label>
+		<label for="role-id" class="form-label">{$LL.admin_roles_rules_role_id()}</label>
 		<input
 			type="text"
 			id="role-id"
 			class="form-input"
 			bind:value={newRoleId}
-			placeholder="e.g., admin, viewer, editor"
+			placeholder={$LL.admin_roles_rules_role_id_placeholder()}
 		/>
 	</div>
 
 	<div class="panel" style="margin: 16px 0;">
-		<h3 class="form-label">Condition (Simple Match)</h3>
+		<h3 class="form-label">{$LL.admin_roles_rules_condition_simple()}</h3>
 
 		<div class="form-row">
 			<div class="form-group">
-				<label for="claim-name" class="form-label">Claim Name</label>
+				<label for="claim-name" class="form-label">{$LL.admin_roles_rules_claim_name()}</label>
 				<input
 					type="text"
 					id="claim-name"
 					class="form-input"
 					bind:value={newClaimName}
-					placeholder="e.g., email, groups, department"
+					placeholder={$LL.admin_roles_rules_claim_name_placeholder()}
 				/>
 			</div>
 			<div class="form-group">
-				<label for="claim-value" class="form-label">Claim Value</label>
+				<label for="claim-value" class="form-label">{$LL.admin_roles_rules_claim_value()}</label>
 				<input
 					type="text"
 					id="claim-value"
 					class="form-input"
 					bind:value={newClaimValue}
-					placeholder="e.g., *@company.com, IT"
+					placeholder={$LL.admin_roles_rules_claim_value_placeholder()}
 				/>
 			</div>
 		</div>
 		<p class="cell-secondary">
-			This creates a simple "equals" condition. For complex conditions, use the API directly.
+			{$LL.admin_roles_rules_condition_hint()}
 		</p>
 	</div>
 
 	<div class="form-row">
 		<div class="form-group">
-			<label for="priority" class="form-label">Priority</label>
+			<label for="priority" class="form-label">{$LL.admin_roles_rules_priority()}</label>
 			<input
 				type="number"
 				id="priority"
@@ -393,24 +401,24 @@
 				min="0"
 				max="1000"
 			/>
-			<span class="cell-secondary">Higher priority rules are evaluated first</span>
+			<span class="cell-secondary">{$LL.admin_roles_rules_priority_hint()}</span>
 		</div>
 	</div>
 
 	<div class="form-group">
 		<ToggleSwitch
 			bind:checked={newStopProcessing}
-			label="Stop Processing"
-			description="Stop processing subsequent rules if this rule matches"
+			label={$LL.admin_roles_rules_stop_processing()}
+			description={$LL.admin_roles_rules_stop_processing_desc()}
 		/>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_roles_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={confirmCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create Rule'}
+			{creating ? $LL.admin_roles_rules_creating() : $LL.admin_roles_rules_create()}
 		</button>
 	{/snippet}
 </Modal>
@@ -419,7 +427,7 @@
 <Modal
 	open={showTestDialog && !!ruleToTest}
 	onClose={closeTestDialog}
-	title={`Test Rule: ${ruleToTest?.name ?? ''}`}
+	title={$LL.admin_roles_rules_test_title({ rule: ruleToTest?.name ?? '' })}
 	size="lg"
 >
 	{#if testError}
@@ -427,19 +435,21 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="test-claims" class="form-label">Test Claims (JSON)</label>
+		<label for="test-claims" class="form-label">{$LL.admin_roles_rules_test_claims()}</label>
 		<textarea id="test-claims" class="form-input" bind:value={testClaims} rows="6"></textarea>
-		<span class="cell-secondary">Enter the claims object that would be received from the IdP</span>
+		<span class="cell-secondary">{$LL.admin_roles_rules_test_claims_hint()}</span>
 	</div>
 
 	{#if testResult}
 		<div class="panel {testResult.matched ? 'panel-success' : 'panel-neutral'}">
 			<div class="cell-primary">
-				{testResult.matched ? '✓ Rule Matched' : '✗ Rule Did Not Match'}
+				{testResult.matched
+					? `✓ ${$LL.admin_roles_rules_matched()}`
+					: `✗ ${$LL.admin_roles_rules_not_matched()}`}
 			</div>
 			{#if testResult.matched && testResult.actions_applied.length > 0}
 				<div style="margin-top: 8px;">
-					<strong>Actions to apply:</strong>
+					<strong>{$LL.admin_roles_rules_actions_to_apply()}</strong>
 					<ul style="margin: 8px 0 0 20px;">
 						{#each testResult.actions_applied as action, i (i)}
 							<li>{action.type}: {action.target}</li>
@@ -451,9 +461,11 @@
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeTestDialog}>Close</button>
+		<button class="btn btn-secondary" onclick={closeTestDialog}>
+			{$LL.admin_roles_rules_close()}
+		</button>
 		<button class="btn btn-primary" onclick={runTest} disabled={testing}>
-			{testing ? 'Testing...' : 'Run Test'}
+			{testing ? $LL.admin_roles_rules_testing() : $LL.admin_roles_rules_run_test()}
 		</button>
 	{/snippet}
 </Modal>
@@ -462,7 +474,7 @@
 <Modal
 	open={showDeleteDialog && !!ruleToDelete}
 	onClose={closeDeleteDialog}
-	title="Delete Role Assignment Rule"
+	title={$LL.admin_roles_rules_delete_title()}
 	size="md"
 >
 	{#if deleteError}
@@ -470,16 +482,15 @@
 	{/if}
 
 	<p class="modal-description">
-		Are you sure you want to delete this role assignment rule? Users will no longer be automatically
-		assigned the specified role based on this rule.
+		{$LL.admin_roles_rules_delete_description()}
 	</p>
 
 	{#if ruleToDelete}
 		<div class="panel" style="margin-top: 16px;">
-			<p><strong>Rule:</strong> {ruleToDelete.name}</p>
-			<p><strong>Role:</strong> {ruleToDelete.role_id}</p>
+			<p><strong>{$LL.admin_roles_rules_rule_label()}</strong> {ruleToDelete.name}</p>
+			<p><strong>{$LL.admin_roles_rules_role_label()}</strong> {ruleToDelete.role_id}</p>
 			<p>
-				<strong>Condition:</strong>
+				<strong>{$LL.admin_roles_rules_condition_label()}</strong>
 				<code class="condition-code">{formatCondition(ruleToDelete.condition)}</code>
 			</p>
 		</div>
@@ -487,10 +498,10 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}>
-			Cancel
+			{$LL.admin_roles_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete Rule'}
+			{deleting ? $LL.admin_roles_rules_deleting() : $LL.admin_roles_rules_delete()}
 		</button>
 	{/snippet}
 </Modal>

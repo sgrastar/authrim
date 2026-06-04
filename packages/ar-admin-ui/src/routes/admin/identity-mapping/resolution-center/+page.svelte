@@ -4,6 +4,7 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingReviewTask
 	} from '$lib/api/admin-identity-mapping';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type ResolutionCategory =
 		| 'conflicts'
@@ -26,33 +27,33 @@
 	const categories: Array<{ id: ResolutionCategory; label: string; description: string }> = [
 		{
 			id: 'conflicts',
-			label: 'Conflicts',
-			description: 'Multiple trusted sources claim incompatible values for the same target.'
+			label: $LL.admin_identity_mapping_resolution_conflicts(),
+			description: $LL.admin_identity_mapping_resolution_conflicts_desc()
 		},
 		{
 			id: 'missing_mappings',
-			label: 'Missing Mappings',
-			description: 'Imported fields or outbound requirements do not have a safe target yet.'
+			label: $LL.admin_identity_mapping_resolution_missing_mappings(),
+			description: $LL.admin_identity_mapping_resolution_missing_mappings_desc()
 		},
 		{
 			id: 'linking_decisions',
-			label: 'Linking Decisions',
-			description: 'Identity candidates need step-up, admin approval, or explicit denial.'
+			label: $LL.admin_identity_mapping_resolution_linking_decisions(),
+			description: $LL.admin_identity_mapping_resolution_linking_decisions_desc()
 		},
 		{
 			id: 'consent_required',
-			label: 'Consent Required',
-			description: 'Destination release needs consent, version upgrade, or purpose review.'
+			label: $LL.admin_identity_mapping_resolution_consent_required(),
+			description: $LL.admin_identity_mapping_resolution_consent_required_desc()
 		},
 		{
 			id: 'lifecycle_actions',
-			label: 'Lifecycle Actions',
-			description: 'Provisioning or deprovisioning signals need protected-account review.'
+			label: $LL.admin_identity_mapping_resolution_lifecycle_actions(),
+			description: $LL.admin_identity_mapping_resolution_lifecycle_actions_desc()
 		},
 		{
 			id: 'activation_blockers',
-			label: 'Activation Blockers',
-			description: 'Policy compile or activation cannot proceed until these items close.'
+			label: $LL.admin_identity_mapping_resolution_activation_blockers(),
+			description: $LL.admin_identity_mapping_resolution_activation_blockers_desc()
 		}
 	];
 
@@ -60,27 +61,27 @@
 		{
 			id: 'res-001',
 			category: 'missing_mappings',
-			title: 'Imported source field has no approved release target',
-			source: 'Source profile preview',
-			impact: 'OIDC destination preview omits the claim until a profile owner confirms the target.',
+			title: $LL.admin_identity_mapping_resolution_fallback_missing_title(),
+			source: $LL.admin_identity_mapping_resolution_fallback_missing_source(),
+			impact: $LL.admin_identity_mapping_resolution_fallback_missing_impact(),
 			severity: 'medium',
 			status: 'open'
 		},
 		{
 			id: 'res-002',
 			category: 'consent_required',
-			title: 'Academic affiliation bundle requires consent version upgrade',
-			source: 'Destination Profile / SAML assertion',
-			impact: 'Attribute release challenge is required before release to the selected SP.',
+			title: $LL.admin_identity_mapping_resolution_fallback_consent_title(),
+			source: $LL.admin_identity_mapping_resolution_fallback_consent_source(),
+			impact: $LL.admin_identity_mapping_resolution_fallback_consent_impact(),
 			severity: 'high',
 			status: 'needs_approval'
 		},
 		{
 			id: 'res-003',
 			category: 'linking_decisions',
-			title: 'OIDC iss + sub candidate cannot hard-match existing SAML NameID',
-			source: 'Identity bridge preview',
-			impact: 'Login remains fail-closed unless step-up or admin approval links the candidate.',
+			title: $LL.admin_identity_mapping_resolution_fallback_linking_title(),
+			source: $LL.admin_identity_mapping_resolution_fallback_linking_source(),
+			impact: $LL.admin_identity_mapping_resolution_fallback_linking_impact(),
 			severity: 'high',
 			status: 'blocked'
 		}
@@ -107,7 +108,10 @@
 			]);
 			reviewTasks = dedupeReviewTasks([...openResult.reviewTasks, ...inReviewResult.reviewTasks]);
 		} catch (error) {
-			loadError = error instanceof Error ? error.message : 'Failed to load review tasks';
+			loadError =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_resolution_load_failed();
 		} finally {
 			isLoading = false;
 		}
@@ -115,13 +119,19 @@
 
 	async function transitionResolutionItem(item: ResolutionItem, status: 'resolved' | 'dismissed') {
 		if (loadError) {
-			actionState = { ...actionState, [item.id]: 'Preview item cannot be changed' };
+			actionState = {
+				...actionState,
+				[item.id]: $LL.admin_identity_mapping_resolution_action_preview()
+			};
 			return;
 		}
 		busyItemId = item.id;
 		actionState = {
 			...actionState,
-			[item.id]: status === 'resolved' ? 'Resolving item' : 'Dismissing item'
+			[item.id]:
+				status === 'resolved'
+					? $LL.admin_identity_mapping_resolution_resolving()
+					: $LL.admin_identity_mapping_resolution_dismissing()
 		};
 		try {
 			await adminIdentityMappingAPI.transitionReviewTask(item.id, {
@@ -130,13 +140,19 @@
 			});
 			actionState = {
 				...actionState,
-				[item.id]: status === 'resolved' ? 'Resolved' : 'Dismissed'
+				[item.id]:
+					status === 'resolved'
+						? $LL.admin_identity_mapping_resolution_resolved()
+						: $LL.admin_identity_mapping_resolution_dismissed()
 			};
 			await loadReviewTasks();
 		} catch (error) {
 			actionState = {
 				...actionState,
-				[item.id]: error instanceof Error ? error.message : 'Action failed'
+				[item.id]:
+					error instanceof Error
+						? error.message
+						: $LL.admin_identity_mapping_resolution_action_failed()
 			};
 		} finally {
 			busyItemId = null;
@@ -163,7 +179,7 @@
 			impact:
 				getPayloadString(task.payload, 'riskSummary') ??
 				getPayloadString(task.payload, 'impact') ??
-				'Review required before this mapping decision can be closed safely.',
+				$LL.admin_identity_mapping_resolution_review_required(),
 			severity: priorityToSeverity(task.priority),
 			status: statusToResolutionStatus(task.status)
 		};
@@ -216,37 +232,42 @@
 </script>
 
 <svelte:head>
-	<title>Mapping Resolution Center - Authrim Admin</title>
+	<title>{$LL.admin_identity_mapping_resolution_head_title()}</title>
 </svelte:head>
 
 <div class="resolution-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">Back to Identity Mapping</a>
-			<p class="eyebrow">Identity Mapping</p>
-			<h1>Mapping Resolution Center</h1>
+			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
+			<h1>{$LL.admin_identity_mapping_resolution_title()}</h1>
 			<p class="summary">
-				Resolve conflicts, missing mappings, linking decisions, consent blockers, protected
-				lifecycle actions, and activation blockers that automatic mapping cannot close safely.
+				{$LL.admin_identity_mapping_resolution_description()}
 			</p>
 		</div>
 		<div class="status-panel">
-			<strong>{loadError ? 'Preview fallback' : 'Review task feed'}</strong>
+			<strong>
+				{loadError
+					? $LL.admin_identity_mapping_editor_preview_fallback()
+					: $LL.admin_identity_mapping_resolution_feed()}
+			</strong>
 			<span>
 				{#if isLoading}
-					Loading unresolved mapping decisions.
+					{$LL.admin_identity_mapping_resolution_loading_unresolved()}
 				{:else if loadError}
-					{loadError}. Showing safe preview examples.
+					{loadError}. {$LL.admin_identity_mapping_resolution_fallback_suffix()}
 				{:else}
-					{reviewTasks.length} unresolved item{reviewTasks.length === 1 ? '' : 's'} loaded from the resolution
-					feed.
+					{$LL.admin_identity_mapping_resolution_loaded({
+						count: reviewTasks.length,
+						plural: reviewTasks.length === 1 ? '' : 's'
+					})}
 				{/if}
 			</span>
 		</div>
 	</div>
 
 	<div class="resolution-layout">
-		<nav class="category-list" aria-label="Resolution categories">
+		<nav class="category-list" aria-label={$LL.admin_identity_mapping_resolution_categories_aria()}>
 			{#each categories as category (category.id)}
 				<button
 					type="button"
@@ -271,13 +292,13 @@
 
 			{#if isLoading}
 				<div class="empty-state">
-					<strong>Loading items</strong>
-					<span>Fetching unresolved conflicts, missing mappings, and approval blockers.</span>
+					<strong>{$LL.admin_identity_mapping_resolution_loading_items()}</strong>
+					<span>{$LL.admin_identity_mapping_resolution_loading_items_desc()}</span>
 				</div>
 			{:else if visibleItems.length === 0}
 				<div class="empty-state">
-					<strong>No unresolved items</strong>
-					<span>This category has no open resolution items.</span>
+					<strong>{$LL.admin_identity_mapping_resolution_no_items()}</strong>
+					<span>{$LL.admin_identity_mapping_resolution_no_items_desc()}</span>
 				</div>
 			{:else}
 				<div class="item-list">
@@ -297,14 +318,14 @@
 										onclick={() => transitionResolutionItem(item, 'resolved')}
 										disabled={busyItemId === item.id}
 									>
-										Resolve
+										{$LL.admin_identity_mapping_resolution_resolve()}
 									</button>
 									<button
 										type="button"
 										onclick={() => transitionResolutionItem(item, 'dismissed')}
 										disabled={busyItemId === item.id}
 									>
-										Dismiss
+										{$LL.admin_identity_mapping_resolution_dismiss()}
 									</button>
 								</div>
 								{#if actionState[item.id]}

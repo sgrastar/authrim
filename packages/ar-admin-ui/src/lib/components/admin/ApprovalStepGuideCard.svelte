@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ApprovalStepGuideResult } from '$lib/api/admin-approvals';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {
 		guide: ApprovalStepGuideResult;
@@ -29,19 +30,19 @@
 		</div>
 		<div class="guide-grid">
 			<div>
-				<strong>Mode</strong>
+				<strong>{$LL.admin_approvals_mode()}</strong>
 				<span>{guide.guide.mode}</span>
 			</div>
 			<div>
-				<strong>Channel</strong>
+				<strong>{$LL.admin_approvals_channel()}</strong>
 				<span>{guide.guide.transport_channel ?? '-'}</span>
 			</div>
 			<div>
-				<strong>Available Methods</strong>
+				<strong>{$LL.admin_approvals_available_methods()}</strong>
 				<span>{formatMethods(guide.guide.acceptable_methods)}</span>
 			</div>
 			<div>
-				<strong>Selection Source</strong>
+				<strong>{$LL.admin_approvals_selection_source()}</strong>
 				<span>{guide.selection_source ?? '-'}</span>
 			</div>
 		</div>
@@ -52,14 +53,14 @@
 			<div class="fallback-actions">
 				{#each getFallbackMethods() as method (method)}
 					<button class="fallback-button" type="button" onclick={() => onIssueFallback?.(method)}>
-						Issue {method}
+						{$LL.admin_approvals_issue_method({ method })}
 					</button>
 				{/each}
 			</div>
 		{/if}
 	{:else}
 		<div class="guide-error">
-			{guide.resolution_error ?? 'Unable to resolve current completion guide.'}
+			{guide.resolution_error ?? $LL.admin_approvals_unable_resolve_guide()}
 		</div>
 	{/if}
 </div>

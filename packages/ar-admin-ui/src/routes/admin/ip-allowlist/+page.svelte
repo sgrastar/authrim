@@ -6,6 +6,7 @@
 		validateIpRange
 	} from '$lib/api/admin-ip-allowlist';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let entries: IpAllowlistEntry[] = $state([]);
 	let currentIp = $state('');
@@ -45,7 +46,7 @@
 			restrictionActive = response.restriction_active;
 		} catch (err) {
 			console.error('Failed to load IP allowlist:', err);
-			error = err instanceof Error ? err.message : 'Failed to load IP allowlist';
+			error = err instanceof Error ? err.message : $LL.admin_ip_allowlist_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -69,7 +70,7 @@
 	async function handleCreate() {
 		const validation = validateIpRange(newIpRange);
 		if (!validation.valid) {
-			createError = validation.error || 'Invalid IP address or CIDR notation';
+			createError = formatValidationError(validation.error);
 			return;
 		}
 
@@ -84,7 +85,7 @@
 			closeCreateDialog();
 			loadEntries();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create entry';
+			createError = err instanceof Error ? err.message : $LL.admin_ip_allowlist_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -107,7 +108,7 @@
 
 		const validation = validateIpRange(editIpRange);
 		if (!validation.valid) {
-			alert(validation.error || 'Invalid IP address or CIDR notation');
+			alert(formatValidationError(validation.error));
 			return;
 		}
 
@@ -121,20 +122,20 @@
 			closeEditDialog();
 			loadEntries();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to update entry');
+			alert(err instanceof Error ? err.message : $LL.admin_ip_allowlist_update_failed());
 		} finally {
 			saving = false;
 		}
 	}
 
 	async function handleDelete(entry: IpAllowlistEntry) {
-		if (!confirm(`Are you sure you want to delete the IP entry "${entry.ip_range}"?`)) return;
+		if (!confirm($LL.admin_ip_allowlist_delete_confirm({ ipRange: entry.ip_range }))) return;
 
 		try {
 			await adminIpAllowlistAPI.delete(entry.id);
 			loadEntries();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to delete entry');
+			alert(err instanceof Error ? err.message : $LL.admin_ip_allowlist_delete_failed());
 		}
 	}
 
@@ -147,7 +148,7 @@
 			}
 			loadEntries();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to toggle entry');
+			alert(err instanceof Error ? err.message : $LL.admin_ip_allowlist_toggle_failed());
 		}
 	}
 
@@ -168,7 +169,7 @@
 		try {
 			checkResult = await adminIpAllowlistAPI.checkIp(checkIp.trim());
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to check IP');
+			alert(err instanceof Error ? err.message : $LL.admin_ip_allowlist_check_failed());
 		} finally {
 			checking = false;
 		}
@@ -177,24 +178,41 @@
 	function formatDate(timestamp: number): string {
 		return new Date(timestamp).toLocaleString();
 	}
+
+	function formatValidationError(errorMessage?: string): string {
+		switch (errorMessage) {
+			case 'IPv6 CIDR prefix must be between 0 and 128':
+				return $LL.admin_ip_allowlist_invalid_ipv6_cidr_prefix();
+			case 'Invalid IPv6 address':
+				return $LL.admin_ip_allowlist_invalid_ipv6();
+			case 'IPv4 CIDR prefix must be between 0 and 32':
+				return $LL.admin_ip_allowlist_invalid_ipv4_cidr_prefix();
+			case 'Invalid IPv4 address':
+				return $LL.admin_ip_allowlist_invalid_ipv4();
+			default:
+				return errorMessage || $LL.admin_ip_allowlist_invalid_ip_or_cidr();
+		}
+	}
 </script>
 
 <svelte:head>
-	<title>IP Allowlist - Authrim</title>
+	<title>{$LL.admin_ip_allowlist_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">IP Allowlist</h1>
-			<p class="page-description">Manage IP-based access control for the Admin panel</p>
+			<h1 class="page-title">{$LL.admin_ip_allowlist_title()}</h1>
+			<p class="page-description">{$LL.admin_ip_allowlist_description()}</p>
 		</div>
 		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={openCheckDialog}>Check IP</button>
+			<button class="btn btn-secondary" onclick={openCheckDialog}
+				>{$LL.admin_ip_allowlist_check_ip()}</button
+			>
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Add IP
+				{$LL.admin_ip_allowlist_add_ip()}
 			</button>
 		</div>
 	</div>
@@ -215,15 +233,15 @@
 		</div>
 		<div class="status-text">
 			{#if restrictionActive}
-				<strong>IP Restriction Active</strong>
-				<span>Only listed IP addresses can access the Admin panel</span>
+				<strong>{$LL.admin_ip_allowlist_restriction_active()}</strong>
+				<span>{$LL.admin_ip_allowlist_restriction_active_description()}</span>
 			{:else}
-				<strong>No IP Restriction</strong>
-				<span>All IP addresses can access the Admin panel. Add entries to enable restriction.</span>
+				<strong>{$LL.admin_ip_allowlist_no_restriction()}</strong>
+				<span>{$LL.admin_ip_allowlist_no_restriction_description()}</span>
 			{/if}
 		</div>
 		<div class="current-ip">
-			Your IP: <code>{currentIp}</code>
+			{$LL.admin_ip_allowlist_your_ip()} <code>{currentIp}</code>
 		</div>
 	</div>
 
@@ -231,7 +249,7 @@
 	<div class="filters-bar">
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={includeDisabled} onchange={() => loadEntries()} />
-			Show disabled entries
+			{$LL.admin_ip_allowlist_show_disabled_entries()}
 		</label>
 	</div>
 
@@ -239,29 +257,31 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-spinner loading-spinner"></i>
-			<p>Loading IP allowlist...</p>
+			<p>{$LL.admin_ip_allowlist_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="error-state">
 			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadEntries}>Retry</button>
+			<button class="btn btn-secondary" onclick={loadEntries}
+				>{$LL.admin_ip_allowlist_retry()}</button
+			>
 		</div>
 	{:else if entries.length === 0}
 		<div class="empty-state">
-			<p>No IP allowlist entries</p>
-			<p class="text-secondary">Add IP addresses or CIDR ranges to restrict Admin panel access</p>
+			<p>{$LL.admin_ip_allowlist_empty()}</p>
+			<p class="text-secondary">{$LL.admin_ip_allowlist_empty_description()}</p>
 		</div>
 	{:else}
 		<div class="table-container">
 			<table class="table">
 				<thead>
 					<tr>
-						<th>IP Range</th>
-						<th>Description</th>
-						<th>Version</th>
-						<th>Status</th>
-						<th>Created</th>
-						<th>Actions</th>
+						<th>{$LL.admin_ip_allowlist_ip_range()}</th>
+						<th>{$LL.admin_ip_allowlist_description_label()}</th>
+						<th>{$LL.admin_ip_allowlist_version()}</th>
+						<th>{$LL.admin_ip_allowlist_status()}</th>
+						<th>{$LL.admin_ip_allowlist_created()}</th>
+						<th>{$LL.admin_ip_allowlist_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -274,9 +294,9 @@
 							<td>IPv{entry.ip_version || '?'}</td>
 							<td>
 								{#if entry.enabled}
-									<span class="badge badge-success">Enabled</span>
+									<span class="badge badge-success">{$LL.admin_ip_allowlist_enabled()}</span>
 								{:else}
-									<span class="badge badge-neutral">Disabled</span>
+									<span class="badge badge-neutral">{$LL.admin_ip_allowlist_disabled()}</span>
 								{/if}
 							</td>
 							<td>{formatDate(entry.created_at)}</td>
@@ -286,13 +306,15 @@
 										class="btn btn-sm btn-secondary"
 										onclick={() => handleToggleEnabled(entry)}
 									>
-										{entry.enabled ? 'Disable' : 'Enable'}
+										{entry.enabled
+											? $LL.admin_ip_allowlist_disable()
+											: $LL.admin_ip_allowlist_enable()}
 									</button>
 									<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(entry)}>
-										Edit
+										{$LL.admin_ip_allowlist_edit()}
 									</button>
 									<button class="btn btn-sm btn-danger" onclick={() => handleDelete(entry)}>
-										Delete
+										{$LL.admin_ip_allowlist_delete()}
 									</button>
 								</div>
 							</td>
@@ -305,38 +327,43 @@
 </div>
 
 <!-- Create Dialog -->
-<Modal open={showCreateDialog} onClose={closeCreateDialog} title="Add IP Entry" size="md">
+<Modal
+	open={showCreateDialog}
+	onClose={closeCreateDialog}
+	title={$LL.admin_ip_allowlist_add_entry()}
+	size="md"
+>
 	{#if createError}
 		<div class="alert alert-danger">{createError}</div>
 	{/if}
 	<div class="form-group">
-		<label for="ipRange">IP Address or CIDR Range *</label>
+		<label for="ipRange">{$LL.admin_ip_allowlist_ip_range_required()}</label>
 		<input
 			type="text"
 			id="ipRange"
 			class="input"
 			bind:value={newIpRange}
-			placeholder="e.g., 192.168.1.0/24 or 10.0.0.1"
+			placeholder={$LL.admin_ip_allowlist_ip_range_placeholder()}
 		/>
-		<p class="help-text">Single IP or CIDR notation (e.g., 192.168.1.0/24)</p>
+		<p class="help-text">{$LL.admin_ip_allowlist_ip_range_help()}</p>
 	</div>
 	<div class="form-group">
-		<label for="description">Description</label>
+		<label for="description">{$LL.admin_ip_allowlist_description_label()}</label>
 		<input
 			type="text"
 			id="description"
 			class="input"
 			bind:value={newDescription}
-			placeholder="e.g., Office network"
+			placeholder={$LL.admin_ip_allowlist_description_placeholder()}
 		/>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_ip_allowlist_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
-			{creating ? 'Adding...' : 'Add'}
+			{creating ? $LL.admin_ip_allowlist_adding() : $LL.admin_ip_allowlist_add()}
 		</button>
 	{/snippet}
 </Modal>
@@ -345,36 +372,43 @@
 <Modal
 	open={showEditDialog && !!editingEntry}
 	onClose={closeEditDialog}
-	title="Edit IP Entry"
+	title={$LL.admin_ip_allowlist_edit_entry()}
 	size="md"
 >
 	<div class="form-group">
-		<label for="editIpRange">IP Address or CIDR Range</label>
+		<label for="editIpRange">{$LL.admin_ip_allowlist_ip_range_label()}</label>
 		<input type="text" id="editIpRange" class="input" bind:value={editIpRange} />
 	</div>
 	<div class="form-group">
-		<label for="editDescription">Description</label>
+		<label for="editDescription">{$LL.admin_ip_allowlist_description_label()}</label>
 		<input type="text" id="editDescription" class="input" bind:value={editDescription} />
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}> Cancel </button>
+		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}>
+			{$LL.admin_ip_allowlist_cancel()}
+		</button>
 		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-			{saving ? 'Saving...' : 'Save'}
+			{saving ? $LL.admin_ip_allowlist_saving() : $LL.admin_ip_allowlist_save()}
 		</button>
 	{/snippet}
 </Modal>
 
 <!-- Check IP Dialog -->
-<Modal open={showCheckDialog} onClose={closeCheckDialog} title="Check IP Address" size="md">
+<Modal
+	open={showCheckDialog}
+	onClose={closeCheckDialog}
+	title={$LL.admin_ip_allowlist_check_address()}
+	size="md"
+>
 	<div class="form-group">
-		<label for="checkIpInput">IP Address</label>
+		<label for="checkIpInput">{$LL.admin_ip_allowlist_ip_address()}</label>
 		<input
 			type="text"
 			id="checkIpInput"
 			class="input"
 			bind:value={checkIp}
-			placeholder="Enter IP address to check"
+			placeholder={$LL.admin_ip_allowlist_check_placeholder()}
 		/>
 	</div>
 	{#if checkResult !== null}
@@ -382,22 +416,24 @@
 			{#if checkResult.restriction_active}
 				{#if checkResult.allowed}
 					<span class="result-icon">✓</span>
-					<span>This IP is <strong>allowed</strong></span>
+					<span>{$LL.admin_ip_allowlist_allowed_result()}</span>
 				{:else}
 					<span class="result-icon">✗</span>
-					<span>This IP is <strong>not allowed</strong></span>
+					<span>{$LL.admin_ip_allowlist_denied_result()}</span>
 				{/if}
 			{:else}
 				<span class="result-icon">○</span>
-				<span>No IP restriction active - all IPs are allowed</span>
+				<span>{$LL.admin_ip_allowlist_all_allowed_result()}</span>
 			{/if}
 		</div>
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeCheckDialog}>Close</button>
+		<button class="btn btn-secondary" onclick={closeCheckDialog}
+			>{$LL.admin_ip_allowlist_close()}</button
+		>
 		<button class="btn btn-primary" onclick={handleCheckIp} disabled={checking || !checkIp.trim()}>
-			{checking ? 'Checking...' : 'Check'}
+			{checking ? $LL.admin_ip_allowlist_checking() : $LL.admin_ip_allowlist_check()}
 		</button>
 	{/snippet}
 </Modal>

@@ -5,6 +5,7 @@
 		type ExternalTokenRefreshConfig,
 		type ExternalTokenRefreshRunSummary
 	} from '$lib/api/admin-external-token-refresh';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let config: ExternalTokenRefreshConfig = $state({
 		enabled: true,
@@ -36,7 +37,7 @@
 			config = configResponse.config;
 			runs = runsResponse.runs;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load token refresh settings';
+			error = err instanceof Error ? err.message : $LL.admin_external_token_refresh_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -50,9 +51,9 @@
 		try {
 			const response = await adminExternalTokenRefreshAPI.updateConfig(config);
 			config = response.config;
-			success = 'Token refresh settings saved.';
+			success = $LL.admin_external_token_refresh_save_success();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save token refresh settings';
+			error = err instanceof Error ? err.message : $LL.admin_external_token_refresh_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -65,11 +66,14 @@
 
 		try {
 			const result = await adminExternalTokenRefreshAPI.runCurrentTenant();
-			success = `Manual refresh ${result.status}; ${result.tokensRefreshed} token(s) refreshed.`;
+			success = $LL.admin_external_token_refresh_run_success({
+				status: result.status,
+				count: result.tokensRefreshed
+			});
 			const runsResponse = await adminExternalTokenRefreshAPI.listRuns();
 			runs = runsResponse.runs;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to run token refresh';
+			error = err instanceof Error ? err.message : $LL.admin_external_token_refresh_run_failed();
 		} finally {
 			running = false;
 		}
@@ -77,7 +81,7 @@
 
 	function formatDate(value: number | null): string {
 		if (!value) return '-';
-		return new Date(value).toLocaleString();
+		return new Date(value).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function formatDuration(run: ExternalTokenRefreshRunSummary): string {
@@ -92,28 +96,51 @@
 		if (status === 'failed') return 'badge badge-danger';
 		return 'badge badge-neutral';
 	}
+
+	function formatTrigger(triggerType: ExternalTokenRefreshRunSummary['trigger_type']): string {
+		return triggerType === 'manual_tenant'
+			? $LL.admin_external_token_refresh_trigger_manual()
+			: $LL.admin_external_token_refresh_trigger_scheduled();
+	}
+
+	function formatStatus(status: ExternalTokenRefreshRunSummary['status']): string {
+		switch (status) {
+			case 'completed':
+				return $LL.admin_external_token_refresh_status_completed();
+			case 'partial_failure':
+				return $LL.admin_external_token_refresh_status_partial_failure();
+			case 'failed':
+				return $LL.admin_external_token_refresh_status_failed();
+			case 'running':
+				return $LL.admin_external_token_refresh_status_running();
+			default:
+				return status;
+		}
+	}
 </script>
 
 <svelte:head>
-	<title>External Token Refresh - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_external_token_refresh_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">External Token Refresh</h1>
+			<h1 class="page-title">{$LL.admin_external_token_refresh_title()}</h1>
 			<p class="page-description">
-				Refresh external IdP tokens for linked identities and review recent run history.
+				{$LL.admin_external_token_refresh_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={load} disabled={loading || saving || running}>
 				<i class="i-ph-arrow-clockwise"></i>
-				Refresh
+				{$LL.admin_external_token_refresh_refresh()}
 			</button>
 			<button class="btn btn-primary" onclick={runNow} disabled={loading || saving || running}>
 				<i class="i-ph-play"></i>
-				{running ? 'Running...' : 'Run Current Tenant'}
+				{running
+					? $LL.admin_external_token_refresh_running()
+					: $LL.admin_external_token_refresh_run_current_tenant()}
 			</button>
 		</div>
 	</div>
@@ -128,21 +155,21 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_external_token_refresh_loading()}</p>
 		</div>
 	{:else}
 		<div class="panel">
 			<div class="panel-header">
-				<h2>Settings</h2>
+				<h2>{$LL.admin_external_token_refresh_settings()}</h2>
 			</div>
 			<div class="settings-grid">
 				<label class="toggle-row">
 					<input type="checkbox" bind:checked={config.enabled} />
-					<span>Enable scheduled refresh</span>
+					<span>{$LL.admin_external_token_refresh_enable_scheduled()}</span>
 				</label>
 
 				<label class="form-field">
-					<span>Refresh threshold seconds</span>
+					<span>{$LL.admin_external_token_refresh_threshold_seconds()}</span>
 					<input
 						type="number"
 						min="1"
@@ -152,7 +179,7 @@
 				</label>
 
 				<label class="form-field">
-					<span>Token batch size</span>
+					<span>{$LL.admin_external_token_refresh_token_batch_size()}</span>
 					<input
 						type="number"
 						min="1"
@@ -163,7 +190,7 @@
 				</label>
 
 				<label class="form-field">
-					<span>Scheduled tenant batch size</span>
+					<span>{$LL.admin_external_token_refresh_scheduled_tenant_batch_size()}</span>
 					<input
 						type="number"
 						min="1"
@@ -175,24 +202,26 @@
 			</div>
 			<div class="panel-actions">
 				<button class="btn btn-primary" onclick={saveConfig} disabled={saving || running}>
-					{saving ? 'Saving...' : 'Save Settings'}
+					{saving
+						? $LL.admin_external_token_refresh_saving()
+						: $LL.admin_external_token_refresh_save_settings()}
 				</button>
 			</div>
 		</div>
 
 		<div class="metrics-grid">
 			<div class="metric-card">
-				<div class="metric-label">Recent Runs</div>
+				<div class="metric-label">{$LL.admin_external_token_refresh_recent_runs()}</div>
 				<div class="metric-value">{runs.length}</div>
 			</div>
 			<div class="metric-card">
-				<div class="metric-label">Failed Tenants</div>
+				<div class="metric-label">{$LL.admin_external_token_refresh_failed_tenants()}</div>
 				<div class="metric-value">
 					{runs.reduce((sum, run) => sum + (run.failed_tenants || 0), 0)}
 				</div>
 			</div>
 			<div class="metric-card">
-				<div class="metric-label">Tokens Refreshed</div>
+				<div class="metric-label">{$LL.admin_external_token_refresh_tokens_refreshed()}</div>
 				<div class="metric-value">
 					{runs.reduce((sum, run) => sum + (run.tokens_refreshed || 0), 0)}
 				</div>
@@ -203,27 +232,27 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Started</th>
-						<th>Trigger</th>
-						<th>Status</th>
-						<th>Tenant</th>
-						<th>Processed</th>
-						<th>Failed</th>
-						<th>Tokens</th>
-						<th>Duration</th>
+						<th>{$LL.admin_external_token_refresh_started()}</th>
+						<th>{$LL.admin_external_token_refresh_trigger()}</th>
+						<th>{$LL.admin_external_token_refresh_status()}</th>
+						<th>{$LL.admin_external_token_refresh_tenant()}</th>
+						<th>{$LL.admin_external_token_refresh_processed()}</th>
+						<th>{$LL.admin_external_token_refresh_failed()}</th>
+						<th>{$LL.admin_external_token_refresh_tokens()}</th>
+						<th>{$LL.admin_external_token_refresh_duration()}</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#if runs.length === 0}
 						<tr>
-							<td colspan="8" class="empty-cell">No token refresh runs recorded.</td>
+							<td colspan="8" class="empty-cell">{$LL.admin_external_token_refresh_no_runs()}</td>
 						</tr>
 					{:else}
 						{#each runs as run (run.id)}
 							<tr>
 								<td>{formatDate(run.started_at)}</td>
-								<td>{run.trigger_type === 'manual_tenant' ? 'Manual' : 'Scheduled'}</td>
-								<td><span class={statusClass(run.status)}>{run.status}</span></td>
+								<td>{formatTrigger(run.trigger_type)}</td>
+								<td><span class={statusClass(run.status)}>{formatStatus(run.status)}</span></td>
 								<td class="mono">{run.requested_tenant_id || '-'}</td>
 								<td>{run.processed_tenants} / {run.selected_tenants_count}</td>
 								<td>{run.failed_tenants}</td>

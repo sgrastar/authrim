@@ -8,6 +8,7 @@
 		PolicySimulationInput,
 		PolicySimulationResult
 	} from '$lib/api/admin-admin-policies';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let policies: AdminPolicy[] = [];
 	let loading = true;
@@ -67,7 +68,7 @@
 			});
 			policies = response.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load policies';
+			error = err instanceof Error ? err.message : $LL.admin_admin_policies_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -96,7 +97,7 @@
 			showCreateDialog = false;
 			await loadPolicies();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create policy';
+			createError = err instanceof Error ? err.message : $LL.admin_admin_policies_create_failed();
 		} finally {
 			createLoading = false;
 		}
@@ -127,7 +128,7 @@
 			_showEditDialog = false;
 			await loadPolicies();
 		} catch (err) {
-			_editError = err instanceof Error ? err.message : 'Failed to update policy';
+			_editError = err instanceof Error ? err.message : $LL.admin_admin_policies_update_failed();
 		} finally {
 			_editLoading = false;
 		}
@@ -142,7 +143,7 @@
 			}
 			await loadPolicies();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to toggle policy status';
+			error = err instanceof Error ? err.message : $LL.admin_admin_policies_toggle_failed();
 		}
 	}
 
@@ -162,7 +163,7 @@
 			_showDeleteDialog = false;
 			await loadPolicies();
 		} catch (err) {
-			_deleteError = err instanceof Error ? err.message : 'Failed to delete policy';
+			_deleteError = err instanceof Error ? err.message : $LL.admin_admin_policies_delete_failed();
 		} finally {
 			_deleteLoading = false;
 		}
@@ -189,7 +190,8 @@
 		try {
 			simulationResult = await adminAdminPoliciesAPI.simulatePolicy(simulationForm);
 		} catch (err) {
-			simulationError = err instanceof Error ? err.message : 'Failed to simulate policy';
+			simulationError =
+				err instanceof Error ? err.message : $LL.admin_admin_policies_simulation_failed();
 		} finally {
 			simulationLoading = false;
 		}
@@ -220,7 +222,21 @@
 
 		return matchesSearch && matchesFilter;
 	});
+
+	function formatEffect(effect: AdminPolicy['effect']) {
+		return effect === 'allow' ? $LL.admin_admin_policies_allow() : $LL.admin_admin_policies_deny();
+	}
+
+	function formatDecision(decision: PolicySimulationResult['decision']) {
+		if (decision === 'allow') return $LL.admin_admin_policies_allow();
+		if (decision === 'deny') return $LL.admin_admin_policies_deny();
+		return $LL.admin_admin_policies_no_match();
+	}
 </script>
+
+<svelte:head>
+	<title>{$LL.admin_admin_policies_head_title()}</title>
+</svelte:head>
 
 <div class="container mx-auto px-4 py-8">
 	<!-- Breadcrumb -->
@@ -228,18 +244,22 @@
 		<a
 			href="/admin/admin-access-control"
 			class="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-			>Admin Access Control</a
+			>{$LL.admin_admin_policies_access_control()}</a
 		>
 		<span class="mx-2 text-gray-400 dark:text-gray-500">/</span>
-		<span class="text-gray-600 dark:text-gray-400">Policies</span>
+		<span class="text-gray-600 dark:text-gray-400">
+			{$LL.admin_admin_policies_breadcrumb()}
+		</span>
 	</nav>
 
 	<!-- Header -->
 	<div class="flex items-center justify-between mb-6">
 		<div>
-			<h1 class="text-3xl font-bold mb-2 dark:text-white">Admin Policies</h1>
+			<h1 class="text-3xl font-bold mb-2 dark:text-white">
+				{$LL.admin_admin_policies_title()}
+			</h1>
 			<p class="text-gray-600 dark:text-gray-400">
-				Combined RBAC/ABAC/ReBAC access control policies
+				{$LL.admin_admin_policies_description()}
 			</p>
 		</div>
 		<div class="flex space-x-3">
@@ -248,14 +268,14 @@
 				class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center"
 			>
 				<span class="i-ph-flask mr-2"></span>
-				Simulate
+				{$LL.admin_admin_policies_simulate()}
 			</button>
 			<button
 				on:click={openCreateDialog}
 				class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center"
 			>
 				<span class="i-ph-plus mr-2"></span>
-				Create Policy
+				{$LL.admin_admin_policies_create_policy()}
 			</button>
 		</div>
 	</div>
@@ -277,7 +297,7 @@
 			<input
 				type="text"
 				bind:value={searchQuery}
-				placeholder="Search policies..."
+				placeholder={$LL.admin_admin_policies_search_placeholder()}
 				class="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 			/>
 		</div>
@@ -286,19 +306,19 @@
 				on:click={() => (filterActive = 'all')}
 				class={`px-4 py-2 rounded-lg transition-colors ${filterActive === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
 			>
-				All
+				{$LL.admin_admin_policies_all()}
 			</button>
 			<button
 				on:click={() => (filterActive = 'active')}
 				class={`px-4 py-2 rounded-lg transition-colors ${filterActive === 'active' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
 			>
-				Active
+				{$LL.admin_admin_policies_active()}
 			</button>
 			<button
 				on:click={() => (filterActive = 'inactive')}
 				class={`px-4 py-2 rounded-lg transition-colors ${filterActive === 'inactive' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
 			>
-				Inactive
+				{$LL.admin_admin_policies_inactive()}
 			</button>
 		</div>
 	</div>
@@ -306,25 +326,29 @@
 	<!-- Loading State -->
 	{#if loading}
 		<div class="flex justify-center py-12">
-			<div class="text-gray-500 dark:text-gray-400">Loading policies...</div>
+			<div class="text-gray-500 dark:text-gray-400">
+				{$LL.admin_admin_policies_loading()}
+			</div>
 		</div>
 	{:else if filteredPolicies.length === 0}
 		<div
 			class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-12 text-center"
 		>
 			<div class="text-gray-400 dark:text-gray-500 text-5xl mb-4 i-ph-shield-check"></div>
-			<h3 class="text-xl font-semibold mb-2 dark:text-white">No policies found</h3>
+			<h3 class="text-xl font-semibold mb-2 dark:text-white">
+				{$LL.admin_admin_policies_no_policies_found()}
+			</h3>
 			<p class="text-gray-600 dark:text-gray-400 mb-4">
 				{searchQuery || filterActive !== 'all'
-					? 'Try adjusting your filters'
-					: 'Get started by creating a policy'}
+					? $LL.admin_admin_policies_try_adjusting_filters()
+					: $LL.admin_admin_policies_empty_create()}
 			</p>
 			{#if !searchQuery && filterActive === 'all'}
 				<button
 					on:click={openCreateDialog}
 					class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
 				>
-					Create Policy
+					{$LL.admin_admin_policies_create_policy()}
 				</button>
 			{/if}
 		</div>
@@ -343,18 +367,20 @@
 									<span
 										class="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full font-medium"
 									>
-										System
+										{$LL.admin_admin_policies_system()}
 									</span>
 								{/if}
 								<span
 									class={`px-2 py-1 text-xs rounded-full font-medium ${policy.effect === 'allow' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}
 								>
-									{policy.effect.toUpperCase()}
+									{formatEffect(policy.effect)}
 								</span>
 								<span
 									class={`px-2 py-1 text-xs rounded-full font-medium ${policy.is_active ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}
 								>
-									{policy.is_active ? 'Active' : 'Inactive'}
+									{policy.is_active
+										? $LL.admin_admin_policies_active()
+										: $LL.admin_admin_policies_inactive()}
 								</span>
 							</div>
 							{#if policy.display_name}
@@ -365,15 +391,21 @@
 							{/if}
 							<div class="space-y-1 text-sm">
 								<div class="flex items-center space-x-2">
-									<span class="text-gray-500">Resource:</span>
+									<span class="text-gray-500">
+										{$LL.admin_admin_policies_resource_label()}
+									</span>
 									<span class="font-mono text-gray-900">{policy.resource_pattern}</span>
 								</div>
 								<div class="flex items-center space-x-2">
-									<span class="text-gray-500">Actions:</span>
+									<span class="text-gray-500">
+										{$LL.admin_admin_policies_actions_label()}
+									</span>
 									<span class="font-mono text-gray-900">{policy.actions.join(', ')}</span>
 								</div>
 								<div class="flex items-center space-x-2">
-									<span class="text-gray-500">Priority:</span>
+									<span class="text-gray-500">
+										{$LL.admin_admin_policies_priority_label()}
+									</span>
 									<span class="text-gray-900">{policy.priority}</span>
 								</div>
 							</div>
@@ -383,26 +415,30 @@
 								<button
 									on:click={() => toggleActive(policy)}
 									class="p-2 text-gray-600 hover:bg-gray-100 rounded transition-colors"
-									title={policy.is_active ? 'Deactivate' : 'Activate'}
+									title={policy.is_active
+										? $LL.admin_admin_policies_deactivate()
+										: $LL.admin_admin_policies_activate()}
 								>
 									<span class={policy.is_active ? 'i-ph-toggle-right' : 'i-ph-toggle-left'}></span>
 								</button>
 								<button
 									on:click={() => openEditDialog(policy)}
 									class="p-2 text-gray-600 hover:bg-gray-100 rounded transition-colors"
-									title="Edit"
+									title={$LL.admin_admin_policies_edit()}
 								>
 									<span class="i-ph-pencil text-lg"></span>
 								</button>
 								<button
 									on:click={() => openDeleteDialog(policy)}
 									class="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
-									title="Delete"
+									title={$LL.admin_admin_policies_delete()}
 								>
 									<span class="i-ph-trash text-lg"></span>
 								</button>
 							{:else}
-								<span class="text-xs text-gray-500 italic">System-protected</span>
+								<span class="text-xs text-gray-500 italic">
+									{$LL.admin_admin_policies_system_protected()}
+								</span>
 							{/if}
 						</div>
 					</div>
@@ -418,7 +454,7 @@
 		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
 		role="button"
 		tabindex="0"
-		aria-label="Close create policy dialog"
+		aria-label={$LL.admin_admin_policies_close_create_dialog()}
 		on:click|self={() => (showCreateDialog = false)}
 		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
 	>
@@ -427,7 +463,7 @@
 			role="dialog"
 			aria-modal="true"
 		>
-			<h2 class="text-xl font-semibold mb-4">Create Policy</h2>
+			<h2 class="text-xl font-semibold mb-4">{$LL.admin_admin_policies_create_title()}</h2>
 			{#if createError}
 				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
 					{createError}
@@ -437,7 +473,7 @@
 				<div class="space-y-4">
 					<div>
 						<label for="name" class="block text-sm font-medium text-gray-700 mb-1">
-							Name <span class="text-red-500">*</span>
+							{$LL.admin_admin_policies_name_required()} <span class="text-red-500">*</span>
 						</label>
 						<input
 							id="name"
@@ -449,26 +485,29 @@
 					</div>
 					<div>
 						<label for="resource_pattern" class="block text-sm font-medium text-gray-700 mb-1">
-							Resource Pattern <span class="text-red-500">*</span>
+							{$LL.admin_admin_policies_resource_pattern_required()}
+							<span class="text-red-500">*</span>
 						</label>
 						<input
 							id="resource_pattern"
 							type="text"
 							bind:value={createForm.resource_pattern}
 							required
-							placeholder="admin:admin_users:*"
+							placeholder={$LL.admin_admin_policies_resource_pattern_placeholder()}
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 						/>
 					</div>
 					<div>
-						<label for="effect" class="block text-sm font-medium text-gray-700 mb-1">Effect</label>
+						<label for="effect" class="block text-sm font-medium text-gray-700 mb-1">
+							{$LL.admin_admin_policies_effect()}
+						</label>
 						<select
 							id="effect"
 							bind:value={createForm.effect}
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 						>
-							<option value="allow">Allow</option>
-							<option value="deny">Deny</option>
+							<option value="allow">{$LL.admin_admin_policies_effect_allow()}</option>
+							<option value="deny">{$LL.admin_admin_policies_effect_deny()}</option>
 						</select>
 					</div>
 				</div>
@@ -479,14 +518,16 @@
 						disabled={createLoading}
 						class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
 					>
-						Cancel
+						{$LL.admin_admin_policies_cancel()}
 					</button>
 					<button
 						type="submit"
 						disabled={createLoading || !createForm.name || !createForm.resource_pattern}
 						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
 					>
-						{createLoading ? 'Creating...' : 'Create'}
+						{createLoading
+							? $LL.admin_admin_policies_creating()
+							: $LL.admin_admin_policies_create()}
 					</button>
 				</div>
 			</form>
@@ -500,7 +541,7 @@
 		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
 		role="button"
 		tabindex="0"
-		aria-label="Close policy simulation dialog"
+		aria-label={$LL.admin_admin_policies_close_simulation_dialog()}
 		on:click|self={() => (showSimulationDialog = false)}
 		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showSimulationDialog = false))}
 	>
@@ -509,8 +550,12 @@
 			role="dialog"
 			aria-modal="true"
 		>
-			<h2 class="text-xl font-semibold mb-4">Policy Simulation</h2>
-			<p class="text-sm text-gray-600 mb-4">Test policy evaluation with custom user context</p>
+			<h2 class="text-xl font-semibold mb-4">
+				{$LL.admin_admin_policies_simulation_title()}
+			</h2>
+			<p class="text-sm text-gray-600 mb-4">
+				{$LL.admin_admin_policies_simulation_description()}
+			</p>
 			{#if simulationError}
 				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
 					{simulationError}
@@ -520,13 +565,13 @@
 				<input
 					type="text"
 					bind:value={simulationForm.resource}
-					placeholder="Resource (e.g., admin:admin_users:read)"
+					placeholder={$LL.admin_admin_policies_resource_placeholder()}
 					class="w-full px-3 py-2 border border-gray-300 rounded-lg"
 				/>
 				<input
 					type="text"
 					bind:value={simulationForm.action}
-					placeholder="Action (e.g., read)"
+					placeholder={$LL.admin_admin_policies_action_placeholder()}
 					class="w-full px-3 py-2 border border-gray-300 rounded-lg"
 				/>
 			</div>
@@ -535,12 +580,14 @@
 				disabled={simulationLoading}
 				class="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 mb-4"
 			>
-				{simulationLoading ? 'Running...' : 'Run Simulation'}
+				{simulationLoading
+					? $LL.admin_admin_policies_running()
+					: $LL.admin_admin_policies_run_simulation()}
 			</button>
 			{#if simulationResult}
 				<div class="bg-gray-50 p-4 rounded-lg">
 					<div class="flex items-center space-x-2 mb-3">
-						<span class="font-semibold">Decision:</span>
+						<span class="font-semibold">{$LL.admin_admin_policies_decision_label()}</span>
 						<span
 							class={`px-3 py-1 rounded-full font-medium ${
 								simulationResult.decision === 'allow'
@@ -550,11 +597,13 @@
 										: 'bg-gray-100 text-gray-700'
 							}`}
 						>
-							{simulationResult.decision.toUpperCase()}
+							{formatDecision(simulationResult.decision)}
 						</span>
 					</div>
 					<div class="text-sm text-gray-600">
-						Evaluated {simulationResult.total_policies_evaluated} policies
+						{$LL.admin_admin_policies_evaluated_count({
+							count: simulationResult.total_policies_evaluated
+						})}
 					</div>
 				</div>
 			{/if}

@@ -5,6 +5,7 @@
 		type IdentityMappingSchemaReadinessRow,
 		type IdentityMappingSchemaReadinessSummary
 	} from '$lib/api/admin-identity-mapping';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type GateFilter = IdentityMappingSchemaReadinessRow['gateState'] | 'all';
 
@@ -32,7 +33,8 @@
 			rows = result.rows;
 			summary = result.summary;
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to load schema readiness';
+			errorMessage =
+				error instanceof Error ? error.message : $LL.admin_identity_mapping_schema_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -45,42 +47,41 @@
 </script>
 
 <svelte:head>
-	<title>Schema Readiness - Authrim Admin</title>
+	<title>{$LL.admin_identity_mapping_schema_head_title()}</title>
 </svelte:head>
 
 <div class="readiness-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">Back to Identity Mapping</a>
-			<p class="eyebrow">Identity Mapping</p>
-			<h1>Schema Readiness</h1>
+			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
+			<h1>{$LL.admin_identity_mapping_schema_title()}</h1>
 			<p class="summary">
-				Check inventory IDs, expected connection points, and gate notes before activating Tier 2
-				mapping policies.
+				{$LL.admin_identity_mapping_schema_description()}
 			</p>
 		</div>
 		<div class="status-panel">
 			<div>
-				<span>Blocked</span>
+				<span>{$LL.admin_identity_mapping_schema_blocked()}</span>
 				<strong>{summary.blocked}</strong>
 			</div>
 			<div>
-				<span>Deferred</span>
+				<span>{$LL.admin_identity_mapping_schema_deferred()}</span>
 				<strong>{summary.deferred}</strong>
 			</div>
 			<div>
-				<span>Attention</span>
+				<span>{$LL.admin_identity_mapping_schema_attention()}</span>
 				<strong>{summary.attention}</strong>
 			</div>
 			<div>
-				<span>Total</span>
+				<span>{$LL.admin_identity_mapping_schema_total()}</span>
 				<strong>{summary.total}</strong>
 			</div>
 		</div>
 	</div>
 
 	<section class="readiness-panel">
-		<div class="filter-bar" aria-label="Schema readiness filters">
+		<div class="filter-bar" aria-label={$LL.admin_identity_mapping_schema_filters_aria()}>
 			{#each statuses as status (status)}
 				<button
 					type="button"
@@ -90,11 +91,13 @@
 					{status.replace('_', ' ')}
 				</button>
 			{/each}
-			<button type="button" onclick={loadSchemaReadiness} disabled={loading}>Refresh</button>
+			<button type="button" onclick={loadSchemaReadiness} disabled={loading}>
+				{$LL.admin_identity_mapping_refresh()}
+			</button>
 		</div>
 
 		{#if loading}
-			<div class="empty-state">Loading schema-readiness inventory from the control plane.</div>
+			<div class="empty-state">{$LL.admin_identity_mapping_schema_loading()}</div>
 		{:else if errorMessage}
 			<div class="empty-state">{errorMessage}</div>
 		{:else}
@@ -102,13 +105,13 @@
 				<table>
 					<thead>
 						<tr>
-							<th>Inventory ID</th>
-							<th>Area</th>
-							<th>Status</th>
-							<th>Gate State</th>
-							<th>Schema Object</th>
-							<th>Connection</th>
-							<th>Gate</th>
+							<th>{$LL.admin_identity_mapping_schema_inventory_id()}</th>
+							<th>{$LL.admin_identity_mapping_schema_area()}</th>
+							<th>{$LL.admin_identity_mapping_schema_status()}</th>
+							<th>{$LL.admin_identity_mapping_schema_gate_state()}</th>
+							<th>{$LL.admin_identity_mapping_schema_object()}</th>
+							<th>{$LL.admin_identity_mapping_schema_connection()}</th>
+							<th>{$LL.admin_identity_mapping_schema_gate()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -123,9 +126,13 @@
 								<td>
 									{#if row.schemaObject}
 										<code>{row.schemaObject}</code>
-										<small>{row.schemaPresent ? 'present' : 'missing'}</small>
+										<small>
+											{row.schemaPresent
+												? $LL.admin_identity_mapping_present()
+												: $LL.admin_identity_mapping_missing()}
+										</small>
 									{:else}
-										<span class="muted">service / adapter</span>
+										<span class="muted">{$LL.admin_identity_mapping_service_adapter()}</span>
 									{/if}
 								</td>
 								<td>{row.expectedConnectionPr}</td>

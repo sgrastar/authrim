@@ -24,8 +24,8 @@ export interface IdentityMappingPolicyVersionSummary {
 	createdAt?: number | null;
 	updatedAt?: number | null;
 	directions?: {
-		inbound: boolean;
-		outbound: boolean;
+		source: boolean;
+		destination: boolean;
 	};
 	sourceProfileIds?: string[];
 	destinationProfileIds?: string[];

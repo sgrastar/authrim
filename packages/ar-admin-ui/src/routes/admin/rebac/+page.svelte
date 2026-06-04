@@ -8,6 +8,7 @@
 	} from '$lib/api/admin-rebac';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// State
 	let objectTypes: ObjectTypeSummary[] = $state([]);
@@ -38,8 +39,7 @@
 			const response = await adminReBACAPI.listObjectTypes();
 			objectTypes = response.object_types;
 		} catch (err) {
-			console.error('Failed to load object types:', err);
-			error = err instanceof Error ? err.message : 'Failed to load object types';
+			error = err instanceof Error ? err.message : $LL.admin_rebac_load_object_types_failed();
 		} finally {
 			loading = false;
 		}
@@ -47,7 +47,7 @@
 
 	async function runPermissionCheck() {
 		if (!checkUserId || !checkRelation || !checkObject) {
-			checkError = 'All fields are required';
+			checkError = $LL.admin_rebac_all_fields_required();
 			return;
 		}
 
@@ -62,8 +62,7 @@
 				object: checkObject
 			});
 		} catch (err) {
-			console.error('Failed to check permission:', err);
-			checkError = err instanceof Error ? err.message : 'Failed to check permission';
+			checkError = err instanceof Error ? err.message : $LL.admin_rebac_check_permission_failed();
 		} finally {
 			checking = false;
 		}
@@ -78,8 +77,7 @@
 			rebacEnabled = settings.values['feature.enable_rebac'] === true;
 			featureFlagsVersion = settings.version;
 		} catch (err) {
-			console.error('Failed to load ReBAC status:', err);
-			rebacError = 'Failed to load ReBAC status';
+			rebacError = err instanceof Error ? err.message : $LL.admin_rebac_status_load_failed();
 		} finally {
 			rebacLoading = false;
 		}
@@ -106,8 +104,7 @@
 			rebacEnabled = newValue;
 			featureFlagsVersion = result.version;
 		} catch (err) {
-			console.error('Failed to update ReBAC status:', err);
-			rebacError = err instanceof Error ? err.message : 'Failed to update ReBAC status';
+			rebacError = err instanceof Error ? err.message : $LL.admin_rebac_status_update_failed();
 			await loadRebacStatus();
 		} finally {
 			rebacSaving = false;
@@ -130,7 +127,7 @@
 </script>
 
 <svelte:head>
-	<title>Relationship-Based Access Control - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_rebac_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
@@ -139,11 +136,11 @@
 		<div class="flex items-start">
 			<span class="i-ph-info text-blue-600 text-xl mr-3 mt-0.5"></span>
 			<div>
-				<h3 class="font-semibold text-blue-900 mb-1">End User ReBAC</h3>
+				<h3 class="font-semibold text-blue-900 mb-1">{$LL.admin_rebac_info_title()}</h3>
 				<p class="text-sm text-blue-800">
-					This page manages relationships for <strong>End Users</strong>. For
-					<strong>Admin Operator</strong>
-					relationship management, visit
+					{$LL.admin_rebac_info_prefix()}<strong>End Users</strong
+					>{$LL.admin_rebac_info_middle()}<strong>Admin Operator</strong
+					>{$LL.admin_rebac_info_suffix()}
 					<a href="/admin/admin-rebac" class="underline hover:text-blue-900">Admin ReBAC</a>.
 				</p>
 			</div>
@@ -152,9 +149,9 @@
 
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Relationship-Based Access Control</h1>
+			<h1 class="page-title">{$LL.admin_rebac_title()}</h1>
 			<p class="page-description">
-				Manage relation definitions and relationship tuples using Zanzibar-style access control.
+				{$LL.admin_rebac_description()}
 			</p>
 		</div>
 	</div>
@@ -163,15 +160,14 @@
 	<div class="panel feature-toggle-panel">
 		<div class="feature-toggle-row">
 			<div class="feature-toggle-info">
-				<h3 class="feature-toggle-title">ReBAC Engine</h3>
+				<h3 class="feature-toggle-title">{$LL.admin_rebac_engine()}</h3>
 				<p class="feature-toggle-description">
-					Enable Relationship-Based Access Control. When enabled, permission checks will evaluate
-					relationship tuples.
+					{$LL.admin_rebac_engine_description()}
 				</p>
 			</div>
 			<div class="feature-toggle-control">
 				{#if rebacLoading}
-					<span class="loading-text">Loading...</span>
+					<span class="loading-text">{$LL.admin_rebac_loading()}</span>
 				{:else}
 					<ToggleSwitch checked={rebacEnabled} disabled={rebacSaving} onchange={toggleRebac} />
 				{/if}
@@ -181,37 +177,39 @@
 			<div class="alert alert-error alert-sm">{rebacError}</div>
 		{/if}
 		{#if rebacSaving}
-			<div class="saving-indicator">Saving...</div>
+			<div class="saving-indicator">{$LL.admin_rebac_saving()}</div>
 		{/if}
 	</div>
 
 	{#if !rebacEnabled && !rebacLoading}
 		<div class="alert alert-warning">
-			<strong>ReBAC is disabled.</strong> Enable it above to use relationship-based permission checks.
-			When disabled, relationship tuples will not be evaluated.
+			<strong>{$LL.admin_rebac_disabled_title()}</strong>
+			{$LL.admin_rebac_disabled_description()}
 		</div>
 	{/if}
 
 	{#if error}
 		<div class="alert alert-error">
 			<span>{error}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadObjectTypes}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={loadObjectTypes}
+				>{$LL.admin_rebac_retry()}</button
+			>
 		</div>
 	{/if}
 
 	<div class="rebac-content-grid">
 		<!-- Navigation Cards -->
 		<div class="section">
-			<h2 class="section-title">Management</h2>
+			<h2 class="section-title">{$LL.admin_rebac_management()}</h2>
 			<div class="nav-cards">
 				<a href="/admin/rebac/definitions" class="nav-card">
 					<div class="nav-card-icon">
 						<i class="i-ph-list-checks"></i>
 					</div>
 					<div class="nav-card-content">
-						<h3>Relation Definitions</h3>
+						<h3>{$LL.admin_rebac_relation_definitions()}</h3>
 						<p class="muted">
-							Configure how relations are computed (union, intersection, inheritance)
+							{$LL.admin_rebac_relation_definitions_description()}
 						</p>
 					</div>
 					<div class="nav-card-arrow">
@@ -224,8 +222,8 @@
 						<i class="i-ph-link"></i>
 					</div>
 					<div class="nav-card-content">
-						<h3>Relationship Tuples</h3>
-						<p class="muted">Manage user-relation-object assignments</p>
+						<h3>{$LL.admin_rebac_relationship_tuples()}</h3>
+						<p class="muted">{$LL.admin_rebac_relationship_tuples_description()}</p>
 					</div>
 					<div class="nav-card-arrow">
 						<i class="i-ph-arrow-right"></i>
@@ -236,17 +234,19 @@
 
 		<!-- Object Types Summary -->
 		<div class="section">
-			<h2 class="section-title">Object Types</h2>
+			<h2 class="section-title">{$LL.admin_rebac_object_types()}</h2>
 			{#if loading}
 				<div class="loading-state">
 					<i class="i-ph-circle-notch loading-spinner"></i>
-					<p>Loading...</p>
+					<p>{$LL.admin_rebac_loading()}</p>
 				</div>
 			{:else if objectTypes.length === 0}
 				<div class="panel">
 					<div class="empty-state">
-						<p class="empty-state-description">No relation definitions configured yet.</p>
-						<a href="/admin/rebac/definitions" class="btn btn-primary">Create Definition</a>
+						<p class="empty-state-description">{$LL.admin_rebac_no_definitions()}</p>
+						<a href="/admin/rebac/definitions" class="btn btn-primary"
+							>{$LL.admin_rebac_create_definition()}</a
+						>
 					</div>
 				</div>
 			{:else}
@@ -254,7 +254,9 @@
 					{#each objectTypes as objType (objType.name)}
 						<a href="/admin/rebac/definitions?object_type={objType.name}" class="object-type-card">
 							<div class="type-name">{objType.name}</div>
-							<div class="type-count muted">{objType.definition_count} definitions</div>
+							<div class="type-count muted">
+								{$LL.admin_rebac_definitions_count({ count: objType.definition_count })}
+							</div>
 						</a>
 					{/each}
 				</div>
@@ -263,12 +265,12 @@
 
 		<!-- Permission Check Tool -->
 		<div class="panel">
-			<h2 class="panel-title">Permission Check</h2>
-			<p class="muted">Test if a user has a specific relation to an object.</p>
+			<h2 class="panel-title">{$LL.admin_rebac_permission_check()}</h2>
+			<p class="muted">{$LL.admin_rebac_permission_check_description()}</p>
 
 			<div class="check-form">
 				<div class="form-group">
-					<label for="check-user" class="form-label">User ID</label>
+					<label for="check-user" class="form-label">{$LL.admin_rebac_user_id()}</label>
 					<input
 						id="check-user"
 						type="text"
@@ -279,7 +281,7 @@
 				</div>
 
 				<div class="form-group">
-					<label for="check-relation" class="form-label">Relation</label>
+					<label for="check-relation" class="form-label">{$LL.admin_rebac_relation()}</label>
 					<input
 						id="check-relation"
 						type="text"
@@ -290,7 +292,7 @@
 				</div>
 
 				<div class="form-group">
-					<label for="check-object" class="form-label">Object</label>
+					<label for="check-object" class="form-label">{$LL.admin_rebac_object()}</label>
 					<input
 						id="check-object"
 						type="text"
@@ -301,7 +303,7 @@
 				</div>
 
 				<button class="btn btn-primary" onclick={runPermissionCheck} disabled={checking}>
-					{checking ? 'Checking...' : 'Check Permission'}
+					{checking ? $LL.admin_rebac_checking() : $LL.admin_rebac_check_permission()}
 				</button>
 			</div>
 
@@ -317,17 +319,21 @@
 				>
 					<div class="result-status">
 						<i class={checkResult.allowed ? 'i-ph-check-circle' : 'i-ph-x-circle'}></i>
-						<span>{checkResult.allowed ? 'ALLOWED' : 'DENIED'}</span>
+						<span
+							>{checkResult.allowed
+								? $LL.admin_rebac_result_allowed()
+								: $LL.admin_rebac_result_denied()}</span
+						>
 					</div>
 					{#if checkResult.resolved_via}
 						<div class="result-detail">
-							<span class="muted">Resolved via:</span>
+							<span class="muted">{$LL.admin_rebac_resolved_via_label()}</span>
 							<span>{checkResult.resolved_via}</span>
 						</div>
 					{/if}
 					{#if checkResult.path && checkResult.path.length > 0}
 						<div class="result-detail">
-							<span class="muted">Path:</span>
+							<span class="muted">{$LL.admin_rebac_path_label()}</span>
 							<span class="mono">{checkResult.path.join(' → ')}</span>
 						</div>
 					{/if}

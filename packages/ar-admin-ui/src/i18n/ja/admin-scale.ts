@@ -1,0 +1,52 @@
+const adminScale = {
+	admin_scale_head_title: 'スケール設定 - Authrim Admin',
+	admin_scale_title: 'スケール設定',
+	admin_scale_description:
+		'システム容量と地理的な分散を設定します。変更は新しいセッションにのみ反映されます。',
+	admin_scale_loading: '読み込み中...',
+	admin_scale_current: '現在:',
+	admin_scale_shards_unit_title: '{count} Shards',
+	admin_scale_login_per_sec: '(~{count} Login/sec)',
+	admin_scale_load_configuration: '設定を読み込み中...',
+	admin_scale_system_scale: 'システムスケール',
+	admin_scale_system_scale_help:
+		'想定される最大負荷に基づいてshard数を設定します。少なすぎると高トラフィック時にエラーが発生し、多すぎると応答遅延が増える可能性があります。',
+	admin_scale_shards_unit: 'shards',
+	admin_scale_region_distribution: 'リージョン分散',
+	admin_scale_region_distribution_help:
+		'認証データ（sessions、tokens）を保存する場所を設定します。ユーザーの地理分布に基づいて割合を設定してください。例: ユーザーの50%がアジアにいる場合、APACを約50%にします。',
+	admin_scale_region_distribution_description: 'リージョンを選択し、{ratio}を設定します。',
+	admin_scale_request_routing_ratio: 'request routing ratio',
+	admin_scale_slider_note: 'Note: 1つのsliderを調整すると、他の値は自動で再配分されます。',
+	admin_scale_advanced_settings: '詳細設定',
+	admin_scale_estimation_model: '推定モデル',
+	admin_scale_estimation_model_description:
+		'load test（2025年12月）に基づきます。\nLogin/sec: shards × 4.7（Full Login Flow）\nComponent RPS: shards × 28（individual endpoints）\nReference: 32 shards ≈ 150 LPS、componentあたり約900 RPS\n実際の結果はauthentication flow、token TTL、利用パターンにより変動します。',
+	admin_scale_client_based_coefficient: 'Client-based coefficient',
+	admin_scale_client_based_applies_to: '対象: PAR、DeviceCode、CIBA、DPoP',
+	admin_scale_coeff_low: '0.25（低トラフィック）',
+	admin_scale_coeff_default: '0.5（デフォルト）',
+	admin_scale_coeff_high: '1.0（高トラフィック）',
+	admin_scale_coeff_current: '現在: {shards} shards（~{rps} RPS）',
+	admin_scale_individual_shard_settings: '個別Shard設定（計算値）',
+	admin_scale_auth_refresh_sync_warning: 'AuthCodeとRefreshTokenは同じ値である必要があります。',
+	admin_scale_synced_with_refresh_token: 'RefreshTokenと同期',
+	admin_scale_synced_with_auth_code: 'AuthCodeと同期',
+	admin_scale_saving: '保存中...',
+	admin_scale_save_changes: '変更を保存',
+	admin_scale_confirm_changes: '変更の確認',
+	admin_scale_dialog_subtitle: '次の変更を保存します:',
+	admin_scale_changes_new_sessions_only: '変更は新しいセッションにのみ反映されます。',
+	admin_scale_cancel: 'キャンセル',
+	admin_scale_diff_scale: 'スケール',
+	admin_scale_saved: 'スケール設定を保存しました。変更は新しいセッションにのみ反映されます。',
+	admin_scale_load_failed: '設定の読み込みに失敗しました',
+	admin_scale_save_failed: '設定の保存に失敗しました',
+	admin_scale_map_unknown: '不明',
+	admin_scale_map_no_do_support: 'DO未対応',
+	admin_scale_map_active_region: '有効なリージョン',
+	admin_scale_map_inactive: '無効',
+	admin_scale_map_traffic_flow: 'Traffic Flow'
+} as const;
+
+export default adminScale;

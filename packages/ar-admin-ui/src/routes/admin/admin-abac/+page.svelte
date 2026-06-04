@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminAdminAbacAPI, type AdminAttribute } from '$lib/api/admin-admin-abac';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Modal } from '$lib/components';
 
 	// State
@@ -66,9 +67,8 @@
 				include_system: includeSystem
 			});
 			attributes = response.items;
-		} catch (err) {
-			console.error('Failed to load attributes:', err);
-			error = err instanceof Error ? err.message : 'Failed to load attributes';
+		} catch {
+			error = $LL.admin_admin_abac_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -106,7 +106,7 @@
 
 	async function handleCreate() {
 		if (!createForm.name.trim()) {
-			createError = 'Attribute name is required';
+			createError = $LL.admin_admin_abac_attribute_name_required();
 			return;
 		}
 
@@ -132,7 +132,7 @@
 			closeCreateDialog();
 			loadAttributes();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create attribute';
+			createError = err instanceof Error ? err.message : $LL.admin_admin_abac_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -182,7 +182,7 @@
 			closeEditDialog();
 			loadAttributes();
 		} catch (err) {
-			saveError = err instanceof Error ? err.message : 'Failed to save attribute';
+			saveError = err instanceof Error ? err.message : $LL.admin_admin_abac_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -190,17 +190,36 @@
 
 	async function handleDelete(attr: AdminAttribute) {
 		if (attr.is_system) {
-			alert('System attributes cannot be deleted');
+			alert($LL.admin_admin_abac_system_delete_blocked());
 			return;
 		}
 
-		if (!confirm(`Are you sure you want to delete the attribute "${attr.name}"?`)) return;
+		if (!confirm($LL.admin_admin_abac_delete_confirm({ attribute: attr.name }))) return;
 
 		try {
 			await adminAdminAbacAPI.deleteAttribute(attr.id);
 			loadAttributes();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to delete attribute');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_abac_delete_failed());
+		}
+	}
+
+	function formatAttributeType(type: AdminAttribute['attribute_type']): string {
+		switch (type) {
+			case 'string':
+				return $LL.admin_admin_abac_type_string();
+			case 'enum':
+				return $LL.admin_admin_abac_type_enum();
+			case 'number':
+				return $LL.admin_admin_abac_type_number();
+			case 'boolean':
+				return $LL.admin_admin_abac_type_boolean();
+			case 'date':
+				return $LL.admin_admin_abac_type_date();
+			case 'array':
+				return $LL.admin_admin_abac_type_array();
+			default:
+				return type;
 		}
 	}
 
@@ -225,23 +244,22 @@
 </script>
 
 <svelte:head>
-	<title>Admin ABAC - Authrim</title>
+	<title>{$LL.admin_admin_abac_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Admin Attribute-Based Access Control</h1>
+			<h1 class="page-title">{$LL.admin_admin_abac_title()}</h1>
 			<p class="page-description">
-				Manage attribute definitions for admin operators. Attributes can be assigned to admin users
-				for fine-grained access control.
+				{$LL.admin_admin_abac_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Create Attribute
+				{$LL.admin_admin_abac_create_attribute()}
 			</button>
 		</div>
 	</div>
@@ -253,13 +271,13 @@
 			<input
 				type="text"
 				class="search-input"
-				placeholder="Search attributes..."
+				placeholder={$LL.admin_admin_abac_search_placeholder()}
 				bind:value={searchQuery}
 			/>
 		</div>
 		<label class="checkbox-label">
 			<input type="checkbox" checked={includeSystem} onchange={toggleIncludeSystem} />
-			<span>Include system attributes</span>
+			<span>{$LL.admin_admin_abac_include_system()}</span>
 		</label>
 	</div>
 
@@ -267,19 +285,23 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-spinner loading-spinner"></i>
-			<p>Loading attributes...</p>
+			<p>{$LL.admin_admin_abac_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="error-state">
 			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadAttributes}>Retry</button>
+			<button class="btn btn-secondary" onclick={loadAttributes}>
+				{$LL.admin_admin_abac_retry()}
+			</button>
 		</div>
 	{:else if filteredAttributes().length === 0}
 		<div class="empty-state">
 			<i class="i-ph-file-dashed empty-icon"></i>
-			<p>No attributes found</p>
+			<p>{$LL.admin_admin_abac_empty()}</p>
 			{#if searchQuery}
-				<button class="btn btn-secondary" onclick={() => (searchQuery = '')}>Clear Search</button>
+				<button class="btn btn-secondary" onclick={() => (searchQuery = '')}>
+					{$LL.admin_admin_abac_clear_search()}
+				</button>
 			{/if}
 		</div>
 	{:else}
@@ -293,10 +315,10 @@
 						</div>
 						<div class="attribute-badges">
 							<span class={getAttributeTypeBadgeClass(attr.attribute_type)}>
-								{attr.attribute_type}
+								{formatAttributeType(attr.attribute_type)}
 							</span>
 							{#if attr.is_system}
-								<span class="badge badge-yellow">System</span>
+								<span class="badge badge-yellow">{$LL.admin_admin_abac_system()}</span>
 							{/if}
 						</div>
 					</div>
@@ -306,34 +328,34 @@
 					<div class="attribute-details">
 						{#if attr.attribute_type === 'enum' && attr.allowed_values}
 							<div class="detail-item">
-								<span class="detail-label">Allowed values:</span>
+								<span class="detail-label">{$LL.admin_admin_abac_allowed_values()}</span>
 								<span class="detail-value">{attr.allowed_values.join(', ')}</span>
 							</div>
 						{/if}
 						{#if attr.attribute_type === 'number' && (attr.min_value !== null || attr.max_value !== null)}
 							<div class="detail-item">
-								<span class="detail-label">Range:</span>
+								<span class="detail-label">{$LL.admin_admin_abac_range()}</span>
 								<span class="detail-value">{attr.min_value ?? '∞'} - {attr.max_value ?? '∞'}</span>
 							</div>
 						{/if}
 						{#if attr.is_required}
 							<div class="detail-item">
-								<span class="badge badge-red">Required</span>
+								<span class="badge badge-red">{$LL.admin_admin_abac_required()}</span>
 							</div>
 						{/if}
 						{#if attr.is_multi_valued}
 							<div class="detail-item">
-								<span class="badge badge-blue">Multi-valued</span>
+								<span class="badge badge-blue">{$LL.admin_admin_abac_multi_valued()}</span>
 							</div>
 						{/if}
 					</div>
 					<div class="attribute-actions">
 						{#if !attr.is_system}
 							<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(attr)}>
-								Edit
+								{$LL.admin_admin_abac_edit()}
 							</button>
 							<button class="btn btn-sm btn-danger" onclick={() => handleDelete(attr)}>
-								Delete
+								{$LL.admin_admin_abac_delete()}
 							</button>
 						{/if}
 					</div>
@@ -347,7 +369,7 @@
 <Modal
 	open={showCreateDialog}
 	onClose={closeCreateDialog}
-	title="Create Attribute Definition"
+	title={$LL.admin_admin_abac_create_title()}
 	size="lg"
 >
 	{#if createError}
@@ -355,102 +377,102 @@
 	{/if}
 	<div class="form-group">
 		<label for="name">
-			Attribute Name <span class="required">*</span>
+			{$LL.admin_admin_abac_attribute_name()} <span class="required">*</span>
 		</label>
 		<input
 			type="text"
 			id="name"
 			class="input"
 			bind:value={createForm.name}
-			placeholder="e.g., admin_department"
+			placeholder={$LL.admin_admin_abac_name_placeholder()}
 		/>
 	</div>
 	<div class="form-group">
-		<label for="displayName">Display Name</label>
+		<label for="displayName">{$LL.admin_admin_abac_display_name()}</label>
 		<input
 			type="text"
 			id="displayName"
 			class="input"
 			bind:value={createForm.display_name}
-			placeholder="e.g., Department"
+			placeholder={$LL.admin_admin_abac_display_name_placeholder()}
 		/>
 	</div>
 	<div class="form-group">
-		<label for="description">Description</label>
+		<label for="description">{$LL.admin_admin_abac_description_label()}</label>
 		<textarea
 			id="description"
 			class="input"
 			bind:value={createForm.description}
-			placeholder="Description of this attribute..."
+			placeholder={$LL.admin_admin_abac_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
 	<div class="form-group">
-		<label for="type">Attribute Type</label>
+		<label for="type">{$LL.admin_admin_abac_attribute_type()}</label>
 		<select id="type" class="input" bind:value={createForm.attribute_type}>
-			<option value="string">String</option>
-			<option value="enum">Enum (Select from values)</option>
-			<option value="number">Number</option>
-			<option value="boolean">Boolean</option>
-			<option value="date">Date</option>
-			<option value="array">Array</option>
+			<option value="string">{$LL.admin_admin_abac_type_string()}</option>
+			<option value="enum">{$LL.admin_admin_abac_type_enum()}</option>
+			<option value="number">{$LL.admin_admin_abac_type_number()}</option>
+			<option value="boolean">{$LL.admin_admin_abac_type_boolean()}</option>
+			<option value="date">{$LL.admin_admin_abac_type_date()}</option>
+			<option value="array">{$LL.admin_admin_abac_type_array()}</option>
 		</select>
 	</div>
 	{#if createForm.attribute_type === 'enum'}
 		<div class="form-group">
-			<label for="allowedValues">Allowed Values (comma-separated)</label>
+			<label for="allowedValues">{$LL.admin_admin_abac_allowed_values_label()}</label>
 			<input
 				type="text"
 				id="allowedValues"
 				class="input"
 				bind:value={createForm.allowed_values}
-				placeholder="e.g., engineering, security, operations"
+				placeholder={$LL.admin_admin_abac_allowed_values_placeholder()}
 			/>
 		</div>
 	{/if}
 	{#if createForm.attribute_type === 'number'}
 		<div class="form-row">
 			<div class="form-group">
-				<label for="minValue">Min Value</label>
+				<label for="minValue">{$LL.admin_admin_abac_min_value()}</label>
 				<input type="number" id="minValue" class="input" bind:value={createForm.min_value} />
 			</div>
 			<div class="form-group">
-				<label for="maxValue">Max Value</label>
+				<label for="maxValue">{$LL.admin_admin_abac_max_value()}</label>
 				<input type="number" id="maxValue" class="input" bind:value={createForm.max_value} />
 			</div>
 		</div>
 	{/if}
 	{#if createForm.attribute_type === 'string'}
 		<div class="form-group">
-			<label for="regexPattern">Regex Pattern (optional)</label>
+			<label for="regexPattern">{$LL.admin_admin_abac_regex_pattern()}</label>
 			<input
 				type="text"
 				id="regexPattern"
 				class="input"
 				bind:value={createForm.regex_pattern}
-				placeholder="e.g., ^[A-Z]{2}-[0-9]{3}$"
+				placeholder={$LL.admin_admin_abac_regex_placeholder()}
 			/>
 		</div>
 	{/if}
 	<div class="form-group">
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={createForm.is_required} />
-			<span>Required for all admin users</span>
+			<span>{$LL.admin_admin_abac_required_for_all()}</span>
 		</label>
 	</div>
 	<div class="form-group">
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={createForm.is_multi_valued} />
-			<span>Allow multiple values</span>
+			<span>{$LL.admin_admin_abac_allow_multiple()}</span>
 		</label>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_admin_abac_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create'}
+			{creating ? $LL.admin_admin_abac_creating() : $LL.admin_admin_abac_create()}
 		</button>
 	{/snippet}
 </Modal>
@@ -459,85 +481,87 @@
 <Modal
 	open={showEditDialog && !!editingAttribute}
 	onClose={closeEditDialog}
-	title="Edit Attribute: {editingAttribute?.name || ''}"
+	title={$LL.admin_admin_abac_edit_title({ attribute: editingAttribute?.name || '' })}
 	size="lg"
 >
 	{#if saveError}
 		<div class="alert alert-error">{saveError}</div>
 	{/if}
 	<div class="form-group">
-		<label for="editDisplayName">Display Name</label>
+		<label for="editDisplayName">{$LL.admin_admin_abac_display_name()}</label>
 		<input
 			type="text"
 			id="editDisplayName"
 			class="input"
 			bind:value={editForm.display_name}
-			placeholder="e.g., Department"
+			placeholder={$LL.admin_admin_abac_display_name_placeholder()}
 		/>
 	</div>
 	<div class="form-group">
-		<label for="editDescription">Description</label>
+		<label for="editDescription">{$LL.admin_admin_abac_description_label()}</label>
 		<textarea
 			id="editDescription"
 			class="input"
 			bind:value={editForm.description}
-			placeholder="Description of this attribute..."
+			placeholder={$LL.admin_admin_abac_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
 	{#if editingAttribute && editingAttribute.attribute_type === 'enum'}
 		<div class="form-group">
-			<label for="editAllowedValues">Allowed Values (comma-separated)</label>
+			<label for="editAllowedValues">{$LL.admin_admin_abac_allowed_values_label()}</label>
 			<input
 				type="text"
 				id="editAllowedValues"
 				class="input"
 				bind:value={editForm.allowed_values}
-				placeholder="e.g., engineering, security, operations"
+				placeholder={$LL.admin_admin_abac_allowed_values_placeholder()}
 			/>
 		</div>
 	{/if}
 	{#if editingAttribute && editingAttribute.attribute_type === 'number'}
 		<div class="form-row">
 			<div class="form-group">
-				<label for="editMinValue">Min Value</label>
+				<label for="editMinValue">{$LL.admin_admin_abac_min_value()}</label>
 				<input type="number" id="editMinValue" class="input" bind:value={editForm.min_value} />
 			</div>
 			<div class="form-group">
-				<label for="editMaxValue">Max Value</label>
+				<label for="editMaxValue">{$LL.admin_admin_abac_max_value()}</label>
 				<input type="number" id="editMaxValue" class="input" bind:value={editForm.max_value} />
 			</div>
 		</div>
 	{/if}
 	{#if editingAttribute && editingAttribute.attribute_type === 'string'}
 		<div class="form-group">
-			<label for="editRegexPattern">Regex Pattern (optional)</label>
+			<label for="editRegexPattern">{$LL.admin_admin_abac_regex_pattern()}</label>
 			<input
 				type="text"
 				id="editRegexPattern"
 				class="input"
 				bind:value={editForm.regex_pattern}
-				placeholder="e.g., ^[A-Z]{2}-[0-9]{3}$"
+				placeholder={$LL.admin_admin_abac_regex_placeholder()}
 			/>
 		</div>
 	{/if}
 	<div class="form-group">
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={editForm.is_required} />
-			<span>Required for all admin users</span>
+			<span>{$LL.admin_admin_abac_required_for_all()}</span>
 		</label>
 	</div>
 	<div class="form-group">
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={editForm.is_multi_valued} />
-			<span>Allow multiple values</span>
+			<span>{$LL.admin_admin_abac_allow_multiple()}</span>
 		</label>
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}>Cancel</button>
+		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}>
+			{$LL.admin_admin_abac_cancel()}
+		</button>
 		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-			{saving ? 'Saving...' : 'Save'}
+			{saving ? $LL.admin_admin_abac_saving() : $LL.admin_admin_abac_save()}
 		</button>
 	{/snippet}
 </Modal>

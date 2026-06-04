@@ -5,6 +5,7 @@
 		adminAdminAccessControlAPI,
 		type AdminAccessControlStats
 	} from '$lib/api/admin-admin-access-control';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let stats: AdminAccessControlStats | null = $state(null);
 	let loading = $state(true);
@@ -13,9 +14,8 @@
 	onMount(async () => {
 		try {
 			stats = await adminAdminAccessControlAPI.getStats();
-		} catch (err) {
-			console.error('Failed to load admin access control stats:', err);
-			error = 'Failed to load admin access control statistics';
+		} catch {
+			error = $LL.admin_admin_access_control_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -30,55 +30,62 @@
 		{
 			id: 'rbac',
 			title: 'RBAC',
-			subtitle: 'Admin Roles',
-			description: 'Manage admin operator roles and permissions through role-based access control.',
+			subtitle: $LL.admin_admin_access_control_rbac_subtitle(),
+			description: $LL.admin_admin_access_control_rbac_description(),
 			icon: 'i-ph-shield-check',
 			color: 'purple',
 			href: '/admin/admin-rbac',
 			statsKey: 'rbac' as const,
 			statsLabel: (s: AdminAccessControlStats) =>
-				`${s.rbac.total_roles} roles, ${s.rbac.total_assignments} assignments`
+				$LL.admin_admin_access_control_rbac_stats({
+					roles: s.rbac.total_roles,
+					assignments: s.rbac.total_assignments
+				})
 		},
 		{
 			id: 'abac',
 			title: 'ABAC',
-			subtitle: 'Admin Attributes',
-			description:
-				'Define and manage admin operator attributes for attribute-based access control.',
+			subtitle: $LL.admin_admin_access_control_abac_subtitle(),
+			description: $LL.admin_admin_access_control_abac_description(),
 			icon: 'i-ph-tag',
 			color: 'green',
 			href: '/admin/admin-abac',
 			statsKey: 'abac' as const,
 			statsLabel: (s: AdminAccessControlStats) =>
-				`${s.abac.total_attributes} attributes (${s.abac.active_attributes} active)`
+				$LL.admin_admin_access_control_abac_stats({
+					attributes: s.abac.total_attributes,
+					active: s.abac.active_attributes
+				})
 		},
 		{
 			id: 'rebac',
 			title: 'ReBAC',
-			subtitle: 'Admin Relations',
-			description: 'Model complex relationships between admin operators for fine-grained access.',
+			subtitle: $LL.admin_admin_access_control_rebac_subtitle(),
+			description: $LL.admin_admin_access_control_rebac_description(),
 			icon: 'i-ph-graph',
 			color: 'orange',
 			href: '/admin/admin-rebac',
 			statsKey: 'rebac' as const,
 			statsLabel: (s: AdminAccessControlStats) =>
-				`${s.rebac.total_definitions} definitions, ${s.rebac.total_tuples} tuples`
+				$LL.admin_admin_access_control_rebac_stats({
+					definitions: s.rebac.total_definitions,
+					tuples: s.rebac.total_tuples
+				})
 		}
 	];
 </script>
 
 <svelte:head>
-	<title>Admin Access Control Hub - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_admin_access_control_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Admin Access Control Hub</h1>
+			<h1 class="page-title">{$LL.admin_admin_access_control_title()}</h1>
 			<p class="page-description">
-				Unified management for Admin RBAC, ABAC, ReBAC, and Policy-based access control for admin
-				operators.
+				{$LL.admin_admin_access_control_description()}
 			</p>
 		</div>
 	</div>
@@ -86,12 +93,14 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading admin access control statistics...</p>
+			<p>{$LL.admin_admin_access_control_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error" style="margin-bottom: 16px;">
 			{error}
-			<button class="btn btn-secondary btn-sm" onclick={() => location.reload()}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={() => location.reload()}>
+				{$LL.admin_admin_access_control_retry()}
+			</button>
 		</div>
 	{:else if stats}
 		<!-- Top Row: 3 Cards -->
@@ -128,37 +137,41 @@
 					<i class="i-ph-scales"></i>
 				</div>
 				<div class="hub-card-titles">
-					<h3 class="hub-card-title">Policies</h3>
-					<span class="hub-card-subtitle">Combined Admin Rules</span>
+					<h3 class="hub-card-title">{$LL.admin_admin_access_control_policies_title()}</h3>
+					<span class="hub-card-subtitle">{$LL.admin_admin_access_control_policies_subtitle()}</span
+					>
 				</div>
 				<i class="i-ph-arrow-right hub-card-arrow"></i>
 			</div>
 			<p class="hub-card-description">
-				Combine Admin RBAC, ABAC, and ReBAC conditions to create fine-grained access control
-				policies for admin operators. Define complex rules that evaluate multiple factors to
-				determine access decisions.
+				{$LL.admin_admin_access_control_policies_description()}
 			</p>
 			<div class="hub-card-stats">
 				<i class="i-ph-chart-bar"></i>
 				<span
-					>{stats.policies.total_policies} policies ({stats.policies.active_policies} active)</span
+					>{$LL.admin_admin_access_control_policies_stats({
+						policies: stats.policies.total_policies,
+						active: stats.policies.active_policies
+					})}</span
 				>
 			</div>
 		</button>
 
 		<!-- Quick Links Section -->
 		<div class="quick-links-section">
-			<h2 class="section-title">Related Tools</h2>
+			<h2 class="section-title">{$LL.admin_admin_access_control_related_tools()}</h2>
 			<div class="quick-links-grid">
 				<a href="/admin/admin-audit" class="quick-link">
 					<i class="i-ph-clipboard-text"></i>
-					<span>Admin Audit Log</span>
-					<span class="quick-link-desc">Review admin actions</span>
+					<span>{$LL.admin_admin_access_control_admin_audit_log()}</span>
+					<span class="quick-link-desc"
+						>{$LL.admin_admin_access_control_admin_audit_log_desc()}</span
+					>
 				</a>
 				<a href="/admin/ip-allowlist" class="quick-link">
 					<i class="i-ph-shield-check"></i>
-					<span>IP Allowlist</span>
-					<span class="quick-link-desc">Network access control</span>
+					<span>{$LL.admin_admin_access_control_ip_allowlist()}</span>
+					<span class="quick-link-desc">{$LL.admin_admin_access_control_ip_allowlist_desc()}</span>
 				</a>
 			</div>
 		</div>

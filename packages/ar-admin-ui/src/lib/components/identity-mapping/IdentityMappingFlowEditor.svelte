@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount, tick } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		type MappingAdapter,
@@ -13,12 +14,12 @@
 		type TransformOperation
 	} from './types';
 
-	type ViewMode = 'overview' | 'inbound' | 'outbound';
+	type ViewMode = 'overview' | 'source' | 'destination';
 	type SelectorOption = {
 		id: string;
 		title: string;
 		adapter?: MappingAdapter;
-		direction?: 'inbound' | 'outbound' | 'both';
+		direction?: 'source' | 'destination' | 'both';
 		sourceProfileIds?: string[];
 		destinationProfileIds?: string[];
 		rules?: PolicySelectorRule[];
@@ -239,7 +240,7 @@
 		samples = [],
 		loading = false,
 		loadError = null,
-		allowedViewModes = ['overview', 'inbound', 'outbound'],
+		allowedViewModes = ['overview', 'source', 'destination'],
 		initialViewMode = 'overview',
 		editable = true,
 		showToolbarSourceProfile = true,
@@ -291,8 +292,8 @@
 		snapshot: 'not available',
 		status: 'empty',
 		reviewGates: '0 fields',
-		inboundAdapter: 'CSV',
-		outboundAdapter: 'OIDC',
+		sourceAdapter: 'CSV',
+		destinationAdapter: 'OIDC',
 		activeRuleId: 'empty-flow',
 		metrics: ['0 / 0', '0 schemas', '0', 'no catalog'],
 		nodes: [],
@@ -317,11 +318,11 @@
 	let sample = $state(emptySample);
 	let selectedSampleId = $state<string | null>(null);
 	let activeSampleRef: MappingSample | null = null;
-	let inboundAdapter = $state<MappingAdapter>(emptySample.inboundAdapter);
-	let outboundAdapter = $state<MappingAdapter>(emptySample.outboundAdapter);
+	let sourceAdapter = $state<MappingAdapter>(emptySample.sourceAdapter);
+	let destinationAdapter = $state<MappingAdapter>(emptySample.destinationAdapter);
 	let selectedDestinationProfileId = $state<string | null>(null);
-	let selectedInboundPolicyId = $state<string | null>(null);
-	let selectedOutboundPolicyId = $state<string | null>(null);
+	let selectedSourcePolicyId = $state<string | null>(null);
+	let selectedDestinationPolicyId = $state<string | null>(null);
 	let appliedInitialPolicyOptionId = $state<string | null>(null);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
@@ -397,27 +398,27 @@
 		collapsed: boolean;
 	}
 
-	const inboundPolicyOptions = $derived(
+	const sourcePolicyOptions = $derived(
 		policySelectorOptions.filter(
-			(option: SelectorOption) => option.direction === 'inbound' || option.direction === 'both'
+			(option: SelectorOption) => option.direction === 'source' || option.direction === 'both'
 		)
 	);
-	const outboundPolicyOptions = $derived(
+	const destinationPolicyOptions = $derived(
 		policySelectorOptions.filter(
-			(option: SelectorOption) => option.direction === 'outbound' || option.direction === 'both'
+			(option: SelectorOption) => option.direction === 'destination' || option.direction === 'both'
 		)
 	);
-	const selectedInboundPolicy = $derived(
-		inboundPolicyOptions.find((option: SelectorOption) => option.id === selectedInboundPolicyId) ??
+	const selectedSourcePolicy = $derived(
+		sourcePolicyOptions.find((option: SelectorOption) => option.id === selectedSourcePolicyId) ??
 			null
 	);
-	const selectedOutboundPolicy = $derived(
-		outboundPolicyOptions.find(
-			(option: SelectorOption) => option.id === selectedOutboundPolicyId
+	const selectedDestinationPolicy = $derived(
+		destinationPolicyOptions.find(
+			(option: SelectorOption) => option.id === selectedDestinationPolicyId
 		) ?? null
 	);
 	const policyModeHasSelection = $derived(
-		laneSelectorMode !== 'policy' || Boolean(selectedInboundPolicyId || selectedOutboundPolicyId)
+		laneSelectorMode !== 'policy' || Boolean(selectedSourcePolicyId || selectedDestinationPolicyId)
 	);
 	const visibleNodes = $derived(
 		policyModeHasSelection
@@ -425,8 +426,8 @@
 					(node) =>
 						node.role === 'target' ||
 						node.role === 'transform' ||
-						(node.role === 'source' && viewMode !== 'outbound') ||
-						(node.role === 'destination' && viewMode !== 'inbound')
+						(node.role === 'source' && viewMode !== 'destination') ||
+						(node.role === 'destination' && viewMode !== 'source')
 				)
 			: []
 	);
@@ -461,34 +462,35 @@
 			(candidate: MappingSample) => ({
 				id: candidate.id,
 				title: candidate.title,
-				adapter: candidate.inboundAdapter
+				adapter: candidate.sourceAdapter
 			})
 		)
 	);
 	const destinationProfileOptions = $derived(destinationProfileOptionsForSample(sample));
-	const selectedInboundPolicyTitle = $derived(selectedInboundPolicy?.title ?? null);
-	const selectedOutboundPolicyTitle = $derived(selectedOutboundPolicy?.title ?? null);
+	const selectedSourcePolicyTitle = $derived(selectedSourcePolicy?.title ?? null);
+	const selectedDestinationPolicyTitle = $derived(selectedDestinationPolicy?.title ?? null);
 	const graphTitle = $derived.by(() => {
 		if (laneSelectorMode !== 'policy') return sample.title;
-		if (!selectedInboundPolicyTitle && !selectedOutboundPolicyTitle) return 'No mapping policies';
-		if (selectedInboundPolicyTitle && selectedInboundPolicyTitle === selectedOutboundPolicyTitle) {
-			return selectedInboundPolicyTitle;
+		if (!selectedSourcePolicyTitle && !selectedDestinationPolicyTitle)
+			return $LL.admin_identity_mapping_flow_no_mapping_policies();
+		if (selectedSourcePolicyTitle && selectedSourcePolicyTitle === selectedDestinationPolicyTitle) {
+			return selectedSourcePolicyTitle;
 		}
-		return [selectedInboundPolicyTitle, selectedOutboundPolicyTitle].filter(Boolean).join(' / ');
+		return [selectedSourcePolicyTitle, selectedDestinationPolicyTitle].filter(Boolean).join(' / ');
 	});
 	const emptyGraphTitle = $derived(
 		laneSelectorMode === 'policy'
 			? policySelectorOptions.length === 0
-				? 'No active mapping policies'
-				: 'Select an active mapping policy'
-			: 'No source or destination profiles registered'
+				? $LL.admin_identity_mapping_flow_no_active_policies()
+				: $LL.admin_identity_mapping_flow_select_active_policy()
+			: $LL.admin_identity_mapping_flow_no_profiles_registered()
 	);
 	const emptyGraphDescription = $derived(
 		laneSelectorMode === 'policy'
 			? policySelectorOptions.length === 0
-				? 'Save, publish, compile, and activate a mapping policy before using this overview.'
-				: 'Choose an inbound policy and/or outbound policy to render its nodes and edges.'
-			: 'Register source and destination profiles, or add a field catalog, to populate this graph.'
+				? $LL.admin_identity_mapping_flow_no_active_policies_desc()
+				: $LL.admin_identity_mapping_flow_select_active_policy_desc()
+			: $LL.admin_identity_mapping_flow_no_profiles_registered_desc()
 	);
 	const hasControlPlaneData = $derived(
 		samples.length > 0 && (laneSelectorMode !== 'policy' || policySelectorOptions.length > 0)
@@ -560,7 +562,7 @@
 
 	$effect(() => {
 		if (
-			selectedViewMode === 'inbound' &&
+			selectedViewMode === 'source' &&
 			selectedProfileId &&
 			selectedProfileId !== selectedSampleId
 		) {
@@ -591,20 +593,20 @@
 		);
 		if (!option) return;
 		appliedInitialPolicyOptionId = initialPolicyOptionId;
-		if (option.direction === 'inbound') {
-			applyInboundPolicySelection(option.id);
-		} else if (option.direction === 'outbound') {
-			applyOutboundPolicySelection(option.id);
+		if (option.direction === 'source') {
+			applySourcePolicySelection(option.id);
+		} else if (option.direction === 'destination') {
+			applyDestinationPolicySelection(option.id);
 		}
 	});
 
 	$effect(() => {
 		if (laneSelectorMode === 'policy') {
-			if (!selectedOutboundPolicyId) {
+			if (!selectedDestinationPolicyId) {
 				selectedDestinationProfileId = null;
 				return;
 			}
-			const destinationProfileId = selectedOutboundPolicy?.destinationProfileIds?.find(
+			const destinationProfileId = selectedDestinationPolicy?.destinationProfileIds?.find(
 				(id: string) => destinationProfileOptions.some((option) => option.id === id)
 			);
 			if (destinationProfileId) {
@@ -612,7 +614,7 @@
 				return;
 			}
 		}
-		if (selectedViewMode === 'outbound' && selectedProfileId) {
+		if (selectedViewMode === 'destination' && selectedProfileId) {
 			selectedDestinationProfileId = selectedProfileId;
 		}
 		const hasSelectedDestination = destinationProfileOptions.some(
@@ -642,9 +644,7 @@
 
 	beforeNavigate((navigation) => {
 		if (!editable || !hasUnsavedDraftChanges) return;
-		const shouldLeave = window.confirm(
-			'You have unsaved mapping draft changes. Leave this page and discard them?'
-		);
+		const shouldLeave = window.confirm($LL.admin_identity_mapping_flow_unsaved_leave_confirm());
 		if (!shouldLeave) {
 			navigation.cancel();
 		}
@@ -678,8 +678,8 @@
 	function activateSample(next: MappingSample) {
 		activeSampleRef = next;
 		selectedSampleId = next.id;
-		inboundAdapter = next.inboundAdapter;
-		outboundAdapter = next.outboundAdapter;
+		sourceAdapter = next.sourceAdapter;
+		destinationAdapter = next.destinationAdapter;
 		selectedDestinationProfileId =
 			destinationProfileOptionsForSample(next).find((option) => option.adapter === 'OIDC')?.id ??
 			destinationProfileOptionsForSample(next)[0]?.id ??
@@ -769,20 +769,20 @@
 	}
 
 	function visibleAutoMapFromNodes(): MappingNode[] {
-		if (viewMode === 'outbound') {
+		if (viewMode === 'destination') {
 			return targetNodes.filter((node) => !node.locked);
 		}
 		return sourceNodes.filter((node) =>
-			node.profileId ? node.profileId === sample.id : node.adapter === inboundAdapter
+			node.profileId ? node.profileId === sample.id : node.adapter === sourceAdapter
 		);
 	}
 
 	function visibleAutoMapToNodes(): MappingNode[] {
-		if (viewMode === 'outbound') {
+		if (viewMode === 'destination') {
 			return destinationNodes.filter((node) =>
 				node.profileId
 					? node.profileId === selectedDestinationProfileId
-					: node.adapter === outboundAdapter
+					: node.adapter === destinationAdapter
 			);
 		}
 		return targetNodes.filter((node) => !node.locked);
@@ -809,14 +809,14 @@
 				id: `auto-edge-${customCounter}`,
 				from: fromNode.id,
 				to: toNode.id,
-				outbound: fromNode.role === 'target',
+				destinationSide: fromNode.role === 'target',
 				custom: true
 			});
 		}
 
 		if (newEdges.length === 0) {
 			draftSubmitStatus = 'info';
-			draftSubmitMessage = 'No confident auto-mapping candidates were found.';
+			draftSubmitMessage = $LL.admin_identity_mapping_flow_no_auto_map();
 			return;
 		}
 
@@ -826,7 +826,9 @@
 		hasUnsavedDraftChanges = true;
 		onDraftDirtyChange?.(true);
 		draftSubmitStatus = 'info';
-		draftSubmitMessage = `Auto-mapped ${newEdges.length} connection${newEdges.length === 1 ? '' : 's'}. Review and compile the draft when ready.`;
+		draftSubmitMessage = $LL.admin_identity_mapping_flow_auto_mapped({
+			count: newEdges.length
+		});
 	}
 
 	async function animateVisibleNodeSwap(role: 'source' | 'destination') {
@@ -922,16 +924,16 @@
 		if (laneSelectorMode !== 'policy' || viewMode !== 'overview') return [];
 		const layerEdges: MappingEdge[] = [];
 		const seen: string[] = [];
-		const addLayerEdge = (from: string, to: string, outbound = false) => {
+		const addLayerEdge = (from: string, to: string, destinationSide = false) => {
 			const id = `overview-layer-edge-${from}-${to}`;
 			if (seen.includes(id)) return;
 			seen.push(id);
-			layerEdges.push({ id, from, to, outbound });
+			layerEdges.push({ id, from, to, destinationSide });
 		};
 
-		for (const option of inboundPolicyOptions) {
-			if (option.id === selectedInboundPolicyId) continue;
-			for (const rule of rulesForPolicyOption(option, 'inbound')) {
+		for (const option of sourcePolicyOptions) {
+			if (option.id === selectedSourcePolicyId) continue;
+			for (const rule of rulesForPolicyOption(option, 'source')) {
 				for (const edge of rule.edges) {
 					for (const profileId of sourceProfileIdsForPolicyEdge(option, edge)) {
 						const profileSample = samples.find(
@@ -947,9 +949,9 @@
 			}
 		}
 
-		for (const option of outboundPolicyOptions) {
-			if (option.id === selectedOutboundPolicyId) continue;
-			for (const rule of rulesForPolicyOption(option, 'outbound')) {
+		for (const option of destinationPolicyOptions) {
+			if (option.id === selectedDestinationPolicyId) continue;
+			for (const rule of rulesForPolicyOption(option, 'destination')) {
 				for (const edge of rule.edges) {
 					const sourceNode = nodeFromPolicyRef(nodes, edge.sourceRef);
 					const destinationNode = nodeFromPolicyRef(nodes, edge.targetRef);
@@ -1003,7 +1005,7 @@
 						id: edgeId,
 						from: fromNode.id,
 						to: toNode.id,
-						outbound: fromNode.role === 'target'
+						destinationSide: fromNode.role === 'target'
 					});
 					graphRules[edgeId] = ruleForPolicyEdge(rule, fromNode, toNode);
 				}
@@ -1032,14 +1034,14 @@
 						id: `policy-edge-${edge.id}-in`,
 						from: fromNode.id,
 						to: transformNode.id,
-						outbound: fromNode.role === 'target'
+						destinationSide: fromNode.role === 'target'
 					});
 				}
 				graphEdges.push({
 					id: `policy-edge-${rule.id}-out`,
 					from: transformNode.id,
 					to: targetNode.id,
-					outbound: targetNode.role === 'destination'
+					destinationSide: targetNode.role === 'destination'
 				});
 				continue;
 			}
@@ -1052,7 +1054,7 @@
 						id: edgeId,
 						from: fromNode.id,
 						to: toNode.id,
-						outbound: fromNode.role === 'target'
+						destinationSide: fromNode.role === 'target'
 					});
 					graphRules[edgeId] = ruleForPolicyEdge(rule, fromNode, toNode);
 					continue;
@@ -1072,13 +1074,13 @@
 						id: `policy-edge-${edge.id}-in`,
 						from: fromNode.id,
 						to: transformNode.id,
-						outbound: fromNode.role === 'target'
+						destinationSide: fromNode.role === 'target'
 					},
 					{
 						id: `policy-edge-${edge.id}-out`,
 						from: transformNode.id,
 						to: toNode.id,
-						outbound: toNode.role === 'destination'
+						destinationSide: toNode.role === 'destination'
 					}
 				);
 			}
@@ -1146,8 +1148,8 @@
 	function selectedPolicyRules(): PolicySelectorRule[] {
 		const rulesByKey: PolicySelectorRule[] = [];
 		for (const rule of [
-			...rulesForPolicyOption(selectedInboundPolicy, 'inbound'),
-			...rulesForPolicyOption(selectedOutboundPolicy, 'outbound')
+			...rulesForPolicyOption(selectedSourcePolicy, 'source'),
+			...rulesForPolicyOption(selectedDestinationPolicy, 'destination')
 		]) {
 			const existingIndex = rulesByKey.findIndex((candidate) => candidate.id === rule.id);
 			if (existingIndex >= 0) {
@@ -1161,13 +1163,13 @@
 
 	function rulesForPolicyOption(
 		option: SelectorOption | null,
-		direction: 'inbound' | 'outbound'
+		direction: 'source' | 'destination'
 	): PolicySelectorRule[] {
 		if (!option) return [];
 		return (option.rules ?? []).filter((rule) =>
-			direction === 'inbound'
-				? rule.ruleKind.includes('inbound')
-				: rule.ruleKind.includes('outbound') || rule.ruleKind.includes('release')
+			direction === 'source'
+				? rule.ruleKind.includes('source')
+				: rule.ruleKind.includes('destination') || rule.ruleKind.includes('release')
 		);
 	}
 
@@ -1210,11 +1212,13 @@
 			destination:
 				toNode.role === 'destination'
 					? `${toNode.adapter ?? 'destination'} / ${toNode.label}`
-					: 'Not connected',
-			transform: 'not configured',
-			validation: `loaded from ${rule.ruleKey}`,
-			release: rule.ruleKind.includes('release') ? 'configured' : 'not configured',
-			trace: `Active policy rule ${rule.ruleKey} restored this mapping edge.`
+					: $LL.admin_identity_mapping_flow_not_connected(),
+			transform: $LL.admin_identity_mapping_flow_not_configured(),
+			validation: $LL.admin_identity_mapping_flow_loaded_from({ ruleKey: rule.ruleKey }),
+			release: rule.ruleKind.includes('release')
+				? $LL.admin_identity_mapping_flow_configured()
+				: $LL.admin_identity_mapping_flow_not_configured(),
+			trace: $LL.admin_identity_mapping_flow_active_policy_edge_trace({ ruleKey: rule.ruleKey })
 		};
 	}
 
@@ -1227,16 +1231,23 @@
 			...fallbackRule(),
 			title: transformNode.label,
 			risk: targetNode.privacy === 'PII' ? 'medium' : 'low',
-			source: 'Connected policy input',
-			target: targetNode.role === 'target' ? targetNode.label : 'Transform node',
+			source: $LL.admin_identity_mapping_flow_connected_policy_input(),
+			target:
+				targetNode.role === 'target'
+					? targetNode.label
+					: $LL.admin_identity_mapping_flow_transform_node(),
 			destination:
 				targetNode.role === 'destination'
 					? `${targetNode.adapter ?? 'destination'} / ${targetNode.label}`
-					: 'Not connected',
+					: $LL.admin_identity_mapping_flow_not_connected(),
 			transform: transformNode.caption,
-			validation: `loaded from ${rule.ruleKey}`,
-			release: rule.ruleKind.includes('release') ? 'configured' : 'not configured',
-			trace: `Active policy rule ${rule.ruleKey} restored this transform node.`
+			validation: $LL.admin_identity_mapping_flow_loaded_from({ ruleKey: rule.ruleKey }),
+			release: rule.ruleKind.includes('release')
+				? $LL.admin_identity_mapping_flow_configured()
+				: $LL.admin_identity_mapping_flow_not_configured(),
+			trace: $LL.admin_identity_mapping_flow_active_policy_transform_trace({
+				ruleKey: rule.ruleKey
+			})
 		};
 	}
 
@@ -1313,16 +1324,16 @@
 		return 'middle';
 	}
 
-	function transformLane(node: MappingNode): 'inbound' | 'outbound' {
-		if (node.role !== 'transform') return 'inbound';
+	function transformSide(node: MappingNode): 'source' | 'destination' {
+		if (node.role !== 'transform') return 'source';
 		const incoming = edges
 			.filter((edge) => edge.to === node.id)
 			.map((edge) => nodeById(edge.from)?.role);
 		const outgoing = edges
 			.filter((edge) => edge.from === node.id)
 			.map((edge) => nodeById(edge.to)?.role);
-		if (incoming.includes('target') || outgoing.includes('destination')) return 'outbound';
-		return 'inbound';
+		if (incoming.includes('target') || outgoing.includes('destination')) return 'destination';
+		return 'source';
 	}
 
 	function buildLayout(): {
@@ -1334,18 +1345,18 @@
 		const targetPositions: Record<string, LayoutNode['targetGroupPosition']> = {};
 
 		const width = Math.max(180, Math.min(240, canvasWidth * 0.2));
-		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
+		const sourceLeft = viewMode === 'source' ? Math.max(26, canvasWidth * 0.08) : 26;
 		const targetLeft =
-			viewMode === 'outbound'
+			viewMode === 'destination'
 				? Math.max(26, canvasWidth * 0.12)
-				: viewMode === 'inbound'
+				: viewMode === 'source'
 					? Math.min(
 							canvasWidth - width - 26,
 							Math.max(sourceLeft + width + 100, canvasWidth * 0.66)
 						)
 					: (canvasWidth - width) / 2;
 		const destinationLeft =
-			viewMode === 'outbound'
+			viewMode === 'destination'
 				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		let cursor = graphBaseTop;
@@ -1380,11 +1391,11 @@
 
 		const sourceLayout = sourceNodes.map((node) => {
 			const selected =
-				laneSelectorMode === 'policy' && !selectedInboundPolicyId
+				laneSelectorMode === 'policy' && !selectedSourcePolicyId
 					? false
 					: node.profileId
 						? node.profileId === sample.id
-						: node.adapter === inboundAdapter;
+						: node.adapter === sourceAdapter;
 			const profileKey = node.profileId ?? node.adapter ?? 'source';
 			const visibleOffset = selected ? visibleSourceOffset++ : 0;
 			const hiddenRowOffset = hiddenSourceRowOffsets[profileKey] ?? 0;
@@ -1414,22 +1425,23 @@
 			targetGroupPosition: targetPositions[node.id]
 		}));
 
-		const inboundTransformLeft = (sourceLeft + width + targetLeft) / 2 - transformWidth / 2;
-		const outboundTransformLeft = (targetLeft + width + destinationLeft) / 2 - transformWidth / 2;
-		const transformLaneOffsets: Record<'inbound' | 'outbound', number> = {
-			inbound: 0,
-			outbound: 0
+		const sourceTransformLeft = (sourceLeft + width + targetLeft) / 2 - transformWidth / 2;
+		const destinationTransformLeft =
+			(targetLeft + width + destinationLeft) / 2 - transformWidth / 2;
+		const transformSideOffsets: Record<'source' | 'destination', number> = {
+			source: 0,
+			destination: 0
 		};
 		const transformLayout = transformNodes.map((node) => {
-			const lane = transformLane(node);
-			const laneOffset = transformLaneOffsets[lane];
-			transformLaneOffsets[lane] = laneOffset + 1;
+			const lane = transformSide(node);
+			const laneOffset = transformSideOffsets[lane];
+			transformSideOffsets[lane] = laneOffset + 1;
 			const left =
 				node.layoutPosition && Number.isFinite(node.layoutPosition.x)
 					? node.layoutPosition.x
-					: lane === 'outbound'
-						? outboundTransformLeft
-						: inboundTransformLeft;
+					: lane === 'destination'
+						? destinationTransformLeft
+						: sourceTransformLeft;
 			return {
 				...node,
 				top: node.layoutPosition?.y ?? graphBaseTop + laneOffset * graphStep,
@@ -1446,11 +1458,11 @@
 
 		const destinationLayout = destinationNodes.map((node) => {
 			const selected =
-				laneSelectorMode === 'policy' && !selectedOutboundPolicyId
+				laneSelectorMode === 'policy' && !selectedDestinationPolicyId
 					? false
 					: node.profileId
 						? node.profileId === selectedDestinationProfileId
-						: node.adapter === outboundAdapter;
+						: node.adapter === destinationAdapter;
 			const profileKey = node.profileId ?? node.adapter ?? 'destination';
 			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
 			const hiddenRowOffset = hiddenDestinationRowOffsets[profileKey] ?? 0;
@@ -1480,24 +1492,24 @@
 		};
 	}
 
-	function laneLabelStyle(role: 'inbound' | 'canonical' | 'outbound'): string {
+	function laneLabelStyle(role: 'source' | 'canonical' | 'destination'): string {
 		const width = Math.max(180, Math.min(240, canvasWidth * 0.2));
-		const sourceLeft = viewMode === 'inbound' ? Math.max(26, canvasWidth * 0.08) : 26;
+		const sourceLeft = viewMode === 'source' ? Math.max(26, canvasWidth * 0.08) : 26;
 		const targetLeft =
-			viewMode === 'outbound'
+			viewMode === 'destination'
 				? Math.max(26, canvasWidth * 0.12)
-				: viewMode === 'inbound'
+				: viewMode === 'source'
 					? Math.min(
 							canvasWidth - width - 26,
 							Math.max(sourceLeft + width + 100, canvasWidth * 0.66)
 						)
 					: (canvasWidth - width) / 2;
 		const destinationLeft =
-			viewMode === 'outbound'
+			viewMode === 'destination'
 				? Math.min(canvasWidth - width - 26, Math.max(targetLeft + width + 100, canvasWidth * 0.72))
 				: Math.max(targetLeft + width + 90, canvasWidth - width - 26);
 		const left =
-			role === 'inbound' ? sourceLeft : role === 'canonical' ? targetLeft : destinationLeft;
+			role === 'source' ? sourceLeft : role === 'canonical' ? targetLeft : destinationLeft;
 		return `left:${left + width / 2}px;width:${width}px;`;
 	}
 
@@ -1678,21 +1690,19 @@
 		const transformNode =
 			fromNode?.role === 'transform' ? fromNode : toNode?.role === 'transform' ? toNode : null;
 		if (transformNode) {
-			if (transformLane(transformNode) === 'outbound') {
+			if (transformSide(transformNode) === 'destination') {
 				return (
 					connectedAdapter(transformNode, 'destination') ??
-					selectedOutboundPolicy?.adapter ??
-					outboundAdapter
+					selectedDestinationPolicy?.adapter ??
+					destinationAdapter
 				);
 			}
 			return (
-				connectedAdapter(transformNode, 'source') ??
-				selectedInboundPolicy?.adapter ??
-				inboundAdapter
+				connectedAdapter(transformNode, 'source') ?? selectedSourcePolicy?.adapter ?? sourceAdapter
 			);
 		}
-		if (edge.outbound) return selectedOutboundPolicy?.adapter ?? outboundAdapter;
-		return selectedInboundPolicy?.adapter ?? inboundAdapter;
+		if (edge.destinationSide) return selectedDestinationPolicy?.adapter ?? destinationAdapter;
+		return selectedSourcePolicy?.adapter ?? sourceAdapter;
 	}
 
 	function connectedAdapter(
@@ -1710,7 +1720,7 @@
 		return [
 			'edge',
 			isOverviewLayerEdge(edge) ? 'overview-layer-edge' : '',
-			edge.outbound ? 'outbound-edge' : '',
+			edge.destinationSide ? 'destination-edge' : '',
 			edge.custom ? 'custom-edge' : '',
 			edge.id === activeRuleId ? 'active' : '',
 			edge.id === selectedEdgeId ? 'edge-picked' : '',
@@ -1746,15 +1756,20 @@
 	}
 
 	function nodeMultiplicityLabel(node: MappingNode): string {
-		if (node.valueMultiplicity === 'multi') return 'Multiple values';
-		if (node.valueMultiplicity === 'single') return 'Single value';
-		return node.inputCardinality === 'many' ? 'Multiple values' : 'Single value';
+		if (node.valueMultiplicity === 'multi')
+			return $LL.admin_identity_mapping_flow_multiple_values();
+		if (node.valueMultiplicity === 'single') return $LL.admin_identity_mapping_flow_single_value();
+		return node.inputCardinality === 'many'
+			? $LL.admin_identity_mapping_flow_multiple_values()
+			: $LL.admin_identity_mapping_flow_single_value();
 	}
 
 	function nodeNullableLabel(node: MappingNode): string {
-		if (node.nullable === true) return 'Nullable';
-		if (node.nullable === false) return 'Not nullable';
-		return node.required ? 'Not nullable by required mapping' : 'Not specified';
+		if (node.nullable === true) return $LL.admin_identity_mapping_flow_nullable();
+		if (node.nullable === false) return $LL.admin_identity_mapping_flow_not_nullable();
+		return node.required
+			? $LL.admin_identity_mapping_flow_not_nullable_required()
+			: $LL.admin_identity_mapping_flow_not_specified();
 	}
 
 	function formatNodeInfoValue(value: unknown): string {
@@ -2295,7 +2310,7 @@
 			id: `custom-edge-${customCounter}`,
 			from,
 			to,
-			outbound: nodeById(from)?.role === 'target',
+			destinationSide: nodeById(from)?.role === 'target',
 			custom: true
 		};
 		edges = [...edges, edge];
@@ -2341,8 +2356,10 @@
 						...candidate,
 						from: side === 'source' ? candidateNodeId : candidate.from,
 						to: side === 'target' ? candidateNodeId : candidate.to,
-						outbound:
-							side === 'source' ? nodeById(candidateNodeId)?.role === 'target' : candidate.outbound,
+						destinationSide:
+							side === 'source'
+								? nodeById(candidateNodeId)?.role === 'target'
+								: candidate.destinationSide,
 						custom: true
 					}
 				: candidate
@@ -2384,26 +2401,26 @@
 				id: `${edge.id}-in-${customCounter}`,
 				from: edge.from,
 				to: nodeId,
-				outbound: edge.outbound,
+				destinationSide: edge.destinationSide,
 				custom: true
 			},
 			{
 				id: `${edge.id}-out-${customCounter}`,
 				from: nodeId,
 				to: edge.to,
-				outbound: edge.outbound,
+				destinationSide: edge.destinationSide,
 				custom: true
 			}
 		];
 		sample.rules[ruleId] = {
 			...fallbackRule(),
 			title: transformNode.label,
-			source: 'Inserted on selected mapping edge',
-			target: 'Transform node',
-			destination: 'Continues to the original edge target',
+			source: $LL.admin_identity_mapping_flow_inserted_edge_source(),
+			target: $LL.admin_identity_mapping_flow_transform_node(),
+			destination: $LL.admin_identity_mapping_flow_continues_original_target(),
 			transform: transformSummary(operation, parameters),
-			validation: 'draft transform node inserted',
-			trace: 'This transform node was inserted into an existing mapping edge.'
+			validation: $LL.admin_identity_mapping_flow_transform_inserted_validation(),
+			trace: $LL.admin_identity_mapping_flow_transform_inserted_trace()
 		};
 		activeRuleId = ruleId;
 		selectedNodeId = nodeId;
@@ -2489,7 +2506,7 @@
 					id: `transform-reconnect-${customCounter}`,
 					from: inEdge.from,
 					to: outEdge.to,
-					outbound: outEdge.outbound || inEdge.outbound,
+					destinationSide: outEdge.destinationSide || inEdge.destinationSide,
 					custom: true
 				});
 			}
@@ -2552,7 +2569,7 @@
 		if (nextId === selectedSampleId) return;
 		if (
 			hasUnsavedDraftChanges &&
-			!window.confirm('You have unsaved mapping draft changes. Switch profiles and discard them?')
+			!window.confirm($LL.admin_identity_mapping_flow_unsaved_switch_confirm())
 		) {
 			select.value = selectedSampleId ?? emptySample.id;
 			return;
@@ -2564,21 +2581,21 @@
 	function selectDestinationProfile(event: Event) {
 		const select = event.currentTarget as HTMLSelectElement;
 		selectedDestinationProfileId = select.value;
-		outboundAdapter =
+		destinationAdapter =
 			destinationProfileOptions.find((option) => option.id === selectedDestinationProfileId)
-				?.adapter ?? outboundAdapter;
+				?.adapter ?? destinationAdapter;
 		animateVisibleNodeSwap('destination');
 	}
 
-	function selectInboundPolicy(event: Event) {
+	function selectSourcePolicy(event: Event) {
 		const select = event.currentTarget as HTMLSelectElement;
-		applyInboundPolicySelection(select.value || null);
+		applySourcePolicySelection(select.value || null);
 	}
 
-	function applyInboundPolicySelection(optionId: string | null) {
-		selectedInboundPolicyId = optionId;
-		const selectedPolicy = inboundPolicyOptions.find(
-			(option: SelectorOption) => option.id === selectedInboundPolicyId
+	function applySourcePolicySelection(optionId: string | null) {
+		selectedSourcePolicyId = optionId;
+		const selectedPolicy = sourcePolicyOptions.find(
+			(option: SelectorOption) => option.id === selectedSourcePolicyId
 		);
 		const sourceProfileId = selectedPolicy?.sourceProfileIds?.find((id: string) =>
 			samples.some((candidate: MappingSample) => candidate.id === id)
@@ -2596,15 +2613,15 @@
 		}
 	}
 
-	function selectOutboundPolicy(event: Event) {
+	function selectDestinationPolicy(event: Event) {
 		const select = event.currentTarget as HTMLSelectElement;
-		applyOutboundPolicySelection(select.value || null);
+		applyDestinationPolicySelection(select.value || null);
 	}
 
-	function applyOutboundPolicySelection(optionId: string | null) {
-		selectedOutboundPolicyId = optionId;
-		const selectedPolicy = outboundPolicyOptions.find(
-			(option: SelectorOption) => option.id === selectedOutboundPolicyId
+	function applyDestinationPolicySelection(optionId: string | null) {
+		selectedDestinationPolicyId = optionId;
+		const selectedPolicy = destinationPolicyOptions.find(
+			(option: SelectorOption) => option.id === selectedDestinationPolicyId
 		);
 		const destinationProfileId = selectedPolicy?.destinationProfileIds?.find((id: string) =>
 			destinationProfileOptions.some((option) => option.id === id)
@@ -2619,7 +2636,7 @@
 	function addNode(role: 'source' | 'destination') {
 		if (!editable) return;
 		customCounter += 1;
-		const adapter = role === 'source' ? inboundAdapter : outboundAdapter;
+		const adapter = role === 'source' ? sourceAdapter : destinationAdapter;
 		const node: MappingNode = {
 			id: `${role}-${adapter.toLowerCase()}-custom-${customCounter}`,
 			ruleId: `custom-${role}-${adapter.toLowerCase()}-${customCounter}`,
@@ -2633,11 +2650,15 @@
 		sample.rules[node.ruleId] = {
 			...fallbackRule(),
 			title: node.label,
-			source: role === 'source' ? `${adapter} adapter / ${node.label}` : 'Custom graph edge',
+			source:
+				role === 'source'
+					? `${adapter} adapter / ${node.label}`
+					: $LL.admin_identity_mapping_flow_custom_graph_edge(),
 			destination:
-				role === 'destination' ? `${adapter} adapter / ${node.label}` : 'Not connected yet',
-			trace:
-				'Custom draft node added. Drag a connection handle to attach it to the identity schema.'
+				role === 'destination'
+					? `${adapter} adapter / ${node.label}`
+					: $LL.admin_identity_mapping_flow_not_connected_yet(),
+			trace: $LL.admin_identity_mapping_flow_custom_node_trace()
 		};
 		selectRule(node.ruleId);
 	}
@@ -2661,6 +2682,101 @@
 
 	function activeTransformSchema(node: MappingNode): TransformOperationSchema {
 		return transformSchema(activeTransformOperation(node));
+	}
+
+	function transformOperationLabel(operation: TransformOperation): string {
+		switch (operation) {
+			case 'copy':
+				return $LL.admin_identity_mapping_flow_transform_copy_label();
+			case 'trim':
+				return $LL.admin_identity_mapping_flow_transform_trim_label();
+			case 'normalize':
+				return $LL.admin_identity_mapping_flow_transform_normalize_label();
+			case 'case':
+				return $LL.admin_identity_mapping_flow_transform_case_label();
+			case 'concat':
+				return $LL.admin_identity_mapping_flow_transform_concat_label();
+			case 'fallback':
+				return $LL.admin_identity_mapping_flow_transform_fallback_label();
+			case 'text_to_boolean':
+				return $LL.admin_identity_mapping_flow_transform_text_to_boolean_label();
+			case 'json_build':
+				return $LL.admin_identity_mapping_flow_transform_json_build_label();
+			case 'json_extract_text':
+				return $LL.admin_identity_mapping_flow_transform_json_extract_text_label();
+			case 'json_extract_boolean':
+				return $LL.admin_identity_mapping_flow_transform_json_extract_boolean_label();
+			case 'json_extract_integer':
+				return $LL.admin_identity_mapping_flow_transform_json_extract_integer_label();
+		}
+	}
+
+	function transformOperationDescription(operation: TransformOperation): string {
+		switch (operation) {
+			case 'copy':
+				return $LL.admin_identity_mapping_flow_transform_copy_desc();
+			case 'trim':
+				return $LL.admin_identity_mapping_flow_transform_trim_desc();
+			case 'normalize':
+				return $LL.admin_identity_mapping_flow_transform_normalize_desc();
+			case 'case':
+				return $LL.admin_identity_mapping_flow_transform_case_desc();
+			case 'concat':
+				return $LL.admin_identity_mapping_flow_transform_concat_desc();
+			case 'fallback':
+				return $LL.admin_identity_mapping_flow_transform_fallback_desc();
+			case 'text_to_boolean':
+				return $LL.admin_identity_mapping_flow_transform_text_to_boolean_desc();
+			case 'json_build':
+				return $LL.admin_identity_mapping_flow_transform_json_build_desc();
+			case 'json_extract_text':
+				return $LL.admin_identity_mapping_flow_transform_json_extract_text_desc();
+			case 'json_extract_boolean':
+				return $LL.admin_identity_mapping_flow_transform_json_extract_boolean_desc();
+			case 'json_extract_integer':
+				return $LL.admin_identity_mapping_flow_transform_json_extract_integer_desc();
+		}
+	}
+
+	function transformParameterLabel(parameter: TransformParameterSchema): string {
+		switch (parameter.name) {
+			case 'mode':
+				return $LL.admin_identity_mapping_flow_transform_param_mode();
+			case 'delimiter':
+				return $LL.admin_identity_mapping_flow_transform_param_delimiter();
+			case 'trueValues':
+				return $LL.admin_identity_mapping_flow_transform_param_true_values();
+			case 'falseValues':
+				return $LL.admin_identity_mapping_flow_transform_param_false_values();
+			case 'nullValues':
+				return $LL.admin_identity_mapping_flow_transform_param_null_values();
+			case 'keyMap':
+				return $LL.admin_identity_mapping_flow_transform_param_key_map();
+			case 'nullHandling':
+				return $LL.admin_identity_mapping_flow_transform_param_null_handling();
+			case 'path':
+				return $LL.admin_identity_mapping_flow_transform_param_json_path();
+			default:
+				return parameter.label;
+		}
+	}
+
+	function transformOptionLabel(parameterName: string, value: string, fallback: string): string {
+		if (parameterName === 'mode') {
+			if (value === 'whitespace')
+				return $LL.admin_identity_mapping_flow_transform_option_whitespace();
+			if (value === 'unicode')
+				return $LL.admin_identity_mapping_flow_transform_option_unicode_nfkc();
+			if (value === 'lower') return $LL.admin_identity_mapping_flow_transform_option_lowercase();
+			if (value === 'upper') return $LL.admin_identity_mapping_flow_transform_option_uppercase();
+			if (value === 'title') return $LL.admin_identity_mapping_flow_transform_option_title_case();
+		}
+		if (parameterName === 'nullHandling') {
+			if (value === 'omit') return $LL.admin_identity_mapping_flow_transform_option_omit_empty();
+			if (value === 'include_null')
+				return $LL.admin_identity_mapping_flow_transform_option_include_null();
+		}
+		return fallback;
 	}
 
 	function defaultTransformParameters(operation: TransformOperation): Record<string, string> {
@@ -2724,14 +2840,15 @@
 		parameters: Record<string, string> = {}
 	): string {
 		const schema = transformSchema(operation);
-		if (schema.parameters.length === 0) return schema.label.toLowerCase();
+		const label = transformOperationLabel(operation).toLowerCase();
+		if (schema.parameters.length === 0) return label;
 		const values = schema.parameters
 			.map((parameter) => parameters[parameter.name])
 			.filter((value) => value && value.length > 0);
-		return [schema.label.toLowerCase(), ...values].join(' / ');
+		return [label, ...values].join(' / ');
 	}
 
-	function updateRuleDetail(ruleId: string, patch: Partial<ReturnType<typeof fallbackRule>>) {
+	function updateRuleDetail(ruleId: string, patch: Partial<RuleDetail>) {
 		sample = {
 			...sample,
 			rules: {
@@ -2763,12 +2880,12 @@
 			};
 		});
 		if (ruleId) {
+			const summary = transformSummary(operation, sanitized);
 			updateRuleDetail(ruleId, {
-				transform: transformSummary(operation, sanitized),
-				validation: 'draft transform configured; compile validation pending',
-				output: `Transform output preview pending for ${transformSummary(operation, sanitized)}.`,
-				trace:
-					'Transform configuration is stored on the draft node and will be persisted as a mapping transform step.'
+				transform: summary,
+				validation: $LL.admin_identity_mapping_flow_transform_configured_validation(),
+				output: $LL.admin_identity_mapping_flow_transform_output_pending({ summary }),
+				trace: $LL.admin_identity_mapping_flow_transform_config_trace()
 			});
 		}
 		markDraftDirty();
@@ -2813,7 +2930,7 @@
 	}
 
 	function directDraftRule(edge: MappingEdge, fromNode: MappingNode, toNode: MappingNode) {
-		const edgeKind = fromNode.role === 'target' ? 'outbound_release' : 'inbound_mapping';
+		const edgeKind = fromNode.role === 'target' ? 'destination_release' : 'source_mapping';
 		return {
 			ruleKey: stableRuleKey(['ui', sample.id, edge.id, fromNode.id, toNode.id]),
 			ruleKind: edgeKind,
@@ -2845,7 +2962,7 @@
 				.map((edge) => nodeById(edge.from))
 				.filter((node): node is MappingNode => Boolean(node));
 			if (inputNodes.length === 0) return [];
-			const edgeKind = toNode.role === 'destination' ? 'outbound_transform' : 'inbound_transform';
+			const edgeKind = toNode.role === 'destination' ? 'destination_transform' : 'source_transform';
 			return [
 				{
 					ruleKey: stableRuleKey(['ui', sample.id, transformNode.id, toNode.id]),
@@ -2907,26 +3024,26 @@
 		const draft = buildDraftPayload();
 		if (draft.rules.length === 0) {
 			draftSubmitStatus = 'error';
-			draftSubmitMessage = 'Connect at least one mapping edge before compiling a draft.';
+			draftSubmitMessage = $LL.admin_identity_mapping_flow_connect_edge_before_compile();
 			return;
 		}
 		if (!onCompileDraft) {
 			draftSubmitStatus = 'error';
-			draftSubmitMessage = 'Compile draft is not connected on this page.';
+			draftSubmitMessage = $LL.admin_identity_mapping_flow_compile_not_connected();
 			return;
 		}
 		draftSubmitStatus = 'saving';
-		draftSubmitMessage = 'Saving draft policy version...';
+		draftSubmitMessage = $LL.admin_identity_mapping_flow_saving_draft_policy();
 		try {
 			await onCompileDraft(draft);
 			draftSubmitStatus = 'saved';
-			draftSubmitMessage = 'Draft policy version saved and compiled.';
+			draftSubmitMessage = $LL.admin_identity_mapping_flow_draft_saved_compiled();
 			hasUnsavedDraftChanges = false;
 			onDraftDirtyChange?.(false);
 		} catch (error) {
 			draftSubmitStatus = 'error';
 			draftSubmitMessage =
-				error instanceof Error ? error.message : 'Failed to compile mapping draft.';
+				error instanceof Error ? error.message : $LL.admin_identity_mapping_flow_compile_failed();
 		}
 	}
 
@@ -2937,81 +3054,81 @@
 		const source =
 			fromNode?.role === 'source'
 				? `${fromNode.adapter} / ${fromNode.label}`
-				: (base.source ?? 'Not connected');
+				: (base.source ?? $LL.admin_identity_mapping_flow_not_connected());
 		const target =
 			fromNode?.role === 'target'
 				? fromNode.label
 				: toNode?.role === 'target'
 					? toNode.label
-					: (base.target ?? 'No schema field selected');
+					: (base.target ?? $LL.admin_identity_mapping_flow_no_schema_field_selected());
 		const destination =
 			toNode?.role === 'destination'
 				? `${toNode.adapter} / ${toNode.label}`
-				: (base.destination ?? 'Not connected');
+				: (base.destination ?? $LL.admin_identity_mapping_flow_not_connected());
 		return {
 			...base,
-			title: `${fromNode?.label ?? 'Mapping edge'} -> ${toNode?.label ?? 'Target'}`,
+			title: `${fromNode?.label ?? $LL.admin_identity_mapping_flow_mapping_edge()} -> ${toNode?.label ?? $LL.admin_identity_mapping_flow_target()}`,
 			source,
 			target,
 			destination,
 			validation: edge.custom
-				? 'draft edge selected; Backspace/Delete removes it'
-				: 'loaded edge selected; Backspace/Delete removes it from this draft',
-			trace: 'Selected edge. Press Backspace or Delete to remove this connection from the draft.'
+				? $LL.admin_identity_mapping_flow_selected_edge_custom_validation()
+				: $LL.admin_identity_mapping_flow_selected_edge_loaded_validation(),
+			trace: $LL.admin_identity_mapping_flow_selected_edge_trace()
 		};
 	}
 
 	function fallbackRule() {
 		return {
-			title: 'Mapping node',
+			title: $LL.admin_identity_mapping_flow_mapping_node(),
 			risk: 'medium' as const,
-			source: 'Selected graph node',
-			target: 'Connected schema field',
-			destination: 'Connected destination',
-			transform: 'not configured',
-			validation: 'not configured',
-			release: 'not configured',
-			storageTarget: 'not configured',
+			source: $LL.admin_identity_mapping_flow_selected_graph_node(),
+			target: $LL.admin_identity_mapping_flow_connected_schema_field(),
+			destination: $LL.admin_identity_mapping_flow_connected_destination(),
+			transform: $LL.admin_identity_mapping_flow_not_configured(),
+			validation: $LL.admin_identity_mapping_flow_not_configured(),
+			release: $LL.admin_identity_mapping_flow_not_configured(),
+			storageTarget: $LL.admin_identity_mapping_flow_not_configured(),
 			consentStatus: 'not_required' as const,
 			legalBasis: 'legitimate_interest' as const,
-			purpose: 'not configured',
-			attributeSetHash: 'not configured',
+			purpose: $LL.admin_identity_mapping_flow_not_configured(),
+			attributeSetHash: $LL.admin_identity_mapping_flow_not_configured(),
 			consentMode: 'not_applicable' as const,
-			releasePolicyVersion: 'not configured',
-			termsVersion: 'not configured',
-			privacyPolicyVersion: 'not configured',
+			releasePolicyVersion: $LL.admin_identity_mapping_flow_not_configured(),
+			termsVersion: $LL.admin_identity_mapping_flow_not_configured(),
+			privacyPolicyVersion: $LL.admin_identity_mapping_flow_not_configured(),
 			denyReason: 'none',
 			runtime: 'graph preview',
 			conflict: 'not evaluated',
 			disclosure: 'redacted summary',
 			dryrunStatus: 'pending',
 			dryrunTone: 'warn' as const,
-			input: 'No runtime input selected.',
-			output: 'No mapping edge yet.',
-			trace: 'Select a mapping node to inspect rule behavior.',
+			input: $LL.admin_identity_mapping_flow_no_runtime_input(),
+			output: $LL.admin_identity_mapping_flow_no_mapping_edge(),
+			trace: $LL.admin_identity_mapping_flow_select_node_trace(),
 			review: '0 tasks',
 			replay: 'no',
 			diffSeverity: 'medium' as const,
-			diffTitle: 'Draft-only node',
-			diff: ['This node exists only in the local draft preview.']
+			diffTitle: $LL.admin_identity_mapping_flow_draft_only_node(),
+			diff: [$LL.admin_identity_mapping_flow_draft_only_node_diff()]
 		};
 	}
 </script>
 
 <section class="mapping-shell">
 	<div class={`workspace ${showInspector ? '' : 'no-inspector'}`}>
-		<section class="pane graph-pane" aria-label="Mapping graph">
+		<section class="pane graph-pane" aria-label={$LL.admin_identity_mapping_flow_graph_aria()}>
 			<div class="graph-toolbar">
 				<div>
 					{#if showGraphPolicyDraftLabel}
-						<p class="section-kicker">Policy draft</p>
+						<p class="section-kicker">{$LL.admin_identity_mapping_flow_policy_draft()}</p>
 					{/if}
 					<h2>{graphTitle}</h2>
 				</div>
 				<div class="graph-actions">
 					{#if showToolbarSourceProfile}
 						<label class="source-profile-select" for="sourceProfile">
-							<span>Source profile</span>
+							<span>{$LL.admin_identity_mapping_source_profile()}</span>
 							<select
 								id="sourceProfile"
 								value={selectedSampleId ?? emptySample.id}
@@ -3019,7 +3136,9 @@
 								onchange={selectSample}
 							>
 								{#if samples.length === 0}
-									<option value={emptySample.id}>No profiles</option>
+									<option value={emptySample.id}>
+										{$LL.admin_identity_mapping_flow_no_profiles()}
+									</option>
 								{:else}
 									{#each samples as option (option.id)}
 										<option value={option.id}>{option.title}</option>
@@ -3029,30 +3148,30 @@
 						</label>
 					{/if}
 					{#if showToolbarModeToggle}
-						<div class="mode-toggle" aria-label="Flow view mode">
+						<div class="mode-toggle" aria-label={$LL.admin_identity_mapping_flow_view_mode_aria()}>
 							{#each enabledViewModes as mode (mode)}
 								<button
-									class={mode === 'inbound'
-										? 'view-inbound'
-										: mode === 'outbound'
-											? 'view-outbound'
+									class={mode === 'source'
+										? 'view-source'
+										: mode === 'destination'
+											? 'view-destination'
 											: 'view-overview'}
 									class:active={viewMode === mode}
 									type="button"
 									onclick={() => (viewMode = mode)}
 								>
 									{mode === 'overview'
-										? 'Overview'
-										: mode === 'inbound'
-											? 'Inbound mapping'
-											: 'Outbound release'}
+										? $LL.admin_identity_mapping_flow_overview()
+										: mode === 'source'
+											? $LL.admin_identity_mapping_flow_source_mapping()
+											: $LL.admin_identity_mapping_flow_destination_release()}
 								</button>
 							{/each}
 						</div>
 					{/if}
 					{#if editable}
 						<button class="secondary-action" type="button" onclick={autoMapConnections}>
-							Auto-map
+							{$LL.admin_identity_mapping_flow_auto_map()}
 						</button>
 					{/if}
 					{#if showCompileDraftButton}
@@ -3072,7 +3191,7 @@
 			{/if}
 
 			<div class="health-strip">
-				<span><strong>Snapshot</strong> {sample.snapshot}</span>
+				<span><strong>{$LL.admin_identity_mapping_flow_snapshot()}</strong> {sample.snapshot}</span>
 				<span class="status-ok">{sample.status}</span>
 				<span class="status-warn">{sample.reviewGates}</span>
 			</div>
@@ -3080,19 +3199,19 @@
 			{#if showMetrics}
 				<div class="metric-row">
 					<div class="metric">
-						<span>Mapped fields</span>
+						<span>{$LL.admin_identity_mapping_flow_mapped_fields()}</span>
 						<strong>{sample.metrics[0]}</strong>
 					</div>
 					<div class="metric">
-						<span>Hot-path reads</span>
+						<span>{$LL.admin_identity_mapping_flow_hot_path_reads()}</span>
 						<strong>{sample.metrics[1]}</strong>
 					</div>
 					<div class="metric">
-						<span>Release denies</span>
+						<span>{$LL.admin_identity_mapping_flow_release_denies()}</span>
 						<strong>{sample.metrics[2]}</strong>
 					</div>
 					<div class="metric">
-						<span>Catalog version</span>
+						<span>{$LL.admin_identity_mapping_flow_catalog_version()}</span>
 						<strong>{sample.metrics[3]}</strong>
 					</div>
 				</div>
@@ -3107,32 +3226,36 @@
 					<div class="graph-empty-state">
 						<strong
 							>{loading
-								? 'Loading control-plane schemas'
+								? $LL.admin_identity_mapping_flow_loading_schemas()
 								: loadError
-									? 'Control-plane schema load failed'
+									? $LL.admin_identity_mapping_flow_schema_load_failed()
 									: emptyGraphTitle}</strong
 						>
 						<span
 							>{loading
-								? 'The graph will render protocol, external, and identity schemas when loading completes.'
+								? $LL.admin_identity_mapping_flow_loading_schemas_desc()
 								: loadError
 									? loadError
 									: emptyGraphDescription}</span
 						>
 					</div>
 				{/if}
-				{#if viewMode !== 'outbound'}
-					<div class="lane-label lane-inbound" style={laneLabelStyle('inbound')}>
-						<span>{laneSelectorMode === 'policy' ? 'Inbound policy' : 'Inbound profile'}</span>
+				{#if viewMode !== 'destination'}
+					<div class="lane-label lane-source" style={laneLabelStyle('source')}>
+						<span>
+							{laneSelectorMode === 'policy'
+								? $LL.admin_identity_mapping_flow_source_policy()
+								: $LL.admin_identity_mapping_source_profile()}
+						</span>
 						{#if showLaneProfileSelectors}
 							{#if laneSelectorMode === 'policy'}
 								<select
-									value={selectedInboundPolicyId ?? ''}
-									disabled={inboundPolicyOptions.length === 0}
-									onchange={selectInboundPolicy}
+									value={selectedSourcePolicyId ?? ''}
+									disabled={sourcePolicyOptions.length === 0}
+									onchange={selectSourcePolicy}
 								>
-									<option value="">Select inbound policy</option>
-									{#each inboundPolicyOptions as option (option.id)}
+									<option value="">{$LL.admin_identity_mapping_flow_select_source_policy()}</option>
+									{#each sourcePolicyOptions as option (option.id)}
 										<option value={option.id}>{option.title}</option>
 									{/each}
 								</select>
@@ -3156,7 +3279,7 @@
 					</div>
 				{/if}
 				<div class="lane-label lane-canonical" style={laneLabelStyle('canonical')}>
-					<span>Identity schema</span>
+					<span>{$LL.admin_identity_mapping_flow_identity_schema()}</span>
 				</div>
 				{#each layout.targetGroups as group (group.key)}
 					<button
@@ -3164,7 +3287,9 @@
 						style={targetGroupStyle(group)}
 						type="button"
 						aria-expanded={!group.collapsed}
-						aria-label={`${group.collapsed ? 'Expand' : 'Collapse'} ${group.label} schema group`}
+						aria-label={group.collapsed
+							? $LL.admin_identity_mapping_flow_expand_schema_group({ group: group.label })
+							: $LL.admin_identity_mapping_flow_collapse_schema_group({ group: group.label })}
 						onclick={(event) => {
 							event.stopPropagation();
 							toggleTargetGroup(group.key);
@@ -3177,18 +3302,24 @@
 						<span class="target-group-chevron" aria-hidden="true"></span>
 					</button>
 				{/each}
-				{#if viewMode !== 'inbound'}
-					<div class="lane-label lane-outbound" style={laneLabelStyle('outbound')}>
-						<span>{laneSelectorMode === 'policy' ? 'Outbound policy' : 'Outbound profile'}</span>
+				{#if viewMode !== 'source'}
+					<div class="lane-label lane-destination" style={laneLabelStyle('destination')}>
+						<span>
+							{laneSelectorMode === 'policy'
+								? $LL.admin_identity_mapping_flow_destination_policy()
+								: $LL.admin_identity_mapping_destination_profile()}
+						</span>
 						{#if showLaneProfileSelectors}
 							{#if laneSelectorMode === 'policy'}
 								<select
-									value={selectedOutboundPolicyId ?? ''}
-									disabled={outboundPolicyOptions.length === 0}
-									onchange={selectOutboundPolicy}
+									value={selectedDestinationPolicyId ?? ''}
+									disabled={destinationPolicyOptions.length === 0}
+									onchange={selectDestinationPolicy}
 								>
-									<option value="">Select outbound policy</option>
-									{#each outboundPolicyOptions as option (option.id)}
+									<option value="">
+										{$LL.admin_identity_mapping_flow_select_destination_policy()}
+									</option>
+									{#each destinationPolicyOptions as option (option.id)}
 										<option value={option.id}>{option.title}</option>
 									{/each}
 								</select>
@@ -3217,7 +3348,7 @@
 				<svg
 					class="edge-layer"
 					viewBox={`0 0 ${canvasWidth} ${layout.height}`}
-					aria-label="Mapping edges"
+					aria-label={$LL.admin_identity_mapping_flow_edges_aria()}
 				>
 					<rect
 						class="edge-blank-hit"
@@ -3227,7 +3358,7 @@
 						height={layout.height}
 						role="button"
 						tabindex="0"
-						aria-label="Clear mapping selection"
+						aria-label={$LL.admin_identity_mapping_flow_clear_selection_aria()}
 						onclick={clearSelection}
 						onkeydown={handleClearSelectionKeyDown}
 					/>
@@ -3238,7 +3369,10 @@
 								d={edgePath(edge)}
 								role="button"
 								tabindex="0"
-								aria-label={`Select mapping edge ${nodeById(edge.from)?.label ?? edge.from} to ${nodeById(edge.to)?.label ?? edge.to}`}
+								aria-label={$LL.admin_identity_mapping_flow_select_edge_aria({
+									from: nodeById(edge.from)?.label ?? edge.from,
+									to: nodeById(edge.to)?.label ?? edge.to
+								})}
 								onclick={(event) => {
 									event.stopPropagation();
 									selectEdge(edge);
@@ -3268,7 +3402,9 @@
 										style={`--edge-accent:${edgeAccent(edge)}`}
 										role="button"
 										tabindex="0"
-										aria-label={`Reconnect ${side} endpoint for selected mapping edge`}
+										aria-label={$LL.admin_identity_mapping_flow_reconnect_edge_aria({
+											side
+										})}
 										onpointerdown={(event) =>
 											startReconnectDrag(event, edge, side as 'source' | 'target')}
 									>
@@ -3286,7 +3422,7 @@
 									style={`--edge-accent:${edgeAccent(edge)}`}
 									role="button"
 									tabindex="0"
-									aria-label="Insert transform node on selected mapping edge"
+									aria-label={$LL.admin_identity_mapping_flow_insert_transform_aria()}
 									onclick={(event) => {
 										event.stopPropagation();
 										addTransformNode(edge);
@@ -3311,7 +3447,7 @@
 									transform={`translate(${deletePoint.x} ${deletePoint.y})`}
 									role="button"
 									tabindex="0"
-									aria-label="Delete selected mapping edge"
+									aria-label={$LL.admin_identity_mapping_flow_delete_edge_aria()}
 									onclick={(event) => {
 										event.stopPropagation();
 										deleteSelectedEdge();
@@ -3369,14 +3505,14 @@
 							onpointerover={() => !node.hidden && (hoverNodeId = node.id)}
 							onpointerout={() => (hoverNodeId = null)}
 						>
-							{#if !node.locked && (node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'outbound'))}
+							{#if !node.locked && (node.role === 'destination' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'destination'))}
 								<span class="node-handle input" data-node-id={node.id} aria-hidden="true"></span>
 							{/if}
 							{#if node.locked}
 								<span
 									class="node-lock-icon"
 									aria-hidden="true"
-									title="Managed by subject identifier strategy"
+									title={$LL.admin_identity_mapping_flow_managed_by_subject()}
 								></span>
 							{/if}
 							{#if node.role !== 'transform' && !node.hidden}
@@ -3391,21 +3527,21 @@
 								>
 									<span class="node-info-mark">i</span>
 									<span class="node-info-overlay">
-										<strong>Sample value</strong>
+										<strong>{$LL.admin_identity_mapping_flow_sample_value()}</strong>
 										{#each nodeInfoExamples(node) as example (example)}
 											<code>{example}</code>
 										{:else}
-											<small>No sample value registered.</small>
+											<small>{$LL.admin_identity_mapping_flow_no_sample_value()}</small>
 										{/each}
-										<strong>Note</strong>
-										<small>{nodeInfoNote(node) ?? 'No note registered.'}</small>
-										<strong>Allowed values</strong>
+										<strong>{$LL.admin_identity_mapping_flow_note()}</strong>
+										<small>{nodeInfoNote(node) ?? $LL.admin_identity_mapping_flow_no_note()}</small>
+										<strong>{$LL.admin_identity_mapping_flow_allowed_values()}</strong>
 										{#if nodeAllowedValues(node).length > 0}
 											<small>{nodeAllowedValues(node).join(', ')}</small>
 										{:else}
-											<small>No fixed values registered.</small>
+											<small>{$LL.admin_identity_mapping_flow_no_fixed_values()}</small>
 										{/if}
-										<strong>Value rule</strong>
+										<strong>{$LL.admin_identity_mapping_flow_value_rule()}</strong>
 										<small>{nodeMultiplicityLabel(node)} / {nodeNullableLabel(node)}</small>
 									</span>
 								</span>
@@ -3427,13 +3563,19 @@
 										{#if node.type}<span class="target-badge type">{node.type}</span>{/if}
 										<span
 											class={`target-badge cardinality cardinality-${targetInputCardinality(node)}`}
-											aria-label={`Accepts ${targetInputCardinality(node) === 'one' ? 'one input' : 'multiple inputs'}`}
+											aria-label={targetInputCardinality(node) === 'one'
+												? $LL.admin_identity_mapping_flow_accepts_one_input()
+												: $LL.admin_identity_mapping_flow_accepts_multiple_inputs()}
 										>
 											{targetInputCardinalityLabel(node)}
 										</span>
 									</span>
 									<span class="target-badges meta-badges">
-										{#if node.required}<span class="target-badge required">Required</span>{/if}
+										{#if node.required}
+											<span class="target-badge required">
+												{$LL.admin_identity_mapping_flow_required()}
+											</span>
+										{/if}
 										{#if node.privacy}
 											<span
 												class={`target-badge ${node.privacy.toLowerCase().replace(/[^a-z]+/g, '-')}`}
@@ -3444,7 +3586,7 @@
 									</span>
 								</span>
 							{/if}
-							{#if !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'inbound'))}
+							{#if !node.locked && (node.role === 'source' || node.role === 'transform' || (node.role === 'target' && viewMode !== 'source'))}
 								<span
 									class="node-handle output"
 									data-node-id={node.id}
@@ -3459,7 +3601,9 @@
 							class="transform-delete-control"
 							style={transformDeleteStyle(node)}
 							type="button"
-							aria-label={`Delete ${node.label}`}
+							aria-label={$LL.admin_identity_mapping_flow_delete_node_aria({
+								node: node.label
+							})}
 							onclick={(event) => {
 								event.stopPropagation();
 								deleteTransformNode(node.id);
@@ -3473,47 +3617,54 @@
 		</section>
 
 		{#if showInspector}
-			<aside class="pane right-pane" aria-label="Mapping inspector">
+			<aside class="pane right-pane" aria-label={$LL.admin_identity_mapping_flow_inspector_aria()}>
 				<div class="pane-header">
 					<div>
-						<p class="section-kicker">Inspector</p>
+						<p class="section-kicker">{$LL.admin_identity_mapping_flow_inspector()}</p>
 						<h2>{rule.title}</h2>
 					</div>
 					<span class={`risk-badge risk-${rule.risk}`}>{rule.risk}</span>
 				</div>
 
-				<div class="tab-bar" role="tablist" aria-label="Inspector tabs">
+				<div
+					class="tab-bar"
+					role="tablist"
+					aria-label={$LL.admin_identity_mapping_flow_tabs_aria()}
+				>
 					<button
 						class:active={activeTab === 'rule'}
 						type="button"
 						onclick={() => (activeTab = 'rule')}
 					>
-						Rule
+						{$LL.admin_identity_mapping_flow_tab_rule()}
 					</button>
 					<button
 						class:active={activeTab === 'dryrun'}
 						type="button"
 						onclick={() => (activeTab = 'dryrun')}
 					>
-						Dry-run
+						{$LL.admin_identity_mapping_flow_tab_dryrun()}
 					</button>
 					<button
 						class:active={activeTab === 'diff'}
 						type="button"
 						onclick={() => (activeTab = 'diff')}
 					>
-						Diff
+						{$LL.admin_identity_mapping_flow_tab_diff()}
 					</button>
 				</div>
 
 				{#if activeTab === 'rule'}
 					{#if selectedTransformNode}
 						{@const schema = activeTransformSchema(selectedTransformNode)}
-						<section class="transform-config-card" aria-label="Transform configuration">
+						<section
+							class="transform-config-card"
+							aria-label={$LL.admin_identity_mapping_flow_transform_config_aria()}
+						>
 							<div class="transform-config-header">
 								<div>
-									<p class="section-kicker">Transform step</p>
-									<h3>{schema.label}</h3>
+									<p class="section-kicker">{$LL.admin_identity_mapping_flow_transform_step()}</p>
+									<h3>{transformOperationLabel(schema.operation)}</h3>
 								</div>
 								<span class="transform-operation-pill"
 									>{activeTransformOperation(selectedTransformNode)}</span
@@ -3523,7 +3674,7 @@
 								class="inspector-field"
 								for={`transform-operation-${selectedTransformNode.id}`}
 							>
-								<span>Operation</span>
+								<span>{$LL.admin_identity_mapping_flow_operation()}</span>
 								<select
 									id={`transform-operation-${selectedTransformNode.id}`}
 									value={activeTransformOperation(selectedTransformNode)}
@@ -3535,19 +3686,25 @@
 										)}
 								>
 									{#each transformOperationSchemas as option (option.operation)}
-										<option value={option.operation}>{option.label}</option>
+										<option value={option.operation}
+											>{transformOperationLabel(option.operation)}</option
+										>
 									{/each}
 								</select>
 							</label>
-							<p class="transform-description">{schema.description}</p>
+							<p class="transform-description">
+								{transformOperationDescription(schema.operation)}
+							</p>
 							{#each schema.parameters as parameter (parameter.name)}
 								<label
 									class="inspector-field"
 									for={`transform-${selectedTransformNode.id}-${parameter.name}`}
 								>
 									<span>
-										{parameter.label}
-										{#if parameter.required}<em>Required</em>{/if}
+										{transformParameterLabel(parameter)}
+										{#if parameter.required}<em
+												>{$LL.admin_identity_mapping_flow_required_badge()}</em
+											>{/if}
 									</span>
 									{#if parameter.kind === 'enum'}
 										<select
@@ -3565,7 +3722,13 @@
 												)}
 										>
 											{#each parameter.options as option (option.value)}
-												<option value={option.value}>{option.label}</option>
+												<option value={option.value}
+													>{transformOptionLabel(
+														parameter.name,
+														option.value,
+														option.label
+													)}</option
+												>
 											{/each}
 										</select>
 									{:else}
@@ -3591,46 +3754,46 @@
 					{/if}
 					<dl class="detail-list">
 						<div>
-							<dt>Source</dt>
+							<dt>{$LL.admin_identity_mapping_source()}</dt>
 							<dd>{rule.source}</dd>
 						</div>
 						<div>
-							<dt>Schema field</dt>
+							<dt>{$LL.admin_identity_mapping_flow_schema_field()}</dt>
 							<dd>{rule.target}</dd>
 						</div>
 						<div>
-							<dt>Destination</dt>
+							<dt>{$LL.admin_identity_mapping_destination()}</dt>
 							<dd>{rule.destination}</dd>
 						</div>
 						<div>
-							<dt>Transform</dt>
+							<dt>{$LL.admin_identity_mapping_flow_transform()}</dt>
 							<dd>{rule.transform}</dd>
 						</div>
 						<div>
-							<dt>Validation</dt>
+							<dt>{$LL.admin_identity_mapping_flow_validation()}</dt>
 							<dd>{rule.validation}</dd>
 						</div>
 						<div>
-							<dt>Release</dt>
+							<dt>{$LL.admin_identity_mapping_flow_release()}</dt>
 							<dd>{rule.release}</dd>
 						</div>
 						<div>
-							<dt>Storage</dt>
-							<dd>{rule.storageTarget ?? 'not configured'}</dd>
+							<dt>{$LL.admin_identity_mapping_flow_storage()}</dt>
+							<dd>{rule.storageTarget ?? $LL.admin_identity_mapping_flow_not_configured()}</dd>
 						</div>
 					</dl>
 				{:else if activeTab === 'dryrun'}
 					<section class="dryrun-card">
 						<div class="dryrun-header">
-							<h3>Sample Evaluation</h3>
+							<h3>{$LL.admin_identity_mapping_flow_sample_evaluation()}</h3>
 							<span class={`dryrun-status ${rule.dryrunTone}`}>{rule.dryrunStatus}</span>
 						</div>
 						<div class="value-pair">
-							<span>Input</span>
+							<span>{$LL.admin_identity_mapping_flow_input()}</span>
 							<code>{rule.input}</code>
 						</div>
 						<div class="value-pair">
-							<span>Output</span>
+							<span>{$LL.admin_identity_mapping_flow_output()}</span>
 							<code>{rule.output}</code>
 						</div>
 						<p class="trace-box">{rule.trace}</p>
@@ -3651,54 +3814,54 @@
 
 				<div class="control-block">
 					<div class="control-row">
-						<span>Consent status</span>
+						<span>{$LL.admin_identity_mapping_flow_consent_status()}</span>
 						<strong>{rule.consentStatus.replaceAll('_', ' ')}</strong>
 					</div>
 					<div class="control-row">
-						<span>Legal basis</span>
+						<span>{$LL.admin_identity_mapping_flow_legal_basis()}</span>
 						<strong>{rule.legalBasis.replaceAll('_', ' ')}</strong>
 					</div>
 					<div class="control-row">
-						<span>Purpose</span>
+						<span>{$LL.admin_identity_mapping_flow_purpose()}</span>
 						<strong>{rule.purpose}</strong>
 					</div>
 					<div class="control-row">
-						<span>Attribute set</span>
+						<span>{$LL.admin_identity_mapping_flow_attribute_set()}</span>
 						<strong>{rule.attributeSetHash}</strong>
 					</div>
 					<div class="control-row">
-						<span>Challenge mode</span>
+						<span>{$LL.admin_identity_mapping_flow_challenge_mode()}</span>
 						<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
 					</div>
 					<div class="control-row">
-						<span>Release policy</span>
+						<span>{$LL.admin_identity_mapping_flow_release_policy()}</span>
 						<strong>{rule.releasePolicyVersion}</strong>
 					</div>
 					<div class="control-row">
-						<span>Terms</span>
+						<span>{$LL.admin_identity_mapping_flow_terms()}</span>
 						<strong>{rule.termsVersion}</strong>
 					</div>
 					<div class="control-row">
-						<span>Privacy Policy</span>
+						<span>{$LL.admin_identity_mapping_flow_privacy_policy()}</span>
 						<strong>{rule.privacyPolicyVersion}</strong>
 					</div>
 					<div class="control-row">
-						<span>Deny reason</span>
+						<span>{$LL.admin_identity_mapping_flow_deny_reason()}</span>
 						<strong>{rule.denyReason}</strong>
 					</div>
 				</div>
 
 				<div class="control-block">
 					<div class="control-row">
-						<span>Runtime exposure</span>
+						<span>{$LL.admin_identity_mapping_flow_runtime_exposure()}</span>
 						<strong>{rule.runtime}</strong>
 					</div>
 					<div class="control-row">
-						<span>Conflict policy</span>
+						<span>{$LL.admin_identity_mapping_flow_conflict_policy()}</span>
 						<strong>{rule.conflict}</strong>
 					</div>
 					<div class="control-row">
-						<span>Trace disclosure</span>
+						<span>{$LL.admin_identity_mapping_flow_trace_disclosure()}</span>
 						<strong>{rule.disclosure}</strong>
 					</div>
 				</div>
@@ -3736,7 +3899,7 @@
 		--map-edge-dash-pattern: 6 6;
 		--map-drag-edge-dash-pattern: 4 3;
 		--map-layer-edge-opacity: 0.24;
-		--map-layer-outbound-edge-opacity: 0.16;
+		--map-layer-destination-edge-opacity: 0.16;
 		overflow: hidden;
 		border: 1px solid var(--map-line);
 		border-radius: 8px;
@@ -3765,7 +3928,7 @@
 		--map-target-active-surface: color-mix(in srgb, var(--map-brand) 42%, var(--map-surface));
 		--map-target-related-surface: color-mix(in srgb, var(--map-brand) 18%, var(--map-surface));
 		--map-layer-edge-opacity: 0.38;
-		--map-layer-outbound-edge-opacity: 0.42;
+		--map-layer-destination-edge-opacity: 0.42;
 	}
 
 	.graph-toolbar,
@@ -4372,12 +4535,12 @@
 		);
 	}
 
-	.outbound-edge {
+	.destination-edge {
 		opacity: 0.62;
 	}
 
-	.edge.overview-layer-edge.outbound-edge {
-		opacity: var(--map-layer-outbound-edge-opacity);
+	.edge.overview-layer-edge.destination-edge {
+		opacity: var(--map-layer-destination-edge-opacity);
 	}
 
 	.custom-edge {

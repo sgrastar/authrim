@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminRolesAPI,
@@ -12,6 +13,7 @@
 	} from '$lib/api/admin-roles';
 	import RoleAssignmentRules from '$lib/components/admin/RoleAssignmentRules.svelte';
 	import { Modal } from '$lib/components';
+	import { formatRoleFilterType, formatRoleType } from '$lib/admin/roles-i18n';
 
 	let roles: Role[] = $state([]);
 	let loading = $state(true);
@@ -46,8 +48,7 @@
 			const response = await adminRolesAPI.list();
 			roles = response.roles;
 		} catch (err) {
-			console.error('Failed to load roles:', err);
-			error = 'Failed to load roles';
+			error = err instanceof Error ? err.message : $LL.admin_roles_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -107,9 +108,9 @@
 		try {
 			// Note: Delete API not implemented yet in backend
 			// await adminRolesAPI.delete(roleToDelete.id);
-			deleteError = 'Role deletion is not yet implemented';
+			deleteError = $LL.admin_roles_delete_unavailable();
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete role';
+			deleteError = err instanceof Error ? err.message : $LL.admin_roles_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -138,7 +139,7 @@
 </script>
 
 <svelte:head>
-	<title>Role-Based Access Control - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_roles_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
@@ -147,12 +148,12 @@
 		<div class="flex items-start">
 			<span class="i-ph-info text-blue-600 text-xl mr-3 mt-0.5"></span>
 			<div>
-				<h3 class="font-semibold text-blue-900 mb-1">End User RBAC</h3>
+				<h3 class="font-semibold text-blue-900 mb-1">{$LL.admin_roles_end_user_rbac()}</h3>
 				<p class="text-sm text-blue-800">
-					This page manages roles for <strong>End Users</strong>. For
-					<strong>Admin Operator</strong>
-					role management, visit
-					<a href="/admin/admin-rbac" class="underline hover:text-blue-900">Admin RBAC</a>.
+					{$LL.admin_roles_info_banner()}
+					<a href="/admin/admin-rbac" class="underline hover:text-blue-900">
+						{$LL.admin_roles_admin_rbac()}
+					</a>
 				</p>
 			</div>
 		</div>
@@ -161,16 +162,14 @@
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Role-Based Access Control</h1>
-			<p class="page-description">
-				Define roles and permissions to control user access based on their organizational role.
-			</p>
+			<h1 class="page-title">{$LL.admin_roles_title()}</h1>
+			<p class="page-description">{$LL.admin_roles_description()}</p>
 		</div>
 		{#if activeTab === 'roles'}
 			<div class="page-actions">
 				<button class="btn btn-primary" onclick={navigateToCreate}>
 					<i class="i-ph-plus"></i>
-					Create Role
+					{$LL.admin_roles_create_role()}
 				</button>
 			</div>
 		{/if}
@@ -180,11 +179,11 @@
 	<div class="tab-nav">
 		<button class="tab-btn" class:active={activeTab === 'roles'} onclick={() => switchTab('roles')}>
 			<i class="i-ph-shield-check"></i>
-			Roles
+			{$LL.admin_roles_tab_roles()}
 		</button>
 		<button class="tab-btn" class:active={activeTab === 'rules'} onclick={() => switchTab('rules')}>
 			<i class="i-ph-git-branch"></i>
-			Assignment Rules
+			{$LL.admin_roles_tab_rules()}
 		</button>
 	</div>
 
@@ -194,55 +193,61 @@
 		{#if error}
 			<div class="alert alert-error" style="margin-bottom: 16px;">
 				{error}
-				<button class="btn btn-secondary btn-sm" onclick={loadRoles}>Retry</button>
+				<button class="btn btn-secondary btn-sm" onclick={loadRoles}>
+					{$LL.admin_roles_retry()}
+				</button>
 			</div>
 		{/if}
 
 		<!-- Filter Bar -->
 		<div class="filter-bar">
-			<span class="filter-label">Filter:</span>
+			<span class="filter-label">{$LL.admin_roles_filter()}</span>
 			<button
 				class="filter-btn"
 				class:active={filterType === 'all'}
 				onclick={() => (filterType = 'all')}
 			>
-				All
+				{$LL.admin_roles_filter_all()}
 			</button>
 			<button
 				class="filter-btn"
 				class:active={filterType === 'system'}
 				onclick={() => (filterType = 'system')}
 			>
-				System
+				{$LL.admin_roles_filter_system()}
 			</button>
 			<button
 				class="filter-btn"
 				class:active={filterType === 'builtin'}
 				onclick={() => (filterType = 'builtin')}
 			>
-				Built-in
+				{$LL.admin_roles_filter_builtin()}
 			</button>
 			<button
 				class="filter-btn"
 				class:active={filterType === 'custom'}
 				onclick={() => (filterType = 'custom')}
 			>
-				Custom
+				{$LL.admin_roles_filter_custom()}
 			</button>
 		</div>
 
 		{#if loading}
 			<div class="loading-state">
 				<i class="i-ph-circle-notch loading-spinner"></i>
-				<p>Loading roles...</p>
+				<p>{$LL.admin_roles_loading()}</p>
 			</div>
 		{:else if filteredRoles.length === 0}
 			<div class="panel">
 				<div class="empty-state">
 					{#if filterType === 'all'}
-						<p class="empty-state-description">No roles found.</p>
+						<p class="empty-state-description">{$LL.admin_roles_empty()}</p>
 					{:else}
-						<p class="empty-state-description">No {filterType} roles found.</p>
+						<p class="empty-state-description">
+							{$LL.admin_roles_empty_filtered({
+								type: formatRoleFilterType(filterType, $LL)
+							})}
+						</p>
 					{/if}
 				</div>
 			</div>
@@ -251,11 +256,11 @@
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th>Name</th>
-							<th>Type</th>
-							<th>Description</th>
-							<th>Created</th>
-							<th class="text-right">Actions</th>
+							<th>{$LL.admin_roles_name()}</th>
+							<th>{$LL.admin_roles_type()}</th>
+							<th>{$LL.admin_roles_description_label()}</th>
+							<th>{$LL.admin_roles_created()}</th>
+							<th class="text-right">{$LL.admin_roles_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -274,7 +279,9 @@
 									{/if}
 								</td>
 								<td>
-									<span class={getRoleTypeBadgeClass(roleType)}>{roleType}</span>
+									<span class={getRoleTypeBadgeClass(roleType)}
+										>{formatRoleType(roleType, $LL)}</span
+									>
 								</td>
 								<td class="muted truncate" style="max-width: 300px;">
 									{role.description || '-'}
@@ -289,14 +296,14 @@
 												navigateToRole(role);
 											}}
 										>
-											View
+											{$LL.admin_roles_view()}
 										</button>
 										{#if canDeleteRole(role)}
 											<button
 												class="btn btn-danger btn-sm"
 												onclick={(e) => openDeleteDialog(role, e)}
 											>
-												Delete
+												{$LL.admin_roles_delete()}
 											</button>
 										{/if}
 									</div>
@@ -317,14 +324,14 @@
 <Modal
 	open={showDeleteDialog && !!roleToDelete}
 	onClose={closeDeleteDialog}
-	title="Delete Role"
+	title={$LL.admin_roles_delete_title()}
 	size="md"
 >
 	{#if roleToDelete}
 		<p class="modal-description">
-			Are you sure you want to delete the role <strong>{roleToDelete.name}</strong>?
+			{$LL.admin_roles_delete_description({ role: roleToDelete.name })}
 		</p>
-		<p class="danger-text">This action cannot be undone.</p>
+		<p class="danger-text">{$LL.admin_roles_delete_danger()}</p>
 
 		{#if deleteError}
 			<div class="alert alert-error">{deleteError}</div>
@@ -333,10 +340,10 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}>
-			Cancel
+			{$LL.admin_roles_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete'}
+			{deleting ? $LL.admin_roles_deleting() : $LL.admin_roles_delete()}
 		</button>
 	{/snippet}
 </Modal>

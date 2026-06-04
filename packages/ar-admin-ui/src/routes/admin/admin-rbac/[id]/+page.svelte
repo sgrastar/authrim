@@ -14,6 +14,14 @@
 		getRoleTypeBadgeClass
 	} from '$lib/api/admin-admin-roles';
 	import { adminAdminsAPI, type AdminUser } from '$lib/api/admin-admins';
+	import { LL } from '$i18n/i18n-svelte';
+	import {
+		formatAdminPermissionCategory,
+		formatAdminPermissionCategoryDescription,
+		formatAdminRoleAssignmentStatus,
+		formatAdminRoleScope,
+		formatAdminRoleType
+	} from '$lib/admin/admin-admin-rbac-i18n';
 	import { Modal } from '$lib/components';
 
 	const roleId = $derived($page.params.id);
@@ -90,8 +98,7 @@
 			assignments = assignmentsResponse.items;
 			adminUsers = adminsResponse.items;
 		} catch (err) {
-			console.error('Failed to load role:', err);
-			error = err instanceof Error ? err.message : 'Failed to load role';
+			error = err instanceof Error ? err.message : $LL.admin_admin_rbac_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -104,7 +111,8 @@
 			const response = await adminAdminRolesAPI.listAssignments(roleId);
 			assignments = response.items;
 		} catch (err) {
-			assignmentError = err instanceof Error ? err.message : 'Failed to load role assignments';
+			assignmentError =
+				err instanceof Error ? err.message : $LL.admin_admin_rbac_assignment_load_failed();
 		}
 	}
 
@@ -198,7 +206,7 @@
 			closeEditDialog();
 			loadRole();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to update role');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_rbac_update_failed());
 		} finally {
 			saving = false;
 		}
@@ -207,7 +215,7 @@
 	async function handleAssign() {
 		if (!role) return;
 		if (!selectedAdminUserId) {
-			assignError = 'Admin user is required';
+			assignError = $LL.admin_admin_rbac_admin_user_required();
 			return;
 		}
 
@@ -225,7 +233,7 @@
 			closeAssignDialog();
 			await refreshRoleSummary();
 		} catch (err) {
-			assignError = err instanceof Error ? err.message : 'Failed to assign role';
+			assignError = err instanceof Error ? err.message : $LL.admin_admin_rbac_assign_failed();
 		} finally {
 			assigning = false;
 		}
@@ -249,7 +257,8 @@
 			closeAssignmentEditDialog();
 			await refreshRoleSummary();
 		} catch (err) {
-			assignmentEditError = err instanceof Error ? err.message : 'Failed to update role assignment';
+			assignmentEditError =
+				err instanceof Error ? err.message : $LL.admin_admin_rbac_assignment_update_failed();
 		} finally {
 			updatingAssignment = false;
 		}
@@ -258,25 +267,25 @@
 	async function handleRemoveAssignment(assignment: AdminRoleAssignmentWithUser) {
 		if (!role) return;
 		const userLabel = assignment.user?.email || assignment.admin_user_id;
-		if (!confirm(`Remove this role assignment from ${userLabel}?`)) return;
+		if (!confirm($LL.admin_admin_rbac_remove_assignment_confirm({ user: userLabel }))) return;
 
 		try {
 			await adminAdminRolesAPI.removeAssignment(role.id, assignment.id);
 			await refreshRoleSummary();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to remove role assignment');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_rbac_assignment_remove_failed());
 		}
 	}
 
 	async function handleDelete() {
 		if (!role) return;
-		if (!confirm(`Are you sure you want to delete the role "${role.name}"?`)) return;
+		if (!confirm($LL.admin_admin_rbac_delete_confirm({ role: role.name }))) return;
 
 		try {
 			await adminAdminRolesAPI.delete(role.id);
 			goto('/admin/admin-rbac');
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to delete role');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_rbac_delete_failed());
 		}
 	}
 
@@ -317,7 +326,7 @@
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp).toLocaleString(undefined);
 	}
 
 	function timestampToDateTimeLocal(timestamp: number | null): string {
@@ -328,14 +337,12 @@
 	}
 
 	function formatScope(assignment: AdminRoleAssignmentWithUser): string {
-		if (assignment.scope_type === 'global') {
-			return 'Global';
-		}
-		if (assignment.scope_type === 'tenant') {
-			return `Tenant: ${assignment.scope_id || assignment.tenant_id}`;
-		}
-		// Existing records may contain reserved scope values, but the AdminUI no longer creates them.
-		return `Unsupported scope: ${assignment.scope_type}${assignment.scope_id ? `:${assignment.scope_id}` : ''}`;
+		return formatAdminRoleScope(
+			assignment.scope_type,
+			assignment.scope_id,
+			assignment.tenant_id,
+			$LL
+		);
 	}
 
 	function formatAdminUser(assignment: AdminRoleAssignmentWithUser): string {
@@ -351,27 +358,37 @@
 </script>
 
 <svelte:head>
-	<title>{role?.display_name || role?.name || 'Admin Role'} - Authrim</title>
+	<title>
+		{role
+			? $LL.admin_admin_rbac_detail_head_title({ role: role.display_name || role.name })
+			: $LL.admin_admin_rbac_detail_fallback_head_title()}
+	</title>
 </svelte:head>
 
 <div class="admin-page">
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-spinner loading-spinner"></i>
-			<p>Loading role...</p>
+			<p>{$LL.admin_admin_rbac_detail_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="error-state">
 			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadRole}>Retry</button>
-			<button class="btn btn-secondary" onclick={handleBack}>Back to List</button>
+			<button class="btn btn-secondary" onclick={loadRole}>
+				{$LL.admin_admin_rbac_retry()}
+			</button>
+			<button class="btn btn-secondary" onclick={handleBack}>
+				{$LL.admin_admin_rbac_back_to_list()}
+			</button>
 		</div>
 	{:else if role}
 		<!-- Page Header -->
 		<div class="page-header">
 			<div>
 				<div class="breadcrumb">
-					<button class="breadcrumb-link" onclick={handleBack}>Admin RBAC</button>
+					<button class="breadcrumb-link" onclick={handleBack}>
+						{$LL.admin_admin_rbac_admin_rbac()}
+					</button>
 					<span class="breadcrumb-separator">/</span>
 					<span>{role.display_name || role.name}</span>
 				</div>
@@ -384,13 +401,13 @@
 				{#if canEditAdminRole(role)}
 					<button class="btn btn-secondary" onclick={openEditDialog}>
 						<i class="i-ph-pencil"></i>
-						Edit
+						{$LL.admin_admin_rbac_edit()}
 					</button>
 				{/if}
 				{#if canDeleteAdminRole(role)}
 					<button class="btn btn-danger" onclick={handleDelete}>
 						<i class="i-ph-trash"></i>
-						Delete
+						{$LL.admin_admin_rbac_delete()}
 					</button>
 				{/if}
 			</div>
@@ -400,34 +417,34 @@
 		<div class="detail-grid">
 			<!-- Basic Info Card -->
 			<div class="detail-card">
-				<h2 class="card-title">Basic Information</h2>
+				<h2 class="card-title">{$LL.admin_admin_rbac_role_information()}</h2>
 				<div class="info-grid">
 					<div class="info-item">
-						<span class="info-label">Role Name</span>
+						<span class="info-label">{$LL.admin_admin_rbac_role_name()}</span>
 						<span class="info-value">{role.name}</span>
 					</div>
 					<div class="info-item">
-						<span class="info-label">Role Type</span>
+						<span class="info-label">{$LL.admin_admin_rbac_role_type()}</span>
 						<span class={getRoleTypeBadgeClass(role.role_type)}>
-							{role.role_type}
+							{formatAdminRoleType(role.role_type, $LL)}
 						</span>
 					</div>
 					<div class="info-item">
-						<span class="info-label">Hierarchy Level</span>
+						<span class="info-label">{$LL.admin_admin_rbac_hierarchy_level()}</span>
 						<span class="info-value">{role.hierarchy_level}</span>
 					</div>
 					{#if role.display_name}
 						<div class="info-item">
-							<span class="info-label">Display Name</span>
+							<span class="info-label">{$LL.admin_admin_rbac_display_name()}</span>
 							<span class="info-value">{role.display_name}</span>
 						</div>
 					{/if}
 					<div class="info-item">
-						<span class="info-label">Assigned Users</span>
+						<span class="info-label">{$LL.admin_admin_rbac_assigned_users()}</span>
 						<span class="info-value">{role.assigned_user_count}</span>
 					</div>
 					<div class="info-item">
-						<span class="info-label">Assignment Scopes</span>
+						<span class="info-label">{$LL.admin_admin_rbac_assignment_scopes()}</span>
 						<span class="info-value">{new Set(assignments.map((a) => a.scope_type)).size}</span>
 					</div>
 				</div>
@@ -437,34 +454,36 @@
 			<div class="detail-card">
 				<div class="card-title-row">
 					<h2 class="card-title">
-						Role Assignments
+						{$LL.admin_admin_rbac_role_assignments()}
 						<span class="badge">{assignments.length}</span>
 					</h2>
 					<button class="btn btn-sm btn-primary" onclick={openAssignDialog}>
 						<i class="i-ph-plus"></i>
-						Assign
+						{$LL.admin_admin_rbac_assign()}
 					</button>
 				</div>
 
 				{#if assignmentError}
 					<div class="inline-error">
 						<span>{assignmentError}</span>
-						<button class="btn btn-sm btn-secondary" onclick={loadAssignments}>Retry</button>
+						<button class="btn btn-sm btn-secondary" onclick={loadAssignments}>
+							{$LL.admin_admin_rbac_retry()}
+						</button>
 					</div>
 				{:else if assignments.length === 0}
-					<p class="empty-message">No active assignments</p>
+					<p class="empty-message">{$LL.admin_admin_rbac_no_active_assignments()}</p>
 				{:else}
 					<div class="table-container">
 						<table class="table">
 							<thead>
 								<tr>
-									<th>Admin User</th>
-									<th>Scope Binding</th>
-									<th>Status</th>
-									<th>Expires</th>
-									<th>Assigned By</th>
-									<th>Created</th>
-									<th class="actions-cell">Actions</th>
+									<th>{$LL.admin_admin_rbac_admin_user()}</th>
+									<th>{$LL.admin_admin_rbac_scope_binding()}</th>
+									<th>{$LL.admin_admin_rbac_status()}</th>
+									<th>{$LL.admin_admin_rbac_expires()}</th>
+									<th>{$LL.admin_admin_rbac_assigned_by()}</th>
+									<th>{$LL.admin_admin_rbac_created()}</th>
+									<th class="actions-cell">{$LL.admin_admin_rbac_actions()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -474,7 +493,9 @@
 											<div class="user-cell">
 												<span>{formatAdminUser(assignment)}</span>
 												{#if assignment.user && !assignment.user.is_active}
-													<span class="badge badge-warning">Inactive</span>
+													<span class="badge badge-warning">
+														{$LL.admin_admin_rbac_inactive()}
+													</span>
 												{/if}
 											</div>
 										</td>
@@ -485,7 +506,7 @@
 													? 'badge badge-success'
 													: 'badge badge-neutral'}
 											>
-												{assignmentStatus(assignment)}
+												{formatAdminRoleAssignmentStatus(assignmentStatus(assignment), $LL)}
 											</span>
 										</td>
 										<td>{formatDate(assignment.expires_at)}</td>
@@ -496,13 +517,13 @@
 												class="btn btn-sm btn-secondary"
 												onclick={() => openAssignmentEditDialog(assignment)}
 											>
-												Edit
+												{$LL.admin_admin_rbac_edit()}
 											</button>
 											<button
 												class="btn btn-sm btn-danger"
 												onclick={() => handleRemoveAssignment(assignment)}
 											>
-												Remove
+												{$LL.admin_admin_rbac_remove()}
 											</button>
 										</td>
 									</tr>
@@ -516,12 +537,12 @@
 			<!-- Permissions Card -->
 			<div class="detail-card">
 				<h2 class="card-title">
-					Permissions
+					{$LL.admin_admin_rbac_permissions()}
 					<span class="badge">{role.permissions.length}</span>
 				</h2>
 
 				{#if role.permissions.length === 0}
-					<p class="empty-message">No permissions assigned</p>
+					<p class="empty-message">{$LL.admin_admin_rbac_no_permissions_assigned()}</p>
 				{:else}
 					<div class="permission-editor-grid permission-view-grid">
 						{#each permissionsByCategory as category (category.category)}
@@ -534,7 +555,12 @@
 											indeterminate={category.hasAnyPermission && !category.hasAllPermissions}
 											disabled
 										/>
-										<span class="permission-category-name">{category.category}</span>
+										<span class="permission-category-name">
+											{formatAdminPermissionCategory(category.category, $LL)}
+										</span>
+										<span class="permission-category-description">
+											{formatAdminPermissionCategoryDescription(category.category, $LL)}
+										</span>
 									</label>
 								</div>
 								<div class="permission-category-body">
@@ -564,32 +590,32 @@
 <Modal
 	open={showEditDialog && !!role}
 	onClose={closeEditDialog}
-	title="Edit Role: {role?.name || ''}"
+	title={$LL.admin_admin_rbac_edit_title({ role: role?.name || '' })}
 	size="lg"
 >
 	<div class="form-group">
-		<label for="editDisplayName">Display Name</label>
+		<label for="editDisplayName">{$LL.admin_admin_rbac_display_name()}</label>
 		<input
 			type="text"
 			id="editDisplayName"
 			class="input"
 			bind:value={editDisplayName}
-			placeholder="e.g., Security Administrator"
+			placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
 		/>
 	</div>
 	<div class="form-group">
-		<label for="editDescription">Description</label>
+		<label for="editDescription">{$LL.admin_admin_rbac_description_label()}</label>
 		<textarea
 			id="editDescription"
 			class="input"
 			bind:value={editDescription}
-			placeholder="What this role can do..."
+			placeholder={$LL.admin_admin_rbac_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label>Permissions</label>
+		<label>{$LL.admin_admin_rbac_permissions()}</label>
 		<div class="permission-editor-grid">
 			{#each ADMIN_PERMISSION_DEFINITIONS as category (category.category)}
 				<div class="permission-category-editor">
@@ -601,7 +627,12 @@
 								indeterminate={isCategoryPartiallySelected(category.permissions)}
 								onchange={() => toggleCategory(category.permissions)}
 							/>
-							<span class="permission-category-name">{category.category}</span>
+							<span class="permission-category-name">
+								{formatAdminPermissionCategory(category.category, $LL)}
+							</span>
+							<span class="permission-category-description">
+								{formatAdminPermissionCategoryDescription(category.category, $LL)}
+							</span>
 						</label>
 					</div>
 					<div class="permission-category-body">
@@ -625,9 +656,11 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}> Cancel </button>
+		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}>
+			{$LL.admin_admin_rbac_cancel()}
+		</button>
 		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-			{saving ? 'Saving...' : 'Save'}
+			{saving ? $LL.admin_admin_rbac_saving() : $LL.admin_admin_rbac_save()}
 		</button>
 	{/snippet}
 </Modal>
@@ -636,7 +669,7 @@
 <Modal
 	open={showAssignmentEditDialog && !!editingAssignment}
 	onClose={closeAssignmentEditDialog}
-	title="Edit Role Assignment"
+	title={$LL.admin_admin_rbac_edit_assignment_title()}
 	size="md"
 >
 	{#if assignmentEditError}
@@ -645,24 +678,24 @@
 	{#if editingAssignment}
 		<div class="form-group">
 			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label>Admin User</label>
+			<label>{$LL.admin_admin_rbac_admin_user()}</label>
 			<div class="readonly-value">{formatAdminUser(editingAssignment)}</div>
 		</div>
 		<div class="form-row">
 			<div class="form-group">
-				<label for="editAssignmentScopeType">Scope Type</label>
+				<label for="editAssignmentScopeType">{$LL.admin_admin_rbac_scope_type()}</label>
 				<select
 					id="editAssignmentScopeType"
 					class="input"
 					bind:value={editAssignmentScopeType}
 					onchange={handleEditAssignmentScopeTypeChange}
 				>
-					<option value="tenant">Tenant</option>
-					<option value="global">Global</option>
+					<option value="tenant">{$LL.admin_admin_rbac_scope_tenant()}</option>
+					<option value="global">{$LL.admin_admin_rbac_scope_global()}</option>
 				</select>
 			</div>
 			<div class="form-group">
-				<label for="editAssignmentScopeId">Scope ID</label>
+				<label for="editAssignmentScopeId">{$LL.admin_admin_rbac_scope_id()}</label>
 				<input
 					id="editAssignmentScopeId"
 					class="input"
@@ -674,7 +707,7 @@
 			</div>
 		</div>
 		<div class="form-group">
-			<label for="editAssignmentExpiresAt">Expires At</label>
+			<label for="editAssignmentExpiresAt">{$LL.admin_admin_rbac_expires_at()}</label>
 			<input
 				id="editAssignmentExpiresAt"
 				class="input"
@@ -690,14 +723,14 @@
 			onclick={closeAssignmentEditDialog}
 			disabled={updatingAssignment}
 		>
-			Cancel
+			{$LL.admin_admin_rbac_cancel()}
 		</button>
 		<button
 			class="btn btn-primary"
 			onclick={handleUpdateAssignment}
 			disabled={updatingAssignment || !editingAssignment}
 		>
-			{updatingAssignment ? 'Saving...' : 'Save'}
+			{updatingAssignment ? $LL.admin_admin_rbac_saving() : $LL.admin_admin_rbac_save()}
 		</button>
 	{/snippet}
 </Modal>
@@ -706,7 +739,7 @@
 <Modal
 	open={showAssignDialog && !!role}
 	onClose={closeAssignDialog}
-	title="Assign Role: {role?.name || ''}"
+	title={$LL.admin_admin_rbac_assign_title({ role: role?.name || '' })}
 	size="md"
 >
 	{#if assignError}
@@ -714,9 +747,9 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="assignAdminUser">Admin User</label>
+		<label for="assignAdminUser">{$LL.admin_admin_rbac_admin_user()}</label>
 		<select id="assignAdminUser" class="input" bind:value={selectedAdminUserId}>
-			<option value="">Select admin user</option>
+			<option value="">{$LL.admin_admin_rbac_select_admin_user()}</option>
 			{#each adminUsers as user (user.id)}
 				<option value={user.id}>{user.name ? `${user.name} <${user.email}>` : user.email}</option>
 			{/each}
@@ -725,19 +758,19 @@
 
 	<div class="form-row">
 		<div class="form-group">
-			<label for="assignScopeType">Scope Type</label>
+			<label for="assignScopeType">{$LL.admin_admin_rbac_scope_type()}</label>
 			<select
 				id="assignScopeType"
 				class="input"
 				bind:value={assignScopeType}
 				onchange={handleScopeTypeChange}
 			>
-				<option value="tenant">Tenant</option>
-				<option value="global">Global</option>
+				<option value="tenant">{$LL.admin_admin_rbac_scope_tenant()}</option>
+				<option value="global">{$LL.admin_admin_rbac_scope_global()}</option>
 			</select>
 		</div>
 		<div class="form-group">
-			<label for="assignScopeId">Scope ID</label>
+			<label for="assignScopeId">{$LL.admin_admin_rbac_scope_id()}</label>
 			<input
 				id="assignScopeId"
 				class="input"
@@ -750,16 +783,16 @@
 	</div>
 
 	<div class="form-group">
-		<label for="assignExpiresAt">Expires At</label>
+		<label for="assignExpiresAt">{$LL.admin_admin_rbac_expires_at()}</label>
 		<input id="assignExpiresAt" class="input" type="datetime-local" bind:value={assignExpiresAt} />
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeAssignDialog} disabled={assigning}>
-			Cancel
+			{$LL.admin_admin_rbac_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={handleAssign} disabled={assigning}>
-			{assigning ? 'Assigning...' : 'Assign Role'}
+			{assigning ? $LL.admin_admin_rbac_assigning() : $LL.admin_admin_rbac_assign_role()}
 		</button>
 	{/snippet}
 </Modal>

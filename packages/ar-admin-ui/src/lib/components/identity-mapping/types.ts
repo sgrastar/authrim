@@ -50,7 +50,7 @@ export interface MappingEdge {
 	id: string;
 	from: string;
 	to: string;
-	outbound?: boolean;
+	destinationSide?: boolean;
 	custom?: boolean;
 }
 
@@ -94,8 +94,8 @@ export interface MappingSample {
 	snapshot: string;
 	status: string;
 	reviewGates: string;
-	inboundAdapter: MappingAdapter;
-	outboundAdapter: MappingAdapter;
+	sourceAdapter: MappingAdapter;
+	destinationAdapter: MappingAdapter;
 	activeRuleId: string;
 	metrics: [string, string, string, string];
 	nodes: MappingNode[];
@@ -133,7 +133,7 @@ export interface MappingDraftPayload {
 	metadata: {
 		sampleId: string;
 		sampleTitle: string;
-		viewMode: 'overview' | 'inbound' | 'outbound';
+		viewMode: 'overview' | 'source' | 'destination';
 		edgeCount: number;
 		transformCount: number;
 	};
