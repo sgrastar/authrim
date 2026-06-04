@@ -19,7 +19,7 @@ export function adaptOidcClaimsPreview(
     }
     sourceValues.push({
       value: claimRequest,
-      sourceRef: { side: 'outbound', namespace: 'oidc.claim', path: claimName },
+      sourceRef: { side: 'destination', namespace: 'oidc.claim', path: claimName },
       metadata: { sourceType: 'oidc', oidcClaimName: claimName, fieldPath: claimName },
     });
   }

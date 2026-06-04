@@ -1087,8 +1087,8 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
           {
             policy_version_id: 'policy_version_1',
             rule_id: 'rule_1',
-            rule_key: 'email-inbound',
-            rule_kind: 'inbound_mapping',
+            rule_key: 'email-source',
+            rule_kind: 'source_mapping',
             action: 'map',
             priority: 0,
             metadata_json: JSON.stringify({ source: 'test' }),
@@ -1101,8 +1101,8 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
           {
             policy_version_id: 'policy_version_1',
             rule_id: 'rule_2',
-            rule_key: 'email-outbound',
-            rule_kind: 'outbound_release',
+            rule_key: 'email-destination',
+            rule_kind: 'destination_release',
             action: 'map',
             priority: 0,
             metadata_json: JSON.stringify({ source: 'test' }),
@@ -1136,13 +1136,13 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         id: 'policy_version_1',
         policySetId: 'policy_1',
         versionLabel: 'draft-1',
-        directions: { inbound: true, outbound: true },
+        directions: { source: true, destination: true },
         sourceProfileIds: ['source-profile-workforce'],
         destinationProfileIds: ['destination-profile-oidc'],
         rules: [
           expect.objectContaining({
             id: 'rule_1',
-            ruleKind: 'inbound_mapping',
+            ruleKind: 'source_mapping',
             edges: [
               expect.objectContaining({
                 id: 'edge_1',
@@ -1154,7 +1154,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
           }),
           expect.objectContaining({
             id: 'rule_2',
-            ruleKind: 'outbound_release',
+            ruleKind: 'destination_release',
             edges: [
               expect.objectContaining({
                 id: 'edge_2',

@@ -131,7 +131,7 @@ export interface FingerprintProvider {
   }): string | undefined;
 }
 
-export type FieldSide = 'inbound' | 'canonical' | 'derived' | 'outbound' | 'review';
+export type FieldSide = 'source' | 'canonical' | 'derived' | 'destination' | 'review';
 
 export interface FieldRef {
   side: FieldSide;
@@ -140,7 +140,7 @@ export interface FieldRef {
   catalogEntryId?: string;
 }
 
-export type TargetType = 'canonical' | 'custom' | 'derived' | 'outbound-only' | 'review-only';
+export type TargetType = 'canonical' | 'custom' | 'derived' | 'destination-only' | 'review-only';
 export type Cardinality = 'single' | 'multi';
 
 export interface FieldCatalogEntry {

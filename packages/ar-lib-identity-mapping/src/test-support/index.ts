@@ -63,7 +63,7 @@ export const TEST_CATALOG: FieldCatalogBundle = {
       valueType: 'string',
       cardinality: 'single',
       classification: 'pii',
-      targetType: 'outbound-only',
+      targetType: 'destination-only',
     },
     {
       id: 'field.oidc.email',
@@ -72,13 +72,13 @@ export const TEST_CATALOG: FieldCatalogBundle = {
       valueType: 'string',
       cardinality: 'single',
       classification: 'pii',
-      targetType: 'outbound-only',
+      targetType: 'destination-only',
     },
   ],
 };
 
 export function fieldRef(namespace: string, path: string, catalogEntryId?: string): FieldRef {
-  return { side: 'inbound', namespace, path, catalogEntryId };
+  return { side: 'source', namespace, path, catalogEntryId };
 }
 
 export function sourceValue(

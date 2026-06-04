@@ -33,7 +33,7 @@ export function adaptScimUserPreview(
 function envelope(path: string, value: unknown): SourceValueEnvelope {
   return {
     value,
-    sourceRef: { side: 'inbound', namespace: 'scim.user', path },
+    sourceRef: { side: 'source', namespace: 'scim.user', path },
     metadata: { sourceType: 'scim', scimPath: path, fieldPath: path },
   };
 }
