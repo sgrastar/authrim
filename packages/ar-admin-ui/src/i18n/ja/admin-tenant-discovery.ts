@@ -165,7 +165,8 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_common_screen_active:
 		'このtenantではcommon discovery screen contentが有効です。tenant-specific discovery screenをカスタマイズするにはoverrideを有効にしてください。',
 	admin_tenant_discovery_save_tenant_screen_override: 'Tenant Screen Overrideを保存',
-	admin_tenant_discovery_validation_enable_method: 'ディスカバリー方法を1つ以上有効にしてください。',
+	admin_tenant_discovery_validation_enable_method:
+		'ディスカバリー方法を1つ以上有効にしてください。',
 	admin_tenant_discovery_validation_manual_requires_method:
 		'manual_onlyではtenant code、tenant slug、WAYFのいずれかを有効にしておく必要があります。',
 	admin_tenant_discovery_common_url_fallback: 'shared /discover URL',
