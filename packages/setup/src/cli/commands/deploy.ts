@@ -1510,6 +1510,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   }
 
   await cleanupEphemeralSetupMachineAccess();
+
+  if (!migrationsSuccess) {
+    // Let CI fail at the deploy step while still giving cleanup a chance to run.
+    process.exitCode = 1;
+  }
 }
 
 // =============================================================================
