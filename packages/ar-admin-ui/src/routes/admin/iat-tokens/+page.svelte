@@ -6,6 +6,7 @@
 		type CreateIatTokenResponse
 	} from '$lib/api/admin-iat-tokens';
 	import { ToggleSwitch, Modal } from '$lib/components';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let tokens: IatToken[] = $state([]);
 	let loading = $state(true);
@@ -39,7 +40,7 @@
 			tokens = response.tokens;
 		} catch (err) {
 			console.error('Failed to load IAT tokens:', err);
-			error = 'Failed to load IAT tokens';
+			error = $LL.admin_iat_tokens_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -80,7 +81,7 @@
 			showTokenCreatedDialog = true;
 			await loadTokens();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create token';
+			createError = err instanceof Error ? err.message : $LL.admin_iat_tokens_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -127,7 +128,7 @@
 			tokenToRevoke = null;
 			await loadTokens();
 		} catch (err) {
-			revokeError = err instanceof Error ? err.message : 'Failed to revoke token';
+			revokeError = err instanceof Error ? err.message : $LL.admin_iat_tokens_revoke_failed();
 		} finally {
 			revoking = false;
 		}
@@ -138,7 +139,7 @@
 	}
 
 	function formatDateTime(isoString: string): string {
-		return new Date(isoString).toLocaleString();
+		return new Date(isoString).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function isExpired(expiresAt: string | null): boolean {
@@ -148,23 +149,22 @@
 </script>
 
 <svelte:head>
-	<title>Initial Access Tokens - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_iat_tokens_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Initial Access Tokens</h1>
+			<h1 class="page-title">{$LL.admin_iat_tokens_title()}</h1>
 			<p class="page-description">
-				Initial Access Tokens (IAT) are used for Dynamic Client Registration (RFC 7591). Clients can
-				use these tokens to register themselves programmatically.
+				{$LL.admin_iat_tokens_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Create Token
+				{$LL.admin_iat_tokens_create_token()}
 			</button>
 		</div>
 	</div>
@@ -176,16 +176,18 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_iat_tokens_loading()}</p>
 		</div>
 	{:else if tokens.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No Initial Access Tokens found.</p>
+				<p class="empty-state-description">{$LL.admin_iat_tokens_empty()}</p>
 				<p class="empty-state-hint">
-					Create a token to allow clients to register dynamically using RFC 7591.
+					{$LL.admin_iat_tokens_empty_hint()}
 				</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Create Token</button>
+				<button class="btn btn-primary" onclick={openCreateDialog}
+					>{$LL.admin_iat_tokens_create_token()}</button
+				>
 			</div>
 		</div>
 	{:else}
@@ -193,12 +195,12 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Token Hash</th>
-						<th>Description</th>
-						<th>Created</th>
-						<th>Expires</th>
-						<th>Single Use</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_iat_tokens_token_hash()}</th>
+						<th>{$LL.admin_iat_tokens_description_label()}</th>
+						<th>{$LL.admin_iat_tokens_created()}</th>
+						<th>{$LL.admin_iat_tokens_expires()}</th>
+						<th>{$LL.admin_iat_tokens_single_use()}</th>
+						<th class="text-right">{$LL.admin_iat_tokens_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -212,21 +214,21 @@
 									<span class={isExpired(token.expiresAt) ? 'danger-text' : ''}>
 										{formatDateTime(token.expiresAt)}
 										{#if isExpired(token.expiresAt)}
-											<span class="badge badge-danger">Expired</span>
+											<span class="badge badge-danger">{$LL.admin_iat_tokens_expired()}</span>
 										{/if}
 									</span>
 								{:else}
-									<span class="muted">Never</span>
+									<span class="muted">{$LL.admin_iat_tokens_never()}</span>
 								{/if}
 							</td>
 							<td>
 								<span class={token.single_use ? 'badge badge-info' : 'badge badge-neutral'}>
-									{token.single_use ? 'Yes' : 'No'}
+									{token.single_use ? $LL.admin_iat_tokens_yes() : $LL.admin_iat_tokens_no()}
 								</span>
 							</td>
 							<td class="text-right">
 								<button class="btn btn-danger btn-sm" onclick={() => openRevokeDialog(token)}>
-									Revoke
+									{$LL.admin_iat_tokens_revoke()}
 								</button>
 							</td>
 						</tr>
@@ -241,7 +243,7 @@
 <Modal
 	open={showCreateDialog}
 	onClose={closeCreateDialog}
-	title="Create Initial Access Token"
+	title={$LL.admin_iat_tokens_create_title()}
 	size="md"
 >
 	{#if createError}
@@ -249,18 +251,19 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="description" class="form-label">Description (optional)</label>
+		<label for="description" class="form-label">{$LL.admin_iat_tokens_description_optional()}</label
+		>
 		<input
 			id="description"
 			type="text"
 			class="form-input"
 			bind:value={newTokenDescription}
-			placeholder="e.g., Mobile App Registration"
+			placeholder={$LL.admin_iat_tokens_description_placeholder()}
 		/>
 	</div>
 
 	<div class="form-group">
-		<label for="expiresInDays" class="form-label">Expires In (Days)</label>
+		<label for="expiresInDays" class="form-label">{$LL.admin_iat_tokens_expires_in_days()}</label>
 		<input
 			id="expiresInDays"
 			type="number"
@@ -269,23 +272,23 @@
 			class="form-input"
 			bind:value={newTokenExpiresInDays}
 		/>
-		<p class="form-hint">Valid range: 1-365 days</p>
+		<p class="form-hint">{$LL.admin_iat_tokens_valid_range_days()}</p>
 	</div>
 
 	<div class="form-group">
 		<ToggleSwitch
 			bind:checked={newTokenSingleUse}
-			label="Single Use"
-			description="Token can only be used once for registration"
+			label={$LL.admin_iat_tokens_single_use()}
+			description={$LL.admin_iat_tokens_single_use_desc()}
 		/>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_iat_tokens_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={confirmCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create Token'}
+			{creating ? $LL.admin_iat_tokens_creating() : $LL.admin_iat_tokens_create_token()}
 		</button>
 	{/snippet}
 </Modal>
@@ -294,48 +297,54 @@
 <Modal
 	open={showTokenCreatedDialog && !!createdToken}
 	onClose={closeTokenCreatedDialog}
-	title="Token Created Successfully"
+	title={$LL.admin_iat_tokens_created_title()}
 	size="lg"
 	closeOnOutsideClick={false}
 >
 	{#if createdToken}
 		<div class="alert alert-warning">
 			<i class="i-ph-warning"></i>
-			<span>Save this token now - it will not be shown again!</span>
+			<span>{$LL.admin_iat_tokens_save_now()}</span>
 		</div>
 
 		<div class="form-group">
 			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label class="form-label">Initial Access Token</label>
+			<label class="form-label">{$LL.admin_iat_tokens_initial_access_token()}</label>
 			<div class="token-display">
 				<code class="token-value">{createdToken.token}</code>
 				<button
 					class={tokenCopied ? 'btn btn-success btn-sm' : 'btn btn-primary btn-sm'}
 					onclick={copyTokenToClipboard}
 				>
-					{tokenCopied ? 'Copied!' : 'Copy'}
+					{tokenCopied ? $LL.admin_iat_tokens_copied() : $LL.admin_iat_tokens_copy()}
 				</button>
 			</div>
 		</div>
 
 		<div class="info-box">
 			<div class="info-row">
-				<span class="info-label">Description:</span>
-				<span class="info-value">{createdToken.description || 'None'}</span>
+				<span class="info-label">{$LL.admin_iat_tokens_description_colon()}</span>
+				<span class="info-value">{createdToken.description || $LL.admin_iat_tokens_none()}</span>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Expires In:</span>
-				<span class="info-value">{createdToken.expiresInDays} days</span>
+				<span class="info-label">{$LL.admin_iat_tokens_expires_in()}</span>
+				<span class="info-value"
+					>{$LL.admin_iat_tokens_days({ count: createdToken.expiresInDays })}</span
+				>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Single Use:</span>
-				<span class="info-value">{createdToken.single_use ? 'Yes' : 'No'}</span>
+				<span class="info-label">{$LL.admin_iat_tokens_single_use()}:</span>
+				<span class="info-value"
+					>{createdToken.single_use ? $LL.admin_iat_tokens_yes() : $LL.admin_iat_tokens_no()}</span
+				>
 			</div>
 		</div>
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-primary" onclick={closeTokenCreatedDialog}>Done</button>
+		<button class="btn btn-primary" onclick={closeTokenCreatedDialog}
+			>{$LL.admin_iat_tokens_done()}</button
+		>
 	{/snippet}
 </Modal>
 
@@ -343,7 +352,7 @@
 <Modal
 	open={showRevokeDialog && !!tokenToRevoke}
 	onClose={closeRevokeDialog}
-	title="Revoke Initial Access Token"
+	title={$LL.admin_iat_tokens_revoke_title()}
 	size="md"
 >
 	{#if tokenToRevoke}
@@ -352,28 +361,27 @@
 		{/if}
 
 		<p class="modal-description">
-			Are you sure you want to revoke this Initial Access Token? This action cannot be undone and
-			will prevent any new client registrations using this token.
+			{$LL.admin_iat_tokens_revoke_description()}
 		</p>
 
 		<div class="info-box">
 			<div class="info-row">
-				<span class="info-label">Token Hash:</span>
+				<span class="info-label">{$LL.admin_iat_tokens_token_hash_label()}</span>
 				<code class="info-value">{formatTokenHash(tokenToRevoke.tokenHash)}</code>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Description:</span>
-				<span class="info-value">{tokenToRevoke.description || 'None'}</span>
+				<span class="info-label">{$LL.admin_iat_tokens_description_colon()}</span>
+				<span class="info-value">{tokenToRevoke.description || $LL.admin_iat_tokens_none()}</span>
 			</div>
 		</div>
 	{/if}
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeRevokeDialog} disabled={revoking}>
-			Cancel
+			{$LL.admin_iat_tokens_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmRevoke} disabled={revoking}>
-			{revoking ? 'Revoking...' : 'Revoke Token'}
+			{revoking ? $LL.admin_iat_tokens_revoking() : $LL.admin_iat_tokens_revoke_token()}
 		</button>
 	{/snippet}
 </Modal>

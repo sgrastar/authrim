@@ -9,6 +9,8 @@
 		canDeleteAdminRole,
 		getRoleTypeBadgeClass
 	} from '$lib/api/admin-admin-roles';
+	import { LL } from '$i18n/i18n-svelte';
+	import { formatAdminRoleType } from '$lib/admin/admin-admin-rbac-i18n';
 	import { Modal } from '$lib/components';
 
 	let roles: AdminRole[] = $state([]);
@@ -40,9 +42,8 @@
 		try {
 			const response = await adminAdminRolesAPI.list();
 			roles = response.items;
-		} catch (err) {
-			console.error('Failed to load roles:', err);
-			error = err instanceof Error ? err.message : 'Failed to load admin roles';
+		} catch {
+			error = $LL.admin_admin_rbac_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -52,8 +53,8 @@
 		try {
 			const response = await adminAdminRolesAPI.listPermissions();
 			permissions = response.items;
-		} catch (err) {
-			console.error('Failed to load permissions:', err);
+		} catch {
+			// The list page can still render role cards without permission metadata.
 		}
 	}
 
@@ -72,7 +73,7 @@
 
 	async function _handleCreate() {
 		if (!newRoleName.trim()) {
-			_createError = 'Role name is required';
+			_createError = $LL.admin_admin_rbac_role_name_required();
 			return;
 		}
 
@@ -89,7 +90,7 @@
 			closeCreateDialog();
 			loadRoles();
 		} catch (err) {
-			_createError = err instanceof Error ? err.message : 'Failed to create role';
+			_createError = err instanceof Error ? err.message : $LL.admin_admin_rbac_create_failed();
 		} finally {
 			_creating = false;
 		}
@@ -133,20 +134,20 @@
 			closeEditDialog();
 			loadRoles();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to update role');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_rbac_update_failed());
 		} finally {
 			saving = false;
 		}
 	}
 
 	async function handleDelete(role: AdminRole) {
-		if (!confirm(`Are you sure you want to delete the role "${role.name}"?`)) return;
+		if (!confirm($LL.admin_admin_rbac_delete_confirm({ role: role.name }))) return;
 
 		try {
 			await adminAdminRolesAPI.delete(role.id);
 			loadRoles();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to delete role');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_rbac_delete_failed());
 		}
 	}
 
@@ -166,20 +167,20 @@
 </script>
 
 <svelte:head>
-	<title>Admin RBAC - Authrim</title>
+	<title>{$LL.admin_admin_rbac_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Admin Role-Based Access Control</h1>
-			<p class="page-description">Manage roles and permissions for administrator accounts</p>
+			<h1 class="page-title">{$LL.admin_admin_rbac_title()}</h1>
+			<p class="page-description">{$LL.admin_admin_rbac_description()}</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Create Role
+				{$LL.admin_admin_rbac_create_role()}
 			</button>
 		</div>
 	</div>
@@ -188,16 +189,18 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-spinner loading-spinner"></i>
-			<p>Loading admin roles...</p>
+			<p>{$LL.admin_admin_rbac_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="error-state">
 			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadRoles}>Retry</button>
+			<button class="btn btn-secondary" onclick={loadRoles}>
+				{$LL.admin_admin_rbac_retry()}
+			</button>
 		</div>
 	{:else if roles.length === 0}
 		<div class="empty-state">
-			<p>No admin roles found</p>
+			<p>{$LL.admin_admin_rbac_empty()}</p>
 		</div>
 	{:else}
 		<div class="roles-grid">
@@ -215,33 +218,37 @@
 							<span class="role-name">{role.name}</span>
 						</div>
 						<span class={getRoleTypeBadgeClass(role.role_type)}>
-							{role.role_type}
+							{formatAdminRoleType(role.role_type, $LL)}
 						</span>
 					</div>
 					{#if role.description}
 						<p class="role-description">{role.description}</p>
 					{/if}
 					<div class="role-permissions">
-						<span class="permissions-label">Permissions:</span>
+						<span class="permissions-label">{$LL.admin_admin_rbac_permissions()}:</span>
 						<div class="permissions-list">
 							{#if role.permissions.length === 0}
-								<span class="text-muted">None</span>
+								<span class="text-muted">{$LL.admin_admin_rbac_none()}</span>
 							{:else if role.permissions.includes('*')}
-								<span class="permission-badge permission-all">Full Access</span>
+								<span class="permission-badge permission-all">
+									{$LL.admin_admin_rbac_full_access()}
+								</span>
 							{:else}
 								{#each role.permissions.slice(0, 5) as perm (perm)}
 									<span class="permission-badge">{perm}</span>
 								{/each}
 								{#if role.permissions.length > 5}
 									<span class="permission-badge permission-more">
-										+{role.permissions.length - 5} more
+										{$LL.admin_admin_rbac_more_permissions({
+											count: role.permissions.length - 5
+										})}
 									</span>
 								{/if}
 							{/if}
 						</div>
 					</div>
 					<div class="role-meta">
-						<span>Level: {role.hierarchy_level}</span>
+						<span>{$LL.admin_admin_rbac_level({ level: role.hierarchy_level })}</span>
 					</div>
 					<div class="role-actions">
 						{#if canEditAdminRole(role)}
@@ -253,7 +260,7 @@
 									openEditDialog(role);
 								}}
 							>
-								Edit
+								{$LL.admin_admin_rbac_edit()}
 							</button>
 						{/if}
 						{#if canDeleteAdminRole(role)}
@@ -265,7 +272,7 @@
 									handleDelete(role);
 								}}
 							>
-								Delete
+								{$LL.admin_admin_rbac_delete()}
 							</button>
 						{/if}
 					</div>
@@ -279,32 +286,32 @@
 <Modal
 	open={_showEditDialog && !!editingRole}
 	onClose={closeEditDialog}
-	title="Edit Role: {editingRole?.name || ''}"
+	title={$LL.admin_admin_rbac_edit_title({ role: editingRole?.name || '' })}
 	size="lg"
 >
 	<div class="form-group">
-		<label for="editDisplayName">Display Name</label>
+		<label for="editDisplayName">{$LL.admin_admin_rbac_display_name()}</label>
 		<input
 			type="text"
 			id="editDisplayName"
 			class="input"
 			bind:value={editDisplayName}
-			placeholder="e.g., Security Administrator"
+			placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
 		/>
 	</div>
 	<div class="form-group">
-		<label for="editDescription">Description</label>
+		<label for="editDescription">{$LL.admin_admin_rbac_description_label()}</label>
 		<textarea
 			id="editDescription"
 			class="input"
 			bind:value={editDescription}
-			placeholder="What this role can do..."
+			placeholder={$LL.admin_admin_rbac_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label>Permissions</label>
+		<label>{$LL.admin_admin_rbac_permissions()}</label>
 		<div class="permissions-grid">
 			{#each permissions as perm (perm.key)}
 				<label class="permission-checkbox">
@@ -321,9 +328,11 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}> Cancel </button>
+		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}>
+			{$LL.admin_admin_rbac_cancel()}
+		</button>
 		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-			{saving ? 'Saving...' : 'Save'}
+			{saving ? $LL.admin_admin_rbac_saving() : $LL.admin_admin_rbac_save()}
 		</button>
 	{/snippet}
 </Modal>

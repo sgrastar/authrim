@@ -1,12 +1,12 @@
 import type { FieldRef, MappingResultStatus, RedactionClassification } from '../core/types';
 
-export type OutboundPreviewProtocol = 'saml' | 'oidc';
+export type DestinationPreviewProtocol = 'saml' | 'oidc';
 export type ReleaseDecision = 'release' | 'omit' | 'deny';
 export type ReleaseLegalBasis = 'consent' | 'legal_obligation' | 'contract' | 'legitimate_interest';
 export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
 
-export interface OutboundPreviewDestination {
-  protocol: OutboundPreviewProtocol;
+export interface DestinationReleasePreviewDestination {
+  protocol: DestinationPreviewProtocol;
   destinationId: string;
   purpose: string;
 }
@@ -33,7 +33,7 @@ export interface SamlRequestedAttributeConstraint {
   isRequired?: boolean;
 }
 
-export interface OutboundReleaseValueInput {
+export interface DestinationReleaseValueInput {
   fieldRef: FieldRef;
   outputName: string;
   outputNameFormat?: string;
@@ -47,9 +47,9 @@ export interface OutboundReleaseValueInput {
   valueFingerprint?: string;
 }
 
-export interface OutboundReleasePreviewInput {
-  destination: OutboundPreviewDestination;
-  values: OutboundReleaseValueInput[];
+export interface DestinationReleasePreviewInput {
+  destination: DestinationReleasePreviewDestination;
+  values: DestinationReleaseValueInput[];
   oidcClaimsRequest?: Record<string, OidcAdvancedClaimConstraint | null>;
   samlRequestedAttributes?: SamlRequestedAttributeConstraint[];
 }
@@ -81,10 +81,10 @@ export interface AttributeReleaseConsentPreview {
   statementVersion: string | null;
 }
 
-export interface OutboundReleasePreviewItem {
+export interface DestinationReleasePreviewItem {
   fieldRef: FieldRef;
   output: {
-    protocol: OutboundPreviewProtocol;
+    protocol: DestinationPreviewProtocol;
     name: string;
     nameFormat: string | null;
   };
@@ -101,9 +101,9 @@ export interface OutboundReleasePreviewItem {
   consentPreview: AttributeReleaseConsentPreview | null;
 }
 
-export interface OutboundReleasePreviewResult {
+export interface DestinationReleasePreviewResult {
   status: MappingResultStatus;
-  destination: OutboundPreviewDestination;
+  destination: DestinationReleasePreviewDestination;
   summary: {
     totalFields: number;
     releaseCount: number;
@@ -112,13 +112,13 @@ export interface OutboundReleasePreviewResult {
     consentRequiredCount: number;
     regulatedDenyCount: number;
   };
-  items: OutboundReleasePreviewItem[];
+  items: DestinationReleasePreviewItem[];
 }
 
-export function previewOutboundRelease(
-  input: OutboundReleasePreviewInput
-): OutboundReleasePreviewResult {
-  const items = input.values.map((value) => previewOutboundReleaseItem(input, value));
+export function previewDestinationRelease(
+  input: DestinationReleasePreviewInput
+): DestinationReleasePreviewResult {
+  const items = input.values.map((value) => previewDestinationReleaseItem(input, value));
   const denyCount = items.filter((item) => item.decision === 'deny').length;
   const omitCount = items.filter((item) => item.decision === 'omit').length;
   const releaseCount = items.filter((item) => item.decision === 'release').length;
@@ -144,10 +144,10 @@ export function previewOutboundRelease(
   };
 }
 
-function previewOutboundReleaseItem(
-  input: OutboundReleasePreviewInput,
-  value: OutboundReleaseValueInput
-): OutboundReleasePreviewItem {
+function previewDestinationReleaseItem(
+  input: DestinationReleasePreviewInput,
+  value: DestinationReleaseValueInput
+): DestinationReleasePreviewItem {
   const reasons: ReleaseReason[] = [];
   const presence = value.presence ?? 'present';
   const oidcConstraint =
@@ -166,7 +166,7 @@ function previewOutboundReleaseItem(
       severity: isRequiredByDestination(oidcConstraint, samlRequestedAttribute)
         ? 'critical'
         : 'warning',
-      message: 'The source value is not present for this outbound field.',
+      message: 'The source value is not present for this destination field.',
     });
   }
 
@@ -196,8 +196,8 @@ function previewOutboundReleaseItem(
 }
 
 function addLegalBasisReasons(
-  destination: OutboundPreviewDestination,
-  value: OutboundReleaseValueInput,
+  destination: DestinationReleasePreviewDestination,
+  value: DestinationReleaseValueInput,
   reasons: ReleaseReason[]
 ): void {
   if (
@@ -231,7 +231,7 @@ function addLegalBasisReasons(
   }
 }
 
-function addConsentReasons(value: OutboundReleaseValueInput, reasons: ReleaseReason[]): void {
+function addConsentReasons(value: DestinationReleaseValueInput, reasons: ReleaseReason[]): void {
   if (value.legalBasis !== 'consent') {
     return;
   }
@@ -321,7 +321,7 @@ function buildOidcConstraintPreview(
 
 function buildSamlRequestedAttributePreview(
   requestedAttributes: SamlRequestedAttributeConstraint[] | undefined,
-  value: OutboundReleaseValueInput
+  value: DestinationReleaseValueInput
 ): SamlRequestedAttributePreview | null {
   const requested = requestedAttributes?.find((attribute) => attribute.name === value.outputName);
   if (!requested) {

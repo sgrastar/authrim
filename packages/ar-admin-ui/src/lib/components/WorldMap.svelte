@@ -14,6 +14,7 @@
 	import { onMount } from 'svelte';
 	import * as d3 from 'd3';
 	import type { FeatureCollection, Feature, Geometry } from 'geojson';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// =========================================================================
 	// Types
@@ -626,9 +627,9 @@
 							onclick={() => isDoCapable && onRegionClick?.(region)}
 							role={isDoCapable ? 'button' : 'img'}
 							tabindex={isDoCapable ? 0 : -1}
-							aria-label="{feature.properties?.NAME || 'Unknown'} - {region}{isDoCapable
-								? ''
-								: ' (No DO support)'}"
+							aria-label={`${feature.properties?.NAME || $LL.admin_scale_map_unknown()} - ${region}${
+								isDoCapable ? '' : ` (${$LL.admin_scale_map_no_do_support()})`
+							}`}
 							onkeydown={(e) => isDoCapable && e.key === 'Enter' && onRegionClick?.(region)}
 						/>
 					{/each}
@@ -710,15 +711,15 @@
 	<div class="map-legend">
 		<div class="legend-item">
 			<span class="legend-dot active"></span>
-			<span>Active Region</span>
+			<span>{$LL.admin_scale_map_active_region()}</span>
 		</div>
 		<div class="legend-item">
 			<span class="legend-dot inactive"></span>
-			<span>Inactive</span>
+			<span>{$LL.admin_scale_map_inactive()}</span>
 		</div>
 		<div class="legend-item">
 			<span class="legend-line"></span>
-			<span>Traffic Flow</span>
+			<span>{$LL.admin_scale_map_traffic_flow()}</span>
 		</div>
 	</div>
 </div>

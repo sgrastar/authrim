@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
+
 	interface Props {
 		status: 'active' | 'inactive' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 		label?: string;
@@ -7,17 +9,17 @@
 
 	let { status, label, showDot = true }: Props = $props();
 
-	const statusLabels: Record<string, string> = {
-		active: 'Active',
-		inactive: 'Inactive',
-		success: 'Success',
-		warning: 'Warning',
-		danger: 'Error',
-		info: 'Info',
-		neutral: 'Neutral'
+	const statusLabels = {
+		active: () => $LL.common_status_active(),
+		inactive: () => $LL.common_status_inactive(),
+		success: () => $LL.common_status_success(),
+		warning: () => $LL.common_status_warning(),
+		danger: () => $LL.common_status_error(),
+		info: () => $LL.common_status_info(),
+		neutral: () => $LL.common_status_neutral()
 	};
 
-	const displayLabel = $derived(label || statusLabels[status]);
+	const displayLabel = $derived(label || statusLabels[status]());
 </script>
 
 <span class="status-badge {status}" class:no-dot={!showDot}>

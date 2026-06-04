@@ -12,6 +12,9 @@
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
 
+	// Product note: Flow may be omitted from Admin UI; keep new i18n work for this
+	// feature paused until product direction is confirmed.
+
 	let flows: Flow[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');

@@ -2976,8 +2976,8 @@ export class IdentityMappingControlPlaneRepository {
     const summariesByVersion = new Map<
       string,
       {
-        inbound: boolean;
-        outbound: boolean;
+        source: boolean;
+        destination: boolean;
         sourceProfileIds: Set<string>;
         destinationProfileIds: Set<string>;
         rules: Map<
@@ -3010,15 +3010,15 @@ export class IdentityMappingControlPlaneRepository {
     for (const row of ruleRows) {
       if (typeof row.rule_kind !== 'string') continue;
       const summary = summariesByVersion.get(row.policy_version_id) ?? {
-        inbound: false,
-        outbound: false,
+        source: false,
+        destination: false,
         sourceProfileIds: new Set<string>(),
         destinationProfileIds: new Set<string>(),
         rules: new Map(),
       };
-      if (row.rule_kind.includes('inbound')) summary.inbound = true;
-      if (row.rule_kind.includes('outbound') || row.rule_kind.includes('release')) {
-        summary.outbound = true;
+      if (row.rule_kind.includes('source')) summary.source = true;
+      if (row.rule_kind.includes('destination') || row.rule_kind.includes('release')) {
+        summary.destination = true;
       }
       for (const profileId of profileIdsFromPolicyRefs(row.source_ref_json, row.target_ref_json)) {
         if (profileId.startsWith('source-profile-') || profileId.startsWith('external-source-')) {
@@ -3078,8 +3078,8 @@ export class IdentityMappingControlPlaneRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       directions: {
-        inbound: summariesByVersion.get(row.id)?.inbound ?? false,
-        outbound: summariesByVersion.get(row.id)?.outbound ?? false,
+        source: summariesByVersion.get(row.id)?.source ?? false,
+        destination: summariesByVersion.get(row.id)?.destination ?? false,
       },
       sourceProfileIds: [...(summariesByVersion.get(row.id)?.sourceProfileIds ?? [])],
       destinationProfileIds: [...(summariesByVersion.get(row.id)?.destinationProfileIds ?? [])],

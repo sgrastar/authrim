@@ -336,7 +336,7 @@ describe('identity mapping flow data adapter', () => {
 
 		expect(samples[0]).toMatchObject({
 			title: 'Workday CSV',
-			inboundAdapter: 'CSV'
+			sourceAdapter: 'CSV'
 		});
 		expect(samples[0].nodes).toEqual(
 			expect.arrayContaining([

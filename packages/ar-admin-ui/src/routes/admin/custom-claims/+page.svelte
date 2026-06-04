@@ -9,10 +9,10 @@
 		type FieldType,
 		type ScopeMode,
 		type ValidationRules,
-		getFieldTypeLabel,
-		getOperationStatusInfo
+		type OperationStatus
 	} from '$lib/api/admin-custom-claims';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// State
 	let schemas: CustomClaimSchema[] = $state([]);
@@ -102,9 +102,8 @@
 
 			schemas = response.schemas;
 			pagination = response.pagination;
-		} catch (err) {
-			console.error('Failed to load schemas:', err);
-			error = err instanceof Error ? err.message : 'Failed to load schemas';
+		} catch {
+			error = $LL.admin_custom_claims_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -113,8 +112,8 @@
 	async function loadStats() {
 		try {
 			stats = await adminCustomClaimsAPI.getStats();
-		} catch (err) {
-			console.error('Failed to load stats:', err);
+		} catch {
+			// Stats are supplemental; keep the schema list usable if this request fails.
 		}
 	}
 
@@ -175,8 +174,8 @@
 			selectedPresetId = response.presets[0]?.id ?? '';
 			selectMissingPresetFields();
 		} catch (err) {
-			console.error('Failed to load custom claim presets:', err);
-			presetError = err instanceof Error ? err.message : 'Failed to load presets';
+			presetError =
+				err instanceof Error ? err.message : $LL.admin_custom_claims_presets_load_failed();
 		} finally {
 			loadingPresets = false;
 		}
@@ -206,7 +205,7 @@
 
 	async function applyPreset() {
 		if (!selectedPresetId || selectedPresetFieldKeys.length === 0) {
-			presetError = 'Select at least one field to apply';
+			presetError = $LL.admin_custom_claims_select_field_error();
 			return;
 		}
 		applyingPreset = true;
@@ -218,8 +217,8 @@
 			await loadSchemas();
 			await loadStats();
 		} catch (err) {
-			console.error('Failed to apply custom claim preset:', err);
-			presetError = err instanceof Error ? err.message : 'Failed to apply preset';
+			presetError =
+				err instanceof Error ? err.message : $LL.admin_custom_claims_apply_preset_failed();
 		} finally {
 			applyingPreset = false;
 		}
@@ -227,7 +226,7 @@
 
 	async function submitCreate() {
 		if (!createForm.field_key || !createForm.display_label) {
-			createError = 'Field Key and Display Label are required';
+			createError = $LL.admin_custom_claims_required_error();
 			return;
 		}
 
@@ -240,7 +239,7 @@
 				try {
 					validationRules = JSON.parse(createForm.validation_rules_json);
 				} catch {
-					createError = 'Invalid JSON in validation rules';
+					createError = $LL.admin_custom_claims_invalid_json_error();
 					creating = false;
 					return;
 				}
@@ -274,8 +273,7 @@
 			loadSchemas();
 			loadStats();
 		} catch (err) {
-			console.error('Failed to create schema:', err);
-			createError = err instanceof Error ? err.message : 'Failed to create schema';
+			createError = err instanceof Error ? err.message : $LL.admin_custom_claims_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -296,8 +294,7 @@
 			const detail = await adminCustomClaimsAPI.getSchema(schema.id);
 			deleteUserCount = detail.user_count;
 			deleteUserCountApproximate = detail.user_count_approximate;
-		} catch (err) {
-			console.error('Failed to fetch user count:', err);
+		} catch {
 			deleteUserCount = -1;
 			deleteUserCountApproximate = true;
 		}
@@ -318,8 +315,7 @@
 			loadSchemas();
 			loadStats();
 		} catch (err) {
-			console.error('Failed to delete schema:', err);
-			deleteError = err instanceof Error ? err.message : 'Failed to delete schema';
+			deleteError = err instanceof Error ? err.message : $LL.admin_custom_claims_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -341,8 +337,7 @@
 			const detail = await adminCustomClaimsAPI.getSchema(schema.id);
 			renameUserCount = detail.user_count;
 			renameUserCountApproximate = detail.user_count_approximate;
-		} catch (err) {
-			console.error('Failed to fetch user count:', err);
+		} catch {
 			renameUserCount = -1;
 			renameUserCountApproximate = true;
 		}
@@ -363,8 +358,7 @@
 			loadSchemas();
 			loadStats();
 		} catch (err) {
-			console.error('Failed to rename schema:', err);
-			renameError = err instanceof Error ? err.message : 'Failed to rename schema';
+			renameError = err instanceof Error ? err.message : $LL.admin_custom_claims_rename_failed();
 		} finally {
 			renaming = false;
 		}
@@ -380,8 +374,7 @@
 			loadSchemas();
 			loadStats();
 		} catch (err) {
-			console.error('Failed to retry operation:', err);
-			error = err instanceof Error ? err.message : 'Failed to retry operation';
+			error = err instanceof Error ? err.message : $LL.admin_custom_claims_retry_failed();
 		}
 	}
 
@@ -397,6 +390,57 @@
 		return badges;
 	}
 
+	function fieldTypeLabel(type: FieldType): string {
+		switch (type) {
+			case 'string':
+				return $LL.admin_custom_claims_field_type_string();
+			case 'number':
+				return $LL.admin_custom_claims_field_type_number();
+			case 'boolean':
+				return $LL.admin_custom_claims_field_type_boolean();
+			case 'date':
+				return $LL.admin_custom_claims_field_type_date();
+			case 'enum':
+				return $LL.admin_custom_claims_field_type_enum();
+			default:
+				return type;
+		}
+	}
+
+	function operationStatusLabel(status: OperationStatus): string {
+		switch (status) {
+			case 'active':
+				return $LL.admin_custom_claims_active();
+			case 'renaming':
+				return $LL.admin_custom_claims_status_renaming();
+			case 'deleting':
+				return $LL.admin_custom_claims_status_deleting();
+			case 'error':
+				return $LL.admin_custom_claims_status_error();
+			default:
+				return status;
+		}
+	}
+
+	function schemaGroupLabel(key: string): string {
+		switch (key) {
+			case 'identity':
+				return $LL.admin_custom_claims_group_identity();
+			case 'name':
+				return $LL.admin_custom_claims_group_name();
+			case 'contact':
+				return $LL.admin_custom_claims_group_contact();
+			case 'address':
+				return $LL.admin_custom_claims_group_address();
+			case 'profile':
+				return $LL.admin_custom_claims_group_profile();
+			case 'access':
+				return $LL.admin_custom_claims_group_access();
+			default:
+				return $LL.admin_custom_claims_group_custom();
+		}
+	}
+
 	type SchemaGroup = {
 		key: string;
 		label: string;
@@ -404,14 +448,14 @@
 		schemas: CustomClaimSchema[];
 	};
 
-	const schemaGroupLabels: Record<string, { label: string; order: number }> = {
-		identity: { label: 'Identity', order: 10 },
-		name: { label: 'Name', order: 20 },
-		contact: { label: 'Contact', order: 30 },
-		address: { label: 'Address', order: 40 },
-		profile: { label: 'Profile', order: 50 },
-		access: { label: 'Access', order: 60 },
-		custom: { label: 'Custom', order: 90 }
+	const schemaGroupOrders: Record<string, number> = {
+		identity: 10,
+		name: 20,
+		contact: 30,
+		address: 40,
+		profile: 50,
+		access: 60,
+		custom: 90
 	};
 
 	function schemaGroupKey(schema: CustomClaimSchema): string {
@@ -457,9 +501,8 @@
 		const groups: SchemaGroup[] = [];
 		for (const schema of schemas) {
 			const key = schemaGroupKey(schema);
-			const definition = schemaGroupLabels[key] ?? schemaGroupLabels.custom;
-			const label = schema.ui_group_label || definition.label;
-			const order = schema.ui_group_order ?? definition.order;
+			const label = schema.ui_group_label || schemaGroupLabel(key);
+			const order = schema.ui_group_order ?? schemaGroupOrders[key] ?? schemaGroupOrders.custom;
 			let group = groups.find((candidate) => candidate.key === key);
 			if (!group) {
 				group = {
@@ -502,7 +545,7 @@
 </script>
 
 <svelte:head>
-	<title>Schema Settings - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_custom_claims_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
@@ -512,10 +555,13 @@
 			<div class="flex items-start">
 				<span class="i-ph-warning text-red-600 text-xl mr-3 mt-0.5"></span>
 				<div class="flex-1">
-					<h3 class="font-semibold text-red-900 mb-1">Operation Errors Detected</h3>
+					<h3 class="font-semibold text-red-900 mb-1">
+						{$LL.admin_custom_claims_operation_errors_title()}
+					</h3>
 					<p class="text-sm text-red-800">
-						{stats.error_count} schema(s) have failed operations that require attention. Filter by "Error"
-						status to review and retry.
+						{$LL.admin_custom_claims_operation_errors_description({
+							count: stats.error_count
+						})}
 					</p>
 				</div>
 			</div>
@@ -525,20 +571,19 @@
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Schema Settings</h1>
+			<h1 class="page-title">{$LL.admin_custom_claims_title()}</h1>
 			<p class="page-description">
-				Define and manage claim fields for users. Control field types, validation rules, and how
-				claims map to OIDC tokens.
+				{$LL.admin_custom_claims_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={openPresetDialog}>
 				<i class="i-ph-list-plus"></i>
-				Add from Preset
+				{$LL.admin_custom_claims_add_from_preset()}
 			</button>
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Add Schema
+				{$LL.admin_custom_claims_add_schema()}
 			</button>
 		</div>
 	</div>
@@ -546,7 +591,9 @@
 	{#if error}
 		<div class="alert alert-error">
 			<span>{error}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadSchemas}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={loadSchemas}
+				>{$LL.admin_custom_claims_retry()}</button
+			>
 		</div>
 	{/if}
 
@@ -555,24 +602,24 @@
 		<div class="stats-grid">
 			<div class="stat-card">
 				<span class="stat-value">{stats.total}</span>
-				<span class="stat-label">Total Schemas</span>
+				<span class="stat-label">{$LL.admin_custom_claims_stats_total()}</span>
 			</div>
 			<div class="stat-card">
 				<span class="stat-value">{stats.active_non_pii}</span>
-				<span class="stat-label">Non-PII (Active)</span>
+				<span class="stat-label">{$LL.admin_custom_claims_stats_non_pii_active()}</span>
 			</div>
 			<div class="stat-card">
 				<span class="stat-value">{stats.active_pii}</span>
-				<span class="stat-label">PII (Active)</span>
+				<span class="stat-label">{$LL.admin_custom_claims_stats_pii_active()}</span>
 			</div>
 			<div class="stat-card">
 				<span class="stat-value">{stats.non_pii_users_with_data}</span>
-				<span class="stat-label">Non-PII Users</span>
+				<span class="stat-label">{$LL.admin_custom_claims_stats_non_pii_users()}</span>
 			</div>
 			{#if stats.pii_users_with_data >= 0}
 				<div class="stat-card">
 					<span class="stat-value">~{stats.pii_users_with_data}</span>
-					<span class="stat-label">PII Users (approx.)</span>
+					<span class="stat-label">{$LL.admin_custom_claims_stats_pii_users_approx()}</span>
 				</div>
 			{/if}
 		</div>
@@ -582,10 +629,9 @@
 	<div class="panel">
 		<div class="schema-note">
 			<div>
-				<strong>System schema fields</strong>
+				<strong>{$LL.admin_custom_claims_system_note_title()}</strong>
 				<p>
-					Standard OIDC fields such as email, name, phone, and address are available as presets.
-					Apply only the groups this tenant needs; custom fields remain manually managed.
+					{$LL.admin_custom_claims_system_note_description()}
 				</p>
 			</div>
 		</div>
@@ -594,45 +640,49 @@
 				<input
 					type="text"
 					class="form-input"
-					placeholder="Search field key, label, description..."
+					placeholder={$LL.admin_custom_claims_search_placeholder()}
 					bind:value={filterSearch}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
 			</div>
 			<div class="form-group">
 				<select class="form-select" bind:value={filterFieldType} onchange={applyFilters}>
-					<option value="">All Types</option>
-					<option value="string">String</option>
-					<option value="number">Number</option>
-					<option value="boolean">Boolean</option>
-					<option value="date">Date</option>
-					<option value="enum">Enum</option>
+					<option value="">{$LL.admin_custom_claims_all_types()}</option>
+					<option value="string">{$LL.admin_custom_claims_field_type_string()}</option>
+					<option value="number">{$LL.admin_custom_claims_field_type_number()}</option>
+					<option value="boolean">{$LL.admin_custom_claims_field_type_boolean()}</option>
+					<option value="date">{$LL.admin_custom_claims_field_type_date()}</option>
+					<option value="enum">{$LL.admin_custom_claims_field_type_enum()}</option>
 				</select>
 			</div>
 			<div class="form-group">
 				<select class="form-select" bind:value={filterIsPii} onchange={applyFilters}>
-					<option value="">All (PII/Non-PII)</option>
+					<option value="">{$LL.admin_custom_claims_all_pii()}</option>
 					<option value="0">Non-PII</option>
 					<option value="1">PII</option>
 				</select>
 			</div>
 			<div class="form-group">
 				<select class="form-select" bind:value={filterIsActive} onchange={applyFilters}>
-					<option value="">All Status</option>
-					<option value="1">Active</option>
-					<option value="0">Inactive</option>
+					<option value="">{$LL.admin_custom_claims_all_status()}</option>
+					<option value="1">{$LL.admin_custom_claims_active()}</option>
+					<option value="0">{$LL.admin_custom_claims_inactive()}</option>
 				</select>
 			</div>
 			<div class="form-group">
 				<select class="form-select" bind:value={filterIsSystem} onchange={applyFilters}>
-					<option value="">All</option>
-					<option value="0">Custom</option>
-					<option value="1">System</option>
+					<option value="">{$LL.admin_custom_claims_all()}</option>
+					<option value="0">{$LL.admin_custom_claims_custom()}</option>
+					<option value="1">{$LL.admin_custom_claims_system()}</option>
 				</select>
 			</div>
 			<div class="form-group">
-				<button class="btn btn-primary" onclick={applyFilters}>Apply</button>
-				<button class="btn btn-secondary" onclick={clearFilters}>Clear</button>
+				<button class="btn btn-primary" onclick={applyFilters}
+					>{$LL.admin_custom_claims_apply()}</button
+				>
+				<button class="btn btn-secondary" onclick={clearFilters}
+					>{$LL.admin_custom_claims_clear()}</button
+				>
 			</div>
 		</div>
 	</div>
@@ -641,14 +691,18 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_custom_claims_loading()}</p>
 		</div>
 	{:else if schemas.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No schemas found.</p>
-				<button class="btn btn-secondary" onclick={openPresetDialog}>Add from Preset</button>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Add Schema</button>
+				<p class="empty-state-description">{$LL.admin_custom_claims_empty()}</p>
+				<button class="btn btn-secondary" onclick={openPresetDialog}
+					>{$LL.admin_custom_claims_add_from_preset()}</button
+				>
+				<button class="btn btn-primary" onclick={openCreateDialog}
+					>{$LL.admin_custom_claims_add_schema()}</button
+				>
 			</div>
 		</div>
 	{:else}
@@ -656,13 +710,13 @@
 			<table class="data-table schema-table">
 				<thead>
 					<tr>
-						<th>Field Key</th>
-						<th>Label</th>
-						<th>Type</th>
+						<th>{$LL.admin_custom_claims_field_key()}</th>
+						<th>{$LL.admin_custom_claims_label()}</th>
+						<th>{$LL.admin_custom_claims_type()}</th>
 						<th>PII</th>
-						<th>Token</th>
-						<th>Required</th>
-						<th>Status</th>
+						<th>{$LL.admin_custom_claims_token()}</th>
+						<th>{$LL.admin_custom_claims_required()}</th>
+						<th>{$LL.admin_custom_claims_status()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -688,7 +742,6 @@
 						</tr>
 						{#if !isSchemaGroupCollapsed(group.key)}
 							{#each group.schemas as schema (schema.id)}
-								{@const statusInfo = getOperationStatusInfo(schema.operation_status)}
 								{@const tokenBadges = getTokenBadges(schema)}
 								<tr
 									class="cursor-pointer hover:bg-gray-50"
@@ -699,7 +752,9 @@
 										<div class="flex items-center gap-2">
 											<code class="text-sm font-mono">{schema.field_key}</code>
 											{#if schema.is_system}
-												<span class="badge badge-neutral text-xs">System</span>
+												<span class="badge badge-neutral text-xs"
+													>{$LL.admin_custom_claims_system()}</span
+												>
 											{/if}
 											{#if schema.claim_namespace}
 												<span class="badge badge-neutral text-xs" title={schema.claim_namespace}
@@ -710,7 +765,7 @@
 									</td>
 									<td>{schema.display_label}</td>
 									<td>
-										<span class="badge badge-neutral">{getFieldTypeLabel(schema.field_type)}</span>
+										<span class="badge badge-neutral">{fieldTypeLabel(schema.field_type)}</span>
 									</td>
 									<td>
 										{#if schema.is_pii}
@@ -732,30 +787,36 @@
 									</td>
 									<td>
 										{#if schema.is_required}
-											<span class="badge badge-error">Required</span>
+											<span class="badge badge-error"
+												>{$LL.admin_custom_claims_required_badge()}</span
+											>
 										{:else}
-											<span class="text-gray-400">Optional</span>
+											<span class="text-gray-400">{$LL.admin_custom_claims_optional()}</span>
 										{/if}
 									</td>
 									<td>
 										{#if schema.operation_status === 'error'}
-											<span class="badge badge-error">{statusInfo.label}</span>
+											<span class="badge badge-error"
+												>{operationStatusLabel(schema.operation_status)}</span
+											>
 											<button
 												class="btn btn-secondary btn-xs ml-1"
 												onclick={(e) => {
 													e.stopPropagation();
 													retryOperation(schema);
 												}}
-												title="Retry failed operation"
+												title={$LL.admin_custom_claims_retry_failed_operation()}
 											>
 												<i class="i-ph-arrow-clockwise"></i>
 											</button>
 										{:else if schema.operation_status !== 'active'}
-											<span class="badge badge-warning">{statusInfo.label}</span>
+											<span class="badge badge-warning"
+												>{operationStatusLabel(schema.operation_status)}</span
+											>
 										{:else if !schema.is_active}
-											<span class="badge badge-neutral">Inactive</span>
+											<span class="badge badge-neutral">{$LL.admin_custom_claims_inactive()}</span>
 										{:else}
-											<span class="badge badge-success">Active</span>
+											<span class="badge badge-success">{$LL.admin_custom_claims_active()}</span>
 										{/if}
 									</td>
 								</tr>
@@ -774,17 +835,21 @@
 					disabled={pagination.page <= 1}
 					onclick={() => goToPage(pagination.page - 1)}
 				>
-					Previous
+					{$LL.admin_custom_claims_previous()}
 				</button>
 				<span class="pagination-info">
-					Page {pagination.page} of {pagination.total_pages} ({pagination.total} total)
+					{$LL.admin_custom_claims_page_info({
+						page: pagination.page,
+						totalPages: pagination.total_pages,
+						total: pagination.total
+					})}
 				</span>
 				<button
 					class="btn btn-secondary btn-sm"
 					disabled={pagination.page >= pagination.total_pages}
 					onclick={() => goToPage(pagination.page + 1)}
 				>
-					Next
+					{$LL.admin_custom_claims_next()}
 				</button>
 			</div>
 		{/if}
@@ -798,7 +863,7 @@
 		showPresetDialog = false;
 		presetError = '';
 	}}
-	title="Add from Preset"
+	title={$LL.admin_custom_claims_preset_title()}
 	size="lg"
 >
 	{#if presetError}
@@ -808,15 +873,15 @@
 	{#if loadingPresets}
 		<div class="loading-state compact">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading presets...</p>
+			<p>{$LL.admin_custom_claims_loading_presets()}</p>
 		</div>
 	{:else if presets.length === 0}
 		<div class="empty-state">
-			<p class="empty-state-description">No presets are available.</p>
+			<p class="empty-state-description">{$LL.admin_custom_claims_no_presets()}</p>
 		</div>
 	{:else}
 		<div class="form-group">
-			<label class="form-label" for="claim-preset">Preset</label>
+			<label class="form-label" for="claim-preset">{$LL.admin_custom_claims_preset()}</label>
 			<select
 				id="claim-preset"
 				class="form-select"
@@ -849,14 +914,14 @@
 							<small>{field.description}</small>
 						</span>
 						<span class="preset-field-meta">
-							<span class="badge badge-neutral">{getFieldTypeLabel(field.field_type)}</span>
+							<span class="badge badge-neutral">{fieldTypeLabel(field.field_type)}</span>
 							{#if field.is_pii}
 								<span class="badge badge-warning">PII</span>
 							{:else}
 								<span class="badge badge-success">Non-PII</span>
 							{/if}
 							{#if exists}
-								<span class="badge badge-neutral">Exists</span>
+								<span class="badge badge-neutral">{$LL.admin_custom_claims_exists()}</span>
 							{/if}
 						</span>
 					</label>
@@ -873,7 +938,7 @@
 				}}
 				disabled={applyingPreset}
 			>
-				Cancel
+				{$LL.admin_custom_claims_cancel()}
 			</button>
 			<button
 				class="btn btn-primary"
@@ -882,9 +947,9 @@
 			>
 				{#if applyingPreset}
 					<i class="i-ph-circle-notch loading-spinner"></i>
-					Applying...
+					{$LL.admin_custom_claims_applying()}
 				{:else}
-					Apply Selected Fields
+					{$LL.admin_custom_claims_apply_selected_fields()}
 				{/if}
 			</button>
 		</div>
@@ -898,7 +963,7 @@
 		showCreateDialog = false;
 		createError = '';
 	}}
-	title="Add Schema"
+	title={$LL.admin_custom_claims_add_schema()}
 	size="lg"
 >
 	{#if createError}
@@ -907,87 +972,98 @@
 
 	<div class="form-grid">
 		<div class="form-group">
-			<label class="form-label" for="create-field-key">Field Key *</label>
+			<label class="form-label" for="create-field-key"
+				>{$LL.admin_custom_claims_field_key_required()}</label
+			>
 			<input
 				id="create-field-key"
 				type="text"
 				class="form-input"
-				placeholder="e.g. employee_id"
+				placeholder={$LL.admin_custom_claims_field_key_placeholder()}
 				bind:value={createForm.field_key}
 			/>
 			<p class="form-hint">
-				snake_case, starts with a letter, max 64 chars. Cannot use reserved OIDC claim names.
+				{$LL.admin_custom_claims_field_key_hint()}
 			</p>
 		</div>
 
 		<div class="form-group">
-			<label class="form-label" for="create-display-label">Display Label *</label>
+			<label class="form-label" for="create-display-label"
+				>{$LL.admin_custom_claims_display_label_required()}</label
+			>
 			<input
 				id="create-display-label"
 				type="text"
 				class="form-input"
-				placeholder="e.g. Employee ID"
+				placeholder={$LL.admin_custom_claims_display_label_placeholder()}
 				bind:value={createForm.display_label}
 			/>
 		</div>
 
 		<div class="form-group">
-			<label class="form-label" for="create-field-type">Field Type</label>
+			<label class="form-label" for="create-field-type"
+				>{$LL.admin_custom_claims_field_type()}</label
+			>
 			<select id="create-field-type" class="form-select" bind:value={createForm.field_type}>
-				<option value="string">String</option>
-				<option value="number">Number</option>
-				<option value="boolean">Boolean</option>
-				<option value="date">Date</option>
-				<option value="enum">Enum</option>
+				<option value="string">{$LL.admin_custom_claims_field_type_string()}</option>
+				<option value="number">{$LL.admin_custom_claims_field_type_number()}</option>
+				<option value="boolean">{$LL.admin_custom_claims_field_type_boolean()}</option>
+				<option value="date">{$LL.admin_custom_claims_field_type_date()}</option>
+				<option value="enum">{$LL.admin_custom_claims_field_type_enum()}</option>
 			</select>
 		</div>
 
 		<div class="form-group">
 			<label class="form-label">
 				<input type="checkbox" bind:checked={createForm.is_pii} />
-				PII (Personal Identifiable Information)
+				{$LL.admin_custom_claims_pii_full()}
 			</label>
 			<p class="form-hint text-amber-600">
-				Cannot be changed after creation. PII data is stored in a separate encrypted database.
+				{$LL.admin_custom_claims_pii_hint()}
 			</p>
 		</div>
 
 		<div class="form-group">
 			<label class="form-label">
 				<input type="checkbox" bind:checked={createForm.is_required} />
-				Required field
+				{$LL.admin_custom_claims_required_field()}
 			</label>
 		</div>
 
 		<div class="form-group col-span-2">
-			<label class="form-label" for="create-description">Description</label>
+			<label class="form-label" for="create-description"
+				>{$LL.admin_custom_claims_description_label()}</label
+			>
 			<textarea
 				id="create-description"
 				class="form-input"
 				rows="2"
-				placeholder="Optional description..."
+				placeholder={$LL.admin_custom_claims_description_placeholder()}
 				bind:value={createForm.description}
 			></textarea>
 		</div>
 
 		<div class="form-group col-span-2">
-			<label class="form-label" for="create-validation">Validation Rules (JSON)</label>
+			<label class="form-label" for="create-validation"
+				>{$LL.admin_custom_claims_validation_rules()}</label
+			>
 			<textarea
 				id="create-validation"
 				class="form-input font-mono text-sm"
 				rows="3"
-				placeholder={'e.g. {"min_length": 1, "max_length": 100}'}
+				placeholder={$LL.admin_custom_claims_validation_placeholder()}
 				bind:value={createForm.validation_rules_json}
 			></textarea>
 			<p class="form-hint">
-				String: min_length, max_length, pattern. Number: min, max. Enum: enum_values (array). Date:
-				min_date, max_date (ISO 8601).
+				{$LL.admin_custom_claims_validation_hint()}
 			</p>
 		</div>
 
 		<!-- Token Integration -->
 		<div class="form-group col-span-2">
-			<h4 class="font-semibold text-sm mb-2">Token / Endpoint Integration</h4>
+			<h4 class="font-semibold text-sm mb-2">
+				{$LL.admin_custom_claims_token_integration()}
+			</h4>
 			<div class="flex gap-4 flex-wrap">
 				<label class="form-label">
 					<input type="checkbox" bind:checked={createForm.include_in_id_token} />
@@ -1001,49 +1077,56 @@
 					<input type="checkbox" bind:checked={createForm.include_in_introspection} />
 					Introspection
 					<small style="color: var(--color-warning, #b08800); display: block; font-size: 0.75rem;"
-						>Custom claim embedding in Introspection responses is currently disabled. Please use the
-						UserInfo endpoint instead.</small
+						>{$LL.admin_custom_claims_introspection_disabled_use_userinfo()}</small
 					>
 				</label>
 			</div>
 		</div>
 
 		<div class="form-group">
-			<label class="form-label" for="create-scopes">Required Scopes (comma-separated)</label>
+			<label class="form-label" for="create-scopes"
+				>{$LL.admin_custom_claims_required_scopes()}</label
+			>
 			<input
 				id="create-scopes"
 				type="text"
 				class="form-input"
-				placeholder="e.g. profile, employee"
+				placeholder={$LL.admin_custom_claims_required_scopes_placeholder()}
 				bind:value={createForm.required_scopes_text}
 			/>
-			<p class="form-hint">Leave empty to always include when token flags are set.</p>
+			<p class="form-hint">{$LL.admin_custom_claims_required_scopes_hint()}</p>
 		</div>
 
 		<div class="form-group">
-			<label class="form-label" for="create-scope-mode">Scope Mode</label>
+			<label class="form-label" for="create-scope-mode"
+				>{$LL.admin_custom_claims_scope_mode()}</label
+			>
 			<select id="create-scope-mode" class="form-select" bind:value={createForm.scope_mode}>
-				<option value="any">Any (one scope suffices)</option>
-				<option value="all">All (all scopes required)</option>
+				<option value="any">{$LL.admin_custom_claims_scope_mode_any()}</option>
+				<option value="all">{$LL.admin_custom_claims_scope_mode_all()}</option>
 			</select>
 		</div>
 
 		<div class="form-group col-span-2">
-			<label class="form-label" for="create-namespace">Claim Namespace (optional)</label>
+			<label class="form-label" for="create-namespace"
+				>{$LL.admin_custom_claims_claim_namespace()}</label
+			>
 			<input
 				id="create-namespace"
 				type="text"
 				class="form-input"
-				placeholder="e.g. https://example.com/claims/"
+				placeholder={$LL.admin_custom_claims_claim_namespace_placeholder()}
 				bind:value={createForm.claim_namespace}
 			/>
 		</div>
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}>Cancel</button>
+		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}
+			>{$LL.admin_custom_claims_cancel()}</button
+		>
 		<button class="btn btn-primary" onclick={submitCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create'}
+			{creating ? $LL.admin_custom_claims_creating() : $LL.admin_custom_claims_create()}
 		</button>
 	{/snippet}
 </Modal>
@@ -1058,7 +1141,7 @@
 		deleteUserCount = 0;
 		deleteUserCountApproximate = false;
 	}}
-	title="Delete Custom Claim Schema"
+	title={$LL.admin_custom_claims_delete_title()}
 	size="md"
 >
 	{#if deleteError}
@@ -1067,38 +1150,48 @@
 
 	{#if schemaToDelete}
 		<div class="alert alert-warning mb-4">
-			<strong>Warning:</strong> This will permanently delete the schema and all associated user data.
-			This action cannot be undone.
+			<strong>{$LL.admin_custom_claims_warning_label()}</strong>
+			{$LL.admin_custom_claims_delete_warning()}
 		</div>
 
 		<div class="bg-gray-50 rounded-lg p-3 mb-4">
 			<p>
-				<strong>Field Key:</strong>
+				<strong>{$LL.admin_custom_claims_field_key()}:</strong>
 				<code>{schemaToDelete.field_key}</code>
 			</p>
-			<p><strong>Label:</strong> {schemaToDelete.display_label}</p>
-			<p><strong>Type:</strong> {getFieldTypeLabel(schemaToDelete.field_type)}</p>
+			<p><strong>{$LL.admin_custom_claims_label()}:</strong> {schemaToDelete.display_label}</p>
 			<p>
-				<strong>Storage:</strong>
-				{schemaToDelete.is_pii ? 'PII Database' : 'Core Database'}
+				<strong>{$LL.admin_custom_claims_type()}:</strong>
+				{fieldTypeLabel(schemaToDelete.field_type)}
+			</p>
+			<p>
+				<strong>{$LL.admin_custom_claims_storage()}:</strong>
+				{schemaToDelete.is_pii
+					? $LL.admin_custom_claims_pii_database()
+					: $LL.admin_custom_claims_core_database()}
 			</p>
 			{#if deleteUserCount > 0}
 				<p class="text-red-600 font-semibold mt-2">
-					Affected users: {deleteUserCountApproximate ? '~' : ''}{deleteUserCount}
-					{deleteUserCountApproximate ? '(approximate)' : ''}
+					{$LL.admin_custom_claims_affected_users({
+						prefix: deleteUserCountApproximate ? '~' : '',
+						count: deleteUserCount,
+						suffix: deleteUserCountApproximate ? $LL.admin_custom_claims_approx() : ''
+					})}
 				</p>
 			{:else if deleteUserCount < 0}
 				<p class="text-amber-600 font-semibold mt-2">
-					Could not fetch affected user count. Proceed with caution.
+					{$LL.admin_custom_claims_fetch_user_count_failed()}
 				</p>
 			{/if}
 		</div>
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}>Cancel</button>
+		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}
+			>{$LL.admin_custom_claims_cancel()}</button
+		>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete Schema & Data'}
+			{deleting ? $LL.admin_custom_claims_deleting() : $LL.admin_custom_claims_delete_schema_data()}
 		</button>
 	{/snippet}
 </Modal>
@@ -1114,7 +1207,7 @@
 		renameUserCount = 0;
 		renameUserCountApproximate = false;
 	}}
-	title="Rename Custom Claim Field Key"
+	title={$LL.admin_custom_claims_rename_custom_title()}
 	size="md"
 >
 	{#if renameError}
@@ -1124,55 +1217,64 @@
 	{#if schemaToRename}
 		<!-- Recommended approach -->
 		<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
-			<h4 class="font-semibold text-blue-900 text-sm mb-1">Recommended Approach</h4>
+			<h4 class="font-semibold text-blue-900 text-sm mb-1">
+				{$LL.admin_custom_claims_recommended_approach()}
+			</h4>
 			<ol class="text-sm text-blue-800 list-decimal list-inside space-y-1">
-				<li>Deactivate this schema (set inactive)</li>
-				<li>Create a new schema with the desired field_key</li>
-				<li>Migrate user data in the background</li>
-				<li>Delete the old schema</li>
+				<li>{$LL.admin_custom_claims_rename_step_deactivate()}</li>
+				<li>{$LL.admin_custom_claims_rename_step_create()}</li>
+				<li>{$LL.admin_custom_claims_rename_step_migrate()}</li>
+				<li>{$LL.admin_custom_claims_rename_step_delete()}</li>
 			</ol>
 		</div>
 
 		<!-- Direct rename warning -->
 		<div class="alert alert-warning mb-4">
-			<strong>Direct rename warning:</strong> Renaming changes the claim name in API responses and tokens.
-			This may break integrations with Relying Parties (RP) that expect the old claim name.
+			<strong>{$LL.admin_custom_claims_direct_rename_warning_label()}</strong>
+			{$LL.admin_custom_claims_direct_rename_warning()}
 		</div>
 
 		<div class="bg-gray-50 rounded-lg p-3 mb-4">
 			<p>
-				<strong>Current Field Key:</strong>
+				<strong>{$LL.admin_custom_claims_current_field_key()}:</strong>
 				<code>{schemaToRename.field_key}</code>
 			</p>
 			{#if renameUserCount > 0}
 				<p class="text-amber-600 font-semibold mt-1">
-					Affected users: {renameUserCountApproximate ? '~' : ''}{renameUserCount}
-					{renameUserCountApproximate ? '(approximate)' : ''}
+					{$LL.admin_custom_claims_affected_users({
+						prefix: renameUserCountApproximate ? '~' : '',
+						count: renameUserCount,
+						suffix: renameUserCountApproximate ? $LL.admin_custom_claims_approx() : ''
+					})}
 				</p>
 			{:else if renameUserCount < 0}
 				<p class="text-amber-600 font-semibold mt-1">
-					Could not fetch affected user count. Proceed with caution.
+					{$LL.admin_custom_claims_fetch_user_count_failed()}
 				</p>
 			{/if}
 		</div>
 
 		<div class="form-group">
-			<label class="form-label" for="rename-new-key">New Field Key</label>
+			<label class="form-label" for="rename-new-key"
+				>{$LL.admin_custom_claims_new_field_key()}</label
+			>
 			<input
 				id="rename-new-key"
 				type="text"
 				class="form-input"
-				placeholder="e.g. new_field_name"
+				placeholder={$LL.admin_custom_claims_field_key_placeholder()}
 				bind:value={renameNewKey}
 			/>
-			<p class="form-hint">snake_case, starts with a letter, max 64 chars.</p>
+			<p class="form-hint">{$LL.admin_custom_claims_field_key_short_hint()}</p>
 		</div>
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showRenameDialog = false)}>Cancel</button>
+		<button class="btn btn-secondary" onclick={() => (showRenameDialog = false)}
+			>{$LL.admin_custom_claims_cancel()}</button
+		>
 		<button class="btn btn-warning" onclick={confirmRename} disabled={renaming || !renameNewKey}>
-			{renaming ? 'Renaming...' : 'Rename Field Key'}
+			{renaming ? $LL.admin_custom_claims_renaming() : $LL.admin_custom_claims_rename_field_key()}
 		</button>
 	{/snippet}
 </Modal>

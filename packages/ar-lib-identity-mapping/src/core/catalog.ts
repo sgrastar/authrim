@@ -14,7 +14,7 @@ const TARGET_TYPES: TargetType[] = [
   'canonical',
   'custom',
   'derived',
-  'outbound-only',
+  'destination-only',
   'review-only',
 ];
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ApprovalCompletionRequirements } from '$lib/api/admin-approvals';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {
 		requirements: ApprovalCompletionRequirements;
@@ -32,32 +33,32 @@
 
 	<div class="guide-grid">
 		<div>
-			<strong>Completion Mode</strong>
+			<strong>{$LL.admin_approvals_completion_mode()}</strong>
 			<span>{requirements.mode}</span>
 		</div>
 		<div>
-			<strong>Available Methods</strong>
+			<strong>{$LL.admin_approvals_available_methods()}</strong>
 			<span>{formatMethods(requirements.acceptable_methods)}</span>
 		</div>
 		<div>
-			<strong>Portal Path</strong>
+			<strong>{$LL.admin_approvals_portal_path()}</strong>
 			<span class="monospace">{requirements.portal_path}</span>
 		</div>
 		{#if completionPath}
 			<div>
-				<strong>Complete Endpoint</strong>
+				<strong>{$LL.admin_approvals_complete_endpoint()}</strong>
 				<span class="monospace">{completionPath}</span>
 			</div>
 		{/if}
 		{#if artifactId}
 			<div>
-				<strong>Artifact ID</strong>
+				<strong>{$LL.admin_approvals_artifact_id()}</strong>
 				<span class="monospace">{artifactId}</span>
 			</div>
 		{/if}
 		{#if requirements.transport_channel}
 			<div>
-				<strong>Delivery Target</strong>
+				<strong>{$LL.admin_approvals_delivery_target()}</strong>
 				<span>{requirements.transport_channel}</span>
 			</div>
 		{/if}
@@ -69,7 +70,7 @@
 
 	{#if requirements.assertion_endpoints}
 		<details class="guide-details">
-			<summary>Assertion Endpoints</summary>
+			<summary>{$LL.admin_approvals_assertion_endpoints()}</summary>
 			<ul>
 				{#each formatAssertionEndpoints(requirements.assertion_endpoints) as endpoint (endpoint)}
 					<li class="monospace">{endpoint}</li>

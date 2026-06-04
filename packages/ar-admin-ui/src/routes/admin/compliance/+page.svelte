@@ -2,23 +2,22 @@
 	import { onMount } from 'svelte';
 	import {
 		adminComplianceAPI,
-		getFrameworkDisplayName,
 		type ComplianceStatus,
 		type ComplianceFramework,
 		type ComplianceCheckStatus,
 		type AccessReview,
 		type ComplianceReport,
 		type DataRetentionStatus,
-		type AccessReviewScope
+		type AccessReviewScope,
+		type AccessReviewStatus,
+		type ReportType,
+		type ReportStatus
 	} from '$lib/api/admin-compliance';
-	import {
-		adminDataRetentionAPI,
-		getCategoryDisplayName,
-		getCategoryDescription
-	} from '$lib/api/admin-data-retention';
+	import { adminDataRetentionAPI } from '$lib/api/admin-data-retention';
 	import RetentionPolicyEditDialog from '$lib/components/RetentionPolicyEditDialog.svelte';
 	import { Modal } from '$lib/components';
 	import { formatDate, isValidDownloadUrl, SMALL_PAGE_SIZE, sanitizeText } from '$lib/utils';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// State
 	let loading = $state(true);
@@ -33,10 +32,10 @@
 
 	// Tab definitions
 	const TABS = [
-		{ id: 'overview', label: 'Overview' },
-		{ id: 'reviews', label: 'Access Reviews' },
-		{ id: 'reports', label: 'Reports' },
-		{ id: 'retention', label: 'Data Retention' }
+		{ id: 'overview', getLabel: () => $LL.admin_compliance_tab_overview() },
+		{ id: 'reviews', getLabel: () => $LL.admin_compliance_tab_reviews() },
+		{ id: 'reports', getLabel: () => $LL.admin_compliance_tab_reports() },
+		{ id: 'retention', getLabel: () => $LL.admin_compliance_tab_retention() }
 	] as const;
 
 	// Start Review Dialog
@@ -74,186 +73,222 @@
 		outOfScope: { item: string; reason: string }[];
 	}
 
-	const FRAMEWORK_DETAILS: Partial<Record<ComplianceFramework, FrameworkDetail>> = {
-		GDPR: {
-			fullName: 'General Data Protection Regulation',
-			description:
-				'EU regulation on data protection and privacy for individuals within the European Union and European Economic Area. Authrim evaluates authentication-service-level GDPR controls.',
-			checks: [
-				{
-					id: 'data_retention_policy',
-					name: 'Data Retention Policy',
-					description: 'Data retention policy enabled with automated cleanup',
-					status: 'implemented'
-				},
-				{
-					id: 'right_to_erasure',
-					name: 'Right to Erasure',
-					description: 'User deletion with PII tombstone for proof of deletion',
-					status: 'implemented'
-				},
-				{
-					id: 'data_encryption',
-					name: 'Data Encryption',
-					description: 'Full encryption at rest (D1/R2) and in transit (HTTPS/TLS)',
-					status: 'implemented'
-				},
-				{
-					id: 'consent_management',
-					name: 'Consent Management',
-					description: 'User consent acquisition, recording, and withdrawal',
-					status: 'planned'
-				},
-				{
-					id: 'dsar_support',
-					name: 'Data Subject Access Request (DSAR)',
-					description: 'User data export capability',
-					status: 'planned'
-				},
-				{
-					id: 'data_minimization',
-					name: 'Data Minimization',
-					description: 'Collection of only the minimum necessary data',
-					status: 'planned'
-				},
-				{
-					id: 'pii_access_audit',
-					name: 'Audit Trail of PII Access',
-					description: 'Access logging for personally identifiable information',
-					status: 'planned'
-				},
-				{
-					id: 'breached_password_detection',
-					name: 'Breached Password Detection',
-					description: 'Detection of compromised passwords',
-					status: 'planned'
-				}
-			],
-			inScope: [
-				'Data retention policy enforcement',
-				'User data deletion with proof of erasure (tombstone)',
-				'Encryption at rest and in transit',
-				'Authentication data protection',
-				'Consent recording for authentication flows'
-			],
-			outOfScope: [
-				{
-					item: 'Data Processing Agreements (DPA)',
-					reason: 'Legal document, tenant responsibility'
-				},
-				{ item: 'Cookie consent banners', reason: 'Application layer responsibility' },
-				{ item: 'Data portability (non-auth data)', reason: 'Application side responsibility' },
-				{
-					item: 'DPIA (Data Protection Impact Assessment)',
-					reason: 'Organizational process'
-				},
-				{
-					item: 'Breach notification to authority',
-					reason: '72-hour obligation, organizational process'
-				},
-				{ item: 'Lawful basis for processing', reason: 'Tenant business decision' },
-				{ item: 'DPO appointment', reason: 'Organizational requirement' },
-				{
-					item: 'International data transfer (SCCs)',
-					reason: 'Legal/organizational requirement'
-				}
-			]
-		},
-		SOC2: {
-			fullName: 'Service Organization Control 2',
-			description:
-				'Audit framework for service organizations, evaluating controls relevant to security, availability, processing integrity, confidentiality, and privacy.',
-			checks: [
-				{
-					id: 'audit_logging',
-					name: 'Audit Logging',
-					description: 'Audit log recording and retention',
-					status: 'implemented'
-				},
-				{
-					id: 'rbac',
-					name: 'Role-Based Access Control',
-					description: 'RBAC configuration and enforcement',
-					status: 'implemented'
-				},
-				{
-					id: 'mfa_coverage',
-					name: 'MFA Coverage',
-					description: 'Multi-factor authentication adoption rate',
-					status: 'implemented'
-				},
-				{
-					id: 'encryption',
-					name: 'Encryption',
-					description: 'Encryption at rest and in transit',
-					status: 'implemented'
-				},
-				{
-					id: 'key_rotation',
-					name: 'Key Rotation',
-					description: 'Signing key rotation status',
-					status: 'planned'
-				},
-				{
-					id: 'session_management',
-					name: 'Session Management',
-					description: 'Session timeout and concurrent session limits',
-					status: 'planned'
-				},
-				{
-					id: 'password_policy',
-					name: 'Password Policy',
-					description: 'Password complexity and expiration requirements',
-					status: 'planned'
-				},
-				{
-					id: 'rate_limiting',
-					name: 'Rate Limiting',
-					description: 'Brute-force attack protection',
-					status: 'planned'
-				},
-				{
-					id: 'account_lockout',
-					name: 'Account Lockout',
-					description: 'Failed login attempt restrictions',
-					status: 'planned'
-				},
-				{
-					id: 'access_review',
-					name: 'Access Review',
-					description: 'Periodic access review completion status',
-					status: 'planned'
-				}
-			],
-			inScope: [
-				'Audit log recording and retention',
-				'Role-based access control enforcement',
-				'Multi-factor authentication coverage',
-				'Data encryption at rest and in transit',
-				'Authentication and session security'
-			],
-			outOfScope: [
-				{ item: 'SOC2 Type II formal audit', reason: 'Requires external CPA audit' },
-				{
-					item: 'Physical security controls',
-					reason: 'Cloudflare infrastructure responsibility'
-				},
-				{ item: 'Network security monitoring', reason: 'Cloudflare responsibility' },
-				{ item: 'Employee background checks', reason: 'Organizational process' },
-				{ item: 'Vendor risk management', reason: 'Organizational process' },
-				{
-					item: 'Business continuity / DR',
-					reason: 'Infrastructure layer (Cloudflare Workers/D1)'
-				},
-				{ item: 'Change management procedures', reason: 'Development process' }
-			]
+	function hasFrameworkDetail(framework: ComplianceFramework): boolean {
+		return framework === 'GDPR' || framework === 'SOC2';
+	}
+
+	function getFrameworkDetail(framework: ComplianceFramework): FrameworkDetail | null {
+		if (framework === 'GDPR') {
+			return {
+				fullName: $LL.admin_compliance_framework_gdpr_full_name(),
+				description: $LL.admin_compliance_framework_gdpr_description(),
+				checks: [
+					{
+						id: 'data_retention_policy',
+						name: $LL.admin_compliance_check_data_retention_policy(),
+						description: $LL.admin_compliance_check_data_retention_policy_desc(),
+						status: 'implemented'
+					},
+					{
+						id: 'right_to_erasure',
+						name: $LL.admin_compliance_check_right_to_erasure(),
+						description: $LL.admin_compliance_check_right_to_erasure_desc(),
+						status: 'implemented'
+					},
+					{
+						id: 'data_encryption',
+						name: $LL.admin_compliance_check_data_encryption(),
+						description: $LL.admin_compliance_check_data_encryption_desc(),
+						status: 'implemented'
+					},
+					{
+						id: 'consent_management',
+						name: $LL.admin_compliance_check_consent_management(),
+						description: $LL.admin_compliance_check_consent_management_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'dsar_support',
+						name: $LL.admin_compliance_check_dsar_support(),
+						description: $LL.admin_compliance_check_dsar_support_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'data_minimization',
+						name: $LL.admin_compliance_check_data_minimization(),
+						description: $LL.admin_compliance_check_data_minimization_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'pii_access_audit',
+						name: $LL.admin_compliance_check_pii_access_audit(),
+						description: $LL.admin_compliance_check_pii_access_audit_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'breached_password_detection',
+						name: $LL.admin_compliance_check_breached_password_detection(),
+						description: $LL.admin_compliance_check_breached_password_detection_desc(),
+						status: 'planned'
+					}
+				],
+				inScope: [
+					$LL.admin_compliance_gdpr_scope_retention(),
+					$LL.admin_compliance_gdpr_scope_erasure(),
+					$LL.admin_compliance_gdpr_scope_encryption(),
+					$LL.admin_compliance_gdpr_scope_auth_data(),
+					$LL.admin_compliance_gdpr_scope_consent()
+				],
+				outOfScope: [
+					{
+						item: $LL.admin_compliance_gdpr_out_dpa(),
+						reason: $LL.admin_compliance_gdpr_out_dpa_reason()
+					},
+					{
+						item: $LL.admin_compliance_gdpr_out_cookie(),
+						reason: $LL.admin_compliance_gdpr_out_cookie_reason()
+					},
+					{
+						item: $LL.admin_compliance_gdpr_out_portability(),
+						reason: $LL.admin_compliance_gdpr_out_portability_reason()
+					},
+					{
+						item: $LL.admin_compliance_gdpr_out_dpia(),
+						reason: $LL.admin_compliance_gdpr_out_dpia_reason()
+					},
+					{
+						item: $LL.admin_compliance_gdpr_out_breach(),
+						reason: $LL.admin_compliance_gdpr_out_breach_reason()
+					},
+					{
+						item: $LL.admin_compliance_gdpr_out_lawful_basis(),
+						reason: $LL.admin_compliance_gdpr_out_lawful_basis_reason()
+					},
+					{
+						item: $LL.admin_compliance_gdpr_out_dpo(),
+						reason: $LL.admin_compliance_gdpr_out_dpo_reason()
+					},
+					{
+						item: $LL.admin_compliance_gdpr_out_transfer(),
+						reason: $LL.admin_compliance_gdpr_out_transfer_reason()
+					}
+				]
+			};
 		}
-	};
+
+		if (framework === 'SOC2') {
+			return {
+				fullName: $LL.admin_compliance_framework_soc2_full_name(),
+				description: $LL.admin_compliance_framework_soc2_description(),
+				checks: [
+					{
+						id: 'audit_logging',
+						name: $LL.admin_compliance_check_audit_logging(),
+						description: $LL.admin_compliance_check_audit_logging_desc(),
+						status: 'implemented'
+					},
+					{
+						id: 'rbac',
+						name: $LL.admin_compliance_check_rbac(),
+						description: $LL.admin_compliance_check_rbac_desc(),
+						status: 'implemented'
+					},
+					{
+						id: 'mfa_coverage',
+						name: $LL.admin_compliance_check_mfa_coverage(),
+						description: $LL.admin_compliance_check_mfa_coverage_desc(),
+						status: 'implemented'
+					},
+					{
+						id: 'encryption',
+						name: $LL.admin_compliance_check_encryption(),
+						description: $LL.admin_compliance_check_encryption_desc(),
+						status: 'implemented'
+					},
+					{
+						id: 'key_rotation',
+						name: $LL.admin_compliance_check_key_rotation(),
+						description: $LL.admin_compliance_check_key_rotation_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'session_management',
+						name: $LL.admin_compliance_check_session_management(),
+						description: $LL.admin_compliance_check_session_management_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'password_policy',
+						name: $LL.admin_compliance_check_password_policy(),
+						description: $LL.admin_compliance_check_password_policy_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'rate_limiting',
+						name: $LL.admin_compliance_check_rate_limiting(),
+						description: $LL.admin_compliance_check_rate_limiting_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'account_lockout',
+						name: $LL.admin_compliance_check_account_lockout(),
+						description: $LL.admin_compliance_check_account_lockout_desc(),
+						status: 'planned'
+					},
+					{
+						id: 'access_review',
+						name: $LL.admin_compliance_check_access_review(),
+						description: $LL.admin_compliance_check_access_review_desc(),
+						status: 'planned'
+					}
+				],
+				inScope: [
+					$LL.admin_compliance_soc2_scope_audit(),
+					$LL.admin_compliance_soc2_scope_rbac(),
+					$LL.admin_compliance_soc2_scope_mfa(),
+					$LL.admin_compliance_soc2_scope_encryption(),
+					$LL.admin_compliance_soc2_scope_auth()
+				],
+				outOfScope: [
+					{
+						item: $LL.admin_compliance_soc2_out_formal_audit(),
+						reason: $LL.admin_compliance_soc2_out_formal_audit_reason()
+					},
+					{
+						item: $LL.admin_compliance_soc2_out_physical(),
+						reason: $LL.admin_compliance_soc2_out_physical_reason()
+					},
+					{
+						item: $LL.admin_compliance_soc2_out_network(),
+						reason: $LL.admin_compliance_soc2_out_network_reason()
+					},
+					{
+						item: $LL.admin_compliance_soc2_out_background(),
+						reason: $LL.admin_compliance_soc2_out_background_reason()
+					},
+					{
+						item: $LL.admin_compliance_soc2_out_vendor(),
+						reason: $LL.admin_compliance_soc2_out_vendor_reason()
+					},
+					{
+						item: $LL.admin_compliance_soc2_out_bcdr(),
+						reason: $LL.admin_compliance_soc2_out_bcdr_reason()
+					},
+					{
+						item: $LL.admin_compliance_soc2_out_change(),
+						reason: $LL.admin_compliance_soc2_out_change_reason()
+					}
+				]
+			};
+		}
+
+		return null;
+	}
 
 	let selectedFramework = $state<ComplianceFramework | null>(null);
 
 	let selectedFrameworkDetail = $derived(
-		selectedFramework ? (FRAMEWORK_DETAILS[selectedFramework] ?? null) : null
+		selectedFramework ? getFrameworkDetail(selectedFramework) : null
 	);
 
 	let selectedFrameworkChecks = $derived(
@@ -289,11 +324,13 @@
 	function getComplianceStatusLabel(status: string): string {
 		switch (status) {
 			case 'compliant':
-				return 'Compliant';
+				return $LL.admin_compliance_status_compliant();
 			case 'partial':
-				return 'Partial';
+				return $LL.admin_compliance_status_partial();
 			case 'non_compliant':
-				return 'Non-Compliant';
+				return $LL.admin_compliance_status_non_compliant();
+			case 'not_applicable':
+				return $LL.admin_compliance_status_not_applicable();
 			default:
 				return status;
 		}
@@ -346,6 +383,53 @@
 		return enabled ? 'quick-stat-value enabled' : 'quick-stat-value disabled';
 	}
 
+	function getReviewStatusLabel(status: AccessReviewStatus): string {
+		switch (status) {
+			case 'pending':
+				return $LL.admin_compliance_status_pending();
+			case 'in_progress':
+				return $LL.admin_compliance_status_in_progress();
+			case 'completed':
+				return $LL.admin_compliance_status_completed();
+			case 'cancelled':
+				return $LL.admin_compliance_status_cancelled();
+		}
+	}
+
+	function getReportStatusLabel(status: ReportStatus): string {
+		switch (status) {
+			case 'pending':
+				return $LL.admin_compliance_status_pending();
+			case 'generating':
+				return $LL.admin_compliance_status_generating();
+			case 'completed':
+				return $LL.admin_compliance_status_completed();
+			case 'failed':
+				return $LL.admin_compliance_status_failed();
+		}
+	}
+
+	function formatEnabled(value: boolean): string {
+		return value ? $LL.admin_compliance_enabled() : $LL.admin_compliance_disabled();
+	}
+
+	function formatYesNo(value: boolean): string {
+		return value ? $LL.admin_compliance_yes() : $LL.admin_compliance_no();
+	}
+
+	function formatFrameworkDisplayName(framework: ComplianceFramework): string {
+		switch (framework) {
+			case 'SOC2':
+				return 'SOC 2';
+			case 'ISO27001':
+				return 'ISO 27001';
+			case 'PCI-DSS':
+				return 'PCI DSS';
+			default:
+				return framework;
+		}
+	}
+
 	async function loadData() {
 		loading = true;
 		error = '';
@@ -359,13 +443,24 @@
 
 		// Collect all errors and update successful results
 		const errors: string[] = [];
-		const names = ['Status', 'Access Reviews', 'Reports', 'Data Retention'];
+		const names = [
+			$LL.admin_compliance_section_status(),
+			$LL.admin_compliance_section_reviews(),
+			$LL.admin_compliance_section_reports(),
+			$LL.admin_compliance_section_retention()
+		];
 
 		if (results[0].status === 'fulfilled') {
 			complianceStatus = results[0].value;
 		} else {
 			errors.push(
-				`${names[0]}: ${results[0].reason instanceof Error ? results[0].reason.message : 'Failed to load'}`
+				$LL.admin_compliance_section_error({
+					section: names[0],
+					message:
+						results[0].reason instanceof Error
+							? results[0].reason.message
+							: $LL.admin_compliance_load_failed()
+				})
 			);
 		}
 
@@ -377,7 +472,13 @@
 				: [];
 		} else {
 			errors.push(
-				`${names[1]}: ${results[1].reason instanceof Error ? results[1].reason.message : 'Failed to load'}`
+				$LL.admin_compliance_section_error({
+					section: names[1],
+					message:
+						results[1].reason instanceof Error
+							? results[1].reason.message
+							: $LL.admin_compliance_load_failed()
+				})
 			);
 		}
 
@@ -386,7 +487,13 @@
 			reports = Array.isArray(results[2].value.data) ? results[2].value.data : [];
 		} else {
 			errors.push(
-				`${names[2]}: ${results[2].reason instanceof Error ? results[2].reason.message : 'Failed to load'}`
+				$LL.admin_compliance_section_error({
+					section: names[2],
+					message:
+						results[2].reason instanceof Error
+							? results[2].reason.message
+							: $LL.admin_compliance_load_failed()
+				})
 			);
 		}
 
@@ -394,12 +501,21 @@
 			dataRetention = results[3].value;
 		} else {
 			errors.push(
-				`${names[3]}: ${results[3].reason instanceof Error ? results[3].reason.message : 'Failed to load'}`
+				$LL.admin_compliance_section_error({
+					section: names[3],
+					message:
+						results[3].reason instanceof Error
+							? results[3].reason.message
+							: $LL.admin_compliance_load_failed()
+				})
 			);
 		}
 
 		if (errors.length > 0) {
-			error = errors.length === 1 ? errors[0] : `Multiple errors: ${errors.join('; ')}`;
+			error =
+				errors.length === 1
+					? errors[0]
+					: $LL.admin_compliance_multiple_errors({ errors: errors.join('; ') });
 		}
 
 		loading = false;
@@ -427,12 +543,14 @@
 		const trimmedName = newReviewName.trim();
 
 		if (!trimmedName) {
-			startReviewError = 'Review name is required';
+			startReviewError = $LL.admin_compliance_review_name_required();
 			return;
 		}
 
 		if (trimmedName.length > MAX_REVIEW_NAME_LENGTH) {
-			startReviewError = `Review name must be ${MAX_REVIEW_NAME_LENGTH} characters or less`;
+			startReviewError = $LL.admin_compliance_review_name_max({
+				count: MAX_REVIEW_NAME_LENGTH
+			});
 			return;
 		}
 
@@ -449,7 +567,8 @@
 			accessReviews = [sanitizeReview(review), ...accessReviews];
 			closeStartReviewDialog();
 		} catch (e) {
-			startReviewError = e instanceof Error ? e.message : 'Failed to start review';
+			startReviewError =
+				e instanceof Error ? e.message : $LL.admin_compliance_start_review_failed();
 		} finally {
 			startingReview = false;
 		}
@@ -461,12 +580,12 @@
 	 */
 	function formatScopeDisplay(scope: string): string {
 		const validScopes: Record<string, string> = {
-			all_users: 'All Users',
-			role: 'Role',
-			organization: 'Organization',
-			inactive_users: 'Inactive Users'
+			all_users: $LL.admin_compliance_scope_all_users(),
+			role: $LL.admin_compliance_scope_role_label(),
+			organization: $LL.admin_compliance_scope_organization_label(),
+			inactive_users: $LL.admin_compliance_scope_inactive_users()
 		};
-		return validScopes[scope] || 'Unknown';
+		return validScopes[scope] || $LL.admin_compliance_scope_unknown();
 	}
 
 	/**
@@ -474,14 +593,14 @@
 	 * Only allows known report types to prevent XSS
 	 * Must match API's ReportType definition
 	 */
-	function formatReportTypeDisplay(type: string): string {
+	function formatReportTypeDisplay(type: ReportType | string): string {
 		const validTypes: Record<string, string> = {
-			gdpr_dsar: 'GDPR DSAR',
-			soc2_audit: 'SOC2 AUDIT',
-			access_summary: 'ACCESS SUMMARY',
-			user_activity: 'USER ACTIVITY'
+			gdpr_dsar: $LL.admin_compliance_report_gdpr_dsar(),
+			soc2_audit: $LL.admin_compliance_report_soc2_audit(),
+			access_summary: $LL.admin_compliance_report_access_summary(),
+			user_activity: $LL.admin_compliance_report_user_activity()
 		};
-		return validTypes[type] || 'UNKNOWN';
+		return validTypes[type] || $LL.admin_compliance_report_unknown();
 	}
 
 	// Global Escape key handler for dialogs
@@ -519,7 +638,7 @@
 			checkedAt?: string;
 		}
 	> {
-		const detail = FRAMEWORK_DETAILS[frameworkKey];
+		const detail = getFrameworkDetail(frameworkKey);
 		if (!detail || !complianceStatus) return [];
 
 		const recentChecks = complianceStatus.recent_checks.filter((c) => c.framework === frameworkKey);
@@ -582,9 +701,48 @@
 			const freshData = await adminComplianceAPI.getDataRetentionStatus();
 			dataRetention = freshData;
 		} catch (err) {
-			retentionActionError = err instanceof Error ? err.message : 'Failed to execute cleanup';
+			retentionActionError =
+				err instanceof Error ? err.message : $LL.admin_compliance_cleanup_failed();
 		} finally {
 			cleanupLoading = false;
+		}
+	}
+
+	function getCategoryDisplayName(category: string): string {
+		switch (category) {
+			case 'audit_logs':
+				return $LL.admin_compliance_category_audit_logs();
+			case 'session_data':
+				return $LL.admin_compliance_category_session_data();
+			case 'tombstones':
+				return $LL.admin_compliance_category_tombstones();
+			case 'auth_codes':
+				return $LL.admin_compliance_category_auth_codes();
+			case 'refresh_tokens':
+				return $LL.admin_compliance_category_refresh_tokens();
+			case 'access_tokens':
+				return $LL.admin_compliance_category_access_tokens();
+			default:
+				return category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+		}
+	}
+
+	function getCategoryDescription(category: string): string {
+		switch (category) {
+			case 'audit_logs':
+				return $LL.admin_compliance_category_audit_logs_desc();
+			case 'session_data':
+				return $LL.admin_compliance_category_session_data_desc();
+			case 'tombstones':
+				return $LL.admin_compliance_category_tombstones_desc();
+			case 'auth_codes':
+				return $LL.admin_compliance_category_auth_codes_desc();
+			case 'refresh_tokens':
+				return $LL.admin_compliance_category_refresh_tokens_desc();
+			case 'access_tokens':
+				return $LL.admin_compliance_category_access_tokens_desc();
+			default:
+				return $LL.admin_compliance_category_unknown_desc();
 		}
 	}
 </script>
@@ -594,10 +752,9 @@
 <div class="admin-page">
 	<div class="page-header">
 		<div class="page-header-info">
-			<h1 class="page-title">Compliance</h1>
+			<h1 class="page-title">{$LL.admin_compliance_title()}</h1>
 			<p class="modal-description">
-				Monitor compliance status across multiple frameworks, manage access reviews, view compliance
-				reports, and track data retention policies.
+				{$LL.admin_compliance_description()}
 			</p>
 		</div>
 	</div>
@@ -619,13 +776,13 @@
 				class="security-tab"
 				class:active={activeTab === tab.id}
 			>
-				{tab.label}
+				{tab.getLabel()}
 			</button>
 		{/each}
 	</div>
 
 	{#if loading}
-		<div class="loading-state">Loading compliance data...</div>
+		<div class="loading-state">{$LL.admin_compliance_loading()}</div>
 	{:else if activeTab === 'overview' && complianceStatus}
 		<!-- Overview Tab -->
 		<div class="compliance-overview">
@@ -633,8 +790,8 @@
 			<div class="panel">
 				<div class="compliance-overall-header">
 					<div>
-						<h2 class="section-title">Overall Compliance Status</h2>
-						<p class="text-muted">Assessment across all compliance frameworks</p>
+						<h2 class="section-title">{$LL.admin_compliance_overall_status()}</h2>
+						<p class="text-muted">{$LL.admin_compliance_overall_status_description()}</p>
 					</div>
 					<div class={getComplianceStatusClass(complianceStatus.overall_status)}>
 						{getComplianceStatusLabel(complianceStatus.overall_status)}
@@ -645,7 +802,7 @@
 			<!-- Frameworks Grid -->
 			<div class="framework-grid">
 				{#each complianceStatus.frameworks as framework (framework.framework)}
-					{@const hasDetail = !!FRAMEWORK_DETAILS[framework.framework]}
+					{@const hasDetail = hasFrameworkDetail(framework.framework)}
 					<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 					<div
 						class="framework-card"
@@ -657,15 +814,20 @@
 						tabindex={hasDetail ? 0 : undefined}
 					>
 						<div class="framework-card-header">
-							<h3 class="framework-name">{getFrameworkDisplayName(framework.framework)}</h3>
+							<h3 class="framework-name">{formatFrameworkDisplayName(framework.framework)}</h3>
 							<span class={getComplianceStatusClass(framework.status)}>
 								{getComplianceStatusLabel(framework.status)}
 							</span>
 						</div>
 						<div class="framework-progress">
 							<div class="framework-progress-info">
-								<span>Compliance Progress</span>
-								<span>{framework.compliant_checks}/{framework.total_checks} checks</span>
+								<span>{$LL.admin_compliance_progress()}</span>
+								<span
+									>{$LL.admin_compliance_checks_count({
+										compliant: framework.compliant_checks,
+										total: framework.total_checks
+									})}</span
+								>
 							</div>
 							<div class="progress-bar">
 								<div
@@ -678,11 +840,14 @@
 						</div>
 						{#if framework.issues.length > 0}
 							<div class="framework-issues">
-								⚠️ {framework.issues.length} issue{framework.issues.length > 1 ? 's' : ''} found
+								⚠️ {$LL.admin_compliance_issue_count({
+									count: framework.issues.length
+								})}
 							</div>
 						{/if}
 						<div class="framework-last-checked">
-							Last checked: {formatDate(framework.last_checked)}
+							{$LL.admin_compliance_last_checked()}
+							{formatDate(framework.last_checked)}
 						</div>
 					</div>
 				{/each}
@@ -691,25 +856,27 @@
 			<!-- Quick Stats -->
 			<div class="quick-stats-grid">
 				<div class="quick-stat-card">
-					<div class="quick-stat-label">Data Retention</div>
+					<div class="quick-stat-label">{$LL.admin_compliance_data_retention()}</div>
 					<div class={getStatusValueClass(complianceStatus.data_retention?.enabled ?? false)}>
-						{complianceStatus.data_retention?.enabled ? 'Enabled' : 'Disabled'}
+						{formatEnabled(complianceStatus.data_retention?.enabled ?? false)}
 					</div>
 				</div>
 				<div class="quick-stat-card">
-					<div class="quick-stat-label">Audit Log</div>
+					<div class="quick-stat-label">{$LL.admin_compliance_audit_log()}</div>
 					<div class={getStatusValueClass(complianceStatus.audit_log?.enabled ?? false)}>
-						{complianceStatus.audit_log?.retention_days ?? '-'} days
+						{complianceStatus.audit_log?.retention_days
+							? $LL.admin_compliance_days({ count: complianceStatus.audit_log.retention_days })
+							: '-'}
 					</div>
 				</div>
 				<div class="quick-stat-card">
-					<div class="quick-stat-label">MFA Coverage</div>
+					<div class="quick-stat-label">{$LL.admin_compliance_mfa_coverage()}</div>
 					<div class="quick-stat-value primary">
 						{complianceStatus.mfa_enforcement?.coverage_percent ?? 0}%
 					</div>
 				</div>
 				<div class="quick-stat-card">
-					<div class="quick-stat-label">Encryption</div>
+					<div class="quick-stat-label">{$LL.admin_compliance_encryption()}</div>
 					<div
 						class="quick-stat-value {complianceStatus.encryption?.at_rest &&
 						complianceStatus.encryption?.in_transit
@@ -717,8 +884,8 @@
 							: 'partial'}"
 					>
 						{complianceStatus.encryption?.at_rest && complianceStatus.encryption?.in_transit
-							? 'Full'
-							: 'Partial'}
+							? $LL.admin_compliance_full()
+							: $LL.admin_compliance_status_partial()}
 					</div>
 				</div>
 			</div>
@@ -727,23 +894,25 @@
 		<!-- Access Reviews Tab -->
 		<div>
 			<div class="tab-header-actions">
-				<button class="btn btn-primary" onclick={openStartReviewDialog}> Start New Review </button>
+				<button class="btn btn-primary" onclick={openStartReviewDialog}>
+					{$LL.admin_compliance_start_new_review()}
+				</button>
 			</div>
 
 			{#if accessReviews.length === 0}
 				<div class="empty-state">
-					<p>No access reviews found.</p>
+					<p>{$LL.admin_compliance_no_reviews()}</p>
 				</div>
 			{:else}
 				<div class="table-container">
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>Name</th>
-								<th>Scope</th>
-								<th>Progress</th>
-								<th>Status</th>
-								<th>Started</th>
+								<th>{$LL.admin_compliance_name()}</th>
+								<th>{$LL.admin_compliance_scope()}</th>
+								<th>{$LL.admin_compliance_review_progress()}</th>
+								<th>{$LL.admin_compliance_section_status()}</th>
+								<th>{$LL.admin_compliance_started()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -770,7 +939,7 @@
 									</td>
 									<td>
 										<span class={getReviewStatusClass(review.status)}>
-											{review.status}
+											{getReviewStatusLabel(review.status)}
 										</span>
 									</td>
 									<td class="text-muted">{formatDate(review.started_at)}</td>
@@ -786,17 +955,17 @@
 		<div>
 			{#if reports.length === 0}
 				<div class="empty-state">
-					<p>No compliance reports found.</p>
+					<p>{$LL.admin_compliance_no_reports()}</p>
 				</div>
 			{:else}
 				<div class="table-container">
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>Type</th>
-								<th>Status</th>
-								<th>Requested</th>
-								<th>Actions</th>
+								<th>{$LL.admin_compliance_type()}</th>
+								<th>{$LL.admin_compliance_section_status()}</th>
+								<th>{$LL.admin_compliance_requested()}</th>
+								<th>{$LL.admin_compliance_actions()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -807,7 +976,7 @@
 									</td>
 									<td>
 										<span class={getReportStatusClass(report.status)}>
-											{report.status}
+											{getReportStatusLabel(report.status)}
 										</span>
 									</td>
 									<td class="text-muted">{formatDate(report.requested_at)}</td>
@@ -819,7 +988,7 @@
 												rel="noopener noreferrer"
 												class="link-primary"
 											>
-												Download
+												{$LL.admin_compliance_download()}
 											</a>
 										{:else}
 											<span class="text-muted">-</span>
@@ -837,28 +1006,28 @@
 		<div class="retention-overview">
 			<!-- Status Card -->
 			<div class="panel">
-				<h2 class="section-title">Data Retention Policy</h2>
+				<h2 class="section-title">{$LL.admin_compliance_retention_policy()}</h2>
 				<div class="retention-stats-grid">
 					<div class="retention-stat">
-						<div class="retention-stat-label">Status</div>
+						<div class="retention-stat-label">{$LL.admin_compliance_section_status()}</div>
 						<div class={getStatusValueClass(dataRetention.enabled)}>
-							{dataRetention.enabled ? 'Enabled' : 'Disabled'}
+							{formatEnabled(dataRetention.enabled)}
 						</div>
 					</div>
 					<div class="retention-stat">
-						<div class="retention-stat-label">GDPR Compliant</div>
+						<div class="retention-stat-label">{$LL.admin_compliance_gdpr_compliant()}</div>
 						<div class={getStatusValueClass(dataRetention.gdpr_compliant)}>
-							{dataRetention.gdpr_compliant ? 'Yes' : 'No'}
+							{formatYesNo(dataRetention.gdpr_compliant)}
 						</div>
 					</div>
 					<div class="retention-stat">
-						<div class="retention-stat-label">Last Cleanup</div>
+						<div class="retention-stat-label">{$LL.admin_compliance_last_cleanup()}</div>
 						<div class="retention-stat-value">
 							{dataRetention.last_cleanup ? formatDate(dataRetention.last_cleanup) : '-'}
 						</div>
 					</div>
 					<div class="retention-stat">
-						<div class="retention-stat-label">Next Cleanup</div>
+						<div class="retention-stat-label">{$LL.admin_compliance_next_cleanup()}</div>
 						<div class="retention-stat-value">
 							{dataRetention.next_scheduled_cleanup
 								? formatDate(dataRetention.next_scheduled_cleanup)
@@ -873,26 +1042,26 @@
 				<div class="panel retention-categories-panel">
 					<div class="retention-categories-header">
 						<div>
-							<h3 class="section-title">Retention Categories</h3>
+							<h3 class="section-title">{$LL.admin_compliance_retention_categories()}</h3>
 							<p class="text-muted">
-								Configure how long data is retained before automatic deletion
+								{$LL.admin_compliance_retention_categories_description()}
 							</p>
 						</div>
 						<button class="btn btn-warning" onclick={openCleanupDialog}>
 							<span>🗑️</span>
-							Run Cleanup
+							{$LL.admin_compliance_run_cleanup()}
 						</button>
 					</div>
 					<div class="table-container">
 						<table class="data-table">
 							<thead>
 								<tr>
-									<th>Category</th>
-									<th class="text-center">Retention</th>
-									<th class="text-right">Records</th>
-									<th>Oldest Record</th>
-									<th>Next Cleanup</th>
-									<th class="text-center">Actions</th>
+									<th>{$LL.admin_compliance_category()}</th>
+									<th class="text-center">{$LL.admin_compliance_retention()}</th>
+									<th class="text-right">{$LL.admin_compliance_records()}</th>
+									<th>{$LL.admin_compliance_oldest_record()}</th>
+									<th>{$LL.admin_compliance_next_cleanup()}</th>
+									<th class="text-center">{$LL.admin_compliance_actions()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -903,7 +1072,9 @@
 											<div class="cell-secondary">{getCategoryDescription(category.category)}</div>
 										</td>
 										<td class="text-center">
-											<span class="retention-days-badge">{category.retention_days} days</span>
+											<span class="retention-days-badge"
+												>{$LL.admin_compliance_days({ count: category.retention_days })}</span
+											>
 										</td>
 										<td class="text-right">{category.records_count.toLocaleString()}</td>
 										<td class="text-muted">
@@ -918,7 +1089,7 @@
 												onclick={() =>
 													openRetentionEditDialog(category.category, category.retention_days)}
 											>
-												Edit
+												{$LL.admin_compliance_edit()}
 											</button>
 										</td>
 									</tr>
@@ -932,11 +1103,9 @@
 				<div class="info-box">
 					<span class="info-box-icon">ℹ️</span>
 					<div>
-						<div class="info-box-title">About Data Retention</div>
+						<div class="info-box-title">{$LL.admin_compliance_about_retention()}</div>
 						<p class="info-box-text">
-							Data retention policies help maintain GDPR compliance by automatically removing old
-							data. Tombstones (deletion records) are kept longer to provide proof of deletion for
-							regulatory purposes. Contact your administrator to modify retention periods.
+							{$LL.admin_compliance_about_retention_description()}
 						</p>
 					</div>
 				</div>
@@ -949,7 +1118,7 @@
 <Modal
 	open={showStartReviewDialog}
 	onClose={closeStartReviewDialog}
-	title="Start Access Review"
+	title={$LL.admin_compliance_start_review_title()}
 	size="md"
 >
 	{#if startReviewError}
@@ -957,37 +1126,39 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="review-name" class="form-label">Review Name</label>
+		<label for="review-name" class="form-label">{$LL.admin_compliance_review_name()}</label>
 		<input
 			type="text"
 			id="review-name"
 			class="form-input"
 			bind:value={newReviewName}
-			placeholder="e.g., Q1 2026 Access Review"
+			placeholder={$LL.admin_compliance_review_name_placeholder()}
 		/>
 	</div>
 
 	<div class="form-group">
-		<label for="review-scope" class="form-label">Scope</label>
+		<label for="review-scope" class="form-label">{$LL.admin_compliance_scope()}</label>
 		<select id="review-scope" class="form-select" bind:value={newReviewScope}>
-			<option value="all_users">All Users</option>
-			<option value="role">By Role</option>
-			<option value="organization">By Organization</option>
-			<option value="inactive_users">Inactive Users</option>
+			<option value="all_users">{$LL.admin_compliance_scope_all_users()}</option>
+			<option value="role">{$LL.admin_compliance_scope_role()}</option>
+			<option value="organization">{$LL.admin_compliance_scope_organization()}</option>
+			<option value="inactive_users">{$LL.admin_compliance_scope_inactive_users()}</option>
 		</select>
 	</div>
 
 	<div class="form-group">
-		<label for="review-due-date" class="form-label">Due Date (optional)</label>
+		<label for="review-due-date" class="form-label"
+			>{$LL.admin_compliance_due_date_optional()}</label
+		>
 		<input type="date" id="review-due-date" class="form-input" bind:value={newReviewDueDate} />
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeStartReviewDialog} disabled={startingReview}>
-			Cancel
+			{$LL.admin_compliance_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={handleStartReview} disabled={startingReview}>
-			{startingReview ? 'Starting...' : 'Start Review'}
+			{startingReview ? $LL.admin_compliance_starting() : $LL.admin_compliance_start_review()}
 		</button>
 	{/snippet}
 </Modal>
@@ -1005,7 +1176,9 @@
 <Modal
 	open={showCleanupDialog}
 	onClose={closeCleanupDialog}
-	title={cleanupResult ? 'Cleanup Completed' : 'Run Data Cleanup'}
+	title={cleanupResult
+		? $LL.admin_compliance_cleanup_completed()
+		: $LL.admin_compliance_cleanup_run()}
 	size="md"
 >
 	{#if cleanupResult}
@@ -1013,9 +1186,14 @@
 		<div class="cleanup-success">
 			<div class="cleanup-success-icon">✅</div>
 			<p class="text-muted">
-				Successfully deleted <strong>{cleanupResult.deleted.toLocaleString()}</strong> records.
+				{$LL.admin_compliance_cleanup_success()}
+				<strong>{cleanupResult.deleted.toLocaleString()}</strong>
+				{$LL.admin_compliance_cleanup_records_suffix()}
 			</p>
-			<p class="cleanup-run-id">Run ID: {cleanupResult.runId}</p>
+			<p class="cleanup-run-id">
+				{$LL.admin_compliance_cleanup_run_id()}
+				{cleanupResult.runId}
+			</p>
 		</div>
 	{:else}
 		<!-- Confirmation State -->
@@ -1026,29 +1204,29 @@
 		<div class="warning-box">
 			<span class="warning-box-icon">⚠️</span>
 			<div>
-				<div class="warning-box-title">Warning: This action cannot be undone</div>
+				<div class="warning-box-title">{$LL.admin_compliance_cleanup_warning_title()}</div>
 				<p class="warning-box-text">
-					This will permanently delete all data that exceeds the configured retention periods across
-					all categories. Records older than their category's retention period will be removed.
+					{$LL.admin_compliance_cleanup_warning_text()}
 				</p>
 			</div>
 		</div>
 
 		<p class="text-muted cleanup-confirm-text">
-			Are you sure you want to run the data cleanup now? This process will delete expired records
-			based on each category's retention policy.
+			{$LL.admin_compliance_cleanup_confirm()}
 		</p>
 	{/if}
 
 	{#snippet footer()}
 		{#if cleanupResult}
-			<button class="btn btn-primary" onclick={closeCleanupDialog}>Close</button>
+			<button class="btn btn-primary" onclick={closeCleanupDialog}>
+				{$LL.admin_compliance_close()}
+			</button>
 		{:else}
 			<button class="btn btn-secondary" onclick={closeCleanupDialog} disabled={cleanupLoading}>
-				Cancel
+				{$LL.admin_compliance_cancel()}
 			</button>
 			<button class="btn btn-danger" onclick={executeCleanup} disabled={cleanupLoading}>
-				{cleanupLoading ? 'Deleting...' : 'Delete Expired Data'}
+				{cleanupLoading ? $LL.admin_compliance_deleting() : $LL.admin_compliance_delete_expired()}
 			</button>
 		{/if}
 	{/snippet}
@@ -1058,13 +1236,13 @@
 <Modal
 	open={!!selectedFramework && !!selectedFrameworkDetail}
 	onClose={closeFrameworkDetail}
-	title={selectedFramework ? getFrameworkDisplayName(selectedFramework) : ''}
+	title={selectedFramework ? formatFrameworkDisplayName(selectedFramework) : ''}
 	size="lg"
 >
 	{#snippet header()}
 		<div>
 			<h2 class="modal-title">
-				{selectedFramework ? getFrameworkDisplayName(selectedFramework) : ''}
+				{selectedFramework ? formatFrameworkDisplayName(selectedFramework) : ''}
 			</h2>
 			<p class="fw-detail-fullname">{selectedFrameworkDetail?.fullName ?? ''}</p>
 		</div>
@@ -1081,7 +1259,7 @@
 		<!-- Compliance Checks (Implemented) -->
 		{#if implementedChecks.length > 0}
 			<div class="fw-detail-section">
-				<h3 class="fw-detail-section-title">Compliance Checks</h3>
+				<h3 class="fw-detail-section-title">{$LL.admin_compliance_framework_checks()}</h3>
 				<div class="fw-check-list">
 					{#each implementedChecks as check (check.id)}
 						<div class="fw-check-item">
@@ -1114,7 +1292,7 @@
 		<!-- Planned Checks -->
 		{#if plannedChecks.length > 0}
 			<div class="fw-detail-section">
-				<h3 class="fw-detail-section-title">Planned Checks</h3>
+				<h3 class="fw-detail-section-title">{$LL.admin_compliance_planned_checks()}</h3>
 				<div class="fw-check-list">
 					{#each plannedChecks as check (check.id)}
 						<div class="fw-check-item planned">
@@ -1125,7 +1303,7 @@
 									<div class="fw-check-desc">{check.description}</div>
 								</div>
 							</div>
-							<span class="planned-badge">Planned</span>
+							<span class="planned-badge">{$LL.admin_compliance_planned()}</span>
 						</div>
 					{/each}
 				</div>
@@ -1135,7 +1313,7 @@
 		<!-- In Scope -->
 		{#if selectedFrameworkDetail && selectedFrameworkDetail.inScope.length > 0}
 			<div class="fw-detail-section">
-				<h3 class="fw-detail-section-title">In Scope</h3>
+				<h3 class="fw-detail-section-title">{$LL.admin_compliance_in_scope()}</h3>
 				<ul class="scope-list in-scope">
 					{#each selectedFrameworkDetail.inScope as item (item)}
 						<li><span class="scope-icon in">✓</span> {item}</li>
@@ -1147,7 +1325,7 @@
 		<!-- Out of Scope -->
 		{#if selectedFrameworkDetail && selectedFrameworkDetail.outOfScope.length > 0}
 			<div class="fw-detail-section">
-				<h3 class="fw-detail-section-title">Out of Scope</h3>
+				<h3 class="fw-detail-section-title">{$LL.admin_compliance_out_of_scope()}</h3>
 				<ul class="scope-list out-scope">
 					{#each selectedFrameworkDetail.outOfScope as entry (entry.item)}
 						<li>
@@ -1162,7 +1340,9 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeFrameworkDetail}>Close</button>
+		<button class="btn btn-secondary" onclick={closeFrameworkDetail}>
+			{$LL.admin_compliance_close()}
+		</button>
 	{/snippet}
 </Modal>
 

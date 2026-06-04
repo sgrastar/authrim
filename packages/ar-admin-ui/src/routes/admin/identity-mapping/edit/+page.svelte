@@ -1,20 +1,21 @@
 <script lang="ts">
 	import IdentityMappingPageShell from '$lib/components/identity-mapping/IdentityMappingPageShell.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 </script>
 
 <IdentityMappingPageShell
-	pageTitle="Mapping Policy Editor"
-	headTitle="Mapping Policy Editor"
+	pageTitle={$LL.admin_identity_mapping_editor_title()}
+	headTitle={$LL.admin_identity_mapping_editor_title()}
 	backHref="/admin/identity-mapping/mapping-policies"
-	backLabel="Back to Mapping Policies"
-	pageDescription="Edit inbound mappings and outbound release projections against registered source and destination profiles."
-	editorAllowedViewModes={['inbound', 'outbound']}
-	editorInitialViewMode="inbound"
+	backLabel={$LL.admin_identity_mapping_back_to_policies()}
+	pageDescription={$LL.admin_identity_mapping_editor_description()}
+	editorAllowedViewModes={['source', 'destination']}
+	editorInitialViewMode="source"
 	showEditorToolbarSourceProfile={false}
 	showEditorToolbarModeToggle={false}
 	showEditorMetrics={false}
 	showProfileModeControl
 	showPolicySaveControl
-	primaryActionLabel="Save draft"
-	primaryActionBusyLabel="Saving..."
+	primaryActionLabel={$LL.admin_identity_mapping_editor_save_draft()}
+	primaryActionBusyLabel={$LL.admin_identity_mapping_editor_saving()}
 />

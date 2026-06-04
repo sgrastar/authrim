@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ApprovalGrantSubjectTokenResult } from '$lib/api/admin-approvals';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {
 		token: ApprovalGrantSubjectTokenResult;
@@ -159,100 +160,108 @@
 </script>
 
 <div class="grant-details">
-	<h4 class="panel-subtitle">Service Integration</h4>
+	<h4 class="panel-subtitle">{$LL.admin_approvals_service_integration()}</h4>
 	<div class="detail-grid compact-grid">
 		<div>
-			<strong>Token Endpoint</strong>
+			<strong>{$LL.admin_approvals_token_endpoint()}</strong>
 			<div>{token.integration_hint.token_endpoint}</div>
 		</div>
 		<div>
-			<strong>Introspection Endpoint</strong>
+			<strong>{$LL.admin_approvals_introspection_endpoint()}</strong>
 			<div>{token.integration_hint.introspection_endpoint}</div>
 		</div>
 		<div>
-			<strong>Audience</strong>
+			<strong>{$LL.admin_approvals_audience()}</strong>
 			<div>{token.integration_hint.target_audience ?? '-'}</div>
 		</div>
 		<div>
-			<strong>Resource Class</strong>
+			<strong>{$LL.admin_approvals_resource_class()}</strong>
 			<div>{token.integration_hint.resource_class}</div>
 		</div>
 		<div>
-			<strong>Resource IDs</strong>
+			<strong>{$LL.admin_approvals_resource_ids()}</strong>
 			<div>{formatResourceIds(token)}</div>
 		</div>
 		<div>
-			<strong>Detail Classes</strong>
+			<strong>{$LL.admin_approvals_detail_classes()}</strong>
 			<div>{formatDetailClasses(token)}</div>
 		</div>
 		<div>
-			<strong>Online Check</strong>
-			<div>{token.integration_hint.requires_online_check ? 'Required' : 'If Needed'}</div>
+			<strong>{$LL.admin_approvals_online_check()}</strong>
+			<div>
+				{token.integration_hint.requires_online_check
+					? $LL.admin_approvals_required()
+					: $LL.admin_approvals_if_needed()}
+			</div>
 		</div>
 		<div>
-			<strong>Fail Closed</strong>
-			<div>{token.integration_hint.fail_closed ? 'Yes' : 'Policy Controlled'}</div>
+			<strong>{$LL.admin_approvals_fail_closed()}</strong>
+			<div>
+				{token.integration_hint.fail_closed
+					? $LL.admin_approvals_yes()
+					: $LL.admin_approvals_policy_controlled()}
+			</div>
 		</div>
 		<div>
-			<strong>SDK Helper</strong>
+			<strong>{$LL.admin_approvals_sdk_helper()}</strong>
 			<div>{token.integration_hint.service_sdk.exchange_helper}</div>
 		</div>
 		<div>
-			<strong>Resource Fetch</strong>
+			<strong>{$LL.admin_approvals_resource_fetch()}</strong>
 			<div>{token.integration_hint.service_sdk.resource_fetch_helper}</div>
 		</div>
 		<div>
-			<strong>Protected Middleware</strong>
+			<strong>{$LL.admin_approvals_protected_middleware()}</strong>
 			<div>{token.integration_hint.service_sdk.protected_resource_middleware}</div>
 		</div>
 		<div>
-			<strong>Projection</strong>
+			<strong>{$LL.admin_approvals_projection()}</strong>
 			<div>{token.integration_hint.service_sdk.projection_helper}</div>
 		</div>
 		{#if token.integration_hint.product_route}
 			<div>
-				<strong>Product Route</strong>
+				<strong>{$LL.admin_approvals_product_route()}</strong>
 				<div>{token.integration_hint.product_route.path_template}</div>
 			</div>
 			<div>
-				<strong>Service Package</strong>
+				<strong>{$LL.admin_approvals_service_package()}</strong>
 				<div>{token.integration_hint.product_route.service_package}</div>
 			</div>
 		{/if}
 	</div>
 
 	<details class="grant-details">
-		<summary>Token Exchange cURL</summary>
+		<summary>{$LL.admin_approvals_token_exchange_curl()}</summary>
 		<pre class="json-block">{buildTokenExchangeCurl(token)}</pre>
 	</details>
 
 	<details class="grant-details">
-		<summary>Introspection cURL</summary>
+		<summary>{$LL.admin_approvals_introspection_curl()}</summary>
 		<pre class="json-block">{buildIntrospectionCurl(token)}</pre>
 	</details>
 
 	<details class="grant-details">
-		<summary>Protected Resource cURL</summary>
+		<summary>{$LL.admin_approvals_protected_resource_curl()}</summary>
 		<pre class="json-block">{buildProtectedResourceCurl(token)}</pre>
 	</details>
 
 	<details class="grant-details">
-		<summary>Service SDK Guidance</summary>
+		<summary>{$LL.admin_approvals_service_sdk_guidance()}</summary>
 		<pre class="json-block">{JSON.stringify(token.integration_hint.service_sdk, null, 2)}</pre>
 	</details>
 
 	<details class="grant-details">
-		<summary>Service Middleware Snippet</summary>
+		<summary>{$LL.admin_approvals_service_middleware_snippet()}</summary>
 		<pre class="json-block">{buildServiceMiddlewareSnippet(token)}</pre>
 	</details>
 
 	<details class="grant-details">
-		<summary>Protected Resource Fetch Snippet</summary>
+		<summary>{$LL.admin_approvals_protected_resource_fetch_snippet()}</summary>
 		<pre class="json-block">{buildProtectedResourceFetchSnippet(token)}</pre>
 	</details>
 
 	<details class="grant-details">
-		<summary>Authorization Defaults</summary>
+		<summary>{$LL.admin_approvals_authorization_defaults()}</summary>
 		<pre class="json-block">{JSON.stringify(
 				token.integration_hint.authorization_defaults,
 				null,

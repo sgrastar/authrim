@@ -7,23 +7,21 @@
 		LIGHT_VARIANTS,
 		DARK_VARIANTS,
 		type LightVariant,
-		type DarkVariant
+		type DarkVariant,
+		type ThemeVariant
 	} from '$lib/stores/theme.svelte';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { adminAuthAPI } from '$lib/api/admin-auth';
-	import { myPasskeysAPI, getPasskeyErrorMessage, type AdminPasskey } from '$lib/api/my-passkeys';
+	import { myPasskeysAPI, PasskeyError, type AdminPasskey } from '$lib/api/my-passkeys';
 	import { Modal } from '$lib/components';
-
-	// Available languages (for future expansion)
-	const LANGUAGES = [
-		{ id: 'en', name: 'English' },
-		{ id: 'ja', name: '日本語', disabled: true },
-		{ id: 'ko', name: '한국어', disabled: true },
-		{ id: 'zh', name: '中文', disabled: true }
-	];
+	import { LL, getLocale, setLocale } from '$i18n/i18n-svelte';
+	import { LOCALE_LABELS, SUPPORTED_LOCALES, isSupportedLocale } from '$i18n/locales';
+	import type { Locales } from '$i18n/i18n-types';
 
 	// State
-	let selectedLanguage = $state('en');
+	let selectedLanguage = $state<Locales>(getLocale());
+	let languageSaving = $state(false);
+	let languageError = $state('');
 
 	// PassKey state
 	let passkeys = $state<AdminPasskey[]>([]);
@@ -45,10 +43,69 @@
 		themeStore.setDarkVariant(variant);
 	}
 
-	function handleLanguageChange(event: Event) {
+	function getThemeVariantName(variant: ThemeVariant): string {
+		switch (variant) {
+			case 'beige':
+				return $LL.admin_account_theme_warm_beige();
+			case 'blue-gray':
+				return $LL.admin_account_theme_blue_gray();
+			case 'green':
+				return $LL.admin_account_theme_fresh_green();
+			case 'brown':
+				return $LL.admin_account_theme_dark_brown();
+			case 'navy':
+				return $LL.admin_account_theme_navy_blue();
+			case 'slate':
+				return $LL.admin_account_theme_slate_gray();
+		}
+	}
+
+	function getLanguageName(language: Locales): string {
+		const label = language === 'en' ? $LL.language_english() : $LL.language_japanese();
+		const nativeName = LOCALE_LABELS[language].nativeName;
+		return nativeName === label ? label : `${label} (${nativeName})`;
+	}
+
+	async function handleLanguageChange(event: Event) {
 		const target = event.target as HTMLSelectElement;
-		selectedLanguage = target.value;
-		// TODO: Implement language switching when translations are ready
+		const nextLanguage = target.value;
+		const previousLanguage = selectedLanguage;
+
+		if (!isSupportedLocale(nextLanguage)) {
+			target.value = previousLanguage;
+			return;
+		}
+
+		if (nextLanguage === selectedLanguage) {
+			return;
+		}
+
+		selectedLanguage = nextLanguage;
+		languageSaving = true;
+		languageError = '';
+
+		try {
+			const response = await fetch('/api/set-language', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({ language: nextLanguage })
+			});
+
+			if (!response.ok) {
+				throw new Error('Failed to update language');
+			}
+
+			setLocale(nextLanguage);
+			window.location.reload();
+		} catch {
+			selectedLanguage = previousLanguage;
+			target.value = previousLanguage;
+			languageError = $LL.language_switch_error();
+		} finally {
+			languageSaving = false;
+		}
 	}
 
 	async function handleLogout() {
@@ -65,7 +122,7 @@
 			const response = await myPasskeysAPI.list();
 			passkeys = response.passkeys;
 		} catch (error) {
-			passkeysError = getPasskeyErrorMessage(error);
+			passkeysError = getLocalizedPasskeyErrorMessage(error);
 		} finally {
 			passkeysLoading = false;
 		}
@@ -83,7 +140,7 @@
 
 	async function handleAddPasskey() {
 		if (!newDeviceName.trim()) {
-			passkeysError = 'Please enter a device name.';
+			passkeysError = $LL.admin_account_device_name_required();
 			return;
 		}
 
@@ -117,7 +174,7 @@
 				closeAddModal();
 			}
 		} catch (error) {
-			passkeysError = getPasskeyErrorMessage(error);
+			passkeysError = getLocalizedPasskeyErrorMessage(error);
 		} finally {
 			addingPasskey = false;
 		}
@@ -135,7 +192,7 @@
 
 	async function saveEditPasskey(passkeyId: string) {
 		if (!editDeviceName.trim()) {
-			passkeysError = 'Device name cannot be empty.';
+			passkeysError = $LL.admin_account_device_name_empty();
 			return;
 		}
 
@@ -152,7 +209,7 @@
 				editDeviceName = '';
 			}
 		} catch (error) {
-			passkeysError = getPasskeyErrorMessage(error);
+			passkeysError = getLocalizedPasskeyErrorMessage(error);
 		}
 	}
 
@@ -174,16 +231,16 @@
 			passkeys = passkeys.filter((pk) => pk.id !== passkeyId);
 			showDeleteConfirm = null;
 		} catch (error) {
-			passkeysError = getPasskeyErrorMessage(error);
+			passkeysError = getLocalizedPasskeyErrorMessage(error);
 		} finally {
 			deletingPasskeyId = null;
 		}
 	}
 
 	function formatDate(timestamp: number | null): string {
-		if (!timestamp) return 'Never';
+		if (!timestamp) return $LL.common_never();
 		const date = new Date(timestamp);
-		return date.toLocaleDateString('en-US', {
+		return date.toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US', {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric'
@@ -191,7 +248,7 @@
 	}
 
 	function formatRelativeTime(timestamp: number | null): string {
-		if (!timestamp) return 'Never';
+		if (!timestamp) return $LL.common_never();
 
 		const now = Date.now();
 		const diff = now - timestamp;
@@ -200,30 +257,67 @@
 		const hours = Math.floor(diff / 3600000);
 		const days = Math.floor(diff / 86400000);
 
-		if (minutes < 1) return 'Just now';
-		if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
-		if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-		if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+		if (minutes < 1) return $LL.common_just_now();
+		if (minutes < 60) return $LL.common_minutes_ago({ count: minutes });
+		if (hours < 24) return $LL.common_hours_ago({ count: hours });
+		if (days < 7) return $LL.common_days_ago({ count: days });
 
 		return formatDate(timestamp);
 	}
 
+	function getLocalizedPasskeyErrorMessage(error: unknown): string {
+		if (error instanceof PasskeyError) {
+			switch (error.code) {
+				case 'invalid_challenge':
+					return $LL.admin_account_registration_expired();
+				case 'verification_failed':
+					return $LL.admin_account_verification_failed();
+				case 'credential_exists':
+					return $LL.admin_account_credential_exists();
+				case 'last_passkey':
+					return $LL.admin_account_last_passkey_error();
+				case 'invalid_request':
+					return $LL.admin_account_invalid_request();
+				default:
+					return $LL.admin_account_generic_error();
+			}
+		}
+
+		if (error instanceof Error) {
+			if (error.name === 'NotAllowedError') {
+				return $LL.admin_account_webauthn_cancelled();
+			}
+			if (error.name === 'NotSupportedError') {
+				return $LL.admin_account_webauthn_not_supported();
+			}
+			if (error.name === 'SecurityError') {
+				return $LL.admin_account_webauthn_security_error();
+			}
+			if (error.name === 'InvalidStateError') {
+				return $LL.admin_account_webauthn_already_registered();
+			}
+		}
+
+		return $LL.admin_account_unexpected_error();
+	}
+
 	onMount(() => {
 		// Theme is already initialized in +layout.svelte
+		selectedLanguage = getLocale();
 		loadPasskeys();
 	});
 </script>
 
 <svelte:head>
-	<title>Account Settings - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_account_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Account Settings</h1>
-			<p class="page-description">Customize your admin dashboard experience</p>
+			<h1 class="page-title">{$LL.admin_account_heading()}</h1>
+			<p class="page-description">{$LL.admin_account_description()}</p>
 		</div>
 	</div>
 
@@ -233,21 +327,21 @@
 		<section class="settings-section">
 			<h2 class="section-title">
 				<i class="i-ph-shield-check"></i>
-				Security
+				{$LL.admin_account_security()}
 			</h2>
 
 			<div class="settings-card">
 				<!-- PassKeys Header -->
 				<div class="setting-row passkeys-header">
 					<div class="setting-info">
-						<h3 class="setting-label">PassKeys</h3>
+						<h3 class="setting-label">{$LL.admin_account_passkeys()}</h3>
 						<p class="setting-description">
-							Manage your passkeys for secure passwordless authentication
+							{$LL.admin_account_passkeys_desc()}
 						</p>
 					</div>
 					<button class="add-btn" onclick={openAddModal} disabled={addingPasskey}>
 						<i class="i-ph-plus"></i>
-						Add New
+						{$LL.admin_account_add_new()}
 					</button>
 				</div>
 
@@ -256,21 +350,23 @@
 					{#if passkeysLoading}
 						<div class="passkeys-loading">
 							<i class="i-ph-spinner spinner"></i>
-							<span>Loading passkeys...</span>
+							<span>{$LL.admin_account_loading_passkeys()}</span>
 						</div>
 					{:else if passkeysError}
 						<div class="passkeys-error">
 							<i class="i-ph-warning-circle"></i>
 							<span>{passkeysError}</span>
-							<button class="retry-btn" onclick={loadPasskeys}>Retry</button>
+							<button class="retry-btn" onclick={loadPasskeys}>
+								{$LL.admin_account_retry()}
+							</button>
 						</div>
 					{:else if passkeys.length === 0}
 						<div class="passkeys-empty">
 							<i class="i-ph-key"></i>
-							<p>No passkeys registered yet.</p>
+							<p>{$LL.admin_account_no_passkeys()}</p>
 							<button class="add-btn-small" onclick={openAddModal}>
 								<i class="i-ph-plus"></i>
-								Add your first passkey
+								{$LL.admin_account_add_first_passkey()}
 							</button>
 						</div>
 					{:else}
@@ -287,22 +383,27 @@
 													type="text"
 													class="passkey-name-input"
 													bind:value={editDeviceName}
-													placeholder="Device name"
+													placeholder={$LL.admin_account_device_name_placeholder()}
 													maxlength="100"
 												/>
 												<div class="passkey-edit-actions">
 													<button class="save-btn" onclick={() => saveEditPasskey(passkey.id)}>
-														Save
+														{$LL.admin_account_save()}
 													</button>
-													<button class="cancel-btn" onclick={cancelEditPasskey}> Cancel </button>
+													<button class="cancel-btn" onclick={cancelEditPasskey}>
+														{$LL.common_cancel()}
+													</button>
 												</div>
 											</div>
 										{:else}
-											<h4 class="passkey-name">{passkey.device_name || 'Unnamed Passkey'}</h4>
+											<h4 class="passkey-name">
+												{passkey.device_name || $LL.admin_account_unnamed_passkey()}
+											</h4>
 											<p class="passkey-meta">
-												Created: {formatDate(passkey.created_at)} • Last used: {formatRelativeTime(
-													passkey.last_used_at
-												)}
+												{$LL.admin_account_passkey_meta({
+													created: formatDate(passkey.created_at),
+													lastUsed: formatRelativeTime(passkey.last_used_at)
+												})}
 											</p>
 										{/if}
 									</div>
@@ -310,7 +411,7 @@
 										<div class="passkey-actions">
 											{#if showDeleteConfirm === passkey.id}
 												<div class="delete-confirm">
-													<span>Delete?</span>
+													<span>{$LL.admin_account_delete_prompt()}</span>
 													<button
 														class="confirm-yes"
 														onclick={() => handleDeletePasskey(passkey.id)}
@@ -319,23 +420,25 @@
 														{#if deletingPasskeyId === passkey.id}
 															<i class="i-ph-spinner spinner"></i>
 														{:else}
-															Yes
+															{$LL.admin_account_yes()}
 														{/if}
 													</button>
-													<button class="confirm-no" onclick={cancelDeletePasskey}> No </button>
+													<button class="confirm-no" onclick={cancelDeletePasskey}>
+														{$LL.admin_account_no()}
+													</button>
 												</div>
 											{:else}
 												<button
 													class="action-btn edit-action"
 													onclick={() => startEditPasskey(passkey)}
-													title="Edit device name"
+													title={$LL.admin_account_edit_device_name()}
 												>
 													<i class="i-ph-pencil-simple"></i>
 												</button>
 												<button
 													class="action-btn delete-action"
 													onclick={() => confirmDeletePasskey(passkey.id)}
-													title="Delete passkey"
+													title={$LL.admin_account_delete_passkey()}
 													disabled={passkeys.length <= 1}
 												>
 													<i class="i-ph-trash"></i>
@@ -349,7 +452,7 @@
 						{#if passkeys.length === 1}
 							<div class="passkeys-notice">
 								<i class="i-ph-info"></i>
-								<span>You need at least one passkey to sign in.</span>
+								<span>{$LL.admin_account_one_passkey_notice()}</span>
 							</div>
 						{/if}
 					{/if}
@@ -361,15 +464,15 @@
 		<section class="settings-section">
 			<h2 class="section-title">
 				<i class="i-ph-paint-brush"></i>
-				Appearance
+				{$LL.admin_account_appearance()}
 			</h2>
 
 			<div class="settings-card">
 				<!-- Theme Mode -->
 				<div class="setting-row">
 					<div class="setting-info">
-						<h3 class="setting-label">Theme Mode</h3>
-						<p class="setting-description">Choose between light and dark mode</p>
+						<h3 class="setting-label">{$LL.admin_account_theme_mode()}</h3>
+						<p class="setting-description">{$LL.admin_account_theme_mode_desc()}</p>
 					</div>
 					<div class="theme-mode-toggle">
 						<button
@@ -378,7 +481,7 @@
 							onclick={() => themeStore.setMode('light')}
 						>
 							<i class="i-ph-sun"></i>
-							<span>Light</span>
+							<span>{$LL.admin_account_light()}</span>
 							{#if themeStore.isLight}
 								<i class="i-ph-check-circle-fill mode-check"></i>
 							{/if}
@@ -389,7 +492,7 @@
 							onclick={() => themeStore.setMode('dark')}
 						>
 							<i class="i-ph-moon"></i>
-							<span>Dark</span>
+							<span>{$LL.admin_account_dark()}</span>
 							{#if themeStore.isDark}
 								<i class="i-ph-check-circle-fill mode-check"></i>
 							{/if}
@@ -400,12 +503,12 @@
 				<!-- Theme Color Variants (shows only relevant variants based on current mode) -->
 				<div class="setting-row setting-row-vertical">
 					<div class="setting-info">
-						<h3 class="setting-label">Theme Color</h3>
+						<h3 class="setting-label">{$LL.admin_account_theme_color()}</h3>
 						<p class="setting-description">
 							{#if themeStore.isLight}
-								Select your preferred light theme color
+								{$LL.admin_account_light_theme_color_desc()}
 							{:else}
-								Select your preferred dark theme color
+								{$LL.admin_account_dark_theme_color_desc()}
 							{/if}
 						</p>
 					</div>
@@ -416,10 +519,10 @@
 									class="color-variant-btn"
 									class:active={themeStore.lightVariant === variant.id}
 									onclick={() => handleLightVariant(variant.id)}
-									title={variant.name}
+									title={getThemeVariantName(variant.id)}
 								>
 									<span class="color-swatch" style="background: {variant.color}"></span>
-									<span class="color-name">{variant.name}</span>
+									<span class="color-name">{getThemeVariantName(variant.id)}</span>
 									{#if themeStore.lightVariant === variant.id}
 										<i class="i-ph-check color-check"></i>
 									{/if}
@@ -431,10 +534,10 @@
 									class="color-variant-btn"
 									class:active={themeStore.darkVariant === variant.id}
 									onclick={() => handleDarkVariant(variant.id)}
-									title={variant.name}
+									title={getThemeVariantName(variant.id)}
 								>
 									<span class="color-swatch" style="background: {variant.color}"></span>
-									<span class="color-name">{variant.name}</span>
+									<span class="color-name">{getThemeVariantName(variant.id)}</span>
 									{#if themeStore.darkVariant === variant.id}
 										<i class="i-ph-check color-check"></i>
 									{/if}
@@ -450,25 +553,36 @@
 		<section class="settings-section">
 			<h2 class="section-title">
 				<i class="i-ph-translate"></i>
-				Language & Region
+				{$LL.admin_account_language_region()}
 			</h2>
 
 			<div class="settings-card">
 				<div class="setting-row">
 					<div class="setting-info">
-						<h3 class="setting-label">Interface Language</h3>
+						<h3 class="setting-label">{$LL.admin_account_interface_language()}</h3>
 						<p class="setting-description">
-							Select your preferred language for the admin interface
+							{$LL.admin_account_interface_language_desc()}
 						</p>
 					</div>
-					<select class="language-select" value={selectedLanguage} onchange={handleLanguageChange}>
-						{#each LANGUAGES as lang (lang.id)}
-							<option value={lang.id} disabled={lang.disabled}>
-								{lang.name}
-								{#if lang.disabled}(Coming soon){/if}
-							</option>
-						{/each}
-					</select>
+					<div class="language-control">
+						<select
+							class="language-select"
+							value={selectedLanguage}
+							onchange={handleLanguageChange}
+							disabled={languageSaving}
+							aria-label={$LL.language_select_label()}
+							aria-invalid={languageError ? 'true' : undefined}
+						>
+							{#each SUPPORTED_LOCALES as lang (lang)}
+								<option value={lang}>
+									{getLanguageName(lang)}
+								</option>
+							{/each}
+						</select>
+						{#if languageError}
+							<p class="language-error" role="alert">{languageError}</p>
+						{/if}
+					</div>
 				</div>
 			</div>
 		</section>
@@ -477,18 +591,20 @@
 		<section class="settings-section">
 			<h2 class="section-title">
 				<i class="i-ph-user-circle"></i>
-				Account
+				{$LL.admin_account_account()}
 			</h2>
 
 			<div class="settings-card">
 				<div class="setting-row">
 					<div class="setting-info">
-						<h3 class="setting-label">Logged in as</h3>
-						<p class="setting-description">{adminAuth.user?.email || 'Unknown'}</p>
+						<h3 class="setting-label">{$LL.admin_account_logged_in_as()}</h3>
+						<p class="setting-description">
+							{adminAuth.user?.email || $LL.admin_account_unknown()}
+						</p>
 					</div>
 					<button class="logout-btn" onclick={handleLogout}>
 						<i class="i-ph-sign-out"></i>
-						Logout
+						{$LL.admin_account_logout()}
 					</button>
 				</div>
 			</div>
@@ -497,18 +613,23 @@
 </div>
 
 <!-- Add PassKey Modal -->
-<Modal open={showAddModal} onClose={closeAddModal} title="Add New PassKey" size="md">
+<Modal
+	open={showAddModal}
+	onClose={closeAddModal}
+	title={$LL.admin_account_add_passkey_title()}
+	size="md"
+>
 	<p class="modal-description">
-		Enter a name for this passkey to help you identify it later (e.g., "MacBook Pro", "YubiKey").
+		{$LL.admin_account_add_passkey_desc()}
 	</p>
 	<div class="form-group">
-		<label for="device-name">Device Name</label>
+		<label for="device-name">{$LL.admin_account_device_name()}</label>
 		<input
 			id="device-name"
 			type="text"
 			class="form-input"
 			bind:value={newDeviceName}
-			placeholder="e.g., MacBook Pro Touch ID"
+			placeholder={$LL.admin_account_device_name_example_placeholder()}
 			maxlength="100"
 			disabled={addingPasskey}
 		/>
@@ -521,15 +642,15 @@
 	{/if}
 	{#snippet footer()}
 		<button class="modal-btn secondary" onclick={closeAddModal} disabled={addingPasskey}>
-			Cancel
+			{$LL.common_cancel()}
 		</button>
 		<button class="modal-btn primary" onclick={handleAddPasskey} disabled={addingPasskey}>
 			{#if addingPasskey}
 				<i class="i-ph-spinner spinner"></i>
-				Registering...
+				{$LL.admin_account_registering()}
 			{:else}
 				<i class="i-ph-fingerprint"></i>
-				Register PassKey
+				{$LL.admin_account_register_passkey()}
 			{/if}
 		</button>
 	{/snippet}
@@ -1144,6 +1265,13 @@
 	}
 
 	/* Language Select */
+	.language-control {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 8px;
+	}
+
 	.language-select {
 		padding: 10px 40px 10px 16px;
 		border: 1px solid var(--border-light);
@@ -1164,8 +1292,16 @@
 		border-color: var(--primary);
 	}
 
-	.language-select option:disabled {
-		color: var(--text-muted);
+	.language-select:disabled {
+		cursor: wait;
+		opacity: 0.7;
+	}
+
+	.language-error {
+		margin: 0;
+		color: var(--error);
+		font-size: 0.8rem;
+		text-align: right;
 	}
 
 	/* Logout Button */

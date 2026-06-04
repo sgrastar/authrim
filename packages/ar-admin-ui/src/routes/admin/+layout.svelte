@@ -14,6 +14,7 @@
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { adminLoggingControlAPI } from '$lib/api/admin-logging-control';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -40,122 +41,126 @@
 	});
 
 	// END USER section - identity management for application users
-	const navEndUser = {
+	const navEndUser = $derived({
 		identity: [
-			{ path: '/admin/users', label: 'End Users', icon: 'i-ph-users' },
-			{ path: '/admin/sessions', label: 'User Sessions', icon: 'i-ph-clock' },
-			{ path: '/admin/organizations', label: 'Organizations', icon: 'i-ph-buildings' }
+			{ path: '/admin/users', label: $LL.admin_nav_end_users(), icon: 'i-ph-users' },
+			{ path: '/admin/sessions', label: $LL.admin_nav_user_sessions(), icon: 'i-ph-clock' },
+			{ path: '/admin/organizations', label: $LL.admin_nav_organizations(), icon: 'i-ph-buildings' }
 		],
 		accessControl: {
-			parent: { href: '/admin/access-control', icon: 'i-ph-shield-star', label: 'Access Control' },
+			parent: {
+				href: '/admin/access-control',
+				icon: 'i-ph-shield-star',
+				label: $LL.admin_nav_access_control()
+			},
 			children: [
-				{ href: '/admin/roles', label: 'RBAC (Roles)' },
-				{ href: '/admin/attributes', label: 'ABAC (Attributes)' },
-				{ href: '/admin/rebac', label: 'ReBAC' },
-				{ href: '/admin/policies', label: 'Policies' }
+				{ href: '/admin/roles', label: $LL.admin_nav_rbac_roles() },
+				{ href: '/admin/attributes', label: $LL.admin_nav_abac_attributes() },
+				{ href: '/admin/rebac', label: $LL.admin_nav_rebac() },
+				{ href: '/admin/policies', label: $LL.admin_nav_policies() }
 			]
 		},
 		monitoring: [
-			{ path: '/admin/audit-logs', label: 'User Audit Logs', icon: 'i-ph-file-text' },
-			{ path: '/admin/access-trace', label: 'Access Trace', icon: 'i-ph-path' },
-			{ path: '/admin/support-ops', label: 'Support Ops', icon: 'i-ph-lifebuoy' },
-			{ path: '/admin/diagnostic-logging', label: 'Diagnostic Logging', icon: 'i-ph-bug' }
+			{ path: '/admin/audit-logs', label: $LL.admin_nav_user_audit_logs(), icon: 'i-ph-file-text' },
+			{ path: '/admin/access-trace', label: $LL.admin_nav_access_trace(), icon: 'i-ph-path' },
+			{ path: '/admin/support-ops', label: $LL.admin_nav_support_ops(), icon: 'i-ph-lifebuoy' },
+			{ path: '/admin/diagnostic-logging', label: $LL.admin_nav_diagnostic_logging(), icon: 'i-ph-bug' }
 		]
-	};
+	});
 
 	// CLIENT section - application/client management
-	const navClient = {
+	const navClient = $derived({
 		applications: [
-			{ path: '/admin/clients', label: 'Clients', icon: 'i-ph-monitor' },
-			{ path: '/admin/webhooks', label: 'Webhooks', icon: 'i-ph-webhooks-logo' },
-			{ path: '/admin/iat-tokens', label: 'IAT Tokens', icon: 'i-ph-key' }
+			{ path: '/admin/clients', label: $LL.admin_nav_clients(), icon: 'i-ph-monitor' },
+			{ path: '/admin/webhooks', label: $LL.admin_nav_webhooks(), icon: 'i-ph-webhooks-logo' },
+			{ path: '/admin/iat-tokens', label: $LL.admin_nav_iat_tokens(), icon: 'i-ph-key' }
 		]
-	};
+	});
 
 	// TENANT section - tenant-level configuration
-	const navTenant = {
+	const navTenant = $derived({
 		authentication: [
-			{ path: '/admin/external-idp', label: 'External IdP', icon: 'i-ph-globe' },
+			{ path: '/admin/external-idp', label: $LL.admin_nav_external_idp(), icon: 'i-ph-globe' },
 			{
 				path: '/admin/external-token-refresh',
-				label: 'Token Refresh',
+				label: $LL.admin_nav_token_refresh(),
 				icon: 'i-ph-arrows-clockwise'
 			},
-			{ path: '/admin/saml', label: 'SAML', icon: 'i-ph-arrows-left-right' },
-			{ path: '/admin/consents', label: 'Consents', icon: 'i-ph-handshake' },
-			{ path: '/admin/consent-statements', label: 'Consent Statements', icon: 'i-ph-list-checks' }
+			{ path: '/admin/saml', label: $LL.admin_nav_saml(), icon: 'i-ph-arrows-left-right' },
+			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
+			{ path: '/admin/consent-statements', label: $LL.admin_nav_consent_statements(), icon: 'i-ph-list-checks' }
 		],
 		identitySchema: [
-			{ path: '/admin/custom-claims', label: 'Schema Settings', icon: 'i-ph-tag' },
-			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
+			{ path: '/admin/custom-claims', label: $LL.admin_nav_schema_settings(), icon: 'i-ph-tag' },
+			{ path: '/admin/scim-tokens', label: $LL.admin_nav_scim_tokens(), icon: 'i-ph-identification-card' }
 		],
 		identityMapping: {
-			parent: { href: '/admin/identity-mapping', icon: 'i-ph-graph', label: 'Identity Mapping' },
+			parent: { href: '/admin/identity-mapping', icon: 'i-ph-graph', label: $LL.admin_nav_identity_mapping() },
 			children: [
-				{ href: '/admin/identity-mapping/profiles', label: 'Source & Destination' },
-				{ href: '/admin/identity-mapping/mapping-policies', label: 'Mapping Policies' },
-				{ href: '/admin/identity-mapping/resolution-center', label: 'Resolution Center' }
+				{ href: '/admin/identity-mapping/profiles', label: $LL.admin_nav_source_destination() },
+				{ href: '/admin/identity-mapping/mapping-policies', label: $LL.admin_nav_mapping_policies() },
+				{ href: '/admin/identity-mapping/resolution-center', label: $LL.admin_nav_resolution_center() }
 			]
 		},
 		branding: [
-			{ path: '/admin/login-methods', label: 'Login Methods', icon: 'i-ph-sign-in' },
-			{ path: '/admin/login-ui', label: 'Login UI', icon: 'i-ph-paint-brush' },
-			{ path: '/admin/tenant-discovery', label: 'Tenant Discovery', icon: 'i-ph-signpost' }
+			{ path: '/admin/login-methods', label: $LL.admin_nav_login_methods(), icon: 'i-ph-sign-in' },
+			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
+			{ path: '/admin/tenant-discovery', label: $LL.admin_nav_tenant_discovery(), icon: 'i-ph-signpost' }
 		],
 		configuration: [
-			{ path: '/admin/info', label: 'Info', icon: 'i-ph-info' },
-			{ path: '/admin/settings', label: 'Settings', icon: 'i-ph-gear' },
-			{ path: '/admin/email-settings', label: 'Email Settings', icon: 'i-ph-envelope-simple' },
-			{ path: '/admin/plugins', label: 'Plugins', icon: 'i-ph-puzzle-piece' }
+			{ path: '/admin/info', label: $LL.admin_nav_info(), icon: 'i-ph-info' },
+			{ path: '/admin/settings', label: $LL.admin_nav_settings(), icon: 'i-ph-gear' },
+			{ path: '/admin/email-settings', label: $LL.admin_nav_email_settings(), icon: 'i-ph-envelope-simple' },
+			{ path: '/admin/plugins', label: $LL.admin_nav_plugins(), icon: 'i-ph-puzzle-piece' }
 		]
-	};
+	});
 
 	// PLATFORM section - system administration
-	const navPlatform = {
+	const navPlatform = $derived({
 		tenantManagement: [
-			{ path: '/admin/tenants', label: 'Tenants', icon: 'i-ph-buildings' },
-			{ path: '/admin/tenant-vanity-domains', label: 'Vanity Domains', icon: 'i-ph-globe' }
+			{ path: '/admin/tenants', label: $LL.admin_nav_tenants(), icon: 'i-ph-buildings' },
+			{ path: '/admin/tenant-vanity-domains', label: $LL.admin_nav_vanity_domains(), icon: 'i-ph-globe' }
 		],
 		security: [
-			{ path: '/admin/security', label: 'Security', icon: 'i-ph-lock-key' },
-			{ path: '/admin/compliance', label: 'Compliance', icon: 'i-ph-certificate' }
+			{ path: '/admin/security', label: $LL.admin_nav_security(), icon: 'i-ph-lock-key' },
+			{ path: '/admin/compliance', label: $LL.admin_nav_compliance(), icon: 'i-ph-certificate' }
 		],
 		operations: [
-			{ path: '/admin/scale', label: 'Scale', icon: 'i-ph-chart-bar' },
-			{ path: '/admin/storage-destinations', label: 'Storage Destinations', icon: 'i-ph-archive' },
+			{ path: '/admin/scale', label: $LL.admin_nav_scale(), icon: 'i-ph-chart-bar' },
+			{ path: '/admin/storage-destinations', label: $LL.admin_nav_storage_destinations(), icon: 'i-ph-archive' },
 			{
 				path: '/admin/logging-policies',
-				label: 'Logging Policies',
+				label: $LL.admin_nav_logging_policies(),
 				icon: 'i-ph-list-magnifying-glass'
 			},
-			{ path: '/admin/notifications', label: 'Notification Center', icon: 'i-ph-bell' },
-			{ path: '/admin/database-connections', label: 'Database Connections', icon: 'i-ph-database' },
-			{ path: '/admin/dr-backup', label: 'DR Backup', icon: 'i-ph-cloud-arrow-up' },
-			{ path: '/admin/jobs', label: 'Jobs', icon: 'i-ph-queue' },
-			{ path: '/admin/approvals', label: 'Approvals', icon: 'i-ph-checks' }
+			{ path: '/admin/notifications', label: $LL.admin_nav_notification_center(), icon: 'i-ph-bell' },
+			{ path: '/admin/database-connections', label: $LL.admin_nav_database_connections(), icon: 'i-ph-database' },
+			{ path: '/admin/dr-backup', label: $LL.admin_nav_dr_backup(), icon: 'i-ph-cloud-arrow-up' },
+			{ path: '/admin/jobs', label: $LL.admin_nav_jobs(), icon: 'i-ph-queue' },
+			{ path: '/admin/approvals', label: $LL.admin_nav_approvals(), icon: 'i-ph-checks' }
 		],
-		adminUsers: { path: '/admin/admins', label: 'Admin Users', icon: 'i-ph-user-gear' },
+		adminUsers: { path: '/admin/admins', label: $LL.admin_nav_admin_users(), icon: 'i-ph-user-gear' },
 		adminAccessControl: {
 			parent: {
 				href: '/admin/admin-access-control',
 				icon: 'i-ph-shield-star',
-				label: 'Admin Access Control'
+				label: $LL.admin_nav_admin_access_control()
 			},
 			children: [
-				{ href: '/admin/admin-rbac', label: 'RBAC (Roles)' },
-				{ href: '/admin/admin-abac', label: 'ABAC (Attributes)' },
-				{ href: '/admin/admin-rebac', label: 'ReBAC' },
-				{ href: '/admin/admin-policies', label: 'Policies' }
+				{ href: '/admin/admin-rbac', label: $LL.admin_nav_rbac_roles() },
+				{ href: '/admin/admin-abac', label: $LL.admin_nav_abac_attributes() },
+				{ href: '/admin/admin-rebac', label: $LL.admin_nav_rebac() },
+				{ href: '/admin/admin-policies', label: $LL.admin_nav_policies() }
 			]
 		},
 		adminOthers: [
-			{ path: '/admin/machine-access', label: 'Machine Access', icon: 'i-ph-robot' },
-			{ path: '/admin/ip-allowlist', label: 'IP Allowlist', icon: 'i-ph-shield-check' },
-			{ path: '/admin/admin-logging', label: 'Admin Logging', icon: 'i-ph-activity' },
-			{ path: '/admin/admin-audit', label: 'Admin Audit Log', icon: 'i-ph-clipboard-text' },
-			{ path: '/admin/operational-logs', label: 'Operational Logs', icon: 'i-ph-scroll' }
+			{ path: '/admin/machine-access', label: $LL.admin_nav_machine_access(), icon: 'i-ph-robot' },
+			{ path: '/admin/ip-allowlist', label: $LL.admin_nav_ip_allowlist(), icon: 'i-ph-shield-check' },
+			{ path: '/admin/admin-logging', label: $LL.admin_nav_admin_logging(), icon: 'i-ph-activity' },
+			{ path: '/admin/admin-audit', label: $LL.admin_nav_admin_audit_log(), icon: 'i-ph-clipboard-text' },
+			{ path: '/admin/operational-logs', label: $LL.admin_nav_operational_logs(), icon: 'i-ph-scroll' }
 		]
-	};
+	});
 
 	// All nav items flattened for breadcrumb lookup
 	const allNavItems = $derived([
@@ -219,7 +224,7 @@
 	const currentBreadcrumb = $derived(() => {
 		const path = $page.url.pathname;
 		if (path === '/admin') {
-			return [{ label: 'Dashboard', icon: 'i-ph-squares-four', level: 'tenant' as const }];
+			return [{ label: $LL.admin_nav_dashboard(), icon: 'i-ph-squares-four', level: 'tenant' as const }];
 		}
 
 		// Find matching nav item
@@ -228,7 +233,7 @@
 			return [{ label: match.label, icon: match.icon, level: 'tenant' as const }];
 		}
 
-		return [{ label: 'Admin', icon: 'i-ph-squares-four', level: 'tenant' as const }];
+		return [{ label: $LL.admin_header_admin_fallback(), icon: 'i-ph-squares-four', level: 'tenant' as const }];
 	});
 
 	onMount(async () => {
@@ -381,14 +386,14 @@
 		<div class="loading-spinner">
 			<i class="i-ph-circle-notch animate-spin w-8 h-8"></i>
 		</div>
-		<p>Loading...</p>
+		<p>{$LL.admin_layout_loading()}</p>
 	</div>
 {:else if adminAuth.isAuthenticated && !adminContextReady}
 	<div class="loading-container">
 		<div class="loading-spinner">
 			<i class="i-ph-circle-notch animate-spin w-8 h-8"></i>
 		</div>
-		<p>Loading tenant context...</p>
+		<p>{$LL.admin_layout_loading_tenant_context()}</p>
 	</div>
 {:else if adminAuth.isAuthenticated}
 	<!-- Authenticated - layout with floating sidebar -->
@@ -398,13 +403,13 @@
 			<NavItem
 				href="/admin"
 				icon="i-ph-squares-four"
-				label="Dashboard"
+				label={$LL.admin_nav_dashboard()}
 				active={isActive('/admin', true)}
 			/>
 
 			<!-- END USER Section -->
-			<NavSection level="enduser" label="End User">
-				<NavGroupLabel label="Identity" />
+			<NavSection level="enduser" label={$LL.admin_nav_section_end_user()}>
+				<NavGroupLabel label={$LL.admin_nav_group_identity()} />
 				{#each navEndUser.identity as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -419,7 +424,7 @@
 					children={navEndUser.accessControl.children}
 				/>
 
-				<NavGroupLabel label="Monitoring" />
+				<NavGroupLabel label={$LL.admin_nav_group_monitoring()} />
 				{#each navEndUser.monitoring as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -431,8 +436,8 @@
 			</NavSection>
 
 			<!-- CLIENT Section -->
-			<NavSection level="client" label="Client">
-				<NavGroupLabel label="Applications" />
+			<NavSection level="client" label={$LL.admin_nav_section_client()}>
+				<NavGroupLabel label={$LL.admin_nav_group_applications()} />
 				{#each navClient.applications as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -444,8 +449,8 @@
 			</NavSection>
 
 			<!-- TENANT Section -->
-			<NavSection level="tenant" label="Tenant">
-				<NavGroupLabel label="Authentication" />
+			<NavSection level="tenant" label={$LL.admin_nav_section_tenant()}>
+				<NavGroupLabel label={$LL.admin_nav_group_authentication()} />
 				{#each navTenant.authentication as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -455,7 +460,7 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label="Schema Settings" />
+				<NavGroupLabel label={$LL.admin_nav_group_schema_settings()} />
 				{#each navTenant.identitySchema as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -469,7 +474,7 @@
 					children={navTenant.identityMapping.children}
 				/>
 
-				<NavGroupLabel label="Branding" />
+				<NavGroupLabel label={$LL.admin_nav_group_branding()} />
 				{#each navTenant.branding as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -479,7 +484,7 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label="Configuration" />
+				<NavGroupLabel label={$LL.admin_nav_group_configuration()} />
 				{#each navTenant.configuration as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -491,8 +496,8 @@
 			</NavSection>
 
 			<!-- PLATFORM Section -->
-			<NavSection level="platform" label="Platform">
-				<NavGroupLabel label="Tenant Management" />
+			<NavSection level="platform" label={$LL.admin_nav_section_platform()}>
+				<NavGroupLabel label={$LL.admin_nav_group_tenant_management()} />
 				{#each navPlatform.tenantManagement as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -502,7 +507,7 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label="Security & Compliance" />
+				<NavGroupLabel label={$LL.admin_nav_group_security_compliance()} />
 				{#each navPlatform.security as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -512,7 +517,7 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label="Operations" />
+				<NavGroupLabel label={$LL.admin_nav_group_operations()} />
 				{#each navPlatform.operations as item (item.path)}
 					<NavItem
 						href={item.path}
@@ -523,7 +528,7 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label="Admin Operators" />
+				<NavGroupLabel label={$LL.admin_nav_group_admin_operators()} />
 				<NavItem
 					href={navPlatform.adminUsers.path}
 					icon={navPlatform.adminUsers.icon}
@@ -567,7 +572,7 @@
 {:else}
 	<!-- Not authenticated - redirect happens in onMount -->
 	<div class="loading-container">
-		<p>Redirecting to login...</p>
+		<p>{$LL.admin_layout_redirecting_to_login()}</p>
 	</div>
 {/if}
 

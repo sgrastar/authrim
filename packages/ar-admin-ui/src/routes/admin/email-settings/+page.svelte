@@ -6,13 +6,13 @@
 		type EmailProviderEntry,
 		type TenantEmailSettings
 	} from '$lib/api/admin-email-settings';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
 	let saving = $state(false);
 	let error = $state('');
 	let successMessage = $state('');
 	let tenantId = $state('');
-	let strategyLabel = $state('Priority + Failover');
 	let providers = $state<EmailProviderEntry[]>([]);
 	let settings = $state<TenantEmailSettings>({
 		strategy: 'priority_failover',
@@ -49,7 +49,7 @@
 			settings = response.settings;
 			providers = response.providers;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load email settings';
+			error = err instanceof Error ? err.message : $LL.admin_email_settings_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -68,12 +68,12 @@
 			const response = await adminEmailSettingsAPI.update(tenantId, settings);
 			settings = response.settings;
 			providers = response.providers;
-			successMessage = 'Email provider order saved';
+			successMessage = $LL.admin_email_settings_saved();
 			setTimeout(() => {
 				successMessage = '';
 			}, 3000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save email settings';
+			error = err instanceof Error ? err.message : $LL.admin_email_settings_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -83,7 +83,7 @@
 		const selectedTenantId = settingsContext.tenantId;
 		if (!selectedTenantId) {
 			loading = false;
-			error = 'Select a tenant to manage email settings';
+			error = $LL.admin_email_settings_select_tenant();
 			return;
 		}
 
@@ -101,23 +101,23 @@
 </script>
 
 <svelte:head>
-	<title>Email Settings - Authrim Admin</title>
+	<title>{$LL.admin_email_settings_head_title()}</title>
 </svelte:head>
 
 <div class="page">
 	<div class="page-header">
 		<div>
-			<h1>Email Settings</h1>
-			<p>Choose the tenant-wide delivery order for enabled and configured email providers.</p>
+			<h1>{$LL.admin_email_settings_title()}</h1>
+			<p>{$LL.admin_email_settings_description()}</p>
 		</div>
 		<button class="save-button" onclick={saveSettings} disabled={saving || loading || !tenantId}>
-			{saving ? 'Saving...' : 'Save Order'}
+			{saving ? $LL.admin_email_settings_saving() : $LL.admin_email_settings_save_order()}
 		</button>
 	</div>
 
 	{#if loading}
 		<div class="panel">
-			<p>Loading email settings...</p>
+			<p>{$LL.admin_email_settings_loading()}</p>
 		</div>
 	{:else}
 		{#if error}
@@ -130,31 +130,28 @@
 
 		<div class="panel summary">
 			<div>
-				<h2>Delivery Mode</h2>
-				<p>{strategyLabel}</p>
+				<h2>{$LL.admin_email_settings_delivery_mode()}</h2>
+				<p>{$LL.admin_email_settings_strategy_priority_failover()}</p>
 			</div>
 			<div>
-				<h2>Tenant</h2>
-				<p>{tenantId || 'Not selected'}</p>
+				<h2>{$LL.admin_email_settings_tenant()}</h2>
+				<p>{tenantId || $LL.admin_email_settings_not_selected()}</p>
 			</div>
 		</div>
 
 		<div class="panel">
 			<div class="panel-header">
 				<div>
-					<h2>Provider Priority</h2>
-					<p>Configured providers are tried in this order until delivery succeeds.</p>
+					<h2>{$LL.admin_email_settings_provider_priority()}</h2>
+					<p>{$LL.admin_email_settings_provider_priority_description()}</p>
 				</div>
-				<a class="plugin-link" href="/admin/plugins">Open Plugins Page</a>
+				<a class="plugin-link" href="/admin/plugins">{$LL.admin_email_settings_open_plugins()}</a>
 			</div>
 
 			{#if providers.length === 0}
 				<div class="empty-state">
-					<p>No configured email providers are available for this tenant.</p>
-					<p>
-						Disabled providers and plugins missing required settings are hidden here. Enable and
-						configure Cloudflare Email Service or Resend on the Plugins page first.
-					</p>
+					<p>{$LL.admin_email_settings_empty()}</p>
+					<p>{$LL.admin_email_settings_empty_hint()}</p>
 				</div>
 			{:else}
 				<div class="provider-list">
@@ -168,26 +165,34 @@
 										<p>{provider.description}</p>
 									</div>
 									<a href={`/admin/plugins?plugin=${encodeURIComponent(provider.id)}`}>
-										Provider Settings
+										{$LL.admin_email_settings_provider_settings()}
 									</a>
 								</div>
 								<div class="provider-id">{provider.id}</div>
 								<div class="provider-meta">
-									<span class="provider-meta-badge">Configured via {provider.configSource}</span>
+									<span class="provider-meta-badge"
+										>{$LL.admin_email_settings_configured_via({
+											source: provider.configSource
+										})}</span
+									>
 									{#if provider.defaultFrom}
-										<span class="provider-meta-text">From: {provider.defaultFrom}</span>
+										<span class="provider-meta-text"
+											>{$LL.admin_email_settings_from({
+												address: provider.defaultFrom
+											})}</span
+										>
 									{/if}
 								</div>
 							</div>
 							<div class="provider-actions">
 								<button onclick={() => moveProvider(index, -1)} disabled={index === 0}>
-									Move Up
+									{$LL.admin_email_settings_move_up()}
 								</button>
 								<button
 									onclick={() => moveProvider(index, 1)}
 									disabled={index === providers.length - 1}
 								>
-									Move Down
+									{$LL.admin_email_settings_move_down()}
 								</button>
 							</div>
 						</div>

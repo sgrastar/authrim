@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { previewOutboundRelease } from '../../previews/outbound-release';
-import type { OutboundReleasePreviewInput } from '../../previews/outbound-release';
+import { previewDestinationRelease } from '../../previews/destination-release';
+import type { DestinationReleasePreviewInput } from '../../previews/destination-release';
 
 const emailField = {
   side: 'canonical' as const,
@@ -10,8 +10,8 @@ const emailField = {
 };
 
 function baseInput(
-  overrides: Partial<OutboundReleasePreviewInput> = {}
-): OutboundReleasePreviewInput {
+  overrides: Partial<DestinationReleasePreviewInput> = {}
+): DestinationReleasePreviewInput {
   return {
     destination: {
       protocol: 'oidc',
@@ -32,9 +32,9 @@ function baseInput(
   };
 }
 
-describe('previewOutboundRelease', () => {
+describe('previewDestinationRelease', () => {
   it('previews OIDC release and Advanced Syntax for Claims constraints without raw values', () => {
-    const result = previewOutboundRelease(
+    const result = previewDestinationRelease(
       baseInput({
         oidcClaimsRequest: {
           email: { essential: true, values: ['person@example.test'], purpose: 'login' },
@@ -60,7 +60,7 @@ describe('previewOutboundRelease', () => {
   });
 
   it('previews SAML attribute release consent as omit when consent is required but missing', () => {
-    const result = previewOutboundRelease(
+    const result = previewDestinationRelease(
       baseInput({
         destination: {
           protocol: 'saml',
@@ -119,7 +119,7 @@ describe('previewOutboundRelease', () => {
   });
 
   it('denies regulated legal obligation data when destination purpose is not allowed', () => {
-    const result = previewOutboundRelease(
+    const result = previewDestinationRelease(
       baseInput({
         destination: {
           protocol: 'oidc',
@@ -159,7 +159,7 @@ describe('previewOutboundRelease', () => {
   });
 
   it('covers contract and legitimate interest paths as trace-only release decisions', () => {
-    const result = previewOutboundRelease(
+    const result = previewDestinationRelease(
       baseInput({
         values: [
           {

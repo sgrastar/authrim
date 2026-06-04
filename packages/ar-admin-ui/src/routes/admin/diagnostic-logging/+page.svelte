@@ -9,6 +9,7 @@
 	} from '$lib/api/admin-storage-destinations';
 	import { adminFetch } from '$lib/api/admin-request';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	type ExportFormat = 'json' | 'jsonl' | 'text';
 	type SortMode = 'category' | 'timeline' | 'session';
@@ -19,10 +20,10 @@
 	type TabId = 'settings' | 'export' | 'storage';
 	let activeTab = $state<TabId>('settings');
 
-	const TAB_DEFINITIONS: ReadonlyArray<{ id: TabId; label: string }> = [
-		{ id: 'settings', label: 'Settings' },
-		{ id: 'export', label: 'Export' },
-		{ id: 'storage', label: 'Storage' }
+	const TAB_DEFINITIONS: ReadonlyArray<{ id: TabId; getLabel: () => string }> = [
+		{ id: 'settings', getLabel: () => $LL.admin_diagnostic_logging_tab_settings() },
+		{ id: 'export', getLabel: () => $LL.admin_diagnostic_logging_tab_export() },
+		{ id: 'storage', getLabel: () => $LL.admin_diagnostic_logging_tab_storage() }
 	];
 
 	// Export form state
@@ -103,7 +104,7 @@
 
 		// Local time zone display
 		const localStr = dateTime
-			.toLocaleString('ja-JP', {
+			.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US', {
 				year: 'numeric',
 				month: '2-digit',
 				day: '2-digit',
@@ -138,9 +139,7 @@
 	function handleTabChange(newTab: TabId) {
 		// Only check Storage tab for unsaved changes
 		if (hasUnsavedStorageChanges) {
-			const confirmChange = confirm(
-				'You have unsaved changes. Switching tabs will discard them. Continue?'
-			);
+			const confirmChange = confirm($LL.admin_diagnostic_logging_unsaved_confirm());
 			if (!confirmChange) return;
 			// Reset to initial values
 			storageModeDefault = initialStorageModeDefault;
@@ -210,7 +209,8 @@
 			initialStorageModeDefault = storageModeDefault;
 			initialStorageModeOverrides = { ...storageModeOverrides };
 		} catch (err) {
-			settingsError = err instanceof Error ? err.message : 'Failed to load diagnostic settings';
+			settingsError =
+				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_load_settings_failed();
 		} finally {
 			settingsLoading = false;
 		}
@@ -223,7 +223,9 @@
 			storageDestinations = response.items;
 		} catch (err) {
 			storageDestinationError =
-				err instanceof Error ? err.message : 'Failed to load storage destinations';
+				err instanceof Error
+					? err.message
+					: $LL.admin_diagnostic_logging_load_storage_destinations_failed();
 			storageDestinations = [];
 		}
 	}
@@ -265,10 +267,12 @@
 				}
 			};
 			selectedStorageDestinationId = destinationId;
-			success = 'Storage destination updated.';
+			success = $LL.admin_diagnostic_logging_storage_destination_updated();
 		} catch (err) {
 			storageDestinationError =
-				err instanceof Error ? err.message : 'Failed to update storage destination';
+				err instanceof Error
+					? err.message
+					: $LL.admin_diagnostic_logging_update_storage_destination_failed();
 		} finally {
 			settingsSaving = false;
 		}
@@ -288,7 +292,7 @@
 
 				if (!response.ok) {
 					const errorData = await response.json().catch(() => ({}));
-					throw new Error(errorData.message || 'Failed to load clients');
+					throw new Error(errorData.message || $LL.admin_diagnostic_logging_load_clients_failed());
 				}
 
 				const data = await response.json();
@@ -310,7 +314,8 @@
 
 			clientOptions = allClients;
 		} catch (err) {
-			clientsError = err instanceof Error ? err.message : 'Failed to load clients';
+			clientsError =
+				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_load_clients_failed();
 			clientOptions = [];
 		} finally {
 			clientsLoading = false;
@@ -356,7 +361,8 @@
 			};
 			loggingEnabled = enabled;
 		} catch (err) {
-			settingsError = err instanceof Error ? err.message : 'Failed to update diagnostic settings';
+			settingsError =
+				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_update_settings_failed();
 		} finally {
 			settingsSaving = false;
 		}
@@ -390,7 +396,8 @@
 			};
 			r2OutputEnabled = enabled;
 		} catch (err) {
-			settingsError = err instanceof Error ? err.message : 'Failed to update diagnostic settings';
+			settingsError =
+				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_update_settings_failed();
 		} finally {
 			settingsSaving = false;
 		}
@@ -424,7 +431,8 @@
 			};
 			sdkIngestEnabled = enabled;
 		} catch (err) {
-			settingsError = err instanceof Error ? err.message : 'Failed to update diagnostic settings';
+			settingsError =
+				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_update_settings_failed();
 		} finally {
 			settingsSaving = false;
 		}
@@ -458,7 +466,8 @@
 			};
 			mergedOutputEnabled = enabled;
 		} catch (err) {
-			settingsError = err instanceof Error ? err.message : 'Failed to update diagnostic settings';
+			settingsError =
+				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_update_settings_failed();
 		} finally {
 			settingsSaving = false;
 		}
@@ -466,7 +475,7 @@
 
 	function validateDateRange() {
 		if (startDate && endDate && startDate > endDate) {
-			error = 'Start date must be before end date.';
+			error = $LL.admin_diagnostic_logging_start_before_end();
 			return false;
 		}
 		return true;
@@ -565,9 +574,12 @@
 			initialStorageModeDefault = storageModeDefault;
 			initialStorageModeOverrides = { ...storageModeOverrides };
 
-			success = 'Storage mode settings updated.';
+			success = $LL.admin_diagnostic_logging_storage_modes_updated();
 		} catch (err) {
-			settingsError = err instanceof Error ? err.message : 'Failed to update storage mode settings';
+			settingsError =
+				err instanceof Error
+					? err.message
+					: $LL.admin_diagnostic_logging_update_storage_modes_failed();
 		} finally {
 			settingsSaving = false;
 		}
@@ -579,7 +591,7 @@
 		success = '';
 
 		if (!tenantId) {
-			error = 'Tenant ID is required.';
+			error = $LL.admin_diagnostic_logging_tenant_required();
 			return;
 		}
 
@@ -626,7 +638,10 @@
 
 			if (!response.ok) {
 				const errorData = await response.json().catch(() => ({}));
-				throw new Error(errorData.message || `Export failed: ${response.statusText}`);
+				throw new Error(
+					errorData.message ||
+						$LL.admin_diagnostic_logging_export_failed_status({ status: response.statusText })
+				);
 			}
 
 			const contentDisposition = response.headers.get('Content-Disposition');
@@ -647,9 +662,9 @@
 			document.body.removeChild(a);
 			URL.revokeObjectURL(url);
 
-			success = `Successfully exported logs as ${filename}`;
+			success = $LL.admin_diagnostic_logging_export_success({ filename });
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to export logs';
+			error = err instanceof Error ? err.message : $LL.admin_diagnostic_logging_export_failed();
 		} finally {
 			loading = false;
 		}
@@ -695,13 +710,14 @@
 			const data = await response.json().catch(() => ({}));
 
 			if (!response.ok) {
-				throw new Error(data.message || 'Connection test failed');
+				throw new Error(data.message || $LL.admin_diagnostic_logging_connection_test_failed());
 			}
 
-			testSuccess = data.message || 'R2 connection successful';
+			testSuccess = data.message || $LL.admin_diagnostic_logging_connection_success();
 			testLatency = typeof data.latencyMs === 'number' ? data.latencyMs : null;
 		} catch (err) {
-			testError = err instanceof Error ? err.message : 'Connection test failed';
+			testError =
+				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_connection_test_failed();
 		} finally {
 			testLoading = false;
 		}
@@ -709,14 +725,14 @@
 </script>
 
 <svelte:head>
-	<title>Diagnostic Logging - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_diagnostic_logging_page_title()}</title>
 </svelte:head>
 
 <div class="diagnostic-logging-page">
 	<div class="page-header">
-		<h1 class="page-title">Diagnostic Logging</h1>
+		<h1 class="page-title">{$LL.admin_diagnostic_logging_title()}</h1>
 		<p class="page-description">
-			Export diagnostic logs for OIDF conformance testing, debugging, and compliance audits.
+			{$LL.admin_diagnostic_logging_description()}
 		</p>
 	</div>
 
@@ -746,7 +762,7 @@
 				class:active={activeTab === tab.id}
 				onclick={() => handleTabChange(tab.id)}
 			>
-				{tab.label}
+				{tab.getLabel()}
 			</button>
 		{/each}
 	</div>
@@ -757,97 +773,97 @@
 			<!-- Settings Tab -->
 			<div class="settings-form-card">
 				<div class="card-section">
-					<h2 class="card-title">Logging Status</h2>
-					<p class="card-subtitle">Enable or disable diagnostic logging for this tenant.</p>
+					<h2 class="card-title">{$LL.admin_diagnostic_logging_logging_status()}</h2>
+					<p class="card-subtitle">{$LL.admin_diagnostic_logging_logging_status_desc()}</p>
 
 					<div class="toggle-item">
-						<h3 class="toggle-item-title">Diagnostic Logging</h3>
+						<h3 class="toggle-item-title">{$LL.admin_diagnostic_logging_diagnostic_logging()}</h3>
 						<p class="toggle-item-description">
-							Enable or disable diagnostic logging for this tenant.
+							{$LL.admin_diagnostic_logging_logging_status_desc()}
 						</p>
 						<div class="toggle-row">
 							<ToggleSwitch
 								checked={loggingEnabled}
 								disabled={!canEdit || settingsLoading || settingsSaving}
-								label="Diagnostic logging"
-								description={loggingEnabled ? 'Logging is enabled.' : 'Logging is disabled.'}
+								label={$LL.admin_diagnostic_logging_toggle_label()}
+								description={loggingEnabled
+									? $LL.admin_diagnostic_logging_enabled()
+									: $LL.admin_diagnostic_logging_disabled()}
 								onchange={handleToggleLogging}
 							/>
 							{#if settingsLoading}
-								<span class="inline-muted">Loading...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_loading()}</span>
 							{:else if settingsSaving}
-								<span class="inline-muted">Saving...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_saving()}</span>
 							{/if}
 						</div>
 					</div>
 
 					<div class="toggle-item">
-						<h3 class="toggle-item-title">R2 Output</h3>
+						<h3 class="toggle-item-title">{$LL.admin_diagnostic_logging_r2_output()}</h3>
 						<p class="toggle-item-description">
-							When enabled, logs are persisted to R2 for export. When disabled, logs are only
-							emitted to console and exports return empty results.
+							{$LL.admin_diagnostic_logging_r2_output_desc()}
 						</p>
 						<div class="toggle-row">
 							<ToggleSwitch
 								checked={r2OutputEnabled}
 								disabled={!canEdit || settingsLoading || settingsSaving}
-								label="Persist logs to R2"
-								description={r2OutputEnabled ? 'R2 output is enabled.' : 'R2 output is disabled.'}
+								label={$LL.admin_diagnostic_logging_r2_toggle_label()}
+								description={r2OutputEnabled
+									? $LL.admin_diagnostic_logging_r2_enabled()
+									: $LL.admin_diagnostic_logging_r2_disabled()}
 								onchange={handleToggleR2Output}
 							/>
 							{#if settingsLoading}
-								<span class="inline-muted">Loading...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_loading()}</span>
 							{:else if settingsSaving}
-								<span class="inline-muted">Saving...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_saving()}</span>
 							{/if}
 						</div>
 					</div>
 
 					<div class="toggle-item">
-						<h3 class="toggle-item-title">SDK Log Ingestion</h3>
+						<h3 class="toggle-item-title">{$LL.admin_diagnostic_logging_sdk_ingestion()}</h3>
 						<p class="toggle-item-description">
-							Accept diagnostic logs from client SDKs (Web, Node.js, etc.) via the public ingest
-							API. Requires client_id authentication.
+							{$LL.admin_diagnostic_logging_sdk_ingestion_desc()}
 						</p>
 						<div class="toggle-row">
 							<ToggleSwitch
 								checked={sdkIngestEnabled}
 								disabled={!canEdit || settingsLoading || settingsSaving}
-								label="Accept SDK logs"
+								label={$LL.admin_diagnostic_logging_sdk_toggle_label()}
 								description={sdkIngestEnabled
-									? 'SDK ingestion is enabled.'
-									: 'SDK ingestion is disabled.'}
+									? $LL.admin_diagnostic_logging_sdk_enabled()
+									: $LL.admin_diagnostic_logging_sdk_disabled()}
 								onchange={handleToggleSdkIngest}
 							/>
 							{#if settingsLoading}
-								<span class="inline-muted">Loading...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_loading()}</span>
 							{:else if settingsSaving}
-								<span class="inline-muted">Saving...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_saving()}</span>
 							{/if}
 						</div>
 					</div>
 
 					<div class="toggle-item">
-						<h3 class="toggle-item-title">Merged Log Output</h3>
+						<h3 class="toggle-item-title">{$LL.admin_diagnostic_logging_merged_output()}</h3>
 						<p class="toggle-item-description">
-							Export server and SDK logs in a single merged timeline using diagnosticSessionId
-							correlation. Useful for OIDF conformance testing and end-to-end debugging. (Requires
-							SDK Log Ingestion enabled)
+							{$LL.admin_diagnostic_logging_merged_output_desc()}
 						</p>
 						<div class="toggle-row">
 							<ToggleSwitch
 								checked={mergedOutputEnabled}
 								disabled={!canEdit || settingsLoading || settingsSaving || !sdkIngestEnabled}
-								label="Enable merged export"
+								label={$LL.admin_diagnostic_logging_merged_toggle_label()}
 								description={mergedOutputEnabled
-									? 'Merged output is enabled.'
-									: 'Merged output is disabled.'}
+									? $LL.admin_diagnostic_logging_merged_enabled()
+									: $LL.admin_diagnostic_logging_merged_disabled()}
 								onchange={handleToggleMergedOutput}
 							/>
 							{#if settingsLoading}
-								<span class="inline-muted">Loading...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_loading()}</span>
 							{:else if settingsSaving}
-								<span class="inline-muted">Saving...</span>
+								<span class="inline-muted">{$LL.admin_diagnostic_logging_saving()}</span>
 							{/if}
 						</div>
 					</div>
@@ -857,14 +873,14 @@
 			<!-- Export Tab -->
 			<form class="settings-form-card" onsubmit={handleExport}>
 				<div class="card-section">
-					<h2 class="card-title">Export Filters</h2>
-					<p class="card-subtitle">Narrow the data set before downloading logs.</p>
+					<h2 class="card-title">{$LL.admin_diagnostic_logging_export_filters()}</h2>
+					<p class="card-subtitle">{$LL.admin_diagnostic_logging_export_filters_desc()}</p>
 				</div>
 
 				<div class="card-section">
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="tenantId">Tenant ID</label>
+							<label for="tenantId">{$LL.admin_diagnostic_logging_tenant_id()}</label>
 							<input
 								id="tenantId"
 								class="settings-input"
@@ -877,11 +893,11 @@
 				</div>
 
 				<div class="card-section">
-					<h3 class="card-title-sm">Date Range</h3>
-					<p class="form-hint">Defaults to the last 7 days when left blank.</p>
+					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_date_range()}</h3>
+					<p class="form-hint">{$LL.admin_diagnostic_logging_date_range_hint()}</p>
 					<div class="date-time-grid">
 						<div class="date-time-group">
-							<label for="startDate">Start Date & Time</label>
+							<label for="startDate">{$LL.admin_diagnostic_logging_start_datetime()}</label>
 							<div class="date-time-row">
 								<input id="startDate" class="settings-input" type="date" bind:value={startDate} />
 								<input
@@ -900,7 +916,7 @@
 							{/if}
 						</div>
 						<div class="date-time-group">
-							<label for="endDate">End Date & Time</label>
+							<label for="endDate">{$LL.admin_diagnostic_logging_end_datetime()}</label>
 							<div class="date-time-row">
 								<input id="endDate" class="settings-input" type="date" bind:value={endDate} />
 								<input
@@ -922,16 +938,16 @@
 				</div>
 
 				<div class="card-section">
-					<h3 class="card-title-sm">Clients</h3>
+					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_clients()}</h3>
 					<p class="form-hint">
-						Select one or more clients to filter results. Leave blank to export all clients.
+						{$LL.admin_diagnostic_logging_clients_hint()}
 					</p>
 					{#if clientsLoading}
-						<p class="empty-state">Loading clients...</p>
+						<p class="empty-state">{$LL.admin_diagnostic_logging_loading_clients()}</p>
 					{:else if clientsError}
 						<p class="empty-state">{clientsError}</p>
 					{:else if clientOptions.length === 0}
-						<p class="empty-state">No clients found for this tenant.</p>
+						<p class="empty-state">{$LL.admin_diagnostic_logging_no_clients()}</p>
 					{:else}
 						<div class="checkbox-grid">
 							{#each clientOptions as client (client.id)}
@@ -951,8 +967,8 @@
 				</div>
 
 				<div class="card-section">
-					<h3 class="card-title-sm">Session IDs</h3>
-					<p class="form-hint">Comma-separated diagnosticSessionId values.</p>
+					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_session_ids()}</h3>
+					<p class="form-hint">{$LL.admin_diagnostic_logging_session_ids_hint()}</p>
 					<textarea
 						class="settings-textarea"
 						rows="3"
@@ -962,7 +978,7 @@
 				</div>
 
 				<div class="card-section">
-					<h3 class="card-title-sm">Categories</h3>
+					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_categories()}</h3>
 					<div class="categories-container">
 						<label class="category-checkbox-card" class:checked={categories['http-request']}>
 							<input
@@ -971,8 +987,11 @@
 								bind:checked={categories['http-request']}
 							/>
 							<div class="category-content">
-								<span class="category-checkbox-text">HTTP Request</span>
-								<span class="category-description">Full request including Authorization header</span
+								<span class="category-checkbox-text"
+									>{$LL.admin_diagnostic_logging_category_http_request()}</span
+								>
+								<span class="category-description"
+									>{$LL.admin_diagnostic_logging_category_http_request_desc()}</span
 								>
 							</div>
 						</label>
@@ -983,8 +1002,12 @@
 								bind:checked={categories['http-response']}
 							/>
 							<div class="category-content">
-								<span class="category-checkbox-text">HTTP Response</span>
-								<span class="category-description">Status code, headers, response body</span>
+								<span class="category-checkbox-text"
+									>{$LL.admin_diagnostic_logging_category_http_response()}</span
+								>
+								<span class="category-description"
+									>{$LL.admin_diagnostic_logging_category_http_response_desc()}</span
+								>
 							</div>
 						</label>
 						<label class="category-checkbox-card" class:checked={categories['token-validation']}>
@@ -994,9 +1017,11 @@
 								bind:checked={categories['token-validation']}
 							/>
 							<div class="category-content">
-								<span class="category-checkbox-text">Token Validation</span>
+								<span class="category-checkbox-text"
+									>{$LL.admin_diagnostic_logging_category_token_validation()}</span
+								>
 								<span class="category-description"
-									>JWT validation, signature verification, claims validation</span
+									>{$LL.admin_diagnostic_logging_category_token_validation_desc()}</span
 								>
 							</div>
 						</label>
@@ -1007,9 +1032,11 @@
 								bind:checked={categories['auth-decision']}
 							/>
 							<div class="category-content">
-								<span class="category-checkbox-text">Auth Decision</span>
+								<span class="category-checkbox-text"
+									>{$LL.admin_diagnostic_logging_category_auth_decision()}</span
+								>
 								<span class="category-description"
-									>Authorization logic, policy evaluation results</span
+									>{$LL.admin_diagnostic_logging_category_auth_decision_desc()}</span
 								>
 							</div>
 						</label>
@@ -1017,36 +1044,39 @@
 				</div>
 
 				<div class="card-section">
-					<h3 class="card-title-sm">Format</h3>
+					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_format()}</h3>
 					<div class="form-grid format-grid">
 						<div class="form-group">
-							<label for="format">Export format</label>
+							<label for="format">{$LL.admin_diagnostic_logging_export_format()}</label>
 							<select id="format" class="settings-select" bind:value={format}>
-								<option value="json">JSON (pretty)</option>
-								<option value="jsonl">JSONL (streaming)</option>
-								<option value="text">Text (grouped)</option>
+								<option value="json">{$LL.admin_diagnostic_logging_json_pretty()}</option>
+								<option value="jsonl">{$LL.admin_diagnostic_logging_jsonl_streaming()}</option>
+								<option value="text">{$LL.admin_diagnostic_logging_text_grouped()}</option>
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="sortMode">Sort mode</label>
+							<label for="sortMode">{$LL.admin_diagnostic_logging_sort_mode()}</label>
 							<select id="sortMode" class="settings-select" bind:value={sortMode}>
-								<option value="timeline">Timeline (mixed)</option>
-								<option value="category">Category (grouped)</option>
-								<option value="session">Session (grouped)</option>
+								<option value="timeline">{$LL.admin_diagnostic_logging_sort_timeline()}</option>
+								<option value="category">{$LL.admin_diagnostic_logging_sort_category()}</option>
+								<option value="session">{$LL.admin_diagnostic_logging_sort_session()}</option>
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="exportMode">Export privacy</label>
+							<label for="exportMode">{$LL.admin_diagnostic_logging_export_privacy()}</label>
 							<select id="exportMode" class="settings-select" bind:value={exportMode}>
-								<option value="full">Full (if stored)</option>
-								<option value="masked">Masked</option>
-								<option value="minimal">Minimal</option>
+								<option value="full">{$LL.admin_diagnostic_logging_privacy_full_if_stored()}</option
+								>
+								<option value="masked">{$LL.admin_diagnostic_logging_privacy_masked()}</option>
+								<option value="minimal">{$LL.admin_diagnostic_logging_privacy_minimal()}</option>
 							</select>
 						</div>
 						<div class="form-group checkbox-group">
 							<label class="settings-checkbox-label">
 								<input class="settings-checkbox" type="checkbox" bind:checked={includeStats} />
-								<span class="settings-checkbox-text">Include statistics summary</span>
+								<span class="settings-checkbox-text"
+									>{$LL.admin_diagnostic_logging_include_stats()}</span
+								>
 							</label>
 						</div>
 					</div>
@@ -1054,13 +1084,13 @@
 
 				<div class="settings-actions">
 					<button class="btn btn-secondary" type="button" onclick={handleReset} disabled={loading}>
-						Reset
+						{$LL.admin_diagnostic_logging_reset()}
 					</button>
 					<button class="btn btn-primary" type="submit" disabled={loading}>
 						{#if loading}
-							Exporting...
+							{$LL.admin_diagnostic_logging_exporting()}
 						{:else}
-							Export Logs
+							{$LL.admin_diagnostic_logging_export_logs()}
 						{/if}
 					</button>
 				</div>
@@ -1068,11 +1098,11 @@
 
 			<div class="settings-form-card">
 				<div class="card-section">
-					<h2 class="card-title">Usage Notes</h2>
+					<h2 class="card-title">{$LL.admin_diagnostic_logging_usage_notes()}</h2>
 					<ul class="info-list">
-						<li>Use diagnosticSessionId values for OIDF conformance submissions.</li>
-						<li>JSONL is best for streaming pipelines and log aggregators.</li>
-						<li>Include statistics for audit trails and compliance exports.</li>
+						<li>{$LL.admin_diagnostic_logging_usage_note_session()}</li>
+						<li>{$LL.admin_diagnostic_logging_usage_note_jsonl()}</li>
+						<li>{$LL.admin_diagnostic_logging_usage_note_stats()}</li>
 					</ul>
 				</div>
 			</div>
@@ -1080,41 +1110,48 @@
 			<!-- Storage Tab -->
 			<div class="settings-form-card">
 				<div class="card-section">
-					<h3 class="card-title-sm">Storage Mode</h3>
+					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_storage_mode()}</h3>
 					<p class="card-subtitle">
-						Choose how much sensitive data is stored for each client. Stored logs cannot be exported
-						at a higher fidelity than they were recorded.
+						{$LL.admin_diagnostic_logging_storage_mode_desc()}
 					</p>
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="storageModeDefault">Default storage mode</label>
+							<label for="storageModeDefault"
+								>{$LL.admin_diagnostic_logging_default_storage_mode()}</label
+							>
 							<select
 								id="storageModeDefault"
 								class="settings-select"
 								bind:value={storageModeDefault}
 								disabled={!canEdit || settingsLoading || settingsSaving}
 							>
-								<option value="full">Full (PII + tokens)</option>
-								<option value="masked">Masked / hashed</option>
-								<option value="minimal">Minimal (non-PII only)</option>
+								<option value="full">{$LL.admin_diagnostic_logging_storage_full_detail()}</option>
+								<option value="masked"
+									>{$LL.admin_diagnostic_logging_storage_masked_detail()}</option
+								>
+								<option value="minimal"
+									>{$LL.admin_diagnostic_logging_storage_minimal_detail()}</option
+								>
 							</select>
 						</div>
 					</div>
 
-					<h4 class="card-title-sm" style="margin-top: 16px;">Client overrides</h4>
+					<h4 class="card-title-sm" style="margin-top: 16px;">
+						{$LL.admin_diagnostic_logging_client_overrides()}
+					</h4>
 					{#if clientsLoading}
-						<p class="empty-state">Loading clients...</p>
+						<p class="empty-state">{$LL.admin_diagnostic_logging_loading_clients()}</p>
 					{:else if clientsError}
 						<p class="empty-state">{clientsError}</p>
 					{:else if clientOptions.length === 0}
-						<p class="empty-state">No clients found for this tenant.</p>
+						<p class="empty-state">{$LL.admin_diagnostic_logging_no_clients()}</p>
 					{:else}
 						<div class="client-overrides-section">
 							<div class="search-row">
 								<input
 									type="text"
 									class="settings-input"
-									placeholder="Search clients..."
+									placeholder={$LL.admin_diagnostic_logging_search_clients()}
 									bind:value={clientSearchQuery}
 								/>
 							</div>
@@ -1123,8 +1160,8 @@
 								<table class="overrides-table">
 									<thead>
 										<tr>
-											<th>Client</th>
-											<th>Storage Mode</th>
+											<th>{$LL.admin_diagnostic_logging_client()}</th>
+											<th>{$LL.admin_diagnostic_logging_storage_mode_column()}</th>
 										</tr>
 									</thead>
 									<tbody>
@@ -1144,10 +1181,18 @@
 															setClientStorageMode(client.id, event.currentTarget.value)}
 														disabled={!canEdit || settingsLoading || settingsSaving}
 													>
-														<option value="inherit">Inherit default</option>
-														<option value="full">Full</option>
-														<option value="masked">Masked</option>
-														<option value="minimal">Minimal</option>
+														<option value="inherit"
+															>{$LL.admin_diagnostic_logging_inherit_default()}</option
+														>
+														<option value="full"
+															>{$LL.admin_diagnostic_logging_storage_full()}</option
+														>
+														<option value="masked"
+															>{$LL.admin_diagnostic_logging_storage_masked()}</option
+														>
+														<option value="minimal"
+															>{$LL.admin_diagnostic_logging_storage_minimal()}</option
+														>
 													</select>
 												</td>
 											</tr>
@@ -1165,7 +1210,7 @@
 							onclick={() => (storageModeOverrides = {})}
 							disabled={!canEdit || settingsSaving}
 						>
-							Clear Overrides
+							{$LL.admin_diagnostic_logging_clear_overrides()}
 						</button>
 						<button
 							class="btn btn-primary"
@@ -1174,9 +1219,9 @@
 							disabled={!canEdit || settingsSaving}
 						>
 							{#if settingsSaving}
-								Saving...
+								{$LL.admin_diagnostic_logging_saving()}
 							{:else}
-								Save Storage Modes
+								{$LL.admin_diagnostic_logging_save_storage_modes()}
 							{/if}
 						</button>
 					</div>
@@ -1185,14 +1230,16 @@
 
 			<div class="settings-form-card">
 				<div class="card-section">
-					<h2 class="card-title">Storage Connection</h2>
-					<p class="card-subtitle">Verify R2 connectivity before exporting large volumes.</p>
+					<h2 class="card-title">{$LL.admin_diagnostic_logging_storage_connection()}</h2>
+					<p class="card-subtitle">{$LL.admin_diagnostic_logging_storage_connection_desc()}</p>
 				</div>
 
 				<div class="card-section">
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="storageDestination">Storage destination</label>
+							<label for="storageDestination"
+								>{$LL.admin_diagnostic_logging_storage_destination()}</label
+							>
 							<select
 								id="storageDestination"
 								class="settings-select"
@@ -1200,7 +1247,7 @@
 								onchange={(event) => handleStorageDestinationChange(event.currentTarget.value)}
 								disabled={!canEdit || settingsSaving}
 							>
-								<option value="">Use runtime binding fields below</option>
+								<option value="">{$LL.admin_diagnostic_logging_use_runtime_binding()}</option>
 								{#each storageDestinations as destination (destination.id)}
 									<option value={destination.id}>
 										{destination.display_name} ({destination.provider})
@@ -1212,7 +1259,7 @@
 							{/if}
 						</div>
 						<div class="form-group">
-							<label for="testTenantId">Tenant ID</label>
+							<label for="testTenantId">{$LL.admin_diagnostic_logging_tenant_id()}</label>
 							<input
 								id="testTenantId"
 								class="settings-input"
@@ -1221,7 +1268,7 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label for="r2BucketBinding">R2 binding</label>
+							<label for="r2BucketBinding">{$LL.admin_diagnostic_logging_r2_binding()}</label>
 							<input
 								id="r2BucketBinding"
 								class="settings-input"
@@ -1230,7 +1277,7 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label for="pathPrefix">Path prefix</label>
+							<label for="pathPrefix">{$LL.admin_diagnostic_logging_path_prefix()}</label>
 							<input id="pathPrefix" class="settings-input" type="text" bind:value={pathPrefix} />
 						</div>
 					</div>
@@ -1263,9 +1310,9 @@
 						disabled={testLoading}
 					>
 						{#if testLoading}
-							Testing...
+							{$LL.admin_diagnostic_logging_testing()}
 						{:else}
-							Test Connection
+							{$LL.admin_diagnostic_logging_test_connection()}
 						{/if}
 					</button>
 				</div>

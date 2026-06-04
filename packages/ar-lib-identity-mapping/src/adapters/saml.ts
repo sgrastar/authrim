@@ -22,7 +22,7 @@ export function adaptSamlAttributesPreview(
 
   const sourceValues: SourceValueEnvelope[] = input.attributes.map((attribute) => ({
     value: attribute.values.length === 1 ? attribute.values[0] : attribute.values,
-    sourceRef: { side: 'inbound', namespace: 'saml.attribute', path: attribute.name },
+    sourceRef: { side: 'source', namespace: 'saml.attribute', path: attribute.name },
     metadata: {
       sourceType: 'saml',
       samlAttributeName: attribute.name,

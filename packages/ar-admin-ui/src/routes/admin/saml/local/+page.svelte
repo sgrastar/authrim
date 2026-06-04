@@ -15,6 +15,7 @@
 	} from '$lib/api/admin-saml';
 	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	type MetadataRole = 'idp' | 'sp';
 	type LoginEntryMode = 'tenant_only' | 'discovery_optional' | 'discovery_required';
@@ -65,13 +66,9 @@
 	let loading = $state(true);
 	let savingSettings = $state(false);
 	let signingAction = $state('');
-	let drBundleAction = $state('');
 	let error = $state('');
 	let actionMessage = $state('');
 	let copiedKey = $state('');
-	let drBundleFileInput = $state<HTMLInputElement | null>(null);
-	let drBundlePassphrase = $state('');
-	let drBundlePassphraseConfirm = $state('');
 	let draftEntityIdStyle = $state<SAMLEntityIdStyle>('metadata_url');
 	let draftInteractiveLoginUrlPolicy = $state<SAMLInteractiveLoginUrlPolicy>('tenant_host');
 	let draftCertificateSubject = $state<SAMLSigningCertificateSubject>({
@@ -99,13 +96,6 @@
 	);
 	const selectedSAMLLoginUrl = $derived(buildSAMLLoginUrl(draftInteractiveLoginUrlPolicy));
 	const loginRouteSteps = $derived(buildLoginRouteSteps(draftInteractiveLoginUrlPolicy));
-	const canExportDRBundle = $derived(
-		!drBundleAction &&
-			drBundlePassphrase.length >= 12 &&
-			drBundlePassphrase === drBundlePassphraseConfirm
-	);
-	const canImportDRBundle = $derived(!drBundleAction && drBundlePassphrase.length >= 12);
-
 	onMount(() => {
 		void initialize();
 	});
@@ -127,7 +117,7 @@
 					getTenantInfo(),
 					adminSettingsAPI.getSettings('login-entry').catch((err) => {
 						discoverySettingsError =
-							err instanceof Error ? err.message : 'Failed to load tenant discovery settings';
+							err instanceof Error ? err.message : $LL.admin_saml_local_error_load_discovery();
 						return null;
 					}),
 					adminSettingsAPI.getPlatformSettings('login-entry').catch(() => null)
@@ -146,7 +136,7 @@
 				? await loadMetadataDocuments(tenantInfoResult)
 				: [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load SAML entity information';
+			error = err instanceof Error ? err.message : $LL.admin_saml_local_error_load_entity();
 		} finally {
 			loading = false;
 		}
@@ -154,10 +144,14 @@
 
 	async function loadMetadataDocuments(info: TenantInfo): Promise<MetadataDocument[]> {
 		const targets = [
-			{ role: 'idp' as const, label: 'Authrim IdP Metadata', url: info.saml.idp_metadata },
+			{
+				role: 'idp' as const,
+				label: $LL.admin_saml_local_authrim_idp_metadata(),
+				url: info.saml.idp_metadata
+			},
 			{
 				role: 'sp' as const,
-				label: 'Authrim SP Metadata',
+				label: $LL.admin_saml_local_authrim_sp_metadata(),
 				url: info.saml.sp_metadata ?? info.saml.metadata
 			}
 		];
@@ -186,7 +180,7 @@
 					} catch (err) {
 						return {
 							...certificate,
-							error: err instanceof Error ? err.message : 'Failed to parse certificate'
+							error: err instanceof Error ? err.message : $LL.admin_saml_local_error_parse_certificate()
 						};
 					}
 				})
@@ -207,7 +201,7 @@
 				entityId: '-',
 				xml: '',
 				certificates: [],
-				error: err instanceof Error ? err.message : 'Failed to load metadata'
+				error: err instanceof Error ? err.message : $LL.admin_saml_local_error_load_metadata()
 			};
 		}
 	}
@@ -216,7 +210,7 @@
 		const doc = new DOMParser().parseFromString(xml, 'application/xml');
 		const parserError = doc.querySelector('parsererror');
 		if (parserError) {
-			throw new Error(parserError.textContent || 'Invalid SAML metadata XML');
+			throw new Error(parserError.textContent || $LL.admin_saml_local_error_invalid_metadata());
 		}
 
 		const root = doc.documentElement;
@@ -283,19 +277,25 @@
 		if (!value) return '-';
 		const date = typeof value === 'number' ? new Date(value) : new Date(value);
 		if (Number.isNaN(date.getTime())) return '-';
-		return date.toLocaleString();
+		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function entityIdStyleLabel(style: SAMLEntityIdStyle) {
-		return style === 'metadata_url' ? 'Metadata URL' : 'Role URL';
+		return style === 'metadata_url'
+			? $LL.admin_saml_local_metadata_url()
+			: $LL.admin_saml_local_role_url();
 	}
 
 	function interactiveLoginPolicyLabel(policy: SAMLInteractiveLoginUrlPolicy) {
-		return policy === 'tenant_host' ? 'Tenant Host' : 'UI Base URL';
+		return policy === 'tenant_host'
+			? $LL.admin_saml_local_tenant_host()
+			: $LL.admin_saml_local_ui_base_url();
 	}
 
 	function metadataSigningLabel(settings: SAMLSettings) {
-		return settings.metadata.signingEnabled ? 'Signed metadata' : 'Unsigned metadata';
+		return settings.metadata.signingEnabled
+			? $LL.admin_saml_local_signed_metadata()
+			: $LL.admin_saml_local_unsigned_metadata();
 	}
 
 	function metadataSigningBadge(settings: SAMLSettings) {
@@ -328,9 +328,13 @@
 	}
 
 	function policySummary(policy: SAMLSigningKeyPolicy) {
-		const active = policy.active?.kid ? `active ${policy.active.kid}` : 'default active key';
-		const next = policy.next?.kid ? `, next ${policy.next.kid}` : '';
-		const backup = policy.backup?.kid ? `, backup ${policy.backup.kid}` : '';
+		const active = policy.active?.kid
+			? $LL.admin_saml_local_active_key({ kid: policy.active.kid })
+			: $LL.admin_saml_local_default_active_key();
+		const next = policy.next?.kid ? $LL.admin_saml_local_next_key({ kid: policy.next.kid }) : '';
+		const backup = policy.backup?.kid
+			? $LL.admin_saml_local_backup_key({ kid: policy.backup.kid })
+			: '';
 		return `${active}${next}${backup}`;
 	}
 
@@ -450,9 +454,9 @@
 		if (policy === 'tenant_host') {
 			const steps: LoginRouteStep[] = [
 				{
-					title: 'SAML redirect',
+					title: $LL.admin_saml_local_route_saml_redirect(),
 					url: tenantLogin,
-					detail: 'The browser is sent to this tenant login URL.'
+					detail: $LL.admin_saml_local_route_tenant_login_detail()
 				}
 			];
 
@@ -462,16 +466,15 @@
 				effectiveTenantLoginEntrySettings?.requireCommonDiscoveryBeforeLogin
 			) {
 				steps.push({
-					title: 'Common discovery gate',
+					title: $LL.admin_saml_local_route_common_discovery_gate(),
 					url: discoverUrlWithTenantReturn(),
-					detail:
-						'Because tenant login requires common discovery, the first visible page is tenant discovery. After the tenant is confirmed, it returns to the tenant login page.'
+					detail: $LL.admin_saml_local_route_common_discovery_detail()
 				});
 			} else {
 				steps.push({
-					title: 'First visible page',
+					title: $LL.admin_saml_local_route_first_visible_page(),
 					url: tenantLogin,
-					detail: 'The login page is shown directly without common tenant discovery.'
+					detail: $LL.admin_saml_local_route_direct_login_detail()
 				});
 			}
 
@@ -480,54 +483,53 @@
 
 		return [
 			{
-				title: 'SAML redirect',
+				title: $LL.admin_saml_local_route_saml_redirect(),
 				url: uiBaseLogin,
-				detail: 'The browser is sent to the global Login UI /login URL with tenant_hint.'
+				detail: $LL.admin_saml_local_route_ui_base_detail()
 			},
 			{
-				title: 'First visible page',
+				title: $LL.admin_saml_local_route_first_visible_page(),
 				url: discoverUrl(),
 				detail: discoveryFirstPageDescription(commonLoginEntrySettings)
 			},
 			{
-				title: 'After tenant resolution',
+				title: $LL.admin_saml_local_route_after_tenant_resolution(),
 				url: tenantLogin,
-				detail:
-					'Discovery issues a tenant verification grant and then redirects to the tenant login page.'
+				detail: $LL.admin_saml_local_route_after_resolution_detail()
 			}
 		];
 	}
 
 	function discoveryFirstPageDescription(settings: LoginEntryPreviewSettings | null) {
 		if (!tenantInfo?.discover_url) {
-			return 'No common discovery URL is configured, so the Login UI is expected to show the login page directly.';
+			return $LL.admin_saml_local_discovery_no_url();
 		}
 		if (!settings) {
-			return 'Common entry /login redirects to /discover, but discovery settings could not be loaded.';
+			return $LL.admin_saml_local_discovery_load_failed();
 		}
 		if (settings.mode === 'tenant_only') {
-			return 'Common entry /login redirects to /discover. Tenant-only mode can auto-return only when discovery receives expected_tenant_id and return_to; this UI Base URL starts from /login, so the discovery page is the first visible page unless single-tenant skip applies.';
+			return $LL.admin_saml_local_discovery_tenant_only();
 		}
 		const methods = settings.discoveryMethods;
 		if (methods.length === 1 && methods[0] === 'wayf') {
-			return 'Common entry /login redirects to a WAYF tenant chooser. Only the tenant dropdown is shown.';
+			return $LL.admin_saml_local_discovery_wayf();
 		}
-		return `Common entry /login redirects to tenant discovery. Visible methods: ${formatDiscoveryMethods(methods)}.`;
+		return $LL.admin_saml_local_discovery_methods({ methods: formatDiscoveryMethods(methods) });
 	}
 
 	function formatDiscoveryMethods(methods: string[]) {
-		if (methods.length === 0) return 'none configured';
+		if (methods.length === 0) return $LL.admin_saml_local_discovery_none_configured();
 		return methods
 			.map((method) => {
 				switch (method) {
 					case 'email_domain':
-						return 'email/domain';
+						return $LL.admin_saml_local_discovery_email_domain();
 					case 'tenant_code':
-						return 'tenant code';
+						return $LL.admin_saml_local_discovery_tenant_code();
 					case 'tenant_slug':
-						return 'tenant slug';
+						return $LL.admin_saml_local_discovery_tenant_slug();
 					case 'wayf':
-						return 'WAYF dropdown';
+						return $LL.admin_saml_local_discovery_wayf_dropdown();
 					default:
 						return method;
 				}
@@ -565,12 +567,12 @@
 			});
 			draftEntityIdStyle = samlSettings.entityIdStyle;
 			draftInteractiveLoginUrlPolicy = samlSettings.interactiveLoginUrlPolicy;
-			actionMessage = 'SAML settings updated';
+			actionMessage = $LL.admin_saml_local_settings_updated();
 			if (tenantInfo?.components.saml) {
 				metadataDocs = await loadMetadataDocuments(tenantInfo);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update SAML settings';
+			error = err instanceof Error ? err.message : $LL.admin_saml_local_error_update_settings();
 		} finally {
 			savingSettings = false;
 		}
@@ -586,10 +588,10 @@
 				certificateSubject: draftCertificateSubject
 			});
 			draftCertificateSubject = currentCertificateSubject();
-			actionMessage = 'SAML signing certificate subject saved';
+			actionMessage = $LL.admin_saml_local_subject_saved();
 		} catch (err) {
 			error =
-				err instanceof Error ? err.message : 'Failed to save SAML signing certificate subject';
+				err instanceof Error ? err.message : $LL.admin_saml_local_error_save_subject();
 		} finally {
 			savingSettings = false;
 		}
@@ -611,75 +613,20 @@
 				keepPreviousAsBackup: true
 			});
 			draftCertificateSubject = currentCertificateSubject();
-			actionMessage = 'SAML signing certificate settings updated';
+			actionMessage = $LL.admin_saml_local_certificate_settings_updated();
 			if (tenantInfo?.components.saml) {
 				metadataDocs = await loadMetadataDocuments(tenantInfo);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update SAML signing certificate';
+			error = err instanceof Error ? err.message : $LL.admin_saml_local_error_update_certificate();
 		} finally {
 			signingAction = '';
 		}
 	}
-
-	async function exportLocalSigningDRBundle() {
-		if (drBundleAction) return;
-		drBundleAction = 'export';
-		actionMessage = '';
-		error = '';
-		try {
-			const bundle = await adminSAMLAPI.exportLocalSigningDRBundle(drBundlePassphrase);
-			const tenant = bundle.tenantId || samlSettings?.tenantId || 'tenant';
-			downloadText(
-				`authrim-saml-local-signing-dr-bundle-${tenant}.json`,
-				JSON.stringify(bundle, null, 2),
-				'application/json'
-			);
-			actionMessage = 'SAML signing DR bundle exported';
-			clearDRBundlePassphrase();
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to export SAML signing DR bundle';
-		} finally {
-			drBundleAction = '';
-		}
-	}
-
-	async function importLocalSigningDRBundle(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file || drBundleAction) return;
-		drBundleAction = 'import';
-		actionMessage = '';
-		error = '';
-		try {
-			const bundle = JSON.parse(await file.text()) as unknown;
-			samlSettings = await adminSAMLAPI.importLocalSigningDRBundle(bundle, drBundlePassphrase);
-			draftEntityIdStyle = samlSettings.entityIdStyle;
-			draftInteractiveLoginUrlPolicy = samlSettings.interactiveLoginUrlPolicy;
-			draftCertificateSubject = normalizeSubjectForForm(
-				samlSettings.localSigning?.certificateSubject ?? samlSettings.certificateSubject
-			);
-			actionMessage = 'SAML signing DR bundle imported';
-			if (tenantInfo?.components.saml) {
-				metadataDocs = await loadMetadataDocuments(tenantInfo);
-			}
-			clearDRBundlePassphrase();
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to import SAML signing DR bundle';
-		} finally {
-			drBundleAction = '';
-			input.value = '';
-		}
-	}
-
-	function clearDRBundlePassphrase() {
-		drBundlePassphrase = '';
-		drBundlePassphraseConfirm = '';
-	}
 </script>
 
 <svelte:head>
-	<title>SAML Entity Info - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_saml_local_page_title()}</title>
 </svelte:head>
 
 {#snippet endpointRow(label: string, value: string, key: string, href?: string)}
@@ -698,7 +645,7 @@
 				class="icon-btn"
 				class:copied={copiedKey === key}
 				onclick={() => copy(value, key)}
-				title="Copy"
+				title={$LL.admin_saml_local_copy()}
 			>
 				<i class={copiedKey === key ? 'i-ph-check' : 'i-ph-copy'}></i>
 			</button>
@@ -722,7 +669,7 @@
 				class="icon-btn"
 				class:copied={copiedKey === key}
 				onclick={() => copy(value, key)}
-				title="Copy"
+				title={$LL.admin_saml_local_copy()}
 			>
 				<i class={copiedKey === key ? 'i-ph-check' : 'i-ph-copy'}></i>
 			</button>
@@ -735,18 +682,19 @@
 		<div>
 			<button class="link-button" onclick={() => goto('/admin/saml')}>
 				<i class="i-ph-arrow-left"></i>
-				SAML
+				{$LL.admin_saml_local_back()}
 			</button>
-			<h1 class="page-title">SAML Entity Info</h1>
-			<p class="page-description">
-				Local Authrim IdP/SP metadata, endpoint references, entity IDs, and published signing
-				certificates.
-			</p>
+			<h1 class="page-title">{$LL.admin_saml_local_title()}</h1>
+			<p class="page-description">{$LL.admin_saml_local_description()}</p>
 		</div>
 		<div class="page-actions">
+			<button class="btn btn-secondary" onclick={() => goto('/admin/dr-backup')}>
+				<i class="i-ph-cloud-arrow-up"></i>
+				{$LL.admin_dr_backup_saml_bundle_title()}
+			</button>
 			<button class="btn btn-secondary" onclick={load} disabled={loading}>
 				<i class="i-ph-arrow-clockwise"></i>
-				Refresh
+				{$LL.admin_saml_refresh()}
 			</button>
 		</div>
 	</div>
@@ -761,93 +709,19 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_saml_loading()}</p>
 		</div>
 	{:else}
 		{#if !tenantInfo?.components.saml}
 			<div class="panel">
 				<div class="panel-header compact-panel-header">
 					<div>
-						<h2 class="panel-title">SAML Metadata</h2>
-						<p class="form-hint">Form-ready URLs and certificates for SAML registration.</p>
+						<h2 class="panel-title">{$LL.admin_saml_local_metadata_title()}</h2>
+						<p class="form-hint">{$LL.admin_saml_local_metadata_desc()}</p>
 					</div>
-					<span class="badge badge-neutral">Not deployed</span>
+					<span class="badge badge-neutral">{$LL.admin_saml_local_not_deployed()}</span>
 				</div>
-				<div class="empty-state compact-empty">SAML worker is not deployed for this tenant.</div>
-			</div>
-		{/if}
-
-		{#if samlSettings}
-			<div class="panel">
-				<div class="panel-header compact-panel-header">
-					<div>
-						<h2 class="panel-title">SAML Signing DR Bundle</h2>
-						<p class="form-hint">
-							Export and restore local SAML signing keys, certificates, entity ID settings, and
-							signing rollover state for this tenant.
-						</p>
-					</div>
-					<div class="metadata-badges">
-						<span class="badge badge-warning">Sensitive</span>
-					</div>
-				</div>
-				<div class="entity-warning">
-					<i class="i-ph-warning-circle"></i>
-					<span>
-						This bundle is encrypted with your passphrase, but it contains private signing keys
-						after decryption. Keep it offline and import it only when recreating the same
-						tenant/domain environment.
-					</span>
-				</div>
-				<div class="dr-bundle-fields">
-					<label>
-						<span>Passphrase</span>
-						<input
-							class="form-input"
-							type="password"
-							autocomplete="new-password"
-							bind:value={drBundlePassphrase}
-							placeholder="12+ characters"
-							disabled={!!drBundleAction}
-						/>
-					</label>
-					<label>
-						<span>Confirm passphrase</span>
-						<input
-							class="form-input"
-							type="password"
-							autocomplete="new-password"
-							bind:value={drBundlePassphraseConfirm}
-							placeholder="Required for export"
-							disabled={!!drBundleAction}
-						/>
-					</label>
-				</div>
-				<div class="form-actions">
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={exportLocalSigningDRBundle}
-						disabled={!canExportDRBundle}
-					>
-						<i class="i-ph-download-simple"></i>
-						{drBundleAction === 'export' ? 'Exporting...' : 'Export DR Bundle'}
-					</button>
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => drBundleFileInput?.click()}
-						disabled={!canImportDRBundle}
-					>
-						<i class="i-ph-upload-simple"></i>
-						{drBundleAction === 'import' ? 'Importing...' : 'Import DR Bundle'}
-					</button>
-					<input
-						bind:this={drBundleFileInput}
-						class="hidden-file-input"
-						type="file"
-						accept="application/json,.json"
-						onchange={importLocalSigningDRBundle}
-					/>
-				</div>
+				<div class="empty-state compact-empty">{$LL.admin_saml_local_worker_not_deployed()}</div>
 			</div>
 		{/if}
 
@@ -858,9 +732,9 @@
 						<div>
 							<h2 class="panel-title">{doc.label}</h2>
 							<p class="form-hint">
-								Endpoint URLs, entityID, metadata XML, and signing certificates for Authrim {roleLabel(
-									doc.role
-								)}.
+								{doc.role === 'idp'
+									? $LL.admin_saml_local_idp_registration_hint()
+									: $LL.admin_saml_local_sp_registration_hint()}
 							</p>
 						</div>
 						<div class="metadata-badges">
@@ -876,7 +750,7 @@
 								disabled={!doc.xml}
 							>
 								<i class="i-ph-download-simple"></i>
-								Metadata
+								{$LL.admin_saml_local_download_xml()}
 							</button>
 						</div>
 					</div>
@@ -885,49 +759,53 @@
 						<div class="alert alert-error">{doc.error}</div>
 					{:else}
 						<div class="metadata-section">
-							<div class="preview-heading">Endpoint References</div>
+							<div class="preview-heading">{$LL.admin_saml_local_endpoint_references()}</div>
 							<div class="info-row-list">
 								{#if doc.role === 'idp'}
-									{@render fieldRow('SSO (Single Sign-On)', tenantInfo.saml.sso, 'saml_sso')}
+									{@render fieldRow($LL.admin_saml_local_sso(), tenantInfo.saml.sso, 'saml_sso')}
 									{@render fieldRow(
-										'IdP Metadata URL',
+										$LL.admin_saml_local_idp_metadata_url(),
 										tenantInfo.saml.idp_metadata,
 										'saml_idp_metadata',
 										tenantInfo.saml.idp_metadata
 									)}
-									{@render fieldRow('SLO (Single Logout)', tenantInfo.saml.slo, 'saml_idp_slo')}
+									{@render fieldRow($LL.admin_saml_local_slo(), tenantInfo.saml.slo, 'saml_idp_slo')}
 								{:else}
 									{@render fieldRow(
-										'ACS (Assertion Consumer Service)',
+										$LL.admin_saml_local_acs(),
 										tenantInfo.saml.acs,
 										'saml_acs'
 									)}
 									{@render fieldRow(
-										'SP Metadata URL',
+										$LL.admin_saml_local_sp_metadata_url(),
 										tenantInfo.saml.sp_metadata ?? tenantInfo.saml.metadata,
 										'saml_sp_metadata',
 										tenantInfo.saml.sp_metadata ?? tenantInfo.saml.metadata
 									)}
-									{@render fieldRow('SLO (Single Logout)', tenantInfo.saml.slo, 'saml_sp_slo')}
+									{@render fieldRow($LL.admin_saml_local_slo(), tenantInfo.saml.slo, 'saml_sp_slo')}
 								{/if}
 							</div>
 						</div>
 
 						<div class="metadata-section">
-							<div class="preview-heading">Registration Values</div>
+							<div class="preview-heading">{$LL.admin_saml_local_registration_values()}</div>
 							<div class="info-row-list">
 								{@render fieldRow(
-									`${roleLabel(doc.role)} entityID`,
+									$LL.admin_saml_local_role_entity_id({ role: roleLabel(doc.role) }),
 									doc.entityId,
 									`${doc.role}_metadata_entity`
 								)}
-								{@render fieldRow('Scope', scopeFromUrl(doc.entityId), `${doc.role}_scope`)}
+								{@render fieldRow(
+									$LL.admin_saml_local_scope(),
+									scopeFromUrl(doc.entityId),
+									`${doc.role}_scope`
+								)}
 							</div>
 						</div>
 
 						{#if doc.certificates.length === 0}
 							<div class="empty-state compact-empty">
-								No X.509 certificates are published in this metadata.
+								{$LL.admin_saml_local_no_certificates()}
 							</div>
 						{:else}
 							<div class="certificate-list">
@@ -935,7 +813,12 @@
 									<section class="certificate-card">
 										<div class="certificate-header">
 											<div>
-												<h3>{roleLabel(certificate.role)} Certificate {certificate.index}</h3>
+												<h3>
+													{$LL.admin_saml_local_certificate_heading({
+														role: roleLabel(certificate.role),
+														index: certificate.index
+													})}
+												</h3>
 												<p>{certificate.use}</p>
 											</div>
 											<div class="certificate-actions">
@@ -948,7 +831,7 @@
 															? 'i-ph-check'
 															: 'i-ph-copy'}
 													></i>
-													Copy
+													{$LL.admin_saml_local_copy_pem()}
 												</button>
 												<button
 													class="btn btn-secondary btn-sm"
@@ -960,7 +843,7 @@
 														)}
 												>
 													<i class="i-ph-download-simple"></i>
-													PEM
+													{$LL.admin_saml_local_download_pem()}
 												</button>
 											</div>
 										</div>
@@ -968,26 +851,32 @@
 										{#if certificate.preview}
 											<div class="certificate-info-grid">
 												<div>
-													<span>Subject</span><strong>{certificate.preview.subject}</strong>
+													<span>{$LL.admin_saml_local_subject()}</span><strong
+														>{certificate.preview.subject}</strong
+													>
 												</div>
-												<div><span>Issuer</span><strong>{certificate.preview.issuer}</strong></div>
 												<div>
-													<span>Valid From</span><strong
+													<span>{$LL.admin_saml_local_issuer()}</span><strong
+														>{certificate.preview.issuer}</strong
+													>
+												</div>
+												<div>
+													<span>{$LL.admin_saml_local_valid_from()}</span><strong
 														>{formatDateTime(certificate.preview.validFrom)}</strong
 													>
 												</div>
 												<div>
-													<span>Valid To</span><strong
+													<span>{$LL.admin_saml_local_valid_to()}</span><strong
 														>{formatDateTime(certificate.preview.validTo)}</strong
 													>
 												</div>
 												<div>
-													<span>Signature</span><strong
+													<span>{$LL.admin_saml_local_signature()}</span><strong
 														>{certificate.preview.signatureAlgorithm}</strong
 													>
 												</div>
 												<div>
-													<span>Public Key</span>
+													<span>{$LL.admin_saml_local_public_key()}</span>
 													<strong>
 														{certificate.preview.publicKeyAlgorithm}
 														{certificate.preview.publicKeySizeBits
@@ -999,12 +888,12 @@
 
 											<div class="fingerprint-grid">
 												{@render endpointRow(
-													'SHA-1 fingerprint',
+													$LL.admin_saml_local_sha1_fingerprint(),
 													fingerprint(certificate.preview.fingerprintSha1),
 													`${certificate.id}_sha1`
 												)}
 												{@render endpointRow(
-													'SHA-256 fingerprint',
+													$LL.admin_saml_local_sha256_fingerprint(),
 													fingerprint(certificate.preview.fingerprintSha256),
 													`${certificate.id}_sha256`
 												)}
@@ -1024,7 +913,7 @@
 										<details class="certificate-pem">
 											<summary>
 												<i class="i-ph-caret-right"></i>
-												<span>Certificate PEM</span>
+												<span>{$LL.admin_saml_local_certificate_pem()}</span>
 											</summary>
 											<div class="field-copy-row">
 												<textarea
@@ -1038,7 +927,7 @@
 													class:copied={copiedKey === `cert_pem_${certificate.id}`}
 													onclick={() =>
 														copy(certificate.certificate, `cert_pem_${certificate.id}`)}
-													title="Copy"
+													title={$LL.admin_saml_local_copy()}
 												>
 													<i
 														class={copiedKey === `cert_pem_${certificate.id}`
@@ -1061,22 +950,21 @@
 			<div class="panel">
 				<div class="panel-header compact-panel-header">
 					<div>
-						<h2 class="panel-title">SAML Published Entity IDs</h2>
-						<p class="form-hint">
-							Tenant-wide SAML defaults used in generated IdP/SP metadata and interactive login
-							redirects.
-						</p>
+						<h2 class="panel-title">{$LL.admin_saml_local_published_entity_ids()}</h2>
+						<p class="form-hint">{$LL.admin_saml_local_published_entity_ids_desc()}</p>
 					</div>
 					<div class="metadata-badges">
 						<span class="badge badge-info">{entityIdStyleLabel(samlSettings.entityIdStyle)}</span>
 						<span class="badge badge-info">
-							Login {interactiveLoginPolicyLabel(samlSettings.interactiveLoginUrlPolicy)}
+							{$LL.admin_saml_local_login_policy_badge({
+								policy: interactiveLoginPolicyLabel(samlSettings.interactiveLoginUrlPolicy)
+							})}
 						</span>
 					</div>
 				</div>
 
 				<div class="entity-layout">
-					<div class="entity-options" role="radiogroup" aria-label="SAML entityID style">
+					<div class="entity-options" role="radiogroup" aria-label={$LL.admin_saml_local_entity_id_style_aria()}>
 						<label class="entity-option">
 							<input
 								type="radio"
@@ -1086,8 +974,8 @@
 								disabled={savingSettings}
 							/>
 							<span>
-								<strong>Metadata URL</strong>
-								<small>/saml/idp/metadata and /saml/sp/metadata</small>
+								<strong>{$LL.admin_saml_local_metadata_url()}</strong>
+								<small>{$LL.admin_saml_local_metadata_url_desc()}</small>
 							</span>
 						</label>
 						<label class="entity-option">
@@ -1099,28 +987,36 @@
 								disabled={savingSettings}
 							/>
 							<span>
-								<strong>Role URL</strong>
-								<small>/saml/idp and /saml/sp</small>
+								<strong>{$LL.admin_saml_local_role_url()}</strong>
+								<small>{$LL.admin_saml_local_role_url_desc()}</small>
 							</span>
 						</label>
 					</div>
 
 					<div class="entity-current">
 						<div class="entity-preview-group">
-							<div class="preview-heading">Current entityIDs</div>
-							{@render fieldRow('IdP Entity ID', samlSettings.generated.idpEntityId, 'idp_entity')}
-							{@render fieldRow('SP Entity ID', samlSettings.generated.spEntityId, 'sp_entity')}
+							<div class="preview-heading">{$LL.admin_saml_local_current_entity_ids()}</div>
+							{@render fieldRow(
+								$LL.admin_saml_local_idp_entity_id(),
+								samlSettings.generated.idpEntityId,
+								'idp_entity'
+							)}
+							{@render fieldRow(
+								$LL.admin_saml_local_sp_entity_id(),
+								samlSettings.generated.spEntityId,
+								'sp_entity'
+							)}
 						</div>
 						{#if draftEntityIdStyle !== samlSettings.entityIdStyle}
 							<div class="entity-preview-group pending-preview">
-								<div class="preview-heading">After save</div>
+								<div class="preview-heading">{$LL.admin_saml_local_after_save()}</div>
 								{@render fieldRow(
-									'IdP Entity ID',
+									$LL.admin_saml_local_idp_entity_id(),
 									buildEntityIdPreview('idp', draftEntityIdStyle),
 									'idp_entity_next'
 								)}
 								{@render fieldRow(
-									'SP Entity ID',
+									$LL.admin_saml_local_sp_entity_id(),
 									buildEntityIdPreview('sp', draftEntityIdStyle),
 									'sp_entity_next'
 								)}
@@ -1131,15 +1027,13 @@
 
 				<div class="login-policy">
 					<div class="section-copy">
-						<div class="section-heading">Interactive Login Redirect</div>
-						<p class="form-hint">
-							Controls where SAML sends users when a flow needs interactive login.
-						</p>
+						<div class="section-heading">{$LL.admin_saml_local_interactive_login_redirect()}</div>
+						<p class="form-hint">{$LL.admin_saml_local_interactive_login_desc()}</p>
 					</div>
 
 					<div class="login-policy-layout">
 						<div class="login-policy-choice">
-							<div class="entity-options" role="radiogroup" aria-label="SAML login redirect policy">
+							<div class="entity-options" role="radiogroup" aria-label={$LL.admin_saml_local_login_policy_aria()}>
 								<label class="entity-option">
 									<input
 										type="radio"
@@ -1149,8 +1043,8 @@
 										disabled={savingSettings}
 									/>
 									<span>
-										<strong>Tenant Host</strong>
-										<small>Use this tenant's /login URL. Default for SAML.</small>
+										<strong>{$LL.admin_saml_local_tenant_host()}</strong>
+										<small>{$LL.admin_saml_local_tenant_host_desc()}</small>
 									</span>
 								</label>
 								<label class="entity-option">
@@ -1162,19 +1056,19 @@
 										disabled={savingSettings}
 									/>
 									<span>
-										<strong>UI Base URL</strong>
-										<small>Use global UI_URL /login with tenant_hint.</small>
+										<strong>{$LL.admin_saml_local_ui_base_url()}</strong>
+										<small>{$LL.admin_saml_local_ui_base_url_desc()}</small>
 									</span>
 								</label>
 							</div>
 						</div>
 
 						<div class="login-policy-preview">
-							<div class="preview-heading">Selected Login URL</div>
-							{@render fieldRow('Login URL', selectedSAMLLoginUrl, 'selected_saml_login_url')}
+							<div class="preview-heading">{$LL.admin_saml_local_selected_login_url()}</div>
+							{@render fieldRow($LL.admin_saml_local_login_url(), selectedSAMLLoginUrl, 'selected_saml_login_url')}
 
 							<div class="route-preview">
-								<div class="preview-heading">Displayed Page Flow</div>
+								<div class="preview-heading">{$LL.admin_saml_local_displayed_page_flow()}</div>
 								{#if discoverySettingsError}
 									<div class="inline-warning">
 										<i class="i-ph-warning-circle"></i>
@@ -1201,11 +1095,8 @@
 				<div class="metadata-summary">
 					<div class="metadata-summary-header">
 						<div>
-							<div class="preview-heading">SAML Metadata Publication</div>
-							<p class="form-hint">
-								Generated IdP/SP metadata currently publishes validity dates. XML signature is
-								opt-in for strict environments.
-							</p>
+							<div class="preview-heading">{$LL.admin_saml_local_metadata_publication()}</div>
+							<p class="form-hint">{$LL.admin_saml_local_metadata_publication_desc()}</p>
 						</div>
 						<div class="metadata-badges">
 							<span class={metadataSigningBadge(samlSettings)}>
@@ -1216,26 +1107,28 @@
 									? 'badge badge-success'
 									: 'badge badge-neutral'}
 							>
-								validUntil {samlSettings.metadata.validUntilEnabled ? 'Enabled' : 'Disabled'}
+								{samlSettings.metadata.validUntilEnabled
+									? $LL.admin_saml_local_valid_until_enabled()
+									: $LL.admin_saml_local_valid_until_disabled()}
 							</span>
 						</div>
 					</div>
 
 					<div class="metadata-grid">
 						<div>
-							<span class="preview-label">IdP validUntil</span>
+							<span class="preview-label">{$LL.admin_saml_local_idp_valid_until()}</span>
 							<strong>{formatDateTime(samlSettings.metadata.idpValidUntil)}</strong>
 						</div>
 						<div>
-							<span class="preview-label">SP validUntil</span>
+							<span class="preview-label">{$LL.admin_saml_local_sp_valid_until()}</span>
 							<strong>{formatDateTime(samlSettings.metadata.spValidUntil)}</strong>
 						</div>
 						<div>
-							<span class="preview-label">Validity window</span>
-							<strong>{samlSettings.metadata.validityDays} days</strong>
+							<span class="preview-label">{$LL.admin_saml_local_validity_window()}</span>
+							<strong>{$LL.admin_saml_local_validity_days({ days: samlSettings.metadata.validityDays })}</strong>
 						</div>
 						<div>
-							<span class="preview-label">cacheDuration</span>
+							<span class="preview-label">{$LL.admin_saml_local_cache_duration()}</span>
 							<strong>{samlSettings.metadata.cacheDuration}</strong>
 						</div>
 					</div>
@@ -1243,11 +1136,7 @@
 
 				<div class="entity-warning">
 					<i class="i-ph-warning-circle"></i>
-					<span>
-						Changing published entityIDs can affect SAML trust. Existing SP/IdP configurations may
-						need updated metadata, audience settings, issuer settings, and certificate validation
-						review before production use.
-					</span>
+					<span>{$LL.admin_saml_local_entity_warning()}</span>
 				</div>
 
 				<div class="form-actions">
@@ -1256,7 +1145,7 @@
 						onclick={saveSAMLSettings}
 						disabled={savingSettings || !hasSAMLSettingsChanges}
 					>
-						{savingSettings ? 'Saving...' : 'Save SAML Settings'}
+						{savingSettings ? $LL.admin_saml_local_saving() : $LL.admin_saml_local_save_settings()}
 					</button>
 				</div>
 			</div>
@@ -1264,16 +1153,14 @@
 			<div class="panel">
 				<div class="panel-header compact-panel-header">
 					<div>
-						<h2 class="panel-title">Signing Certificate Subject</h2>
-						<p class="form-hint">
-							Default subject values used when Authrim recreates SAML signing certificates.
-						</p>
+						<h2 class="panel-title">{$LL.admin_saml_local_signing_subject()}</h2>
+						<p class="form-hint">{$LL.admin_saml_local_signing_subject_desc()}</p>
 					</div>
 				</div>
 
 				<div class="subject-grid">
 					<label>
-						<span>C (Country)</span>
+						<span>{$LL.admin_saml_local_country()}</span>
 						<input
 							class="form-input"
 							bind:value={draftCertificateSubject.countryName}
@@ -1282,7 +1169,7 @@
 						/>
 					</label>
 					<label>
-						<span>ST (State or Province Name)</span>
+						<span>{$LL.admin_saml_local_state()}</span>
 						<input
 							class="form-input"
 							bind:value={draftCertificateSubject.stateOrProvinceName}
@@ -1291,7 +1178,7 @@
 						/>
 					</label>
 					<label>
-						<span>L (Locality Name)</span>
+						<span>{$LL.admin_saml_local_locality()}</span>
 						<input
 							class="form-input"
 							bind:value={draftCertificateSubject.localityName}
@@ -1300,7 +1187,7 @@
 						/>
 					</label>
 					<label>
-						<span>O (Organization)</span>
+						<span>{$LL.admin_saml_local_organization()}</span>
 						<input
 							class="form-input"
 							bind:value={draftCertificateSubject.organizationName}
@@ -1309,7 +1196,7 @@
 						/>
 					</label>
 					<label>
-						<span>OU (Organizational Unit)</span>
+						<span>{$LL.admin_saml_local_org_unit()}</span>
 						<input
 							class="form-input"
 							bind:value={draftCertificateSubject.organizationalUnitName}
@@ -1318,7 +1205,7 @@
 						/>
 					</label>
 					<label>
-						<span>CN (Common Name)</span>
+						<span>{$LL.admin_saml_local_common_name()}</span>
 						<input
 							class="form-input"
 							bind:value={draftCertificateSubject.commonName}
@@ -1330,10 +1217,7 @@
 
 				<div class="entity-warning">
 					<i class="i-ph-warning-circle"></i>
-					<span>
-						Changing these values affects newly generated certificates only. Existing federation
-						partners may need updated metadata after a certificate is recreated or rolled over.
-					</span>
+					<span>{$LL.admin_saml_local_subject_warning()}</span>
 				</div>
 
 				<div class="form-actions">
@@ -1342,7 +1226,7 @@
 						onclick={saveCertificateSubject}
 						disabled={savingSettings || !hasCertificateSubjectChanges}
 					>
-						{savingSettings ? 'Saving...' : 'Save Signing Certificate Subject'}
+						{savingSettings ? $LL.admin_saml_local_saving() : $LL.admin_saml_local_save_subject()}
 					</button>
 				</div>
 			</div>
@@ -1350,10 +1234,8 @@
 			<div class="panel">
 				<div class="panel-header compact-panel-header">
 					<div>
-						<h2 class="panel-title">Signing Rollover</h2>
-						<p class="form-hint">
-							Recreate, publish, promote, or retire SAML signing keys for Authrim IdP/SP metadata.
-						</p>
+						<h2 class="panel-title">{$LL.admin_saml_local_signing_rollover()}</h2>
+						<p class="form-hint">{$LL.admin_saml_local_signing_rollover_desc()}</p>
 					</div>
 				</div>
 
@@ -1362,7 +1244,9 @@
 						{@const policy = localSigningPolicy(role)}
 						<section class="local-signing-card">
 							<div>
-								<div class="preview-heading">{roleLabel(role)} Signing Rollover</div>
+								<div class="preview-heading">
+									{$LL.admin_saml_local_signing_rollover_heading({ role: roleLabel(role) })}
+								</div>
 								<p class="form-hint">{policySummary(policy)}</p>
 							</div>
 							<div class="local-signing-actions">
@@ -1371,28 +1255,28 @@
 									onclick={() => runLocalSigningAction(role, 'recreate_active')}
 									disabled={!!signingAction}
 								>
-									Recreate active
+									{$LL.admin_saml_local_recreate_active()}
 								</button>
 								<button
 									class="btn btn-secondary btn-sm"
 									onclick={() => runLocalSigningAction(role, 'publish_next')}
 									disabled={!!signingAction}
 								>
-									Publish next
+									{$LL.admin_saml_local_publish_next()}
 								</button>
 								<button
 									class="btn btn-secondary btn-sm"
 									onclick={() => runLocalSigningAction(role, 'promote_next')}
 									disabled={!!signingAction || !policy.next?.kid}
 								>
-									Promote next
+									{$LL.admin_saml_local_promote_next()}
 								</button>
 								<button
 									class="btn btn-secondary btn-sm"
 									onclick={() => runLocalSigningAction(role, 'retire_backup')}
 									disabled={!!signingAction || !policy.backup?.kid}
 								>
-									Retire backup
+									{$LL.admin_saml_local_retire_backup()}
 								</button>
 							</div>
 						</section>
@@ -1886,22 +1770,6 @@
 		gap: 8px;
 		justify-content: flex-end;
 		margin-top: 16px;
-	}
-
-	.dr-bundle-fields {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 320px));
-		gap: 10px;
-		margin-top: 14px;
-	}
-
-	.dr-bundle-fields label {
-		display: grid;
-		gap: 6px;
-	}
-
-	.hidden-file-input {
-		display: none;
 	}
 
 	.metadata-panel {

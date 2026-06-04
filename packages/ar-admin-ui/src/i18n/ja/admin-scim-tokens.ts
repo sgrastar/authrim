@@ -1,0 +1,45 @@
+const adminScimTokens = {
+	admin_scim_tokens_head_title: 'SCIM Tokens - Authrim Admin',
+	admin_scim_tokens_title: 'SCIM Tokens',
+	admin_scim_tokens_description:
+		'SCIM tokensはSystem for Cross-domain Identity Management（RFC 7643/7644）のprovisioningで使用します。',
+	admin_scim_tokens_create_token: 'Tokenを作成',
+	admin_scim_tokens_load_failed: 'SCIM tokensの読み込みに失敗しました',
+	admin_scim_tokens_create_failed: 'Tokenの作成に失敗しました',
+	admin_scim_tokens_revoke_failed: 'Tokenのrevokeに失敗しました',
+	admin_scim_tokens_loading: '読み込み中...',
+	admin_scim_tokens_empty: 'SCIM tokenが見つかりません。',
+	admin_scim_tokens_empty_hint:
+		'Identity providerのSCIM provisioningを有効にするにはtokenを作成します。',
+	admin_scim_tokens_token_hash: 'Token Hash',
+	admin_scim_tokens_description_label: '説明',
+	admin_scim_tokens_expires_in_days: '有効期間（日）',
+	admin_scim_tokens_status: 'ステータス',
+	admin_scim_tokens_actions: '操作',
+	admin_scim_tokens_enabled: '有効',
+	admin_scim_tokens_disabled: '無効',
+	admin_scim_tokens_revoke: 'Revoke',
+	admin_scim_tokens_create_title: 'SCIM Tokenを作成',
+	admin_scim_tokens_description_optional: '説明（任意）',
+	admin_scim_tokens_valid_range: '有効範囲: 1-3650日（最大10年）',
+	admin_scim_tokens_cancel: 'キャンセル',
+	admin_scim_tokens_creating: '作成中...',
+	admin_scim_tokens_created_title: 'Tokenを作成しました',
+	admin_scim_tokens_save_now_warning: 'このtokenは再表示されません。今すぐ保存してください。',
+	admin_scim_tokens_scim_token: 'SCIM Token',
+	admin_scim_tokens_copied: 'コピー済み',
+	admin_scim_tokens_copy: 'コピー',
+	admin_scim_tokens_description_colon: '説明:',
+	admin_scim_tokens_none: 'なし',
+	admin_scim_tokens_expires_in_colon: '有効期間:',
+	admin_scim_tokens_days: '{count}日',
+	admin_scim_tokens_done: '完了',
+	admin_scim_tokens_revoke_title: 'SCIM Tokenをrevoke',
+	admin_scim_tokens_revoke_confirm:
+		'このSCIM tokenをrevokeしますか？この操作は元に戻せず、このtokenを使用しているSCIM integrationはすぐに無効になります。',
+	admin_scim_tokens_token_hash_colon: 'Token Hash:',
+	admin_scim_tokens_revoking: 'Revoke中...',
+	admin_scim_tokens_revoke_token: 'Tokenをrevoke'
+} as const;
+
+export default adminScimTokens;

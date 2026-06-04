@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
 	import type { HTMLInputAttributes } from 'svelte/elements';
 
 	interface Props extends Omit<HTMLInputAttributes, 'value'> {
@@ -6,17 +7,20 @@
 		width?: string;
 	}
 
-	let {
-		value = $bindable(''),
-		width = '300px',
-		placeholder = 'Search...',
-		...restProps
-	}: Props = $props();
+	let { value = $bindable(''), width = '300px', placeholder, ...restProps }: Props = $props();
+
+	const displayPlaceholder = $derived(placeholder ?? $LL.common_search_placeholder());
 </script>
 
 <div class="search-box" style:width>
 	<i class="search-icon i-ph-magnifying-glass"></i>
-	<input type="search" class="search-input" bind:value {placeholder} {...restProps} />
+	<input
+		type="search"
+		class="search-input"
+		bind:value
+		placeholder={displayPlaceholder}
+		{...restProps}
+	/>
 </div>
 
 <style>

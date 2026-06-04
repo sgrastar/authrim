@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
+
 	interface Props {
 		open: boolean;
 		title: string;
@@ -9,15 +11,7 @@
 		onCancel: () => void;
 	}
 
-	let {
-		open,
-		title,
-		resourceName,
-		phrase,
-		confirmLabel = 'Confirm',
-		onConfirm,
-		onCancel
-	}: Props = $props();
+	let { open, title, resourceName, phrase, confirmLabel, onConfirm, onCancel }: Props = $props();
 	let value = $state('');
 
 	$effect(() => {
@@ -39,23 +33,31 @@
 		<div class="modal" role="dialog" aria-modal="true" aria-labelledby="danger-modal-title">
 			<div class="modal-header">
 				<h2 id="danger-modal-title">{title}</h2>
-				<button class="icon-button" type="button" aria-label="Close" onclick={onCancel}>x</button>
+				<button class="icon-button" type="button" aria-label={$LL.common_close()} onclick={onCancel}
+					>x</button
+				>
 			</div>
 			<div class="modal-body">
 				<p class="resource-name">{resourceName}</p>
-				<p class="muted">Type the confirmation phrase exactly.</p>
+				<p class="muted">{$LL.common_confirmation_phrase_instruction()}</p>
 				<code>{phrase}</code>
-				<input bind:value autocomplete="off" placeholder="Confirmation phrase" />
+				<input
+					bind:value
+					autocomplete="off"
+					placeholder={$LL.common_confirmation_phrase_placeholder()}
+				/>
 			</div>
 			<div class="modal-actions">
-				<button class="btn btn-secondary" type="button" onclick={onCancel}>Cancel</button>
+				<button class="btn btn-secondary" type="button" onclick={onCancel}
+					>{$LL.common_cancel()}</button
+				>
 				<button
 					class="btn btn-danger"
 					type="button"
 					onclick={submit}
 					disabled={value.trim() !== phrase}
 				>
-					{confirmLabel}
+					{confirmLabel ?? $LL.common_confirm()}
 				</button>
 			</div>
 		</div>

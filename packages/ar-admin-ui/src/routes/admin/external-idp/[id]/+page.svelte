@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminExternalProvidersAPI,
 		type ExternalIdPProvider,
@@ -51,11 +52,11 @@
 
 	// Validate slug format
 	function validateSlug(value: string): string {
-		if (!value) return 'Slug is required';
+		if (!value) return $LL.admin_external_idp_slug_required_error();
 		if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(value)) {
-			return 'Slug must contain only lowercase letters, numbers, and hyphens (cannot start/end with hyphen)';
+			return $LL.admin_external_idp_slug_format_error();
 		}
-		if (value.length > 50) return 'Slug must be 50 characters or less';
+		if (value.length > 50) return $LL.admin_external_idp_slug_length_error();
 		return '';
 	}
 
@@ -86,7 +87,7 @@
 	// Discover OIDC configuration from well-known endpoint (via backend proxy to avoid CORS)
 	async function discoverOidcConfig() {
 		if (!discoveryUrl) {
-			discoveryError = 'Please enter a Discovery URL';
+			discoveryError = $LL.admin_external_idp_discovery_required();
 			return;
 		}
 
@@ -116,7 +117,8 @@
 			discoveryError = '';
 		} catch (err) {
 			console.error('OIDC Discovery failed:', err);
-			discoveryError = err instanceof Error ? err.message : 'Failed to discover OIDC configuration';
+			discoveryError =
+				err instanceof Error ? err.message : $LL.admin_external_idp_discovery_error();
 		} finally {
 			discovering = false;
 		}
@@ -157,7 +159,7 @@
 			buttonText = data.buttonText || '';
 		} catch (err) {
 			console.error('Failed to load provider:', err);
-			error = err instanceof Error ? err.message : 'Failed to load provider';
+			error = err instanceof Error ? err.message : $LL.admin_external_idp_error_load_provider();
 		} finally {
 			loading = false;
 		}
@@ -219,7 +221,7 @@
 			// Reload to get updated data
 			await loadProvider();
 		} catch (err) {
-			saveError = err instanceof Error ? err.message : 'Failed to update provider';
+			saveError = err instanceof Error ? err.message : $LL.admin_external_idp_error_update();
 		} finally {
 			saving = false;
 		}
@@ -232,15 +234,21 @@
 
 <svelte:head>
 	<title
-		>{provider ? `Edit: ${provider.name}` : 'Provider Details'} - External IdP - Admin Dashboard - Authrim</title
+		>{provider
+			? $LL.admin_external_idp_edit_title({ name: provider.name })
+			: $LL.admin_external_idp_detail_title_fallback()} - External IdP - Admin Dashboard - Authrim</title
 	>
 </svelte:head>
 
 <div class="admin-page">
-	<a href="/admin/external-idp" class="back-link">← Back to External IdP</a>
+	<a href="/admin/external-idp" class="back-link">← {$LL.admin_external_idp_back()}</a>
 
 	<h1 class="page-title">
-		{loading ? 'Loading...' : provider ? `Edit: ${provider.name}` : 'Provider Not Found'}
+		{loading
+			? $LL.admin_external_idp_loading()
+			: provider
+				? $LL.admin_external_idp_edit_title({ name: provider.name })
+				: $LL.admin_external_idp_not_found()}
 	</h1>
 
 	{#if error}
@@ -248,7 +256,7 @@
 	{/if}
 
 	{#if loading}
-		<div class="loading-state">Loading...</div>
+		<div class="loading-state">{$LL.admin_external_idp_loading()}</div>
 	{:else if provider}
 		<form
 			onsubmit={(e) => {
@@ -261,15 +269,15 @@
 			{/if}
 
 			{#if saveSuccess}
-				<div class="alert alert-success">Provider updated successfully!</div>
+				<div class="alert alert-success">{$LL.admin_external_idp_updated()}</div>
 			{/if}
 
 			<!-- Enable/Disable Toggle -->
 			<div class="panel">
 				<ToggleSwitch
 					bind:checked={enabled}
-					label="Provider Status"
-					description="Enable or disable this identity provider. When disabled, users cannot sign in using this provider."
+					label={$LL.admin_external_idp_provider_status()}
+					description={$LL.admin_external_idp_provider_status_desc()}
 				/>
 			</div>
 
@@ -277,30 +285,30 @@
 			<div class="panel">
 				<ToggleSwitch
 					bind:checked={enableSso}
-					label="Enable SSO"
-					description="When enabled, users are automatically signed in with a session after external IdP authentication (handoff flow). When disabled, the client receives an authorization code for token exchange (Direct Auth flow)."
+					label={$LL.admin_external_idp_enable_sso()}
+					description={$LL.admin_external_idp_enable_sso_desc()}
 				/>
 			</div>
 
 			<!-- Basic Information -->
 			<div class="panel">
-				<h2 class="panel-title">Basic Information</h2>
+				<h2 class="panel-title">{$LL.admin_external_idp_basic_information()}</h2>
 
 				<div class="form-grid">
 					<div class="form-group">
-						<label for="name" class="form-label">Name *</label>
+						<label for="name" class="form-label">{$LL.admin_external_idp_name_required()}</label>
 						<input id="name" type="text" bind:value={name} required class="form-input" />
 					</div>
 
 					<div class="form-group">
-						<label for="slug" class="form-label">Slug *</label>
+						<label for="slug" class="form-label">{$LL.admin_external_idp_slug_required()}</label>
 						<input
 							id="slug"
 							type="text"
 							bind:value={slug}
 							oninput={handleSlugInput}
 							required
-							placeholder="e.g., google"
+							placeholder={$LL.admin_external_idp_slug_placeholder()}
 							class="form-input"
 							class:input-error={slugError}
 						/>
@@ -308,14 +316,15 @@
 							<p class="form-error">{slugError}</p>
 						{:else}
 							<p class="form-hint">
-								Used in redirect URL. Changing this will require updating your external IdP
-								configuration.
+								{$LL.admin_external_idp_slug_edit_hint()}
 							</p>
 						{/if}
 					</div>
 
 					<div class="form-group">
-						<label for="providerType" class="form-label">Provider Type</label>
+						<label for="providerType" class="form-label"
+							>{$LL.admin_external_idp_provider_type()}</label
+						>
 						<select id="providerType" bind:value={providerType} class="form-select">
 							<option value="oidc">OIDC (OpenID Connect)</option>
 							<option value="oauth2">OAuth 2.0</option>
@@ -323,9 +332,9 @@
 					</div>
 
 					<div class="form-group">
-						<label for="priority" class="form-label">Priority</label>
+						<label for="priority" class="form-label">{$LL.admin_external_idp_priority()}</label>
 						<input id="priority" type="number" bind:value={priority} min="0" class="form-input" />
-						<p class="form-hint">Higher priority providers are shown first</p>
+						<p class="form-hint">{$LL.admin_external_idp_priority_hint()}</p>
 					</div>
 				</div>
 
@@ -333,14 +342,14 @@
 				{#if redirectUrl()}
 					<div class="redirect-url-section">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="form-label">Redirect URL (for external IdP configuration)</label>
+						<label class="form-label">{$LL.admin_external_idp_redirect_url()}</label>
 						<div class="redirect-url-box">
 							<code class="redirect-url-text">{redirectUrl()}</code>
 							<button
 								type="button"
 								class="copy-btn"
 								onclick={copyRedirectUrl}
-								title="Copy to clipboard"
+								title={$LL.admin_external_idp_copy_to_clipboard()}
 							>
 								{#if copySuccess}
 									<span class="copy-success">✓</span>
@@ -368,20 +377,20 @@
 
 			<!-- OAuth/OIDC Configuration -->
 			<div class="panel">
-				<h2 class="panel-title">OAuth/OIDC Configuration</h2>
+				<h2 class="panel-title">{$LL.admin_external_idp_oauth_config()}</h2>
 
 				<!-- OIDC Discovery -->
 				{#if providerType === 'oidc'}
 					<div class="discovery-section">
 						<label for="discoveryUrl" class="form-label"
-							>Auto-discover from OpenID Configuration</label
+							>{$LL.admin_external_idp_discovery_label()}</label
 						>
 						<div class="discovery-input-row">
 							<input
 								id="discoveryUrl"
 								type="url"
 								bind:value={discoveryUrl}
-								placeholder="https://accounts.google.com or https://accounts.google.com/.well-known/openid-configuration"
+								placeholder={$LL.admin_external_idp_discovery_placeholder()}
 								class="form-input"
 							/>
 							<button
@@ -392,7 +401,7 @@
 							>
 								{#if discovering}
 									<span class="spinner-small"></span>
-									Discovering...
+									{$LL.admin_external_idp_discovering()}
 								{:else}
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
@@ -408,7 +417,7 @@
 										<circle cx="11" cy="11" r="8"></circle>
 										<path d="m21 21-4.3-4.3"></path>
 									</svg>
-									Discover
+									{$LL.admin_external_idp_discover()}
 								{/if}
 							</button>
 						</div>
@@ -416,7 +425,7 @@
 							<p class="form-error">{discoveryError}</p>
 						{:else}
 							<p class="form-hint">
-								Enter the issuer URL or full discovery URL to auto-fill endpoints.
+								{$LL.admin_external_idp_discovery_edit_hint()}
 							</p>
 						{/if}
 					</div>
@@ -424,29 +433,31 @@
 
 				<div class="form-grid">
 					<div class="form-group">
-						<label for="clientId" class="form-label">Client ID *</label>
+						<label for="clientId" class="form-label"
+							>{$LL.admin_external_idp_client_id_required()}</label
+						>
 						<input id="clientId" type="text" bind:value={clientId} required class="form-input" />
 					</div>
 
 					<div class="form-group">
 						<label for="clientSecret" class="form-label"
-							>Client Secret (leave empty to keep current)</label
+							>{$LL.admin_external_idp_client_secret_keep()}</label
 						>
 						<input
 							id="clientSecret"
 							type="password"
 							bind:value={clientSecret}
-							placeholder="Enter new secret to update"
+							placeholder={$LL.admin_external_idp_client_secret_update_placeholder()}
 							class="form-input"
 						/>
 						{#if provider.hasSecret}
-							<p class="form-hint text-success">A secret is already configured</p>
+							<p class="form-hint text-success">{$LL.admin_external_idp_secret_configured()}</p>
 						{/if}
 					</div>
 
 					{#if providerType === 'oidc'}
 						<div class="form-group form-group-full">
-							<label for="issuer" class="form-label">Issuer URL</label>
+							<label for="issuer" class="form-label">{$LL.admin_external_idp_issuer_url()}</label>
 							<input
 								id="issuer"
 								type="url"
@@ -458,7 +469,7 @@
 					{/if}
 
 					<div class="form-group form-group-full">
-						<label for="scopes" class="form-label">Scopes</label>
+						<label for="scopes" class="form-label">{$LL.admin_external_idp_scopes()}</label>
 						<input
 							id="scopes"
 							type="text"
@@ -470,10 +481,14 @@
 				</div>
 
 				<details class="advanced-details">
-					<summary class="advanced-details-summary">Advanced Endpoints</summary>
+					<summary class="advanced-details-summary">
+						{$LL.admin_external_idp_advanced_endpoints()}
+					</summary>
 					<div class="form-grid" style="margin-top: 12px;">
 						<div class="form-group">
-							<label for="authorizationEndpoint" class="form-label">Authorization Endpoint</label>
+							<label for="authorizationEndpoint" class="form-label"
+								>{$LL.admin_external_idp_authorization_endpoint()}</label
+							>
 							<input
 								id="authorizationEndpoint"
 								type="url"
@@ -483,12 +498,16 @@
 						</div>
 
 						<div class="form-group">
-							<label for="tokenEndpoint" class="form-label">Token Endpoint</label>
+							<label for="tokenEndpoint" class="form-label"
+								>{$LL.admin_external_idp_token_endpoint()}</label
+							>
 							<input id="tokenEndpoint" type="url" bind:value={tokenEndpoint} class="form-input" />
 						</div>
 
 						<div class="form-group">
-							<label for="userinfoEndpoint" class="form-label">Userinfo Endpoint</label>
+							<label for="userinfoEndpoint" class="form-label"
+								>{$LL.admin_external_idp_userinfo_endpoint()}</label
+							>
 							<input
 								id="userinfoEndpoint"
 								type="url"
@@ -498,7 +517,7 @@
 						</div>
 
 						<div class="form-group">
-							<label for="jwksUri" class="form-label">JWKS URI</label>
+							<label for="jwksUri" class="form-label">{$LL.admin_external_idp_jwks_uri()}</label>
 							<input id="jwksUri" type="url" bind:value={jwksUri} class="form-input" />
 						</div>
 					</div>
@@ -507,42 +526,42 @@
 
 			<!-- Behavior Settings -->
 			<div class="panel">
-				<h2 class="panel-title">Behavior Settings</h2>
+				<h2 class="panel-title">{$LL.admin_external_idp_behavior_settings()}</h2>
 
 				<div class="behavior-settings-list">
 					<ToggleSwitch
 						bind:checked={autoLinkEmail}
-						label="Auto Link Email"
-						description="Automatically link accounts with matching email addresses"
+						label={$LL.admin_external_idp_auto_link_email()}
+						description={$LL.admin_external_idp_auto_link_email_desc()}
 					/>
 
 					<ToggleSwitch
 						bind:checked={jitProvisioning}
-						label="JIT Provisioning"
-						description="Create new user accounts on first login"
+						label={$LL.admin_external_idp_jit_provisioning()}
+						description={$LL.admin_external_idp_jit_provisioning_desc()}
 					/>
 
 					<ToggleSwitch
 						bind:checked={requireEmailVerified}
-						label="Require Email Verified"
-						description="Only allow users with verified email addresses"
+						label={$LL.admin_external_idp_require_email_verified()}
+						description={$LL.admin_external_idp_require_email_verified_desc()}
 					/>
 
 					<ToggleSwitch
 						bind:checked={alwaysFetchUserinfo}
-						label="Always Fetch Userinfo"
-						description="Fetch userinfo endpoint even if claims are in ID token"
+						label={$LL.admin_external_idp_always_fetch_userinfo()}
+						description={$LL.admin_external_idp_always_fetch_userinfo_desc()}
 					/>
 				</div>
 			</div>
 
 			<!-- UI Customization -->
 			<div class="panel">
-				<h2 class="panel-title">UI Customization</h2>
+				<h2 class="panel-title">{$LL.admin_external_idp_ui_customization()}</h2>
 
 				<div class="form-grid">
 					<div class="form-group form-group-full">
-						<label for="iconUrl" class="form-label">Icon URL</label>
+						<label for="iconUrl" class="form-label">{$LL.admin_external_idp_icon_url()}</label>
 						<input
 							id="iconUrl"
 							type="url"
@@ -556,13 +575,15 @@
 						<LoginProviderIconPicker
 							bind:value={iconName}
 							defaultIcon="sign-in"
-							defaultLabel="Automatic"
-							description="Used when Icon URL is empty. Choose Automatic to keep the built-in provider fallback."
+							defaultLabel={$LL.admin_external_idp_icon_automatic()}
+							description={$LL.admin_external_idp_icon_picker_desc()}
 						/>
 					</div>
 
 					<div class="form-group">
-						<label for="buttonColor" class="form-label">Button Color (Light Theme)</label>
+						<label for="buttonColor" class="form-label"
+							>{$LL.admin_external_idp_button_color_light()}</label
+						>
 						<div class="color-picker-row">
 							<input type="color" bind:value={buttonColor} class="color-picker-input" />
 							<input
@@ -576,7 +597,9 @@
 					</div>
 
 					<div class="form-group">
-						<label for="buttonColorDark" class="form-label">Button Color (Dark Theme)</label>
+						<label for="buttonColorDark" class="form-label"
+							>{$LL.admin_external_idp_button_color_dark()}</label
+						>
 						<div class="color-picker-row">
 							<input type="color" bind:value={buttonColorDark} class="color-picker-input" />
 							<input
@@ -590,31 +613,38 @@
 					</div>
 
 					<div class="form-group form-group-full">
-						<label for="buttonText" class="form-label">Button Text</label>
+						<label for="buttonText" class="form-label">{$LL.admin_external_idp_button_text()}</label
+						>
 						<input
 							id="buttonText"
 							type="text"
 							bind:value={buttonText}
-							placeholder={name ? `ex. Sign in with ${name}` : 'ex. Sign in with Provider'}
+							placeholder={name
+								? $LL.admin_external_idp_button_text_named_placeholder({ name })
+								: $LL.admin_external_idp_button_text_placeholder()}
 							class="form-input"
 						/>
-						<p class="form-hint">Leave empty to use the default text based on the provider name.</p>
+						<p class="form-hint">{$LL.admin_external_idp_button_text_hint()}</p>
 					</div>
 				</div>
 			</div>
 
 			<!-- Actions -->
 			<div class="form-actions">
-				<button type="button" class="btn btn-secondary" onclick={navigateBack}> Cancel </button>
+				<button type="button" class="btn btn-secondary" onclick={navigateBack}>
+					{$LL.dialog_cancel()}
+				</button>
 				<button type="submit" class="btn btn-primary" disabled={saving}>
-					{saving ? 'Saving...' : 'Save Changes'}
+					{saving ? $LL.admin_client_detail_saving() : $LL.admin_user_detail_save()}
 				</button>
 			</div>
 		</form>
 	{:else}
 		<div class="empty-state">
-			<p>Provider not found.</p>
-			<button class="btn btn-primary" onclick={navigateBack}>Back to Providers</button>
+			<p>{$LL.admin_external_idp_not_found_desc()}</p>
+			<button class="btn btn-primary" onclick={navigateBack}
+				>{$LL.admin_external_idp_back_to_providers()}</button
+			>
 		</div>
 	{/if}
 </div>

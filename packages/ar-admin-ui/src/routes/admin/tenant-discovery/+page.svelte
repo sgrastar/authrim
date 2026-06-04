@@ -16,6 +16,7 @@
 		resolveEmailResolutionPolicy,
 		type EmailResolutionPolicy
 	} from '$lib/admin/tenant-discovery-settings';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface LoginEntryForm {
 		overrideEnabled: boolean;
@@ -114,7 +115,9 @@
 	const canEditPlatform = $derived(
 		settingsContext.getPermissionForScope('platform', adminAuth.user?.roles ?? []) === 'edit'
 	);
-	const commonDiscoverDisplay = $derived(commonDiscoverUrl || 'the shared /discover URL');
+	const commonDiscoverDisplay = $derived(
+		commonDiscoverUrl || $LL.admin_tenant_discovery_common_url_fallback()
+	);
 
 	const hasBehaviorChanges = $derived(
 		initialBehaviorValues
@@ -150,7 +153,7 @@
 			!form.tenantSlugEnabled &&
 			!form.wayfEnabled
 		) {
-			return 'Enable at least one discovery method.';
+			return $LL.admin_tenant_discovery_validation_enable_method();
 		}
 
 		if (
@@ -159,7 +162,7 @@
 			!form.tenantSlugEnabled &&
 			!form.wayfEnabled
 		) {
-			return 'manual_only requires tenant code, tenant slug, or WAYF to remain enabled.';
+			return $LL.admin_tenant_discovery_validation_manual_requires_method();
 		}
 
 		return '';
@@ -174,20 +177,18 @@
 		switch (mode) {
 			case 'tenant_only':
 				return {
-					description:
-						'Users sign in through a tenant-specific entry point. The shared discovery page is bypassed unless another flow sends users there.',
-					sample: 'Use when every app or invitation already knows the tenant.'
+					description: $LL.admin_tenant_discovery_entry_mode_tenant_only_description(),
+					sample: $LL.admin_tenant_discovery_entry_mode_tenant_only_sample()
 				};
 			case 'discovery_optional':
 				return {
-					description:
-						'Users can use tenant discovery, but tenant-specific login URLs remain valid.',
-					sample: 'Good default for gradual multi-tenant rollout.'
+					description: $LL.admin_tenant_discovery_entry_mode_discovery_optional_description(),
+					sample: $LL.admin_tenant_discovery_entry_mode_discovery_optional_sample()
 				};
 			case 'discovery_required':
 				return {
-					description: 'Users must resolve a tenant before login methods are shown.',
-					sample: 'Use when the shared login entry should always choose a tenant first.'
+					description: $LL.admin_tenant_discovery_entry_mode_discovery_required_description(),
+					sample: $LL.admin_tenant_discovery_entry_mode_discovery_required_sample()
 				};
 		}
 	}
@@ -195,26 +196,25 @@
 	function emailResolutionInfo(policy: EmailResolutionPolicy, enabled: boolean) {
 		if (!enabled) {
 			return {
-				description: 'Email-based discovery is currently disabled.',
-				sample: 'Enable Email address below to use this policy.'
+				description: $LL.admin_tenant_discovery_email_resolution_disabled_description(),
+				sample: $LL.admin_tenant_discovery_email_resolution_disabled_sample()
 			};
 		}
 		switch (policy) {
 			case 'exact_email_only':
 				return {
-					description: 'Resolve the tenant only when the full email address is explicitly mapped.',
-					sample: 'alice@example.edu must have its own mapping.'
+					description: $LL.admin_tenant_discovery_email_resolution_exact_only_description(),
+					sample: $LL.admin_tenant_discovery_email_resolution_exact_only_sample()
 				};
 			case 'exact_email_then_domain':
 				return {
-					description:
-						'Try an exact email mapping first, then fall back to the email domain if no exact match exists.',
-					sample: 'alice@example.edu falls back to example.edu.'
+					description: $LL.admin_tenant_discovery_email_resolution_exact_then_domain_description(),
+					sample: $LL.admin_tenant_discovery_email_resolution_exact_then_domain_sample()
 				};
 			case 'disabled':
 				return {
-					description: 'Do not resolve tenants from email addresses.',
-					sample: 'Users must use another enabled discovery method.'
+					description: $LL.admin_tenant_discovery_email_resolution_disabled_policy_description(),
+					sample: $LL.admin_tenant_discovery_email_resolution_disabled_policy_sample()
 				};
 		}
 	}
@@ -223,27 +223,23 @@
 		switch (policy) {
 			case 'auto_if_single':
 				return {
-					description:
-						'Automatically continue when discovery returns exactly one tenant. Show a selection screen for multiple matches.',
-					sample: 'Best when mappings are reliable and one clear match is common.'
+					description: $LL.admin_tenant_discovery_selection_auto_if_single_description(),
+					sample: $LL.admin_tenant_discovery_selection_auto_if_single_sample()
 				};
 			case 'always_select':
 				return {
-					description:
-						'Always show the tenant selection step after discovery, even if only one tenant matched.',
-					sample: 'Use when users should explicitly confirm the tenant.'
+					description: $LL.admin_tenant_discovery_selection_always_select_description(),
+					sample: $LL.admin_tenant_discovery_selection_always_select_sample()
 				};
 			case 'select_if_multiple':
 				return {
-					description:
-						'Skip the selection step for one match, but ask users to choose when multiple tenants match.',
-					sample: 'Balanced default for shared email domains.'
+					description: $LL.admin_tenant_discovery_selection_select_if_multiple_description(),
+					sample: $LL.admin_tenant_discovery_selection_select_if_multiple_sample()
 				};
 			case 'manual_only':
 				return {
-					description:
-						'Do not auto-select from email resolution. Users must enter or choose a tenant manually.',
-					sample: 'Requires tenant code, tenant slug, or WAYF discovery to stay enabled.'
+					description: $LL.admin_tenant_discovery_selection_manual_only_description(),
+					sample: $LL.admin_tenant_discovery_selection_manual_only_sample()
 				};
 		}
 	}
@@ -578,9 +574,13 @@
 					commonEntryForm = null;
 					initialCommonEntryValues = null;
 					commonEntryBehaviorError =
-						err instanceof Error ? err.message : 'Failed to load common entry behavior';
+						err instanceof Error
+							? err.message
+							: $LL.admin_tenant_discovery_load_common_behavior_failed();
 					commonEntryError =
-						err instanceof Error ? err.message : 'Failed to load common entry screen settings';
+						err instanceof Error
+							? err.message
+							: $LL.admin_tenant_discovery_load_common_screen_failed();
 				}
 			} else {
 				tenantUiForm = createDiscoveryUiForm(tenantUiResult, {
@@ -595,7 +595,7 @@
 				initialCommonEntryValues = null;
 			}
 		} catch (err) {
-			pageError = err instanceof Error ? err.message : 'Failed to load tenant discovery settings';
+			pageError = err instanceof Error ? err.message : $LL.admin_tenant_discovery_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -639,15 +639,15 @@
 				{ level: 'tenant', tenantId: settingsContext.resolveTenantId(currentTenantId) },
 				{ ifMatch: loginEntrySettings.version, set }
 			);
-			behaviorSuccess = 'Discovery behavior saved';
+			behaviorSuccess = $LL.admin_tenant_discovery_behavior_saved();
 			await loadPageData();
 		} catch (err) {
 			behaviorError =
 				err instanceof SettingsConflictError
-					? 'Settings were modified by another user. Reload and try again.'
+					? $LL.admin_tenant_discovery_conflict()
 					: err instanceof Error
 						? err.message
-						: 'Failed to save discovery behavior';
+						: $LL.admin_tenant_discovery_behavior_save_failed();
 		} finally {
 			behaviorSaving = false;
 		}
@@ -675,15 +675,15 @@
 				{ level: 'platform' },
 				{ ifMatch: commonEntryBehaviorSettings.version, set }
 			);
-			commonEntryBehaviorSuccess = 'Common entry discovery behavior saved';
+			commonEntryBehaviorSuccess = $LL.admin_tenant_discovery_common_behavior_saved();
 			await loadPageData();
 		} catch (err) {
 			commonEntryBehaviorError =
 				err instanceof SettingsConflictError
-					? 'Settings were modified by another user. Reload and try again.'
+					? $LL.admin_tenant_discovery_conflict()
 					: err instanceof Error
 						? err.message
-						: 'Failed to save common entry discovery behavior';
+						: $LL.admin_tenant_discovery_common_behavior_save_failed();
 		} finally {
 			commonEntryBehaviorSaving = false;
 		}
@@ -704,15 +704,15 @@
 				{ level: 'platform' },
 				{ ifMatch: commonEntrySettings.version, set }
 			);
-			commonEntrySuccess = 'Common entry screen saved';
+			commonEntrySuccess = $LL.admin_tenant_discovery_common_screen_saved();
 			await loadPageData();
 		} catch (err) {
 			commonEntryError =
 				err instanceof SettingsConflictError
-					? 'Settings were modified by another user. Reload and try again.'
+					? $LL.admin_tenant_discovery_conflict()
 					: err instanceof Error
 						? err.message
-						: 'Failed to save common entry screen';
+						: $LL.admin_tenant_discovery_common_screen_save_failed();
 		} finally {
 			commonEntrySaving = false;
 		}
@@ -736,15 +736,15 @@
 				{ level: 'tenant', tenantId: settingsContext.resolveTenantId(currentTenantId) },
 				{ ifMatch: tenantUiSettings.version, set }
 			);
-			tenantUiSuccess = 'Tenant discovery screen saved';
+			tenantUiSuccess = $LL.admin_tenant_discovery_tenant_screen_saved();
 			await loadPageData();
 		} catch (err) {
 			tenantUiError =
 				err instanceof SettingsConflictError
-					? 'Settings were modified by another user. Reload and try again.'
+					? $LL.admin_tenant_discovery_conflict()
 					: err instanceof Error
 						? err.message
-						: 'Failed to save tenant discovery screen';
+						: $LL.admin_tenant_discovery_tenant_screen_save_failed();
 		} finally {
 			tenantUiSaving = false;
 		}
@@ -752,19 +752,18 @@
 </script>
 
 <svelte:head>
-	<title>Tenant Discovery - Admin</title>
+	<title>{$LL.admin_tenant_discovery_head_title()}</title>
 </svelte:head>
 
 <div class="page-shell">
 	<header class="page-header">
 		<div>
-			<h1 class="page-title">Tenant Discovery</h1>
+			<h1 class="page-title">{$LL.admin_tenant_discovery_title()}</h1>
 			<p class="page-description">
 				{#if singleTenantMode}
-					Available after enabling multi-tenant mode. Use this page to configure tenant discovery
-					flows.
+					{$LL.admin_tenant_discovery_description_single()}
 				{:else}
-					Configure tenant resolution behavior and customize the discovery screen.
+					{$LL.admin_tenant_discovery_description_multi()}
 				{/if}
 			</p>
 		</div>
@@ -772,28 +771,27 @@
 
 	{#if loading}
 		<div class="loading-state">
-			<p>Loading tenant discovery settings...</p>
+			<p>{$LL.admin_tenant_discovery_loading()}</p>
 		</div>
 	{:else if singleTenantMode}
 		<section class="panel">
 			<div class="alert alert-info">
-				Tenant discovery is disabled while this deployment is running in single-tenant mode. You can
-				start from `workers.dev`, add an API custom domain later, and then enable multi-tenant mode
-				in Setup.
+				{$LL.admin_tenant_discovery_single_mode_disabled()}
 			</div>
 		</section>
 		<section class="panel">
 			<div class="section-header">
 				<div>
-					<h2>Discovery Controls</h2>
+					<h2>{$LL.admin_tenant_discovery_controls_title()}</h2>
 					<p>
-						Common entry, tenant resolution, and discovery screen overrides become available after
-						multi-tenant mode is enabled.
+						{$LL.admin_tenant_discovery_controls_description()}
 					</p>
 				</div>
 			</div>
 			<div class="actions">
-				<button class="btn btn-primary" disabled>Enable In Setup</button>
+				<button class="btn btn-primary" disabled
+					>{$LL.admin_tenant_discovery_enable_in_setup()}</button
+				>
 			</div>
 		</section>
 	{:else if pageError}
@@ -805,11 +803,11 @@
 			<section class="panel">
 				<div class="section-header">
 					<div>
-						<h2>Common Entry Login Behavior</h2>
+						<h2>{$LL.admin_tenant_discovery_common_behavior_title()}</h2>
 						<p>
-							Controls the shared entry page before a tenant is selected. Current URL: <code
-								>{commonDiscoverDisplay}</code
-							>.
+							{$LL.admin_tenant_discovery_common_behavior_description({
+								url: commonDiscoverDisplay
+							})}
 						</p>
 					</div>
 				</div>
@@ -825,32 +823,43 @@
 				{/if}
 				{#if !canEditPlatform}
 					<div class="alert alert-info">
-						Common entry behavior is a platform setting. Tenant admins can review it, but cannot
-						edit it.
+						{$LL.admin_tenant_discovery_platform_readonly_behavior()}
 					</div>
 				{/if}
 
 				{#if commonEntryBehaviorForm}
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="common-entry-mode">Entry Mode</label>
+							<label for="common-entry-mode">{$LL.admin_tenant_discovery_entry_mode()}</label>
 							<select
 								id="common-entry-mode"
 								bind:value={commonEntryBehaviorForm.mode}
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 							>
-								<option value="tenant_only">Tenant-specific entry only</option>
-								<option value="discovery_optional">Discovery optional</option>
-								<option value="discovery_required">Discovery required</option>
+								<option value="tenant_only"
+									>{$LL.admin_tenant_discovery_entry_mode_tenant_only()}</option
+								>
+								<option value="discovery_optional"
+									>{$LL.admin_tenant_discovery_entry_mode_discovery_optional()}</option
+								>
+								<option value="discovery_required"
+									>{$LL.admin_tenant_discovery_entry_mode_discovery_required()}</option
+								>
 							</select>
 							<div class="inline-help">
 								<p>{entryModeInfo(commonEntryBehaviorForm.mode).description}</p>
-								<code>Example: {entryModeInfo(commonEntryBehaviorForm.mode).sample}</code>
+								<code
+									>{$LL.admin_tenant_discovery_example({
+										sample: entryModeInfo(commonEntryBehaviorForm.mode).sample
+									})}</code
+								>
 							</div>
 						</div>
 
 						<div class="form-group">
-							<label for="common-email-policy">Email Resolution</label>
+							<label for="common-email-policy"
+								>{$LL.admin_tenant_discovery_email_resolution()}</label
+							>
 							<select
 								id="common-email-policy"
 								bind:value={commonEntryBehaviorForm.emailResolutionPolicy}
@@ -859,9 +868,11 @@
 									!commonEntryBehaviorForm.emailEnabled}
 							>
 								<option value="exact_email_then_domain"
-									>Exact email, then email-domain fallback</option
+									>{$LL.admin_tenant_discovery_email_resolution_exact_then_domain()}</option
 								>
-								<option value="exact_email_only">Exact email only</option>
+								<option value="exact_email_only"
+									>{$LL.admin_tenant_discovery_email_resolution_exact_only()}</option
+								>
 							</select>
 							<div class="inline-help">
 								<p>
@@ -871,43 +882,56 @@
 									).description}
 								</p>
 								<code>
-									Example: {emailResolutionInfo(
-										commonEntryBehaviorForm.emailResolutionPolicy,
-										commonEntryBehaviorForm.emailEnabled
-									).sample}
+									{$LL.admin_tenant_discovery_example({
+										sample: emailResolutionInfo(
+											commonEntryBehaviorForm.emailResolutionPolicy,
+											commonEntryBehaviorForm.emailEnabled
+										).sample
+									})}
 								</code>
 							</div>
 						</div>
 
 						<div class="form-group">
-							<label for="common-selection-policy">Selection Policy</label>
+							<label for="common-selection-policy"
+								>{$LL.admin_tenant_discovery_selection_policy()}</label
+							>
 							<select
 								id="common-selection-policy"
 								bind:value={commonEntryBehaviorForm.selectionPolicy}
 								disabled={!canEditPlatform || commonEntryBehaviorSaving}
 							>
-								<option value="auto_if_single">Auto if single</option>
-								<option value="always_select">Always select</option>
-								<option value="select_if_multiple">Select if multiple</option>
-								<option value="manual_only">Manual only</option>
+								<option value="auto_if_single"
+									>{$LL.admin_tenant_discovery_selection_auto_if_single()}</option
+								>
+								<option value="always_select"
+									>{$LL.admin_tenant_discovery_selection_always_select()}</option
+								>
+								<option value="select_if_multiple"
+									>{$LL.admin_tenant_discovery_selection_select_if_multiple()}</option
+								>
+								<option value="manual_only"
+									>{$LL.admin_tenant_discovery_selection_manual_only()}</option
+								>
 							</select>
 							<div class="inline-help">
 								<p>{selectionPolicyInfo(commonEntryBehaviorForm.selectionPolicy).description}</p>
 								<code>
-									Example: {selectionPolicyInfo(commonEntryBehaviorForm.selectionPolicy).sample}
+									{$LL.admin_tenant_discovery_example({
+										sample: selectionPolicyInfo(commonEntryBehaviorForm.selectionPolicy).sample
+									})}
 								</code>
 							</div>
 						</div>
 					</div>
 
 					<div class="methods-card">
-						<h3>Enabled Discovery Methods</h3>
+						<h3>{$LL.admin_tenant_discovery_enabled_methods()}</h3>
 						<div class="toggle-row">
 							<div>
-								<strong>Email address</strong>
+								<strong>{$LL.admin_tenant_discovery_method_email()}</strong>
 								<p>
-									Allow users to identify the tenant from their email address, with optional
-									email-domain fallback.
+									{$LL.admin_tenant_discovery_method_email_description()}
 								</p>
 							</div>
 							<ToggleSwitch
@@ -921,8 +945,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Tenant code</strong>
-								<p>Allow users to identify the tenant by tenant code.</p>
+								<strong>{$LL.admin_tenant_discovery_method_tenant_code()}</strong>
+								<p>{$LL.admin_tenant_discovery_method_tenant_code_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="common-tenant-code-enabled"
@@ -935,8 +959,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Tenant slug</strong>
-								<p>Allow users to identify the tenant by tenant slug.</p>
+								<strong>{$LL.admin_tenant_discovery_method_tenant_slug()}</strong>
+								<p>{$LL.admin_tenant_discovery_method_tenant_slug_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="common-tenant-slug-enabled"
@@ -949,8 +973,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>WAYF tenant chooser</strong>
-								<p>Show a tenant-name dropdown populated from active tenants.</p>
+								<strong>{$LL.admin_tenant_discovery_method_wayf()}</strong>
+								<p>{$LL.admin_tenant_discovery_method_wayf_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="common-wayf-enabled"
@@ -966,8 +990,8 @@
 					<div class="toggle-list">
 						<div class="toggle-row">
 							<div>
-								<strong>Allow manual tenant entry</strong>
-								<p>Show manual entry fallback when automatic discovery cannot resolve a tenant.</p>
+								<strong>{$LL.admin_tenant_discovery_allow_manual()}</strong>
+								<p>{$LL.admin_tenant_discovery_allow_manual_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="common-allow-manual-entry"
@@ -981,8 +1005,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Remember last tenant</strong>
-								<p>Remember the tenant that was resolved most recently for this browser.</p>
+								<strong>{$LL.admin_tenant_discovery_remember_last()}</strong>
+								<p>{$LL.admin_tenant_discovery_remember_last_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="common-remember-last-tenant"
@@ -995,9 +1019,9 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Redirect default login to discovery</strong>
+								<strong>{$LL.admin_tenant_discovery_redirect_default_login()}</strong>
 								<p>
-									Redirect common-entry <code>/login</code> requests to <code>/discover</code> when appropriate.
+									{$LL.admin_tenant_discovery_redirect_default_login_description()}
 								</p>
 							</div>
 							<ToggleSwitch
@@ -1012,10 +1036,9 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Require common discovery before tenant login</strong>
+								<strong>{$LL.admin_tenant_discovery_require_common_before_login()}</strong>
 								<p>
-									When enabled, direct tenant-host <code>/login</code> visits must pass through the shared
-									discover screen first. Challenge-based OIDC login is unchanged.
+									{$LL.admin_tenant_discovery_require_common_before_login_common_description()}
 								</p>
 							</div>
 							<ToggleSwitch
@@ -1030,8 +1053,10 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Redirect tenant discover to common entry</strong>
-								<p>Redirect tenant-host and vanity-host <code>/discover</code> to common entry.</p>
+								<strong>{$LL.admin_tenant_discovery_redirect_tenant_discover()}</strong>
+								<p>
+									{$LL.admin_tenant_discovery_redirect_tenant_discover_common_description()}
+								</p>
 							</div>
 							<ToggleSwitch
 								id="common-redirect-tenant-discover"
@@ -1045,10 +1070,9 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Skip discovery when only one tenant exists</strong>
+								<strong>{$LL.admin_tenant_discovery_skip_if_one()}</strong>
 								<p>
-									When enabled, the shared <code>/discover</code> flow immediately continues to the tenant
-									login page if there is exactly one active tenant.
+									{$LL.admin_tenant_discovery_skip_if_one_description()}
 								</p>
 							</div>
 							<ToggleSwitch
@@ -1072,7 +1096,11 @@
 								commonEntryBehaviorSaving ||
 								!!commonEntryBehaviorValidationError}
 						>
-							{#if commonEntryBehaviorSaving}Saving...{:else}Save Common Entry Behavior{/if}
+							{#if commonEntryBehaviorSaving}
+								{$LL.admin_tenant_discovery_saving()}
+							{:else}
+								{$LL.admin_tenant_discovery_save_common_behavior()}
+							{/if}
 						</button>
 					</div>
 				{/if}
@@ -1082,14 +1110,23 @@
 		<section class="panel">
 			<div class="section-header">
 				<div>
-					<h2>{singleTenantMode ? 'Discovery Behavior' : 'Tenant Entry Override'}</h2>
+					<h2>
+						{singleTenantMode
+							? $LL.admin_tenant_discovery_tenant_behavior_title_single()
+							: $LL.admin_tenant_discovery_tenant_behavior_title_multi()}
+					</h2>
 					<p>
 						{singleTenantMode
-							? 'Controls how this tenant is resolved before login.'
-							: `Controls direct entry behavior for ${currentTenantName}. This does not change the shared entry page at ${commonDiscoverDisplay}.`}
+							? $LL.admin_tenant_discovery_tenant_behavior_description_single()
+							: $LL.admin_tenant_discovery_tenant_behavior_description_multi({
+									tenant: currentTenantName,
+									url: commonDiscoverDisplay
+								})}
 					</p>
 				</div>
-				<a class="subtle-link" href={`/admin/tenants/${currentTenantId}`}>Open Tenant Details</a>
+				<a class="subtle-link" href={`/admin/tenants/${currentTenantId}`}
+					>{$LL.admin_tenant_discovery_open_tenant_details()}</a
+				>
 			</div>
 
 			{#if behaviorError}
@@ -1106,10 +1143,9 @@
 				{#if !singleTenantMode}
 					<div class="override-toggle">
 						<div>
-							<strong>Enable tenant entry override</strong>
+							<strong>{$LL.admin_tenant_discovery_enable_tenant_override()}</strong>
 							<p>
-								When disabled, this tenant uses the common entry behavior. Existing tenant values
-								are kept but ignored until this override is enabled.
+								{$LL.admin_tenant_discovery_enable_tenant_override_description()}
 							</p>
 						</div>
 						<ToggleSwitch
@@ -1126,33 +1162,45 @@
 				{#if singleTenantMode || behaviorForm.overrideEnabled}
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="mode">Entry Mode</label>
+							<label for="mode">{$LL.admin_tenant_discovery_entry_mode()}</label>
 							<select
 								id="mode"
 								bind:value={behaviorForm.mode}
 								disabled={!canEditTenant || behaviorSaving}
 							>
-								<option value="tenant_only">Tenant-specific entry only</option>
-								<option value="discovery_optional">Discovery optional</option>
-								<option value="discovery_required">Discovery required</option>
+								<option value="tenant_only"
+									>{$LL.admin_tenant_discovery_entry_mode_tenant_only()}</option
+								>
+								<option value="discovery_optional"
+									>{$LL.admin_tenant_discovery_entry_mode_discovery_optional()}</option
+								>
+								<option value="discovery_required"
+									>{$LL.admin_tenant_discovery_entry_mode_discovery_required()}</option
+								>
 							</select>
 							<div class="inline-help">
 								<p>{entryModeInfo(behaviorForm.mode).description}</p>
-								<code>Example: {entryModeInfo(behaviorForm.mode).sample}</code>
+								<code
+									>{$LL.admin_tenant_discovery_example({
+										sample: entryModeInfo(behaviorForm.mode).sample
+									})}</code
+								>
 							</div>
 						</div>
 
 						<div class="form-group">
-							<label for="email-policy">Email Resolution</label>
+							<label for="email-policy">{$LL.admin_tenant_discovery_email_resolution()}</label>
 							<select
 								id="email-policy"
 								bind:value={behaviorForm.emailResolutionPolicy}
 								disabled={!canEditTenant || behaviorSaving || !behaviorForm.emailEnabled}
 							>
 								<option value="exact_email_then_domain"
-									>Exact email, then email-domain fallback</option
+									>{$LL.admin_tenant_discovery_email_resolution_exact_then_domain()}</option
 								>
-								<option value="exact_email_only">Exact email only</option>
+								<option value="exact_email_only"
+									>{$LL.admin_tenant_discovery_email_resolution_exact_only()}</option
+								>
 							</select>
 							<div class="inline-help">
 								<p>
@@ -1162,41 +1210,54 @@
 									).description}
 								</p>
 								<code>
-									Example: {emailResolutionInfo(
-										behaviorForm.emailResolutionPolicy,
-										behaviorForm.emailEnabled
-									).sample}
+									{$LL.admin_tenant_discovery_example({
+										sample: emailResolutionInfo(
+											behaviorForm.emailResolutionPolicy,
+											behaviorForm.emailEnabled
+										).sample
+									})}
 								</code>
 							</div>
 						</div>
 
 						<div class="form-group">
-							<label for="selection-policy">Selection Policy</label>
+							<label for="selection-policy">{$LL.admin_tenant_discovery_selection_policy()}</label>
 							<select
 								id="selection-policy"
 								bind:value={behaviorForm.selectionPolicy}
 								disabled={!canEditTenant || behaviorSaving}
 							>
-								<option value="auto_if_single">Auto if single</option>
-								<option value="always_select">Always select</option>
-								<option value="select_if_multiple">Select if multiple</option>
-								<option value="manual_only">Manual only</option>
+								<option value="auto_if_single"
+									>{$LL.admin_tenant_discovery_selection_auto_if_single()}</option
+								>
+								<option value="always_select"
+									>{$LL.admin_tenant_discovery_selection_always_select()}</option
+								>
+								<option value="select_if_multiple"
+									>{$LL.admin_tenant_discovery_selection_select_if_multiple()}</option
+								>
+								<option value="manual_only"
+									>{$LL.admin_tenant_discovery_selection_manual_only()}</option
+								>
 							</select>
 							<div class="inline-help">
 								<p>{selectionPolicyInfo(behaviorForm.selectionPolicy).description}</p>
-								<code>Example: {selectionPolicyInfo(behaviorForm.selectionPolicy).sample}</code>
+								<code
+									>{$LL.admin_tenant_discovery_example({
+										sample: selectionPolicyInfo(behaviorForm.selectionPolicy).sample
+									})}</code
+								>
 							</div>
 						</div>
 					</div>
 
 					<div class="methods-card">
-						<h3>Enabled Discovery Methods</h3>
+						<h3>{$LL.admin_tenant_discovery_enabled_methods()}</h3>
 						<div class="toggle-row">
 							<div>
-								<strong>Email address</strong>
+								<strong>{$LL.admin_tenant_discovery_method_email()}</strong>
 								<p>
-									Allow users to identify the tenant from their email address, with optional
-									email-domain fallback.
+									{$LL.admin_tenant_discovery_method_email_description()}
 								</p>
 							</div>
 							<ToggleSwitch
@@ -1210,8 +1271,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Tenant code</strong>
-								<p>Allow users to identify the tenant by tenant code.</p>
+								<strong>{$LL.admin_tenant_discovery_method_tenant_code()}</strong>
+								<p>{$LL.admin_tenant_discovery_method_tenant_code_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="tenant-code-enabled"
@@ -1224,8 +1285,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Tenant slug</strong>
-								<p>Allow users to identify the tenant by tenant slug.</p>
+								<strong>{$LL.admin_tenant_discovery_method_tenant_slug()}</strong>
+								<p>{$LL.admin_tenant_discovery_method_tenant_slug_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="tenant-slug-enabled"
@@ -1238,8 +1299,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>WAYF tenant chooser</strong>
-								<p>Show a tenant-name dropdown populated from active tenants.</p>
+								<strong>{$LL.admin_tenant_discovery_method_wayf()}</strong>
+								<p>{$LL.admin_tenant_discovery_method_wayf_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="wayf-enabled"
@@ -1255,8 +1316,8 @@
 					<div class="toggle-list">
 						<div class="toggle-row">
 							<div>
-								<strong>Allow manual tenant entry</strong>
-								<p>Show manual entry fallback when automatic discovery cannot resolve a tenant.</p>
+								<strong>{$LL.admin_tenant_discovery_allow_manual()}</strong>
+								<p>{$LL.admin_tenant_discovery_allow_manual_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="allow-manual-entry"
@@ -1269,8 +1330,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Remember last tenant</strong>
-								<p>Remember the tenant that was resolved most recently for this browser.</p>
+								<strong>{$LL.admin_tenant_discovery_remember_last()}</strong>
+								<p>{$LL.admin_tenant_discovery_remember_last_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="remember-last-tenant"
@@ -1283,8 +1344,8 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Redirect default login to discovery</strong>
-								<p>Redirect common-entry `/login` requests to `/discover` when appropriate.</p>
+								<strong>{$LL.admin_tenant_discovery_redirect_default_login()}</strong>
+								<p>{$LL.admin_tenant_discovery_redirect_default_login_description()}</p>
 							</div>
 							<ToggleSwitch
 								id="redirect-default-login"
@@ -1297,10 +1358,9 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Require common discovery before tenant login</strong>
+								<strong>{$LL.admin_tenant_discovery_require_common_before_login()}</strong>
 								<p>
-									When enabled, direct visits to this tenant's <code>/login</code> must pass through the
-									shared discover screen first. Challenge-based OIDC login is unchanged.
+									{$LL.admin_tenant_discovery_require_common_before_login_tenant_description()}
 								</p>
 							</div>
 							<ToggleSwitch
@@ -1314,9 +1374,9 @@
 						</div>
 						<div class="toggle-row">
 							<div>
-								<strong>Redirect tenant discover to common entry</strong>
+								<strong>{$LL.admin_tenant_discovery_redirect_tenant_discover()}</strong>
 								<p>
-									Redirect this tenant's host and vanity host <code>/discover</code> to common entry.
+									{$LL.admin_tenant_discovery_redirect_tenant_discover_tenant_description()}
 								</p>
 							</div>
 							<ToggleSwitch
@@ -1339,13 +1399,16 @@
 								behaviorSaving ||
 								!!behaviorValidationError}
 						>
-							{#if behaviorSaving}Saving...{:else}Save Discovery Behavior{/if}
+							{#if behaviorSaving}
+								{$LL.admin_tenant_discovery_saving()}
+							{:else}
+								{$LL.admin_tenant_discovery_save_behavior()}
+							{/if}
 						</button>
 					</div>
 				{:else}
 					<div class="collapsed-override">
-						Common entry behavior is active for this tenant. Enable the override to configure
-						tenant-specific entry behavior.
+						{$LL.admin_tenant_discovery_common_behavior_active()}
 					</div>
 					<div class="actions">
 						<button
@@ -1353,7 +1416,11 @@
 							onclick={saveBehavior}
 							disabled={!canEditTenant || !hasBehaviorChanges || behaviorSaving}
 						>
-							{#if behaviorSaving}Saving...{:else}Save Tenant Entry Override{/if}
+							{#if behaviorSaving}
+								{$LL.admin_tenant_discovery_saving()}
+							{:else}
+								{$LL.admin_tenant_discovery_save_tenant_entry_override()}
+							{/if}
 						</button>
 					</div>
 				{/if}
@@ -1364,11 +1431,11 @@
 			<section class="panel">
 				<div class="section-header">
 					<div>
-						<h2>Common Entry Screen Content</h2>
+						<h2>{$LL.admin_tenant_discovery_common_screen_title()}</h2>
 						<p>
-							Text, branding, and theme used by the shared entry page at <code
-								>{commonDiscoverDisplay}</code
-							>.
+							{$LL.admin_tenant_discovery_common_screen_description({
+								url: commonDiscoverDisplay
+							})}
 						</p>
 					</div>
 				</div>
@@ -1381,47 +1448,45 @@
 				{/if}
 				{#if !canEditPlatform}
 					<div class="alert alert-info">
-						Common entry screen content is a platform setting. Tenant admins can review it, but
-						cannot edit it.
+						{$LL.admin_tenant_discovery_platform_readonly_screen()}
 					</div>
 				{/if}
 
 				{#if commonEntryForm}
 					<p class="field-hint section-hint">
-						Blank values are prefilled with the effective defaults currently shown on the shared
-						discovery screen.
+						{$LL.admin_tenant_discovery_common_prefill_hint()}
 					</p>
 					<div class="form-grid two-column">
 						<div class="form-group">
-							<label for="common-theme">Theme</label>
+							<label for="common-theme">{$LL.admin_tenant_discovery_theme()}</label>
 							<select
 								id="common-theme"
 								bind:value={commonEntryForm.theme}
 								disabled={!canEditPlatform || commonEntrySaving}
 							>
-								<option value="">Inherit / default</option>
-								<option value="light">light</option>
-								<option value="dark">dark</option>
+								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
+								<option value="light">{$LL.admin_tenant_discovery_light()}</option>
+								<option value="dark">{$LL.admin_tenant_discovery_dark()}</option>
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="common-variant">Variant</label>
+							<label for="common-variant">{$LL.admin_tenant_discovery_variant()}</label>
 							<select
 								id="common-variant"
 								bind:value={commonEntryForm.variant}
 								disabled={!canEditPlatform || commonEntrySaving}
 							>
-								<option value="">Inherit / default</option>
-								<option value="beige">beige</option>
-								<option value="blue-gray">blue-gray</option>
-								<option value="green">green</option>
-								<option value="brown">brown</option>
-								<option value="navy">navy</option>
-								<option value="slate">slate</option>
+								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
+								<option value="beige">{$LL.admin_tenant_discovery_beige()}</option>
+								<option value="blue-gray">{$LL.admin_tenant_discovery_blue_gray()}</option>
+								<option value="green">{$LL.admin_tenant_discovery_green()}</option>
+								<option value="brown">{$LL.admin_tenant_discovery_brown()}</option>
+								<option value="navy">{$LL.admin_tenant_discovery_navy()}</option>
+								<option value="slate">{$LL.admin_tenant_discovery_slate()}</option>
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="common-brand-name">Brand Name</label>
+							<label for="common-brand-name">{$LL.admin_tenant_discovery_brand_name()}</label>
 							<input
 								id="common-brand-name"
 								type="text"
@@ -1430,7 +1495,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="common-logo-url">Logo URL</label>
+							<label for="common-logo-url">{$LL.admin_tenant_discovery_logo_url()}</label>
 							<input
 								id="common-logo-url"
 								type="url"
@@ -1439,7 +1504,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="common-page-title">Page Title</label>
+							<label for="common-page-title">{$LL.admin_tenant_discovery_page_title()}</label>
 							<input
 								id="common-page-title"
 								type="text"
@@ -1448,7 +1513,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="common-kicker">Kicker Text</label>
+							<label for="common-kicker">{$LL.admin_tenant_discovery_kicker_text()}</label>
 							<input
 								id="common-kicker"
 								type="text"
@@ -1457,7 +1522,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="common-title">Title Text</label>
+							<label for="common-title">{$LL.admin_tenant_discovery_title_text()}</label>
 							<input
 								id="common-title"
 								type="text"
@@ -1466,7 +1531,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="common-subtitle">Subtitle Text</label>
+							<label for="common-subtitle">{$LL.admin_tenant_discovery_subtitle_text()}</label>
 							<textarea
 								id="common-subtitle"
 								rows="3"
@@ -1481,7 +1546,11 @@
 							onclick={saveCommonEntryUi}
 							disabled={!canEditPlatform || !hasCommonEntryChanges || commonEntrySaving}
 						>
-							{#if commonEntrySaving}Saving...{:else}Save Common Entry Screen{/if}
+							{#if commonEntrySaving}
+								{$LL.admin_tenant_discovery_saving()}
+							{:else}
+								{$LL.admin_tenant_discovery_save_common_screen()}
+							{/if}
 						</button>
 					</div>
 				{/if}
@@ -1491,12 +1560,11 @@
 		<section class="panel">
 			<div class="section-header">
 				<div>
-					<h2>Tenant Override Screen Content</h2>
+					<h2>{$LL.admin_tenant_discovery_tenant_screen_title()}</h2>
 					<p>
-						Overrides for tenant-specific discovery screens on <strong>{currentTenantName}</strong>.
-						In multi-tenant mode, <code>/discover</code> on tenant hosts usually redirects to
-						<code>/login</code>, so these values mainly apply to flows that still render discovery
-						directly, such as invitation or app-hint resolution.
+						{$LL.admin_tenant_discovery_tenant_screen_description({
+							tenant: currentTenantName
+						})}
 					</p>
 				</div>
 			</div>
@@ -1512,10 +1580,9 @@
 				{#if !singleTenantMode}
 					<div class="override-toggle">
 						<div>
-							<strong>Enable tenant screen content override</strong>
+							<strong>{$LL.admin_tenant_discovery_enable_tenant_screen_override()}</strong>
 							<p>
-								When disabled, common discovery screen content applies. Existing tenant screen
-								values are kept but ignored until this override is enabled.
+								{$LL.admin_tenant_discovery_enable_tenant_screen_override_description()}
 							</p>
 						</div>
 						<ToggleSwitch
@@ -1531,12 +1598,13 @@
 
 				{#if singleTenantMode || tenantUiForm.overrideEnabled}
 					<p class="field-hint section-hint">
-						Fields are prefilled with the effective values currently used for this tenant. Saving
-						writes them as explicit tenant overrides.
+						{$LL.admin_tenant_discovery_tenant_prefill_hint()}
 					</p>
 					<div class="form-grid two-column">
 						<div class="form-group">
-							<label for="tenant-inherit">Inherit from Login UI</label>
+							<label for="tenant-inherit"
+								>{$LL.admin_tenant_discovery_inherit_from_login_ui()}</label
+							>
 							<ToggleSwitch
 								id="tenant-inherit"
 								checked={tenantUiForm.inheritFromLoginUi}
@@ -1547,35 +1615,35 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label for="tenant-theme">Theme</label>
+							<label for="tenant-theme">{$LL.admin_tenant_discovery_theme()}</label>
 							<select
 								id="tenant-theme"
 								bind:value={tenantUiForm.theme}
 								disabled={!canEditTenant || tenantUiSaving}
 							>
-								<option value="">Inherit / default</option>
-								<option value="light">light</option>
-								<option value="dark">dark</option>
+								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
+								<option value="light">{$LL.admin_tenant_discovery_light()}</option>
+								<option value="dark">{$LL.admin_tenant_discovery_dark()}</option>
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="tenant-variant">Variant</label>
+							<label for="tenant-variant">{$LL.admin_tenant_discovery_variant()}</label>
 							<select
 								id="tenant-variant"
 								bind:value={tenantUiForm.variant}
 								disabled={!canEditTenant || tenantUiSaving}
 							>
-								<option value="">Inherit / default</option>
-								<option value="beige">beige</option>
-								<option value="blue-gray">blue-gray</option>
-								<option value="green">green</option>
-								<option value="brown">brown</option>
-								<option value="navy">navy</option>
-								<option value="slate">slate</option>
+								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
+								<option value="beige">{$LL.admin_tenant_discovery_beige()}</option>
+								<option value="blue-gray">{$LL.admin_tenant_discovery_blue_gray()}</option>
+								<option value="green">{$LL.admin_tenant_discovery_green()}</option>
+								<option value="brown">{$LL.admin_tenant_discovery_brown()}</option>
+								<option value="navy">{$LL.admin_tenant_discovery_navy()}</option>
+								<option value="slate">{$LL.admin_tenant_discovery_slate()}</option>
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="tenant-brand-name">Brand Name</label>
+							<label for="tenant-brand-name">{$LL.admin_tenant_discovery_brand_name()}</label>
 							<input
 								id="tenant-brand-name"
 								type="text"
@@ -1584,7 +1652,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="tenant-logo-url">Logo URL</label>
+							<label for="tenant-logo-url">{$LL.admin_tenant_discovery_logo_url()}</label>
 							<input
 								id="tenant-logo-url"
 								type="url"
@@ -1593,7 +1661,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="tenant-page-title">Page Title</label>
+							<label for="tenant-page-title">{$LL.admin_tenant_discovery_page_title()}</label>
 							<input
 								id="tenant-page-title"
 								type="text"
@@ -1602,7 +1670,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="tenant-kicker">Kicker Text</label>
+							<label for="tenant-kicker">{$LL.admin_tenant_discovery_kicker_text()}</label>
 							<input
 								id="tenant-kicker"
 								type="text"
@@ -1611,7 +1679,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="tenant-title">Title Text</label>
+							<label for="tenant-title">{$LL.admin_tenant_discovery_title_text()}</label>
 							<input
 								id="tenant-title"
 								type="text"
@@ -1620,7 +1688,7 @@
 							/>
 						</div>
 						<div class="form-group full-width">
-							<label for="tenant-subtitle">Subtitle Text</label>
+							<label for="tenant-subtitle">{$LL.admin_tenant_discovery_subtitle_text()}</label>
 							<textarea
 								id="tenant-subtitle"
 								rows="3"
@@ -1635,13 +1703,16 @@
 							onclick={saveTenantUi}
 							disabled={!canEditTenant || !hasTenantUiChanges || tenantUiSaving}
 						>
-							{#if tenantUiSaving}Saving...{:else}Save Tenant Override{/if}
+							{#if tenantUiSaving}
+								{$LL.admin_tenant_discovery_saving()}
+							{:else}
+								{$LL.admin_tenant_discovery_save_tenant_override()}
+							{/if}
 						</button>
 					</div>
 				{:else}
 					<div class="collapsed-override">
-						Common discovery screen content is active for this tenant. Enable the override to
-						customize tenant-specific discovery screens.
+						{$LL.admin_tenant_discovery_common_screen_active()}
 					</div>
 					<div class="actions">
 						<button
@@ -1649,7 +1720,11 @@
 							onclick={saveTenantUi}
 							disabled={!canEditTenant || !hasTenantUiChanges || tenantUiSaving}
 						>
-							{#if tenantUiSaving}Saving...{:else}Save Tenant Screen Override{/if}
+							{#if tenantUiSaving}
+								{$LL.admin_tenant_discovery_saving()}
+							{:else}
+								{$LL.admin_tenant_discovery_save_tenant_screen_override()}
+							{/if}
 						</button>
 					</div>
 				{/if}

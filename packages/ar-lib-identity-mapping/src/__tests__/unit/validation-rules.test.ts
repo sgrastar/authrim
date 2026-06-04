@@ -11,19 +11,19 @@ describe('validation rules', () => {
         {
           id: 'validation.email.type',
           kind: 'type',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { valueType: 'string' },
         },
         {
           id: 'validation.email.enum',
           kind: 'enum',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { allowedValues: ['user@example.test'] },
         },
         {
           id: 'validation.email.cardinality',
           kind: 'cardinality',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { cardinality: 'single' },
         },
       ],
@@ -43,7 +43,7 @@ describe('validation rules', () => {
         {
           id: 'validation.email.format',
           kind: 'format',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { format: 'email' },
         },
       ],
@@ -72,7 +72,7 @@ describe('validation rules', () => {
         {
           id: 'validation.profile.json',
           kind: 'type',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { valueType: 'json' },
         },
       ],
@@ -84,7 +84,7 @@ describe('validation rules', () => {
         {
           id: 'validation.profile.json',
           kind: 'type',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { valueType: 'json' },
         },
       ],
@@ -101,7 +101,7 @@ describe('validation rules', () => {
         {
           id: 'validation.email.format',
           kind: 'format',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { format: 'email' },
         },
       ],
@@ -112,7 +112,7 @@ describe('validation rules', () => {
         {
           id: 'validation.email.format',
           kind: 'format',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { format: 'email' },
         },
       ],

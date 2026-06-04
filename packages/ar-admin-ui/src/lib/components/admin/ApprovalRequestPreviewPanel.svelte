@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ApprovalRequestPreviewResult } from '$lib/api/admin-approvals';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {
 		preview: ApprovalRequestPreviewResult | null;
@@ -30,8 +31,8 @@
 <div class="preview-panel">
 	<div class="preview-header">
 		<div>
-			<h3 class="preview-title">Resolution Preview</h3>
-			<p class="preview-note">Preview is point-in-time. Re-run it after editing the request.</p>
+			<h3 class="preview-title">{$LL.admin_approvals_resolution_preview()}</h3>
+			<p class="preview-note">{$LL.admin_approvals_preview_note()}</p>
 		</div>
 		{#if preview && onApplyResolvedSteps}
 			<button
@@ -40,76 +41,80 @@
 				onclick={() => onApplyResolvedSteps?.()}
 				disabled={!canApplyResolvedSteps}
 			>
-				Apply Resolved Steps
+				{$LL.admin_approvals_apply_resolved_steps()}
 			</button>
 		{/if}
 	</div>
 
 	{#if loading}
-		<div class="preview-empty">Resolving approval steps…</div>
+		<div class="preview-empty">{$LL.admin_approvals_resolving_steps()}</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if !preview}
 		<div class="preview-empty">
-			No preview yet. Resolve approvers and transport channels before creating the request.
+			{$LL.admin_approvals_no_preview()}
 		</div>
 	{:else}
 		<div class="preview-grid">
 			<div class="preview-card">
-				<h4>Request</h4>
+				<h4>{$LL.admin_approvals_request()}</h4>
 				<dl class="preview-list">
 					<div>
-						<dt>Investigation</dt>
+						<dt>{$LL.admin_approvals_investigation()}</dt>
 						<dd>{preview.request.investigation_id}</dd>
 					</div>
 					<div>
-						<dt>Target</dt>
+						<dt>{$LL.admin_approvals_target()}</dt>
 						<dd>{preview.request.target_subject_type}:{preview.request.target_subject_id}</dd>
 					</div>
 					<div>
-						<dt>Preset</dt>
+						<dt>{$LL.admin_approvals_preset()}</dt>
 						<dd>{preview.request.policy_preset}</dd>
 					</div>
 					<div>
-						<dt>Redaction</dt>
+						<dt>{$LL.admin_approvals_redaction()}</dt>
 						<dd>{preview.request.redaction_level}</dd>
 					</div>
 					<div>
-						<dt>Expires</dt>
+						<dt>{$LL.admin_approvals_expires()}</dt>
 						<dd>{formatDateTime(preview.request.expires_at)}</dd>
 					</div>
 					<div>
-						<dt>Remind Cooldown</dt>
+						<dt>{$LL.admin_approvals_remind_cooldown()}</dt>
 						<dd>{preview.request.resolved_policy.notification_cooldown_seconds?.remind ?? '-'}s</dd>
 					</div>
 					<div>
-						<dt>Resend Cooldown</dt>
+						<dt>{$LL.admin_approvals_resend_cooldown()}</dt>
 						<dd>{preview.request.resolved_policy.notification_cooldown_seconds?.resend ?? '-'}s</dd>
 					</div>
 				</dl>
 			</div>
 			<div class="preview-card">
-				<h4>Scope</h4>
+				<h4>{$LL.admin_approvals_scope()}</h4>
 				<dl class="preview-list">
 					<div>
-						<dt>Surface</dt>
+						<dt>{$LL.admin_approvals_surface()}</dt>
 						<dd>{preview.request.request_surface}</dd>
 					</div>
 					<div>
-						<dt>Action</dt>
+						<dt>{$LL.admin_approvals_action()}</dt>
 						<dd>{preview.request.requested_action}</dd>
 					</div>
 					<div>
-						<dt>Reason</dt>
+						<dt>{$LL.admin_approvals_reason()}</dt>
 						<dd>{preview.request.reason_code}</dd>
 					</div>
 					<div>
-						<dt>Reuse Scope</dt>
+						<dt>{$LL.admin_approvals_reuse_scope()}</dt>
 						<dd>{preview.request.reuse_scope}</dd>
 					</div>
 					<div>
-						<dt>Partial Access</dt>
-						<dd>{preview.request.partial_access_allowed ? 'Allowed' : 'Blocked'}</dd>
+						<dt>{$LL.admin_approvals_partial_access()}</dt>
+						<dd>
+							{preview.request.partial_access_allowed
+								? $LL.admin_approvals_allowed()
+								: $LL.admin_approvals_blocked()}
+						</dd>
 					</div>
 				</dl>
 			</div>
@@ -129,25 +134,45 @@
 							</div>
 						</div>
 						{#if step.transport_resolution_error}
-							<span class="preview-badge preview-badge-error">Needs Attention</span>
+							<span class="preview-badge preview-badge-error"
+								>{$LL.admin_approvals_needs_attention()}</span
+							>
 						{:else}
-							<span class="preview-badge">Ready</span>
+							<span class="preview-badge">{$LL.admin_approvals_ready()}</span>
 						{/if}
 					</div>
 
 					<div class="preview-step-grid">
-						<div><strong>Resolved Method</strong><span>{step.method ?? '-'}</span></div>
 						<div>
-							<strong>Transport Channel</strong><span>{step.transport_channel ?? '-'}</span>
+							<strong>{$LL.admin_approvals_resolved_method()}</strong><span
+								>{step.method ?? '-'}</span
+							>
 						</div>
 						<div>
-							<strong>Acceptable Methods</strong><span
+							<strong>{$LL.admin_approvals_transport_channel()}</strong><span
+								>{step.transport_channel ?? '-'}</span
+							>
+						</div>
+						<div>
+							<strong>{$LL.admin_approvals_acceptable_methods()}</strong><span
 								>{formatMethods(step.acceptable_methods)}</span
 							>
 						</div>
-						<div><strong>Selection Source</strong><span>{step.selection_source}</span></div>
-						<div><strong>Relation Type</strong><span>{step.relation_type ?? '-'}</span></div>
-						<div><strong>Relation Source</strong><span>{step.relation_source ?? '-'}</span></div>
+						<div>
+							<strong>{$LL.admin_approvals_selection_source()}</strong><span
+								>{step.selection_source}</span
+							>
+						</div>
+						<div>
+							<strong>{$LL.admin_approvals_relation_type()}</strong><span
+								>{step.relation_type ?? '-'}</span
+							>
+						</div>
+						<div>
+							<strong>{$LL.admin_approvals_relation_source()}</strong><span
+								>{step.relation_source ?? '-'}</span
+							>
+						</div>
 					</div>
 
 					{#if step.guidance_title || step.guidance_body || step.fallback_note}

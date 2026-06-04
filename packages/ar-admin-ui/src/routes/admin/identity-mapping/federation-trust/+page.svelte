@@ -6,6 +6,7 @@
 		type IdentityMappingFederationTrustSourceSummary
 	} from '$lib/api/admin-identity-mapping';
 	import { adminSAMLAPI, type SAMLMetadataEntitySummary } from '$lib/api/admin-saml';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let trustSources = $state<IdentityMappingFederationTrustSourceSummary[]>([]);
 	let loading = $state(true);
@@ -40,7 +41,8 @@
 			loadedMetadataSourceId = null;
 			selectedSourceId = trustSources[0]?.id ?? null;
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to load federation trust';
+			errorMessage =
+				error instanceof Error ? error.message : $LL.admin_identity_mapping_trust_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -58,7 +60,9 @@
 		} catch (error) {
 			if (loadedMetadataSourceId === trustSourceId) {
 				metadataError =
-					error instanceof Error ? error.message : 'Failed to load federation metadata documents';
+					error instanceof Error
+						? error.message
+						: $LL.admin_identity_mapping_trust_documents_load_failed();
 				metadataDocuments = [];
 			}
 		} finally {
@@ -70,7 +74,7 @@
 
 	async function loadAggregateEntities() {
 		if (!previewId.trim()) {
-			entityError = 'Enter a SAML aggregate preview ID first.';
+			entityError = $LL.admin_identity_mapping_trust_preview_required();
 			return;
 		}
 		entityLoading = true;
@@ -82,7 +86,10 @@
 			});
 			aggregateEntities = result.entities;
 		} catch (error) {
-			entityError = error instanceof Error ? error.message : 'Failed to load aggregate entities';
+			entityError =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_trust_entities_load_failed();
 		} finally {
 			entityLoading = false;
 		}
@@ -94,43 +101,44 @@
 
 	function payloadValue(source: IdentityMappingFederationTrustSourceSummary, key: string): string {
 		const value = source.protocolPayload?.[key];
-		return typeof value === 'string' ? value : 'not configured';
+		return typeof value === 'string' ? value : $LL.admin_identity_mapping_trust_not_configured();
 	}
 </script>
 
 <svelte:head>
-	<title>Federation Trust - Authrim Admin</title>
+	<title>{$LL.admin_identity_mapping_trust_head_title()}</title>
 </svelte:head>
 
 <div class="trust-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">Back to Identity Mapping</a>
-			<p class="eyebrow">Identity Mapping</p>
-			<h1>Federation Trust</h1>
+			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
+			<h1>{$LL.admin_identity_mapping_trust_title()}</h1>
 			<p class="summary">
-				Manage normalized federation trust sources and inspect SAML aggregate entities before
-				binding them to mapping profiles.
+				{$LL.admin_identity_mapping_trust_description()}
 			</p>
 		</div>
 		<div class="status-panel">
 			<strong>{trustSources.length}</strong>
-			<span>trust sources</span>
+			<span>{$LL.admin_identity_mapping_trust_sources_count()}</span>
 		</div>
 	</div>
 
 	<div class="trust-layout">
-		<section class="source-list" aria-label="Federation trust sources">
+		<section class="source-list" aria-label={$LL.admin_identity_mapping_trust_sources_aria()}>
 			<div class="panel-heading">
-				<p class="eyebrow">Sources</p>
-				<button type="button" onclick={loadTrustSources} disabled={loading}>Refresh</button>
+				<p class="eyebrow">{$LL.admin_identity_mapping_trust_sources()}</p>
+				<button type="button" onclick={loadTrustSources} disabled={loading}>
+					{$LL.admin_identity_mapping_refresh()}
+				</button>
 			</div>
 			{#if loading}
-				<div class="empty-state">Loading trust sources.</div>
+				<div class="empty-state">{$LL.admin_identity_mapping_trust_loading()}</div>
 			{:else if errorMessage}
 				<div class="empty-state">{errorMessage}</div>
 			{:else if trustSources.length === 0}
-				<div class="empty-state">No federation trust sources have been registered.</div>
+				<div class="empty-state">{$LL.admin_identity_mapping_trust_empty()}</div>
 			{:else}
 				{#each trustSources as source (source.id)}
 					<button
@@ -149,8 +157,8 @@
 		<section class="detail-panel">
 			<div class="panel-heading">
 				<div>
-					<p class="eyebrow">Detail</p>
-					<h2>{selectedSource?.displayName ?? 'Select a trust source'}</h2>
+					<p class="eyebrow">{$LL.admin_identity_mapping_trust_detail()}</p>
+					<h2>{selectedSource?.displayName ?? $LL.admin_identity_mapping_trust_select_source()}</h2>
 				</div>
 				{#if selectedSource}
 					<strong class="badge">{selectedSource.lifecycleState}</strong>
@@ -160,35 +168,35 @@
 			{#if selectedSource}
 				<div class="detail-grid">
 					<div>
-						<span>Source key</span>
+						<span>{$LL.admin_identity_mapping_trust_source_key()}</span>
 						<strong>{selectedSource.sourceKey}</strong>
 					</div>
 					<div>
-						<span>Source type</span>
+						<span>{$LL.admin_identity_mapping_trust_source_type()}</span>
 						<strong>{selectedSource.sourceType}</strong>
 					</div>
 					<div>
-						<span>Policy</span>
+						<span>{$LL.admin_identity_mapping_trust_policy()}</span>
 						<strong>{payloadValue(selectedSource, 'policy')}</strong>
 					</div>
 					<div>
-						<span>Updated</span>
-						<strong>{selectedSource.updatedAt ?? 'unknown'}</strong>
+						<span>{$LL.admin_identity_mapping_trust_updated()}</span>
+						<strong>{selectedSource.updatedAt ?? $LL.admin_identity_mapping_unknown()}</strong>
 					</div>
 				</div>
 			{/if}
 
 			<div class="aggregate-panel">
 				<div>
-					<p class="eyebrow">Metadata Ledger</p>
-					<h2>Imported documents and entity summaries</h2>
+					<p class="eyebrow">{$LL.admin_identity_mapping_trust_metadata_ledger()}</p>
+					<h2>{$LL.admin_identity_mapping_trust_documents_title()}</h2>
 				</div>
 				{#if metadataLoading}
-					<div class="empty-state">Loading metadata documents.</div>
+					<div class="empty-state">{$LL.admin_identity_mapping_trust_documents_loading()}</div>
 				{:else if metadataError}
 					<div class="empty-state">{metadataError}</div>
 				{:else if metadataDocuments.length === 0}
-					<div class="empty-state">No metadata documents are registered for this source.</div>
+					<div class="empty-state">{$LL.admin_identity_mapping_trust_documents_empty()}</div>
 				{:else}
 					<div class="document-list">
 						{#each metadataDocuments as document (document.id)}
@@ -196,11 +204,18 @@
 								<div>
 									<p>{document.documentType}</p>
 									<h3>{document.sourceUrl ?? document.documentHash}</h3>
-									<span
-										>{document.validationState} / {document.entitySummaries.length} entities</span
-									>
+									<span>
+										{document.validationState} /
+										{$LL.admin_identity_mapping_entities_count({
+											count: document.entitySummaries.length
+										})}
+									</span>
 								</div>
-								<strong>{document.validatedAt ?? document.fetchedAt ?? 'pending'}</strong>
+								<strong>
+									{document.validatedAt ??
+										document.fetchedAt ??
+										$LL.admin_identity_mapping_pending()}
+								</strong>
 							</article>
 						{/each}
 					</div>
@@ -209,20 +224,26 @@
 
 			<div class="aggregate-panel">
 				<div>
-					<p class="eyebrow">SAML Aggregate Entity Selection</p>
-					<h2>Preview entity candidates</h2>
+					<p class="eyebrow">{$LL.admin_identity_mapping_trust_entity_selection()}</p>
+					<h2>{$LL.admin_identity_mapping_trust_entity_title()}</h2>
 				</div>
 				<div class="aggregate-form">
 					<label>
-						<span>Preview ID</span>
-						<input bind:value={previewId} placeholder="metadata preview id" />
+						<span>{$LL.admin_identity_mapping_trust_preview_id()}</span>
+						<input
+							bind:value={previewId}
+							placeholder={$LL.admin_identity_mapping_trust_preview_placeholder()}
+						/>
 					</label>
 					<label>
-						<span>Search</span>
-						<input bind:value={entityQuery} placeholder="entity ID, display name, keyword" />
+						<span>{$LL.admin_identity_mapping_trust_search()}</span>
+						<input
+							bind:value={entityQuery}
+							placeholder={$LL.admin_identity_mapping_trust_search_placeholder()}
+						/>
 					</label>
 					<button type="button" onclick={loadAggregateEntities} disabled={entityLoading}>
-						Load entities
+						{$LL.admin_identity_mapping_trust_load_entities()}
 					</button>
 				</div>
 				{#if entityError}
@@ -236,7 +257,11 @@
 									<h3>{entity.displayName ?? entity.entityId}</h3>
 									<span>{entity.entityId}</span>
 								</div>
-								<strong>{entity.certificateCount} certs</strong>
+								<strong>
+									{$LL.admin_identity_mapping_certs_count({
+										count: entity.certificateCount
+									})}
+								</strong>
 							</article>
 						{/each}
 					</div>

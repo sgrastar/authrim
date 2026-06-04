@@ -49,7 +49,7 @@ describe('dry-run mapping', () => {
         {
           id: 'validation.email.required',
           kind: 'required',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
         },
       ],
     });
@@ -66,7 +66,7 @@ describe('dry-run mapping', () => {
         {
           id: 'validation.email.cardinality',
           kind: 'cardinality',
-          targetRef: { side: 'inbound', namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
           parameters: { cardinality: 'single' },
         },
       ],
@@ -87,7 +87,7 @@ describe('dry-run mapping', () => {
         {
           id: 'validation.email.required',
           kind: 'required' as const,
-          targetRef: { side: 'inbound' as const, namespace: 'csv', path: 'email' },
+          targetRef: { side: 'source' as const, namespace: 'csv', path: 'email' },
         },
       ],
     };

@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Unified Identity Mapping: destination profile registration
 --
--- Destination profiles define outbound release contracts for OIDC claims and CSV
+-- Destination profiles define destination release contracts for OIDC claims and CSV
 -- export formats. They store schema, validation, warning, and release-impact
 -- summaries only; raw identity values are never persisted here.
 -- =============================================================================

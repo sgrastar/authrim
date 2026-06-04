@@ -5,9 +5,9 @@
 		getApprovalEvidenceCompletionArtifact,
 		getApprovalEvidenceDecisionReceipt,
 		getApprovalEvidenceGrantSubjectTokenIssue,
-		getApprovalEvidenceEventDescriptor,
-		getApprovalEvidenceEventMeta
+		getApprovalEvidenceEventDescriptor
 	} from '$lib/admin/approval-evidence-timeline';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {
 		evidence: ApprovalTransportEvidence;
@@ -20,27 +20,126 @@
 	function getToneClass(tone: 'info' | 'success' | 'warning' | 'danger'): string {
 		return `timeline-card tone-${tone}`;
 	}
+
+	function getLocalizedDescriptor(event: ApprovalTransportEvidence['events'][number]) {
+		const descriptor = getApprovalEvidenceEventDescriptor(event);
+		switch (event.kind) {
+			case 'request_created':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_request_created_title(),
+					summary: $LL.admin_approvals_event_request_created_summary()
+				};
+			case 'step_initial':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_step_initial_title(),
+					summary: $LL.admin_approvals_event_step_initial_summary()
+				};
+			case 'step_artifact_issued':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_step_artifact_issued_title(),
+					summary: $LL.admin_approvals_event_step_artifact_issued_summary()
+				};
+			case 'step_receipt_issued':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_step_receipt_issued_title(),
+					summary: $LL.admin_approvals_event_step_receipt_issued_summary()
+				};
+			case 'grant_subject_token_issued':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_subject_token_issued_title(),
+					summary: $LL.admin_approvals_event_subject_token_issued_summary()
+				};
+			case 'grant_revoked':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_grant_revoked_title(),
+					summary: $LL.admin_approvals_event_grant_revoked_summary()
+				};
+			case 'step_remind':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_step_remind_title(),
+					summary: $LL.admin_approvals_event_step_remind_summary()
+				};
+			case 'step_resend':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_step_resend_title(),
+					summary: $LL.admin_approvals_event_step_resend_summary()
+				};
+			case 'step_approved':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_step_approved_title(),
+					summary: $LL.admin_approvals_event_step_approved_summary()
+				};
+			case 'step_denied':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_step_denied_title(),
+					summary: $LL.admin_approvals_event_step_denied_summary()
+				};
+			case 'request_cancelled':
+				return {
+					...descriptor,
+					title: $LL.admin_approvals_event_request_cancelled_title(),
+					summary: $LL.admin_approvals_event_request_cancelled_summary()
+				};
+			default:
+				return {
+					...descriptor,
+					summary: $LL.admin_approvals_event_default_summary()
+				};
+		}
+	}
+
+	function getLocalizedEventMeta(event: ApprovalTransportEvidence['events'][number]): string[] {
+		const meta: string[] = [];
+
+		if (event.method) {
+			meta.push($LL.admin_approvals_method_label({ value: event.method }));
+		}
+		if (event.transport_channel) {
+			meta.push(`${$LL.admin_approvals_channel()}: ${event.transport_channel}`);
+		}
+		if (event.notification_action) {
+			meta.push(`${$LL.admin_approvals_last_action()}: ${event.notification_action}`);
+		}
+		if (typeof event.notification_count === 'number') {
+			meta.push($LL.admin_approvals_notifications_label({ count: event.notification_count }));
+		}
+		if (event.reason_code) {
+			meta.push($LL.admin_approvals_reason_label({ value: event.reason_code }));
+		}
+
+		return meta;
+	}
 </script>
 
 <div class="detail-grid compact-grid">
 	<div>
-		<strong>Investigation</strong>
+		<strong>{$LL.admin_approvals_investigation()}</strong>
 		<div>{evidence.request.investigation_id}</div>
 	</div>
 	<div>
-		<strong>Requested At</strong>
+		<strong>{$LL.admin_approvals_requested_at()}</strong>
 		<div>{formatDateTime(evidence.request.requested_at)}</div>
 	</div>
 	<div>
-		<strong>Events</strong>
+		<strong>{$LL.admin_approvals_events()}</strong>
 		<div>{evidence.events.length}</div>
 	</div>
 </div>
 
 <div class="steps-list">
 	{#each evidence.events as event (event.id)}
-		{@const descriptor = getApprovalEvidenceEventDescriptor(event)}
-		{@const meta = getApprovalEvidenceEventMeta(event)}
+		{@const descriptor = getLocalizedDescriptor(event)}
+		{@const meta = getLocalizedEventMeta(event)}
 		{@const artifactSwitch = getApprovalEvidenceArtifactSwitch(event)}
 		{@const completionArtifact = getApprovalEvidenceCompletionArtifact(event)}
 		{@const decisionReceipt = getApprovalEvidenceDecisionReceipt(event)}
@@ -70,16 +169,20 @@
 
 			{#if artifactSwitch}
 				<div class="timeline-summary">
-					<strong>Method Switch</strong>
+					<strong>{$LL.admin_approvals_method_switch()}</strong>
 					<div class="cell-secondary">
 						{artifactSwitch.previousMethod ?? '-'} → {artifactSwitch.requestedMethod ?? '-'}
 						{#if artifactSwitch.previousArtifactId}
-							· replaced {artifactSwitch.previousArtifactId}
+							· {$LL.admin_approvals_replaced_artifact({
+								artifactId: artifactSwitch.previousArtifactId
+							})}
 						{/if}
 					</div>
 					{#if artifactSwitch.allowedMethods.length > 0}
 						<div class="cell-secondary">
-							Allowed methods: {artifactSwitch.allowedMethods.join(', ')}
+							{$LL.admin_approvals_allowed_methods({
+								methods: artifactSwitch.allowedMethods.join(', ')
+							})}
 						</div>
 					{/if}
 				</div>
@@ -87,11 +190,11 @@
 
 			{#if completionArtifact}
 				<div class="timeline-summary">
-					<strong>Completion Artifact</strong>
+					<strong>{$LL.admin_approvals_completion_artifact()}</strong>
 					<div class="cell-secondary">
-						{completionArtifact.artifactId ?? '-'} · expires {formatDateTime(
-							completionArtifact.expiresAt
-						)}
+						{completionArtifact.artifactId ?? '-'} · {$LL.admin_approvals_expires_at({
+							value: formatDateTime(completionArtifact.expiresAt)
+						})}
 					</div>
 					{#if completionArtifact.path}
 						<div class="cell-secondary">{completionArtifact.path}</div>
@@ -101,7 +204,7 @@
 
 			{#if decisionReceipt}
 				<div class="timeline-summary">
-					<strong>Decision Receipt</strong>
+					<strong>{$LL.admin_approvals_decision_receipt()}</strong>
 					<div class="cell-secondary">
 						{decisionReceipt.receiptId ?? '-'}
 						{#if decisionReceipt.decision}
@@ -118,28 +221,37 @@
 						<div class="cell-secondary">{decisionReceipt.portalPath}</div>
 					{/if}
 					{#if decisionReceipt.expiresAt}
-						<div class="cell-secondary">expires {formatDateTime(decisionReceipt.expiresAt)}</div>
+						<div class="cell-secondary">
+							{$LL.admin_approvals_expires_at({
+								value: formatDateTime(decisionReceipt.expiresAt)
+							})}
+						</div>
 					{/if}
 					{#if decisionReceipt.grantIds.length > 0}
-						<div class="cell-secondary">grants: {decisionReceipt.grantIds.join(', ')}</div>
+						<div class="cell-secondary">
+							{$LL.admin_approvals_grants_count({ count: decisionReceipt.grantIds.length })}:
+							{decisionReceipt.grantIds.join(', ')}
+						</div>
 					{/if}
 				</div>
 			{/if}
 
 			{#if subjectTokenIssue}
 				<div class="timeline-summary">
-					<strong>Downstream Subject Token</strong>
+					<strong>{$LL.admin_approvals_downstream_subject_token()}</strong>
 					<div class="cell-secondary">
 						{subjectTokenIssue.clientId ?? '-'}
 						{#if subjectTokenIssue.grantId}
-							· grant {subjectTokenIssue.grantId}
+							· {$LL.admin_approvals_grant_label({ grantId: subjectTokenIssue.grantId })}
 						{/if}
 						{#if subjectTokenIssue.expiresIn}
-							· ttl {subjectTokenIssue.expiresIn}s
+							· {$LL.admin_approvals_ttl_label({ seconds: subjectTokenIssue.expiresIn })}
 						{/if}
 					</div>
 					{#if subjectTokenIssue.targetAudience}
-						<div class="cell-secondary">aud {subjectTokenIssue.targetAudience}</div>
+						<div class="cell-secondary">
+							{$LL.admin_approvals_aud_label({ audience: subjectTokenIssue.targetAudience })}
+						</div>
 					{/if}
 					<div class="cell-secondary">
 						{subjectTokenIssue.resourceClass ?? '-'}
@@ -147,17 +259,31 @@
 							· {subjectTokenIssue.redactionLevel}
 						{/if}
 						{#if subjectTokenIssue.requiresOnlineCheck !== null}
-							· online {subjectTokenIssue.requiresOnlineCheck ? 'required' : 'optional'}
+							· {$LL.admin_approvals_online_label({
+								mode: subjectTokenIssue.requiresOnlineCheck
+									? $LL.admin_approvals_online_required()
+									: $LL.admin_approvals_online_optional()
+							})}
 						{/if}
 						{#if subjectTokenIssue.failClosed !== null}
-							· {subjectTokenIssue.failClosed ? 'fail-closed' : 'policy-controlled'}
+							· {subjectTokenIssue.failClosed
+								? $LL.admin_approvals_fail_closed()
+								: $LL.admin_approvals_policy_controlled()}
 						{/if}
 					</div>
 					{#if subjectTokenIssue.resourceIds.length > 0}
-						<div class="cell-secondary">resources: {subjectTokenIssue.resourceIds.join(', ')}</div>
+						<div class="cell-secondary">
+							{$LL.admin_approvals_resources_label({
+								values: subjectTokenIssue.resourceIds.join(', ')
+							})}
+						</div>
 					{/if}
 					{#if subjectTokenIssue.detailClasses.length > 0}
-						<div class="cell-secondary">details: {subjectTokenIssue.detailClasses.join(', ')}</div>
+						<div class="cell-secondary">
+							{$LL.admin_approvals_details_label({
+								values: subjectTokenIssue.detailClasses.join(', ')
+							})}
+						</div>
 					{/if}
 					{#if subjectTokenIssue.jti}
 						<div class="cell-secondary">jti: {subjectTokenIssue.jti}</div>
@@ -167,19 +293,19 @@
 
 			{#if event.transport_summary}
 				<details class="grant-details">
-					<summary>Transport Summary</summary>
+					<summary>{$LL.admin_approvals_transport_summary()}</summary>
 					<pre class="json-block">{formatJson(event.transport_summary)}</pre>
 				</details>
 			{/if}
 			{#if event.transport_detail}
 				<details class="grant-details">
-					<summary>Transport Detail</summary>
+					<summary>{$LL.admin_approvals_transport_detail()}</summary>
 					<pre class="json-block">{formatJson(event.transport_detail)}</pre>
 				</details>
 			{/if}
 			{#if event.approval_step}
 				<details class="grant-details">
-					<summary>Approval Step</summary>
+					<summary>{$LL.admin_approvals_approval_step()}</summary>
 					<pre class="json-block">{formatJson(event.approval_step)}</pre>
 				</details>
 			{/if}

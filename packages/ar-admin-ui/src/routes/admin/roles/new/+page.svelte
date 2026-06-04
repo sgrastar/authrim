@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminRolesAPI,
@@ -9,6 +10,11 @@
 		PERMISSION_DEFINITIONS,
 		type CreateRoleRequest
 	} from '$lib/api/admin-roles';
+	import {
+		formatPermissionCategory,
+		formatPermissionDescription,
+		formatPermissionLabel
+	} from '$lib/admin/roles-i18n';
 
 	// Form state
 	let name = $state('');
@@ -27,9 +33,7 @@
 
 	// Validation
 	let nameError = $derived(
-		name.length > 0 && !/^[a-z][a-z0-9_-]*$/.test(name)
-			? 'Name must start with lowercase letter and contain only lowercase letters, numbers, underscores, and hyphens'
-			: ''
+		name.length > 0 && !/^[a-z][a-z0-9_-]*$/.test(name) ? $LL.admin_roles_name_validation() : ''
 	);
 
 	let isValid = $derived(name.length > 0 && !nameError && selectedPermissions.size > 0);
@@ -45,7 +49,7 @@
 					r.is_system || ['admin', 'viewer', 'support', 'auditor'].includes(r.name.toLowerCase())
 			);
 		} catch (err) {
-			console.error('Failed to load roles:', err);
+			error = err instanceof Error ? err.message : $LL.admin_roles_load_failed();
 		} finally {
 			loadingRoles = false;
 		}
@@ -112,7 +116,7 @@
 			await adminRolesAPI.create(data);
 			goto('/admin/roles');
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create role';
+			error = err instanceof Error ? err.message : $LL.admin_roles_create_failed();
 		} finally {
 			submitting = false;
 		}
@@ -124,14 +128,14 @@
 </script>
 
 <svelte:head>
-	<title>Create Role - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_roles_create_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
-	<a href="/admin/roles" class="back-link">← Back to Roles</a>
+	<a href="/admin/roles" class="back-link">← {$LL.admin_roles_back_to_roles()}</a>
 
-	<h1 class="page-title">Create Custom Role</h1>
-	<p class="modal-description">Create a new custom role with specific permissions.</p>
+	<h1 class="page-title">{$LL.admin_roles_create_title()}</h1>
+	<p class="modal-description">{$LL.admin_roles_create_description()}</p>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -145,64 +149,63 @@
 	>
 		<!-- Basic Info Section -->
 		<div class="panel">
-			<h2 class="panel-title">Basic Information</h2>
+			<h2 class="panel-title">{$LL.admin_roles_basic_information()}</h2>
 
 			<div class="form-group">
 				<label for="name" class="form-label">
-					Role Name <span class="text-danger">*</span>
+					{$LL.admin_roles_role_name()}
+					<span class="text-danger">{$LL.admin_roles_required()}</span>
 				</label>
 				<input
 					type="text"
 					id="name"
 					bind:value={name}
-					placeholder="e.g., billing_manager"
+					placeholder={$LL.admin_roles_name_placeholder()}
 					class="form-input"
 					class:form-input-error={nameError}
 				/>
 				{#if nameError}
 					<span class="form-error">{nameError}</span>
 				{/if}
-				<span class="form-hint">
-					Lowercase letters, numbers, underscores, and hyphens only. Must start with a letter.
-				</span>
+				<span class="form-hint">{$LL.admin_roles_name_hint()}</span>
 			</div>
 
 			<div class="form-group">
-				<label for="description" class="form-label">Description</label>
+				<label for="description" class="form-label">{$LL.admin_roles_description_label()}</label>
 				<textarea
 					id="description"
 					bind:value={description}
-					placeholder="Describe what this role is for..."
+					placeholder={$LL.admin_roles_description_placeholder()}
 					rows="3"
 					class="form-input"
 				></textarea>
 			</div>
 
 			<div class="form-group">
-				<label for="inherits-from" class="form-label">Inherit From (Optional)</label>
+				<label for="inherits-from" class="form-label">{$LL.admin_roles_inherit_from()}</label>
 				<select
 					id="inherits-from"
 					bind:value={inheritsFrom}
 					disabled={loadingRoles}
 					class="form-select"
 				>
-					<option value="">None - Start with no permissions</option>
+					<option value="">{$LL.admin_roles_inherit_none()}</option>
 					{#each availableRoles as role (role.id)}
 						<option value={role.id}>{role.display_name || role.name}</option>
 					{/each}
 				</select>
-				<span class="form-hint">
-					Inherited permissions will be automatically included. Changes to the base role will be
-					reflected in this role.
-				</span>
+				<span class="form-hint">{$LL.admin_roles_inherit_hint()}</span>
 			</div>
 		</div>
 
 		<!-- Permissions Section -->
 		<div class="panel">
-			<h2 class="panel-title">Permissions <span class="text-danger">*</span></h2>
+			<h2 class="panel-title">
+				{$LL.admin_roles_permissions()}
+				<span class="text-danger">{$LL.admin_roles_required()}</span>
+			</h2>
 			<p class="form-hint" style="margin-bottom: 16px;">
-				Select the permissions this role should have. At least one permission is required.
+				{$LL.admin_roles_permissions_hint()}
 			</p>
 
 			<div class="permission-editor-grid">
@@ -216,7 +219,9 @@
 									indeterminate={isCategoryPartiallySelected(category.permissions)}
 									onchange={() => toggleCategory(category.permissions)}
 								/>
-								<span class="permission-category-name">{category.categoryLabel}</span>
+								<span class="permission-category-name">
+									{formatPermissionCategory(category.category, $LL)}
+								</span>
 							</label>
 						</div>
 						<div class="permission-category-body">
@@ -228,8 +233,12 @@
 										onchange={() => togglePermission(perm.id)}
 									/>
 									<span class="permission-checkbox-info">
-										<span class="permission-checkbox-label">{perm.label}</span>
-										<span class="permission-checkbox-desc">{perm.description}</span>
+										<span class="permission-checkbox-label">
+											{formatPermissionLabel(perm.id, $LL)}
+										</span>
+										<span class="permission-checkbox-desc">
+											{formatPermissionDescription(perm.id, $LL)}
+										</span>
 									</span>
 								</label>
 							{/each}
@@ -240,7 +249,7 @@
 
 			{#if selectedPermissions.size > 0}
 				<div class="permission-selected-count">
-					{selectedPermissions.size} permission(s) selected
+					{$LL.admin_roles_selected_count({ count: selectedPermissions.size })}
 				</div>
 			{/if}
 		</div>
@@ -248,10 +257,10 @@
 		<!-- Actions -->
 		<div class="form-actions">
 			<button type="button" class="btn btn-secondary" onclick={navigateBack} disabled={submitting}>
-				Cancel
+				{$LL.admin_roles_cancel()}
 			</button>
 			<button type="submit" class="btn btn-primary" disabled={!isValid || submitting}>
-				{submitting ? 'Creating...' : 'Create Role'}
+				{submitting ? $LL.admin_roles_creating() : $LL.admin_roles_create_role()}
 			</button>
 		</div>
 	</form>

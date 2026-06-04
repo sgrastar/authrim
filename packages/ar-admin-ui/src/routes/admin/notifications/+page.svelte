@@ -7,39 +7,73 @@
 		type NotificationDeliveryRoute,
 		type NotificationCenterSummaryRow
 	} from '$lib/api/admin-logging-control';
+	import { LL } from '$i18n/i18n-svelte';
 
 	const CATEGORY_OPTIONS = [
-		{ value: '', label: 'All categories' },
-		{ value: 'storage_registry_security', label: 'Storage registry security' },
-		{ value: 'storage_registry_health', label: 'Storage registry health' },
-		{ value: 'tenant_database_stats', label: 'Tenant database stats' },
-		{ value: 'tenant_database_health', label: 'Tenant database health' },
-		{ value: 'logging_destination_health', label: 'Logging destination health' },
-		{ value: 'logging_delivery_failure', label: 'Logging delivery failure' },
-		{ value: 'logging_fallback_used', label: 'Logging fallback used' },
-		{ value: 'logging_dlq_backlog', label: 'Logging DLQ backlog' },
-		{ value: 'logging_quota_warning', label: 'Logging quota warning' },
-		{ value: 'logging_repair_job_status', label: 'Logging repair job status' },
-		{ value: 'notification_delivery_failure', label: 'Notification delivery failure' }
+		{ value: '', getLabel: () => $LL.admin_notifications_all_categories() },
+		{
+			value: 'storage_registry_security',
+			getLabel: () => $LL.admin_notifications_category_storage_registry_security()
+		},
+		{
+			value: 'storage_registry_health',
+			getLabel: () => $LL.admin_notifications_category_storage_registry_health()
+		},
+		{
+			value: 'tenant_database_stats',
+			getLabel: () => $LL.admin_notifications_category_tenant_database_stats()
+		},
+		{
+			value: 'tenant_database_health',
+			getLabel: () => $LL.admin_notifications_category_tenant_database_health()
+		},
+		{
+			value: 'logging_destination_health',
+			getLabel: () => $LL.admin_notifications_category_logging_destination_health()
+		},
+		{
+			value: 'logging_delivery_failure',
+			getLabel: () => $LL.admin_notifications_category_logging_delivery_failure()
+		},
+		{
+			value: 'logging_fallback_used',
+			getLabel: () => $LL.admin_notifications_category_logging_fallback_used()
+		},
+		{
+			value: 'logging_dlq_backlog',
+			getLabel: () => $LL.admin_notifications_category_logging_dlq_backlog()
+		},
+		{
+			value: 'logging_quota_warning',
+			getLabel: () => $LL.admin_notifications_category_logging_quota_warning()
+		},
+		{
+			value: 'logging_repair_job_status',
+			getLabel: () => $LL.admin_notifications_category_logging_repair_job_status()
+		},
+		{
+			value: 'notification_delivery_failure',
+			getLabel: () => $LL.admin_notifications_category_notification_delivery_failure()
+		}
 	];
 
 	const STATUS_OPTIONS = [
-		{ value: 'unresolved', label: 'Unresolved' },
-		{ value: 'all', label: 'All statuses' },
-		{ value: 'pending', label: 'Pending' },
-		{ value: 'failed', label: 'Failed' },
-		{ value: 'dead_letter', label: 'Dead letter' },
-		{ value: 'suppressed', label: 'Resolved' },
-		{ value: 'delivered', label: 'Delivered' }
+		{ value: 'unresolved', getLabel: () => $LL.admin_notifications_unresolved() },
+		{ value: 'all', getLabel: () => $LL.admin_notifications_all_statuses() },
+		{ value: 'pending', getLabel: () => $LL.admin_notifications_pending() },
+		{ value: 'failed', getLabel: () => $LL.admin_notifications_failed() },
+		{ value: 'dead_letter', getLabel: () => $LL.admin_notifications_dead_letter() },
+		{ value: 'suppressed', getLabel: () => $LL.admin_notifications_resolved() },
+		{ value: 'delivered', getLabel: () => $LL.admin_notifications_delivered() }
 	];
 
 	const SEVERITY_OPTIONS = [
-		{ value: '', label: 'All severities' },
-		{ value: 'critical', label: 'Critical' },
-		{ value: 'high', label: 'High' },
-		{ value: 'medium', label: 'Medium' },
-		{ value: 'low', label: 'Low' },
-		{ value: 'info', label: 'Info' }
+		{ value: '', getLabel: () => $LL.admin_notifications_all_severities() },
+		{ value: 'critical', getLabel: () => $LL.admin_notifications_critical() },
+		{ value: 'high', getLabel: () => $LL.admin_notifications_high() },
+		{ value: 'medium', getLabel: () => $LL.admin_notifications_medium() },
+		{ value: 'low', getLabel: () => $LL.admin_notifications_low() },
+		{ value: 'info', getLabel: () => $LL.admin_notifications_info() }
 	];
 
 	let tenantId = $state('');
@@ -119,7 +153,7 @@
 			response = notificationResponse;
 			deliveryRoutes = routeResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load notification center';
+			error = err instanceof Error ? err.message : $LL.admin_notifications_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -135,7 +169,7 @@
 			await adminLoggingControlAPI.resolveNotificationCenterEvent(event.id);
 			await loadNotifications();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to resolve notification';
+			error = err instanceof Error ? err.message : $LL.admin_notifications_resolve_failed();
 		} finally {
 			resolvingId = '';
 		}
@@ -148,7 +182,7 @@
 			await adminLoggingControlAPI.deliverNotificationCenterEvent(event.id);
 			await loadNotifications();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to deliver notification';
+			error = err instanceof Error ? err.message : $LL.admin_notifications_deliver_failed();
 		} finally {
 			deliveringId = '';
 		}
@@ -161,7 +195,7 @@
 			await adminLoggingControlAPI.runNotificationDelivery(limit);
 			await loadNotifications();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to run notification delivery';
+			error = err instanceof Error ? err.message : $LL.admin_notifications_run_delivery_failed();
 		} finally {
 			deliveryRunning = false;
 		}
@@ -169,14 +203,14 @@
 </script>
 
 <svelte:head>
-	<title>Notification Center - Authrim Admin</title>
+	<title>{$LL.admin_notifications_page_title()}</title>
 </svelte:head>
 
 <div class="page-shell">
 	<header class="page-header">
 		<div>
-			<p class="eyebrow">Operations</p>
-			<h1>Notification Center</h1>
+			<p class="eyebrow">{$LL.admin_notifications_eyebrow()}</p>
+			<h1>{$LL.admin_notifications_title()}</h1>
 		</div>
 		<div class="header-actions">
 			<button
@@ -185,46 +219,48 @@
 				onclick={runDelivery}
 				disabled={deliveryRunning}
 			>
-				{deliveryRunning ? 'Delivering' : 'Run delivery'}
+				{deliveryRunning
+					? $LL.admin_notifications_delivering()
+					: $LL.admin_notifications_run_delivery()}
 			</button>
 			<button class="btn btn-primary" type="button" onclick={loadNotifications} disabled={loading}>
 				<i class="i-ph-arrow-clockwise"></i>
-				{loading ? 'Loading' : 'Refresh'}
+				{loading ? $LL.admin_notifications_loading() : $LL.admin_notifications_refresh()}
 			</button>
 		</div>
 	</header>
 
 	<section class="filter-panel">
 		<label>
-			Tenant ID
-			<input bind:value={tenantId} placeholder="platform view" />
+			{$LL.admin_notifications_tenant_id()}
+			<input bind:value={tenantId} placeholder={$LL.admin_notifications_platform_view()} />
 		</label>
 		<label>
-			Category
+			{$LL.admin_notifications_category()}
 			<select bind:value={category}>
 				{#each CATEGORY_OPTIONS as option (option.value)}
-					<option value={option.value}>{option.label}</option>
+					<option value={option.value}>{option.getLabel()}</option>
 				{/each}
 			</select>
 		</label>
 		<label>
-			Status
+			{$LL.admin_notifications_status()}
 			<select bind:value={status}>
 				{#each STATUS_OPTIONS as option (option.value)}
-					<option value={option.value}>{option.label}</option>
+					<option value={option.value}>{option.getLabel()}</option>
 				{/each}
 			</select>
 		</label>
 		<label>
-			Severity
+			{$LL.admin_notifications_severity()}
 			<select bind:value={severity}>
 				{#each SEVERITY_OPTIONS as option (option.value)}
-					<option value={option.value}>{option.label}</option>
+					<option value={option.value}>{option.getLabel()}</option>
 				{/each}
 			</select>
 		</label>
 		<label>
-			Limit
+			{$LL.admin_notifications_limit()}
 			<input type="number" min="1" max="200" bind:value={limit} />
 		</label>
 	</section>
@@ -235,25 +271,25 @@
 
 	<section class="summary-strip">
 		<div>
-			<span class="metric-label">Unresolved</span>
+			<span class="metric-label">{$LL.admin_notifications_unresolved()}</span>
 			<strong>{unresolvedCount}</strong>
 		</div>
 		<div>
-			<span class="metric-label">Visible</span>
+			<span class="metric-label">{$LL.admin_notifications_visible()}</span>
 			<strong>{events.length}</strong>
 		</div>
 		<div>
-			<span class="metric-label">Groups</span>
+			<span class="metric-label">{$LL.admin_notifications_groups()}</span>
 			<strong>{summary.length}</strong>
 		</div>
 		<div>
-			<span class="metric-label">Routes</span>
+			<span class="metric-label">{$LL.admin_notifications_routes()}</span>
 			<strong>{deliveryRoutes.length}</strong>
 		</div>
 	</section>
 
 	{#if summary.length > 0}
-		<section class="summary-grid" aria-label="Notification summary">
+		<section class="summary-grid" aria-label={$LL.admin_notifications_summary_aria()}>
 			{#each summary as row (summaryKey(row))}
 				<div class="summary-cell">
 					<div class="summary-count">{row.count}</div>
@@ -272,20 +308,20 @@
 			<table>
 				<thead>
 					<tr>
-						<th>Severity</th>
-						<th>Status</th>
-						<th>Category</th>
-						<th>Tenant</th>
-						<th>Event</th>
-						<th>Attempts</th>
-						<th>Updated</th>
-						<th>Action</th>
+						<th>{$LL.admin_notifications_severity()}</th>
+						<th>{$LL.admin_notifications_status()}</th>
+						<th>{$LL.admin_notifications_category()}</th>
+						<th>{$LL.admin_notifications_tenant()}</th>
+						<th>{$LL.admin_notifications_event()}</th>
+						<th>{$LL.admin_notifications_attempts()}</th>
+						<th>{$LL.admin_notifications_updated()}</th>
+						<th>{$LL.admin_notifications_action()}</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#if events.length === 0}
 						<tr>
-							<td colspan="8" class="empty-cell">No notifications found.</td>
+							<td colspan="8" class="empty-cell">{$LL.admin_notifications_empty()}</td>
 						</tr>
 					{:else}
 						{#each events as event (event.id)}
@@ -312,7 +348,9 @@
 										onclick={() => deliverEvent(event)}
 										disabled={deliveringId === event.id}
 									>
-										{deliveringId === event.id ? 'Sending' : 'Deliver'}
+										{deliveringId === event.id
+											? $LL.admin_notifications_sending()
+											: $LL.admin_notifications_deliver()}
 									</button>
 									<button
 										class="btn btn-secondary btn-small"
@@ -321,7 +359,9 @@
 										disabled={resolvingId === event.id ||
 											!['pending', 'failed', 'dead_letter'].includes(event.status)}
 									>
-										{resolvingId === event.id ? 'Resolving' : 'Resolve'}
+										{resolvingId === event.id
+											? $LL.admin_notifications_resolving()
+											: $LL.admin_notifications_resolve()}
 									</button>
 								</td>
 							</tr>

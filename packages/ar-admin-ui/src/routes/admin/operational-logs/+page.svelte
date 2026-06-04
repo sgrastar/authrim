@@ -6,6 +6,7 @@
 		type OperationalLogDetail,
 		type OperationalLogSummary
 	} from '$lib/api/admin-operational-logs';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -36,7 +37,7 @@
 			logs = response.items;
 			total = response.total;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load operational logs';
+			error = err instanceof Error ? err.message : $LL.admin_operational_logs_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -54,7 +55,8 @@
 		try {
 			selectedLog = await adminOperationalLogsAPI.get(log.id);
 		} catch (err) {
-			detailError = err instanceof Error ? err.message : 'Failed to load operational log detail';
+			detailError =
+				err instanceof Error ? err.message : $LL.admin_operational_logs_detail_load_failed();
 		} finally {
 			detailLoading = false;
 		}
@@ -73,40 +75,44 @@
 </script>
 
 <svelte:head>
-	<title>Operational Logs - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_operational_logs_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Operational Logs</h1>
+			<h1 class="page-title">{$LL.admin_operational_logs_title()}</h1>
 			<p class="page-description">
-				View short-retention reason-detail records stored separately from immutable audit logs.
+				{$LL.admin_operational_logs_description()}
 			</p>
 		</div>
 		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={loadLogs} disabled={loading}>Refresh</button>
+			<button class="btn btn-secondary" onclick={loadLogs} disabled={loading}
+				>{$LL.admin_operational_logs_refresh()}</button
+			>
 		</div>
 	</div>
 
 	<div class="panel">
 		<div class="filter-row">
 			<div class="form-group">
-				<label class="form-label" for="subject-type">Subject Type</label>
+				<label class="form-label" for="subject-type"
+					>{$LL.admin_operational_logs_subject_type()}</label
+				>
 				<select
 					id="subject-type"
 					class="form-select"
 					bind:value={subjectTypeFilter}
 					onchange={loadLogs}
 				>
-					<option value="">All</option>
-					<option value="user">User</option>
-					<option value="client">Client</option>
-					<option value="session">Session</option>
+					<option value="">{$LL.admin_operational_logs_all()}</option>
+					<option value="user">{$LL.admin_operational_logs_subject_user()}</option>
+					<option value="client">{$LL.admin_operational_logs_subject_client()}</option>
+					<option value="session">{$LL.admin_operational_logs_subject_session()}</option>
 				</select>
 			</div>
 			<div class="form-group">
-				<label class="form-label" for="subject-id">Subject ID</label>
+				<label class="form-label" for="subject-id">{$LL.admin_operational_logs_subject_id()}</label>
 				<input
 					id="subject-id"
 					class="form-input"
@@ -115,11 +121,11 @@
 				/>
 			</div>
 			<div class="form-group">
-				<label class="form-label" for="action">Action</label>
+				<label class="form-label" for="action">{$LL.admin_operational_logs_action()}</label>
 				<input id="action" class="form-input" bind:value={actionFilter} onchange={loadLogs} />
 			</div>
 			<div class="form-group">
-				<label class="form-label" for="actor-id">Actor ID</label>
+				<label class="form-label" for="actor-id">{$LL.admin_operational_logs_actor_id()}</label>
 				<input id="actor-id" class="form-input" bind:value={actorIdFilter} onchange={loadLogs} />
 			</div>
 		</div>
@@ -131,24 +137,24 @@
 
 	<div class="panel">
 		<div class="panel-header">
-			<h2 class="panel-title">Entries</h2>
-			<span class="panel-meta">{total} total</span>
+			<h2 class="panel-title">{$LL.admin_operational_logs_entries()}</h2>
+			<span class="panel-meta">{$LL.admin_operational_logs_total_count({ count: total })}</span>
 		</div>
 
 		{#if loading}
-			<div class="empty-state">Loading operational logs…</div>
+			<div class="empty-state">{$LL.admin_operational_logs_loading()}</div>
 		{:else if logs.length === 0}
-			<div class="empty-state">No operational logs matched the current filters.</div>
+			<div class="empty-state">{$LL.admin_operational_logs_empty()}</div>
 		{:else}
 			<div class="table-wrapper">
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th>Action</th>
-							<th>Subject</th>
-							<th>Actor</th>
-							<th>Created</th>
-							<th>Expires</th>
+							<th>{$LL.admin_operational_logs_action()}</th>
+							<th>{$LL.admin_operational_logs_subject()}</th>
+							<th>{$LL.admin_operational_logs_actor()}</th>
+							<th>{$LL.admin_operational_logs_created()}</th>
+							<th>{$LL.admin_operational_logs_expires()}</th>
 							<th></th>
 						</tr>
 					</thead>
@@ -165,7 +171,7 @@
 								<td>{formatDateTime(log.expires_at)}</td>
 								<td class="row-actions">
 									<button class="btn btn-sm btn-secondary" onclick={() => openDetail(log)}>
-										View Detail
+										{$LL.admin_operational_logs_view_detail()}
 									</button>
 								</td>
 							</tr>
@@ -177,41 +183,46 @@
 	</div>
 </div>
 
-<Modal open={showDetailModal} onClose={closeDetail} title="Operational Log Detail" size="md">
+<Modal
+	open={showDetailModal}
+	onClose={closeDetail}
+	title={$LL.admin_operational_logs_detail_title()}
+	size="md"
+>
 	{#if detailLoading}
-		<div class="empty-state">Loading operational log detail…</div>
+		<div class="empty-state">{$LL.admin_operational_logs_detail_loading()}</div>
 	{:else if detailError}
 		<div class="alert alert-error">{detailError}</div>
 	{:else if selectedLog}
 		<div class="detail-grid">
 			<div>
-				<strong>Action</strong>
+				<strong>{$LL.admin_operational_logs_action()}</strong>
 				<div>{selectedLog.action}</div>
 			</div>
 			<div>
-				<strong>Subject</strong>
+				<strong>{$LL.admin_operational_logs_subject()}</strong>
 				<div>{selectedLog.subject_type}:{selectedLog.subject_id}</div>
 			</div>
 			<div>
-				<strong>Actor</strong>
+				<strong>{$LL.admin_operational_logs_actor()}</strong>
 				<div>{selectedLog.actor_id}</div>
 			</div>
 			<div>
-				<strong>Request ID</strong>
+				<strong>{$LL.admin_operational_logs_request_id()}</strong>
 				<div>{selectedLog.request_id ?? '-'}</div>
 			</div>
 			<div>
-				<strong>Created</strong>
+				<strong>{$LL.admin_operational_logs_created()}</strong>
 				<div>{formatDateTime(selectedLog.created_at)}</div>
 			</div>
 			<div>
-				<strong>Expires</strong>
+				<strong>{$LL.admin_operational_logs_expires()}</strong>
 				<div>{formatDateTime(selectedLog.expires_at)}</div>
 			</div>
 		</div>
 
 		<div class="panel detail-panel">
-			<h3 class="panel-title">Reason Detail</h3>
+			<h3 class="panel-title">{$LL.admin_operational_logs_reason_detail()}</h3>
 			<pre class="detail-block">{selectedLog.reason_detail}</pre>
 		</div>
 	{/if}

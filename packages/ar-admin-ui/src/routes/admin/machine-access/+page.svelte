@@ -10,6 +10,7 @@
 		type AdminMachineTenantScope,
 		type AdminMachineTenantScopeMode
 	} from '$lib/api/admin-machine-access';
+	import { LL } from '$i18n/i18n-svelte';
 
 	const PRINCIPAL_TYPES: AdminMachinePrincipalType[] = [
 		'setup_tool',
@@ -77,8 +78,49 @@
 		return new Date(value).toLocaleString();
 	}
 
-	function formatPrincipalType(value: string): string {
-		return value.replaceAll('_', ' ');
+	function formatPrincipalType(value: AdminMachinePrincipalType): string {
+		switch (value) {
+			case 'setup_tool':
+				return $LL.admin_machine_access_type_setup_tool();
+			case 'admin_ui_bff':
+				return $LL.admin_machine_access_type_admin_ui_bff();
+			case 'automation':
+				return $LL.admin_machine_access_type_automation();
+			case 'ci':
+				return $LL.admin_machine_access_type_ci();
+			case 'mcp_server':
+				return $LL.admin_machine_access_type_mcp_server();
+			case 'ai_agent':
+				return $LL.admin_machine_access_type_ai_agent();
+			case 'internal_service':
+				return $LL.admin_machine_access_type_internal_service();
+			case 'integration':
+				return $LL.admin_machine_access_type_integration();
+		}
+	}
+
+	function formatPrincipalStatus(value: AdminMachinePrincipalStatus): string {
+		switch (value) {
+			case 'active':
+				return $LL.admin_machine_access_status_active();
+			case 'disabled':
+				return $LL.admin_machine_access_status_disabled();
+			case 'deleted':
+				return $LL.admin_machine_access_status_deleted();
+		}
+	}
+
+	function formatCredentialStatus(value: AdminMachineCredential['status']): string {
+		switch (value) {
+			case 'active':
+				return $LL.admin_machine_access_status_active();
+			case 'rotating':
+				return $LL.admin_machine_access_status_rotating();
+			case 'revoked':
+				return $LL.admin_machine_access_status_revoked();
+			case 'expired':
+				return $LL.admin_machine_access_status_expired();
+		}
 	}
 
 	function formatTenantScopes(scopes: AdminMachineTenantScope[]): string {
@@ -117,7 +159,7 @@
 	function parsePublicJwk(value: string): unknown {
 		const parsed: unknown = JSON.parse(value);
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error('Public JWK must be a JSON object');
+			throw new Error($LL.admin_machine_access_public_jwk_object_error());
 		}
 		return parsed;
 	}
@@ -174,7 +216,7 @@
 				selectPrincipal(principals[0]);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load machine access principals';
+			error = err instanceof Error ? err.message : $LL.admin_machine_access_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -201,12 +243,12 @@
 			createClientId = '';
 			createDisplayName = '';
 			createDescription = '';
-			notice = 'Machine principal created';
+			notice = $LL.admin_machine_access_created_notice();
 			await loadPrincipals();
 			const created = principals.find((entry) => entry.id === principal.id);
 			if (created) selectPrincipal(created);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create machine principal';
+			error = err instanceof Error ? err.message : $LL.admin_machine_access_create_failed();
 		} finally {
 			saving = false;
 		}
@@ -225,11 +267,11 @@
 				permissions: parseLines(editPermissions),
 				tenant_scopes: parseTenantScopes(editTenantScopes)
 			});
-			notice = 'Machine principal updated';
+			notice = $LL.admin_machine_access_updated_notice();
 			selectPrincipal(principal);
 			await loadPrincipals();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update machine principal';
+			error = err instanceof Error ? err.message : $LL.admin_machine_access_update_failed();
 		} finally {
 			saving = false;
 		}
@@ -244,18 +286,18 @@
 			if (selectedPrincipal.status === 'active') {
 				const principal = await adminMachineAccessAPI.disable(
 					selectedPrincipal.id,
-					disableReason.trim() || 'disabled from Admin UI'
+					disableReason.trim() || $LL.admin_machine_access_default_disable_reason()
 				);
-				notice = 'Machine principal disabled';
+				notice = $LL.admin_machine_access_disabled_notice();
 				selectPrincipal(principal);
 			} else {
 				const principal = await adminMachineAccessAPI.enable(selectedPrincipal.id);
-				notice = 'Machine principal enabled';
+				notice = $LL.admin_machine_access_enabled_notice();
 				selectPrincipal(principal);
 			}
 			await loadPrincipals();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update principal status';
+			error = err instanceof Error ? err.message : $LL.admin_machine_access_status_update_failed();
 		} finally {
 			saving = false;
 		}
@@ -279,10 +321,11 @@
 			credentialKid = '';
 			credentialDisplayName = '';
 			credentialDescription = '';
-			notice = 'Machine credential created';
+			notice = $LL.admin_machine_access_credential_created_notice();
 			await refreshSelected();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create machine credential';
+			error =
+				err instanceof Error ? err.message : $LL.admin_machine_access_credential_create_failed();
 		} finally {
 			saving = false;
 		}
@@ -303,10 +346,11 @@
 			});
 			rotateKid = '';
 			rotateDisplayName = '';
-			notice = 'Machine credential rotation started';
+			notice = $LL.admin_machine_access_credential_rotation_notice();
 			await refreshSelected();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to rotate machine credential';
+			error =
+				err instanceof Error ? err.message : $LL.admin_machine_access_credential_rotate_failed();
 		} finally {
 			saving = false;
 		}
@@ -321,13 +365,14 @@
 			await adminMachineAccessAPI.emergencyRevokeCredential(
 				selectedPrincipal.id,
 				selectedCredential.id,
-				emergencyReason.trim() || 'emergency revoke from Admin UI'
+				emergencyReason.trim() || $LL.admin_machine_access_default_revoke_reason()
 			);
 			emergencyReason = '';
-			notice = 'Machine credential revoked';
+			notice = $LL.admin_machine_access_credential_revoked_notice();
 			await refreshSelected();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to revoke machine credential';
+			error =
+				err instanceof Error ? err.message : $LL.admin_machine_access_credential_revoke_failed();
 		} finally {
 			saving = false;
 		}
@@ -335,27 +380,27 @@
 </script>
 
 <svelte:head>
-	<title>Admin Machine Access - Authrim</title>
+	<title>{$LL.admin_machine_access_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Admin Machine Access</h1>
+			<h1 class="page-title">{$LL.admin_machine_access_title()}</h1>
 			<p class="page-description">
-				Manage scoped machine principals, credentials, and tenant grants.
+				{$LL.admin_machine_access_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<select class="form-select" bind:value={statusFilter} onchange={() => void loadPrincipals()}>
-				<option value="">All statuses</option>
-				<option value="active">Active</option>
-				<option value="disabled">Disabled</option>
-				<option value="deleted">Deleted</option>
+				<option value="">{$LL.admin_machine_access_all_statuses()}</option>
+				<option value="active">{$LL.admin_machine_access_status_active()}</option>
+				<option value="disabled">{$LL.admin_machine_access_status_disabled()}</option>
+				<option value="deleted">{$LL.admin_machine_access_status_deleted()}</option>
 			</select>
 			<button class="btn btn-secondary" onclick={() => void loadPrincipals()} disabled={loading}>
 				<i class="i-ph-arrow-clockwise"></i>
-				Refresh
+				{$LL.admin_machine_access_refresh()}
 			</button>
 		</div>
 	</div>
@@ -369,15 +414,15 @@
 
 	<div class="summary-grid">
 		<div class="summary-tile">
-			<span>Principals</span>
+			<span>{$LL.admin_machine_access_principals()}</span>
 			<strong>{principals.length}</strong>
 		</div>
 		<div class="summary-tile">
-			<span>Active credentials</span>
+			<span>{$LL.admin_machine_access_active_credentials()}</span>
 			<strong>{activeCredentialCount}</strong>
 		</div>
 		<div class="summary-tile">
-			<span>Selected</span>
+			<span>{$LL.admin_machine_access_selected()}</span>
 			<strong>{selectedPrincipal?.clientId || '-'}</strong>
 		</div>
 	</div>
@@ -385,8 +430,12 @@
 	<div class="machine-layout">
 		<section class="panel">
 			<div class="panel-header">
-				<h2>Principals</h2>
-				<span>{loading ? 'Loading' : `${principals.length} shown`}</span>
+				<h2>{$LL.admin_machine_access_principals()}</h2>
+				<span
+					>{loading
+						? $LL.admin_machine_access_loading()
+						: $LL.admin_machine_access_shown_count({ count: principals.length })}</span
+				>
 			</div>
 			<div class="principal-list">
 				{#each principals as principal (principal.id)}
@@ -401,31 +450,31 @@
 						</span>
 						<span class="row-meta">
 							<em>{formatPrincipalType(principal.principalType)}</em>
-							<b class={`status ${principal.status}`}>{principal.status}</b>
+							<b class={`status ${principal.status}`}>{formatPrincipalStatus(principal.status)}</b>
 						</span>
 					</button>
 				{/each}
 				{#if !loading && principals.length === 0}
-					<p class="empty-state">No machine principals found.</p>
+					<p class="empty-state">{$LL.admin_machine_access_no_principals()}</p>
 				{/if}
 			</div>
 		</section>
 
 		<section class="panel">
 			<div class="panel-header">
-				<h2>Create principal</h2>
+				<h2>{$LL.admin_machine_access_create_principal()}</h2>
 			</div>
 			<div class="form-grid">
 				<label>
-					Client ID
+					{$LL.admin_machine_access_client_id()}
 					<input class="form-input" bind:value={createClientId} placeholder="automation-admin" />
 				</label>
 				<label>
-					Display name
+					{$LL.admin_machine_access_display_name()}
 					<input class="form-input" bind:value={createDisplayName} placeholder="Automation Admin" />
 				</label>
 				<label>
-					Type
+					{$LL.admin_machine_access_type()}
 					<select class="form-select" bind:value={createPrincipalType}>
 						{#each PRINCIPAL_TYPES as type (type)}
 							<option value={type}>{formatPrincipalType(type)}</option>
@@ -433,25 +482,25 @@
 					</select>
 				</label>
 				<label>
-					Token TTL seconds
+					{$LL.admin_machine_access_token_ttl_seconds()}
 					<input class="form-input" type="number" min="60" max="900" bind:value={createTokenTtl} />
 				</label>
 				<label class="wide">
-					Description
+					{$LL.admin_machine_access_description_label()}
 					<input class="form-input" bind:value={createDescription} />
 				</label>
 				<label>
-					Permissions
+					{$LL.admin_machine_access_permissions()}
 					<textarea class="form-textarea" bind:value={createPermissions}></textarea>
 				</label>
 				<label>
-					Tenant scopes
+					{$LL.admin_machine_access_tenant_scopes()}
 					<textarea class="form-textarea" bind:value={createTenantScopes}></textarea>
 				</label>
 			</div>
 			<button class="btn btn-primary" onclick={() => void createPrincipal()} disabled={saving}>
 				<i class="i-ph-plus"></i>
-				Create principal
+				{$LL.admin_machine_access_create_principal()}
 			</button>
 		</section>
 	</div>
@@ -460,40 +509,42 @@
 		<div class="detail-layout">
 			<section class="panel">
 				<div class="panel-header">
-					<h2>Principal grants</h2>
-					<b class={`status ${selectedPrincipal.status}`}>{selectedPrincipal.status}</b>
+					<h2>{$LL.admin_machine_access_principal_grants()}</h2>
+					<b class={`status ${selectedPrincipal.status}`}
+						>{formatPrincipalStatus(selectedPrincipal.status)}</b
+					>
 				</div>
 				<div class="form-grid">
 					<label>
-						Display name
+						{$LL.admin_machine_access_display_name()}
 						<input class="form-input" bind:value={editDisplayName} />
 					</label>
 					<label>
-						Token TTL seconds
+						{$LL.admin_machine_access_token_ttl_seconds()}
 						<input class="form-input" type="number" min="60" max="900" bind:value={editTokenTtl} />
 					</label>
 					<label class="wide">
-						Description
+						{$LL.admin_machine_access_description_label()}
 						<input class="form-input" bind:value={editDescription} />
 					</label>
 					<label>
-						Permissions
+						{$LL.admin_machine_access_permissions()}
 						<textarea class="form-textarea tall" bind:value={editPermissions}></textarea>
 					</label>
 					<label>
-						Tenant scopes
+						{$LL.admin_machine_access_tenant_scopes()}
 						<textarea class="form-textarea tall" bind:value={editTenantScopes}></textarea>
 					</label>
 				</div>
 				<div class="button-row">
 					<button class="btn btn-primary" onclick={() => void savePrincipal()} disabled={saving}>
 						<i class="i-ph-floppy-disk"></i>
-						Save grants
+						{$LL.admin_machine_access_save_grants()}
 					</button>
 					<input
 						class="form-input compact"
 						bind:value={disableReason}
-						placeholder="Disable reason"
+						placeholder={$LL.admin_machine_access_disable_reason()}
 						disabled={selectedPrincipal.status !== 'active'}
 					/>
 					<button
@@ -501,15 +552,21 @@
 						onclick={() => void togglePrincipalStatus()}
 						disabled={saving}
 					>
-						{selectedPrincipal.status === 'active' ? 'Disable' : 'Enable'}
+						{selectedPrincipal.status === 'active'
+							? $LL.admin_machine_access_disable()
+							: $LL.admin_machine_access_enable()}
 					</button>
 				</div>
 			</section>
 
 			<section class="panel">
 				<div class="panel-header">
-					<h2>Credentials</h2>
-					<span>{selectedPrincipal.credentials.length} total</span>
+					<h2>{$LL.admin_machine_access_credentials()}</h2>
+					<span
+						>{$LL.admin_machine_access_total_count({
+							count: selectedPrincipal.credentials.length
+						})}</span
+					>
 				</div>
 				<div class="credential-list">
 					{#each selectedPrincipal.credentials as credential (credential.id)}
@@ -524,7 +581,9 @@
 							</span>
 							<span class="row-meta">
 								<em>{credential.alg}</em>
-								<b class={`status ${credential.status}`}>{credential.status}</b>
+								<b class={`status ${credential.status}`}
+									>{formatCredentialStatus(credential.status)}</b
+								>
 							</span>
 						</button>
 					{/each}
@@ -533,19 +592,19 @@
 					<div class="credential-detail">
 						<dl>
 							<div>
-								<dt>ID</dt>
+								<dt>{$LL.admin_machine_access_id()}</dt>
 								<dd>{selectedCredential.id}</dd>
 							</div>
 							<div>
-								<dt>Last used</dt>
+								<dt>{$LL.admin_machine_access_last_used()}</dt>
 								<dd>{formatDate(selectedCredential.lastUsedAt)}</dd>
 							</div>
 							<div>
-								<dt>Last IP</dt>
+								<dt>{$LL.admin_machine_access_last_ip()}</dt>
 								<dd>{selectedCredential.lastUsedIp || '-'}</dd>
 							</div>
 							<div>
-								<dt>Expires</dt>
+								<dt>{$LL.admin_machine_access_expires()}</dt>
 								<dd>{formatDate(selectedCredential.expiresAt)}</dd>
 							</div>
 						</dl>
@@ -553,14 +612,14 @@
 							<input
 								class="form-input compact"
 								bind:value={emergencyReason}
-								placeholder="Revoke reason"
+								placeholder={$LL.admin_machine_access_revoke_reason()}
 							/>
 							<button
 								class="btn btn-danger"
 								onclick={() => void emergencyRevokeCredential()}
 								disabled={saving || selectedCredential.status === 'revoked'}
 							>
-								Emergency revoke
+								{$LL.admin_machine_access_emergency_revoke()}
 							</button>
 						</div>
 					</div>
@@ -571,19 +630,19 @@
 		<div class="detail-layout">
 			<section class="panel">
 				<div class="panel-header">
-					<h2>Create credential</h2>
+					<h2>{$LL.admin_machine_access_create_credential()}</h2>
 				</div>
 				<div class="form-grid">
 					<label>
-						Key ID
+						{$LL.admin_machine_access_key_id()}
 						<input class="form-input" bind:value={credentialKid} placeholder="automation-2026-05" />
 					</label>
 					<label>
-						Display name
+						{$LL.admin_machine_access_display_name()}
 						<input class="form-input" bind:value={credentialDisplayName} />
 					</label>
 					<label>
-						Algorithm
+						{$LL.admin_machine_access_algorithm()}
 						<select class="form-select" bind:value={credentialAlg}>
 							{#each ALGORITHMS as alg (alg)}
 								<option value={alg}>{alg}</option>
@@ -591,44 +650,45 @@
 						</select>
 					</label>
 					<label class="wide">
-						Description
+						{$LL.admin_machine_access_description_label()}
 						<input class="form-input" bind:value={credentialDescription} />
 					</label>
 					<label>
-						Permissions
+						{$LL.admin_machine_access_permissions()}
 						<textarea class="form-textarea" bind:value={credentialPermissions}></textarea>
 					</label>
 					<label>
-						Tenant scopes
+						{$LL.admin_machine_access_tenant_scopes()}
 						<textarea class="form-textarea" bind:value={credentialTenantScopes}></textarea>
 					</label>
 					<label class="wide">
-						Public JWK
+						{$LL.admin_machine_access_public_jwk()}
 						<textarea class="form-textarea jwk" bind:value={credentialPublicJwk}></textarea>
 					</label>
 				</div>
 				<button class="btn btn-primary" onclick={() => void createCredential()} disabled={saving}>
 					<i class="i-ph-key"></i>
-					Create credential
+					{$LL.admin_machine_access_create_credential()}
 				</button>
 			</section>
 
 			<section class="panel">
 				<div class="panel-header">
-					<h2>Rotate selected credential</h2>
-					<span>{selectedCredential?.kid || 'No credential selected'}</span>
+					<h2>{$LL.admin_machine_access_rotate_selected_credential()}</h2>
+					<span>{selectedCredential?.kid || $LL.admin_machine_access_no_credential_selected()}</span
+					>
 				</div>
 				<div class="form-grid">
 					<label>
-						New key ID
+						{$LL.admin_machine_access_new_key_id()}
 						<input class="form-input" bind:value={rotateKid} />
 					</label>
 					<label>
-						Display name
+						{$LL.admin_machine_access_display_name()}
 						<input class="form-input" bind:value={rotateDisplayName} />
 					</label>
 					<label>
-						Algorithm
+						{$LL.admin_machine_access_algorithm()}
 						<select class="form-select" bind:value={rotateAlg}>
 							{#each ALGORITHMS as alg (alg)}
 								<option value={alg}>{alg}</option>
@@ -636,7 +696,7 @@
 						</select>
 					</label>
 					<label>
-						Overlap seconds
+						{$LL.admin_machine_access_overlap_seconds()}
 						<input
 							class="form-input"
 							type="number"
@@ -646,7 +706,7 @@
 						/>
 					</label>
 					<label class="wide">
-						Public JWK
+						{$LL.admin_machine_access_public_jwk()}
 						<textarea class="form-textarea jwk" bind:value={rotatePublicJwk}></textarea>
 					</label>
 				</div>
@@ -656,7 +716,7 @@
 					disabled={saving || !selectedCredential}
 				>
 					<i class="i-ph-arrows-clockwise"></i>
-					Rotate credential
+					{$LL.admin_machine_access_rotate_credential()}
 				</button>
 			</section>
 		</div>

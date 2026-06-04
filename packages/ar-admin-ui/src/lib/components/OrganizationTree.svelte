@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
+	import { LL } from '$i18n/i18n-svelte';
 	import OrganizationTree from './OrganizationTree.svelte';
 
 	interface Props {
@@ -67,7 +68,7 @@
 			class="toggle-btn"
 			class:has-children={hasChildren}
 			onclick={handleToggle}
-			aria-label={isExpanded ? 'Collapse' : 'Expand'}
+			aria-label={isExpanded ? $LL.admin_org_tree_collapse() : $LL.admin_org_tree_expand()}
 			disabled={!hasChildren}
 		>
 			{#if hasChildren}
@@ -88,9 +89,9 @@
 
 		<div class="node-badges">
 			{#if !node.is_active}
-				<span class="badge inactive">Inactive</span>
+				<span class="badge inactive">{$LL.admin_org_inactive()}</span>
 			{/if}
-			<span class="badge member-count" title="Members">
+			<span class="badge member-count" title={$LL.admin_org_tree_members()}>
 				{node.member_count}
 			</span>
 		</div>

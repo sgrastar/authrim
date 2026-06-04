@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ElevationGrantRecord } from '$lib/api/admin-approvals';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {
 		grant: ElevationGrantRecord;
@@ -10,14 +11,14 @@
 	function enforcementSummary(redactionLevel: ElevationGrantRecord['redaction_level']) {
 		if (redactionLevel === 'raw') {
 			return {
-				title: 'High-Risk Grant',
-				body: 'Services should require online introspection, fail closed, and avoid caching this grant decision.'
+				title: $LL.admin_approvals_high_risk_grant(),
+				body: $LL.admin_approvals_high_risk_grant_body()
 			};
 		}
 
 		return {
-			title: 'Standard Grant',
-			body: 'Services may verify offline first, keep caching short, and still apply local ACL or ownership checks.'
+			title: $LL.admin_approvals_standard_grant(),
+			body: $LL.admin_approvals_standard_grant_body()
 		};
 	}
 
@@ -32,19 +33,19 @@
 	<p>{enforcement.body}</p>
 	<div class="grant-guide-grid">
 		<div>
-			<strong>Audience</strong>
+			<strong>{$LL.admin_approvals_audience()}</strong>
 			<span>{grant.target_audience}</span>
 		</div>
 		<div>
-			<strong>Resource Class</strong>
+			<strong>{$LL.admin_approvals_resource_class()}</strong>
 			<span>{grant.resource_class}</span>
 		</div>
 		<div>
-			<strong>Actor</strong>
+			<strong>{$LL.admin_approvals_actor()}</strong>
 			<span>{grant.actor_subject_type} · {grant.actor_subject_id}</span>
 		</div>
 		<div>
-			<strong>Scope</strong>
+			<strong>{$LL.admin_approvals_scope()}</strong>
 			<span class="monospace">{grant.scope_canonical}</span>
 		</div>
 	</div>

@@ -2,16 +2,19 @@
 	import { onMount } from 'svelte';
 	import {
 		adminSecurityAPI,
-		getAlertTypeDisplayName,
-		getThreatTypeDisplayName,
+		type AlertType,
 		type SecurityAlert,
+		type SuspiciousActivityType,
 		type SuspiciousActivity,
 		type SecurityThreat,
+		type ThreatType,
+		type ThreatStatus,
 		type IPReputationResult,
 		type AlertStatus,
 		type AlertSeverity
 	} from '$lib/api/admin-security';
 	import { formatDate, DEFAULT_PAGE_SIZE, sanitizeText } from '$lib/utils';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// State
 	let loading = $state(true);
@@ -41,15 +44,27 @@
 
 	// Tab definitions with type safety
 	type TabId = 'alerts' | 'activities' | 'threats' | 'ip-check';
-	const TAB_DEFINITIONS: ReadonlyArray<{ id: TabId; label: string; getCount: () => number }> = [
-		{ id: 'alerts', label: 'Alerts', getCount: () => openAlertsCount },
+	const TAB_DEFINITIONS: ReadonlyArray<{
+		id: TabId;
+		getLabel: () => string;
+		getCount: () => number;
+	}> = [
+		{
+			id: 'alerts',
+			getLabel: () => $LL.admin_security_tab_alerts(),
+			getCount: () => openAlertsCount
+		},
 		{
 			id: 'activities',
-			label: 'Suspicious Activities',
+			getLabel: () => $LL.admin_security_tab_activities(),
 			getCount: () => suspiciousActivities.length
 		},
-		{ id: 'threats', label: 'Threats', getCount: () => detectedThreatsCount },
-		{ id: 'ip-check', label: 'IP Check', getCount: () => 0 }
+		{
+			id: 'threats',
+			getLabel: () => $LL.admin_security_tab_threats(),
+			getCount: () => detectedThreatsCount
+		},
+		{ id: 'ip-check', getLabel: () => $LL.admin_security_tab_ip_check(), getCount: () => 0 }
 	];
 
 	// Helper functions for CSS classes
@@ -151,6 +166,141 @@
 		}
 	}
 
+	function formatSeverity(severity: AlertSeverity): string {
+		switch (severity) {
+			case 'critical':
+				return $LL.admin_security_severity_critical();
+			case 'high':
+				return $LL.admin_security_severity_high();
+			case 'medium':
+				return $LL.admin_security_severity_medium();
+			case 'low':
+				return $LL.admin_security_severity_low();
+			case 'info':
+				return $LL.admin_security_severity_info();
+		}
+	}
+
+	function formatAlertStatus(status: AlertStatus): string {
+		switch (status) {
+			case 'open':
+				return $LL.admin_security_status_open();
+			case 'acknowledged':
+				return $LL.admin_security_status_acknowledged();
+			case 'resolved':
+				return $LL.admin_security_status_resolved();
+			case 'dismissed':
+				return $LL.admin_security_status_dismissed();
+		}
+	}
+
+	function formatThreatStatus(status: ThreatStatus): string {
+		switch (status) {
+			case 'detected':
+				return $LL.admin_security_status_detected();
+			case 'investigating':
+				return $LL.admin_security_status_investigating();
+			case 'mitigated':
+				return $LL.admin_security_status_mitigated();
+			case 'false_positive':
+				return $LL.admin_security_status_false_positive();
+		}
+	}
+
+	function formatRiskLevel(level: IPReputationResult['risk_level'] | 'none'): string {
+		switch (level) {
+			case 'critical':
+				return $LL.admin_security_risk_critical();
+			case 'high':
+				return $LL.admin_security_risk_high();
+			case 'medium':
+				return $LL.admin_security_risk_medium();
+			case 'low':
+				return $LL.admin_security_risk_low();
+			case 'none':
+				return $LL.admin_security_risk_none();
+		}
+	}
+
+	function formatAlertType(type: AlertType): string {
+		switch (type) {
+			case 'brute_force':
+				return $LL.admin_security_alert_type_brute_force();
+			case 'credential_stuffing':
+				return $LL.admin_security_alert_type_credential_stuffing();
+			case 'suspicious_login':
+				return $LL.admin_security_alert_type_suspicious_login();
+			case 'impossible_travel':
+				return $LL.admin_security_alert_type_impossible_travel();
+			case 'account_takeover':
+				return $LL.admin_security_alert_type_account_takeover();
+			case 'mfa_bypass_attempt':
+				return $LL.admin_security_alert_type_mfa_bypass_attempt();
+			case 'token_abuse':
+				return $LL.admin_security_alert_type_token_abuse();
+			case 'rate_limit_exceeded':
+				return $LL.admin_security_alert_type_rate_limit_exceeded();
+			case 'config_change':
+				return $LL.admin_security_alert_type_config_change();
+			case 'privilege_escalation':
+				return $LL.admin_security_alert_type_privilege_escalation();
+			case 'data_exfiltration':
+				return $LL.admin_security_alert_type_data_exfiltration();
+			default:
+				return $LL.admin_security_alert_type_unknown();
+		}
+	}
+
+	function formatActivityType(type: SuspiciousActivityType): string {
+		switch (type) {
+			case 'unusual_login_time':
+				return $LL.admin_security_activity_type_unusual_login_time();
+			case 'new_device':
+				return $LL.admin_security_activity_type_new_device();
+			case 'new_location':
+				return $LL.admin_security_activity_type_new_location();
+			case 'failed_mfa':
+				return $LL.admin_security_activity_type_failed_mfa();
+			case 'password_spray':
+				return $LL.admin_security_activity_type_password_spray();
+			case 'session_hijacking':
+				return $LL.admin_security_activity_type_session_hijacking();
+			case 'unusual_api_usage':
+				return $LL.admin_security_activity_type_unusual_api_usage();
+			case 'excessive_permissions':
+				return $LL.admin_security_activity_type_excessive_permissions();
+			case 'data_access_anomaly':
+				return $LL.admin_security_activity_type_data_access_anomaly();
+		}
+	}
+
+	function formatThreatType(type: ThreatType): string {
+		switch (type) {
+			case 'malware':
+				return $LL.admin_security_threat_type_malware();
+			case 'phishing':
+				return $LL.admin_security_threat_type_phishing();
+			case 'ransomware':
+				return $LL.admin_security_threat_type_ransomware();
+			case 'ddos':
+				return $LL.admin_security_threat_type_ddos();
+			case 'sql_injection':
+				return $LL.admin_security_threat_type_sql_injection();
+			case 'xss':
+				return $LL.admin_security_threat_type_xss();
+			case 'credential_theft':
+				return $LL.admin_security_threat_type_credential_theft();
+			case 'insider_threat':
+				return $LL.admin_security_threat_type_insider_threat();
+			case 'apt':
+				return $LL.admin_security_threat_type_apt();
+			case 'zero_day':
+				return $LL.admin_security_threat_type_zero_day();
+			default:
+				return $LL.admin_security_threat_type_unknown();
+		}
+	}
+
 	// Sanitize API responses to prevent XSS (defense in depth)
 	function sanitizeAlert(alert: SecurityAlert): SecurityAlert {
 		return {
@@ -222,17 +372,26 @@
 
 		// Collect all errors
 		const errors: string[] = [];
-		const names = ['Alerts', 'Suspicious Activities', 'Threats'];
+		const names = [
+			$LL.admin_security_tab_alerts(),
+			$LL.admin_security_tab_activities(),
+			$LL.admin_security_tab_threats()
+		];
 		results.forEach((result, index) => {
 			if (result.status === 'rejected') {
 				const message =
-					result.reason instanceof Error ? result.reason.message : `Failed to load ${names[index]}`;
+					result.reason instanceof Error
+						? result.reason.message
+						: $LL.admin_security_failed_to_load_section({ section: names[index] });
 				errors.push(message);
 			}
 		});
 
 		if (errors.length > 0) {
-			error = errors.length === 1 ? errors[0] : `Multiple errors: ${errors.join('; ')}`;
+			error =
+				errors.length === 1
+					? errors[0]
+					: $LL.admin_security_multiple_errors({ errors: errors.join('; ') });
 		}
 
 		loading = false;
@@ -250,7 +409,7 @@
 			// Apply sanitization to prevent XSS
 			alerts = alerts.map((a) => (a.id === alertId ? sanitizeAlert(updated) : a));
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to acknowledge alert';
+			error = e instanceof Error ? e.message : $LL.admin_security_acknowledge_failed();
 		} finally {
 			acknowledgingId = null;
 		}
@@ -280,12 +439,12 @@
 		const trimmedIP = ipToCheck.trim();
 
 		if (!trimmedIP) {
-			ipCheckError = 'Please enter an IP address';
+			ipCheckError = $LL.admin_security_empty_ip_error();
 			return;
 		}
 
 		if (!isValidIPAddress(trimmedIP)) {
-			ipCheckError = 'Invalid IP address format. Please enter a valid IPv4 or IPv6 address.';
+			ipCheckError = $LL.admin_security_invalid_ip_error();
 			return;
 		}
 
@@ -296,7 +455,7 @@
 		try {
 			ipCheckResult = await adminSecurityAPI.checkIPReputation(trimmedIP);
 		} catch (e) {
-			ipCheckError = e instanceof Error ? e.message : 'Failed to check IP reputation';
+			ipCheckError = e instanceof Error ? e.message : $LL.admin_security_ip_check_failed();
 		} finally {
 			checkingIP = false;
 		}
@@ -341,7 +500,7 @@
 				try {
 					await loadAlerts();
 				} catch (e) {
-					error = e instanceof Error ? e.message : 'Failed to load alerts';
+					error = e instanceof Error ? e.message : $LL.admin_security_alerts_load_failed();
 				}
 			})();
 		}
@@ -351,12 +510,14 @@
 <div class="admin-page">
 	<div class="page-header">
 		<div class="page-header-info">
-			<h1 class="page-title">Security</h1>
+			<h1 class="page-title">{$LL.admin_security_title()}</h1>
 			<p class="page-description">
-				Monitor security alerts, suspicious activities, detected threats, and check IP reputation.
+				{$LL.admin_security_description()}
 			</p>
 		</div>
-		<button class="btn btn-secondary" onclick={loadData} disabled={loading}> Refresh </button>
+		<button class="btn btn-secondary" onclick={loadData} disabled={loading}>
+			{$LL.admin_security_refresh()}
+		</button>
 	</div>
 
 	{#if error}
@@ -378,12 +539,12 @@
 				class="security-tab"
 				class:active={activeTab === tab.id}
 			>
-				{tab.label}
+				{tab.getLabel()}
 				{#if tabCount > 0}
 					<span
 						class="tab-count"
 						class:alert-count={tab.id === 'alerts'}
-						aria-label="{tabCount} items"
+						aria-label={$LL.admin_security_tab_items({ count: tabCount })}
 					>
 						{tabCount}
 					</span>
@@ -393,38 +554,38 @@
 	</div>
 
 	{#if loading}
-		<div class="loading-state">Loading security data...</div>
+		<div class="loading-state">{$LL.admin_security_loading()}</div>
 	{:else if activeTab === 'alerts'}
 		<!-- Alerts Tab -->
 		<div>
 			<!-- Filters -->
 			<div class="security-filter-bar">
 				<div class="filter-group">
-					<label for="status-filter" class="filter-label">Status</label>
+					<label for="status-filter" class="filter-label">{$LL.admin_security_status()}</label>
 					<select id="status-filter" class="filter-select" bind:value={statusFilter}>
-						<option value="">All Status</option>
-						<option value="open">Open</option>
-						<option value="acknowledged">Acknowledged</option>
-						<option value="resolved">Resolved</option>
-						<option value="dismissed">Dismissed</option>
+						<option value="">{$LL.admin_security_all_status()}</option>
+						<option value="open">{$LL.admin_security_status_open()}</option>
+						<option value="acknowledged">{$LL.admin_security_status_acknowledged()}</option>
+						<option value="resolved">{$LL.admin_security_status_resolved()}</option>
+						<option value="dismissed">{$LL.admin_security_status_dismissed()}</option>
 					</select>
 				</div>
 				<div class="filter-group">
-					<label for="severity-filter" class="filter-label">Severity</label>
+					<label for="severity-filter" class="filter-label">{$LL.admin_security_severity()}</label>
 					<select id="severity-filter" class="filter-select" bind:value={severityFilter}>
-						<option value="">All Severities</option>
-						<option value="critical">Critical</option>
-						<option value="high">High</option>
-						<option value="medium">Medium</option>
-						<option value="low">Low</option>
-						<option value="info">Info</option>
+						<option value="">{$LL.admin_security_all_severities()}</option>
+						<option value="critical">{$LL.admin_security_severity_critical()}</option>
+						<option value="high">{$LL.admin_security_severity_high()}</option>
+						<option value="medium">{$LL.admin_security_severity_medium()}</option>
+						<option value="low">{$LL.admin_security_severity_low()}</option>
+						<option value="info">{$LL.admin_security_severity_info()}</option>
 					</select>
 				</div>
 			</div>
 
 			{#if alerts.length === 0}
 				<div class="empty-state">
-					<p>No security alerts found.</p>
+					<p>{$LL.admin_security_no_alerts()}</p>
 				</div>
 			{:else}
 				<div class="security-cards-grid">
@@ -433,13 +594,13 @@
 							<div class="security-card-header">
 								<div class="security-card-badges">
 									<span class={getSeverityBadgeClass(alert.severity)}>
-										{alert.severity.toUpperCase()}
+										{formatSeverity(alert.severity)}
 									</span>
 									<span class={getAlertStatusBadgeClass(alert.status)}>
-										{alert.status}
+										{formatAlertStatus(alert.status)}
 									</span>
 									<span class="alert-type-label">
-										{getAlertTypeDisplayName(alert.type)}
+										{formatAlertType(alert.type)}
 									</span>
 								</div>
 								<span class="security-card-date">
@@ -451,10 +612,10 @@
 							<div class="security-card-footer">
 								<div class="security-card-meta">
 									{#if alert.source_ip}
-										<span>IP: {alert.source_ip}</span>
+										<span>{$LL.admin_security_ip_label()} {alert.source_ip}</span>
 									{/if}
 									{#if alert.user_email}
-										<span>User: {alert.user_email}</span>
+										<span>{$LL.admin_security_user_label()} {alert.user_email}</span>
 									{/if}
 								</div>
 								{#if alert.status === 'open'}
@@ -463,7 +624,9 @@
 										onclick={() => acknowledgeAlert(alert.id)}
 										disabled={acknowledgingId === alert.id}
 									>
-										{acknowledgingId === alert.id ? 'Acknowledging...' : 'Acknowledge'}
+										{acknowledgingId === alert.id
+											? $LL.admin_security_acknowledging()
+											: $LL.admin_security_acknowledge()}
 									</button>
 								{/if}
 							</div>
@@ -477,7 +640,7 @@
 		<div>
 			{#if suspiciousActivities.length === 0}
 				<div class="empty-state">
-					<p>No suspicious activities detected.</p>
+					<p>{$LL.admin_security_no_activities()}</p>
 				</div>
 			{:else}
 				<div class="security-cards-grid">
@@ -486,14 +649,14 @@
 							<div class="security-card-header">
 								<div class="security-card-badges">
 									<span class={getSeverityBadgeClass(activity.severity)}>
-										{activity.severity.toUpperCase()}
+										{formatSeverity(activity.severity)}
 									</span>
 									<span class="alert-type-label">
-										{activity.type.replace(/_/g, ' ')}
+										{formatActivityType(activity.type)}
 									</span>
 								</div>
 								<div class="risk-score-display">
-									<span class="risk-score-label">Risk Score:</span>
+									<span class="risk-score-label">{$LL.admin_security_risk_score_label()}</span>
 									<span class="risk-score-value {getRiskScoreClass(activity.risk_score)}">
 										{activity.risk_score}
 									</span>
@@ -502,12 +665,13 @@
 							<p class="security-card-description activity-description">{activity.description}</p>
 							<div class="security-card-meta">
 								{#if activity.source_ip}
-									<span>IP: {activity.source_ip}</span>
+									<span>{$LL.admin_security_ip_label()} {activity.source_ip}</span>
 								{/if}
 								{#if activity.user_email}
-									<span>User: {activity.user_email}</span>
+									<span>{$LL.admin_security_user_label()} {activity.user_email}</span>
 								{/if}
-								<span>Detected: {formatDate(activity.detected_at)}</span>
+								<span>{$LL.admin_security_detected_label()} {formatDate(activity.detected_at)}</span
+								>
 							</div>
 						</div>
 					{/each}
@@ -519,7 +683,7 @@
 		<div>
 			{#if threats.length === 0}
 				<div class="empty-state">
-					<p>No threats detected.</p>
+					<p>{$LL.admin_security_no_threats()}</p>
 				</div>
 			{:else}
 				<div class="security-cards-grid">
@@ -528,13 +692,13 @@
 							<div class="security-card-header">
 								<div class="security-card-badges">
 									<span class={getSeverityBadgeClass(threat.severity)}>
-										{threat.severity.toUpperCase()}
+										{formatSeverity(threat.severity)}
 									</span>
 									<span class={getThreatStatusBadgeClass(threat.status)}>
-										{threat.status}
+										{formatThreatStatus(threat.status)}
 									</span>
 									<span class="alert-type-label">
-										{getThreatTypeDisplayName(threat.type)}
+										{formatThreatType(threat.type)}
 									</span>
 								</div>
 								<span class="security-card-date">
@@ -545,7 +709,9 @@
 							<p class="security-card-description">{threat.description}</p>
 							{#if Array.isArray(threat.indicators) && threat.indicators.length > 0}
 								<div class="threat-indicators">
-									<span class="threat-indicators-label">Indicators:</span>
+									<span class="threat-indicators-label"
+										>{$LL.admin_security_indicators_label()}</span
+									>
 									<div class="threat-indicators-list">
 										{#each threat.indicators as indicator (indicator)}
 											<span class="threat-indicator-tag">{indicator}</span>
@@ -561,19 +727,19 @@
 	{:else if activeTab === 'ip-check'}
 		<!-- IP Check Tab -->
 		<div class="ip-check-section">
-			<h2 class="ip-check-title">IP Reputation Check</h2>
-			<p class="ip-check-description">Check the reputation and risk level of an IP address.</p>
+			<h2 class="ip-check-title">{$LL.admin_security_ip_check_title()}</h2>
+			<p class="ip-check-description">{$LL.admin_security_ip_check_description()}</p>
 
 			<div class="ip-check-form">
 				<input
 					type="text"
 					class="ip-check-input"
 					bind:value={ipToCheck}
-					placeholder="Enter IP address (e.g., 192.168.1.1)"
+					placeholder={$LL.admin_security_ip_placeholder()}
 					onkeydown={(e) => e.key === 'Enter' && checkIPReputation()}
 				/>
 				<button class="btn btn-primary" onclick={checkIPReputation} disabled={checkingIP}>
-					{checkingIP ? 'Checking...' : 'Check'}
+					{checkingIP ? $LL.admin_security_checking() : $LL.admin_security_check()}
 				</button>
 			</div>
 
@@ -586,13 +752,13 @@
 					<div class={getRiskLevelBgClass(ipCheckResult.risk_level)}>
 						<div class="ip-result-header-content">
 							<div>
-								<div class="ip-result-label">IP Address</div>
+								<div class="ip-result-label">{$LL.admin_security_ip_address()}</div>
 								<div class="ip-result-ip">{ipCheckResult.ip}</div>
 							</div>
 							<div class="ip-result-risk">
-								<div class="ip-result-label">Risk Level</div>
+								<div class="ip-result-label">{$LL.admin_security_risk_level()}</div>
 								<div class={getRiskLevelClass(ipCheckResult.risk_level)}>
-									{ipCheckResult.risk_level.toUpperCase()}
+									{formatRiskLevel(ipCheckResult.risk_level)}
 								</div>
 							</div>
 						</div>
@@ -600,26 +766,28 @@
 					<div class="ip-result-body">
 						<div class="ip-result-stats">
 							<div class="ip-stat">
-								<div class="ip-stat-label">Risk Score</div>
+								<div class="ip-stat-label">{$LL.admin_security_risk_score()}</div>
 								<div class="ip-stat-value">{ipCheckResult.risk_score}/100</div>
 							</div>
 							<div class="ip-stat">
-								<div class="ip-stat-label">Failed Auth (24h)</div>
+								<div class="ip-stat-label">{$LL.admin_security_failed_auth_24h()}</div>
 								<div class="ip-stat-value">{ipCheckResult.failed_auth_attempts_24h}</div>
 							</div>
 							<div class="ip-stat">
-								<div class="ip-stat-label">Rate Limit Violations</div>
+								<div class="ip-stat-label">{$LL.admin_security_rate_limit_violations()}</div>
 								<div class="ip-stat-value">{ipCheckResult.rate_limit_violations_24h}</div>
 							</div>
 						</div>
 
 						<div class="ip-blocked-status {ipCheckResult.is_blocked ? 'blocked' : 'not-blocked'}">
-							{ipCheckResult.is_blocked ? '⛔ This IP is BLOCKED' : '✓ This IP is NOT blocked'}
+							{ipCheckResult.is_blocked
+								? `⛔ ${$LL.admin_security_ip_blocked()}`
+								: `✓ ${$LL.admin_security_ip_not_blocked()}`}
 						</div>
 
 						{#if ipCheckResult.recommendations.length > 0}
 							<div class="ip-recommendations">
-								<div class="ip-recommendations-title">Recommendations</div>
+								<div class="ip-recommendations-title">{$LL.admin_security_recommendations()}</div>
 								<ul class="ip-recommendations-list">
 									{#each ipCheckResult.recommendations as rec (rec)}
 										<li>{rec}</li>

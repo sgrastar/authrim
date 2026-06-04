@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { adminUsersAPI, type User, type UpdateUserInput } from '$lib/api/admin-users';
 	import { adminSessionsAPI } from '$lib/api/admin-sessions';
 	import {
@@ -95,7 +96,7 @@
 			resetEditForm();
 		} catch (err) {
 			console.error('Failed to load user:', err);
-			error = err instanceof Error ? err.message : 'Failed to load user';
+			error = err instanceof Error ? err.message : $LL.admin_user_detail_error_load();
 		} finally {
 			loading = false;
 		}
@@ -152,7 +153,7 @@
 			userRoles = response.roles;
 		} catch (err) {
 			console.error('Failed to load user roles:', err);
-			rolesError = err instanceof Error ? err.message : 'Failed to load roles';
+			rolesError = err instanceof Error ? err.message : $LL.admin_user_detail_error_load_roles();
 		} finally {
 			rolesLoading = false;
 		}
@@ -204,11 +205,11 @@
 	async function assignRole() {
 		if (!selectedRoleId) return;
 		if (selectedScope === 'org' && !selectedOrgId) {
-			rolesError = 'Please select an organization for org-scoped role';
+			rolesError = $LL.admin_user_detail_error_select_org();
 			return;
 		}
 		if (selectedScope === 'org' && selectedOrgId && !isValidUUID(selectedOrgId)) {
-			rolesError = 'Invalid organization ID format';
+			rolesError = $LL.admin_user_detail_error_invalid_org();
 			return;
 		}
 
@@ -225,7 +226,7 @@
 			closeAssignRoleDialog();
 		} catch (err) {
 			console.error('Failed to assign role:', err);
-			rolesError = err instanceof Error ? err.message : 'Failed to assign role';
+			rolesError = err instanceof Error ? err.message : $LL.admin_user_detail_error_assign_role();
 		} finally {
 			assignLoading = false;
 		}
@@ -253,7 +254,7 @@
 			closeRemoveRoleDialog();
 		} catch (err) {
 			console.error('Failed to remove role:', err);
-			rolesError = err instanceof Error ? err.message : 'Failed to remove role';
+			rolesError = err instanceof Error ? err.message : $LL.admin_user_detail_error_remove_role();
 		} finally {
 			removeRoleLoading = false;
 		}
@@ -295,7 +296,7 @@
 			isEditing = false;
 		} catch (err) {
 			console.error('Failed to update user:', err);
-			actionError = err instanceof Error ? err.message : 'Failed to update user';
+			actionError = err instanceof Error ? err.message : $LL.admin_user_detail_error_update();
 		} finally {
 			saving = false;
 		}
@@ -349,7 +350,7 @@
 			closeConfirmDialog();
 		} catch (err) {
 			console.error(`Failed to ${confirmAction} user:`, err);
-			actionError = err instanceof Error ? err.message : `Failed to ${confirmAction} user`;
+			actionError = err instanceof Error ? err.message : $LL.admin_user_detail_error_update();
 		} finally {
 			confirmLoading = false;
 		}
@@ -357,7 +358,7 @@
 
 	function formatTimestamp(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function getStatusBadgeClass(status: string): string {
@@ -390,7 +391,8 @@
 			consentRecords = response.records || [];
 		} catch (err) {
 			console.error('Failed to load consent records:', err);
-			consentError = err instanceof Error ? err.message : 'Failed to load consent records';
+			consentError =
+				err instanceof Error ? err.message : $LL.admin_user_detail_error_load_consents();
 		} finally {
 			consentLoading = false;
 		}
@@ -406,7 +408,8 @@
 			showHistoryModal = true;
 		} catch (err) {
 			console.error('Failed to load consent history:', err);
-			consentError = err instanceof Error ? err.message : 'Failed to load consent history';
+			consentError =
+				err instanceof Error ? err.message : $LL.admin_user_detail_error_load_history();
 		} finally {
 			historyLoading = false;
 		}
@@ -425,7 +428,8 @@
 			statementToWithdraw = null;
 		} catch (err) {
 			console.error('Failed to withdraw consent:', err);
-			consentError = err instanceof Error ? err.message : 'Failed to withdraw consent';
+			consentError =
+				err instanceof Error ? err.message : $LL.admin_user_detail_error_withdraw_consent();
 		} finally {
 			withdrawLoading = false;
 		}
@@ -450,13 +454,13 @@
 	function getConsentStatusLabel(status: string): string {
 		switch (status) {
 			case 'granted':
-				return 'Granted';
+				return $LL.admin_user_detail_status_granted();
 			case 'denied':
-				return 'Denied';
+				return $LL.admin_user_detail_status_denied();
 			case 'withdrawn':
-				return 'Withdrawn';
+				return $LL.admin_user_detail_status_withdrawn();
 			case 'expired':
-				return 'Expired';
+				return $LL.admin_user_detail_status_expired();
 			default:
 				return status;
 		}
@@ -466,57 +470,82 @@
 	function getActionLabel(action: string): string {
 		switch (action) {
 			case 'grant':
-				return 'Granted';
+				return $LL.admin_user_detail_status_granted();
 			case 'deny':
-				return 'Denied';
+				return $LL.admin_user_detail_status_denied();
 			case 'withdraw':
-				return 'Withdrawn';
+				return $LL.admin_user_detail_status_withdrawn();
 			case 'version_upgrade':
-				return 'Version Upgraded';
+				return $LL.admin_user_detail_action_version_upgraded();
 			default:
 				return action;
 		}
+	}
+
+	function getStatusLabel(status: string): string {
+		switch (status) {
+			case 'active':
+				return $LL.admin_users_status_active();
+			case 'suspended':
+				return $LL.admin_users_status_suspended();
+			case 'locked':
+				return $LL.admin_users_status_locked();
+			default:
+				return status;
+		}
+	}
+
+	function getScopeLabel(scope: ScopeType): string {
+		switch (scope) {
+			case 'global':
+				return $LL.admin_user_detail_scope_global();
+			case 'org':
+				return $LL.admin_user_detail_scope_org();
+			case 'resource':
+			default:
+				return scope;
+		}
+	}
+
+	function formatYesNo(value: boolean): string {
+		return value ? $LL.admin_user_detail_yes() : $LL.admin_user_detail_no();
 	}
 
 	function getConfirmDialogContent() {
 		switch (confirmAction) {
 			case 'suspend':
 				return {
-					title: 'Suspend User',
-					description:
-						"This will temporarily suspend the user's account. The user will not be able to log in until unsuspended.",
-					buttonText: 'Suspend',
+					title: $LL.admin_user_detail_suspend_user(),
+					description: $LL.admin_user_detail_suspend_desc(),
+					buttonText: $LL.admin_user_detail_suspend_action(),
 					buttonColor: '#f59e0b'
 				};
 			case 'lock':
 				return {
-					title: 'Lock User Account',
-					description:
-						"This will lock the user's account due to security concerns. Use this for suspicious activity or compromised accounts.",
-					buttonText: 'Lock',
+					title: $LL.admin_user_detail_lock_account(),
+					description: $LL.admin_user_detail_lock_desc(),
+					buttonText: $LL.admin_user_detail_lock_action(),
 					buttonColor: '#ef4444'
 				};
 			case 'activate':
 				return {
-					title: 'Activate User',
-					description:
-						"This will restore the user's account to active status. The user will be able to log in again.",
-					buttonText: 'Activate',
+					title: $LL.admin_user_detail_activate_user(),
+					description: $LL.admin_user_detail_activate_desc(),
+					buttonText: $LL.admin_user_detail_activate_action(),
 					buttonColor: '#10b981'
 				};
 			case 'revoke-sessions':
 				return {
-					title: 'Revoke All Sessions',
-					description:
-						'This will immediately log out the user from all devices. The user will need to log in again.',
-					buttonText: 'Revoke All',
+					title: $LL.admin_user_detail_revoke_all_sessions(),
+					description: $LL.admin_user_detail_revoke_sessions_desc(),
+					buttonText: $LL.admin_user_detail_revoke_all_action(),
 					buttonColor: '#dc2626'
 				};
 			case 'delete':
 				return {
-					title: 'Delete User',
-					description: 'This will delete the user. The user will be removed from the list.',
-					buttonText: 'Delete',
+					title: $LL.admin_user_detail_deleteUser(),
+					description: $LL.admin_user_detail_delete_desc(),
+					buttonText: $LL.admin_users_delete(),
 					buttonColor: '#dc2626'
 				};
 			default:
@@ -526,16 +555,18 @@
 </script>
 
 <svelte:head>
-	<title>{user?.email || 'User'} - Admin Dashboard - Authrim</title>
+	<title
+		>{user?.email || $LL.admin_user_detail_page_title_fallback()} - Admin Dashboard - Authrim</title
+	>
 </svelte:head>
 
 <div class="admin-page">
-	<a href="/admin/users" class="back-link">← Back to Users</a>
+	<a href="/admin/users" class="back-link">← {$LL.admin_users_back_to_users()}</a>
 
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading user...</p>
+			<p>{$LL.admin_user_detail_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
@@ -543,10 +574,10 @@
 		<!-- User Header -->
 		<div class="page-header-with-status">
 			<div class="page-header-info">
-				<h1>{sanitizeText(user.name || user.email || 'Unknown User')}</h1>
+				<h1>{sanitizeText(user.name || user.email || $LL.admin_user_detail_unknown_user())}</h1>
 				<p>{sanitizeText(user.email || '')}</p>
 			</div>
-			<span class={getStatusBadgeClass(user.status)}>{user.status}</span>
+			<span class={getStatusBadgeClass(user.status)}>{getStatusLabel(user.status)}</span>
 		</div>
 
 		{#if actionError}
@@ -561,11 +592,11 @@
 				onclick={() => switchTab('overview')}
 			>
 				<i class="i-ph-user"></i>
-				Overview
+				{$LL.admin_user_detail_tab_overview()}
 			</button>
 			<button class="tab" class:active={activeTab === 'roles'} onclick={() => switchTab('roles')}>
 				<i class="i-ph-shield-check"></i>
-				Roles
+				{$LL.admin_user_detail_tab_roles()}
 			</button>
 			<button
 				class="tab"
@@ -573,7 +604,7 @@
 				onclick={() => switchTab('consents')}
 			>
 				<i class="i-ph-check-circle"></i>
-				Consents
+				{$LL.admin_user_detail_tab_consents()}
 			</button>
 			<button
 				class="tab"
@@ -581,7 +612,7 @@
 				onclick={() => switchTab('actions')}
 			>
 				<i class="i-ph-gear"></i>
-				Actions
+				{$LL.admin_user_detail_tab_actions()}
 			</button>
 		</div>
 
@@ -590,9 +621,11 @@
 			<!-- User Details -->
 			<div class="panel">
 				<div class="panel-header">
-					<h2 class="panel-title">User Information</h2>
+					<h2 class="panel-title">{$LL.admin_user_detail_user_information()}</h2>
 					{#if !isEditing}
-						<button class="btn btn-primary btn-sm" onclick={startEditing}>Edit</button>
+						<button class="btn btn-primary btn-sm" onclick={startEditing}
+							>{$LL.admin_users_edit()}</button
+						>
 					{/if}
 				</div>
 
@@ -606,15 +639,15 @@
 					>
 						<div class="form-grid">
 							<div class="form-group">
-								<label for="email" class="form-label">Email</label>
+								<label for="email" class="form-label">{$LL.admin_users_email()}</label>
 								<input id="email" type="email" class="form-input" bind:value={editForm.email} />
 							</div>
 							<div class="form-group">
-								<label for="name" class="form-label">Name</label>
+								<label for="name" class="form-label">{$LL.admin_users_name()}</label>
 								<input id="name" type="text" class="form-input" bind:value={editForm.name} />
 							</div>
 							<div class="form-group">
-								<label for="given_name" class="form-label">Given Name</label>
+								<label for="given_name" class="form-label">{$LL.admin_users_given_name()}</label>
 								<input
 									id="given_name"
 									type="text"
@@ -623,7 +656,7 @@
 								/>
 							</div>
 							<div class="form-group">
-								<label for="family_name" class="form-label">Family Name</label>
+								<label for="family_name" class="form-label">{$LL.admin_users_family_name()}</label>
 								<input
 									id="family_name"
 									type="text"
@@ -632,7 +665,7 @@
 								/>
 							</div>
 							<div class="form-group">
-								<label for="nickname" class="form-label">Nickname</label>
+								<label for="nickname" class="form-label">{$LL.admin_user_detail_nickname()}</label>
 								<input
 									id="nickname"
 									type="text"
@@ -641,7 +674,9 @@
 								/>
 							</div>
 							<div class="form-group">
-								<label for="preferred_username" class="form-label">Preferred Username</label>
+								<label for="preferred_username" class="form-label"
+									>{$LL.admin_user_detail_preferred_username()}</label
+								>
 								<input
 									id="preferred_username"
 									type="text"
@@ -650,7 +685,9 @@
 								/>
 							</div>
 							<div class="form-group">
-								<label for="phone_number" class="form-label">Phone Number</label>
+								<label for="phone_number" class="form-label"
+									>{$LL.admin_user_detail_phone_number()}</label
+								>
 								<input
 									id="phone_number"
 									type="tel"
@@ -661,21 +698,21 @@
 							<div class="form-group form-group-full">
 								<ToggleSwitch
 									bind:checked={editForm.email_verified}
-									label="Email Verified"
-									description="Mark the user's email address as verified"
+									label={$LL.admin_users_verified_label()}
+									description={$LL.admin_user_detail_email_verified_desc()}
 								/>
 							</div>
 							<div class="form-group form-group-full">
 								<ToggleSwitch
 									bind:checked={editForm.phone_number_verified}
-									label="Phone Verified"
-									description="Mark the user's phone number as verified"
+									label={$LL.admin_user_detail_phone_verified()}
+									description={$LL.admin_user_detail_phone_verified_desc()}
 								/>
 							</div>
 						</div>
 						<div class="action-buttons" style="margin-top: 20px;">
 							<button type="submit" class="btn btn-primary" disabled={saving}>
-								{saving ? 'Saving...' : 'Save Changes'}
+								{saving ? $LL.admin_client_detail_saving() : $LL.admin_user_detail_save()}
 							</button>
 							<button
 								type="button"
@@ -683,7 +720,7 @@
 								onclick={cancelEditing}
 								disabled={saving}
 							>
-								Cancel
+								{$LL.dialog_cancel()}
 							</button>
 						</div>
 					</form>
@@ -695,54 +732,54 @@
 							<dd class="info-value mono">{user.id}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Email</dt>
+							<dt>{$LL.admin_users_email()}</dt>
 							<dd class="info-value">{sanitizeText(user.email || '-')}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Name</dt>
+							<dt>{$LL.admin_users_name()}</dt>
 							<dd class="info-value">{sanitizeText(user.name || '-')}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Given Name</dt>
+							<dt>{$LL.admin_users_given_name()}</dt>
 							<dd class="info-value">{sanitizeText(user.given_name || '-')}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Family Name</dt>
+							<dt>{$LL.admin_users_family_name()}</dt>
 							<dd class="info-value">{sanitizeText(user.family_name || '-')}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Nickname</dt>
+							<dt>{$LL.admin_user_detail_nickname()}</dt>
 							<dd class="info-value">{sanitizeText(user.nickname || '-')}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Preferred Username</dt>
+							<dt>{$LL.admin_user_detail_preferred_username()}</dt>
 							<dd class="info-value">{sanitizeText(user.preferred_username || '-')}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Phone Number</dt>
+							<dt>{$LL.admin_user_detail_phone_number()}</dt>
 							<dd class="info-value">{sanitizeText(user.phone_number || '-')}</dd>
 						</div>
 						<div class="info-item">
-							<dt>User Type</dt>
+							<dt>{$LL.admin_user_detail_user_type()}</dt>
 							<dd class="info-value">{user.user_type}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Email Verified</dt>
+							<dt>{$LL.admin_users_verified_label()}</dt>
 							<dd class="info-value">
 								{#if user.email_verified}
-									<span class="verify-yes">✓ Yes</span>
+									<span class="verify-yes">✓ {formatYesNo(true)}</span>
 								{:else}
-									<span class="verify-no">✗ No</span>
+									<span class="verify-no">✗ {formatYesNo(false)}</span>
 								{/if}
 							</dd>
 						</div>
 						<div class="info-item">
-							<dt>Phone Verified</dt>
+							<dt>{$LL.admin_user_detail_phone_verified()}</dt>
 							<dd class="info-value">
 								{#if user.phone_number_verified}
-									<span class="verify-yes">✓ Yes</span>
+									<span class="verify-yes">✓ {formatYesNo(true)}</span>
 								{:else}
-									<span class="verify-no">✗ No</span>
+									<span class="verify-no">✗ {formatYesNo(false)}</span>
 								{/if}
 							</dd>
 						</div>
@@ -752,29 +789,29 @@
 
 			<!-- Timestamps -->
 			<div class="panel">
-				<h2 class="panel-title">Timestamps</h2>
+				<h2 class="panel-title">{$LL.admin_user_detail_timestamps()}</h2>
 				<dl class="info-grid">
 					<div class="info-item">
-						<dt>Created At</dt>
+						<dt>{$LL.admin_user_detail_created_at()}</dt>
 						<dd class="info-value">{formatTimestamp(user.created_at)}</dd>
 					</div>
 					<div class="info-item">
-						<dt>Updated At</dt>
+						<dt>{$LL.admin_user_detail_updated_at()}</dt>
 						<dd class="info-value">{formatTimestamp(user.updated_at)}</dd>
 					</div>
 					<div class="info-item">
-						<dt>Last Login At</dt>
+						<dt>{$LL.admin_user_detail_last_login_at()}</dt>
 						<dd class="info-value">{formatTimestamp(user.last_login_at)}</dd>
 					</div>
 					{#if user.suspended_at}
 						<div class="info-item">
-							<dt>Suspended At</dt>
+							<dt>{$LL.admin_user_detail_suspended_at()}</dt>
 							<dd class="info-value warning">{formatTimestamp(user.suspended_at)}</dd>
 						</div>
 					{/if}
 					{#if user.locked_at}
 						<div class="info-item">
-							<dt>Locked At</dt>
+							<dt>{$LL.admin_user_detail_locked_at()}</dt>
 							<dd class="info-value danger">{formatTimestamp(user.locked_at)}</dd>
 						</div>
 					{/if}
@@ -783,7 +820,7 @@
 
 			<!-- Passkeys -->
 			<div class="panel">
-				<h2 class="panel-title">Passkeys</h2>
+				<h2 class="panel-title">{$LL.admin_user_detail_passkeys()}</h2>
 				{#if user.passkeys && user.passkeys.length > 0}
 					<ul class="passkey-list">
 						{#each user.passkeys as passkey (passkey.id)}
@@ -791,18 +828,26 @@
 								<div class="passkey-header">
 									<div>
 										<p class="passkey-name">
-											{sanitizeText(passkey.device_name || 'Unnamed Device')}
+											{sanitizeText(passkey.device_name || $LL.admin_user_detail_unnamed_device())}
 										</p>
-										<p class="passkey-meta">Created: {formatTimestamp(passkey.created_at)}</p>
+										<p class="passkey-meta">
+											{$LL.admin_user_detail_passkey_created({
+												date: formatTimestamp(passkey.created_at)
+											})}
+										</p>
 									</div>
-									<p class="passkey-meta">Last used: {formatTimestamp(passkey.last_used_at)}</p>
+									<p class="passkey-meta">
+										{$LL.admin_user_detail_passkey_last_used({
+											date: formatTimestamp(passkey.last_used_at)
+										})}
+									</p>
 								</div>
 							</li>
 						{/each}
 					</ul>
 				{:else}
 					<div class="empty-state">
-						<p class="empty-state-description">No passkeys registered</p>
+						<p class="empty-state-description">{$LL.admin_user_detail_no_passkeys()}</p>
 					</div>
 				{/if}
 			</div>
@@ -813,8 +858,10 @@
 			<!-- Role Assignments -->
 			<div class="panel">
 				<div class="panel-header">
-					<h2 class="panel-title">Role Assignments</h2>
-					<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}>Assign Role</button>
+					<h2 class="panel-title">{$LL.admin_user_detail_role_assignments()}</h2>
+					<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}
+						>{$LL.admin_user_detail_assign_role()}</button
+					>
 				</div>
 
 				{#if rolesError}
@@ -824,18 +871,18 @@
 				{#if rolesLoading}
 					<div class="loading-state">
 						<i class="i-ph-circle-notch loading-spinner"></i>
-						<p>Loading roles...</p>
+						<p>{$LL.admin_user_detail_loading_roles()}</p>
 					</div>
 				{:else if userRoles.length > 0}
 					<div class="data-table-container">
 						<table class="data-table">
 							<thead>
 								<tr>
-									<th>Role</th>
-									<th>Scope</th>
-									<th>Scope Target</th>
-									<th>Expires</th>
-									<th class="text-right">Actions</th>
+									<th>{$LL.admin_user_detail_role()}</th>
+									<th>{$LL.admin_user_detail_scope()}</th>
+									<th>{$LL.admin_user_detail_scope_target()}</th>
+									<th>{$LL.admin_user_detail_expires()}</th>
+									<th class="text-right">{$LL.admin_users_actions()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -846,19 +893,22 @@
 												{role.role_display_name || role.role_name}
 											</span>
 											{#if role.is_system_role}
-												<span class="badge-system">System</span>
+												<span class="badge-system">{$LL.admin_user_detail_system()}</span>
 											{/if}
 										</td>
 										<td>
-											<span class={getScopeBadgeClass(role.scope)}>{role.scope}</span>
+											<span class={getScopeBadgeClass(role.scope)}>{getScopeLabel(role.scope)}</span
+											>
 										</td>
 										<td class="muted">{role.scope_target || '-'}</td>
 										<td class="muted"
-											>{role.expires_at ? formatTimestamp(role.expires_at) : 'Never'}</td
+											>{role.expires_at
+												? formatTimestamp(role.expires_at)
+												: $LL.admin_user_detail_never()}</td
 										>
 										<td class="text-right">
 											<button class="btn btn-danger btn-sm" onclick={() => confirmRemoveRole(role)}>
-												Remove
+												{$LL.admin_user_detail_remove()}
 											</button>
 										</td>
 									</tr>
@@ -868,7 +918,7 @@
 					</div>
 				{:else}
 					<div class="empty-state">
-						<p class="empty-state-description">No roles assigned to this user</p>
+						<p class="empty-state-description">{$LL.admin_user_detail_no_roles()}</p>
 					</div>
 				{/if}
 			</div>
@@ -877,7 +927,7 @@
 		<!-- Consents Tab -->
 		{#if activeTab === 'consents'}
 			<div class="panel">
-				<h2 class="panel-title">Consent Records</h2>
+				<h2 class="panel-title">{$LL.admin_user_detail_consent_records()}</h2>
 
 				{#if consentError}
 					<div class="alert alert-error">{consentError}</div>
@@ -886,20 +936,20 @@
 				{#if consentLoading}
 					<div class="loading-state">
 						<i class="i-ph-circle-notch loading-spinner"></i>
-						<p>Loading consent records...</p>
+						<p>{$LL.admin_user_detail_loading_consent_records()}</p>
 					</div>
 				{:else if consentRecords.length > 0}
 					<div class="data-table-container">
 						<table class="data-table">
 							<thead>
 								<tr>
-									<th>Statement</th>
-									<th>Version</th>
-									<th>Status</th>
-									<th>Granted At</th>
-									<th>Withdrawn At</th>
-									<th>Expires At</th>
-									<th class="text-right">Actions</th>
+									<th>{$LL.admin_user_detail_statement()}</th>
+									<th>{$LL.admin_user_detail_version()}</th>
+									<th>{$LL.admin_users_status()}</th>
+									<th>{$LL.admin_user_detail_granted_at()}</th>
+									<th>{$LL.admin_user_detail_withdrawn_at()}</th>
+									<th>{$LL.admin_user_detail_expires_at()}</th>
+									<th class="text-right">{$LL.admin_users_actions()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -923,7 +973,7 @@
 													loadConsentHistory(record.statement_id);
 												}}
 											>
-												History
+												{$LL.admin_user_detail_history()}
 											</button>
 											{#if record.status === 'granted'}
 												<button
@@ -936,7 +986,7 @@
 														showWithdrawModal = true;
 													}}
 												>
-													Withdraw
+													{$LL.admin_user_detail_withdraw()}
 												</button>
 											{/if}
 										</td>
@@ -947,7 +997,7 @@
 					</div>
 				{:else}
 					<div class="empty-state">
-						<p class="empty-state-description">No consent records found for this user</p>
+						<p class="empty-state-description">{$LL.admin_user_detail_no_consent_records()}</p>
 					</div>
 				{/if}
 			</div>
@@ -956,25 +1006,25 @@
 		<!-- Actions Tab -->
 		{#if activeTab === 'actions'}
 			<div class="panel">
-				<h2 class="panel-title">Actions</h2>
+				<h2 class="panel-title">{$LL.admin_user_detail_tab_actions()}</h2>
 				<div class="action-buttons">
 					{#if user.status === 'active'}
 						<button class="btn btn-warning" onclick={() => openConfirmDialog('suspend')}>
-							Suspend User
+							{$LL.admin_user_detail_suspend_user()}
 						</button>
 						<button class="btn btn-danger" onclick={() => openConfirmDialog('lock')}>
-							Lock Account
+							{$LL.admin_user_detail_lock_account()}
 						</button>
 					{:else if user.status === 'suspended' || user.status === 'locked'}
 						<button class="btn btn-success" onclick={() => openConfirmDialog('activate')}>
-							Activate User
+							{$LL.admin_user_detail_activate_user()}
 						</button>
 					{/if}
 					<button class="btn btn-purple" onclick={() => openConfirmDialog('revoke-sessions')}>
-						Revoke All Sessions
+						{$LL.admin_user_detail_revoke_all_sessions()}
 					</button>
 					<button class="btn btn-danger" onclick={() => openConfirmDialog('delete')}>
-						Delete User
+						{$LL.admin_user_detail_deleteUser()}
 					</button>
 				</div>
 			</div>
@@ -988,15 +1038,20 @@
 	<Modal
 		open={showConfirmDialog}
 		onClose={closeConfirmDialog}
-		title={revokedSessionsCount !== null ? 'Sessions Revoked' : dialogContent.title}
+		title={revokedSessionsCount !== null
+			? $LL.admin_user_detail_sessions_revoked()
+			: dialogContent.title}
 		size="sm"
 	>
 		{#if revokedSessionsCount !== null}
 			<!-- Success message for revoke-sessions -->
 			<div class="alert alert-success">
-				Successfully revoked {revokedSessionsCount} session{revokedSessionsCount === 1 ? '' : 's'}.
+				{$LL.admin_user_detail_sessions_revoked_message({
+					count: revokedSessionsCount,
+					plural: revokedSessionsCount === 1 ? '' : 's'
+				})}
 				{#if revokedSessionsCount > 0}
-					Active sessions in memory will expire naturally.
+					{$LL.admin_user_detail_sessions_expire_naturally()}
 				{/if}
 			</div>
 		{:else}
@@ -1004,10 +1059,10 @@
 		{/if}
 		{#snippet footer()}
 			{#if revokedSessionsCount !== null}
-				<button class="btn btn-primary" onclick={closeConfirmDialog}>Close</button>
+				<button class="btn btn-primary" onclick={closeConfirmDialog}>{$LL.dialog_close()}</button>
 			{:else}
 				<button class="btn btn-secondary" onclick={closeConfirmDialog} disabled={confirmLoading}>
-					Cancel
+					{$LL.dialog_cancel()}
 				</button>
 				<button
 					class="btn {confirmAction === 'activate'
@@ -1018,7 +1073,7 @@
 					onclick={executeAction}
 					disabled={confirmLoading}
 				>
-					{confirmLoading ? 'Processing...' : dialogContent.buttonText}
+					{confirmLoading ? $LL.admin_user_detail_processing() : dialogContent.buttonText}
 				</button>
 			{/if}
 		{/snippet}
@@ -1026,45 +1081,51 @@
 {/if}
 
 <!-- Assign Role Dialog -->
-<Modal open={showAssignRoleDialog} onClose={closeAssignRoleDialog} title="Assign Role" size="md">
+<Modal
+	open={showAssignRoleDialog}
+	onClose={closeAssignRoleDialog}
+	title={$LL.admin_user_detail_assign_role()}
+	size="md"
+>
 	{#if rolesError}
 		<div class="alert alert-error">{rolesError}</div>
 	{/if}
 
 	{#if assignStep === 'select-role'}
 		<!-- Step 1: Select Role -->
-		<p class="step-indicator">Step 1 of 2: Select Role</p>
+		<p class="step-indicator">{$LL.admin_user_detail_assign_step_role()}</p>
 		<div class="form-group">
-			<label for="role-select" class="form-label">Select a role to assign</label>
+			<label for="role-select" class="form-label">{$LL.admin_user_detail_select_role_label()}</label
+			>
 			<select id="role-select" class="form-select" bind:value={selectedRoleId}>
-				<option value="">-- Select a role --</option>
+				<option value="">{$LL.admin_user_detail_select_role_placeholder()}</option>
 				{#each availableRoles as role (role.id)}
 					<option value={role.id}>
 						{role.display_name || role.name}
-						{role.is_system ? '(System)' : ''}
+						{role.is_system ? `(${$LL.admin_user_detail_system()})` : ''}
 					</option>
 				{/each}
 			</select>
 		</div>
 	{:else}
 		<!-- Step 2: Select Scope -->
-		<p class="step-indicator">Step 2 of 2: Select Scope</p>
+		<p class="step-indicator">{$LL.admin_user_detail_assign_step_scope()}</p>
 		<div class="form-group">
 			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label class="form-label">Select scope for this role</label>
+			<label class="form-label">{$LL.admin_user_detail_scope_label()}</label>
 			<div class="scope-options">
 				<label class="scope-option" class:selected={selectedScope === 'global'}>
 					<input type="radio" value="global" bind:group={selectedScope} />
 					<div class="scope-option-content">
-						<span>Global</span>
-						<p>Role applies across all organizations</p>
+						<span>{$LL.admin_user_detail_scope_global()}</span>
+						<p>{$LL.admin_user_detail_scope_global_desc()}</p>
 					</div>
 				</label>
 				<label class="scope-option" class:selected={selectedScope === 'org'}>
 					<input type="radio" value="org" bind:group={selectedScope} />
 					<div class="scope-option-content">
-						<span>Organization</span>
-						<p>Role applies only within a specific organization</p>
+						<span>{$LL.admin_user_detail_scope_org()}</span>
+						<p>{$LL.admin_user_detail_scope_org_desc()}</p>
 					</div>
 				</label>
 			</div>
@@ -1073,15 +1134,17 @@
 		{#if selectedScope === 'org'}
 			<div class="form-group">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
-				<label class="form-label">Select Organization</label>
+				<label class="form-label">{$LL.admin_user_detail_select_organization()}</label>
 				<div class="org-selector">
 					{#if selectedOrgName}
 						<span class="org-selector-name">{selectedOrgName}</span>
 					{:else}
-						<span class="org-selector-placeholder">No organization selected</span>
+						<span class="org-selector-placeholder">
+							{$LL.admin_user_detail_no_organization_selected()}
+						</span>
 					{/if}
 					<button class="btn btn-primary btn-sm" onclick={openOrgSelectDialog}>
-						{selectedOrgId ? 'Change' : 'Select'}
+						{selectedOrgId ? $LL.admin_user_detail_change() : $LL.admin_user_detail_select()}
 					</button>
 				</div>
 			</div>
@@ -1089,20 +1152,22 @@
 	{/if}
 	{#snippet footer()}
 		{#if assignStep === 'select-role'}
-			<button class="btn btn-secondary" onclick={closeAssignRoleDialog}>Cancel</button>
+			<button class="btn btn-secondary" onclick={closeAssignRoleDialog}
+				>{$LL.dialog_cancel()}</button
+			>
 			<button class="btn btn-primary" onclick={goToScopeStep} disabled={!selectedRoleId}>
-				Next
+				{$LL.common_next()}
 			</button>
 		{:else}
 			<button class="btn btn-secondary" onclick={goBackToRoleStep} disabled={assignLoading}>
-				Back
+				{$LL.common_previous()}
 			</button>
 			<button
 				class="btn btn-success"
 				onclick={assignRole}
 				disabled={assignLoading || (selectedScope === 'org' && !selectedOrgId)}
 			>
-				{assignLoading ? 'Assigning...' : 'Assign Role'}
+				{assignLoading ? $LL.admin_user_detail_assigning() : $LL.admin_user_detail_assign_role()}
 			</button>
 		{/if}
 	{/snippet}
@@ -1112,24 +1177,28 @@
 <Modal
 	open={showRemoveRoleDialog && !!roleToRemove}
 	onClose={closeRemoveRoleDialog}
-	title="Remove Role"
+	title={$LL.admin_user_detail_remove_role_title()}
 	size="sm"
 >
 	<p class="modal-description">
-		Are you sure you want to remove the role <strong
-			>{sanitizeText(roleToRemove?.role_display_name || roleToRemove?.role_name || '')}</strong
-		>
-		{#if roleToRemove?.scope !== 'global'}
-			(scope: {sanitizeText(roleToRemove?.scope_target || '')})
-		{/if}
-		from this user?
+		{$LL.admin_user_detail_remove_role_desc({
+			role: sanitizeText(roleToRemove?.role_display_name || roleToRemove?.role_name || ''),
+			scope:
+				roleToRemove?.scope !== 'global'
+					? $LL.admin_user_detail_remove_role_scope({
+							scope: sanitizeText(roleToRemove?.scope_target || '')
+						})
+					: ''
+		})}
 	</p>
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeRemoveRoleDialog} disabled={removeRoleLoading}>
-			Cancel
+			{$LL.dialog_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={removeRole} disabled={removeRoleLoading}>
-			{removeRoleLoading ? 'Removing...' : 'Remove Role'}
+			{removeRoleLoading
+				? $LL.admin_user_detail_removing()
+				: $LL.admin_user_detail_remove_role_title()}
 		</button>
 	{/snippet}
 </Modal>
@@ -1139,7 +1208,7 @@
 	open={showOrgSelectDialog}
 	onClose={() => (showOrgSelectDialog = false)}
 	onSelect={handleOrgSelect}
-	title="Select Organization for Role Scope"
+	title={$LL.admin_user_detail_select_org_title()}
 />
 
 <!-- Consent History Modal -->
@@ -1150,24 +1219,24 @@
 		selectedStatementForHistory = null;
 		consentHistory = [];
 	}}
-	title="Consent History"
+	title={$LL.admin_user_detail_consent_history()}
 	size="lg"
 >
 	{#if historyLoading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading history...</p>
+			<p>{$LL.admin_user_detail_loading_history()}</p>
 		</div>
 	{:else if consentHistory.length > 0}
 		<div class="data-table-container">
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Action</th>
-						<th>Version</th>
-						<th>Status Change</th>
-						<th>Timestamp</th>
-						<th>Client</th>
+						<th>{$LL.admin_user_detail_action()}</th>
+						<th>{$LL.admin_user_detail_version()}</th>
+						<th>{$LL.admin_user_detail_status_change()}</th>
+						<th>{$LL.admin_user_detail_timestamp()}</th>
+						<th>{$LL.admin_user_detail_client()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -1197,7 +1266,7 @@
 		</div>
 	{:else}
 		<div class="empty-state">
-			<p class="empty-state-description">No history found</p>
+			<p class="empty-state-description">{$LL.admin_user_detail_no_history()}</p>
 		</div>
 	{/if}
 
@@ -1210,7 +1279,7 @@
 				consentHistory = [];
 			}}
 		>
-			Close
+			{$LL.dialog_close()}
 		</button>
 	{/snippet}
 </Modal>
@@ -1222,13 +1291,14 @@
 		showWithdrawModal = false;
 		statementToWithdraw = null;
 	}}
-	title="Withdraw Consent"
+	title={$LL.admin_user_detail_withdraw_consent_title()}
 	size="sm"
 >
 	<p class="modal-description">
-		Are you sure you want to withdraw consent for statement
-		<strong>{statementToWithdraw?.id}</strong> (version {statementToWithdraw?.version})? This action
-		will be recorded in the consent history.
+		{$LL.admin_user_detail_withdraw_consent_desc({
+			statement: statementToWithdraw?.id ?? '',
+			version: statementToWithdraw?.version ?? ''
+		})}
 	</p>
 
 	{#snippet footer()}
@@ -1240,10 +1310,12 @@
 			}}
 			disabled={withdrawLoading}
 		>
-			Cancel
+			{$LL.dialog_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={handleWithdrawConsent} disabled={withdrawLoading}>
-			{withdrawLoading ? 'Withdrawing...' : 'Withdraw Consent'}
+			{withdrawLoading
+				? $LL.admin_user_detail_withdrawing()
+				: $LL.admin_user_detail_withdraw_consent_title()}
 		</button>
 	{/snippet}
 </Modal>

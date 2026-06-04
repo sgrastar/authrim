@@ -5,11 +5,12 @@
 		type IdentityMappingPolicyVersionSummary,
 		type IdentityMappingPolicySummary
 	} from '$lib/api/admin-identity-mapping';
+	import { LL } from '$i18n/i18n-svelte';
 
-	type PolicyDirection = 'inbound' | 'outbound';
+	type PolicySide = 'source' | 'destination';
 
 	interface PolicyListItem {
-		direction: PolicyDirection;
+		side: PolicySide;
 		policy: IdentityMappingPolicySummary;
 		version: IdentityMappingPolicyVersionSummary;
 		href: string;
@@ -43,55 +44,58 @@
 			);
 			policyVersionsByPolicyId = Object.fromEntries(versionPairs);
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to load mapping policies';
+			errorMessage =
+				error instanceof Error ? error.message : $LL.admin_identity_mapping_policies_load_failed();
 		} finally {
 			loading = false;
 		}
 	}
 
-	const sourcePolicyItems = $derived(buildPolicyItems('inbound'));
-	const destinationPolicyItems = $derived(buildPolicyItems('outbound'));
+	const sourcePolicyItems = $derived(buildPolicyItems('source'));
+	const destinationPolicyItems = $derived(buildPolicyItems('destination'));
 
-	function buildPolicyItems(direction: PolicyDirection): PolicyListItem[] {
+	function buildPolicyItems(side: PolicySide): PolicyListItem[] {
 		return policies
 			.map((policy) => {
-				const versions = versionsForDirection(policy, direction);
+				const versions = versionsForSide(policy, side);
 				const version = preferredVersion(versions);
 				if (!version) {
 					return null;
 				}
 				return {
-					direction,
+					side,
 					policy,
 					version,
-					href: editPolicyHref(policy, version, direction),
-					profileSummary: profileSummary(version, direction),
+					href: editPolicyHref(policy, version, side),
+					profileSummary: profileSummary(version, side),
 					versionSummary: `${version.versionLabel} / ${version.lifecycleState}`
 				} satisfies PolicyListItem;
 			})
 			.filter((item): item is PolicyListItem => item !== null);
 	}
 
-	function versionsForDirection(
+	function versionsForSide(
 		policy: IdentityMappingPolicySummary,
-		direction: PolicyDirection
+		side: PolicySide
 	): IdentityMappingPolicyVersionSummary[] {
 		return (policyVersionsByPolicyId[policy.id] ?? []).filter((version) =>
-			versionSupportsDirection(version, direction)
+			versionSupportsSide(version, side)
 		);
 	}
 
-	function versionSupportsDirection(
+	function versionSupportsSide(
 		version: IdentityMappingPolicyVersionSummary,
-		direction: PolicyDirection
+		side: PolicySide
 	): boolean {
 		if (version.directions) {
-			return Boolean(version.directions[direction]);
+			return side === 'source'
+				? Boolean(version.directions.source)
+				: Boolean(version.directions.destination);
 		}
 		const hasSourceProfiles = (version.sourceProfileIds?.length ?? 0) > 0;
 		const hasDestinationProfiles = (version.destinationProfileIds?.length ?? 0) > 0;
 		if (hasSourceProfiles || hasDestinationProfiles) {
-			return direction === 'inbound' ? hasSourceProfiles : hasDestinationProfiles;
+			return side === 'source' ? hasSourceProfiles : hasDestinationProfiles;
 		}
 		return true;
 	}
@@ -114,46 +118,50 @@
 	function editPolicyHref(
 		policy: IdentityMappingPolicySummary,
 		version: IdentityMappingPolicyVersionSummary,
-		direction: PolicyDirection
+		side: PolicySide
 	): string {
 		const params = new URLSearchParams({
 			policyId: policy.id,
 			versionId: version.id,
-			direction
+			direction: side
 		});
 		return `/admin/identity-mapping/edit?${params.toString()}`;
 	}
 
-	function newPolicyHref(direction: PolicyDirection): string {
-		const params = new URLSearchParams({ direction });
+	function newPolicyHref(side: PolicySide): string {
+		const params = new URLSearchParams({ direction: side });
 		return `/admin/identity-mapping/edit?${params.toString()}`;
 	}
 
-	function profileSummary(
-		version: IdentityMappingPolicyVersionSummary,
-		direction: PolicyDirection
-	): string {
+	function profileSummary(version: IdentityMappingPolicyVersionSummary, side: PolicySide): string {
 		const count =
-			direction === 'inbound'
+			side === 'source'
 				? (version.sourceProfileIds?.length ?? 0)
 				: (version.destinationProfileIds?.length ?? 0);
-		const noun = direction === 'inbound' ? 'source profile' : 'destination profile';
-		return count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
+		return side === 'source'
+			? $LL.admin_identity_mapping_source_profile_count({
+					count,
+					plural: count === 1 ? '' : 's'
+				})
+			: $LL.admin_identity_mapping_destination_profile_count({
+					count,
+					plural: count === 1 ? '' : 's'
+				});
 	}
 </script>
 
 <svelte:head>
-	<title>Mapping Policies - Authrim Admin</title>
+	<title>{$LL.admin_identity_mapping_policies_head_title()}</title>
 </svelte:head>
 
 <div class="operations-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">Back to Identity Mapping</a>
-			<p class="eyebrow">Identity Mapping</p>
-			<h1>Mapping Policies</h1>
+			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
+			<h1>{$LL.admin_identity_mapping_policies_title()}</h1>
 			<p class="summary">
-				Review source mapping policies and destination release policies before editing their rules.
+				{$LL.admin_identity_mapping_policies_description()}
 			</p>
 		</div>
 	</div>
@@ -161,31 +169,35 @@
 	<section class="policy-panel">
 		<div class="panel-heading">
 			<div>
-				<h2>Source and destination policy lists</h2>
+				<h2>{$LL.admin_identity_mapping_policies_lists_title()}</h2>
 			</div>
-			<button type="button" onclick={loadPolicies} disabled={loading}>Refresh</button>
+			<button type="button" onclick={loadPolicies} disabled={loading}>
+				{$LL.admin_identity_mapping_refresh()}
+			</button>
 		</div>
 
 		{#if loading}
-			<div class="empty-state">Loading mapping policies.</div>
+			<div class="empty-state">{$LL.admin_identity_mapping_policies_loading()}</div>
 		{:else if errorMessage}
 			<div class="empty-state">{errorMessage}</div>
 		{:else if policies.length === 0}
-			<div class="empty-state">No mapping policies are registered yet.</div>
+			<div class="empty-state">{$LL.admin_identity_mapping_policies_empty()}</div>
 		{:else}
 			<div class="policy-columns">
 				<section class="policy-column" aria-labelledby="source-policy-heading">
 					<div class="column-heading">
-						<h3 id="source-policy-heading">Source policies</h3>
-						<a class="create-policy-link" href={newPolicyHref('inbound')}>
-							Create new source policy
+						<h3 id="source-policy-heading">
+							{$LL.admin_identity_mapping_policies_source_title()}
+						</h3>
+						<a class="create-policy-link" href={newPolicyHref('source')}>
+							{$LL.admin_identity_mapping_policies_create_source()}
 						</a>
 					</div>
 					{#if sourcePolicyItems.length === 0}
-						<div class="column-empty">No source policies.</div>
+						<div class="column-empty">{$LL.admin_identity_mapping_policies_no_source()}</div>
 					{:else}
 						<div class="policy-list">
-							{#each sourcePolicyItems as item (`${item.direction}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
+							{#each sourcePolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
 								<a class="policy-item" href={item.href}>
 									<div>
 										<h4>{item.policy.displayName}</h4>
@@ -205,16 +217,20 @@
 
 				<section class="policy-column" aria-labelledby="destination-policy-heading">
 					<div class="column-heading">
-						<h3 id="destination-policy-heading">Destination policies</h3>
-						<a class="create-policy-link" href={newPolicyHref('outbound')}>
-							Create new destination policy
+						<h3 id="destination-policy-heading">
+							{$LL.admin_identity_mapping_policies_destination_title()}
+						</h3>
+						<a class="create-policy-link" href={newPolicyHref('destination')}>
+							{$LL.admin_identity_mapping_policies_create_destination()}
 						</a>
 					</div>
 					{#if destinationPolicyItems.length === 0}
-						<div class="column-empty">No destination policies.</div>
+						<div class="column-empty">
+							{$LL.admin_identity_mapping_policies_no_destination()}
+						</div>
 					{:else}
 						<div class="policy-list">
-							{#each destinationPolicyItems as item (`${item.direction}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
+							{#each destinationPolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
 								<a class="policy-item" href={item.href}>
 									<div>
 										<h4>{item.policy.displayName}</h4>

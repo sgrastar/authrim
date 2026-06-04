@@ -128,7 +128,7 @@ describe('adminIdentityMappingAPI', () => {
 			rules: [
 				{
 					ruleKey: 'email',
-					ruleKind: 'inbound_mapping',
+					ruleKind: 'source_mapping',
 					action: 'map',
 					edges: [{ sourceRef: { path: 'Email' }, targetRef: { path: 'email' } }],
 					transforms: [{ edgeIndex: 0, operation: 'trim' }]

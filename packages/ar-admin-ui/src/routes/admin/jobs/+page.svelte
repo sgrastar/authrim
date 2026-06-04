@@ -4,9 +4,6 @@
 	import {
 		adminJobsAPI,
 		getJobStatusColor,
-		getJobStatusDisplayName,
-		getJobTypeDisplayName,
-		getReportTypeDisplayName,
 		formatJobDuration,
 		type Job,
 		type JobStatus,
@@ -26,6 +23,7 @@
 		sanitizeText
 	} from '$lib/utils';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// State
 	let loading = $state(true);
@@ -128,7 +126,7 @@
 			// Apply sanitization to prevent XSS
 			jobs = Array.isArray(response.data) ? response.data.map(sanitizeJob) : [];
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load jobs';
+			error = e instanceof Error ? e.message : $LL.admin_jobs_load_failed();
 		}
 	}
 
@@ -138,7 +136,7 @@
 			jobTypes = response.job_types.filter((jobType) => jobType.creatable_from_admin_api);
 			jobTypeError = '';
 		} catch (e) {
-			jobTypeError = e instanceof Error ? e.message : 'Failed to load job types';
+			jobTypeError = e instanceof Error ? e.message : $LL.admin_jobs_load_types_failed();
 			jobTypes = [];
 		}
 	}
@@ -262,20 +260,23 @@
 				const to = new Date(reportToDate);
 
 				if (from > to) {
-					createReportError = 'From date must be before To date';
+					createReportError = $LL.admin_jobs_from_before_to_error();
 					return;
 				}
 
 				// Check for future dates
 				if (to > today) {
-					createReportError = 'To date cannot be in the future';
+					createReportError = $LL.admin_jobs_to_future_error();
 					return;
 				}
 
 				// Check date range limit
 				const daysDiff = Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
 				if (daysDiff > MAX_DATE_RANGE_DAYS) {
-					createReportError = `Date range cannot exceed ${MAX_DATE_RANGE_DAYS} days (${Math.floor(MAX_DATE_RANGE_DAYS / 365)} years)`;
+					createReportError = $LL.admin_jobs_date_range_error({
+						days: MAX_DATE_RANGE_DAYS,
+						years: Math.floor(MAX_DATE_RANGE_DAYS / 365)
+					});
 					return;
 				}
 			}
@@ -284,7 +285,7 @@
 			if (reportToDate) {
 				const to = new Date(reportToDate);
 				if (to > today) {
-					createReportError = 'To date cannot be in the future';
+					createReportError = $LL.admin_jobs_to_future_error();
 					return;
 				}
 			}
@@ -317,7 +318,7 @@
 			jobs = [sanitizeJob(job), ...jobs];
 			closeCreateReportDialog();
 		} catch (e) {
-			createReportError = e instanceof Error ? e.message : 'Failed to create report job';
+			createReportError = e instanceof Error ? e.message : $LL.admin_jobs_create_report_failed();
 		} finally {
 			creatingReport = false;
 		}
@@ -326,7 +327,7 @@
 	async function handleCreateImport() {
 		createImportError = '';
 		if (!importFile) {
-			createImportError = 'CSV file is required';
+			createImportError = $LL.admin_jobs_csv_required();
 			return;
 		}
 
@@ -349,7 +350,7 @@
 			jobs = [sanitizeJob(job), ...jobs];
 			closeCreateImportDialog();
 		} catch (e) {
-			createImportError = e instanceof Error ? e.message : 'Failed to create import job';
+			createImportError = e instanceof Error ? e.message : $LL.admin_jobs_create_import_failed();
 		} finally {
 			creatingImport = false;
 		}
@@ -359,7 +360,7 @@
 		tenantDbRequestError = '';
 		const generation = Number.parseInt(tenantDbGeneration, 10);
 		if (!Number.isInteger(generation) || generation < 1) {
-			tenantDbRequestError = 'Generation must be a positive integer';
+			tenantDbRequestError = $LL.admin_jobs_generation_positive_integer();
 			return;
 		}
 
@@ -376,7 +377,7 @@
 			closeTenantDbDialog();
 		} catch (e) {
 			tenantDbRequestError =
-				e instanceof Error ? e.message : 'Failed to create tenant database request';
+				e instanceof Error ? e.message : $LL.admin_jobs_create_tenant_db_failed();
 		} finally {
 			creatingTenantDbRequest = false;
 		}
@@ -462,30 +463,68 @@
 
 	function getDeliveryLabel(value: 'auto' | 'inline' | 'artifact'): string {
 		const labels = {
-			auto: 'Auto',
-			inline: 'Inline',
-			artifact: 'Artifact'
+			auto: $LL.admin_jobs_delivery_auto(),
+			inline: $LL.admin_jobs_delivery_inline(),
+			artifact: $LL.admin_jobs_delivery_artifact()
 		};
 		return labels[value];
 	}
 
 	function getDeliveryDescription(value: 'auto' | 'inline' | 'artifact'): string {
 		const descriptions = {
-			auto: 'Runtime chooses inline or artifact based on result size and policy.',
-			inline: 'Result is stored directly on the job record when it is small enough.',
-			artifact: 'Result is written to a storage destination and referenced from the job record.'
+			auto: $LL.admin_jobs_delivery_auto_description(),
+			inline: $LL.admin_jobs_delivery_inline_description(),
+			artifact: $LL.admin_jobs_delivery_artifact_description()
 		};
 		return descriptions[value];
 	}
 
 	function getProcessorDescription(value: JobTypeDefinition['processor_status']): string {
 		if (value === 'scheduled') {
-			return 'Handled by the scheduled/background processor. This is a processor mode, not a guarantee that each job is pre-scheduled for a future time.';
+			return $LL.admin_jobs_processor_scheduled();
 		}
 		if (value === 'inline') {
-			return 'Handled directly during the create request or by an immediate worker path.';
+			return $LL.admin_jobs_processor_inline();
 		}
-		return 'Registered in the catalog but not currently runnable from the Admin API.';
+		return $LL.admin_jobs_processor_disabled();
+	}
+
+	function getJobStatusLabel(status: JobStatus): string {
+		const labels: Record<JobStatus, string> = {
+			pending: $LL.admin_jobs_status_pending(),
+			running: $LL.admin_jobs_status_running(),
+			completed: $LL.admin_jobs_status_completed(),
+			partial_failure: $LL.admin_jobs_status_partial_failure(),
+			failed: $LL.admin_jobs_status_failed(),
+			cancelled: $LL.admin_jobs_status_cancelled()
+		};
+		return labels[status] ?? $LL.admin_jobs_status_unknown();
+	}
+
+	function getJobTypeLabel(type: JobType): string {
+		const labels: Record<JobType, string> = {
+			users_import: $LL.admin_jobs_type_users_import(),
+			users_bulk_update: $LL.admin_jobs_type_users_bulk_update(),
+			report_generation: $LL.admin_jobs_type_report_generation(),
+			org_bulk_members: $LL.admin_jobs_type_org_bulk_members(),
+			tenant_delete: $LL.admin_jobs_type_tenant_delete(),
+			tenant_database_provision: $LL.admin_jobs_type_tenant_database_provision(),
+			tenant_database_activate_batch: $LL.admin_jobs_type_tenant_database_activate_batch(),
+			tenant_database_export: $LL.admin_jobs_type_tenant_database_export(),
+			tenant_database_restore_dry_run: $LL.admin_jobs_type_tenant_database_restore_dry_run(),
+			tenant_database_purge_backup: $LL.admin_jobs_type_tenant_database_purge_backup()
+		};
+		return labels[type] ?? $LL.admin_jobs_type_unknown();
+	}
+
+	function getReportTypeLabel(type: ReportType): string {
+		const labels: Record<ReportType, string> = {
+			user_activity: $LL.admin_jobs_report_user_activity(),
+			access_summary: $LL.admin_jobs_report_access_summary(),
+			compliance_audit: $LL.admin_jobs_report_compliance_audit(),
+			security_events: $LL.admin_jobs_report_security_events()
+		};
+		return labels[type] ?? $LL.admin_jobs_report_unknown();
 	}
 
 	function clearFilters() {
@@ -546,7 +585,7 @@
 </script>
 
 <svelte:head>
-	<title>Jobs - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_jobs_page_title()}</title>
 </svelte:head>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
@@ -555,24 +594,23 @@
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Jobs</h1>
+			<h1 class="page-title">{$LL.admin_jobs_title()}</h1>
 			<p class="page-description">
-				Monitor queued operational work including user imports, tenant database requests, bulk
-				updates, and report jobs. Running jobs refresh automatically.
+				{$LL.admin_jobs_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={openTenantDbDialog}>
 				<i class="i-ph-database"></i>
-				Tenant DB
+				{$LL.admin_jobs_tenant_db()}
 			</button>
 			<button class="btn btn-secondary" onclick={openCreateImportDialog}>
 				<i class="i-ph-upload-simple"></i>
-				Import Users
+				{$LL.admin_jobs_import_users()}
 			</button>
 			<button class="btn btn-primary" onclick={openCreateReportDialog}>
 				<i class="i-ph-file-text"></i>
-				Create Report Job
+				{$LL.admin_jobs_create_report_job()}
 			</button>
 		</div>
 	</div>
@@ -586,19 +624,19 @@
 
 	<div class="job-summary-grid">
 		<div class="summary-card">
-			<span class="summary-label">Total jobs</span>
+			<span class="summary-label">{$LL.admin_jobs_total_jobs()}</span>
 			<strong>{jobSummary.total}</strong>
 		</div>
 		<div class="summary-card">
-			<span class="summary-label">Active</span>
+			<span class="summary-label">{$LL.admin_jobs_active()}</span>
 			<strong>{jobSummary.active}</strong>
 		</div>
 		<div class="summary-card">
-			<span class="summary-label">Completed</span>
+			<span class="summary-label">{$LL.admin_jobs_completed()}</span>
 			<strong>{jobSummary.completed}</strong>
 		</div>
 		<div class="summary-card warning">
-			<span class="summary-label">Needs attention</span>
+			<span class="summary-label">{$LL.admin_jobs_needs_attention()}</span>
 			<strong>{jobSummary.failed}</strong>
 		</div>
 	</div>
@@ -607,10 +645,9 @@
 		<div class="panel">
 			<div class="panel-header">
 				<div>
-					<h2 class="panel-title">Creatable Job Types</h2>
+					<h2 class="panel-title">{$LL.admin_jobs_creatable_types_title()}</h2>
 					<p class="panel-description">
-						Job types exposed through Admin API creation endpoints. Select a type to inspect
-						processor mode and result handling.
+						{$LL.admin_jobs_creatable_types_description()}
 					</p>
 				</div>
 			</div>
@@ -618,7 +655,7 @@
 				{#each jobTypes as jobType (jobType.job_type)}
 					<button class="job-type-item" onclick={() => viewJobTypeDetail(jobType)}>
 						<div>
-							<div class="cell-primary">{getJobTypeDisplayName(jobType.type)}</div>
+							<div class="cell-primary">{getJobTypeLabel(jobType.type)}</div>
 							<div class="cell-secondary mono">{jobType.job_type}</div>
 						</div>
 						<div class="job-type-badges">
@@ -637,46 +674,58 @@
 	<div class="panel">
 		<div class="panel-header">
 			<div>
-				<h2 class="panel-title">Job Queue</h2>
-				<p class="panel-description">Filter by lifecycle state and workload type.</p>
+				<h2 class="panel-title">{$LL.admin_jobs_queue_title()}</h2>
+				<p class="panel-description">{$LL.admin_jobs_queue_description()}</p>
 			</div>
 			{#if activeFilterCount > 0}
-				<button class="btn btn-secondary btn-sm" onclick={clearFilters}>Clear filters</button>
+				<button class="btn btn-secondary btn-sm" onclick={clearFilters}
+					>{$LL.admin_jobs_clear_filters()}</button
+				>
 			{/if}
 		</div>
 		<div class="filter-row">
 			<div class="form-group">
-				<label for="status-filter" class="form-label">Status</label>
+				<label for="status-filter" class="form-label">{$LL.admin_jobs_status()}</label>
 				<select id="status-filter" class="form-select" bind:value={statusFilter}>
-					<option value="">All Status</option>
-					<option value="pending">Pending</option>
-					<option value="running">Running</option>
-					<option value="completed">Completed</option>
-					<option value="partial_failure">Partial Failure</option>
-					<option value="failed">Failed</option>
-					<option value="cancelled">Cancelled</option>
+					<option value="">{$LL.admin_jobs_all_status()}</option>
+					<option value="pending">{$LL.admin_jobs_status_pending()}</option>
+					<option value="running">{$LL.admin_jobs_status_running()}</option>
+					<option value="completed">{$LL.admin_jobs_status_completed()}</option>
+					<option value="partial_failure">{$LL.admin_jobs_status_partial_failure()}</option>
+					<option value="failed">{$LL.admin_jobs_status_failed()}</option>
+					<option value="cancelled">{$LL.admin_jobs_status_cancelled()}</option>
 				</select>
 			</div>
 			<div class="form-group">
-				<label for="type-filter" class="form-label">Type</label>
+				<label for="type-filter" class="form-label">{$LL.admin_jobs_type()}</label>
 				<select id="type-filter" class="form-select" bind:value={typeFilter}>
-					<option value="">All Types</option>
-					<option value="users_import">User Import</option>
-					<option value="users_bulk_update">Bulk Update</option>
-					<option value="report_generation">Report Generation</option>
-					<option value="org_bulk_members">Org Bulk Members</option>
-					<option value="tenant_delete">Tenant Deletion</option>
-					<option value="tenant_database_provision">Tenant DB Provisioning</option>
-					<option value="tenant_database_activate_batch">Tenant DB Activation</option>
-					<option value="tenant_database_export">Tenant DB Export</option>
-					<option value="tenant_database_restore_dry_run">Tenant DB Restore Dry-Run</option>
-					<option value="tenant_database_purge_backup">Tenant DB Backup Purge</option>
+					<option value="">{$LL.admin_jobs_all_types()}</option>
+					<option value="users_import">{$LL.admin_jobs_type_users_import()}</option>
+					<option value="users_bulk_update">{$LL.admin_jobs_type_users_bulk_update()}</option>
+					<option value="report_generation">{$LL.admin_jobs_type_report_generation()}</option>
+					<option value="org_bulk_members">{$LL.admin_jobs_type_org_bulk_members()}</option>
+					<option value="tenant_delete">{$LL.admin_jobs_type_tenant_delete()}</option>
+					<option value="tenant_database_provision"
+						>{$LL.admin_jobs_type_tenant_database_provision()}</option
+					>
+					<option value="tenant_database_activate_batch"
+						>{$LL.admin_jobs_type_tenant_database_activate_batch()}</option
+					>
+					<option value="tenant_database_export"
+						>{$LL.admin_jobs_type_tenant_database_export()}</option
+					>
+					<option value="tenant_database_restore_dry_run"
+						>{$LL.admin_jobs_type_tenant_database_restore_dry_run()}</option
+					>
+					<option value="tenant_database_purge_backup"
+						>{$LL.admin_jobs_type_tenant_database_purge_backup()}</option
+					>
 				</select>
 			</div>
 			<div class="form-group form-group-action">
 				<button class="btn btn-secondary" onclick={loadData} disabled={loading}>
 					<i class="i-ph-arrows-clockwise"></i>
-					Refresh
+					{$LL.admin_jobs_refresh()}
 				</button>
 			</div>
 		</div>
@@ -685,26 +734,27 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading jobs...</p>
+			<p>{$LL.admin_jobs_loading_jobs()}</p>
 		</div>
 	{:else if jobs.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No jobs found.</p>
+				<p class="empty-state-description">{$LL.admin_jobs_no_jobs()}</p>
 				{#if statusFilter || typeFilter}
 					<p class="empty-state-hint">
-						Current filters:
+						{$LL.admin_jobs_current_filters()}
 						{#if statusFilter}
-							<span class="badge badge-neutral">{getJobStatusDisplayName(statusFilter)}</span>
+							<span class="badge badge-neutral">{getJobStatusLabel(statusFilter)}</span>
 						{/if}
-						{#if typeFilter}<span class="badge badge-neutral"
-								>{getJobTypeDisplayName(typeFilter)}</span
+						{#if typeFilter}<span class="badge badge-neutral">{getJobTypeLabel(typeFilter)}</span
 							>{/if}
 					</p>
-					<button class="btn btn-secondary" onclick={clearFilters}> Clear filters </button>
+					<button class="btn btn-secondary" onclick={clearFilters}>
+						{$LL.admin_jobs_clear_filters()}
+					</button>
 				{:else}
 					<p class="empty-state-hint">
-						Create an import, tenant database request, or report job to start tracking work.
+						{$LL.admin_jobs_empty_hint()}
 					</p>
 				{/if}
 			</div>
@@ -714,19 +764,19 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Type</th>
-						<th>Status</th>
-						<th>Progress</th>
-						<th>Duration</th>
-						<th>Created</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_jobs_type()}</th>
+						<th>{$LL.admin_jobs_status()}</th>
+						<th>{$LL.admin_jobs_progress()}</th>
+						<th>{$LL.admin_jobs_duration()}</th>
+						<th>{$LL.admin_jobs_created()}</th>
+						<th class="text-right">{$LL.admin_jobs_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each jobs as job (job.id)}
 						<tr class:row-active={job.status === 'pending' || job.status === 'running'}>
 							<td>
-								<div class="cell-primary">{getJobTypeDisplayName(job.type)}</div>
+								<div class="cell-primary">{getJobTypeLabel(job.type)}</div>
 								<div class="cell-secondary mono">{job.id.substring(0, 8)}...</div>
 							</td>
 							<td>
@@ -734,7 +784,7 @@
 									{#if job.status === 'running'}
 										<span class="pulse-dot"></span>
 									{/if}
-									{getJobStatusDisplayName(job.status)}
+									{getJobStatusLabel(job.status)}
 								</span>
 							</td>
 							<td>
@@ -755,7 +805,7 @@
 							<td class="text-right">
 								<button class="btn btn-secondary btn-sm" onclick={() => viewJobDetail(job)}>
 									<i class="i-ph-sidebar-simple"></i>
-									Details
+									{$LL.admin_jobs_details()}
 								</button>
 							</td>
 						</tr>
@@ -770,7 +820,7 @@
 <Modal
 	open={showTenantDbDialog}
 	onClose={closeTenantDbDialog}
-	title="Tenant Database Request"
+	title={$LL.admin_jobs_tenant_database_request()}
 	size="md"
 >
 	{#if tenantDbRequestError}
@@ -778,14 +828,14 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="tenant-db-slug" class="form-label">Tenant Slug</label>
+		<label for="tenant-db-slug" class="form-label">{$LL.admin_jobs_tenant_slug()}</label>
 		<input id="tenant-db-slug" type="text" class="form-input" bind:value={tenantDbSlug} />
-		<p class="form-hint">Leave blank to use the current tenant context when supported.</p>
+		<p class="form-hint">{$LL.admin_jobs_tenant_slug_hint()}</p>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label for="tenant-db-generation" class="form-label">Generation</label>
+			<label for="tenant-db-generation" class="form-label">{$LL.admin_jobs_generation()}</label>
 			<input
 				id="tenant-db-generation"
 				type="number"
@@ -795,38 +845,38 @@
 			/>
 		</div>
 		<div class="form-group">
-			<label for="tenant-db-execution" class="form-label">Execution</label>
+			<label for="tenant-db-execution" class="form-label">{$LL.admin_jobs_execution()}</label>
 			<select id="tenant-db-execution" class="form-select" bind:value={tenantDbExecutionMode}>
-				<option value="plan_only">Plan only</option>
-				<option value="operator_cli">Operator CLI</option>
+				<option value="plan_only">{$LL.admin_jobs_execution_plan_only()}</option>
+				<option value="operator_cli">{$LL.admin_jobs_execution_operator_cli()}</option>
 			</select>
 		</div>
 	</div>
 
 	<label class="checkbox-row">
 		<input type="checkbox" bind:checked={tenantDbActivate} />
-		<span>Request activation after generated bindings are deployed</span>
+		<span>{$LL.admin_jobs_activate_after_deploy()}</span>
 	</label>
 
 	<div class="form-group">
-		<label for="tenant-db-reason" class="form-label">Reason</label>
+		<label for="tenant-db-reason" class="form-label">{$LL.admin_jobs_reason()}</label>
 		<textarea id="tenant-db-reason" class="form-textarea" rows="3" bind:value={tenantDbReason}
 		></textarea>
-		<p class="form-hint">Recorded with the job request and operational audit trail.</p>
+		<p class="form-hint">{$LL.admin_jobs_reason_hint()}</p>
 	</div>
 
 	{#snippet footer()}
 		<button
 			class="btn btn-secondary"
 			onclick={closeTenantDbDialog}
-			disabled={creatingTenantDbRequest}>Cancel</button
+			disabled={creatingTenantDbRequest}>{$LL.admin_jobs_cancel()}</button
 		>
 		<button
 			class="btn btn-primary"
 			onclick={handleCreateTenantDbRequest}
 			disabled={creatingTenantDbRequest}
 		>
-			{creatingTenantDbRequest ? 'Creating...' : 'Create Request'}
+			{creatingTenantDbRequest ? $LL.admin_jobs_creating() : $LL.admin_jobs_create_request()}
 		</button>
 	{/snippet}
 </Modal>
@@ -835,7 +885,7 @@
 <Modal
 	open={showCreateImportDialog}
 	onClose={closeCreateImportDialog}
-	title="Import Users"
+	title={$LL.admin_jobs_import_users()}
 	size="md"
 >
 	{#if createImportError}
@@ -843,7 +893,7 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="import-file" class="form-label">CSV File</label>
+		<label for="import-file" class="form-label">{$LL.admin_jobs_csv_file()}</label>
 		<input
 			id="import-file"
 			type="file"
@@ -852,43 +902,44 @@
 			onchange={handleImportFileChange}
 		/>
 		<p class="muted">
-			Expected headers: <code>email</code>, <code>name</code>, <code>given_name</code>,
+			{$LL.admin_jobs_expected_headers()} <code>email</code>, <code>name</code>,
+			<code>given_name</code>,
 			<code>family_name</code>, <code>nickname</code>, <code>preferred_username</code>,
 			<code>picture</code>, <code>email_verified</code>, <code>phone_number</code>,
 			<code>phone_number_verified</code>, <code>user_type</code>, <code>status</code>,
-			<code>lifecycle_state</code>, plus any custom claim keys.
+			<code>lifecycle_state</code>, {$LL.admin_jobs_custom_claim_keys_suffix()}
 		</p>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label for="import-duplicate" class="form-label">On Duplicate</label>
+			<label for="import-duplicate" class="form-label">{$LL.admin_jobs_on_duplicate()}</label>
 			<select id="import-duplicate" class="form-select" bind:value={importOnDuplicate}>
-				<option value="skip">Skip existing users</option>
-				<option value="update">Update existing users</option>
-				<option value="error">Fail duplicate rows</option>
+				<option value="skip">{$LL.admin_jobs_duplicate_skip()}</option>
+				<option value="update">{$LL.admin_jobs_duplicate_update()}</option>
+				<option value="error">{$LL.admin_jobs_duplicate_error()}</option>
 			</select>
 		</div>
 		<div class="form-group">
-			<label for="import-header" class="form-label">CSV Header</label>
+			<label for="import-header" class="form-label">{$LL.admin_jobs_csv_header()}</label>
 			<select id="import-header" class="form-select" bind:value={importSkipHeader}>
-				<option value={true}>First row is header</option>
-				<option value={false}>Use default column order</option>
+				<option value={true}>{$LL.admin_jobs_first_row_header()}</option>
+				<option value={false}>{$LL.admin_jobs_default_column_order()}</option>
 			</select>
 		</div>
 	</div>
 
 	<label class="checkbox-row">
 		<input type="checkbox" bind:checked={importValidateOnly} />
-		<span>Validate only (do not write users)</span>
+		<span>{$LL.admin_jobs_validate_only()}</span>
 	</label>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateImportDialog} disabled={creatingImport}
-			>Cancel</button
+			>{$LL.admin_jobs_cancel()}</button
 		>
 		<button class="btn btn-primary" onclick={handleCreateImport} disabled={creatingImport}>
-			{creatingImport ? 'Uploading...' : 'Start Import'}
+			{creatingImport ? $LL.admin_jobs_uploading() : $LL.admin_jobs_start_import()}
 		</button>
 	{/snippet}
 </Modal>
@@ -897,7 +948,7 @@
 <Modal
 	open={showCreateReportDialog}
 	onClose={closeCreateReportDialog}
-	title="Create Report Job"
+	title={$LL.admin_jobs_create_report_job()}
 	size="md"
 >
 	{#if createReportError}
@@ -905,70 +956,70 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="report-type" class="form-label">Report Type</label>
+		<label for="report-type" class="form-label">{$LL.admin_jobs_report_type()}</label>
 		<select id="report-type" class="form-select" bind:value={reportType}>
-			<option value="user_activity">{getReportTypeDisplayName('user_activity')}</option>
-			<option value="access_summary">{getReportTypeDisplayName('access_summary')}</option>
-			<option value="compliance_audit">{getReportTypeDisplayName('compliance_audit')}</option>
-			<option value="security_events">{getReportTypeDisplayName('security_events')}</option>
+			<option value="user_activity">{getReportTypeLabel('user_activity')}</option>
+			<option value="access_summary">{getReportTypeLabel('access_summary')}</option>
+			<option value="compliance_audit">{getReportTypeLabel('compliance_audit')}</option>
+			<option value="security_events">{getReportTypeLabel('security_events')}</option>
 		</select>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label for="report-from" class="form-label">From Date (optional)</label>
+			<label for="report-from" class="form-label">{$LL.admin_jobs_from_date_optional()}</label>
 			<input id="report-from" type="date" class="form-input" bind:value={reportFromDate} />
 		</div>
 		<div class="form-group">
-			<label for="report-to" class="form-label">To Date (optional)</label>
+			<label for="report-to" class="form-label">{$LL.admin_jobs_to_date_optional()}</label>
 			<input id="report-to" type="date" class="form-input" bind:value={reportToDate} />
 		</div>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label for="report-format" class="form-label">Format</label>
+			<label for="report-format" class="form-label">{$LL.admin_jobs_format()}</label>
 			<select id="report-format" class="form-select" bind:value={reportFormat}>
 				<option value="json">JSON</option>
 				<option value="csv">CSV</option>
 			</select>
 		</div>
 		<div class="form-group">
-			<label for="report-delivery" class="form-label">Result Delivery</label>
+			<label for="report-delivery" class="form-label">{$LL.admin_jobs_result_delivery()}</label>
 			<select id="report-delivery" class="form-select" bind:value={reportResultDelivery}>
-				<option value="auto">Auto</option>
-				<option value="inline">Inline</option>
-				<option value="artifact">Artifact</option>
+				<option value="auto">{$LL.admin_jobs_delivery_auto()}</option>
+				<option value="inline">{$LL.admin_jobs_delivery_inline()}</option>
+				<option value="artifact">{$LL.admin_jobs_delivery_artifact()}</option>
 			</select>
 		</div>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label for="report-storage-destination" class="form-label">Storage Destination</label>
+			<label for="report-storage-destination" class="form-label"
+				>{$LL.admin_jobs_storage_destination()}</label
+			>
 			<select
 				id="report-storage-destination"
 				class="form-select"
 				bind:value={reportStorageDestinationId}
 			>
-				<option value="">Runtime default</option>
+				<option value="">{$LL.admin_jobs_runtime_default()}</option>
 				{#each storageDestinations as destination (destination.id)}
 					<option value={destination.id}>{destination.display_name} ({destination.provider})</option
 					>
 				{/each}
 			</select>
-			<p class="form-hint">
-				Use runtime default unless the report must be written to a specific destination.
-			</p>
+			<p class="form-hint">{$LL.admin_jobs_storage_destination_hint()}</p>
 		</div>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateReportDialog} disabled={creatingReport}
-			>Cancel</button
+			>{$LL.admin_jobs_cancel()}</button
 		>
 		<button class="btn btn-primary" onclick={handleCreateReport} disabled={creatingReport}>
-			{creatingReport ? 'Creating...' : 'Create Report Job'}
+			{creatingReport ? $LL.admin_jobs_creating() : $LL.admin_jobs_create_report_job()}
 		</button>
 	{/snippet}
 </Modal>
@@ -977,39 +1028,43 @@
 <Modal
 	open={!!selectedJobType}
 	onClose={closeJobTypeDetail}
-	title={selectedJobType ? getJobTypeDisplayName(selectedJobType.type) : 'Job Type'}
+	title={selectedJobType ? getJobTypeLabel(selectedJobType.type) : $LL.admin_jobs_job_type()}
 	size="md"
 >
 	{#if selectedJobType}
 		<div class="job-type-detail">
 			<div class="info-grid">
 				<div class="info-card">
-					<span class="info-label">Catalog key</span>
+					<span class="info-label">{$LL.admin_jobs_catalog_key()}</span>
 					<span class="info-value mono">{selectedJobType.job_type}</span>
 				</div>
 				<div class="info-card">
-					<span class="info-label">Processor</span>
+					<span class="info-label">{$LL.admin_jobs_processor()}</span>
 					<span class="badge badge-info">{selectedJobType.processor_status}</span>
 				</div>
 				<div class="info-card">
-					<span class="info-label">Create endpoint</span>
-					<span class="info-value mono">{selectedJobType.create_endpoint ?? 'Not exposed'}</span>
+					<span class="info-label">{$LL.admin_jobs_create_endpoint()}</span>
+					<span class="info-value mono"
+						>{selectedJobType.create_endpoint ?? $LL.admin_jobs_not_exposed()}</span
+					>
 				</div>
 				<div class="info-card">
-					<span class="info-label">Result object</span>
-					<span class="info-value mono">{selectedJobType.result_object_class ?? 'None'}</span>
+					<span class="info-label">{$LL.admin_jobs_result_object()}</span>
+					<span class="info-value mono"
+						>{selectedJobType.result_object_class ?? $LL.admin_jobs_none()}</span
+					>
 				</div>
 			</div>
 
 			<div class="detail-section">
-				<h3 class="detail-section-title">Processor mode</h3>
+				<h3 class="detail-section-title">{$LL.admin_jobs_processor_mode()}</h3>
 				<p class="detail-copy">
 					{getProcessorDescription(selectedJobType.processor_status)}
 				</p>
 			</div>
 
 			<div class="detail-section">
-				<h3 class="detail-section-title">Result delivery</h3>
+				<h3 class="detail-section-title">{$LL.admin_jobs_result_delivery_title()}</h3>
 				<div class="delivery-list">
 					{#each selectedJobType.supported_result_delivery as delivery (delivery)}
 						<div class="delivery-item">
@@ -1022,7 +1077,7 @@
 
 			{#if selectedJobType.notes}
 				<div class="detail-section">
-					<h3 class="detail-section-title">Notes</h3>
+					<h3 class="detail-section-title">{$LL.admin_jobs_notes()}</h3>
 					<p class="detail-copy">{selectedJobType.notes}</p>
 				</div>
 			{/if}
@@ -1030,7 +1085,7 @@
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeJobTypeDetail}>Close</button>
+		<button class="btn btn-secondary" onclick={closeJobTypeDetail}>{$LL.admin_jobs_close()}</button>
 	{/snippet}
 </Modal>
 
@@ -1038,17 +1093,21 @@
 <Modal
 	open={showJobDetailDialog && !!selectedJob}
 	onClose={closeJobDetailDialog}
-	title={getJobTypeDisplayName(selectedJob?.type ?? 'report_generation')}
+	title={getJobTypeLabel(selectedJob?.type ?? 'report_generation')}
 	size="lg"
 >
 	{#snippet header()}
 		<div>
 			<h2 class="modal-title">
-				{getJobTypeDisplayName(selectedJob?.type ?? 'report_generation')}
+				{getJobTypeLabel(selectedJob?.type ?? 'report_generation')}
 			</h2>
 			<div class="cell-secondary mono">{selectedJob?.id}</div>
 		</div>
-		<button class="modal-close" onclick={closeJobDetailDialog} aria-label="Close dialog">
+		<button
+			class="modal-close"
+			onclick={closeJobDetailDialog}
+			aria-label={$LL.admin_jobs_close_dialog()}
+		>
 			<i class="i-ph-x"></i>
 		</button>
 	{/snippet}
@@ -1056,37 +1115,37 @@
 	{#if loadingJobDetail}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_jobs_loading()}</p>
 		</div>
 	{:else if selectedJob}
 		<div class="info-grid">
 			<div class="info-card">
-				<span class="info-label">Status</span>
+				<span class="info-label">{$LL.admin_jobs_status()}</span>
 				<span class={getStatusBadgeClass(selectedJob.status)}>
-					{getJobStatusDisplayName(selectedJob.status)}
+					{getJobStatusLabel(selectedJob.status)}
 				</span>
 			</div>
 			<div class="info-card">
-				<span class="info-label">Duration</span>
+				<span class="info-label">{$LL.admin_jobs_duration()}</span>
 				<span class="info-value"
 					>{formatJobDuration(selectedJob.started_at, selectedJob.completed_at)}</span
 				>
 			</div>
 			<div class="info-card">
-				<span class="info-label">Created</span>
+				<span class="info-label">{$LL.admin_jobs_created()}</span>
 				<span class="info-value">{formatDate(selectedJob.created_at)}</span>
 			</div>
 			<div class="info-card">
-				<span class="info-label">Created By</span>
+				<span class="info-label">{$LL.admin_jobs_created_by()}</span>
 				<span class="info-value">{selectedJob.created_by}</span>
 			</div>
 			<div class="info-card">
-				<span class="info-label">Attempts</span>
+				<span class="info-label">{$LL.admin_jobs_attempts()}</span>
 				<span class="info-value">{selectedJob.attempts}/{selectedJob.max_attempts}</span>
 			</div>
 			{#if selectedJob.next_run_at}
 				<div class="info-card">
-					<span class="info-label">Next Run</span>
+					<span class="info-label">{$LL.admin_jobs_next_run()}</span>
 					<span class="info-value">{formatDate(selectedJob.next_run_at)}</span>
 				</div>
 			{/if}
@@ -1094,7 +1153,7 @@
 
 		{#if selectedJob.progress}
 			<div class="detail-section">
-				<h3 class="detail-section-title">Progress</h3>
+				<h3 class="detail-section-title">{$LL.admin_jobs_progress()}</h3>
 				<div class="progress-detail">
 					<div class="progress-bar-lg">
 						<div
@@ -1109,55 +1168,67 @@
 					</span>
 				</div>
 				{#if selectedJob.progress.current_item}
-					<p class="muted">Processing: {selectedJob.progress.current_item}</p>
+					<p class="muted">
+						{$LL.admin_jobs_processing({ item: selectedJob.progress.current_item })}
+					</p>
 				{/if}
 				{#if selectedJob.progress.stage}
-					<p class="muted">Stage: {selectedJob.progress.stage}</p>
+					<p class="muted">{$LL.admin_jobs_stage({ stage: selectedJob.progress.stage })}</p>
 				{/if}
 			</div>
 		{/if}
 
 		{#if selectedJob.result}
 			<div class="detail-section">
-				<h3 class="detail-section-title">Result Summary</h3>
+				<h3 class="detail-section-title">{$LL.admin_jobs_result_summary()}</h3>
 				<div class="result-grid">
 					<div class="result-card success">
 						<span class="result-value">{selectedJob.result.summary.success_count}</span>
-						<span class="result-label">Succeeded</span>
+						<span class="result-label">{$LL.admin_jobs_succeeded()}</span>
 					</div>
 					<div class="result-card danger">
 						<span class="result-value">{selectedJob.result.summary.failure_count}</span>
-						<span class="result-label">Failed</span>
+						<span class="result-label">{$LL.admin_jobs_failed()}</span>
 					</div>
 					<div class="result-card neutral">
 						<span class="result-value">{selectedJob.result.summary.skipped_count}</span>
-						<span class="result-label">Skipped</span>
+						<span class="result-label">{$LL.admin_jobs_skipped()}</span>
 					</div>
 				</div>
 
 				{#if selectedJob.progress}
 					<p class="muted">
-						Processed {selectedJob.progress.processed} of {selectedJob.progress.total}
+						{$LL.admin_jobs_processed_summary({
+							processed: selectedJob.progress.processed,
+							total: selectedJob.progress.total
+						})}
 						{#if selectedJob.progress.succeeded !== undefined}
-							({selectedJob.progress.succeeded} succeeded / {selectedJob.progress.failed ?? 0}
-							failed / {selectedJob.progress.skipped ?? 0} skipped)
+							{$LL.admin_jobs_processed_detail({
+								succeeded: selectedJob.progress.succeeded,
+								failed: selectedJob.progress.failed ?? 0,
+								skipped: selectedJob.progress.skipped ?? 0
+							})}
 						{/if}
 					</p>
 				{/if}
 
 				{#if selectedJob.result.failures.length > 0}
 					<div class="failures-section">
-						<h4 class="failures-title">Failures ({selectedJob.result.failures.length})</h4>
+						<h4 class="failures-title">
+							{$LL.admin_jobs_failures({ count: selectedJob.result.failures.length })}
+						</h4>
 						<div class="failures-list">
 							{#each selectedJob.result.failures.slice(0, 10) as failure, i (i)}
 								<div class="failure-item">
-									{#if failure.line}Line {failure.line}:
-									{/if}{failure.error || 'Unknown error'}
+									{#if failure.line}{$LL.admin_jobs_line_error({ line: failure.line })}
+									{/if}{failure.error || $LL.admin_jobs_unknown_error()}
 								</div>
 							{/each}
 							{#if selectedJob.result.failures.length > 10}
 								<div class="muted">
-									... and {selectedJob.result.failures.length - 10} more
+									{$LL.admin_jobs_more_failures({
+										count: selectedJob.result.failures.length - 10
+									})}
 								</div>
 							{/if}
 						</div>
@@ -1166,13 +1237,13 @@
 
 				{#if selectedJob.result.logs.length > 0}
 					<div class="detail-section">
-						<h4 class="failures-title">Recent Logs</h4>
+						<h4 class="failures-title">{$LL.admin_jobs_recent_logs()}</h4>
 						<div class="failures-list">
 							{#each selectedJob.result.logs as entry, i (i)}
 								<div class="failure-item">
 									<strong>{entry.level.toUpperCase()}</strong>
 									{#if entry.row}
-										row {entry.row}:{/if}
+										{$LL.admin_jobs_row({ row: entry.row })}{/if}
 									{entry.message}
 								</div>
 							{/each}
@@ -1188,7 +1259,7 @@
 						class="btn btn-primary"
 					>
 						<i class="i-ph-download"></i>
-						Download Result
+						{$LL.admin_jobs_download_result()}
 					</a>
 				{/if}
 			</div>
@@ -1196,14 +1267,16 @@
 
 		{#if selectedJob.parameters && Object.keys(selectedJob.parameters).length > 0}
 			<div class="detail-section">
-				<h3 class="detail-section-title">Parameters</h3>
+				<h3 class="detail-section-title">{$LL.admin_jobs_parameters()}</h3>
 				<pre class="code-block">{JSON.stringify(selectedJob.parameters, null, 2)}</pre>
 			</div>
 		{/if}
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeJobDetailDialog}>Close</button>
+		<button class="btn btn-secondary" onclick={closeJobDetailDialog}
+			>{$LL.admin_jobs_close()}</button
+		>
 	{/snippet}
 </Modal>
 

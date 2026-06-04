@@ -5,6 +5,7 @@
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import { adminSAMLAPI, type SAMLSettings } from '$lib/api/admin-saml';
 	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type LoginEntryMode = 'tenant_only' | 'discovery_optional' | 'discovery_required';
 
@@ -71,7 +72,7 @@
 			commonLoginEntrySettings =
 				normalizeLoginEntrySettings(commonLoginEntryResult) ?? tenantLoginEntrySettings;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load info';
+			error = e instanceof Error ? e.message : $LL.admin_info_error_load();
 		} finally {
 			loading = false;
 		}
@@ -129,18 +130,18 @@
 	}
 
 	function formatDiscoveryMethods(methods: string[] | undefined) {
-		if (!methods || methods.length === 0) return 'None configured';
+		if (!methods || methods.length === 0) return $LL.admin_info_none_configured();
 		return methods
 			.map((method) => {
 				switch (method) {
 					case 'email_domain':
-						return 'Email/domain';
+						return $LL.admin_info_method_email_domain();
 					case 'tenant_code':
-						return 'Tenant code';
+						return $LL.admin_info_method_tenant_code();
 					case 'tenant_slug':
-						return 'Tenant slug';
+						return $LL.admin_info_method_tenant_slug();
 					case 'wayf':
-						return 'WAYF dropdown';
+						return $LL.admin_info_method_wayf();
 					default:
 						return method;
 				}
@@ -149,30 +150,30 @@
 	}
 
 	function tenantLoginFirstPage() {
-		if (!info?.login_ui_url) return 'Not configured';
+		if (!info?.login_ui_url) return $LL.admin_info_not_configured();
 		const settings = effectiveTenantLoginEntrySettings;
 		if (
 			info.discover_url &&
 			settings?.mode !== 'tenant_only' &&
 			settings?.requireCommonDiscoveryBeforeLogin
 		) {
-			return `Tenant discovery first, then ${info.login_ui_url}`;
+			return $LL.admin_info_tenant_discovery_first({ url: info.login_ui_url });
 		}
 		return info.login_ui_url;
 	}
 
 	function globalLoginFirstPage() {
-		if (!info?.global_login_ui_url) return 'Not configured';
+		if (!info?.global_login_ui_url) return $LL.admin_info_not_configured();
 		if (!info.discover_url) return info.global_login_ui_url;
 		const settings = commonLoginEntrySettings;
 		if (settings?.skipDiscoveryIfOnlyOneTenant) {
-			return `${info.discover_url} (may skip if only one tenant is active)`;
+			return $LL.admin_info_global_discovery_may_skip({ url: info.discover_url });
 		}
 		return info.discover_url;
 	}
 
 	function samlInteractiveFirstPage() {
-		if (!samlSettings) return 'Not configured';
+		if (!samlSettings) return $LL.admin_info_not_configured();
 		const policy = samlSettings.interactiveLoginUrlPolicy;
 		if (policy === 'tenant_host') {
 			return tenantLoginFirstPage();
@@ -182,7 +183,7 @@
 </script>
 
 <svelte:head>
-	<title>Info — Admin Dashboard — Authrim</title>
+	<title>{$LL.admin_info_page_title()}</title>
 </svelte:head>
 
 <!-- Reusable URL row snippet -->
@@ -206,7 +207,7 @@
 			<button
 				class="copy-btn {copiedKey === urlKey ? 'copied' : ''}"
 				onclick={() => copy(value, urlKey)}
-				title="Copy to clipboard"
+				title={$LL.admin_info_copy_title()}
 			>
 				{#if copiedKey === urlKey}
 					<i class="i-ph-check w-4 h-4"></i>
@@ -220,16 +221,16 @@
 
 <div class="page-container">
 	<div class="page-header">
-		<h1 class="page-title">Info</h1>
+		<h1 class="page-title">{$LL.admin_info_title()}</h1>
 		<p class="page-description">
-			Issuer metadata, well-known URLs, and endpoint references for this tenant.
+			{$LL.admin_info_description()}
 		</p>
 	</div>
 
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch animate-spin w-6 h-6"></i>
-			<span>Loading...</span>
+			<span>{$LL.admin_info_loading()}</span>
 		</div>
 	{:else if error}
 		<div class="error-banner">
@@ -241,64 +242,85 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-identification-card w-5 h-5"></i>
-				Identity
+				{$LL.admin_info_identity()}
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('Tenant ID', info.tenant_id, 'tenant_id', undefined, true)}
-				{@render urlRow('Tenant Name', info.tenant_name, 'tenant_name')}
-				{@render urlRow('Issuer', info.issuer, 'issuer', info.issuer)}
-				{@render urlRow('API Base URL', info.api_url, 'api_url', info.api_url)}
+				{@render urlRow($LL.admin_info_tenant_id(), info.tenant_id, 'tenant_id', undefined, true)}
+				{@render urlRow($LL.admin_info_tenant_name(), info.tenant_name, 'tenant_name')}
+				{@render urlRow($LL.admin_info_issuer(), info.issuer, 'issuer', info.issuer)}
+				{@render urlRow($LL.admin_info_api_base_url(), info.api_url, 'api_url', info.api_url)}
 				{#if info.components.login_ui}
-					{@render urlRow('Built-in Login UI', 'Deployed', 'login_ui_deployment')}
+					{@render urlRow(
+						$LL.admin_info_builtin_login_ui(),
+						$LL.admin_info_deployed(),
+						'login_ui_deployment'
+					)}
 				{:else}
-					{@render urlRow('Built-in Login UI', 'Not deployed', 'login_ui_deployment')}
+					{@render urlRow(
+						$LL.admin_info_builtin_login_ui(),
+						$LL.admin_info_not_deployed(),
+						'login_ui_deployment'
+					)}
 				{/if}
 				{#if info.login_ui_url}
 					{@render urlRow(
-						'Login URL (this tenant)',
+						$LL.admin_info_login_url_tenant(),
 						info.login_ui_url,
 						'login_ui_url',
 						info.login_ui_url
 					)}
 				{:else}
-					{@render urlRow('Login URL (this tenant)', 'Not configured', 'login_ui_url_status')}
+					{@render urlRow(
+						$LL.admin_info_login_url_tenant(),
+						$LL.admin_info_not_configured(),
+						'login_ui_url_status'
+					)}
 				{/if}
 				{@render urlRow(
-					'Tenant Login First Page',
+					$LL.admin_info_tenant_login_first_page(),
 					tenantLoginFirstPage(),
 					'tenant_login_first_page'
 				)}
 				{#if info.global_login_ui_url}
 					{@render urlRow(
-						'Global Login URL (common entry)',
+						$LL.admin_info_global_login_url(),
 						info.global_login_ui_url,
 						'global_login_ui_url',
 						info.global_login_ui_url
 					)}
 				{:else}
 					{@render urlRow(
-						'Global Login URL (common entry)',
-						'Not configured',
+						$LL.admin_info_global_login_url(),
+						$LL.admin_info_not_configured(),
 						'global_login_ui_url_status'
 					)}
 				{/if}
 				{@render urlRow(
-					'Global Login First Page',
+					$LL.admin_info_global_login_first_page(),
 					globalLoginFirstPage(),
 					'global_login_first_page'
 				)}
 				{#if info.discover_url}
 					{@render urlRow(
-						'Tenant Discovery URL',
+						$LL.admin_info_tenant_discovery_url(),
 						info.discover_url,
 						'discover_url',
 						info.discover_url
 					)}
 				{/if}
 				{#if info.components.admin_ui && info.admin_ui_url}
-					{@render urlRow('Admin UI URL', info.admin_ui_url, 'admin_ui_url', info.admin_ui_url)}
+					{@render urlRow(
+						$LL.admin_info_admin_ui_url(),
+						info.admin_ui_url,
+						'admin_ui_url',
+						info.admin_ui_url
+					)}
 				{:else}
-					{@render urlRow('Admin UI', 'Not deployed', 'admin_ui_status')}
+					{@render urlRow(
+						$LL.admin_info_admin_ui(),
+						$LL.admin_info_not_deployed(),
+						'admin_ui_status'
+					)}
 				{/if}
 			</div>
 		</section>
@@ -307,43 +329,45 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-path w-5 h-5"></i>
-				Login Entry / Tenant Discovery
+				{$LL.admin_info_login_entry_title()}
 			</h2>
 			<div class="url-grid">
 				{@render urlRow(
-					'Tenant override',
-					tenantLoginEntrySettings?.overrideEnabled ? 'Enabled' : 'Disabled',
+					$LL.admin_info_tenant_override(),
+					tenantLoginEntrySettings?.overrideEnabled
+						? $LL.admin_info_enabled()
+						: $LL.admin_info_disabled(),
 					'login_entry_override'
 				)}
 				{@render urlRow(
-					'Effective tenant mode',
-					effectiveTenantLoginEntrySettings?.mode ?? 'Not available',
+					$LL.admin_info_effective_tenant_mode(),
+					effectiveTenantLoginEntrySettings?.mode ?? $LL.admin_info_not_available(),
 					'effective_tenant_mode',
 					undefined,
 					true
 				)}
 				{@render urlRow(
-					'Effective tenant methods',
+					$LL.admin_info_effective_tenant_methods(),
 					formatDiscoveryMethods(effectiveTenantLoginEntrySettings?.discoveryMethods),
 					'effective_tenant_methods'
 				)}
 				{@render urlRow(
-					'Common entry mode',
-					commonLoginEntrySettings?.mode ?? 'Not available',
+					$LL.admin_info_common_entry_mode(),
+					commonLoginEntrySettings?.mode ?? $LL.admin_info_not_available(),
 					'common_entry_mode',
 					undefined,
 					true
 				)}
 				{@render urlRow(
-					'Common entry methods',
+					$LL.admin_info_common_entry_methods(),
 					formatDiscoveryMethods(commonLoginEntrySettings?.discoveryMethods),
 					'common_entry_methods'
 				)}
 				{@render urlRow(
-					'Common discovery before tenant login',
+					$LL.admin_info_common_before_tenant(),
 					effectiveTenantLoginEntrySettings?.requireCommonDiscoveryBeforeLogin
-						? 'Enabled'
-						: 'Disabled',
+						? $LL.admin_info_enabled()
+						: $LL.admin_info_disabled(),
 					'common_before_tenant_login'
 				)}
 			</div>
@@ -353,29 +377,29 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-magnifying-glass w-5 h-5"></i>
-				Well-Known / Discovery
+				{$LL.admin_info_well_known()}
 			</h2>
 			<div class="url-grid">
 				{@render urlRow(
-					'OpenID Configuration',
+					$LL.admin_info_openid_config(),
 					info.well_known.openid_configuration,
 					'wk_oidc',
 					info.well_known.openid_configuration
 				)}
 				{@render urlRow(
-					'OAuth Authorization Server',
+					$LL.admin_info_oauth_authorization_server(),
 					info.well_known.oauth_authorization_server,
 					'wk_oauth',
 					info.well_known.oauth_authorization_server
 				)}
 				{@render urlRow(
-					'JWKS (JSON Web Key Set)',
+					$LL.admin_info_jwks(),
 					info.well_known.jwks,
 					'wk_jwks',
 					info.well_known.jwks
 				)}
 				{@render urlRow(
-					'WebFinger',
+					$LL.admin_info_webfinger(),
 					info.well_known.webfinger,
 					'wk_webfinger',
 					info.well_known.webfinger
@@ -387,35 +411,39 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-lock-key w-5 h-5"></i>
-				OIDC / OAuth 2.0 Endpoints
+				{$LL.admin_info_oidc_oauth_endpoints()}
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('Authorization', info.oidc.authorization, 'oidc_auth')}
-				{@render urlRow('Token', info.oidc.token, 'oidc_token')}
-				{@render urlRow('UserInfo', info.oidc.userinfo, 'oidc_userinfo')}
-				{@render urlRow('Introspection', info.oidc.introspection, 'oidc_introspect')}
-				{@render urlRow('Revocation', info.oidc.revocation, 'oidc_revoke')}
-				{@render urlRow('End Session (Logout)', info.oidc.end_session, 'oidc_endsession')}
+				{@render urlRow($LL.admin_info_authorization(), info.oidc.authorization, 'oidc_auth')}
+				{@render urlRow($LL.admin_info_token(), info.oidc.token, 'oidc_token')}
+				{@render urlRow($LL.admin_info_userinfo(), info.oidc.userinfo, 'oidc_userinfo')}
+				{@render urlRow($LL.admin_info_introspection(), info.oidc.introspection, 'oidc_introspect')}
+				{@render urlRow($LL.admin_info_revocation(), info.oidc.revocation, 'oidc_revoke')}
+				{@render urlRow($LL.admin_info_end_session(), info.oidc.end_session, 'oidc_endsession')}
 			</div>
 
-			<h3 class="subsection-title">OAuth 2.0 Extensions</h3>
+			<h3 class="subsection-title">{$LL.admin_info_oauth_extensions()}</h3>
 			<div class="url-grid">
 				{#if info.components.async}
 					{@render urlRow(
-						'Device Authorization (RFC 8628)',
+						$LL.admin_info_device_authorization(),
 						info.oauth_extensions.device_authorization,
 						'oauth_device'
 					)}
 				{:else}
-					{@render urlRow('Device Authorization (RFC 8628)', 'Not deployed', 'oauth_device_status')}
+					{@render urlRow(
+						$LL.admin_info_device_authorization(),
+						$LL.admin_info_not_deployed(),
+						'oauth_device_status'
+					)}
 				{/if}
 				{@render urlRow(
-					'Pushed Authorization Request (RFC 9126)',
+					$LL.admin_info_par(),
 					info.oauth_extensions.pushed_authorization_request,
 					'oauth_par'
 				)}
 				{@render urlRow(
-					'Dynamic Client Registration (RFC 7591)',
+					$LL.admin_info_dcr(),
 					info.oauth_extensions.dynamic_client_registration,
 					'oauth_dcr'
 				)}
@@ -426,17 +454,17 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-device-mobile w-5 h-5"></i>
-				CIBA (Client-Initiated Backchannel Authentication)
+				{$LL.admin_info_ciba()}
 			</h2>
 			<div class="url-grid">
 				{#if info.components.async}
 					{@render urlRow(
-						'Backchannel Authentication (RFC 9449)',
+						$LL.admin_info_backchannel_auth(),
 						info.ciba.backchannel_authentication,
 						'ciba_auth'
 					)}
 				{:else}
-					{@render urlRow('Status', 'Not deployed', 'ciba_status')}
+					{@render urlRow($LL.admin_info_status(), $LL.admin_info_not_deployed(), 'ciba_status')}
 				{/if}
 			</div>
 		</section>
@@ -445,62 +473,62 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-shield-check w-5 h-5"></i>
-				SAML 2.0
+				{$LL.admin_info_saml()}
 			</h2>
 			<div class="url-grid">
 				{#if info.components.saml}
 					{#if samlSettings}
 						{@render urlRow(
-							'Published IdP Entity ID',
+							$LL.admin_info_published_idp_entity_id(),
 							samlSettings.generated.idpEntityId,
 							'saml_idp_entity_id',
 							undefined,
 							true
 						)}
 						{@render urlRow(
-							'Published SP Entity ID',
+							$LL.admin_info_published_sp_entity_id(),
 							samlSettings.generated.spEntityId,
 							'saml_sp_entity_id',
 							undefined,
 							true
 						)}
 						{@render urlRow(
-							'Entity ID Style',
+							$LL.admin_info_entity_id_style(),
 							samlSettings.entityIdStyle,
 							'saml_entity_id_style',
 							undefined,
 							true
 						)}
 						{@render urlRow(
-							'Interactive Login Redirect',
+							$LL.admin_info_interactive_login_redirect(),
 							samlSettings.interactiveLoginUrlPolicy === 'tenant_host'
-								? 'Tenant Host'
-								: 'UI Base URL',
+								? $LL.admin_info_tenant_host()
+								: $LL.admin_info_ui_base_url(),
 							'saml_interactive_login_policy'
 						)}
 						{@render urlRow(
-							'SAML First Visible Page',
+							$LL.admin_info_saml_first_visible_page(),
 							samlInteractiveFirstPage(),
 							'saml_first_visible_page'
 						)}
 					{/if}
-					{@render urlRow('SSO (Single Sign-On)', info.saml.sso, 'saml_sso')}
+					{@render urlRow($LL.admin_info_sso(), info.saml.sso, 'saml_sso')}
 					{@render urlRow(
-						'IdP Metadata',
+						$LL.admin_info_idp_metadata(),
 						info.saml.idp_metadata,
 						'saml_idp_metadata',
 						info.saml.idp_metadata
 					)}
 					{@render urlRow(
-						'SP Metadata',
+						$LL.admin_info_sp_metadata(),
 						info.saml.sp_metadata ?? info.saml.metadata,
 						'saml_sp_metadata',
 						info.saml.sp_metadata ?? info.saml.metadata
 					)}
-					{@render urlRow('ACS (Assertion Consumer Service)', info.saml.acs, 'saml_acs')}
-					{@render urlRow('SLO (Single Logout)', info.saml.slo, 'saml_slo')}
+					{@render urlRow($LL.admin_info_acs(), info.saml.acs, 'saml_acs')}
+					{@render urlRow($LL.admin_info_slo(), info.saml.slo, 'saml_slo')}
 				{:else}
-					{@render urlRow('Status', 'Not deployed', 'saml_status')}
+					{@render urlRow($LL.admin_info_status(), $LL.admin_info_not_deployed(), 'saml_status')}
 				{/if}
 			</div>
 		</section>
@@ -509,22 +537,30 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-certificate w-5 h-5"></i>
-				Verifiable Credentials (OID4VC)
+				{$LL.admin_info_vc()}
 			</h2>
 			<div class="url-grid">
 				{#if info.components.vc}
 					{@render urlRow(
-						'Credential Issuer Metadata',
+						$LL.admin_info_credential_issuer_metadata(),
 						info.vc.credential_issuer_metadata,
 						'vc_meta',
 						info.vc.credential_issuer_metadata
 					)}
-					{@render urlRow('Credential Endpoint', info.vc.credential, 'vc_credential')}
-					{@render urlRow('Batch Credential', info.vc.batch_credential, 'vc_batch')}
-					{@render urlRow('Deferred Credential', info.vc.deferred_credential, 'vc_deferred')}
-					{@render urlRow('VP Token Request', info.vc.vp_token_request, 'vc_vp')}
+					{@render urlRow(
+						$LL.admin_info_credential_endpoint(),
+						info.vc.credential,
+						'vc_credential'
+					)}
+					{@render urlRow($LL.admin_info_batch_credential(), info.vc.batch_credential, 'vc_batch')}
+					{@render urlRow(
+						$LL.admin_info_deferred_credential(),
+						info.vc.deferred_credential,
+						'vc_deferred'
+					)}
+					{@render urlRow($LL.admin_info_vp_token_request(), info.vc.vp_token_request, 'vc_vp')}
 				{:else}
-					{@render urlRow('Status', 'Not deployed', 'vc_status')}
+					{@render urlRow($LL.admin_info_status(), $LL.admin_info_not_deployed(), 'vc_status')}
 				{/if}
 			</div>
 		</section>
@@ -533,14 +569,14 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-users-three w-5 h-5"></i>
-				SCIM 2.0 (Provisioning)
+				{$LL.admin_info_scim()}
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('Base URL', info.scim.base, 'scim_base')}
-				{@render urlRow('Users', info.scim.users, 'scim_users')}
-				{@render urlRow('Groups', info.scim.groups, 'scim_groups')}
+				{@render urlRow($LL.admin_info_base_url(), info.scim.base, 'scim_base')}
+				{@render urlRow($LL.admin_info_users(), info.scim.users, 'scim_users')}
+				{@render urlRow($LL.admin_info_groups(), info.scim.groups, 'scim_groups')}
 				{@render urlRow(
-					'Service Provider Config',
+					$LL.admin_info_service_provider_config(),
 					info.scim.service_provider_config,
 					'scim_spc',
 					info.scim.service_provider_config
@@ -552,20 +588,24 @@
 		<section class="info-section">
 			<h2 class="section-title">
 				<i class="i-ph-terminal w-5 h-5"></i>
-				Admin API
+				{$LL.admin_info_admin_api()}
 			</h2>
 			<div class="url-grid">
-				{@render urlRow('Base URL', info.admin_api.base, 'api_base')}
-				{@render urlRow('Users', info.admin_api.users, 'api_users')}
-				{@render urlRow('Clients', info.admin_api.clients, 'api_clients')}
-				{@render urlRow('Sessions', info.admin_api.sessions, 'api_sessions')}
-				{@render urlRow('Audit Logs', info.admin_api.audit_logs, 'api_audit')}
-				{@render urlRow('Settings', info.admin_api.settings, 'api_settings')}
-				{@render urlRow('Tenants', info.admin_api.tenants, 'api_tenants')}
-				{@render urlRow('Schema Settings', info.admin_api.custom_claims, 'api_claims')}
-				{@render urlRow('Organizations', info.admin_api.organizations, 'api_orgs')}
-				{@render urlRow('Roles', info.admin_api.roles, 'api_roles')}
-				{@render urlRow('Webhooks', info.admin_api.webhooks, 'api_webhooks')}
+				{@render urlRow($LL.admin_info_base_url(), info.admin_api.base, 'api_base')}
+				{@render urlRow($LL.admin_info_users(), info.admin_api.users, 'api_users')}
+				{@render urlRow($LL.admin_info_clients(), info.admin_api.clients, 'api_clients')}
+				{@render urlRow($LL.admin_info_sessions(), info.admin_api.sessions, 'api_sessions')}
+				{@render urlRow($LL.admin_info_audit_logs(), info.admin_api.audit_logs, 'api_audit')}
+				{@render urlRow($LL.admin_info_settings(), info.admin_api.settings, 'api_settings')}
+				{@render urlRow($LL.admin_info_tenants(), info.admin_api.tenants, 'api_tenants')}
+				{@render urlRow(
+					$LL.admin_info_schema_settings(),
+					info.admin_api.custom_claims,
+					'api_claims'
+				)}
+				{@render urlRow($LL.admin_info_organizations(), info.admin_api.organizations, 'api_orgs')}
+				{@render urlRow($LL.admin_info_roles(), info.admin_api.roles, 'api_roles')}
+				{@render urlRow($LL.admin_info_webhooks(), info.admin_api.webhooks, 'api_webhooks')}
 			</div>
 		</section>
 	{/if}

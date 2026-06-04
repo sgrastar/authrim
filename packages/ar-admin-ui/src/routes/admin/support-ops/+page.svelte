@@ -11,6 +11,7 @@
 		type SupportOpsSelectorOperator
 	} from '$lib/api/admin-support-ops';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type TabId = 'aggregate' | 'cohort' | 'action';
 	type SelectorRow = {
@@ -20,10 +21,14 @@
 		value: string;
 	};
 
-	const tabs: Array<{ id: TabId; label: string; icon: string }> = [
-		{ id: 'aggregate', label: 'Aggregate', icon: 'i-ph-chart-bar' },
-		{ id: 'cohort', label: 'Cohort', icon: 'i-ph-funnel' },
-		{ id: 'action', label: 'Action', icon: 'i-ph-checks' }
+	const tabs: Array<{ id: TabId; getLabel: () => string; icon: string }> = [
+		{
+			id: 'aggregate',
+			getLabel: () => $LL.admin_support_ops_tab_aggregate(),
+			icon: 'i-ph-chart-bar'
+		},
+		{ id: 'cohort', getLabel: () => $LL.admin_support_ops_tab_cohort(), icon: 'i-ph-funnel' },
+		{ id: 'action', getLabel: () => $LL.admin_support_ops_tab_action(), icon: 'i-ph-checks' }
 	];
 
 	let activeTab = $state<TabId>('aggregate');
@@ -107,7 +112,7 @@
 				groupBy = firstAggregatableField() ?? '';
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load support operations';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -241,9 +246,9 @@
 				selector: buildSelector(),
 				group_by: [groupBy]
 			});
-			success = 'Aggregate completed';
+			success = $LL.admin_support_ops_aggregate_completed();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Aggregate failed';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_aggregate_failed();
 		} finally {
 			loading = false;
 		}
@@ -263,9 +268,9 @@
 					support_case_id: supportCaseId || undefined
 				}
 			});
-			success = 'Preview completed';
+			success = $LL.admin_support_ops_preview_completed();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Preview failed';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_preview_failed();
 		} finally {
 			loading = false;
 		}
@@ -292,13 +297,13 @@
 				cohortResult.snapshot_status === 'running'
 			) {
 				startCohortPolling();
-				success = 'Cohort snapshot queued';
+				success = $LL.admin_support_ops_cohort_snapshot_queued();
 			} else {
 				stopCohortPolling();
-				success = 'Cohort created';
+				success = $LL.admin_support_ops_cohort_created();
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Cohort creation failed';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_cohort_creation_failed();
 		} finally {
 			loading = false;
 		}
@@ -315,16 +320,18 @@
 			cohortResult = latest;
 			if (latest.snapshot_status === 'completed') {
 				stopCohortPolling();
-				if (showMessages) success = 'Cohort snapshot completed';
+				if (showMessages) success = $LL.admin_support_ops_cohort_snapshot_completed();
 			} else if (latest.snapshot_status === 'failed' || latest.snapshot_status === 'cancelled') {
 				stopCohortPolling();
-				error = latest.snapshot_error || `Cohort snapshot ${latest.snapshot_status}`;
+				error =
+					latest.snapshot_error ||
+					$LL.admin_support_ops_cohort_snapshot_status({ status: latest.snapshot_status });
 			} else if (showMessages) {
-				success = 'Cohort snapshot still running';
+				success = $LL.admin_support_ops_cohort_snapshot_running();
 			}
 		} catch (err) {
 			if (!showMessages) stopCohortPolling();
-			error = err instanceof Error ? err.message : 'Failed to refresh cohort';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_refresh_failed();
 		} finally {
 			if (showMessages) loading = false;
 		}
@@ -343,9 +350,9 @@
 			});
 			currentActionId = result.action_id;
 			actionResult = result;
-			success = 'Action requested';
+			success = $LL.admin_support_ops_action_requested();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Action request failed';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_action_request_failed();
 		} finally {
 			loading = false;
 		}
@@ -357,9 +364,9 @@
 		loading = true;
 		try {
 			actionResult = await adminSupportOpsAPI.approveAction(currentActionId);
-			success = 'Action approved';
+			success = $LL.admin_support_ops_action_approved();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Action approval failed';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_action_approval_failed();
 		} finally {
 			loading = false;
 		}
@@ -371,9 +378,9 @@
 		loading = true;
 		try {
 			actionResult = await adminSupportOpsAPI.executeAction(currentActionId);
-			success = 'Action completed';
+			success = $LL.admin_support_ops_action_completed();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Action execution failed';
+			error = err instanceof Error ? err.message : $LL.admin_support_ops_action_execution_failed();
 		} finally {
 			loading = false;
 		}
@@ -381,14 +388,14 @@
 </script>
 
 <svelte:head>
-	<title>Support Ops - Authrim Admin</title>
+	<title>{$LL.admin_support_ops_page_title()}</title>
 </svelte:head>
 
 <div class="page-shell">
 	<header class="page-header">
 		<div>
-			<p class="eyebrow">End User Operations</p>
-			<h1>Support Ops</h1>
+			<p class="eyebrow">{$LL.admin_support_ops_eyebrow()}</p>
+			<h1>{$LL.admin_support_ops_title()}</h1>
 		</div>
 		<div class="tenant-chip">
 			<i class="i-ph-buildings"></i>
@@ -411,7 +418,7 @@
 				onclick={() => (activeTab = tab.id)}
 			>
 				<i class={tab.icon}></i>
-				<span>{tab.label}</span>
+				<span>{tab.getLabel()}</span>
 			</button>
 		{/each}
 	</div>
@@ -419,7 +426,7 @@
 	<section class="panel">
 		<div class="toolbar">
 			<label>
-				<span>Resource</span>
+				<span>{$LL.admin_support_ops_resource()}</span>
 				<select bind:value={selectedResourceName}>
 					{#each resources as resource (resource.resource)}
 						<option value={resource.resource}>{resource.displayName}</option>
@@ -427,25 +434,25 @@
 				</select>
 			</label>
 			<label>
-				<span>Support Case</span>
+				<span>{$LL.admin_support_ops_support_case()}</span>
 				<input bind:value={supportCaseId} placeholder="CASE-1234" />
 			</label>
 			<label>
-				<span>Action</span>
+				<span>{$LL.admin_support_ops_tab_action()}</span>
 				<select bind:value={actionName}>
-					<option value="suspend">Suspend</option>
+					<option value="suspend">{$LL.admin_support_ops_action_suspend()}</option>
 				</select>
 			</label>
 		</div>
 
 		<div class="selector-list">
 			<div class="selector-header">
-				<h2>Selector</h2>
+				<h2>{$LL.admin_support_ops_selector()}</h2>
 				<button
 					type="button"
 					class="icon-button"
 					onclick={addSelectorRow}
-					aria-label="Add condition"
+					aria-label={$LL.admin_support_ops_add_condition()}
 				>
 					<i class="i-ph-plus"></i>
 				</button>
@@ -471,7 +478,7 @@
 						{/each}
 					</select>
 					{#if row.op === 'exists' || row.op === 'not_exists'}
-						<input value="" disabled aria-label="No value" />
+						<input value="" disabled aria-label={$LL.admin_support_ops_no_value()} />
 					{:else if fieldDescriptor(row.field)?.values}
 						<select
 							value={row.value}
@@ -501,7 +508,7 @@
 						class="icon-button danger"
 						disabled={selectorRows.length <= 1}
 						onclick={() => removeSelectorRow(row.id)}
-						aria-label="Remove condition"
+						aria-label={$LL.admin_support_ops_remove_condition()}
 					>
 						<i class="i-ph-trash"></i>
 					</button>
@@ -514,7 +521,7 @@
 		<section class="panel">
 			<div class="toolbar compact">
 				<label>
-					<span>Group By</span>
+					<span>{$LL.admin_support_ops_group_by()}</span>
 					<select bind:value={groupBy}>
 						{#each aggregatableFields as [fieldName] (fieldName)}
 							<option value={fieldName}>{fieldName}</option>
@@ -523,7 +530,7 @@
 				</label>
 				<button type="button" class="primary" disabled={loading || !groupBy} onclick={runAggregate}>
 					<i class="i-ph-chart-bar"></i>
-					<span>Run</span>
+					<span>{$LL.admin_support_ops_run()}</span>
 				</button>
 			</div>
 
@@ -531,8 +538,8 @@
 				<table>
 					<thead>
 						<tr>
-							<th>Group</th>
-							<th>Count</th>
+							<th>{$LL.admin_support_ops_group()}</th>
+							<th>{$LL.admin_support_ops_count()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -553,28 +560,42 @@
 	{:else if activeTab === 'cohort'}
 		<section class="panel">
 			<label class="reason">
-				<span>Reason</span>
+				<span>{$LL.admin_support_ops_reason()}</span>
 				<textarea bind:value={actionReason} rows="3"></textarea>
 			</label>
 			<div class="actions">
 				<button type="button" class="secondary" disabled={loading} onclick={previewCohort}>
 					<i class="i-ph-eye"></i>
-					<span>Preview</span>
+					<span>{$LL.admin_support_ops_preview()}</span>
 				</button>
 				<button type="button" class="primary" disabled={loading} onclick={createCohort}>
 					<i class="i-ph-funnel"></i>
-					<span>Create Cohort</span>
+					<span>{$LL.admin_support_ops_create_cohort()}</span>
 				</button>
 			</div>
 
 			{#if previewResult}
 				<div class="summary-grid">
-					<div><span>Matched</span><strong>{formatCount(previewResult.matched_count)}</strong></div>
 					<div>
-						<span>Actionable</span><strong>{formatCount(previewResult.actionable_count)}</strong>
+						<span>{$LL.admin_support_ops_matched()}</span><strong
+							>{formatCount(previewResult.matched_count)}</strong
+						>
 					</div>
-					<div><span>Blocked</span><strong>{formatCount(previewResult.blocked_count)}</strong></div>
-					<div><span>Risk</span><strong>{previewResult.risk.risk_level}</strong></div>
+					<div>
+						<span>{$LL.admin_support_ops_actionable()}</span><strong
+							>{formatCount(previewResult.actionable_count)}</strong
+						>
+					</div>
+					<div>
+						<span>{$LL.admin_support_ops_blocked()}</span><strong
+							>{formatCount(previewResult.blocked_count)}</strong
+						>
+					</div>
+					<div>
+						<span>{$LL.admin_support_ops_risk()}</span><strong
+							>{previewResult.risk.risk_level}</strong
+						>
+					</div>
 				</div>
 				<div class="privacy-line">
 					min_count {previewResult.risk.min_count} · selector {previewResult.selector_hash}
@@ -596,7 +617,7 @@
 						onclick={() => refreshCohortStatus()}
 					>
 						<i class="i-ph-arrows-clockwise"></i>
-						<span>Refresh</span>
+						<span>{$LL.admin_support_ops_refresh()}</span>
 					</button>
 				</div>
 			{/if}
@@ -605,16 +626,16 @@
 		<section class="panel">
 			<div class="toolbar">
 				<label>
-					<span>Cohort ID</span>
+					<span>{$LL.admin_support_ops_cohort_id()}</span>
 					<input bind:value={currentCohortId} />
 				</label>
 				<label>
-					<span>Action ID</span>
+					<span>{$LL.admin_support_ops_action_id()}</span>
 					<input bind:value={currentActionId} />
 				</label>
 			</div>
 			<label class="reason">
-				<span>Reason</span>
+				<span>{$LL.admin_support_ops_reason()}</span>
 				<textarea bind:value={actionReason} rows="3"></textarea>
 			</label>
 			<div class="actions">
@@ -625,12 +646,12 @@
 					onclick={requestAction}
 				>
 					<i class="i-ph-paper-plane-tilt"></i>
-					<span>Request</span>
+					<span>{$LL.admin_support_ops_request()}</span>
 				</button>
 				{#if approvalUrl}
 					<a class="secondary link-button" href={approvalUrl}>
 						<i class="i-ph-check"></i>
-						<span>Approval</span>
+						<span>{$LL.admin_support_ops_approval()}</span>
 					</a>
 				{:else}
 					<button
@@ -640,7 +661,7 @@
 						onclick={approveAction}
 					>
 						<i class="i-ph-check"></i>
-						<span>Approve</span>
+						<span>{$LL.admin_support_ops_approve()}</span>
 					</button>
 				{/if}
 				<button
@@ -650,12 +671,14 @@
 					onclick={executeAction}
 				>
 					<i class="i-ph-play"></i>
-					<span>Execute</span>
+					<span>{$LL.admin_support_ops_execute()}</span>
 				</button>
 			</div>
 			{#if currentCohortSnapshotStatus && currentCohortSnapshotStatus !== 'completed'}
 				<div class="privacy-line">
-					cohort snapshot {currentCohortSnapshotStatus}; refresh before requesting action
+					{$LL.admin_support_ops_snapshot_not_ready({
+						status: currentCohortSnapshotStatus
+					})}
 				</div>
 			{/if}
 			{#if actionResult}

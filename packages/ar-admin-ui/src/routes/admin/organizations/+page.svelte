@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminOrganizationsAPI,
@@ -78,8 +79,7 @@
 				}
 			}
 		} catch (err) {
-			console.error('Failed to load organizations:', err);
-			hierarchyError = err instanceof Error ? err.message : 'Failed to load organizations';
+			hierarchyError = err instanceof Error ? err.message : $LL.admin_org_load_failed();
 		} finally {
 			hierarchyLoading = false;
 		}
@@ -97,8 +97,7 @@
 			expandedNodes.clear();
 			expandedNodes.add(org.id);
 		} catch (err) {
-			console.error('Failed to load hierarchy:', err);
-			hierarchyError = err instanceof Error ? err.message : 'Failed to load hierarchy';
+			hierarchyError = err instanceof Error ? err.message : $LL.admin_org_hierarchy_load_failed();
 		} finally {
 			hierarchyLoading = false;
 		}
@@ -171,8 +170,7 @@
 			mappings = response.mappings;
 			total = response.total;
 		} catch (err) {
-			console.error('Failed to load domain mappings:', err);
-			error = 'Failed to load domain mappings';
+			error = err instanceof Error ? err.message : $LL.admin_org_mappings_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -222,7 +220,7 @@
 
 	async function confirmCreate() {
 		if (!newDomain.trim() || !newOrgId.trim()) {
-			createError = 'Domain and Organization ID are required';
+			createError = $LL.admin_org_domain_required();
 			return;
 		}
 
@@ -240,7 +238,7 @@
 			showCreateDialog = false;
 			await loadMappings();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create mapping';
+			createError = err instanceof Error ? err.message : $LL.admin_org_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -271,7 +269,7 @@
 			mappingToDelete = null;
 			await loadMappings();
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete mapping';
+			deleteError = err instanceof Error ? err.message : $LL.admin_org_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -303,7 +301,7 @@
 			verifyRecordName = result.record_name;
 			verifyExpectedValue = result.expected_value;
 		} catch (err) {
-			verifyError = err instanceof Error ? err.message : 'Failed to start verification';
+			verifyError = err instanceof Error ? err.message : $LL.admin_org_start_verification_failed();
 		} finally {
 			verifying = false;
 		}
@@ -322,10 +320,10 @@
 				mappingToVerify = null;
 				await loadMappings();
 			} else {
-				verifyError = result.error || 'DNS record not found. Please wait for DNS propagation.';
+				verifyError = result.error || $LL.admin_org_dns_record_not_found();
 			}
 		} catch (err) {
-			verifyError = err instanceof Error ? err.message : 'Failed to verify domain';
+			verifyError = err instanceof Error ? err.message : $LL.admin_org_verify_failed();
 		} finally {
 			verifying = false;
 		}
@@ -339,23 +337,33 @@
 			});
 			await loadMappings();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update mapping';
+			error = err instanceof Error ? err.message : $LL.admin_org_update_failed();
+		}
+	}
+
+	function formatMembershipType(type: OrgDomainMapping['membership_type']): string {
+		switch (type) {
+			case 'admin':
+				return $LL.admin_org_membership_admin();
+			case 'owner':
+				return $LL.admin_org_membership_owner();
+			case 'member':
+			default:
+				return $LL.admin_org_membership_member();
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>Organizations - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_org_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Organizations</h1>
-			<p class="page-description">
-				Manage organization hierarchy and domain mappings for JIT provisioning.
-			</p>
+			<h1 class="page-title">{$LL.admin_org_title()}</h1>
+			<p class="page-description">{$LL.admin_org_description()}</p>
 		</div>
 	</div>
 
@@ -367,7 +375,7 @@
 			onclick={() => handleTabChange('hierarchy')}
 		>
 			<i class="i-ph-tree-structure"></i>
-			Hierarchy
+			{$LL.admin_org_hierarchy()}
 		</button>
 		<button
 			class="tab"
@@ -375,7 +383,7 @@
 			onclick={() => handleTabChange('mappings')}
 		>
 			<i class="i-ph-globe"></i>
-			Domain Mappings
+			{$LL.admin_org_domain_mappings()}
 		</button>
 	</div>
 
@@ -389,49 +397,53 @@
 						type="text"
 						class="form-input"
 						bind:value={searchQuery}
-						placeholder="Search organizations..."
+						placeholder={$LL.admin_org_search_placeholder()}
 						onkeydown={(e) => e.key === 'Enter' && handleSearch()}
 					/>
 				</div>
-				<button class="btn btn-primary" onclick={handleSearch}>Search</button>
+				<button class="btn btn-primary" onclick={handleSearch}>{$LL.admin_org_search()}</button>
 				<button class="btn btn-secondary" onclick={expandAll} disabled={!hierarchyData}>
-					Expand All
+					{$LL.admin_org_expand_all()}
 				</button>
 				<button class="btn btn-secondary" onclick={collapseAll} disabled={!hierarchyData}>
-					Collapse All
+					{$LL.admin_org_collapse_all()}
 				</button>
 			</div>
 
 			{#if hierarchyError}
 				<div class="alert alert-error" style="margin-bottom: 16px;">
 					{hierarchyError}
-					<button class="btn btn-secondary btn-sm" onclick={loadOrganizations}>Retry</button>
+					<button class="btn btn-secondary btn-sm" onclick={loadOrganizations}>
+						{$LL.admin_org_retry()}
+					</button>
 				</div>
 			{/if}
 
 			{#if hierarchyLoading}
 				<div class="loading-state">
 					<i class="i-ph-circle-notch loading-spinner"></i>
-					<p>Loading organizations...</p>
+					<p>{$LL.admin_org_loading_organizations()}</p>
 				</div>
 			{:else if hierarchyData}
 				<!-- Summary -->
 				<div class="summary-bar">
 					<span class="summary-item">
-						<strong>{hierarchyData.summary.total_organizations}</strong> organizations
+						{$LL.admin_org_summary_organizations({
+							count: hierarchyData.summary.total_organizations
+						})}
 					</span>
 					<span class="summary-divider">|</span>
 					<span class="summary-item">
-						<strong>{hierarchyData.summary.total_members}</strong> total members
+						{$LL.admin_org_summary_members({ count: hierarchyData.summary.total_members })}
 					</span>
 					<span class="summary-divider">|</span>
 					<span class="summary-item">
-						Max depth: <strong>{hierarchyData.summary.max_depth}</strong>
+						{$LL.admin_org_summary_max_depth({ depth: hierarchyData.summary.max_depth })}
 					</span>
 					{#if highlightedIds.size > 0}
 						<span class="summary-divider">|</span>
 						<span class="summary-item highlight">
-							<strong>{highlightedIds.size}</strong> matches
+							{$LL.admin_org_summary_matches({ count: highlightedIds.size })}
 						</span>
 					{/if}
 				</div>
@@ -447,7 +459,7 @@
 				</div>
 			{:else if organizations.length === 0}
 				<div class="empty-state">
-					<p class="empty-state-description">No organizations found.</p>
+					<p class="empty-state-description">{$LL.admin_org_empty()}</p>
 				</div>
 			{/if}
 		</div>
@@ -457,14 +469,10 @@
 	{#if activeTab === 'mappings'}
 		<div class="panel">
 			<div class="section-header">
-				<p class="section-description">
-					Configure domain-to-organization mappings for automatic user provisioning via JIT
-					(Just-In-Time) provisioning. Users with email addresses matching a verified domain will be
-					automatically added to the mapped organization.
-				</p>
+				<p class="section-description">{$LL.admin_org_mappings_description()}</p>
 				<button class="btn btn-primary" onclick={openCreateDialog}>
 					<i class="i-ph-plus"></i>
-					Add Mapping
+					{$LL.admin_org_add_mapping()}
 				</button>
 			</div>
 
@@ -475,29 +483,33 @@
 			{#if loading}
 				<div class="loading-state">
 					<i class="i-ph-circle-notch loading-spinner"></i>
-					<p>Loading...</p>
+					<p>{$LL.admin_org_loading()}</p>
 				</div>
 			{:else if mappings.length === 0}
 				<div class="empty-state">
-					<p class="empty-state-description">No domain mappings configured.</p>
+					<p class="empty-state-description">{$LL.admin_org_mappings_empty()}</p>
 					<p class="empty-state-hint">
-						Add a domain mapping to enable automatic organization assignment for users.
+						{$LL.admin_org_mappings_empty_hint()}
 					</p>
-					<button class="btn btn-primary" onclick={openCreateDialog}>Add Your First Mapping</button>
+					<button class="btn btn-primary" onclick={openCreateDialog}>
+						{$LL.admin_org_add_first_mapping()}
+					</button>
 				</div>
 			{:else}
-				<p class="result-count">Showing {mappings.length} of {total} mappings</p>
+				<p class="result-count">
+					{$LL.admin_org_result_count({ shown: mappings.length, total })}
+				</p>
 
 				<div class="data-table-container">
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>Organization ID</th>
-								<th>Verification</th>
-								<th>Status</th>
-								<th>Auto Join</th>
-								<th>Membership</th>
-								<th class="text-right">Actions</th>
+								<th>{$LL.admin_org_organization_id()}</th>
+								<th>{$LL.admin_org_verification()}</th>
+								<th>{$LL.admin_org_status()}</th>
+								<th>{$LL.admin_org_auto_join()}</th>
+								<th>{$LL.admin_org_membership()}</th>
+								<th class="text-right">{$LL.admin_org_actions()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -506,22 +518,25 @@
 									<td>
 										<div class="mono cell-primary">{mapping.org_id}</div>
 										<div class="cell-secondary">
-											Hash: {mapping.domain_hash.substring(0, 16)}...
+											{$LL.admin_org_hash()}
+											{mapping.domain_hash.substring(0, 16)}...
 										</div>
 									</td>
 									<td>
 										<span class={mapping.verified ? 'badge badge-success' : 'badge badge-warning'}>
-											{mapping.verified ? 'Verified' : 'Pending'}
+											{mapping.verified ? $LL.admin_org_verified() : $LL.admin_org_pending()}
 										</span>
 									</td>
 									<td>
 										<span class={mapping.is_active ? 'badge badge-info' : 'badge badge-neutral'}>
-											{mapping.is_active ? 'Active' : 'Inactive'}
+											{mapping.is_active ? $LL.admin_org_active() : $LL.admin_org_inactive()}
 										</span>
 									</td>
-									<td>{mapping.auto_join_enabled ? 'Yes' : 'No'}</td>
+									<td>{mapping.auto_join_enabled ? $LL.admin_org_yes() : $LL.admin_org_no()}</td>
 									<td>
-										<span class="badge badge-neutral">{mapping.membership_type}</span>
+										<span class="badge badge-neutral"
+											>{formatMembershipType(mapping.membership_type)}</span
+										>
 									</td>
 									<td class="text-right">
 										<div class="action-buttons">
@@ -530,20 +545,20 @@
 													class="btn btn-warning btn-sm"
 													onclick={(e) => openVerifyDialog(mapping, e)}
 												>
-													Verify
+													{$LL.admin_org_verify()}
 												</button>
 											{/if}
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={(e) => toggleActive(mapping, e)}
 											>
-												{mapping.is_active ? 'Disable' : 'Enable'}
+												{mapping.is_active ? $LL.admin_org_disable() : $LL.admin_org_enable()}
 											</button>
 											<button
 												class="btn btn-danger btn-sm"
 												onclick={(e) => openDeleteDialog(mapping, e)}
 											>
-												Delete
+												{$LL.admin_org_delete()}
 											</button>
 										</div>
 									</td>
@@ -558,13 +573,18 @@
 </div>
 
 <!-- Create Dialog -->
-<Modal open={showCreateDialog} onClose={closeCreateDialog} title="Add Domain Mapping" size="md">
+<Modal
+	open={showCreateDialog}
+	onClose={closeCreateDialog}
+	title={$LL.admin_org_add_mapping_title()}
+	size="md"
+>
 	{#if createError}
 		<div class="alert alert-error">{createError}</div>
 	{/if}
 
 	<div class="form-group">
-		<label for="new-domain" class="form-label">Email Domain</label>
+		<label for="new-domain" class="form-label">{$LL.admin_org_email_domain()}</label>
 		<input
 			id="new-domain"
 			type="text"
@@ -572,13 +592,11 @@
 			bind:value={newDomain}
 			placeholder="example.com"
 		/>
-		<p class="form-hint">
-			Users with email addresses from this domain will be mapped to the organization.
-		</p>
+		<p class="form-hint">{$LL.admin_org_email_domain_hint()}</p>
 	</div>
 
 	<div class="form-group">
-		<label for="new-org-id" class="form-label">Organization ID</label>
+		<label for="new-org-id" class="form-label">{$LL.admin_org_organization_id()}</label>
 		<input
 			id="new-org-id"
 			type="text"
@@ -591,26 +609,27 @@
 	<div class="form-group">
 		<ToggleSwitch
 			bind:checked={newAutoJoin}
-			label="Auto Join"
-			description="Enable auto-join for new users with this domain"
+			label={$LL.admin_org_auto_join()}
+			description={$LL.admin_org_auto_join_description()}
 		/>
 	</div>
 
 	<div class="form-group">
-		<label for="membership-type" class="form-label">Default Membership Type</label>
+		<label for="membership-type" class="form-label">{$LL.admin_org_default_membership_type()}</label
+		>
 		<select id="membership-type" class="form-select" bind:value={newMembershipType}>
-			<option value="member">Member</option>
-			<option value="admin">Admin</option>
-			<option value="owner">Owner</option>
+			<option value="member">{$LL.admin_org_membership_member()}</option>
+			<option value="admin">{$LL.admin_org_membership_admin()}</option>
+			<option value="owner">{$LL.admin_org_membership_owner()}</option>
 		</select>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_org_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={confirmCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create Mapping'}
+			{creating ? $LL.admin_org_creating() : $LL.admin_org_create_mapping()}
 		</button>
 	{/snippet}
 </Modal>
@@ -619,7 +638,7 @@
 <Modal
 	open={showVerifyDialog && !!mappingToVerify}
 	onClose={closeVerifyDialog}
-	title="Verify Domain Ownership"
+	title={$LL.admin_org_verify_domain_title()}
 	size="lg"
 >
 	{#if verifyError}
@@ -628,43 +647,41 @@
 
 	{#if !verifyRecordName}
 		<p class="modal-description">
-			To verify domain ownership, you'll need to add a DNS TXT record. Click "Get DNS Record" to
-			generate the verification record.
+			{$LL.admin_org_verify_intro()}
 		</p>
 		<button class="btn btn-primary" onclick={startVerification} disabled={verifying}>
-			{verifying ? 'Loading...' : 'Get DNS Record'}
+			{verifying ? $LL.admin_org_loading() : $LL.admin_org_get_dns_record()}
 		</button>
 	{:else}
-		<p class="modal-description">Add the following TXT record to your domain's DNS settings:</p>
+		<p class="modal-description">{$LL.admin_org_add_txt_record()}</p>
 
 		<div class="info-box">
 			<div class="info-row">
-				<span class="info-label">Record Name (Host)</span>
+				<span class="info-label">{$LL.admin_org_record_name()}</span>
 				<code class="info-value mono">{verifyRecordName}</code>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Record Type</span>
+				<span class="info-label">{$LL.admin_org_record_type()}</span>
 				<code class="info-value">TXT</code>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Record Value</span>
+				<span class="info-label">{$LL.admin_org_record_value()}</span>
 				<code class="info-value mono">{verifyExpectedValue}</code>
 			</div>
 		</div>
 
 		<p class="form-hint">
-			Note: DNS changes may take up to 48 hours to propagate. Once the record is set, click "Verify
-			Domain" to confirm.
+			{$LL.admin_org_dns_note()}
 		</p>
 	{/if}
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeVerifyDialog} disabled={verifying}>
-			Cancel
+			{$LL.admin_org_cancel()}
 		</button>
 		{#if verifyRecordName}
 			<button class="btn btn-success" onclick={confirmVerification} disabled={verifying}>
-				{verifying ? 'Verifying...' : 'Verify Domain'}
+				{verifying ? $LL.admin_org_verifying() : $LL.admin_org_verify_domain()}
 			</button>
 		{/if}
 	{/snippet}
@@ -674,7 +691,7 @@
 <Modal
 	open={showDeleteDialog && !!mappingToDelete}
 	onClose={closeDeleteDialog}
-	title="Delete Domain Mapping"
+	title={$LL.admin_org_delete_mapping_title()}
 	size="md"
 >
 	{#if deleteError}
@@ -682,29 +699,30 @@
 	{/if}
 
 	<p class="modal-description">
-		Are you sure you want to delete this domain mapping? New users from this domain will no longer
-		be automatically assigned to the organization.
+		{$LL.admin_org_delete_description()}
 	</p>
 
 	<div class="info-box">
 		<div class="info-row">
-			<span class="info-label">Organization:</span>
+			<span class="info-label">{$LL.admin_org_organization_label()}</span>
 			<span class="info-value">{mappingToDelete?.org_id ?? ''}</span>
 		</div>
 		<div class="info-row">
-			<span class="info-label">Status:</span>
+			<span class="info-label">{$LL.admin_org_status_label()}</span>
 			<span class="info-value">
-				{mappingToDelete?.verified ? 'Verified' : 'Pending Verification'}
+				{mappingToDelete?.verified
+					? $LL.admin_org_verified()
+					: $LL.admin_org_pending_verification()}
 			</span>
 		</div>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}>
-			Cancel
+			{$LL.admin_org_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete Mapping'}
+			{deleting ? $LL.admin_org_deleting() : $LL.admin_org_delete_mapping()}
 		</button>
 	{/snippet}
 </Modal>

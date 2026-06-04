@@ -8,6 +8,7 @@
 		type TenantConsentRequirement
 	} from '$lib/api/admin-consent-statements';
 	import { adminClientsAPI } from '$lib/api/admin-clients';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -88,10 +89,10 @@
 
 	const LEGAL_BASES = ['consent', 'legitimate_interest', 'contract', 'legal_obligation'];
 
-	const VERSION_STATUSES: Record<string, { label: string; color: string }> = {
-		draft: { label: 'Draft', color: 'var(--text-muted)' },
-		active: { label: 'Active', color: 'var(--success)' },
-		archived: { label: 'Archived', color: 'var(--warning)' }
+	const VERSION_STATUS_COLORS: Record<string, string> = {
+		draft: 'var(--text-muted)',
+		active: 'var(--success)',
+		archived: 'var(--warning)'
 	};
 
 	// ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@
 			const result = await adminConsentStatementsAPI.listStatements();
 			statements = result.statements || [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load statements';
+			error = err instanceof Error ? err.message : $LL.admin_consent_statements_error_load();
 		} finally {
 			loading = false;
 		}
@@ -125,7 +126,7 @@
 			const result = await adminConsentStatementsAPI.listVersions(selectedStatementId);
 			versions = result.versions || [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load versions';
+			error = err instanceof Error ? err.message : $LL.admin_consent_versions_error_load();
 		} finally {
 			loading = false;
 		}
@@ -142,7 +143,7 @@
 			);
 			localizations = result.localizations || [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load localizations';
+			error = err instanceof Error ? err.message : $LL.admin_consent_localizations_error_load();
 		} finally {
 			loading = false;
 		}
@@ -159,7 +160,7 @@
 			requirements = reqResult.requirements || [];
 			_clients = clientResult.clients || [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load requirements';
+			error = err instanceof Error ? err.message : $LL.admin_consent_requirements_error_load();
 		} finally {
 			loading = false;
 		}
@@ -186,17 +187,17 @@
 		try {
 			if (editingStatementId) {
 				await adminConsentStatementsAPI.updateStatement(editingStatementId, statementFormData);
-				successMessage = 'Statement updated successfully';
+				successMessage = $LL.admin_consent_statements_updated_success();
 			} else {
 				await adminConsentStatementsAPI.createStatement(statementFormData);
-				successMessage = 'Statement created successfully';
+				successMessage = $LL.admin_consent_statements_created_success();
 			}
 			showStatementForm = false;
 			editingStatementId = null;
 			resetStatementForm();
 			await loadStatements();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save statement';
+			error = err instanceof Error ? err.message : $LL.admin_consent_statements_error_save();
 		}
 	}
 
@@ -219,19 +220,19 @@
 			});
 			await loadStatements();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update statement';
+			error = err instanceof Error ? err.message : $LL.admin_consent_statements_error_update();
 		}
 	}
 
 	async function deleteStatement(stmt: ConsentStatement) {
-		if (!confirm(`Delete consent statement "${stmt.slug}"?`)) return;
+		if (!confirm($LL.admin_consent_statements_delete_confirm({ slug: stmt.slug }))) return;
 		try {
 			await adminConsentStatementsAPI.deleteStatement(stmt.id);
-			successMessage = 'Statement deleted';
+			successMessage = $LL.admin_consent_statements_deleted_success();
 			if (selectedStatementId === stmt.id) selectedStatementId = null;
 			await loadStatements();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete statement';
+			error = err instanceof Error ? err.message : $LL.admin_consent_statements_error_delete();
 		}
 	}
 
@@ -264,12 +265,12 @@
 				content_type: versionFormData.content_type,
 				effective_at: new Date(versionFormData.effective_at).getTime()
 			});
-			successMessage = 'Version created successfully';
+			successMessage = $LL.admin_consent_versions_created_success();
 			showVersionForm = false;
 			versionFormData = { version: '', content_type: 'url', effective_at: '' };
 			await loadVersions();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save version';
+			error = err instanceof Error ? err.message : $LL.admin_consent_versions_error_save();
 		}
 	}
 
@@ -283,12 +284,12 @@
 		error = '';
 		try {
 			await adminConsentStatementsAPI.activateVersion(selectedStatementId, activatingVersionId);
-			successMessage = 'Version activated successfully';
+			successMessage = $LL.admin_consent_versions_activated_success();
 			showActivateConfirm = false;
 			activatingVersionId = null;
 			await loadVersions();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to activate version';
+			error = err instanceof Error ? err.message : $LL.admin_consent_versions_error_activate();
 		}
 	}
 
@@ -301,14 +302,14 @@
 
 	async function deleteVersion(versionId: string) {
 		if (!selectedStatementId) return;
-		if (!confirm('Delete this draft version?')) return;
+		if (!confirm($LL.admin_consent_versions_delete_confirm())) return;
 		try {
 			await adminConsentStatementsAPI.deleteVersion(selectedStatementId, versionId);
-			successMessage = 'Version deleted';
+			successMessage = $LL.admin_consent_versions_deleted_success();
 			if (selectedVersionId === versionId) selectedVersionId = null;
 			await loadVersions();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete version';
+			error = err instanceof Error ? err.message : $LL.admin_consent_versions_error_delete();
 		}
 	}
 
@@ -335,13 +336,15 @@
 					inline_content: localizationFormData.inline_content || undefined
 				}
 			);
-			successMessage = editingLanguage ? 'Localization updated' : 'Localization created';
+			successMessage = editingLanguage
+				? $LL.admin_consent_localizations_updated_success()
+				: $LL.admin_consent_localizations_created_success();
 			showLocalizationForm = false;
 			editingLanguage = null;
 			resetLocalizationForm();
 			await loadLocalizations();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save localization';
+			error = err instanceof Error ? err.message : $LL.admin_consent_localizations_error_save();
 		}
 	}
 
@@ -359,17 +362,17 @@
 
 	async function deleteLocalization(lang: string) {
 		if (!selectedStatementId || !selectedVersionId) return;
-		if (!confirm(`Delete "${lang}" localization?`)) return;
+		if (!confirm($LL.admin_consent_localizations_delete_confirm({ language: lang }))) return;
 		try {
 			await adminConsentStatementsAPI.deleteLocalization(
 				selectedStatementId,
 				selectedVersionId,
 				lang
 			);
-			successMessage = 'Localization deleted';
+			successMessage = $LL.admin_consent_localizations_deleted_success();
 			await loadLocalizations();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete localization';
+			error = err instanceof Error ? err.message : $LL.admin_consent_localizations_error_delete();
 		}
 	}
 
@@ -398,12 +401,12 @@
 				conditional_rules_json: requirementFormData.conditional_rules_json || undefined,
 				display_order: requirementFormData.display_order
 			});
-			successMessage = 'Requirement saved successfully';
+			successMessage = $LL.admin_consent_requirements_saved_success();
 			showRequirementForm = false;
 			resetRequirementForm();
 			await loadRequirements();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save requirement';
+			error = err instanceof Error ? err.message : $LL.admin_consent_requirements_error_save();
 		}
 	}
 
@@ -422,13 +425,13 @@
 	}
 
 	async function deleteRequirement(statementId: string) {
-		if (!confirm('Remove this requirement?')) return;
+		if (!confirm($LL.admin_consent_requirements_delete_confirm())) return;
 		try {
 			await adminConsentStatementsAPI.deleteRequirement(statementId);
-			successMessage = 'Requirement removed';
+			successMessage = $LL.admin_consent_requirements_deleted_success();
 			await loadRequirements();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete requirement';
+			error = err instanceof Error ? err.message : $LL.admin_consent_requirements_error_delete();
 		}
 	}
 
@@ -470,16 +473,74 @@
 		return colors[category] || colors.custom;
 	}
 
+	function getCategoryLabel(category: string): string {
+		switch (category) {
+			case 'terms_of_service':
+				return $LL.admin_consent_category_terms_of_service();
+			case 'privacy_policy':
+				return $LL.admin_consent_category_privacy_policy();
+			case 'cookie_policy':
+				return $LL.admin_consent_category_cookie_policy();
+			case 'marketing':
+				return $LL.admin_consent_category_marketing();
+			case 'data_sharing':
+				return $LL.admin_consent_category_data_sharing();
+			case 'analytics':
+				return $LL.admin_consent_category_analytics();
+			case 'do_not_sell':
+				return $LL.admin_consent_category_do_not_sell();
+			default:
+				return $LL.admin_consent_category_custom();
+		}
+	}
+
+	function getLegalBasisLabel(legalBasis: string): string {
+		switch (legalBasis) {
+			case 'consent':
+				return $LL.admin_consent_legal_basis_consent();
+			case 'legitimate_interest':
+				return $LL.admin_consent_legal_basis_legitimate_interest();
+			case 'contract':
+				return $LL.admin_consent_legal_basis_contract();
+			case 'legal_obligation':
+				return $LL.admin_consent_legal_basis_legal_obligation();
+			default:
+				return legalBasis;
+		}
+	}
+
+	function getVersionStatusLabel(status: string): string {
+		switch (status) {
+			case 'active':
+				return $LL.admin_consent_versions_status_active();
+			case 'archived':
+				return $LL.admin_consent_versions_status_archived();
+			default:
+				return $LL.admin_consent_versions_status_draft();
+		}
+	}
+
+	function getEnforcementLabel(enforcement: string): string {
+		if (enforcement === 'allow_continue') {
+			return $LL.admin_consent_requirements_enforcement_allow_continue();
+		}
+		return $LL.admin_consent_requirements_enforcement_block();
+	}
+
 	function getStatementSlug(id: string): string {
 		return statements.find((s) => s.id === id)?.slug || id;
 	}
 </script>
 
+<svelte:head>
+	<title>{$LL.admin_consent_statements_title()}</title>
+</svelte:head>
+
 <div class="admin-page">
 	<div class="admin-page__header">
-		<h1 class="admin-page__title">Consent Statement Management</h1>
+		<h1 class="admin-page__title">{$LL.admin_consent_statements_title()}</h1>
 		<p class="admin-page__subtitle">
-			Manage consent items, versions, localizations, and requirements
+			{$LL.admin_consent_statements_subtitle()}
 		</p>
 	</div>
 
@@ -504,7 +565,7 @@
 			class:admin-tab--active={activeTab === 'statements'}
 			onclick={() => switchTab('statements')}
 		>
-			Statements
+			{$LL.admin_consent_statements_tab_statements()}
 		</button>
 		<button
 			class="admin-tab"
@@ -512,7 +573,8 @@
 			onclick={() => switchTab('versions')}
 			disabled={!selectedStatementId}
 		>
-			Versions {selectedStatement ? `(${selectedStatement.slug})` : ''}
+			{$LL.admin_consent_statements_tab_versions()}
+			{selectedStatement ? `(${selectedStatement.slug})` : ''}
 		</button>
 		<button
 			class="admin-tab"
@@ -520,25 +582,25 @@
 			onclick={() => switchTab('localizations')}
 			disabled={!selectedVersionId}
 		>
-			Localizations
+			{$LL.admin_consent_statements_tab_localizations()}
 		</button>
 		<button
 			class="admin-tab"
 			class:admin-tab--active={activeTab === 'requirements'}
 			onclick={() => switchTab('requirements')}
 		>
-			Requirements
+			{$LL.admin_consent_statements_tab_requirements()}
 		</button>
 	</div>
 
 	<!-- Tab Content -->
 	{#if loading}
-		<div class="admin-loading">Loading...</div>
+		<div class="admin-loading">{$LL.admin_consent_statements_loading()}</div>
 	{:else if activeTab === 'statements'}
 		<!-- ===== STATEMENTS TAB ===== -->
 		<div class="admin-section">
 			<div class="admin-section__header">
-				<h2>Consent Statements</h2>
+				<h2>{$LL.admin_consent_statements_consent_statements()}</h2>
 				<button
 					class="admin-btn admin-btn--primary"
 					onclick={() => {
@@ -547,52 +609,54 @@
 						showStatementForm = true;
 					}}
 				>
-					+ New Statement
+					+ {$LL.admin_consent_statements_new()}
 				</button>
 			</div>
 
 			{#if showStatementForm}
 				<div class="admin-form-card mb-4">
 					<h3 class="admin-form-card__title">
-						{editingStatementId ? 'Edit Statement' : 'New Statement'}
+						{editingStatementId
+							? $LL.admin_consent_statements_edit()
+							: $LL.admin_consent_statements_new()}
 					</h3>
 					<div class="admin-form-grid">
 						<div class="admin-form-group">
-							<label for="stmt-slug">Slug</label>
+							<label for="stmt-slug">{$LL.admin_consent_statements_slug()}</label>
 							<input
 								id="stmt-slug"
 								type="text"
 								class="admin-input"
 								bind:value={statementFormData.slug}
-								placeholder="e.g., marketing_emails"
+								placeholder={$LL.admin_consent_statements_placeholder_slug()}
 							/>
 						</div>
 						<div class="admin-form-group">
-							<label for="stmt-category">Category</label>
+							<label for="stmt-category">{$LL.admin_consent_statements_category()}</label>
 							<select
 								id="stmt-category"
 								class="admin-input"
 								bind:value={statementFormData.category}
 							>
 								{#each CATEGORIES as cat (cat)}
-									<option value={cat}>{cat.replace(/_/g, ' ')}</option>
+									<option value={cat}>{getCategoryLabel(cat)}</option>
 								{/each}
 							</select>
 						</div>
 						<div class="admin-form-group">
-							<label for="stmt-legal-basis">Legal Basis</label>
+							<label for="stmt-legal-basis">{$LL.admin_consent_statements_legal_basis()}</label>
 							<select
 								id="stmt-legal-basis"
 								class="admin-input"
 								bind:value={statementFormData.legal_basis}
 							>
 								{#each LEGAL_BASES as basis (basis)}
-									<option value={basis}>{basis.replace(/_/g, ' ')}</option>
+									<option value={basis}>{getLegalBasisLabel(basis)}</option>
 								{/each}
 							</select>
 						</div>
 						<div class="admin-form-group">
-							<label for="stmt-order">Display Order</label>
+							<label for="stmt-order">{$LL.admin_consent_statements_order()}</label>
 							<input
 								id="stmt-order"
 								type="number"
@@ -601,13 +665,13 @@
 							/>
 						</div>
 						<div class="admin-form-group" style="grid-column: 1 / -1;">
-							<label for="stmt-purpose">Processing Purpose</label>
+							<label for="stmt-purpose">{$LL.admin_consent_statements_purpose()}</label>
 							<textarea
 								id="stmt-purpose"
 								class="admin-input"
 								bind:value={statementFormData.processing_purpose}
 								rows="2"
-								placeholder="GDPR Art13/14: Data processing purpose description"
+								placeholder={$LL.admin_consent_statements_placeholder_purpose()}
 							></textarea>
 						</div>
 					</div>
@@ -619,10 +683,12 @@
 								editingStatementId = null;
 							}}
 						>
-							Cancel
+							{$LL.admin_consent_statements_cancel()}
 						</button>
 						<button class="admin-btn admin-btn--primary" onclick={saveStatement}>
-							{editingStatementId ? 'Update' : 'Create'}
+							{editingStatementId
+								? $LL.admin_consent_statements_update()
+								: $LL.admin_consent_statements_create()}
 						</button>
 					</div>
 				</div>
@@ -632,13 +698,13 @@
 				<table class="admin-table">
 					<thead>
 						<tr>
-							<th>Slug</th>
-							<th>Category</th>
-							<th>Legal Basis</th>
-							<th>Order</th>
-							<th>Active</th>
-							<th>Created</th>
-							<th>Actions</th>
+							<th>{$LL.admin_consent_statements_slug()}</th>
+							<th>{$LL.admin_consent_statements_category()}</th>
+							<th>{$LL.admin_consent_statements_legal_basis()}</th>
+							<th>{$LL.admin_consent_statements_order()}</th>
+							<th>{$LL.admin_consent_statements_active()}</th>
+							<th>{$LL.admin_consent_statements_created()}</th>
+							<th>{$LL.admin_consent_statements_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -658,10 +724,10 @@
 											stmt.category
 										)}20; color: {getCategoryBadgeColor(stmt.category)};"
 									>
-										{stmt.category.replace(/_/g, ' ')}
+										{getCategoryLabel(stmt.category)}
 									</span>
 								</td>
-								<td class="text-sm">{stmt.legal_basis.replace(/_/g, ' ')}</td>
+								<td class="text-sm">{getLegalBasisLabel(stmt.legal_basis)}</td>
 								<td class="text-sm">{stmt.display_order}</td>
 								<td>
 									<button
@@ -676,7 +742,9 @@
 											toggleStatementActive(stmt);
 										}}
 									>
-										{stmt.is_active ? 'Active' : 'Inactive'}
+										{stmt.is_active
+											? $LL.admin_consent_statements_active()
+											: $LL.admin_consent_statements_inactive()}
 									</button>
 								</td>
 								<td class="text-sm">{formatDate(stmt.created_at)}</td>
@@ -689,7 +757,7 @@
 												editStatement(stmt);
 											}}
 										>
-											Edit
+											{$LL.admin_consent_statements_edit_action()}
 										</button>
 										<button
 											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
@@ -698,7 +766,7 @@
 												deleteStatement(stmt);
 											}}
 										>
-											Delete
+											{$LL.admin_consent_statements_delete_action()}
 										</button>
 									</div>
 								</td>
@@ -706,7 +774,7 @@
 						{:else}
 							<tr>
 								<td colspan="7" class="text-center text-sm" style="color: var(--text-muted);">
-									No consent statements yet. Create one to get started.
+									{$LL.admin_consent_statements_empty()}
 								</td>
 							</tr>
 						{/each}
@@ -716,7 +784,7 @@
 
 			{#if selectedStatementId}
 				<p class="mt-3 text-sm" style="color: var(--text-secondary);">
-					Selected: <strong>{selectedStatement?.slug}</strong> — Switch to Versions tab to manage versions.
+					{$LL.admin_consent_statements_selected({ slug: selectedStatement?.slug || '' })}
 				</p>
 			{/if}
 		</div>
@@ -724,18 +792,20 @@
 		<!-- ===== VERSIONS TAB ===== -->
 		<div class="admin-section">
 			<div class="admin-section__header">
-				<h2>Versions — {selectedStatement?.slug}</h2>
+				<h2>
+					{$LL.admin_consent_versions_title({ slug: selectedStatement?.slug || '' })}
+				</h2>
 				<button class="admin-btn admin-btn--primary" onclick={() => (showVersionForm = true)}>
-					+ New Version
+					+ {$LL.admin_consent_versions_new()}
 				</button>
 			</div>
 
 			{#if showVersionForm}
 				<div class="admin-form-card mb-4">
-					<h3 class="admin-form-card__title">New Version</h3>
+					<h3 class="admin-form-card__title">{$LL.admin_consent_versions_new()}</h3>
 					<div class="admin-form-grid">
 						<div class="admin-form-group">
-							<label for="ver-version">Version (YYYYMMDD)</label>
+							<label for="ver-version">{$LL.admin_consent_versions_version()}</label>
 							<input
 								id="ver-version"
 								type="text"
@@ -747,18 +817,18 @@
 							/>
 						</div>
 						<div class="admin-form-group">
-							<label for="ver-content-type">Content Type</label>
+							<label for="ver-content-type">{$LL.admin_consent_versions_content_type()}</label>
 							<select
 								id="ver-content-type"
 								class="admin-input"
 								bind:value={versionFormData.content_type}
 							>
-								<option value="url">URL (external document)</option>
-								<option value="inline">Inline (text content)</option>
+								<option value="url">{$LL.admin_consent_content_type_url()}</option>
+								<option value="inline">{$LL.admin_consent_content_type_inline()}</option>
 							</select>
 						</div>
 						<div class="admin-form-group">
-							<label for="ver-effective">Effective Date</label>
+							<label for="ver-effective">{$LL.admin_consent_versions_effective()}</label>
 							<input
 								id="ver-effective"
 								type="date"
@@ -772,9 +842,11 @@
 							class="admin-btn admin-btn--secondary"
 							onclick={() => (showVersionForm = false)}
 						>
-							Cancel
+							{$LL.admin_consent_statements_cancel()}
 						</button>
-						<button class="admin-btn admin-btn--primary" onclick={saveVersion}> Create </button>
+						<button class="admin-btn admin-btn--primary" onclick={saveVersion}>
+							{$LL.admin_consent_statements_create()}
+						</button>
 					</div>
 				</div>
 			{/if}
@@ -783,17 +855,18 @@
 				<table class="admin-table">
 					<thead>
 						<tr>
-							<th>Version</th>
-							<th>Content Type</th>
-							<th>Status</th>
-							<th>Effective</th>
-							<th>Hash</th>
-							<th>Actions</th>
+							<th>{$LL.admin_consent_versions_version()}</th>
+							<th>{$LL.admin_consent_versions_content_type()}</th>
+							<th>{$LL.admin_consent_statements_status()}</th>
+							<th>{$LL.admin_consent_versions_effective()}</th>
+							<th>{$LL.admin_consent_versions_hash()}</th>
+							<th>{$LL.admin_consent_statements_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each versions as ver (ver.id)}
-							{@const statusInfo = VERSION_STATUSES[ver.status] || VERSION_STATUSES.draft}
+							{@const statusColor =
+								VERSION_STATUS_COLORS[ver.status] || VERSION_STATUS_COLORS.draft}
 							<tr
 								class:admin-table__row--selected={selectedVersionId === ver.id}
 								onclick={() => selectVersion(ver.id)}
@@ -806,17 +879,21 @@
 											class="admin-badge"
 											style="background: var(--success)20; color: var(--success); margin-left: 4px;"
 										>
-											current
+											{$LL.admin_consent_versions_current()}
 										</span>
 									{/if}
 								</td>
-								<td class="text-sm">{ver.content_type}</td>
+								<td class="text-sm">
+									{ver.content_type === 'inline'
+										? $LL.admin_consent_content_type_inline()
+										: $LL.admin_consent_content_type_url()}
+								</td>
 								<td>
 									<span
 										class="admin-badge"
-										style="background: {statusInfo.color}20; color: {statusInfo.color};"
+										style="background: {statusColor}20; color: {statusColor};"
 									>
-										{statusInfo.label}
+										{getVersionStatusLabel(ver.status)}
 									</span>
 								</td>
 								<td class="text-sm">{formatDate(ver.effective_at)}</td>
@@ -834,7 +911,7 @@
 													confirmActivate(ver.id);
 												}}
 											>
-												Activate
+												{$LL.admin_consent_versions_activate()}
 											</button>
 											<button
 												class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
@@ -843,7 +920,7 @@
 													deleteVersion(ver.id);
 												}}
 											>
-												Delete
+												{$LL.admin_consent_statements_delete_action()}
 											</button>
 										{/if}
 									</div>
@@ -852,7 +929,7 @@
 						{:else}
 							<tr>
 								<td colspan="6" class="text-center text-sm" style="color: var(--text-muted);">
-									No versions yet. Create a version for this statement.
+									{$LL.admin_consent_versions_empty()}
 								</td>
 							</tr>
 						{/each}
@@ -862,7 +939,7 @@
 
 			{#if selectedVersionId}
 				<p class="mt-3 text-sm" style="color: var(--text-secondary);">
-					Selected version — Switch to Localizations tab to manage translations.
+					{$LL.admin_consent_versions_selected()}
 				</p>
 			{/if}
 		</div>
@@ -873,7 +950,7 @@
 				class="admin-modal-overlay"
 				role="button"
 				tabindex="0"
-				aria-label="Close activate version dialog"
+				aria-label={$LL.admin_consent_versions_dialog_close()}
 				onclick={(event) => {
 					if (event.target === event.currentTarget) {
 						showActivateConfirm = false;
@@ -882,20 +959,19 @@
 				onkeydown={(event) => closeOnBackdropKeydown(event, () => (showActivateConfirm = false))}
 			>
 				<div class="admin-modal" role="dialog" aria-modal="true">
-					<h3 class="admin-modal__title">Activate Version</h3>
+					<h3 class="admin-modal__title">{$LL.admin_consent_versions_dialog_title()}</h3>
 					<p class="admin-modal__text">
-						Activating this version may require existing users to re-consent. This action has legal
-						implications. Are you sure?
+						{$LL.admin_consent_versions_activate_confirm()}
 					</p>
 					<div class="admin-modal__actions">
 						<button
 							class="admin-btn admin-btn--secondary"
 							onclick={() => (showActivateConfirm = false)}
 						>
-							Cancel
+							{$LL.admin_consent_statements_cancel()}
 						</button>
 						<button class="admin-btn admin-btn--primary" onclick={activateVersion}>
-							Activate
+							{$LL.admin_consent_versions_activate()}
 						</button>
 					</div>
 				</div>
@@ -905,7 +981,7 @@
 		<!-- ===== LOCALIZATIONS TAB ===== -->
 		<div class="admin-section">
 			<div class="admin-section__header">
-				<h2>Localizations</h2>
+				<h2>{$LL.admin_consent_statements_tab_localizations()}</h2>
 				<button
 					class="admin-btn admin-btn--primary"
 					onclick={() => {
@@ -914,18 +990,20 @@
 						showLocalizationForm = true;
 					}}
 				>
-					+ Add Language
+					+ {$LL.admin_consent_localizations_add()}
 				</button>
 			</div>
 
 			{#if showLocalizationForm}
 				<div class="admin-form-card mb-4">
 					<h3 class="admin-form-card__title">
-						{editingLanguage ? `Edit: ${editingLanguage}` : 'New Localization'}
+						{editingLanguage
+							? $LL.admin_consent_localizations_edit({ language: editingLanguage })
+							: $LL.admin_consent_localizations_new()}
 					</h3>
 					<div class="admin-form-grid">
 						<div class="admin-form-group">
-							<label for="loc-lang">Language (BCP 47)</label>
+							<label for="loc-lang">{$LL.admin_consent_localizations_language()}</label>
 							<input
 								id="loc-lang"
 								type="text"
@@ -936,27 +1014,27 @@
 							/>
 						</div>
 						<div class="admin-form-group">
-							<label for="loc-title">Title</label>
+							<label for="loc-title">{$LL.admin_consent_localizations_title()}</label>
 							<input
 								id="loc-title"
 								type="text"
 								class="admin-input"
 								bind:value={localizationFormData.title}
-								placeholder="Consent title"
+								placeholder={$LL.admin_consent_localizations_placeholder_title()}
 							/>
 						</div>
 						<div class="admin-form-group" style="grid-column: 1 / -1;">
-							<label for="loc-desc">Description</label>
+							<label for="loc-desc">{$LL.admin_consent_localizations_description()}</label>
 							<textarea
 								id="loc-desc"
 								class="admin-input"
 								bind:value={localizationFormData.description}
 								rows="2"
-								placeholder="Short description for consent screen"
+								placeholder={$LL.admin_consent_localizations_placeholder_description()}
 							></textarea>
 						</div>
 						<div class="admin-form-group">
-							<label for="loc-url">Document URL</label>
+							<label for="loc-url">{$LL.admin_consent_localizations_url()}</label>
 							<input
 								id="loc-url"
 								type="url"
@@ -966,13 +1044,13 @@
 							/>
 						</div>
 						<div class="admin-form-group" style="grid-column: 1 / -1;">
-							<label for="loc-inline">Inline Content</label>
+							<label for="loc-inline">{$LL.admin_consent_localizations_inline()}</label>
 							<textarea
 								id="loc-inline"
 								class="admin-input"
 								bind:value={localizationFormData.inline_content}
 								rows="4"
-								placeholder="Full text content (when content_type is inline)"
+								placeholder={$LL.admin_consent_localizations_placeholder_inline()}
 							></textarea>
 						</div>
 					</div>
@@ -984,10 +1062,12 @@
 								editingLanguage = null;
 							}}
 						>
-							Cancel
+							{$LL.admin_consent_statements_cancel()}
 						</button>
 						<button class="admin-btn admin-btn--primary" onclick={saveLocalization}>
-							{editingLanguage ? 'Update' : 'Create'}
+							{editingLanguage
+								? $LL.admin_consent_statements_update()
+								: $LL.admin_consent_statements_create()}
 						</button>
 					</div>
 				</div>
@@ -997,11 +1077,11 @@
 				<table class="admin-table">
 					<thead>
 						<tr>
-							<th>Language</th>
-							<th>Title</th>
-							<th>Description</th>
-							<th>URL</th>
-							<th>Actions</th>
+							<th>{$LL.admin_consent_localizations_language()}</th>
+							<th>{$LL.admin_consent_localizations_title()}</th>
+							<th>{$LL.admin_consent_localizations_description()}</th>
+							<th>{$LL.admin_consent_localizations_url()}</th>
+							<th>{$LL.admin_consent_statements_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1025,7 +1105,7 @@
 											rel="noopener noreferrer"
 											style="color: var(--primary);"
 										>
-											Link
+											{$LL.admin_consent_localizations_link()}
 										</a>
 									{:else}
 										-
@@ -1037,13 +1117,13 @@
 											class="admin-btn admin-btn--ghost admin-btn--sm"
 											onclick={() => editLocalization(loc)}
 										>
-											Edit
+											{$LL.admin_consent_statements_edit_action()}
 										</button>
 										<button
 											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
 											onclick={() => deleteLocalization(loc.language)}
 										>
-											Delete
+											{$LL.admin_consent_statements_delete_action()}
 										</button>
 									</div>
 								</td>
@@ -1051,7 +1131,7 @@
 						{:else}
 							<tr>
 								<td colspan="5" class="text-center text-sm" style="color: var(--text-muted);">
-									No localizations yet. Add at least one language before activating the version.
+									{$LL.admin_consent_localizations_empty()}
 								</td>
 							</tr>
 						{/each}
@@ -1063,7 +1143,7 @@
 		<!-- ===== REQUIREMENTS TAB ===== -->
 		<div class="admin-section">
 			<div class="admin-section__header">
-				<h2>Tenant Consent Requirements</h2>
+				<h2>{$LL.admin_consent_requirements_title()}</h2>
 				<button
 					class="admin-btn admin-btn--primary"
 					onclick={() => {
@@ -1071,31 +1151,33 @@
 						showRequirementForm = true;
 					}}
 				>
-					+ Add Requirement
+					+ {$LL.admin_consent_requirements_add()}
 				</button>
 			</div>
 
 			{#if showRequirementForm}
 				<div class="admin-form-card mb-4">
 					<h3 class="admin-form-card__title">
-						{requirementFormData.statement_id ? 'Edit Requirement' : 'New Requirement'}
+						{requirementFormData.statement_id
+							? $LL.admin_consent_requirements_edit()
+							: $LL.admin_consent_requirements_new()}
 					</h3>
 					<div class="admin-form-grid">
 						<div class="admin-form-group">
-							<label for="req-statement">Statement</label>
+							<label for="req-statement">{$LL.admin_consent_requirements_statement()}</label>
 							<select
 								id="req-statement"
 								class="admin-input"
 								bind:value={requirementFormData.statement_id}
 							>
-								<option value="">-- Select --</option>
+								<option value="">{$LL.admin_consent_requirements_select_placeholder()}</option>
 								{#each statements as stmt (stmt.id)}
 									<option value={stmt.id}>{stmt.slug}</option>
 								{/each}
 							</select>
 						</div>
 						<div class="admin-form-group">
-							<label for="req-required">Required</label>
+							<label for="req-required">{$LL.admin_consent_requirements_required()}</label>
 							<select
 								id="req-required"
 								class="admin-input"
@@ -1106,23 +1188,27 @@
 									);
 								}}
 							>
-								<option value={1}>Required</option>
-								<option value={0}>Optional</option>
+								<option value={1}>{$LL.admin_consent_requirements_required()}</option>
+								<option value={0}>{$LL.admin_consent_requirements_optional()}</option>
 							</select>
 						</div>
 						<div class="admin-form-group">
-							<label for="req-enforcement">Enforcement</label>
+							<label for="req-enforcement">{$LL.admin_consent_requirements_enforcement()}</label>
 							<select
 								id="req-enforcement"
 								class="admin-input"
 								bind:value={requirementFormData.enforcement}
 							>
-								<option value="block">Block (must consent)</option>
-								<option value="allow_continue">Allow Continue</option>
+								<option value="block">{$LL.admin_consent_requirements_enforcement_block()}</option>
+								<option value="allow_continue"
+									>{$LL.admin_consent_requirements_enforcement_allow_continue()}</option
+								>
 							</select>
 						</div>
 						<div class="admin-form-group">
-							<label for="req-min-version">Min Version (YYYYMMDD)</label>
+							<label for="req-min-version"
+								>{$LL.admin_consent_requirements_min_version_yyyymmdd()}</label
+							>
 							<input
 								id="req-min-version"
 								type="text"
@@ -1133,7 +1219,7 @@
 							/>
 						</div>
 						<div class="admin-form-group">
-							<label for="req-order">Display Order</label>
+							<label for="req-order">{$LL.admin_consent_statements_order()}</label>
 							<input
 								id="req-order"
 								type="number"
@@ -1154,12 +1240,13 @@
 											: 0;
 									}}
 								/>
-								Show Deletion Link
+								{$LL.admin_consent_requirements_deletion_link()}
 							</label>
 						</div>
 						{#if requirementFormData.show_deletion_link}
 							<div class="admin-form-group">
-								<label for="req-deletion-url">Deletion URL</label>
+								<label for="req-deletion-url">{$LL.admin_consent_requirements_deletion_url()}</label
+								>
 								<input
 									id="req-deletion-url"
 									type="url"
@@ -1170,7 +1257,7 @@
 							</div>
 						{/if}
 						<div class="admin-form-group" style="grid-column: 1 / -1;">
-							<label for="req-rules">Conditional Rules (JSON)</label>
+							<label for="req-rules">{$LL.admin_consent_requirements_rules()}</label>
 							<textarea
 								id="req-rules"
 								class="admin-input"
@@ -1185,9 +1272,11 @@
 							class="admin-btn admin-btn--secondary"
 							onclick={() => (showRequirementForm = false)}
 						>
-							Cancel
+							{$LL.admin_consent_statements_cancel()}
 						</button>
-						<button class="admin-btn admin-btn--primary" onclick={saveRequirement}> Save </button>
+						<button class="admin-btn admin-btn--primary" onclick={saveRequirement}>
+							{$LL.admin_consent_requirements_save()}
+						</button>
 					</div>
 				</div>
 			{/if}
@@ -1196,12 +1285,12 @@
 				<table class="admin-table">
 					<thead>
 						<tr>
-							<th>Statement</th>
-							<th>Required</th>
-							<th>Enforcement</th>
-							<th>Min Version</th>
-							<th>Order</th>
-							<th>Actions</th>
+							<th>{$LL.admin_consent_requirements_statement()}</th>
+							<th>{$LL.admin_consent_requirements_required()}</th>
+							<th>{$LL.admin_consent_requirements_enforcement()}</th>
+							<th>{$LL.admin_consent_requirements_min_version()}</th>
+							<th>{$LL.admin_consent_statements_order()}</th>
+							<th>{$LL.admin_consent_statements_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1219,10 +1308,12 @@
 											? 'var(--danger)'
 											: 'var(--text-muted)'};"
 									>
-										{req.is_required ? 'Required' : 'Optional'}
+										{req.is_required
+											? $LL.admin_consent_requirements_required()
+											: $LL.admin_consent_requirements_optional()}
 									</span>
 								</td>
-								<td class="text-sm">{req.enforcement}</td>
+								<td class="text-sm">{getEnforcementLabel(req.enforcement)}</td>
 								<td class="text-sm">{req.min_version || '-'}</td>
 								<td class="text-sm">{req.display_order}</td>
 								<td>
@@ -1231,13 +1322,13 @@
 											class="admin-btn admin-btn--ghost admin-btn--sm"
 											onclick={() => editRequirement(req)}
 										>
-											Edit
+											{$LL.admin_consent_statements_edit_action()}
 										</button>
 										<button
 											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
 											onclick={() => deleteRequirement(req.statement_id)}
 										>
-											Delete
+											{$LL.admin_consent_statements_delete_action()}
 										</button>
 									</div>
 								</td>
@@ -1245,7 +1336,7 @@
 						{:else}
 							<tr>
 								<td colspan="6" class="text-center text-sm" style="color: var(--text-muted);">
-									No requirements configured. Add one to enforce consent on login.
+									{$LL.admin_consent_requirements_empty()}
 								</td>
 							</tr>
 						{/each}

@@ -13,6 +13,9 @@
 	} from '$lib/api/admin-flows';
 	import { FlowCanvas, NodePalette, NodeConfigModal } from '$lib/components/flow-designer';
 
+	// Product note: Flow may be omitted from Admin UI; keep new i18n work for this
+	// feature paused until product direction is confirmed.
+
 	let flow: Flow | null = $state(null);
 	let loading = $state(true);
 	let error = $state('');

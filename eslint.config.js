@@ -20,7 +20,7 @@ export default [
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module',
-        project: ['./packages/*/tsconfig.json'],
+        project: ['./packages/*/tsconfig.json', './tools/*/tsconfig.json'],
       },
       globals: {
         ...globals.node,

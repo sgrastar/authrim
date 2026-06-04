@@ -189,7 +189,7 @@ function buildHeaderSuggestions(input: CsvDryRunPreviewInput): CsvHeaderSuggesti
     .sort((left, right) => left.localeCompare(right))
     .map((columnName) => {
       const suggestedPath = input.columnToPath[columnName] ?? normalizeColumnName(columnName);
-      const catalogRef: FieldRef = { side: 'inbound', namespace: 'csv', path: suggestedPath };
+      const catalogRef: FieldRef = { side: 'source', namespace: 'csv', path: suggestedPath };
       const catalogEntry = findCatalogEntry(input.catalog, catalogRef);
       return {
         columnName,

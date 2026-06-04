@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminExternalProvidersAPI,
 		type ExternalIdPProvider,
@@ -27,7 +28,7 @@
 			providers = response.providers;
 		} catch (err) {
 			console.error('Failed to load external IdP providers:', err);
-			error = 'Failed to load external IdP providers';
+			error = $LL.admin_external_idp_error_load();
 		} finally {
 			loading = false;
 		}
@@ -70,7 +71,7 @@
 			providerToDelete = null;
 			await loadProviders();
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete provider';
+			deleteError = err instanceof Error ? err.message : $LL.admin_external_idp_error_delete();
 		} finally {
 			deleting = false;
 		}
@@ -84,23 +85,22 @@
 </script>
 
 <svelte:head>
-	<title>External IdP - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_external_idp_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">External Identity Providers</h1>
+			<h1 class="page-title">{$LL.admin_external_idp_title()}</h1>
 			<p class="page-description">
-				Configure external identity providers for social login and enterprise SSO (Google, GitHub,
-				Microsoft, etc.)
+				{$LL.admin_external_idp_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={navigateToNew}>
 				<i class="i-ph-plus"></i>
-				Add Provider
+				{$LL.admin_external_idp_add_provider()}
 			</button>
 		</div>
 	</div>
@@ -112,16 +112,18 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_external_idp_loading()}</p>
 		</div>
 	{:else if providers.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No external identity providers configured.</p>
+				<p class="empty-state-description">{$LL.admin_external_idp_empty()}</p>
 				<p class="empty-state-hint">
-					Add a provider to enable social login or enterprise SSO for your users.
+					{$LL.admin_external_idp_empty_hint()}
 				</p>
-				<button class="btn btn-primary" onclick={navigateToNew}>Add Your First Provider</button>
+				<button class="btn btn-primary" onclick={navigateToNew}
+					>{$LL.admin_external_idp_add_first()}</button
+				>
 			</div>
 		</div>
 	{:else}
@@ -129,12 +131,12 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Name</th>
-						<th>Type</th>
-						<th>Status</th>
-						<th>Priority</th>
-						<th>Client ID</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_external_idp_name()}</th>
+						<th>{$LL.admin_external_idp_type()}</th>
+						<th>{$LL.admin_users_status()}</th>
+						<th>{$LL.admin_external_idp_priority()}</th>
+						<th>{$LL.admin_external_idp_client_id()}</th>
+						<th class="text-right">{$LL.admin_users_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -171,7 +173,7 @@
 							</td>
 							<td>
 								<span class={provider.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
-									{provider.enabled ? 'Enabled' : 'Disabled'}
+									{provider.enabled ? $LL.admin_saml_enabled() : $LL.admin_saml_disabled()}
 								</span>
 							</td>
 							<td>{provider.priority}</td>
@@ -183,7 +185,7 @@
 									class="btn btn-danger btn-sm"
 									onclick={(e) => openDeleteDialog(provider, e)}
 								>
-									Delete
+									{$LL.admin_users_delete()}
 								</button>
 							</td>
 						</tr>
@@ -198,7 +200,7 @@
 <Modal
 	open={showDeleteDialog && !!providerToDelete}
 	onClose={closeDeleteDialog}
-	title="Delete External IdP Provider"
+	title={$LL.admin_external_idp_delete_title()}
 	size="md"
 >
 	{#if providerToDelete}
@@ -207,21 +209,20 @@
 		{/if}
 
 		<p class="modal-description">
-			Are you sure you want to delete this external IdP provider? This action cannot be undone and
-			users will no longer be able to sign in with this provider.
+			{$LL.admin_external_idp_delete_desc()}
 		</p>
 
 		<div class="info-box">
 			<div class="info-row">
-				<span class="info-label">Provider:</span>
+				<span class="info-label">{$LL.admin_external_idp_provider()}</span>
 				<span class="info-value">{providerToDelete.name}</span>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Type:</span>
+				<span class="info-label">{$LL.admin_external_idp_type()}:</span>
 				<span class="info-value">{providerToDelete.providerType.toUpperCase()}</span>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Client ID:</span>
+				<span class="info-label">{$LL.admin_external_idp_client_id()}:</span>
 				<code class="info-value">{providerToDelete.clientId}</code>
 			</div>
 		</div>
@@ -229,10 +230,10 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}>
-			Cancel
+			{$LL.dialog_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete Provider'}
+			{deleting ? $LL.admin_users_deleting() : $LL.admin_external_idp_delete_provider()}
 		</button>
 	{/snippet}
 </Modal>

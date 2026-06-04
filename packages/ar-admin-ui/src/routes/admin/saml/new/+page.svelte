@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { ToggleSwitch } from '$lib/components';
 	import {
 		adminSAMLAPI,
@@ -165,7 +166,7 @@
 			const result = await adminSAMLAPI.listFederationTrustProfiles();
 			const profile = result.profiles.find((item) => item.id === id);
 			if (!profile) {
-				error = 'Federation trust profile was not found';
+				error = $LL.admin_saml_new_federation_not_found();
 				return;
 			}
 			federationProfileName = profile.name;
@@ -178,7 +179,7 @@
 				.filter(Boolean)
 				.join('\n\n');
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load federation trust profile';
+			error = err instanceof Error ? err.message : $LL.admin_saml_new_error_load_federation();
 		} finally {
 			loadingFederationProfile = false;
 		}
@@ -188,7 +189,7 @@
 		if (!attributeMappingJson.trim()) return {};
 		const parsed = JSON.parse(attributeMappingJson) as unknown;
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error('Attribute mapping must be a JSON object');
+			throw new Error($LL.admin_saml_detail_mapping_object_error());
 		}
 		return parsed as Record<string, string>;
 	}
@@ -342,7 +343,9 @@
 	}
 
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
-		return type === 'saml_sp' ? 'Service Provider' : 'Identity Provider';
+		return type === 'saml_sp'
+			? $LL.admin_saml_detail_service_provider()
+			: $LL.admin_saml_detail_identity_provider();
 	}
 
 	function isValidLoginLogoUrl(value: string): boolean {
@@ -364,8 +367,8 @@
 			metadataImportTone = 'warning';
 			metadataImportMessage =
 				metadataImportedProviderType === 'saml_idp'
-					? 'This is IdP metadata. Keep Identity Provider selected for external SAML login, or import the target SP metadata before choosing Service Provider.'
-					: 'This is SP metadata. Keep Service Provider selected for Authrim-issued assertions, or import the external IdP metadata before choosing Identity Provider.';
+					? $LL.admin_saml_new_metadata_idp_warning()
+					: $LL.admin_saml_new_metadata_sp_warning();
 			return;
 		}
 
@@ -383,8 +386,7 @@
 		}
 		metadataImportError = '';
 		metadataImportTone = 'warning';
-		metadataImportMessage =
-			'Federation mode creates a trust profile for signed aggregate metadata, not a single IdP/SP provider.';
+		metadataImportMessage = $LL.admin_saml_new_federation_mode_message();
 	}
 
 	function scheduleMetadataImport() {
@@ -399,13 +401,13 @@
 	async function importMetadataFromUrl(options: { showRequiredError?: boolean } = {}) {
 		if (!metadataUrl.trim()) {
 			if (options.showRequiredError ?? true) {
-				metadataImportError = 'Metadata URL is required';
+				metadataImportError = $LL.admin_saml_new_metadata_url_error();
 			}
 			return;
 		}
 
 		if (!isImportableMetadataUrl(metadataUrl.trim())) {
-			metadataImportError = 'Metadata URL must be a valid HTTP or HTTPS URL';
+			metadataImportError = $LL.admin_saml_new_metadata_url_invalid();
 			return;
 		}
 
@@ -433,7 +435,8 @@
 		} catch (err) {
 			metadataImported = false;
 			metadataImportedProviderType = '';
-			metadataImportError = err instanceof Error ? err.message : 'Failed to import SAML metadata';
+			metadataImportError =
+				err instanceof Error ? err.message : $LL.admin_saml_new_metadata_import_failed();
 		} finally {
 			importingMetadata = false;
 		}
@@ -441,7 +444,7 @@
 
 	async function importMetadataFromXml() {
 		if (!metadataXml.trim()) {
-			metadataImportError = 'Metadata XML is required';
+			metadataImportError = $LL.admin_saml_new_metadata_xml_error();
 			return;
 		}
 
@@ -462,7 +465,7 @@
 			metadataImported = false;
 			metadataImportedProviderType = '';
 			metadataImportError =
-				err instanceof Error ? err.message : 'Failed to import SAML metadata XML';
+				err instanceof Error ? err.message : $LL.admin_saml_new_metadata_xml_import_failed();
 		} finally {
 			importingMetadata = false;
 		}
@@ -485,7 +488,11 @@
 				federationProfileName = federationProfileName || 'SAML federation';
 			}
 			metadataImportTone = preview.verification.status === 'verified' ? 'success' : 'warning';
-			metadataImportMessage = `Aggregate metadata loaded from ${options.source.toUpperCase()}: ${preview.entityCount} entities, signature ${preview.verification.status}.`;
+			metadataImportMessage = $LL.admin_saml_new_aggregate_loaded({
+				source: options.source.toUpperCase(),
+				count: preview.entityCount,
+				status: preview.verification.status
+			});
 			await loadAggregateEntities(0);
 			return;
 		}
@@ -500,8 +507,8 @@
 		metadataImportTone = 'success';
 		metadataImportMessage =
 			preview.providerType === 'saml_sp'
-				? 'SP metadata imported. Authrim will act as IdP for this provider.'
-				: 'IdP metadata imported. Authrim will act as SP for this provider.';
+				? $LL.admin_saml_new_sp_imported()
+				: $LL.admin_saml_new_idp_imported();
 	}
 
 	function resetMetadataImportState() {
@@ -609,17 +616,17 @@
 
 	async function createFederationTrustProfile() {
 		if (!federationProfileName.trim()) {
-			error = 'Federation profile name is required';
+			error = $LL.admin_saml_new_federation_name_error();
 			return;
 		}
 		const metadataUrlPatterns = parseFederationProfileUrlPatterns();
 		if (metadataUrlPatterns.length === 0) {
-			error = 'Metadata URL pattern is required';
+			error = $LL.admin_saml_new_metadata_pattern_error();
 			return;
 		}
 		const certificates = parseFederationProfileCertificates();
 		if (certificates.length === 0) {
-			error = 'Signing certificate PEM is required for a federation trust profile';
+			error = $LL.admin_saml_new_federation_certificate_error();
 			return;
 		}
 
@@ -643,13 +650,13 @@
 					: await adminSAMLAPI.createFederationTrustProfile(request);
 			saving = false;
 			federationProfileSavedMessage = isEditingFederationProfile
-				? 'Federation trust profile updated. Returning to SAML settings...'
-				: 'Federation trust profile saved. Returning to SAML settings...';
+				? $LL.admin_saml_new_federation_updated_returning()
+				: $LL.admin_saml_new_federation_saved_returning();
 			setTimeout(() => {
 				void goto('/admin/saml');
 			}, 1000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create federation trust profile';
+			error = err instanceof Error ? err.message : $LL.admin_saml_new_error_create_federation();
 		} finally {
 			saving = false;
 		}
@@ -663,13 +670,13 @@
 		const certificate = federationProfileCertificate.trim();
 		if (source === 'url' && !certificateUrl) {
 			if (!options.quiet) {
-				federationCertificateError = 'Certificate URL is required';
+				federationCertificateError = $LL.admin_saml_new_certificate_url_error();
 			}
 			return;
 		}
 		if (source === 'pem' && !certificate) {
 			if (!options.quiet) {
-				federationCertificateError = 'Certificate PEM is required';
+				federationCertificateError = $LL.admin_saml_new_certificate_pem_error();
 			}
 			return;
 		}
@@ -686,7 +693,9 @@
 			federationCertificatePreview = null;
 			if (!options.quiet) {
 				federationCertificateError =
-					err instanceof Error ? err.message : 'Failed to preview federation trust certificate';
+					err instanceof Error
+						? err.message
+						: $LL.admin_saml_new_error_preview_federation_certificate();
 			}
 		} finally {
 			loadingFederationCertificate = false;
@@ -714,7 +723,7 @@
 	async function previewProviderCertificate(options: { quiet?: boolean } = {}) {
 		if (!certificate.trim()) {
 			if (!options.quiet) {
-				providerCertificateError = 'Certificate PEM is required';
+				providerCertificateError = $LL.admin_saml_new_certificate_pem_error();
 			}
 			return;
 		}
@@ -731,7 +740,9 @@
 			providerCertificatePreview = null;
 			if (!options.quiet) {
 				providerCertificateError =
-					err instanceof Error ? err.message : 'Failed to preview SAML certificate';
+					err instanceof Error
+						? err.message
+						: $LL.admin_saml_new_error_preview_provider_certificate();
 			}
 		} finally {
 			loadingProviderCertificate = false;
@@ -750,7 +761,7 @@
 	function formatCertificateDate(value: string) {
 		const date = new Date(value);
 		if (Number.isNaN(date.getTime())) return value || '-';
-		return date.toLocaleString();
+		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function handleAggregateSearch() {
@@ -801,7 +812,7 @@
 			}, 1000);
 			await pollAggregateBatch();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to start aggregate metadata import';
+			error = err instanceof Error ? err.message : $LL.admin_saml_new_error_start_aggregate();
 		} finally {
 			saving = false;
 		}
@@ -819,25 +830,27 @@
 	function validate() {
 		if (aggregatePreview) return '';
 		if (setupTarget === 'federation') {
-			if (!federationProfileName.trim()) return 'Federation profile name is required';
-			if (!federationProfileUrlPattern.trim()) return 'Metadata URL pattern is required';
+			if (!federationProfileName.trim()) return $LL.admin_saml_new_federation_name_error();
+			if (!federationProfileUrlPattern.trim()) return $LL.admin_saml_new_metadata_pattern_error();
 			if (!federationProfileCertificate.trim()) {
-				return 'Signing certificate PEM is required for a federation trust profile';
+				return $LL.admin_saml_new_federation_certificate_error();
 			}
 			return '';
 		}
-		if (!name.trim()) return 'Name is required';
-		if (!isValidLoginLogoUrl(logoUrl)) return 'Login UI logo URL must be a valid HTTPS URL';
-		if (setupMode === 'metadata_url' && !metadataUrl.trim()) return 'Metadata URL is required';
-		if (setupMode === 'metadata_xml' && !metadataXml.trim()) return 'Metadata XML is required';
+		if (!name.trim()) return $LL.admin_saml_detail_name_required_error();
+		if (!isValidLoginLogoUrl(logoUrl)) return $LL.admin_saml_detail_logo_invalid();
+		if (setupMode === 'metadata_url' && !metadataUrl.trim())
+			return $LL.admin_saml_new_metadata_url_error();
+		if (setupMode === 'metadata_xml' && !metadataXml.trim())
+			return $LL.admin_saml_new_metadata_xml_error();
 		if (setupMode === 'manual') {
-			if (!entityId.trim()) return 'Entity ID is required';
-			if (!allowPost && !allowRedirect) return 'At least one binding is required';
+			if (!entityId.trim()) return $LL.admin_saml_detail_entity_required();
+			if (!allowPost && !allowRedirect) return $LL.admin_saml_detail_at_least_one_binding();
 			if (providerType === 'saml_idp' && (!ssoUrl.trim() || !certificate.trim())) {
-				return 'SSO URL and certificate are required for a SAML IdP';
+				return $LL.admin_saml_detail_idp_required();
 			}
 			if (providerType === 'saml_sp' && !acsUrl.trim()) {
-				return 'ACS URL is required for a SAML SP';
+				return $LL.admin_saml_detail_sp_required();
 			}
 			parseMapping();
 		}
@@ -892,12 +905,12 @@
 
 			const provider = await adminSAMLAPI.createProvider(request);
 			saving = false;
-			providerSavedMessage = `${provider.name} created. Returning to SAML settings...`;
+			providerSavedMessage = $LL.admin_saml_new_provider_created_returning({ name: provider.name });
 			setTimeout(() => {
 				void goto('/admin/saml');
 			}, 1000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create SAML provider';
+			error = err instanceof Error ? err.message : $LL.admin_saml_new_error_create_provider();
 		} finally {
 			saving = false;
 		}
@@ -910,31 +923,32 @@
 
 <svelte:head>
 	<title>
-		{isEditingFederationProfile ? 'Edit Federation Trust Profile' : 'New SAML Provider/Federation'}
-		- Admin Dashboard - Authrim
+		{isEditingFederationProfile
+			? $LL.admin_saml_new_edit_page_title()
+			: $LL.admin_saml_new_page_title()}
 	</title>
 </svelte:head>
 
 {#snippet certificatePreviewCard(preview: SAMLTrustCertificatePreview)}
 	<div class="certificate-preview">
 		<div class="certificate-preview-header">
-			<strong>Valid X.509 certificate</strong>
+			<strong>{$LL.admin_saml_detail_certificate_valid()}</strong>
 			<span class="badge badge-info">{preview.publicKeyAlgorithm}</span>
 		</div>
 		<div class="certificate-preview-grid">
-			<span>Subject</span>
+			<span>{$LL.admin_saml_local_subject()}</span>
 			<code>{preview.subject}</code>
-			<span>Issuer</span>
+			<span>{$LL.admin_saml_local_issuer()}</span>
 			<code>{preview.issuer}</code>
-			<span>Valid From</span>
+			<span>{$LL.admin_saml_local_valid_from()}</span>
 			<code>{formatCertificateDate(preview.validFrom)}</code>
-			<span>Valid To</span>
+			<span>{$LL.admin_saml_local_valid_to()}</span>
 			<code>{formatCertificateDate(preview.validTo)}</code>
-			<span>Signature</span>
+			<span>{$LL.admin_saml_local_signature()}</span>
 			<code>{preview.signatureAlgorithm}</code>
 			{#if preview.publicKeySizeBits}
-				<span>Key Size</span>
-				<code>{preview.publicKeySizeBits} bits</code>
+				<span>{$LL.admin_saml_detail_key_size()}</span>
+				<code>{$LL.admin_saml_detail_bits({ bits: preview.publicKeySizeBits })}</code>
 			{/if}
 			<span>SHA-1</span>
 			<code>{preview.fingerprintSha1}</code>
@@ -952,10 +966,10 @@
 {/snippet}
 
 <div class="admin-page">
-	<a href="/admin/saml" class="back-link">← Back to SAML</a>
+	<a href="/admin/saml" class="back-link">← {$LL.admin_saml_detail_back()}</a>
 
 	<h1 class="page-title">
-		{isEditingFederationProfile ? 'Edit Federation Trust Profile' : 'Add SAML Provider/Federation'}
+		{isEditingFederationProfile ? $LL.admin_saml_new_edit_title() : $LL.admin_saml_new_title()}
 	</h1>
 
 	<form
@@ -977,7 +991,7 @@
 		{#if loadingFederationProfile}
 			<div class="loading-state">
 				<i class="i-ph-circle-notch loading-spinner"></i>
-				<p>Loading federation trust profile...</p>
+				<p>{$LL.admin_saml_new_loading_federation()}</p>
 			</div>
 		{/if}
 
@@ -986,14 +1000,14 @@
 				{#if setupTarget === 'federation'}
 					<ToggleSwitch
 						bind:checked={enabled}
-						label="Trust Profile Status"
-						description="Enable or disable this trust profile for aggregate metadata verification."
+						label={$LL.admin_saml_new_trust_profile_status()}
+						description={$LL.admin_saml_new_trust_profile_status_desc()}
 					/>
 				{:else}
 					<ToggleSwitch
 						bind:checked={enabled}
-						label="Provider Status"
-						description="Enable or disable this SAML provider."
+						label={$LL.admin_saml_detail_provider_status()}
+						description={$LL.admin_saml_detail_provider_status_desc()}
 					/>
 				{/if}
 			</div>
@@ -1001,15 +1015,15 @@
 
 		{#if !isEditingFederationProfile}
 			<div class="panel">
-				<h2 class="panel-title">SAML Configuration</h2>
+				<h2 class="panel-title">{$LL.admin_saml_detail_saml_configuration()}</h2>
 				<p class="form-hint panel-hint">
-					Enter a metadata URL to automatically detect a single IdP/SP provider or a federation
-					aggregate containing multiple entities.
+					{$LL.admin_saml_new_config_intro()}
 				</p>
 
 				<div class="metadata-import-row">
 					<div class="form-group metadata-import-input">
-						<label for="metadataUrl" class="form-label">Metadata URL</label>
+						<label for="metadataUrl" class="form-label">{$LL.admin_saml_local_metadata_url()}</label
+						>
 						<input
 							id="metadataUrl"
 							type="url"
@@ -1029,9 +1043,9 @@
 					>
 						{#if importingMetadata}
 							<i class="i-ph-circle-notch loading-spinner"></i>
-							Importing Metadata...
+							{$LL.admin_saml_new_importing_metadata()}
 						{:else}
-							Import Metadata
+							{$LL.admin_saml_new_import_metadata()}
 						{/if}
 					</button>
 				</div>
@@ -1039,7 +1053,7 @@
 				{#if importingMetadata}
 					<p class="form-hint loading-hint">
 						<i class="i-ph-circle-notch loading-spinner"></i>
-						Reading metadata, detecting single entity or federation aggregate, and preparing import options.
+						{$LL.admin_saml_new_metadata_loading_hint()}
 					</p>
 				{:else if metadataImportError}
 					<p class="form-error">{metadataImportError}</p>
@@ -1052,8 +1066,7 @@
 					</p>
 				{:else}
 					<p class="form-hint">
-						Single SP metadata selects Service Provider. Single IdP metadata selects Identity
-						Provider. Aggregate metadata opens federation import options.
+						{$LL.admin_saml_new_metadata_import_hint()}
 					</p>
 				{/if}
 			</div>
@@ -1061,14 +1074,16 @@
 
 		{#if aggregatePreview}
 			<div class="panel">
-				<h2 class="panel-title">Federation Aggregate Detected</h2>
+				<h2 class="panel-title">{$LL.admin_saml_new_aggregate_detected()}</h2>
 				<p
 					class:form-success={aggregatePreview.verification.status === 'verified'}
 					class:form-warning={aggregatePreview.verification.status !== 'verified'}
 				>
-					Signature {aggregatePreview.verification.status}
+					{$LL.admin_saml_new_signature_status({ status: aggregatePreview.verification.status })}
 					{#if aggregatePreview.verification.trustProfileName}
-						via {aggregatePreview.verification.trustProfileName}
+						{$LL.admin_saml_new_signature_via({
+							profile: aggregatePreview.verification.trustProfileName
+						})}
 					{/if}
 				</p>
 
@@ -1080,8 +1095,8 @@
 						onclick={() => (aggregateImportMode = 'selected_entities')}
 					>
 						<div class="i-ph-list-checks h-5 w-5 template-icon"></div>
-						<div class="template-name">Create Providers</div>
-						<div class="template-desc">Select entities from this aggregate</div>
+						<div class="template-name">{$LL.admin_saml_new_create_providers()}</div>
+						<div class="template-desc">{$LL.admin_saml_new_create_providers_desc()}</div>
 					</button>
 					<button
 						type="button"
@@ -1090,8 +1105,8 @@
 						onclick={() => (aggregateImportMode = 'trust_profile')}
 					>
 						<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
-						<div class="template-name">Federation Trust Profile</div>
-						<div class="template-desc">Register trust anchor for this aggregate</div>
+						<div class="template-name">{$LL.admin_saml_new_federation_trust_profile()}</div>
+						<div class="template-desc">{$LL.admin_saml_new_federation_trust_profile_desc()}</div>
 					</button>
 				</div>
 
@@ -1099,16 +1114,20 @@
 					<div class="federation-profile-form">
 						<div class="form-grid">
 							<div class="form-group">
-								<label for="federationProfileName" class="form-label">Profile Name *</label>
+								<label for="federationProfileName" class="form-label">
+									{$LL.admin_saml_new_profile_name_required()}
+								</label>
 								<input
 									id="federationProfileName"
 									bind:value={federationProfileName}
 									class="form-input"
-									placeholder="Example Research Federation"
+									placeholder={$LL.admin_saml_new_profile_name_placeholder()}
 								/>
 							</div>
 							<div class="form-group">
-								<label for="federationProfilePolicy" class="form-label">Policy</label>
+								<label for="federationProfilePolicy" class="form-label"
+									>{$LL.admin_saml_policy()}</label
+								>
 								<select
 									id="federationProfilePolicy"
 									bind:value={federationProfilePolicy}
@@ -1116,12 +1135,12 @@
 								>
 									<option value="strict">Strict</option>
 									<option value="warn">Warn</option>
-									<option value="disabled">Disabled</option>
+									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 								</select>
 							</div>
 							<div class="form-group form-group-full">
 								<label for="federationProfileUrlPattern" class="form-label">
-									Metadata URL Pattern *
+									{$LL.admin_saml_new_metadata_url_pattern_required()}
 								</label>
 								<input
 									id="federationProfileUrlPattern"
@@ -1129,18 +1148,17 @@
 									class="form-input"
 								/>
 								<p class="form-hint">
-									Use the exact aggregate URL for a narrow trust profile, or a controlled wildcard
-									such as https://metadata.example.org/*.
+									{$LL.admin_saml_new_exact_pattern_hint()}
 								</p>
 							</div>
 							<div class="form-group form-group-full">
 								<label for="federationProfileCertificate" class="form-label">
-									Federation Signing Certificate *
+									{$LL.admin_saml_new_federation_certificate_required()}
 								</label>
 								<div class="metadata-import-row certificate-url-row">
 									<div class="form-group metadata-import-input">
 										<label for="federationProfileCertificateUrl" class="form-label">
-											Certificate URL
+											{$LL.admin_saml_new_certificate_url()}
 										</label>
 										<input
 											id="federationProfileCertificateUrl"
@@ -1156,7 +1174,9 @@
 										onclick={() => previewFederationCertificate('url')}
 										disabled={loadingFederationCertificate}
 									>
-										{loadingFederationCertificate ? 'Checking...' : 'Load Certificate'}
+										{loadingFederationCertificate
+											? $LL.admin_saml_detail_checking()
+											: $LL.admin_saml_new_load_certificate()}
 									</button>
 								</div>
 								<textarea
@@ -1165,12 +1185,10 @@
 									oninput={handleFederationCertificateInput}
 									class="form-input form-textarea monospace"
 									rows="8"
-									placeholder="Paste PEM, base64 DER, or enter a certificate URL above"
+									placeholder={$LL.admin_saml_new_certificate_input_placeholder()}
 								></textarea>
 								<p class="form-hint">
-									Accepts X.509 certificates in DER or PEM form. Common URL/file extensions are
-									.cer, .crt, and .pem, but Authrim validates the certificate content rather than
-									the extension.
+									{$LL.admin_saml_new_federation_certificate_hint()}
 								</p>
 								<div class="certificate-actions">
 									<button
@@ -1179,7 +1197,7 @@
 										onclick={() => previewFederationCertificate('pem')}
 										disabled={loadingFederationCertificate || !federationProfileCertificate.trim()}
 									>
-										Validate Certificate
+										{$LL.admin_saml_detail_validate_certificate()}
 									</button>
 								</div>
 								{#if federationCertificateError}
@@ -1192,20 +1210,22 @@
 						</div>
 						{#if federationProfileCreated}
 							<p class="form-success">
-								Federation trust profile created: {federationProfileCreated.name}
+								{$LL.admin_saml_new_federation_created({ name: federationProfileCreated.name })}
 							</p>
 						{/if}
 					</div>
 				{:else}
 					<div class="metadata-import-row">
 						<div class="form-group metadata-import-input">
-							<label for="aggregateSearch" class="form-label">Search entities</label>
+							<label for="aggregateSearch" class="form-label">
+								{$LL.admin_saml_new_search_entities()}
+							</label>
 							<input
 								id="aggregateSearch"
 								type="search"
 								bind:value={aggregateEntityQuery}
 								class="form-input"
-								placeholder="entityID, display name, endpoint"
+								placeholder={$LL.admin_saml_new_search_placeholder()}
 								onkeydown={(event) => {
 									if (event.key === 'Enter') {
 										event.preventDefault();
@@ -1219,14 +1239,16 @@
 							class="btn btn-secondary metadata-import-button"
 							onclick={handleAggregateSearch}
 						>
-							Search
+							{$LL.admin_saml_new_search()}
 						</button>
 					</div>
 
 					{#if aggregateKeywordFacets.length > 0}
 						<div class="aggregate-filter-row">
 							<div class="form-group aggregate-filter-category">
-								<label for="aggregateKeywordCategory" class="form-label">Keyword category</label>
+								<label for="aggregateKeywordCategory" class="form-label">
+									{$LL.admin_saml_new_keyword_category()}
+								</label>
 								<select
 									id="aggregateKeywordCategory"
 									class="form-select"
@@ -1241,7 +1263,9 @@
 							{#if activeAggregateKeywordFacet}
 								<div
 									class="aggregate-keyword-options"
-									aria-label={`${activeAggregateKeywordFacet.label} filters`}
+									aria-label={$LL.admin_saml_new_filters_aria({
+										label: activeAggregateKeywordFacet.label
+									})}
 								>
 									{#each activeAggregateKeywordFacet.values as value (value.keyword)}
 										<label class="aggregate-keyword-option">
@@ -1260,9 +1284,13 @@
 					{/if}
 
 					<p class="form-hint">
-						Showing {aggregateEntities.length} of {aggregateEntityTotal}. Selected {selectedAggregateEntityIds.length}.
+						{$LL.admin_saml_new_aggregate_showing({
+							shown: aggregateEntities.length,
+							total: aggregateEntityTotal,
+							selected: selectedAggregateEntityIds.length
+						})}
 						{#if loadingAggregateEntities}
-							Loading more...
+							{$LL.admin_saml_new_loading_more()}
 						{/if}
 					</p>
 
@@ -1303,7 +1331,7 @@
 									disabled={loadingAggregateEntities}
 									onclick={() => loadAggregateEntities(aggregateEntitiesOffset)}
 								>
-									{loadingAggregateEntities ? 'Loading...' : 'Load more'}
+									{loadingAggregateEntities ? $LL.common_loading() : $LL.admin_saml_new_load_more()}
 								</button>
 							</div>
 						{/if}
@@ -1312,9 +1340,12 @@
 					{#if aggregateBatch}
 						<div class="batch-progress">
 							<div>
-								Processed {aggregateBatch.processed} / {aggregateBatch.total}
-								· Succeeded {aggregateBatch.succeeded}
-								· Failed {aggregateBatch.failed}
+								{$LL.admin_saml_new_batch_progress({
+									processed: aggregateBatch.processed,
+									total: aggregateBatch.total,
+									succeeded: aggregateBatch.succeeded,
+									failed: aggregateBatch.failed
+								})}
 							</div>
 							<progress value={aggregateBatch.processed} max={aggregateBatch.total}></progress>
 						</div>
@@ -1326,10 +1357,9 @@
 		{#if !aggregatePreview}
 			{#if !isEditingFederationProfile}
 				<div class="panel">
-					<h2 class="panel-title">Choose Provider Type</h2>
+					<h2 class="panel-title">{$LL.admin_saml_new_choose_provider_type()}</h2>
 					<p class="form-hint panel-hint">
-						Choose IdP or SP for a single SAML counterparty, or Federation for aggregate metadata
-						trust anchors.
+						{$LL.admin_saml_new_choose_provider_type_hint()}
 					</p>
 
 					<div class="template-grid saml-choice-grid">
@@ -1340,8 +1370,8 @@
 							onclick={() => chooseProviderType('saml_idp')}
 						>
 							<div class="i-ph-identification-card h-5 w-5 template-icon"></div>
-							<div class="template-name">Identity Provider</div>
-							<div class="template-desc">External login</div>
+							<div class="template-name">{$LL.admin_saml_detail_identity_provider()}</div>
+							<div class="template-desc">{$LL.admin_saml_new_external_login()}</div>
 						</button>
 
 						<button
@@ -1351,8 +1381,8 @@
 							onclick={() => chooseProviderType('saml_sp')}
 						>
 							<div class="i-ph-app-window h-5 w-5 template-icon"></div>
-							<div class="template-name">Service Provider</div>
-							<div class="template-desc">Authrim as IdP</div>
+							<div class="template-name">{$LL.admin_saml_detail_service_provider()}</div>
+							<div class="template-desc">{$LL.admin_saml_new_authrim_as_idp()}</div>
 						</button>
 
 						<button
@@ -1362,14 +1392,16 @@
 							onclick={chooseFederation}
 						>
 							<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
-							<div class="template-name">Federation</div>
-							<div class="template-desc">Aggregate metadata trust</div>
+							<div class="template-name">{$LL.admin_saml_new_federation()}</div>
+							<div class="template-desc">{$LL.admin_saml_new_aggregate_metadata_trust()}</div>
 						</button>
 					</div>
 
 					{#if metadataImported && metadataImportedProviderType}
 						<p class="form-hint selected-metadata-role">
-							Imported metadata role: {providerTypeLabel(metadataImportedProviderType)}.
+							{$LL.admin_saml_new_imported_metadata_role({
+								role: providerTypeLabel(metadataImportedProviderType)
+							})}
 						</p>
 					{/if}
 				</div>
@@ -1377,24 +1409,27 @@
 
 			{#if setupTarget === 'federation'}
 				<div class="panel">
-					<h2 class="panel-title">Federation Trust Profile</h2>
+					<h2 class="panel-title">{$LL.admin_saml_new_federation_trust_profile()}</h2>
 					<p class="form-hint panel-hint">
-						Register a trust anchor for signed aggregate metadata. This does not create a single
-						SAML IdP/SP provider by itself.
+						{$LL.admin_saml_new_federation_profile_hint()}
 					</p>
 
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="manualFederationProfileName" class="form-label">Profile Name *</label>
+							<label for="manualFederationProfileName" class="form-label">
+								{$LL.admin_saml_new_profile_name_required()}
+							</label>
 							<input
 								id="manualFederationProfileName"
 								bind:value={federationProfileName}
 								class="form-input"
-								placeholder="Example Research Federation"
+								placeholder={$LL.admin_saml_new_profile_name_placeholder()}
 							/>
 						</div>
 						<div class="form-group">
-							<label for="manualFederationProfilePolicy" class="form-label">Policy</label>
+							<label for="manualFederationProfilePolicy" class="form-label">
+								{$LL.admin_saml_policy()}
+							</label>
 							<select
 								id="manualFederationProfilePolicy"
 								bind:value={federationProfilePolicy}
@@ -1402,22 +1437,24 @@
 							>
 								<option value="strict">Strict</option>
 								<option value="warn">Warn</option>
-								<option value="disabled">Disabled</option>
+								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
 						</div>
 						<div class="form-group form-group-full">
-							<label for="manualFederationDescription" class="form-label">Description</label>
+							<label for="manualFederationDescription" class="form-label">
+								{$LL.admin_saml_detail_description()}
+							</label>
 							<textarea
 								id="manualFederationDescription"
 								bind:value={description}
 								class="form-input form-textarea"
 								rows="3"
-								placeholder="Operational note, owner, federation source, or rollout status"
+								placeholder={$LL.admin_saml_new_federation_description_placeholder()}
 							></textarea>
 						</div>
 						<div class="form-group form-group-full">
 							<label for="manualFederationProfileUrlPattern" class="form-label">
-								Metadata URL Pattern *
+								{$LL.admin_saml_new_metadata_url_pattern_required()}
 							</label>
 							<textarea
 								id="manualFederationProfileUrlPattern"
@@ -1427,18 +1464,17 @@
 								placeholder="https://metadata.example.org/*"
 							></textarea>
 							<p class="form-hint">
-								Use one pattern per line. Prefer the exact aggregate URL for narrow trust, or a
-								controlled wildcard for a known metadata host.
+								{$LL.admin_saml_new_line_pattern_hint()}
 							</p>
 						</div>
 						<div class="form-group form-group-full">
 							<label for="manualFederationProfileCertificate" class="form-label">
-								Federation Signing Certificate *
+								{$LL.admin_saml_new_federation_certificate_required()}
 							</label>
 							<div class="metadata-import-row certificate-url-row">
 								<div class="form-group metadata-import-input">
 									<label for="manualFederationProfileCertificateUrl" class="form-label">
-										Certificate URL
+										{$LL.admin_saml_new_certificate_url()}
 									</label>
 									<input
 										id="manualFederationProfileCertificateUrl"
@@ -1454,7 +1490,9 @@
 									onclick={() => previewFederationCertificate('url')}
 									disabled={loadingFederationCertificate}
 								>
-									{loadingFederationCertificate ? 'Checking...' : 'Load Certificate'}
+									{loadingFederationCertificate
+										? $LL.admin_saml_detail_checking()
+										: $LL.admin_saml_new_load_certificate()}
 								</button>
 							</div>
 							<textarea
@@ -1463,12 +1501,10 @@
 								oninput={handleFederationCertificateInput}
 								class="form-input form-textarea monospace"
 								rows="10"
-								placeholder="Paste PEM, base64 DER, or enter a certificate URL above"
+								placeholder={$LL.admin_saml_new_certificate_input_placeholder()}
 							></textarea>
 							<p class="form-hint">
-								Accepts X.509 certificates in DER or PEM form. Common URL/file extensions are .cer,
-								.crt, and .pem. This is similar to Shibboleth metadata signature validation
-								configuration.
+								{$LL.admin_saml_new_federation_certificate_hint_shibboleth()}
 							</p>
 							<div class="certificate-actions">
 								<button
@@ -1477,7 +1513,7 @@
 									onclick={() => previewFederationCertificate('pem')}
 									disabled={loadingFederationCertificate || !federationProfileCertificate.trim()}
 								>
-									Validate Certificate
+									{$LL.admin_saml_detail_validate_certificate()}
 								</button>
 							</div>
 							{#if federationCertificateError}
@@ -1491,11 +1527,11 @@
 				</div>
 			{:else}
 				<div class="panel">
-					<h2 class="panel-title">Basic Information</h2>
+					<h2 class="panel-title">{$LL.admin_saml_detail_basic_information()}</h2>
 
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="name" class="form-label">Name *</label>
+							<label for="name" class="form-label">{$LL.admin_saml_detail_name_required()}</label>
 							<input
 								id="name"
 								type="text"
@@ -1507,7 +1543,9 @@
 						</div>
 
 						<div class="form-group">
-							<label for="nameIdFormat" class="form-label">NameID Format</label>
+							<label for="nameIdFormat" class="form-label"
+								>{$LL.admin_saml_detail_nameid_format()}</label
+							>
 							<select id="nameIdFormat" bind:value={nameIdFormat} class="form-select">
 								{#each nameIdFormats as format (format.value)}
 									<option value={format.value}>{format.label}</option>
@@ -1516,18 +1554,20 @@
 						</div>
 
 						<div class="form-group form-group-full">
-							<label for="description" class="form-label">Description</label>
+							<label for="description" class="form-label"
+								>{$LL.admin_saml_detail_description()}</label
+							>
 							<textarea
 								id="description"
 								bind:value={description}
 								class="form-input form-textarea"
 								rows="3"
-								placeholder="Operational note, owner, rollout status, or test purpose"
+								placeholder={$LL.admin_saml_new_description_placeholder()}
 							></textarea>
 						</div>
 
 						<div class="form-group form-group-full">
-							<label for="logoUrl" class="form-label">Login UI Logo URL</label>
+							<label for="logoUrl" class="form-label">{$LL.admin_saml_detail_logo_url()}</label>
 							<div class="logo-url-field">
 								<input
 									id="logoUrl"
@@ -1537,14 +1577,13 @@
 									placeholder="https://example.com/logo.png"
 								/>
 								{#if logoUrl}
-									<div class="logo-url-preview" aria-label="Logo preview">
+									<div class="logo-url-preview" aria-label={$LL.admin_saml_detail_logo_preview()}>
 										<img src={logoUrl} alt="" loading="lazy" />
 									</div>
 								{/if}
 							</div>
 							<p class="form-hint">
-								Optional. Used as the provider logo on Login UI buttons. HTTPS only; the image is
-								fitted into a square.
+								{$LL.admin_saml_detail_logo_hint()}
 							</p>
 						</div>
 
@@ -1552,18 +1591,17 @@
 							<LoginProviderIconPicker
 								bind:value={iconName}
 								defaultIcon="buildings"
-								defaultLabel="Default SAML icon"
-								description="Used when Login UI Logo URL is empty."
+								defaultLabel={$LL.admin_saml_detail_default_icon()}
+								description={$LL.admin_saml_detail_default_icon_desc()}
 							/>
 						</div>
 					</div>
 				</div>
 
 				<div class="panel">
-					<h2 class="panel-title">Configuration Method</h2>
+					<h2 class="panel-title">{$LL.admin_saml_new_configuration_method()}</h2>
 					<p class="form-hint panel-hint">
-						Metadata import is preferred. Use manual fields only when the counterparty cannot
-						publish metadata.
+						{$LL.admin_saml_new_configuration_method_hint()}
 					</p>
 
 					<div class="template-grid saml-choice-grid">
@@ -1574,8 +1612,8 @@
 							onclick={() => (setupMode = 'metadata_url')}
 						>
 							<div class="i-ph-link h-5 w-5 template-icon"></div>
-							<div class="template-name">Metadata URL</div>
-							<div class="template-desc">Auto fetch</div>
+							<div class="template-name">{$LL.admin_saml_local_metadata_url()}</div>
+							<div class="template-desc">{$LL.admin_saml_new_auto_fetch()}</div>
 						</button>
 
 						<button
@@ -1585,8 +1623,8 @@
 							onclick={() => (setupMode = 'metadata_xml')}
 						>
 							<div class="i-ph-file-code h-5 w-5 template-icon"></div>
-							<div class="template-name">Metadata XML</div>
-							<div class="template-desc">Paste XML</div>
+							<div class="template-name">{$LL.admin_saml_new_metadata_xml()}</div>
+							<div class="template-desc">{$LL.admin_saml_new_paste_xml()}</div>
 						</button>
 
 						<button
@@ -1596,18 +1634,20 @@
 							onclick={() => (setupMode = 'manual')}
 						>
 							<div class="i-ph-sliders h-5 w-5 template-icon"></div>
-							<div class="template-name">Manual</div>
-							<div class="template-desc">Direct input</div>
+							<div class="template-name">{$LL.admin_saml_new_manual()}</div>
+							<div class="template-desc">{$LL.admin_saml_new_direct_input()}</div>
 						</button>
 					</div>
 				</div>
 
 				<div class="panel">
-					<h2 class="panel-title">SAML Configuration</h2>
+					<h2 class="panel-title">{$LL.admin_saml_detail_saml_configuration()}</h2>
 
 					{#if setupMode === 'metadata_url'}
 						<div class="form-group">
-							<label for="metadataUrlMode" class="form-label">Metadata URL *</label>
+							<label for="metadataUrlMode" class="form-label">
+								{$LL.admin_saml_new_metadata_url_required()}
+							</label>
 							<input
 								id="metadataUrlMode"
 								type="url"
@@ -1616,12 +1656,14 @@
 								placeholder="https://example.com/saml/metadata"
 							/>
 							<p class="form-hint">
-								HTTPS URLs are fetched by the backend and stored with metadata change tracking.
+								{$LL.admin_saml_new_metadata_url_backend_hint()}
 							</p>
 						</div>
 					{:else if setupMode === 'metadata_xml'}
 						<div class="form-group">
-							<label for="metadataXml" class="form-label">Metadata XML *</label>
+							<label for="metadataXml" class="form-label">
+								{$LL.admin_saml_new_metadata_xml_required()}
+							</label>
 							<textarea
 								id="metadataXml"
 								bind:value={metadataXml}
@@ -1630,8 +1672,7 @@
 								rows="12"
 							></textarea>
 							<p class="form-hint">
-								Paste SAML metadata XML, then import it to detect the role and populate the provider
-								fields.
+								{$LL.admin_saml_new_metadata_xml_hint()}
 							</p>
 							<div class="form-actions compact-actions">
 								<button
@@ -1642,9 +1683,9 @@
 								>
 									{#if importingMetadata}
 										<i class="i-ph-circle-notch loading-spinner"></i>
-										Importing Metadata...
+										{$LL.admin_saml_new_importing_metadata()}
 									{:else}
-										Import Metadata
+										{$LL.admin_saml_new_import_metadata()}
 									{/if}
 								</button>
 							</div>
@@ -1662,30 +1703,32 @@
 					{:else}
 						<div class="form-grid">
 							<div class="form-group form-group-full">
-								<label for="entityId" class="form-label">Entity ID *</label>
+								<label for="entityId" class="form-label">{$LL.admin_saml_entity_id()} *</label>
 								<input id="entityId" type="text" bind:value={entityId} class="form-input" />
 							</div>
 
 							{#if providerType === 'saml_idp'}
 								<div class="form-group">
-									<label for="ssoUrl" class="form-label">SSO URL *</label>
+									<label for="ssoUrl" class="form-label">{$LL.admin_saml_sso_url_required()}</label>
 									<input id="ssoUrl" type="url" bind:value={ssoUrl} class="form-input" />
 								</div>
 							{:else}
 								<div class="form-group">
-									<label for="acsUrl" class="form-label">ACS URL *</label>
+									<label for="acsUrl" class="form-label">{$LL.admin_saml_acs_url_required()}</label>
 									<input id="acsUrl" type="url" bind:value={acsUrl} class="form-input" />
 								</div>
 							{/if}
 
 							<div class="form-group">
-								<label for="sloUrl" class="form-label">SLO URL</label>
+								<label for="sloUrl" class="form-label">{$LL.admin_saml_slo_url()}</label>
 								<input id="sloUrl" type="url" bind:value={sloUrl} class="form-input" />
 							</div>
 
 							<div class="form-group form-group-full">
 								<label for="certificate" class="form-label">
-									{providerType === 'saml_idp' ? 'Signing Certificate *' : 'SP Certificate'}
+									{providerType === 'saml_idp'
+										? $LL.admin_saml_detail_signing_certificate_required()
+										: $LL.admin_saml_detail_sp_certificate()}
 								</label>
 								<textarea
 									id="certificate"
@@ -1696,7 +1739,7 @@
 									placeholder="-----BEGIN CERTIFICATE-----"
 								></textarea>
 								<p class="form-hint">
-									Validate the X.509 certificate before saving when entering metadata manually.
+									{$LL.admin_saml_new_manual_certificate_hint()}
 								</p>
 								<div class="certificate-actions">
 									<button
@@ -1705,7 +1748,9 @@
 										onclick={() => previewProviderCertificate()}
 										disabled={loadingProviderCertificate || !certificate.trim()}
 									>
-										{loadingProviderCertificate ? 'Checking...' : 'Validate Certificate'}
+										{loadingProviderCertificate
+											? $LL.admin_saml_detail_checking()
+											: $LL.admin_saml_detail_validate_certificate()}
 									</button>
 								</div>
 								{#if providerCertificateError}
@@ -1717,7 +1762,9 @@
 							</div>
 
 							<div class="form-group form-group-full">
-								<label for="attributeMapping" class="form-label">Attribute Mapping JSON</label>
+								<label for="attributeMapping" class="form-label">
+									{$LL.admin_saml_detail_attribute_mapping_json()}
+								</label>
 								<textarea
 									id="attributeMapping"
 									bind:value={attributeMappingJson}
@@ -1742,11 +1789,13 @@
 
 				{#if providerType === 'saml_idp'}
 					<div class="panel">
-						<h2 class="panel-title">SP Login Policy</h2>
+						<h2 class="panel-title">{$LL.admin_saml_detail_sp_login_policy()}</h2>
 
 						<div class="form-grid">
 							<div class="form-group">
-								<label for="providerName" class="form-label">SP Display Name</label>
+								<label for="providerName" class="form-label">
+									{$LL.admin_saml_detail_sp_display_name()}
+								</label>
 								<input
 									id="providerName"
 									type="text"
@@ -1757,18 +1806,22 @@
 							</div>
 
 							<div class="form-group">
-								<label for="jitEmailLinkingPolicy" class="form-label">JIT Linking Policy</label>
+								<label for="jitEmailLinkingPolicy" class="form-label">
+									{$LL.admin_saml_detail_jit_linking_policy()}
+								</label>
 								<select
 									id="jitEmailLinkingPolicy"
 									bind:value={jitEmailLinkingPolicy}
 									class="form-select"
 								>
-									<option value="email_linking">Existing verified email or JIT create</option>
-									<option value="jit_create_only">JIT create only</option>
-									<option value="disabled">Existing links only</option>
+									<option value="email_linking"
+										>{$LL.admin_saml_detail_jit_existing_or_create()}</option
+									>
+									<option value="jit_create_only">{$LL.admin_saml_detail_jit_create_only()}</option>
+									<option value="disabled">{$LL.admin_saml_detail_jit_existing_only()}</option>
 								</select>
 								<p class="field-hint">
-									Controls whether first login can link by verified local email or create a user.
+									{$LL.admin_saml_detail_jit_hint()}
 								</p>
 							</div>
 
@@ -1779,47 +1832,48 @@
 										bind:checked={allowSyntheticEmailFallback}
 										class="checkbox"
 									/>
-									Allow synthetic email fallback
+									{$LL.admin_saml_detail_synthetic_email()}
 								</label>
 								<p class="field-hint">
-									Use only for legacy IdPs that cannot release an email attribute.
+									{$LL.admin_saml_detail_synthetic_email_hint()}
 								</p>
 							</div>
 
 							<div class="form-group">
 								<label for="logoutRequestSignaturePolicy" class="form-label">
-									IdP LogoutRequest Signature
+									{$LL.admin_saml_detail_idp_logout_signature()}
 								</label>
 								<select
 									id="logoutRequestSignaturePolicy"
 									bind:value={logoutRequestSignaturePolicy}
 									class="form-select"
 								>
-									<option value="required">Required</option>
-									<option value="optional">Optional</option>
-									<option value="disabled">Disabled</option>
+									<option value="required">{$LL.admin_saml_detail_required()}</option>
+									<option value="optional">{$LL.admin_saml_detail_optional()}</option>
+									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 								</select>
 								<p class="field-hint">
-									Required by default. Use Optional or Disabled only for explicit legacy IdP
-									compatibility.
+									{$LL.admin_saml_detail_signature_required_hint()}
 								</p>
 							</div>
 
 							<div class="form-group">
-								<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
+								<label for="authnContextPolicyMode" class="form-label">
+									{$LL.admin_saml_detail_authn_context_policy()}
+								</label>
 								<select
 									id="authnContextPolicyMode"
 									bind:value={authnContextPolicyMode}
 									class="form-select"
 								>
-									<option value="observe">Observe</option>
-									<option value="require_any">Require allowed value</option>
+									<option value="observe">{$LL.admin_saml_detail_observe()}</option>
+									<option value="require_any">{$LL.admin_saml_detail_require_allowed()}</option>
 								</select>
 							</div>
 
 							<div class="form-group form-group-full">
 								<label for="allowedAuthnContextClassRefs" class="form-label">
-									Allowed AuthnContextClassRef
+									{$LL.admin_saml_detail_allowed_authn_context()}
 								</label>
 								<textarea
 									id="allowedAuthnContextClassRefs"
@@ -1834,11 +1888,12 @@
 
 				{#if providerType === 'saml_sp'}
 					<div class="panel">
-						<h2 class="panel-title">SP Policy</h2>
+						<h2 class="panel-title">{$LL.admin_saml_detail_sp_policy()}</h2>
 
 						<div class="form-grid">
 							<div class="form-group">
-								<label for="samlProfile" class="form-label">Profile</label>
+								<label for="samlProfile" class="form-label">{$LL.admin_saml_detail_profile()}</label
+								>
 								<select id="samlProfile" bind:value={samlProfile} class="form-select">
 									<option value="baseline">Baseline</option>
 									<option value="strict">Strict</option>
@@ -1848,14 +1903,16 @@
 							</div>
 
 							<div class="form-group">
-								<label for="attributePreset" class="form-label">Attribute Preset</label>
+								<label for="attributePreset" class="form-label">
+									{$LL.admin_saml_detail_attribute_preset()}
+								</label>
 								<select
 									id="attributePreset"
 									bind:value={attributePresetId}
 									class="form-select"
 									disabled={loadingPresets}
 								>
-									<option value="">None</option>
+									<option value="">{$LL.admin_saml_detail_none()}</option>
 									{#each presets as preset (preset.id)}
 										<option value={preset.id}>{preset.label}</option>
 									{/each}
@@ -1864,53 +1921,55 @@
 
 							<div class="form-group">
 								<label for="authnRequestSignaturePolicy" class="form-label">
-									AuthnRequest Signature
+									{$LL.admin_saml_detail_authn_request_signature()}
 								</label>
 								<select
 									id="authnRequestSignaturePolicy"
 									bind:value={authnRequestSignaturePolicy}
 									class="form-select"
 								>
-									<option value="optional">Optional</option>
-									<option value="required">Required</option>
-									<option value="disabled">Disabled</option>
+									<option value="optional">{$LL.admin_saml_detail_optional()}</option>
+									<option value="required">{$LL.admin_saml_detail_required()}</option>
+									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 								</select>
 							</div>
 
 							<div class="form-group">
 								<label for="spLogoutRequestSignaturePolicy" class="form-label">
-									LogoutRequest Signature
+									{$LL.admin_saml_detail_logout_request_signature()}
 								</label>
 								<select
 									id="spLogoutRequestSignaturePolicy"
 									bind:value={logoutRequestSignaturePolicy}
 									class="form-select"
 								>
-									<option value="required">Required</option>
-									<option value="optional">Optional</option>
-									<option value="disabled">Disabled</option>
+									<option value="required">{$LL.admin_saml_detail_required()}</option>
+									<option value="optional">{$LL.admin_saml_detail_optional()}</option>
+									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 								</select>
 								<p class="field-hint">
-									Required by default. Relax only for an explicit legacy SP exception.
+									{$LL.admin_saml_detail_sp_signature_hint()}
 								</p>
 							</div>
 
 							<div class="form-group">
-								<label for="authnContextClassRefMode" class="form-label">AuthnContext Mode</label>
+								<label for="authnContextClassRefMode" class="form-label">
+									{$LL.admin_saml_detail_authn_context_mode()}
+								</label>
 								<select
 									id="authnContextClassRefMode"
 									bind:value={authnContextClassRefMode}
 									class="form-select"
 								>
-									<option value="session">Session aware</option>
-									<option value="legacy_static">Legacy static</option>
+									<option value="session">{$LL.admin_saml_detail_session_aware()}</option>
+									<option value="legacy_static">{$LL.admin_saml_detail_legacy_static()}</option>
 								</select>
 							</div>
 
 							<div class="form-group">
-								<label for="defaultAuthnContextClassRef" class="form-label"
-									>Default AuthnContext</label
-								>
+								<label for="defaultAuthnContextClassRef" class="form-label">
+									{$LL.admin_saml_detail_default_authn_context()}
+								</label>
 								<input
 									id="defaultAuthnContextClassRef"
 									type="text"
@@ -1920,9 +1979,9 @@
 							</div>
 
 							<div class="form-group">
-								<label for="passkeyAuthnContextClassRef" class="form-label"
-									>Passkey AuthnContext</label
-								>
+								<label for="passkeyAuthnContextClassRef" class="form-label">
+									{$LL.admin_saml_detail_passkey_authn_context()}
+								</label>
 								<input
 									id="passkeyAuthnContextClassRef"
 									type="text"
@@ -1935,13 +1994,13 @@
 						<div class="behavior-settings-list">
 							<ToggleSwitch
 								bind:checked={signAssertions}
-								label="Sign Assertions"
-								description="Sign SAML Assertions sent to this service provider."
+								label={$LL.admin_saml_detail_sign_assertions()}
+								description={$LL.admin_saml_detail_sign_assertions_desc()}
 							/>
 							<ToggleSwitch
 								bind:checked={signResponses}
-								label="Sign Responses"
-								description="Sign SAML Responses sent to this service provider."
+								label={$LL.admin_saml_detail_sign_responses()}
+								description={$LL.admin_saml_detail_sign_responses_desc()}
 							/>
 						</div>
 					</div>
@@ -1953,7 +2012,7 @@
 			<div class="save-warning-panel">
 				<div class="save-warning-title">
 					<i class="i-ph-warning-circle"></i>
-					<span>Certificate security warnings</span>
+					<span>{$LL.admin_saml_new_certificate_security_warnings()}</span>
 				</div>
 				<ul>
 					{#each providerCertificatePreview?.warnings ?? [] as warning (warning)}
@@ -1967,7 +2026,9 @@
 		{/if}
 
 		<div class="form-actions">
-			<button type="button" class="btn btn-secondary" onclick={navigateBack}>Cancel</button>
+			<button type="button" class="btn btn-secondary" onclick={navigateBack}>
+				{$LL.admin_saml_new_cancel()}
+			</button>
 			<button
 				type="submit"
 				class="btn btn-primary"
@@ -1980,18 +2041,20 @@
 			>
 				{#if aggregatePreview}
 					{#if aggregateImportMode === 'trust_profile'}
-						{saving ? 'Saving...' : 'Save Trust Profile'}
+						{saving ? $LL.admin_saml_local_saving() : $LL.admin_saml_new_save_trust_profile()}
 					{:else}
-						{saving ? 'Starting...' : 'Create Selected Providers'}
+						{saving
+							? $LL.admin_saml_new_starting()
+							: $LL.admin_saml_new_create_selected_providers()}
 					{/if}
 				{:else if setupTarget === 'federation'}
 					{saving
-						? 'Saving...'
+						? $LL.admin_saml_local_saving()
 						: isEditingFederationProfile
-							? 'Update Trust Profile'
-							: 'Create Trust Profile'}
+							? $LL.admin_saml_new_update_trust_profile()
+							: $LL.admin_saml_new_create_trust_profile()}
 				{:else}
-					{saving ? 'Creating...' : 'Create Provider'}
+					{saving ? $LL.admin_saml_new_creating() : $LL.admin_saml_new_create_provider()}
 				{/if}
 			</button>
 		</div>

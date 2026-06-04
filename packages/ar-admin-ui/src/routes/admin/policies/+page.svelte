@@ -9,13 +9,12 @@
 		type ConditionCategory,
 		type PolicyContext,
 		type SimulationResult,
-		getEffectLabel,
-		formatCondition,
 		getCategoryIcon,
 		createEmptyContext
 	} from '$lib/api/admin-policies';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	// State
 	let rules: PolicyRule[] = $state([]);
@@ -98,8 +97,7 @@
 			rules = response.rules;
 			pagination = response.pagination;
 		} catch (err) {
-			console.error('Failed to load policies:', err);
-			error = err instanceof Error ? err.message : 'Failed to load policies';
+			error = err instanceof Error ? err.message : $LL.admin_policies_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -110,8 +108,9 @@
 			const response = await adminPoliciesAPI.getConditionTypes();
 			conditionTypes = response.condition_types;
 			categories = response.categories;
-		} catch (err) {
-			console.error('Failed to load condition types:', err);
+		} catch {
+			conditionTypes = [];
+			categories = [];
 		}
 	}
 
@@ -171,7 +170,7 @@
 
 	async function saveRule() {
 		if (!ruleForm.name) {
-			saveError = 'Name is required';
+			saveError = $LL.admin_policies_name_required();
 			return;
 		}
 
@@ -188,8 +187,7 @@
 			showRuleDialog = false;
 			loadRules();
 		} catch (err) {
-			console.error('Failed to save policy:', err);
-			saveError = err instanceof Error ? err.message : 'Failed to save policy';
+			saveError = err instanceof Error ? err.message : $LL.admin_policies_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -214,8 +212,7 @@
 			ruleToDelete = null;
 			loadRules();
 		} catch (err) {
-			console.error('Failed to delete policy:', err);
-			deleteError = err instanceof Error ? err.message : 'Failed to delete policy';
+			deleteError = err instanceof Error ? err.message : $LL.admin_policies_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -226,8 +223,8 @@
 		try {
 			await adminPoliciesAPI.updatePolicy(rule.id, { enabled: !rule.enabled });
 			loadRules();
-		} catch (err) {
-			console.error('Failed to toggle policy:', err);
+		} catch {
+			error = $LL.admin_policies_toggle_failed();
 		}
 	}
 
@@ -246,8 +243,7 @@
 		try {
 			simulationResult = await adminPoliciesAPI.simulate(simulationContext, true);
 		} catch (err) {
-			console.error('Simulation failed:', err);
-			simulationError = err instanceof Error ? err.message : 'Simulation failed';
+			simulationError = err instanceof Error ? err.message : $LL.admin_policies_simulation_failed();
 		} finally {
 			simulating = false;
 		}
@@ -314,13 +310,272 @@
 	}
 
 	function formatDate(timestamp: number): string {
-		return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+		return new Date(timestamp * 1000).toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US', {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric',
 			hour: '2-digit',
 			minute: '2-digit'
 		});
+	}
+
+	function formatEffect(effect: 'allow' | 'deny'): string {
+		return effect === 'allow' ? $LL.admin_policies_allow() : $LL.admin_policies_deny();
+	}
+
+	function formatConditionLocalized(condition: PolicyCondition): string {
+		const { type, params } = condition;
+		switch (type) {
+			case 'has_role':
+				return $LL.admin_policies_condition_has_role({
+					role: String(params.role ?? ''),
+					scope: params.scope ? ` (${String(params.scope)})` : ''
+				});
+			case 'has_any_role':
+				return $LL.admin_policies_condition_has_any_role({
+					roles: ((params.roles as string[]) ?? []).join(', ')
+				});
+			case 'has_all_roles':
+				return $LL.admin_policies_condition_has_all_roles({
+					roles: ((params.roles as string[]) ?? []).join(', ')
+				});
+			case 'is_resource_owner':
+				return $LL.admin_policies_condition_is_resource_owner();
+			case 'same_organization':
+				return $LL.admin_policies_condition_same_organization();
+			case 'attribute_equals':
+				return $LL.admin_policies_condition_attribute_equals({
+					attribute: String(params.attribute ?? ''),
+					value: String(params.value ?? '')
+				});
+			case 'attribute_exists':
+				return $LL.admin_policies_condition_attribute_exists({
+					attribute: String(params.attribute ?? '')
+				});
+			case 'attribute_in':
+				return $LL.admin_policies_condition_attribute_in({
+					attribute: String(params.attribute ?? ''),
+					values: ((params.values as string[]) ?? []).join(', ')
+				});
+			case 'time_in_range':
+				return $LL.admin_policies_condition_time_in_range({
+					start: String(params.start_hour ?? ''),
+					end: String(params.end_hour ?? '')
+				});
+			case 'day_of_week':
+				return $LL.admin_policies_condition_day_of_week({
+					days: ((params.days as number[]) ?? []).join(', ')
+				});
+			case 'valid_during':
+				return $LL.admin_policies_condition_valid_during({
+					start: String(params.start ?? $LL.admin_policies_now()),
+					end: String(params.end ?? $LL.admin_policies_infinity())
+				});
+			case 'country_in':
+				return $LL.admin_policies_condition_country_in({
+					countries: ((params.countries as string[]) ?? []).join(', ')
+				});
+			case 'country_not_in':
+				return $LL.admin_policies_condition_country_not_in({
+					countries: ((params.countries as string[]) ?? []).join(', ')
+				});
+			case 'ip_in_range':
+				return $LL.admin_policies_condition_ip_in_range({
+					cidr: String(params.cidr ?? '')
+				});
+			case 'numeric_gt':
+				return `${params.attribute} > ${params.threshold}`;
+			case 'numeric_gte':
+				return `${params.attribute} >= ${params.threshold}`;
+			case 'numeric_lt':
+				return `${params.attribute} < ${params.threshold}`;
+			case 'numeric_lte':
+				return `${params.attribute} <= ${params.threshold}`;
+			case 'numeric_between':
+				return `${params.min} <= ${params.attribute} <= ${params.max}`;
+			case 'request_count_lt':
+				return $LL.admin_policies_condition_request_count_lt({ limit: String(params.limit ?? '') });
+			case 'request_count_lte':
+				return $LL.admin_policies_condition_request_count_lte({
+					limit: String(params.limit ?? '')
+				});
+			case 'request_count_gt':
+				return $LL.admin_policies_condition_request_count_gt({ limit: String(params.limit ?? '') });
+			case 'request_count_gte':
+				return $LL.admin_policies_condition_request_count_gte({
+					limit: String(params.limit ?? '')
+				});
+			default:
+				return JSON.stringify(condition);
+		}
+	}
+
+	function formatCategoryLabel(category: ConditionCategory): string {
+		switch (category.id) {
+			case 'rbac':
+				return $LL.admin_policies_category_rbac();
+			case 'ownership':
+				return $LL.admin_policies_category_ownership();
+			case 'abac':
+				return $LL.admin_policies_category_abac();
+			case 'time':
+				return $LL.admin_policies_category_time();
+			case 'numeric':
+				return $LL.admin_policies_category_numeric();
+			case 'geo':
+				return $LL.admin_policies_category_geo();
+			case 'rate':
+				return $LL.admin_policies_category_rate();
+			default:
+				return category.label;
+		}
+	}
+
+	function formatConditionTypeLabel(type: ConditionTypeMetadata): string {
+		switch (type.type) {
+			case 'has_role':
+				return $LL.admin_policies_type_has_role();
+			case 'has_any_role':
+				return $LL.admin_policies_type_has_any_role();
+			case 'has_all_roles':
+				return $LL.admin_policies_type_has_all_roles();
+			case 'is_resource_owner':
+				return $LL.admin_policies_type_is_resource_owner();
+			case 'same_organization':
+				return $LL.admin_policies_type_same_organization();
+			case 'attribute_equals':
+				return $LL.admin_policies_type_attribute_equals();
+			case 'attribute_exists':
+				return $LL.admin_policies_type_attribute_exists();
+			case 'attribute_in':
+				return $LL.admin_policies_type_attribute_in();
+			case 'time_in_range':
+				return $LL.admin_policies_type_time_in_range();
+			case 'day_of_week':
+				return $LL.admin_policies_type_day_of_week();
+			case 'valid_during':
+				return $LL.admin_policies_type_valid_during();
+			case 'numeric_gt':
+				return $LL.admin_policies_type_numeric_gt();
+			case 'numeric_gte':
+				return $LL.admin_policies_type_numeric_gte();
+			case 'numeric_lt':
+				return $LL.admin_policies_type_numeric_lt();
+			case 'numeric_lte':
+				return $LL.admin_policies_type_numeric_lte();
+			case 'numeric_between':
+				return $LL.admin_policies_type_numeric_between();
+			case 'country_in':
+				return $LL.admin_policies_type_country_in();
+			case 'country_not_in':
+				return $LL.admin_policies_type_country_not_in();
+			case 'ip_in_range':
+				return $LL.admin_policies_type_ip_in_range();
+			case 'request_count_lt':
+				return $LL.admin_policies_type_request_count_lt();
+			case 'request_count_lte':
+				return $LL.admin_policies_type_request_count_lte();
+			case 'request_count_gt':
+				return $LL.admin_policies_type_request_count_gt();
+			case 'request_count_gte':
+				return $LL.admin_policies_type_request_count_gte();
+			default:
+				return type.label;
+		}
+	}
+
+	function formatConditionTypeDescription(type: ConditionTypeMetadata): string {
+		switch (type.type) {
+			case 'has_role':
+				return $LL.admin_policies_type_desc_has_role();
+			case 'has_any_role':
+				return $LL.admin_policies_type_desc_has_any_role();
+			case 'has_all_roles':
+				return $LL.admin_policies_type_desc_has_all_roles();
+			case 'is_resource_owner':
+				return $LL.admin_policies_type_desc_is_resource_owner();
+			case 'same_organization':
+				return $LL.admin_policies_type_desc_same_organization();
+			case 'attribute_equals':
+				return $LL.admin_policies_type_desc_attribute_equals();
+			case 'attribute_exists':
+				return $LL.admin_policies_type_desc_attribute_exists();
+			case 'attribute_in':
+				return $LL.admin_policies_type_desc_attribute_in();
+			case 'time_in_range':
+				return $LL.admin_policies_type_desc_time_in_range();
+			case 'day_of_week':
+				return $LL.admin_policies_type_desc_day_of_week();
+			case 'valid_during':
+				return $LL.admin_policies_type_desc_valid_during();
+			case 'numeric_gt':
+				return $LL.admin_policies_type_desc_numeric_gt();
+			case 'numeric_gte':
+				return $LL.admin_policies_type_desc_numeric_gte();
+			case 'numeric_lt':
+				return $LL.admin_policies_type_desc_numeric_lt();
+			case 'numeric_lte':
+				return $LL.admin_policies_type_desc_numeric_lte();
+			case 'numeric_between':
+				return $LL.admin_policies_type_desc_numeric_between();
+			case 'country_in':
+				return $LL.admin_policies_type_desc_country_in();
+			case 'country_not_in':
+				return $LL.admin_policies_type_desc_country_not_in();
+			case 'ip_in_range':
+				return $LL.admin_policies_type_desc_ip_in_range();
+			case 'request_count_lt':
+				return $LL.admin_policies_type_desc_request_count_lt();
+			case 'request_count_lte':
+				return $LL.admin_policies_type_desc_request_count_lte();
+			case 'request_count_gt':
+				return $LL.admin_policies_type_desc_request_count_gt();
+			case 'request_count_gte':
+				return $LL.admin_policies_type_desc_request_count_gte();
+			default:
+				return type.description;
+		}
+	}
+
+	function formatParamLabel(param: { name: string; label: string }): string {
+		switch (param.name) {
+			case 'role':
+				return $LL.admin_policies_param_role();
+			case 'roles':
+				return $LL.admin_policies_param_roles();
+			case 'scope':
+				return $LL.admin_policies_param_scope();
+			case 'attribute':
+				return $LL.admin_policies_param_attribute();
+			case 'value':
+				return $LL.admin_policies_param_value();
+			case 'values':
+				return $LL.admin_policies_param_values();
+			case 'start_hour':
+				return $LL.admin_policies_param_start_hour();
+			case 'end_hour':
+				return $LL.admin_policies_param_end_hour();
+			case 'days':
+				return $LL.admin_policies_param_days();
+			case 'start':
+				return $LL.admin_policies_param_start();
+			case 'end':
+				return $LL.admin_policies_param_end();
+			case 'countries':
+				return $LL.admin_policies_param_countries();
+			case 'cidr':
+				return $LL.admin_policies_param_cidr();
+			case 'threshold':
+				return $LL.admin_policies_param_threshold();
+			case 'min':
+				return $LL.admin_policies_param_min();
+			case 'max':
+				return $LL.admin_policies_param_max();
+			case 'limit':
+				return $LL.admin_policies_param_limit();
+			default:
+				return param.label;
+		}
 	}
 
 	$effect(() => {
@@ -353,8 +608,8 @@
 			customRulesEnabled = settings.values['feature.enable_custom_rules'] === true;
 			featureFlagsVersion = settings.version;
 		} catch (err) {
-			console.error('Failed to load Custom Rules status:', err);
-			customRulesError = 'Failed to load Custom Rules status';
+			customRulesError =
+				err instanceof Error ? err.message : $LL.admin_policies_custom_rules_load_failed();
 		} finally {
 			customRulesLoading = false;
 		}
@@ -381,9 +636,8 @@
 			customRulesEnabled = newValue;
 			featureFlagsVersion = result.version;
 		} catch (err) {
-			console.error('Failed to update Custom Rules status:', err);
 			customRulesError =
-				err instanceof Error ? err.message : 'Failed to update Custom Rules status';
+				err instanceof Error ? err.message : $LL.admin_policies_custom_rules_update_failed();
 			await loadCustomRulesStatus();
 		} finally {
 			customRulesSaving = false;
@@ -408,25 +662,25 @@
 </script>
 
 <svelte:head>
-	<title>Policy Rules - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_policies_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Policy Rules</h1>
+			<h1 class="page-title">{$LL.admin_policies_title()}</h1>
 			<p class="page-description">
-				Combine RBAC, ABAC, and ReBAC conditions to create fine-grained access control rules.
+				{$LL.admin_policies_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={openSimulateDialog} disabled={!customRulesEnabled}>
 				<i class="i-ph-play"></i>
-				Simulate
+				{$LL.admin_policies_simulate()}
 			</button>
 			<button class="btn btn-primary" onclick={openCreateDialog} disabled={!customRulesEnabled}>
 				<i class="i-ph-plus"></i>
-				Create Policy
+				{$LL.admin_policies_create_policy()}
 			</button>
 		</div>
 	</div>
@@ -435,15 +689,14 @@
 	<div class="panel feature-toggle-panel">
 		<div class="feature-toggle-row">
 			<div class="feature-toggle-info">
-				<h3 class="feature-toggle-title">Custom Policy Rules</h3>
+				<h3 class="feature-toggle-title">{$LL.admin_policies_custom_rules()}</h3>
 				<p class="feature-toggle-description">
-					Enable custom policy rules that combine RBAC roles, ABAC attributes, and ReBAC
-					relationships for fine-grained access control.
+					{$LL.admin_policies_custom_rules_description()}
 				</p>
 			</div>
 			<div class="feature-toggle-control">
 				{#if customRulesLoading}
-					<span class="loading-text">Loading...</span>
+					<span class="loading-text">{$LL.admin_policies_loading()}</span>
 				{:else}
 					<ToggleSwitch
 						checked={customRulesEnabled}
@@ -457,21 +710,23 @@
 			<div class="alert alert-error alert-sm">{customRulesError}</div>
 		{/if}
 		{#if customRulesSaving}
-			<div class="saving-indicator">Saving...</div>
+			<div class="saving-indicator">{$LL.admin_policies_saving()}</div>
 		{/if}
 	</div>
 
 	{#if !customRulesEnabled && !customRulesLoading}
 		<div class="alert alert-warning">
-			<strong>Custom Rules are disabled.</strong> Enable above to create custom policy rules. Default
-			policies based on roles will still apply.
+			<strong>{$LL.admin_policies_custom_rules_disabled_title()}</strong>
+			{$LL.admin_policies_custom_rules_disabled_description()}
 		</div>
 	{/if}
 
 	{#if error}
 		<div class="alert alert-error">
 			<span>{error}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadRules}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={loadRules}
+				>{$LL.admin_policies_retry()}</button
+			>
 		</div>
 	{/if}
 
@@ -479,32 +734,34 @@
 	<div class="panel">
 		<div class="filter-row">
 			<div class="form-group" style="flex: 2;">
-				<label for="filter-search" class="form-label">Search</label>
+				<label for="filter-search" class="form-label">{$LL.admin_policies_search()}</label>
 				<input
 					id="filter-search"
 					type="text"
 					class="form-input"
-					placeholder="Search policies..."
+					placeholder={$LL.admin_policies_search_placeholder()}
 					bind:value={filterSearch}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
 			</div>
 			<div class="form-group">
-				<label for="filter-status" class="form-label">Status</label>
+				<label for="filter-status" class="form-label">{$LL.admin_policies_status()}</label>
 				<select
 					id="filter-status"
 					class="form-select"
 					bind:value={filterEnabled}
 					onchange={applyFilters}
 				>
-					<option value={undefined}>All Status</option>
-					<option value={true}>Enabled</option>
-					<option value={false}>Disabled</option>
+					<option value={undefined}>{$LL.admin_policies_all_status()}</option>
+					<option value={true}>{$LL.admin_policies_enabled()}</option>
+					<option value={false}>{$LL.admin_policies_disabled()}</option>
 				</select>
 			</div>
 			<div class="form-group form-group-action">
-				<button class="btn btn-primary" onclick={applyFilters}>Apply</button>
-				<button class="btn btn-secondary" onclick={clearFilters}>Clear</button>
+				<button class="btn btn-primary" onclick={applyFilters}>{$LL.admin_policies_apply()}</button>
+				<button class="btn btn-secondary" onclick={clearFilters}
+					>{$LL.admin_policies_clear()}</button
+				>
 			</div>
 		</div>
 	</div>
@@ -513,13 +770,15 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_policies_loading()}</p>
 		</div>
 	{:else if rules.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No policy rules found.</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Create Policy</button>
+				<p class="empty-state-description">{$LL.admin_policies_empty()}</p>
+				<button class="btn btn-primary" onclick={openCreateDialog}
+					>{$LL.admin_policies_create_policy()}</button
+				>
 			</div>
 		</div>
 	{:else}
@@ -531,25 +790,25 @@
 							<span class="policy-priority">#{rule.priority}</span>
 							<h3 class="policy-name">{rule.name}</h3>
 							<span class={rule.effect === 'allow' ? 'badge badge-success' : 'badge badge-danger'}>
-								{getEffectLabel(rule.effect)}
+								{formatEffect(rule.effect)}
 							</span>
 							{#if !rule.enabled}
-								<span class="badge badge-neutral">Disabled</span>
+								<span class="badge badge-neutral">{$LL.admin_policies_disabled()}</span>
 							{/if}
 						</div>
 						<div class="action-buttons">
 							<button
 								class="btn-toggle"
 								onclick={(e) => toggleEnabled(rule, e)}
-								title={rule.enabled ? 'Disable' : 'Enable'}
+								title={rule.enabled ? $LL.admin_policies_disable() : $LL.admin_policies_enable()}
 							>
 								<i class={rule.enabled ? 'i-ph-toggle-right' : 'i-ph-toggle-left'}></i>
 							</button>
 							<button class="btn btn-secondary btn-sm" onclick={() => openEditDialog(rule)}
-								>Edit</button
+								>{$LL.admin_policies_edit()}</button
 							>
 							<button class="btn btn-danger btn-sm" onclick={(e) => openDeleteDialog(rule, e)}>
-								Delete
+								{$LL.admin_policies_delete()}
 							</button>
 						</div>
 					</div>
@@ -561,7 +820,7 @@
 					<div class="policy-details">
 						{#if rule.resource_types.length > 0}
 							<div class="detail-row">
-								<span class="detail-label">Resources:</span>
+								<span class="detail-label">{$LL.admin_policies_resources_label()}</span>
 								<span class="tag-list">
 									{#each rule.resource_types as type (type)}
 										<span class="tag">{type}</span>
@@ -572,7 +831,7 @@
 
 						{#if rule.actions.length > 0}
 							<div class="detail-row">
-								<span class="detail-label">Actions:</span>
+								<span class="detail-label">{$LL.admin_policies_actions_label()}</span>
 								<span class="tag-list">
 									{#each rule.actions as action (action)}
 										<span class="tag">{action}</span>
@@ -583,10 +842,10 @@
 
 						{#if rule.conditions.length > 0}
 							<div class="detail-row detail-row-vertical">
-								<span class="detail-label">Conditions:</span>
+								<span class="detail-label">{$LL.admin_policies_conditions_label()}</span>
 								<div class="tag-list">
 									{#each rule.conditions as condition, i (i)}
-										<span class="tag tag-info">{formatCondition(condition)}</span>
+										<span class="tag tag-info">{formatConditionLocalized(condition)}</span>
 									{/each}
 								</div>
 							</div>
@@ -594,7 +853,9 @@
 					</div>
 
 					<div class="policy-meta">
-						<span class="muted">Updated {formatDate(rule.updated_at)}</span>
+						<span class="muted"
+							>{$LL.admin_policies_updated_at({ date: formatDate(rule.updated_at) })}</span
+						>
 					</div>
 				</div>
 			{/each}
@@ -608,17 +869,21 @@
 					disabled={pagination.page === 1}
 					onclick={() => goToPage(pagination.page - 1)}
 				>
-					Previous
+					{$LL.admin_policies_previous()}
 				</button>
 				<span class="pagination-info">
-					Page {pagination.page} of {pagination.total_pages} ({pagination.total} total)
+					{$LL.admin_policies_page_of({
+						page: pagination.page,
+						totalPages: pagination.total_pages,
+						count: pagination.total
+					})}
 				</span>
 				<button
 					class="btn btn-secondary btn-sm"
 					disabled={pagination.page === pagination.total_pages}
 					onclick={() => goToPage(pagination.page + 1)}
 				>
-					Next
+					{$LL.admin_policies_next()}
 				</button>
 			</div>
 		{/if}
@@ -629,7 +894,7 @@
 <Modal
 	open={showRuleDialog}
 	onClose={() => (showRuleDialog = false)}
-	title={editingRule ? 'Edit Policy Rule' : 'Create Policy Rule'}
+	title={editingRule ? $LL.admin_policies_edit_rule() : $LL.admin_policies_create_rule()}
 	size="lg"
 >
 	{#if saveError}
@@ -638,17 +903,17 @@
 
 	<div class="form-row-inline">
 		<div class="form-group" style="flex: 2;">
-			<label for="rule-name" class="form-label">Name *</label>
+			<label for="rule-name" class="form-label">{$LL.admin_policies_name_required_label()}</label>
 			<input
 				id="rule-name"
 				type="text"
 				class="form-input"
 				bind:value={ruleForm.name}
-				placeholder="e.g., Allow org admins to manage users"
+				placeholder={$LL.admin_policies_name_placeholder()}
 			/>
 		</div>
 		<div class="form-group">
-			<label for="rule-priority" class="form-label">Priority</label>
+			<label for="rule-priority" class="form-label">{$LL.admin_policies_priority()}</label>
 			<input
 				id="rule-priority"
 				type="number"
@@ -661,29 +926,29 @@
 	</div>
 
 	<div class="form-group">
-		<label for="rule-description" class="form-label">Description</label>
+		<label for="rule-description" class="form-label">{$LL.admin_policies_rule_description()}</label>
 		<textarea
 			id="rule-description"
 			class="form-input"
 			bind:value={ruleForm.description}
-			placeholder="Describe what this policy does..."
+			placeholder={$LL.admin_policies_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
 
 	<div class="form-row-inline">
 		<div class="form-group">
-			<label for="rule-effect" class="form-label">Effect *</label>
+			<label for="rule-effect" class="form-label">{$LL.admin_policies_effect_required()}</label>
 			<select id="rule-effect" class="form-select" bind:value={ruleForm.effect}>
-				<option value="allow">Allow</option>
-				<option value="deny">Deny</option>
+				<option value="allow">{$LL.admin_policies_allow()}</option>
+				<option value="deny">{$LL.admin_policies_deny()}</option>
 			</select>
 		</div>
 		<div class="form-group">
 			<ToggleSwitch
 				bind:checked={ruleForm.enabled}
-				label="Enabled"
-				description="Activate this policy rule"
+				label={$LL.admin_policies_enabled()}
+				description={$LL.admin_policies_activate_rule()}
 			/>
 		</div>
 	</div>
@@ -691,16 +956,18 @@
 	<!-- Resource Types -->
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Resource Types</label>
+		<label class="form-label">{$LL.admin_policies_resource_types()}</label>
 		<div class="input-with-button">
 			<input
 				type="text"
 				class="form-input"
 				bind:value={resourceTypeInput}
-				placeholder="e.g., user, document, organization"
+				placeholder={$LL.admin_policies_resource_types_placeholder()}
 				onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addResourceType())}
 			/>
-			<button type="button" class="btn btn-secondary" onclick={addResourceType}>Add</button>
+			<button type="button" class="btn btn-secondary" onclick={addResourceType}
+				>{$LL.admin_policies_add()}</button
+			>
 		</div>
 		{#if ruleForm.resource_types.length > 0}
 			<div class="tag-list tag-list-removable">
@@ -717,16 +984,18 @@
 	<!-- Actions -->
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Actions</label>
+		<label class="form-label">{$LL.admin_policies_actions()}</label>
 		<div class="input-with-button">
 			<input
 				type="text"
 				class="form-input"
 				bind:value={actionInput}
-				placeholder="e.g., read, write, delete, manage"
+				placeholder={$LL.admin_policies_actions_placeholder()}
 				onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addAction())}
 			/>
-			<button type="button" class="btn btn-secondary" onclick={addAction}>Add</button>
+			<button type="button" class="btn btn-secondary" onclick={addAction}
+				>{$LL.admin_policies_add()}</button
+			>
 		</div>
 		{#if ruleForm.actions.length > 0}
 			<div class="tag-list tag-list-removable">
@@ -743,17 +1012,21 @@
 	<!-- Conditions -->
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Conditions</label>
+		<label class="form-label">{$LL.admin_policies_conditions()}</label>
 		<button type="button" class="btn btn-secondary btn-sm" onclick={openConditionBuilder}>
 			<i class="i-ph-plus"></i>
-			Add Condition
+			{$LL.admin_policies_add_condition()}
 		</button>
 		{#if ruleForm.conditions.length > 0}
 			<div class="condition-builder-list">
 				{#each ruleForm.conditions as condition, i (i)}
 					<div class="condition-item">
-						<span class="condition-text">{formatCondition(condition)}</span>
-						<button class="btn-icon" onclick={() => removeCondition(i)} aria-label="Remove">
+						<span class="condition-text">{formatConditionLocalized(condition)}</span>
+						<button
+							class="btn-icon"
+							onclick={() => removeCondition(i)}
+							aria-label={$LL.admin_policies_remove()}
+						>
 							<i class="i-ph-x"></i>
 						</button>
 					</div>
@@ -763,9 +1036,15 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showRuleDialog = false)}>Cancel</button>
+		<button class="btn btn-secondary" onclick={() => (showRuleDialog = false)}
+			>{$LL.admin_policies_cancel()}</button
+		>
 		<button class="btn btn-primary" onclick={saveRule} disabled={saving}>
-			{saving ? 'Saving...' : editingRule ? 'Update' : 'Create'}
+			{saving
+				? $LL.admin_policies_saving()
+				: editingRule
+					? $LL.admin_policies_update()
+					: $LL.admin_policies_create()}
 		</button>
 	{/snippet}
 </Modal>
@@ -774,7 +1053,7 @@
 <Modal
 	open={showConditionDialog}
 	onClose={() => (showConditionDialog = false)}
-	title="Add Condition"
+	title={$LL.admin_policies_add_condition()}
 	size="md"
 >
 	{#if !selectedCategory}
@@ -783,7 +1062,7 @@
 			{#each categories as category (category.id)}
 				<button class="category-card" onclick={() => selectCategory(category.id)}>
 					<span class="category-icon">{getCategoryIcon(category.id)}</span>
-					<span class="category-label">{category.label}</span>
+					<span class="category-label">{formatCategoryLabel(category)}</span>
 				</button>
 			{/each}
 		</div>
@@ -791,13 +1070,13 @@
 		<!-- Condition Type Selection -->
 		<button class="btn-back" onclick={() => selectCategory('')}>
 			<i class="i-ph-arrow-left"></i>
-			Back to categories
+			{$LL.admin_policies_back_to_categories()}
 		</button>
 		<div class="type-list">
 			{#each conditionTypes.filter((t) => t.category === selectedCategory) as type (type.type)}
 				<button class="type-card" onclick={() => selectConditionType(type.type)}>
-					<span class="type-label">{type.label}</span>
-					<span class="type-description">{type.description}</span>
+					<span class="type-label">{formatConditionTypeLabel(type)}</span>
+					<span class="type-description">{formatConditionTypeDescription(type)}</span>
 				</button>
 			{/each}
 		</div>
@@ -806,17 +1085,17 @@
 		{@const typeInfo = conditionTypes.find((t) => t.type === selectedConditionType)}
 		<button class="btn-back" onclick={() => selectConditionType('')}>
 			<i class="i-ph-arrow-left"></i>
-			Back to types
+			{$LL.admin_policies_back_to_types()}
 		</button>
 
 		{#if typeInfo}
-			<h3 class="section-subtitle">{typeInfo.label}</h3>
-			<p class="muted">{typeInfo.description}</p>
+			<h3 class="section-subtitle">{formatConditionTypeLabel(typeInfo)}</h3>
+			<p class="muted">{formatConditionTypeDescription(typeInfo)}</p>
 
 			{#each typeInfo.params as param (param.name)}
 				<div class="form-group">
 					<label for="param-{param.name}" class="form-label">
-						{param.label}{param.required ? ' *' : ''}
+						{formatParamLabel(param)}{param.required ? ' *' : ''}
 					</label>
 					{#if param.type === 'string'}
 						<input
@@ -837,7 +1116,7 @@
 							id="param-{param.name}"
 							type="text"
 							class="form-input"
-							placeholder="Comma-separated values"
+							placeholder={$LL.admin_policies_comma_values()}
 							oninput={(e) => {
 								conditionParams[param.name] = e.currentTarget.value
 									.split(',')
@@ -850,7 +1129,7 @@
 							id="param-{param.name}"
 							type="text"
 							class="form-input"
-							placeholder="Comma-separated numbers"
+							placeholder={$LL.admin_policies_comma_numbers()}
 							oninput={(e) => {
 								conditionParams[param.name] = e.currentTarget.value
 									.split(',')
@@ -867,9 +1146,11 @@
 	{#snippet footer()}
 		{#if selectedConditionType}
 			<button class="btn btn-secondary" onclick={() => (showConditionDialog = false)}>
-				Cancel
+				{$LL.admin_policies_cancel()}
 			</button>
-			<button class="btn btn-primary" onclick={addCondition}>Add Condition</button>
+			<button class="btn btn-primary" onclick={addCondition}
+				>{$LL.admin_policies_add_condition()}</button
+			>
 		{/if}
 	{/snippet}
 </Modal>
@@ -878,7 +1159,7 @@
 <Modal
 	open={showDeleteDialog && !!ruleToDelete}
 	onClose={() => (showDeleteDialog = false)}
-	title="Delete Policy Rule"
+	title={$LL.admin_policies_delete_rule()}
 	size="md"
 >
 	{#if deleteError}
@@ -886,14 +1167,17 @@
 	{/if}
 
 	<p class="modal-description">
-		Are you sure you want to delete the policy rule <strong>{ruleToDelete?.name ?? ''}</strong>?
+		{$LL.admin_policies_delete_confirm_prefix()}<strong>{ruleToDelete?.name ?? ''}</strong
+		>{$LL.admin_policies_delete_confirm_suffix()}
 	</p>
-	<p class="danger-text">This action cannot be undone.</p>
+	<p class="danger-text">{$LL.admin_policies_cannot_be_undone()}</p>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}>Cancel</button>
+		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}
+			>{$LL.admin_policies_cancel()}</button
+		>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete'}
+			{deleting ? $LL.admin_policies_deleting() : $LL.admin_policies_delete()}
 		</button>
 	{/snippet}
 </Modal>
@@ -902,20 +1186,22 @@
 <Modal
 	open={showSimulateDialog}
 	onClose={() => (showSimulateDialog = false)}
-	title="Policy Simulator"
+	title={$LL.admin_policies_simulator_title()}
 	size="lg"
 >
-	<p class="muted">Test how policies evaluate against a given context.</p>
+	<p class="muted">{$LL.admin_policies_simulator_description()}</p>
 
 	{#if simulationError}
 		<div class="alert alert-error">{simulationError}</div>
 	{/if}
 
 	<div class="simulation-form">
-		<h3 class="section-subtitle">Subject</h3>
+		<h3 class="section-subtitle">{$LL.admin_policies_subject()}</h3>
 		<div class="form-row-inline">
 			<div class="form-group">
-				<label for="sim-subject-id" class="form-label">Subject ID *</label>
+				<label for="sim-subject-id" class="form-label"
+					>{$LL.admin_policies_subject_id_required()}</label
+				>
 				<input
 					id="sim-subject-id"
 					type="text"
@@ -925,7 +1211,9 @@
 				/>
 			</div>
 			<div class="form-group">
-				<label for="sim-subject-org" class="form-label">Organization ID</label>
+				<label for="sim-subject-org" class="form-label"
+					>{$LL.admin_policies_organization_id()}</label
+				>
 				<input
 					id="sim-subject-org"
 					type="text"
@@ -936,10 +1224,12 @@
 			</div>
 		</div>
 
-		<h3 class="section-subtitle">Resource</h3>
+		<h3 class="section-subtitle">{$LL.admin_policies_resource()}</h3>
 		<div class="form-row-inline">
 			<div class="form-group">
-				<label for="sim-resource-type" class="form-label">Resource Type *</label>
+				<label for="sim-resource-type" class="form-label"
+					>{$LL.admin_policies_resource_type_required()}</label
+				>
 				<input
 					id="sim-resource-type"
 					type="text"
@@ -949,7 +1239,9 @@
 				/>
 			</div>
 			<div class="form-group">
-				<label for="sim-resource-id" class="form-label">Resource ID *</label>
+				<label for="sim-resource-id" class="form-label"
+					>{$LL.admin_policies_resource_id_required()}</label
+				>
 				<input
 					id="sim-resource-id"
 					type="text"
@@ -960,9 +1252,9 @@
 			</div>
 		</div>
 
-		<h3 class="section-subtitle">Action</h3>
+		<h3 class="section-subtitle">{$LL.admin_policies_action()}</h3>
 		<div class="form-group">
-			<label for="sim-action" class="form-label">Action Name *</label>
+			<label for="sim-action" class="form-label">{$LL.admin_policies_action_name_required()}</label>
 			<input
 				id="sim-action"
 				type="text"
@@ -972,10 +1264,10 @@
 			/>
 		</div>
 
-		<h3 class="section-subtitle">Environment (Optional)</h3>
+		<h3 class="section-subtitle">{$LL.admin_policies_environment_optional()}</h3>
 		<div class="form-row-inline">
 			<div class="form-group">
-				<label for="sim-env-ip" class="form-label">Client IP</label>
+				<label for="sim-env-ip" class="form-label">{$LL.admin_policies_client_ip()}</label>
 				<input
 					id="sim-env-ip"
 					type="text"
@@ -985,7 +1277,7 @@
 				/>
 			</div>
 			<div class="form-group">
-				<label for="sim-env-country" class="form-label">Country Code</label>
+				<label for="sim-env-country" class="form-label">{$LL.admin_policies_country_code()}</label>
 				<input
 					id="sim-env-country"
 					type="text"
@@ -1005,22 +1297,34 @@
 		>
 			<div class="result-header">
 				<i class={simulationResult.allowed ? 'i-ph-check-circle' : 'i-ph-x-circle'}></i>
-				<span class="result-text">{simulationResult.allowed ? 'ALLOWED' : 'DENIED'}</span>
+				<span class="result-text"
+					>{simulationResult.allowed
+						? $LL.admin_policies_result_allowed()
+						: $LL.admin_policies_result_denied()}</span
+				>
 			</div>
 			<div class="result-details">
-				<p><strong>Reason:</strong> {simulationResult.reason}</p>
+				<p><strong>{$LL.admin_policies_reason_label()}</strong> {simulationResult.reason}</p>
 				{#if simulationResult.decided_by}
-					<p><strong>Decided by:</strong> {simulationResult.decided_by}</p>
+					<p>
+						<strong>{$LL.admin_policies_decided_by_label()}</strong>
+						{simulationResult.decided_by}
+					</p>
 				{/if}
-				<p><strong>Rules evaluated:</strong> {simulationResult.evaluated_rules}</p>
+				<p>
+					<strong>{$LL.admin_policies_rules_evaluated_label()}</strong>
+					{simulationResult.evaluated_rules}
+				</p>
 			</div>
 		</div>
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showSimulateDialog = false)}>Close</button>
+		<button class="btn btn-secondary" onclick={() => (showSimulateDialog = false)}
+			>{$LL.admin_policies_close()}</button
+		>
 		<button class="btn btn-primary" onclick={runSimulation} disabled={simulating}>
-			{simulating ? 'Simulating...' : 'Run Simulation'}
+			{simulating ? $LL.admin_policies_simulating() : $LL.admin_policies_run_simulation()}
 		</button>
 	{/snippet}
 </Modal>

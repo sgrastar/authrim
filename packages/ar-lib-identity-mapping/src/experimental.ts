@@ -12,7 +12,7 @@ export {
   adaptScimUserPreview,
 } from './adapters';
 export { previewCsvDryRun } from './previews/csv-dry-run';
-export { previewOutboundRelease } from './previews/outbound-release';
+export { previewDestinationRelease } from './previews/destination-release';
 export type {
   CsvPreviewAdapterInput,
   OidcClaimsPreviewAdapterInput,
@@ -33,15 +33,15 @@ export type {
   AttributeReleaseConsentPreviewInput,
   OidcAdvancedClaimConstraint,
   OidcConstraintPreview,
-  OutboundPreviewDestination,
-  OutboundPreviewProtocol,
-  OutboundReleasePreviewInput,
-  OutboundReleasePreviewItem,
-  OutboundReleasePreviewResult,
-  OutboundReleaseValueInput,
+  DestinationReleasePreviewDestination,
+  DestinationPreviewProtocol,
+  DestinationReleasePreviewInput,
+  DestinationReleasePreviewItem,
+  DestinationReleasePreviewResult,
+  DestinationReleaseValueInput,
   ReleaseDecision,
   ReleaseLegalBasis,
   ReleaseReason,
   SamlRequestedAttributeConstraint,
   SamlRequestedAttributePreview,
-} from './previews/outbound-release';
+} from './previews/destination-release';

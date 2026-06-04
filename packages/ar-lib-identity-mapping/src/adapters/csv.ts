@@ -20,7 +20,7 @@ export function adaptCsvPreview(input: CsvPreviewAdapterInput): AdapterResult<Ma
   const sourceValues: SourceValueEnvelope[] = Object.entries(input.columnToPath).map(
     ([columnName, path]) => ({
       value: input.row[columnName],
-      sourceRef: { side: 'inbound', namespace: 'csv', path },
+      sourceRef: { side: 'source', namespace: 'csv', path },
       metadata: { sourceType: 'csv', columnName, csvHeaderName: columnName },
     })
   );

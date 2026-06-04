@@ -7,6 +7,7 @@
 	} from '$lib/api/admin-settings';
 	import { SettingsScopeSelector } from '$lib/components/admin';
 	import { settingsContext, type SettingScopeLevel } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// Category scope configuration (which categories are available at which scope)
 	const CATEGORY_SCOPES: Record<string, SettingScopeLevel[]> = {
@@ -130,7 +131,7 @@
 			const result = await adminSettingsAPI.getCategories();
 			categories = result.categories;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load categories';
+			error = err instanceof Error ? err.message : $LL.admin_settings_error_load_categories();
 		} finally {
 			loading = false;
 		}
@@ -138,16 +139,16 @@
 </script>
 
 <svelte:head>
-	<title>Settings - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_settings_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Settings</h1>
+			<h1 class="page-title">{$LL.admin_settings_title()}</h1>
 			<p class="page-description">
-				Configure system settings, security policies, and feature flags
+				{$LL.admin_settings_description()}
 			</p>
 		</div>
 	</div>
@@ -164,7 +165,7 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading categories...</p>
+			<p>{$LL.admin_settings_loading_categories()}</p>
 		</div>
 	{:else}
 		<!-- Category Grid -->
@@ -175,17 +176,17 @@
 					<div class="icon-card-header">
 						<span class="icon-card-icon">🔏</span>
 						<div>
-							<h2 class="icon-card-title">Signing Keys</h2>
+							<h2 class="icon-card-title">{$LL.admin_settings_signing_keys()}</h2>
 							<span
 								class="icon-card-badge"
 								style="background: var(--warning-light); color: var(--warning);"
 							>
-								Special
+								{$LL.admin_settings_special()}
 							</span>
 						</div>
 					</div>
 					<p class="icon-card-description">
-						Manage JWT signing keys for token issuance and rotation
+						{$LL.admin_settings_signing_keys_desc()}
 					</p>
 				</a>
 			{/if}
@@ -196,16 +197,16 @@
 					<div class="icon-card-header">
 						<span class="icon-card-icon">🗂️</span>
 						<div>
-							<h2 class="icon-card-title">Sharding</h2>
+							<h2 class="icon-card-title">{$LL.admin_settings_sharding()}</h2>
 							<span
 								class="icon-card-badge"
 								style="background: var(--warning-light); color: var(--warning);"
 							>
-								Special
+								{$LL.admin_settings_special()}
 							</span>
 						</div>
 					</div>
-					<p class="icon-card-description">Configure shard counts for load distribution</p>
+					<p class="icon-card-description">{$LL.admin_settings_sharding_desc()}</p>
 				</a>
 			{/if}
 
@@ -215,17 +216,17 @@
 					<div class="icon-card-header">
 						<span class="icon-card-icon">💾</span>
 						<div>
-							<h2 class="icon-card-title">Cache Mode</h2>
+							<h2 class="icon-card-title">{$LL.admin_settings_cache_mode()}</h2>
 							<span
 								class="icon-card-badge"
 								style="background: var(--warning-light); color: var(--warning);"
 							>
-								Special
+								{$LL.admin_settings_special()}
 							</span>
 						</div>
 					</div>
 					<p class="icon-card-description">
-						Configure cache TTL for client metadata and related data
+						{$LL.admin_settings_cache_mode_desc()}
 					</p>
 				</a>
 			{/if}
@@ -236,17 +237,17 @@
 					<div class="icon-card-header">
 						<span class="icon-card-icon">🧭</span>
 						<div>
-							<h2 class="icon-card-title">Runtime Profiles</h2>
+							<h2 class="icon-card-title">{$LL.admin_settings_runtime_profiles()}</h2>
 							<span
 								class="icon-card-badge"
 								style="background: var(--warning-light); color: var(--warning);"
 							>
-								Special
+								{$LL.admin_settings_special()}
 							</span>
 						</div>
 					</div>
 					<p class="icon-card-description">
-						Manage storage, audit, and residency runtime profiles, including audit sinks
+						{$LL.admin_settings_runtime_profiles_desc()}
 					</p>
 				</a>
 			{/if}
@@ -257,17 +258,17 @@
 					<div class="icon-card-header">
 						<span class="icon-card-icon">🧪</span>
 						<div>
-							<h2 class="icon-card-title">Diagnostic Logging</h2>
+							<h2 class="icon-card-title">{$LL.admin_settings_diagnostic_logging()}</h2>
 							<span
 								class="icon-card-badge"
 								style="background: var(--warning-light); color: var(--warning);"
 							>
-								Special
+								{$LL.admin_settings_special()}
 							</span>
 						</div>
 					</div>
 					<p class="icon-card-description">
-						Export conformance and diagnostic logs for audits and debugging
+						{$LL.admin_settings_diagnostic_logging_desc()}
 					</p>
 				</a>
 			{/if}
@@ -282,13 +283,13 @@
 						<div>
 							<h2 class="icon-card-title">{category.label}</h2>
 							{#if isReadOnly}
-								<span class="icon-card-badge">Read-only</span>
+								<span class="icon-card-badge">{$LL.admin_settings_readonly()}</span>
 							{:else}
 								<span
 									class="icon-card-badge"
 									style="background: transparent; color: var(--text-muted);"
 								>
-									{category.settingsCount} setting{category.settingsCount !== 1 ? 's' : ''}
+									{$LL.admin_settings_count({ count: category.settingsCount })}
 								</span>
 							{/if}
 						</div>

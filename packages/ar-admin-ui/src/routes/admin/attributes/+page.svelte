@@ -6,12 +6,11 @@
 		type UserAttribute,
 		type AttributeStats,
 		type AttributeSourceType,
-		getSourceTypeLabel,
-		isAttributeExpired,
-		formatExpirationStatus
+		isAttributeExpired
 	} from '$lib/api/admin-attributes';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	// State
 	let attributes: UserAttribute[] = $state([]);
@@ -60,6 +59,7 @@
 	// Cleanup dialog state
 	let showCleanupDialog = $state(false);
 	let cleaningUp = $state(false);
+	let cleanupError = $state('');
 	let cleanupResult: { deleted_count: number } | null = $state(null);
 	let loadedTenantId = $state('');
 
@@ -81,8 +81,7 @@
 			attributes = response.attributes;
 			pagination = response.pagination;
 		} catch (err) {
-			console.error('Failed to load attributes:', err);
-			error = err instanceof Error ? err.message : 'Failed to load attributes';
+			error = err instanceof Error ? err.message : $LL.admin_attributes_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -91,8 +90,8 @@
 	async function loadStats() {
 		try {
 			stats = await adminAttributesAPI.getStats();
-		} catch (err) {
-			console.error('Failed to load stats:', err);
+		} catch {
+			stats = null;
 		}
 	}
 
@@ -131,7 +130,7 @@
 
 	async function submitCreate() {
 		if (!createForm.user_id || !createForm.attribute_name) {
-			createError = 'User ID and attribute name are required';
+			createError = $LL.admin_attributes_user_and_name_required();
 			return;
 		}
 
@@ -153,8 +152,7 @@
 			loadAttributes();
 			loadStats();
 		} catch (err) {
-			console.error('Failed to create attribute:', err);
-			createError = err instanceof Error ? err.message : 'Failed to create attribute';
+			createError = err instanceof Error ? err.message : $LL.admin_attributes_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -180,8 +178,7 @@
 			loadAttributes();
 			loadStats();
 		} catch (err) {
-			console.error('Failed to delete attribute:', err);
-			deleteError = err instanceof Error ? err.message : 'Failed to delete attribute';
+			deleteError = err instanceof Error ? err.message : $LL.admin_attributes_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -189,6 +186,7 @@
 
 	async function cleanupExpired() {
 		cleaningUp = true;
+		cleanupError = '';
 		cleanupResult = null;
 
 		try {
@@ -196,14 +194,14 @@
 			loadAttributes();
 			loadStats();
 		} catch (err) {
-			console.error('Failed to cleanup expired attributes:', err);
+			cleanupError = err instanceof Error ? err.message : $LL.admin_attributes_cleanup_failed();
 		} finally {
 			cleaningUp = false;
 		}
 	}
 
 	function formatDate(timestamp: number): string {
-		return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+		return new Date(timestamp * 1000).toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US', {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric',
@@ -225,6 +223,35 @@
 		}
 	}
 
+	function formatSourceType(sourceType: AttributeSourceType): string {
+		switch (sourceType) {
+			case 'vc':
+				return $LL.admin_attributes_source_vc();
+			case 'saml':
+				return $LL.admin_attributes_source_saml();
+			case 'manual':
+				return $LL.admin_attributes_source_manual();
+			default:
+				return sourceType;
+		}
+	}
+
+	function formatExpirationStatusLocalized(expiresAt: number | null): string {
+		if (!expiresAt) return $LL.admin_attributes_never_expires();
+		const now = Date.now();
+		const expiresAtMs = expiresAt * 1000;
+		if (expiresAtMs < now) {
+			return $LL.admin_attributes_expired();
+		}
+		const daysUntil = Math.ceil((expiresAtMs - now) / (1000 * 60 * 60 * 24));
+		if (daysUntil <= 7) {
+			return daysUntil === 1
+				? $LL.admin_attributes_expires_in_one_day()
+				: $LL.admin_attributes_expires_in_days({ count: daysUntil });
+		}
+		return new Date(expiresAtMs).toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+	}
+
 	async function loadAbacStatus() {
 		abacLoading = true;
 		abacError = '';
@@ -234,8 +261,7 @@
 			abacEnabled = settings.values['feature.enable_abac'] === true;
 			featureFlagsVersion = settings.version;
 		} catch (err) {
-			console.error('Failed to load ABAC status:', err);
-			abacError = 'Failed to load ABAC status';
+			abacError = err instanceof Error ? err.message : $LL.admin_attributes_abac_load_failed();
 		} finally {
 			abacLoading = false;
 		}
@@ -262,8 +288,7 @@
 			abacEnabled = newValue;
 			featureFlagsVersion = result.version;
 		} catch (err) {
-			console.error('Failed to update ABAC status:', err);
-			abacError = err instanceof Error ? err.message : 'Failed to update ABAC status';
+			abacError = err instanceof Error ? err.message : $LL.admin_attributes_abac_update_failed();
 			await loadAbacStatus();
 		} finally {
 			abacSaving = false;
@@ -286,7 +311,7 @@
 </script>
 
 <svelte:head>
-	<title>Attribute-Based Access Control - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_attributes_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
@@ -295,11 +320,12 @@
 		<div class="flex items-start">
 			<span class="i-ph-info text-blue-600 text-xl mr-3 mt-0.5"></span>
 			<div>
-				<h3 class="font-semibold text-blue-900 mb-1">End User ABAC</h3>
+				<h3 class="font-semibold text-blue-900 mb-1">{$LL.admin_attributes_info_title()}</h3>
 				<p class="text-sm text-blue-800">
-					This page manages attributes for <strong>End Users</strong>. For
+					{$LL.admin_attributes_info_prefix()}
+					<strong>End Users</strong>{$LL.admin_attributes_info_middle()}
 					<strong>Admin Operator</strong>
-					attribute management, visit
+					{$LL.admin_attributes_info_suffix()}
 					<a href="/admin/admin-abac" class="underline hover:text-blue-900">Admin ABAC</a>.
 				</p>
 			</div>
@@ -309,10 +335,9 @@
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Attribute-Based Access Control</h1>
+			<h1 class="page-title">{$LL.admin_attributes_title()}</h1>
 			<p class="page-description">
-				Control access based on user attributes like subscription tier, location, or verified
-				credentials.
+				{$LL.admin_attributes_description()}
 			</p>
 		</div>
 		<div class="page-actions">
@@ -322,11 +347,11 @@
 				disabled={!abacEnabled}
 			>
 				<i class="i-ph-trash"></i>
-				Cleanup Expired
+				{$LL.admin_attributes_cleanup_expired()}
 			</button>
 			<button class="btn btn-primary" onclick={openCreateDialog} disabled={!abacEnabled}>
 				<i class="i-ph-plus"></i>
-				Add Attribute
+				{$LL.admin_attributes_add_attribute()}
 			</button>
 		</div>
 	</div>
@@ -335,15 +360,14 @@
 	<div class="panel feature-toggle-panel">
 		<div class="feature-toggle-row">
 			<div class="feature-toggle-info">
-				<h3 class="feature-toggle-title">ABAC Engine</h3>
+				<h3 class="feature-toggle-title">{$LL.admin_attributes_abac_engine()}</h3>
 				<p class="feature-toggle-description">
-					Enable Attribute-Based Access Control. When enabled, user attributes can be used in policy
-					conditions.
+					{$LL.admin_attributes_abac_description()}
 				</p>
 			</div>
 			<div class="feature-toggle-control">
 				{#if abacLoading}
-					<span class="loading-text">Loading...</span>
+					<span class="loading-text">{$LL.admin_attributes_loading()}</span>
 				{:else}
 					<ToggleSwitch checked={abacEnabled} disabled={abacSaving} onchange={toggleAbac} />
 				{/if}
@@ -353,21 +377,23 @@
 			<div class="alert alert-error alert-sm">{abacError}</div>
 		{/if}
 		{#if abacSaving}
-			<div class="saving-indicator">Saving...</div>
+			<div class="saving-indicator">{$LL.admin_attributes_saving()}</div>
 		{/if}
 	</div>
 
 	{#if !abacEnabled && !abacLoading}
 		<div class="alert alert-warning">
-			<strong>ABAC is disabled.</strong> Enable it above to manage user attributes. When disabled, attribute-based
-			conditions in policies will not be evaluated.
+			<strong>{$LL.admin_attributes_abac_disabled_title()}</strong>
+			{$LL.admin_attributes_abac_disabled_description()}
 		</div>
 	{/if}
 
 	{#if error}
 		<div class="alert alert-error">
 			<span>{error}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadAttributes}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={loadAttributes}
+				>{$LL.admin_attributes_retry()}</button
+			>
 		</div>
 	{/if}
 
@@ -376,31 +402,31 @@
 		<div class="stats-grid">
 			<div class="stat-card">
 				<span class="stat-value">{stats.total}</span>
-				<span class="stat-label">Total Attributes</span>
+				<span class="stat-label">{$LL.admin_attributes_total_attributes()}</span>
 			</div>
 			<div class="stat-card">
 				<span class="stat-value">{stats.active}</span>
-				<span class="stat-label">Active</span>
+				<span class="stat-label">{$LL.admin_attributes_active()}</span>
 			</div>
 			<div class="stat-card stat-card-warning">
 				<span class="stat-value">{stats.expired}</span>
-				<span class="stat-label">Expired</span>
+				<span class="stat-label">{$LL.admin_attributes_expired()}</span>
 			</div>
 			<div class="stat-card">
 				<span class="stat-value">{stats.unique_users}</span>
-				<span class="stat-label">Users with Attributes</span>
+				<span class="stat-label">{$LL.admin_attributes_users_with_attributes()}</span>
 			</div>
 		</div>
 
 		<!-- Source Distribution -->
 		{#if stats.by_source.length > 0}
 			<div class="panel">
-				<h3 class="panel-title">By Source</h3>
+				<h3 class="panel-title">{$LL.admin_attributes_by_source()}</h3>
 				<div class="distribution-bars">
 					{#each stats.by_source as source (source.source_type)}
 						<div class="distribution-item">
 							<span class={getSourceBadgeClass(source.source_type)}>
-								{getSourceTypeLabel(source.source_type as AttributeSourceType)}
+								{formatSourceType(source.source_type as AttributeSourceType)}
 							</span>
 							<div class="bar-container">
 								<div
@@ -423,7 +449,7 @@
 				<input
 					type="text"
 					class="form-input"
-					placeholder="Search..."
+					placeholder={$LL.admin_attributes_search_placeholder()}
 					bind:value={filterSearch}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
@@ -432,7 +458,7 @@
 				<input
 					type="text"
 					class="form-input"
-					placeholder="User ID"
+					placeholder={$LL.admin_attributes_user_id()}
 					bind:value={filterUserId}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
@@ -441,25 +467,33 @@
 				<input
 					type="text"
 					class="form-input"
-					placeholder="Attribute name"
+					placeholder={$LL.admin_attributes_attribute_name()}
 					bind:value={filterAttributeName}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
 			</div>
 			<div class="form-group">
 				<select class="form-select" bind:value={filterSourceType} onchange={applyFilters}>
-					<option value="">All Sources</option>
-					<option value="vc">Verifiable Credential</option>
-					<option value="saml">SAML IdP</option>
-					<option value="manual">Manual</option>
+					<option value="">{$LL.admin_attributes_all_sources()}</option>
+					<option value="vc">{$LL.admin_attributes_source_vc()}</option>
+					<option value="saml">{$LL.admin_attributes_source_saml()}</option>
+					<option value="manual">{$LL.admin_attributes_source_manual()}</option>
 				</select>
 			</div>
 			<div class="form-group" style="min-width: 180px;">
-				<ToggleSwitch bind:checked={includeExpired} label="Include expired" size="sm" />
+				<ToggleSwitch
+					bind:checked={includeExpired}
+					label={$LL.admin_attributes_include_expired()}
+					size="sm"
+				/>
 			</div>
 			<div class="form-group">
-				<button class="btn btn-primary" onclick={applyFilters}>Apply</button>
-				<button class="btn btn-secondary" onclick={clearFilters}>Clear</button>
+				<button class="btn btn-primary" onclick={applyFilters}
+					>{$LL.admin_attributes_apply()}</button
+				>
+				<button class="btn btn-secondary" onclick={clearFilters}
+					>{$LL.admin_attributes_clear()}</button
+				>
 			</div>
 		</div>
 	</div>
@@ -468,13 +502,15 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_attributes_loading()}</p>
 		</div>
 	{:else if attributes.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No attributes found.</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Add Attribute</button>
+				<p class="empty-state-description">{$LL.admin_attributes_empty()}</p>
+				<button class="btn btn-primary" onclick={openCreateDialog}
+					>{$LL.admin_attributes_add_attribute()}</button
+				>
 			</div>
 		</div>
 	{:else}
@@ -482,13 +518,13 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>User</th>
-						<th>Attribute</th>
-						<th>Value</th>
-						<th>Source</th>
-						<th>Verified</th>
-						<th>Expiration</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_attributes_user()}</th>
+						<th>{$LL.admin_attributes_attribute()}</th>
+						<th>{$LL.admin_attributes_value()}</th>
+						<th>{$LL.admin_attributes_source()}</th>
+						<th>{$LL.admin_attributes_verified()}</th>
+						<th>{$LL.admin_attributes_expiration()}</th>
+						<th class="text-right">{$LL.admin_attributes_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -514,7 +550,7 @@
 							</td>
 							<td>
 								<span class={getSourceBadgeClass(attr.source_type)}>
-									{getSourceTypeLabel(attr.source_type as AttributeSourceType)}
+									{formatSourceType(attr.source_type as AttributeSourceType)}
 								</span>
 							</td>
 							<td class="muted nowrap">{formatDate(attr.verified_at)}</td>
@@ -525,12 +561,12 @@
 										attr.expires_at * 1000 - Date.now() < 7 * 24 * 60 * 60 * 1000 &&
 										!isAttributeExpired(attr)}
 								>
-									{formatExpirationStatus(attr.expires_at)}
+									{formatExpirationStatusLocalized(attr.expires_at)}
 								</span>
 							</td>
 							<td class="text-right">
 								<button class="btn btn-danger btn-sm" onclick={(e) => openDeleteDialog(attr, e)}>
-									Delete
+									{$LL.admin_attributes_delete()}
 								</button>
 							</td>
 						</tr>
@@ -547,18 +583,21 @@
 					disabled={pagination.page === 1}
 					onclick={() => goToPage(pagination.page - 1)}
 				>
-					Previous
+					{$LL.admin_attributes_previous()}
 				</button>
 				<span class="pagination-info">
-					Page {pagination.page} of {pagination.total_pages}
-					<span class="muted">({pagination.total} total)</span>
+					{$LL.admin_attributes_page_of({
+						page: pagination.page,
+						totalPages: pagination.total_pages
+					})}
+					<span class="muted">{$LL.admin_attributes_total_count({ count: pagination.total })}</span>
 				</span>
 				<button
 					class="btn btn-secondary btn-sm"
 					disabled={pagination.page === pagination.total_pages}
 					onclick={() => goToPage(pagination.page + 1)}
 				>
-					Next
+					{$LL.admin_attributes_next()}
 				</button>
 			</div>
 		{/if}
@@ -569,7 +608,7 @@
 <Modal
 	open={showCreateDialog}
 	onClose={() => (showCreateDialog = false)}
-	title="Add User Attribute"
+	title={$LL.admin_attributes_add_user_attribute()}
 	size="md"
 >
 	{#if createError}
@@ -577,7 +616,7 @@
 	{/if}
 
 	<div class="form-group">
-		<label for="user-id" class="form-label">User ID</label>
+		<label for="user-id" class="form-label">{$LL.admin_attributes_user_id()}</label>
 		<input
 			id="user-id"
 			type="text"
@@ -588,7 +627,7 @@
 	</div>
 
 	<div class="form-group">
-		<label for="attr-name" class="form-label">Attribute Name</label>
+		<label for="attr-name" class="form-label">{$LL.admin_attributes_attribute_name_title()}</label>
 		<input
 			id="attr-name"
 			type="text"
@@ -599,7 +638,7 @@
 	</div>
 
 	<div class="form-group">
-		<label for="attr-value" class="form-label">Attribute Value</label>
+		<label for="attr-value" class="form-label">{$LL.admin_attributes_attribute_value()}</label>
 		<input
 			id="attr-value"
 			type="text"
@@ -612,14 +651,14 @@
 	<div class="form-group">
 		<ToggleSwitch
 			bind:checked={createForm.has_expiry}
-			label="Set expiration"
-			description="Set an expiration date for this attribute"
+			label={$LL.admin_attributes_set_expiration()}
+			description={$LL.admin_attributes_set_expiration_description()}
 		/>
 	</div>
 
 	{#if createForm.has_expiry}
 		<div class="form-group">
-			<label for="expires-at" class="form-label">Expires At</label>
+			<label for="expires-at" class="form-label">{$LL.admin_attributes_expires_at()}</label>
 			<input
 				id="expires-at"
 				type="datetime-local"
@@ -630,9 +669,11 @@
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}> Cancel </button>
+		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}>
+			{$LL.admin_attributes_cancel()}
+		</button>
 		<button class="btn btn-primary" onclick={submitCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create'}
+			{creating ? $LL.admin_attributes_creating() : $LL.admin_attributes_create()}
 		</button>
 	{/snippet}
 </Modal>
@@ -641,7 +682,7 @@
 <Modal
 	open={showDeleteDialog && !!attributeToDelete}
 	onClose={() => (showDeleteDialog = false)}
-	title="Delete Attribute"
+	title={$LL.admin_attributes_delete_attribute()}
 	size="md"
 >
 	{#if deleteError}
@@ -649,16 +690,20 @@
 	{/if}
 
 	<p class="modal-description">
-		Are you sure you want to delete the attribute
-		<strong>{attributeToDelete?.attribute_name ?? ''}</strong> for user
-		<strong>{(attributeToDelete?.user_email || attributeToDelete?.user_id) ?? ''}</strong>?
+		{$LL.admin_attributes_delete_confirm_prefix()}
+		<strong>{attributeToDelete?.attribute_name ?? ''}</strong>
+		{$LL.admin_attributes_delete_confirm_middle()}
+		<strong>{(attributeToDelete?.user_email || attributeToDelete?.user_id) ?? ''}</strong
+		>{$LL.admin_attributes_delete_confirm_suffix()}
 	</p>
-	<p class="danger-text">This action cannot be undone.</p>
+	<p class="danger-text">{$LL.admin_attributes_cannot_be_undone()}</p>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}> Cancel </button>
+		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}>
+			{$LL.admin_attributes_cancel()}
+		</button>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete'}
+			{deleting ? $LL.admin_attributes_deleting() : $LL.admin_attributes_delete()}
 		</button>
 	{/snippet}
 </Modal>
@@ -667,30 +712,40 @@
 <Modal
 	open={showCleanupDialog}
 	onClose={() => (showCleanupDialog = false)}
-	title="Cleanup Expired Attributes"
+	title={$LL.admin_attributes_cleanup_expired_title()}
 	size="md"
 >
+	{#if cleanupError}
+		<div class="alert alert-error">{cleanupError}</div>
+	{/if}
+
 	{#if cleanupResult}
 		<div class="alert alert-success">
 			<p>
-				Successfully deleted <strong>{cleanupResult.deleted_count}</strong> expired attributes.
+				{$LL.admin_attributes_cleanup_success_prefix()}
+				<strong>{cleanupResult.deleted_count}</strong>
+				{$LL.admin_attributes_cleanup_success_suffix()}
 			</p>
 		</div>
 	{:else}
 		<p class="modal-description">
-			This will permanently delete all expired attributes from the system.
+			{$LL.admin_attributes_cleanup_description()}
 			{#if stats}
-				Currently there are <strong>{stats.expired}</strong> expired attributes.
+				{$LL.admin_attributes_cleanup_current_prefix()}
+				<strong>{stats.expired}</strong>
+				{$LL.admin_attributes_cleanup_current_suffix()}
 			{/if}
 		</p>
-		<p class="danger-text">This action cannot be undone.</p>
+		<p class="danger-text">{$LL.admin_attributes_cannot_be_undone()}</p>
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showCleanupDialog = false)}> Close </button>
+		<button class="btn btn-secondary" onclick={() => (showCleanupDialog = false)}>
+			{$LL.admin_attributes_close()}
+		</button>
 		{#if !cleanupResult}
 			<button class="btn btn-danger" onclick={cleanupExpired} disabled={cleaningUp}>
-				{cleaningUp ? 'Cleaning up...' : 'Delete Expired'}
+				{cleaningUp ? $LL.admin_attributes_cleaning_up() : $LL.admin_attributes_delete_expired()}
 			</button>
 		{/if}
 	{/snippet}

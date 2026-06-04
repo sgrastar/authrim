@@ -16,13 +16,13 @@
 	} from '$lib/api/admin-identity-mapping';
 	import {
 		createDestinationConsentSettingsDraft,
-		summarizeDestinationConsentSettings,
 		type DestinationConsentSettingsDraft
 	} from '$lib/admin/identity-mapping-profile-settings';
 	import {
 		destinationTemplates,
 		type DestinationTemplate
 	} from '$lib/admin/identity-mapping-destination-templates';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type EditorKind = 'source' | 'destination';
 	type CsvCreateMode = 'upload' | 'manual';
@@ -112,32 +112,50 @@
 	const requiredMissingPolicyOptions = ['error', 'review', 'omit'];
 	const csvSourceProfileMaxBytes = 2 * 1024 * 1024;
 	const delimiterOptions = [
-		{ value: 'auto', label: 'Auto' },
-		{ value: ',', label: 'Comma' },
-		{ value: '\\t', label: 'Tab' },
-		{ value: ';', label: 'Semicolon' },
-		{ value: '|', label: 'Pipe' }
+		{ value: 'auto', label: $LL.admin_identity_mapping_profile_edit_delimiter_auto() },
+		{ value: ',', label: $LL.admin_identity_mapping_profile_edit_delimiter_comma() },
+		{ value: '\\t', label: $LL.admin_identity_mapping_profile_edit_delimiter_tab() },
+		{ value: ';', label: $LL.admin_identity_mapping_profile_edit_delimiter_semicolon() },
+		{ value: '|', label: $LL.admin_identity_mapping_profile_edit_delimiter_pipe() }
 	];
 	const customOptionValue = '__custom__';
 	const persistentNameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
 	const samlNameIdFormatOptions = [
-		{ value: persistentNameIdFormat, label: 'Persistent' },
+		{
+			value: persistentNameIdFormat,
+			label: $LL.admin_identity_mapping_profile_edit_nameid_persistent()
+		},
 		{
 			value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
-			label: 'Email address'
+			label: $LL.admin_identity_mapping_profile_edit_nameid_email_address()
 		},
-		{ value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient', label: 'Transient' },
-		{ value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified', label: 'Unspecified' },
-		{ value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:entity', label: 'Entity' },
-		{ value: customOptionValue, label: 'Custom' }
+		{
+			value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient',
+			label: $LL.admin_identity_mapping_profile_edit_nameid_transient()
+		},
+		{
+			value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+			label: $LL.admin_identity_mapping_profile_edit_nameid_unspecified()
+		},
+		{
+			value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:entity',
+			label: $LL.admin_identity_mapping_profile_edit_nameid_entity()
+		},
+		{ value: customOptionValue, label: $LL.admin_identity_mapping_profile_edit_nameid_custom() }
 	];
 	const samlNameIdValueOptions = [
-		{ value: 'subject_identifier', label: 'Subject identifier' },
-		{ value: 'email', label: 'Email' },
+		{
+			value: 'subject_identifier',
+			label: $LL.admin_identity_mapping_profile_edit_nameid_subject_identifier()
+		},
+		{ value: 'email', label: $LL.admin_identity_mapping_profile_edit_nameid_email() },
 		{ value: 'eduPersonTargetedID', label: 'eduPersonTargetedID' },
 		{ value: 'eduPersonPrincipalName', label: 'eduPersonPrincipalName' },
-		{ value: 'pairwise_id', label: 'Pairwise ID' },
-		{ value: customOptionValue, label: 'Custom field' }
+		{ value: 'pairwise_id', label: $LL.admin_identity_mapping_profile_edit_nameid_pairwise_id() },
+		{
+			value: customOptionValue,
+			label: $LL.admin_identity_mapping_profile_edit_nameid_custom_field()
+		}
 	];
 	let editorKind = $state<EditorKind>('source');
 	let loading = $state(true);
@@ -319,7 +337,10 @@
 			attributeFields = loadedAttributeFields.attributeFields;
 			applyRequestedProfile();
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to load profile editor';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -336,7 +357,7 @@
 			const sourceProfile = sourceProfiles.find((item) => item.id === profileId);
 			const schema = sourceProfile?.version?.schema;
 			if (!sourceProfile || !schema) {
-				message = 'Source profile version schema is not available for editing.';
+				message = $LL.admin_identity_mapping_profile_edit_source_schema_unavailable();
 				return;
 			}
 			editingSourceProfileId = sourceProfile.id;
@@ -353,14 +374,16 @@
 			parsedCsvParserOptions = schema.parser ?? {};
 			parsedCsvWarningSummary = sourceProfile.version?.warningSummary ?? {};
 			blockingWarningsConfirmed = getBlockingWarningCount(parsedCsvSchema) === 0;
-			message = `Editing ${sourceProfile.displayName}. Saving creates a new draft version.`;
+			message = $LL.admin_identity_mapping_profile_edit_editing_message({
+				name: sourceProfile.displayName
+			});
 			return;
 		}
 
 		const destinationProfile = destinationProfiles.find((item) => item.id === profileId);
 		const schema = destinationProfile?.version?.schema;
 		if (!destinationProfile || !schema) {
-			message = 'Destination profile version schema is not available for editing.';
+			message = $LL.admin_identity_mapping_profile_edit_destination_schema_unavailable();
 			return;
 		}
 		editingDestinationProfileId = destinationProfile.id;
@@ -375,7 +398,9 @@
 		loadDestinationSchemaDraft(schema);
 		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
 		consentDraft = createDestinationConsentSettingsDraft(destinationProfile.id);
-		message = `Editing ${destinationProfile.displayName}. Saving creates a new draft version.`;
+		message = $LL.admin_identity_mapping_profile_edit_editing_message({
+			name: destinationProfile.displayName
+		});
 	}
 
 	function getInputValue(event: Event): string {
@@ -442,11 +467,13 @@
 
 	async function parseSelectedCsv() {
 		if (!selectedCsvFile) {
-			message = 'Choose a CSV file before parsing.';
+			message = $LL.admin_identity_mapping_profile_edit_choose_csv();
 			return;
 		}
 		if (selectedCsvFile.size > csvSourceProfileMaxBytes) {
-			message = `CSV source profile files must be ${formatFileSize(csvSourceProfileMaxBytes)} or smaller.`;
+			message = $LL.admin_identity_mapping_profile_edit_csv_size({
+				size: formatFileSize(csvSourceProfileMaxBytes)
+			});
 			return;
 		}
 		parsingCsv = true;
@@ -477,7 +504,10 @@
 				csvProfileKey = normalizeProfileKey(csvDisplayName || selectedCsvFile.name);
 			csvDetailTab = 'columns';
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to parse CSV';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_parse_failed();
 		} finally {
 			parsingCsv = false;
 		}
@@ -486,7 +516,7 @@
 	async function saveCsvProfile() {
 		const schema = activeCsvSchema;
 		if (!schema || !canSaveCsvDraft) {
-			message = 'Parse a CSV file or add manual columns before saving.';
+			message = $LL.admin_identity_mapping_profile_edit_save_csv_required();
 			return;
 		}
 		savingCsv = true;
@@ -515,12 +545,17 @@
 			const response = editingSourceProfileId
 				? await adminIdentityMappingAPI.updateSourceProfile(editingSourceProfileId, request)
 				: await adminIdentityMappingAPI.createSourceProfile(request);
-			message = `Saved ${response.result.displayName}. Review and activate it before Flow Editor use.`;
+			message = $LL.admin_identity_mapping_profile_edit_saved_review_activate({
+				name: response.result.displayName
+			});
 			editingSourceProfileId = response.result.id;
 			sourceProfileVersionId = response.result.version?.id ?? null;
 			sourceProfileVersionState = response.result.version?.lifecycleState ?? 'draft';
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to save CSV source profile';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_save_csv_failed();
 		} finally {
 			savingCsv = false;
 		}
@@ -528,7 +563,7 @@
 
 	async function saveDestinationProfile() {
 		if (!canSaveDestinationDraft) {
-			message = 'Complete the destination profile and confirm blocking release warnings.';
+			message = $LL.admin_identity_mapping_profile_edit_destination_required();
 			return;
 		}
 		savingDestination = true;
@@ -562,12 +597,17 @@
 						request
 					)
 				: await adminIdentityMappingAPI.createDestinationProfile(request);
-			message = `Saved ${response.result.displayName}. Review and activate it before Flow Editor use.`;
+			message = $LL.admin_identity_mapping_profile_edit_saved_review_activate({
+				name: response.result.displayName
+			});
 			editingDestinationProfileId = response.result.id;
 			destinationProfileVersionId = response.result.version?.id ?? null;
 			destinationProfileVersionState = response.result.version?.lifecycleState ?? 'draft';
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to save destination profile';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_save_destination_failed();
 		} finally {
 			savingDestination = false;
 		}
@@ -584,7 +624,7 @@
 					sourceProfileVersionId
 				);
 				sourceProfileVersionState = 'reviewed';
-				message = 'Source profile draft reviewed. Activate it before Flow Editor use.';
+				message = $LL.admin_identity_mapping_profile_edit_source_reviewed();
 				return;
 			}
 			if (
@@ -598,9 +638,12 @@
 				destinationProfileVersionId
 			);
 			destinationProfileVersionState = 'reviewed';
-			message = 'Destination profile draft reviewed. Activate it before Flow Editor use.';
+			message = $LL.admin_identity_mapping_profile_edit_destination_reviewed();
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to review profile draft';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_review_failed();
 		} finally {
 			reviewingProfile = false;
 		}
@@ -617,7 +660,7 @@
 					sourceProfileVersionId
 				);
 				sourceProfileVersionState = 'active';
-				message = 'Source profile version activated.';
+				message = $LL.admin_identity_mapping_profile_edit_source_activated();
 				return;
 			}
 			if (
@@ -631,9 +674,12 @@
 				destinationProfileVersionId
 			);
 			destinationProfileVersionState = 'active';
-			message = 'Destination profile version activated.';
+			message = $LL.admin_identity_mapping_profile_edit_destination_activated();
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to activate profile version';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_activate_failed();
 		} finally {
 			activatingProfile = false;
 		}
@@ -646,7 +692,9 @@
 		const label = editorKind === 'source' ? csvDisplayName : destinationDisplayName;
 		if (
 			!window.confirm(
-				`Delete ${label || 'this profile'}? This removes the profile and its versions.`
+				$LL.admin_identity_mapping_profile_edit_delete_confirm({
+					name: label || $LL.admin_identity_mapping_profile_edit_this_profile()
+				})
 			)
 		) {
 			return;
@@ -661,7 +709,10 @@
 			}
 			await goto('/admin/identity-mapping/profiles');
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to delete profile';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_delete_failed();
 		} finally {
 			deletingProfile = false;
 		}
@@ -691,11 +742,14 @@
 			groupDisplayName = '';
 			groupDescription = '';
 			groupFieldKeys = '';
-			message = 'Saved attribute group.';
+			message = $LL.admin_identity_mapping_profile_edit_saved_attribute_group();
 			const loaded = await adminIdentityMappingAPI.listAttributeGroups();
 			attributeGroups = loaded.attributeGroups;
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to save attribute group';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_save_attribute_group_failed();
 		} finally {
 			savingRegistry = false;
 		}
@@ -719,11 +773,14 @@
 			fieldValueType = 'string';
 			fieldClassification = 'internal';
 			fieldSurfaces = ['userinfo'];
-			message = 'Saved attribute field.';
+			message = $LL.admin_identity_mapping_profile_edit_saved_attribute_field();
 			const loaded = await adminIdentityMappingAPI.listAttributeFields();
 			attributeFields = loaded.attributeFields;
 		} catch (error) {
-			message = error instanceof Error ? error.message : 'Failed to save attribute field';
+			message =
+				error instanceof Error
+					? error.message
+					: $LL.admin_identity_mapping_profile_edit_save_attribute_field_failed();
 		} finally {
 			savingRegistry = false;
 		}
@@ -932,7 +989,7 @@
 		);
 		const schema = selected?.version?.schema;
 		if (!selected || !schema) {
-			message = 'Choose an existing destination profile with an editable schema.';
+			message = $LL.admin_identity_mapping_profile_edit_existing_schema_required();
 			return;
 		}
 
@@ -950,7 +1007,9 @@
 		loadDestinationSchemaDraft(schema);
 		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
 		consentDraft = createDestinationConsentSettingsDraft('destination-draft');
-		message = `Copied ${selected.displayName}. Save it as a new destination profile.`;
+		message = $LL.admin_identity_mapping_profile_edit_copied_existing({
+			name: selected.displayName
+		});
 	}
 
 	function copyDestinationTemplate(template: DestinationTemplate) {
@@ -961,7 +1020,9 @@
 		destinationProfileKey = uniqueProfileKey(template.profileKey, destinationProfiles);
 		loadDestinationSchemaDraft(template.schema);
 		previewTemplate = null;
-		message = `Copied template ${template.displayName}. Save it as a new destination profile.`;
+		message = $LL.admin_identity_mapping_profile_edit_copied_template({
+			name: template.displayName
+		});
 	}
 
 	function createManualColumn(
@@ -1445,8 +1506,46 @@
 		const trimmed = value.trim();
 		if (!trimmed) return undefined;
 		const parsed = JSON.parse(trimmed) as unknown;
-		if (!isRecord(parsed)) throw new Error(`${label} must be a JSON object`);
+		if (!isRecord(parsed))
+			throw new Error($LL.admin_identity_mapping_profile_edit_json_object_required({ label }));
 		return parsed;
+	}
+
+	function csvDetailTabLabel(tab: CsvDetailTab): string {
+		switch (tab) {
+			case 'summary':
+				return $LL.admin_identity_mapping_profile_edit_summary();
+			case 'parser':
+				return $LL.admin_identity_mapping_profile_edit_parser();
+			case 'columns':
+				return $LL.admin_identity_mapping_profile_edit_columns();
+			case 'warnings':
+				return $LL.admin_identity_mapping_profile_edit_warnings();
+		}
+	}
+
+	function localizedConsentSummary(settings: DestinationConsentSettingsDraft): string {
+		const scope =
+			settings.scope === 'tenant_default'
+				? $LL.admin_identity_mapping_profile_edit_tenant_default()
+				: $LL.admin_identity_mapping_profile_edit_client_override({
+						clientId: settings.clientId || '-'
+					});
+		const challenge =
+			settings.challengeExperience === 'login_flow'
+				? $LL.admin_identity_mapping_profile_edit_login_flow_challenge()
+				: $LL.admin_identity_mapping_profile_edit_step_up_challenge();
+		const guard = settings.regulatedPurposeGuard
+			? $LL.admin_identity_mapping_profile_edit_purpose_guard_enabled()
+			: $LL.admin_identity_mapping_profile_edit_purpose_guard_off();
+		return $LL.admin_identity_mapping_profile_edit_consent_summary({
+			scope,
+			legalBasis: settings.legalBasis,
+			mode: settings.consentMode,
+			purpose: settings.purpose,
+			challenge,
+			guard
+		});
 	}
 
 	function normalizeProfileKey(value: string): string {
@@ -1487,17 +1586,27 @@
 	}
 </script>
 
+<svelte:head>
+	<title>{$LL.admin_identity_mapping_profile_edit_head_title()}</title>
+</svelte:head>
+
 <div class="profile-editor-page">
-	<a class="back-link" href="/admin/identity-mapping/profiles">Back to profiles</a>
+	<a class="back-link" href="/admin/identity-mapping/profiles"
+		>{$LL.admin_identity_mapping_profile_edit_back()}</a
+	>
 
 	<div class="page-heading">
 		<div>
-			<h1>{editorKind === 'source' ? 'Source Profile' : 'Destination Profile'}</h1>
+			<h1>
+				{editorKind === 'source'
+					? $LL.admin_identity_mapping_profile_edit_source_title()
+					: $LL.admin_identity_mapping_profile_edit_destination_title()}
+			</h1>
 			<p class="summary">
 				{#if editorKind === 'source'}
-					Register source profiles from CSV files or manual column definitions.
+					{$LL.admin_identity_mapping_profile_edit_source_description()}
 				{:else}
-					Define destination release contracts, attribute groups, and consent settings.
+					{$LL.admin_identity_mapping_profile_edit_destination_description()}
 				{/if}
 			</p>
 		</div>
@@ -1508,7 +1617,9 @@
 				onclick={deleteCurrentProfile}
 				disabled={deletingProfile}
 			>
-				{deletingProfile ? 'Deleting...' : 'Delete'}
+				{deletingProfile
+					? $LL.admin_identity_mapping_profile_edit_deleting()
+					: $LL.admin_identity_mapping_profile_edit_delete()}
 			</button>
 		{/if}
 	</div>
@@ -1516,7 +1627,9 @@
 	{#if !loading}
 		<div
 			class="profile-tabs"
-			aria-label={editorKind === 'source' ? 'Source profile type' : 'Destination profile type'}
+			aria-label={editorKind === 'source'
+				? $LL.admin_identity_mapping_profile_edit_source_type_aria()
+				: $LL.admin_identity_mapping_profile_edit_destination_type_aria()}
 		>
 			{#if editorKind === 'source'}
 				<button
@@ -1531,7 +1644,7 @@
 					class:active={csvMode === 'manual'}
 					onclick={() => (csvMode = 'manual')}
 				>
-					Manual
+					{$LL.admin_identity_mapping_profile_edit_manual()}
 				</button>
 			{:else}
 				<button
@@ -1555,25 +1668,27 @@
 
 	{#if loading}
 		<section class="panel">
-			<div class="empty-state">Loading profile editor.</div>
+			<div class="empty-state">{$LL.admin_identity_mapping_profile_edit_loading()}</div>
 		</section>
 	{:else if editorKind === 'source'}
 		<section class="panel">
 			<div class="panel-heading">
 				<div>
 					<p class="eyebrow">
-						{editingSourceProfileId ? 'Edit Source Profile' : 'Create Source Profile'}
+						{editingSourceProfileId
+							? $LL.admin_identity_mapping_profile_edit_edit_source()
+							: $LL.admin_identity_mapping_profile_edit_create_source()}
 					</p>
-					<h2>CSV source profile</h2>
+					<h2>{$LL.admin_identity_mapping_profile_edit_csv_source_profile()}</h2>
 				</div>
 			</div>
 
 			<div class="settings-grid">
 				<label>
-					<span>Display name</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span>
 					<input
 						value={csvDisplayName}
-						placeholder="Workday CSV 2026"
+						placeholder={$LL.admin_identity_mapping_profile_edit_csv_display_placeholder()}
 						oninput={(event) => {
 							csvDisplayName = getInputValue(event);
 							if (!csvProfileKey.trim()) csvProfileKey = normalizeProfileKey(csvDisplayName);
@@ -1585,7 +1700,7 @@
 			{#if csvMode === 'upload'}
 				<div class="settings-grid parser-grid">
 					<label>
-						<span>CSV file</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_csv_file()}</span>
 						<input
 							type="file"
 							accept=".csv,text/csv,text/plain"
@@ -1598,7 +1713,7 @@
 						/>
 					</label>
 					<label>
-						<span>Encoding</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_encoding()}</span>
 						<select value={csvEncoding} onchange={(event) => (csvEncoding = getInputValue(event))}>
 							<option value="utf-8">UTF-8</option>
 							<option value="shift_jis">Shift_JIS</option>
@@ -1607,7 +1722,7 @@
 						</select>
 					</label>
 					<label>
-						<span>Delimiter</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_delimiter()}</span>
 						<select
 							value={csvDelimiter}
 							onchange={(event) => (csvDelimiter = getInputValue(event))}
@@ -1618,14 +1733,16 @@
 						</select>
 					</label>
 					<label>
-						<span>Header row</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_header_row()}</span>
 						<select
 							value={csvHeaderMode}
 							onchange={(event) => (csvHeaderMode = getInputValue(event))}
 						>
-							<option value="auto">Auto detect</option>
-							<option value="first_row">First row</option>
-							<option value="none">No header</option>
+							<option value="auto">{$LL.admin_identity_mapping_profile_edit_auto_detect()}</option>
+							<option value="first_row"
+								>{$LL.admin_identity_mapping_profile_edit_first_row()}</option
+							>
+							<option value="none">{$LL.admin_identity_mapping_profile_edit_no_header()}</option>
 						</select>
 					</label>
 				</div>
@@ -1635,35 +1752,47 @@
 						onclick={parseSelectedCsv}
 						disabled={parsingCsv || !selectedCsvFile}
 					>
-						{parsingCsv ? 'Parsing...' : 'Parse CSV'}
+						{parsingCsv
+							? $LL.admin_identity_mapping_profile_edit_parsing()
+							: $LL.admin_identity_mapping_profile_edit_parse_csv()}
 					</button>
-					<span>Raw CSV rows are parsed server-side and are not persisted.</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_raw_csv_note()}</span>
 				</div>
 			{:else}
-				<p class="profile-note">Create a CSV profile from scratch.</p>
+				<p class="profile-note">
+					{$LL.admin_identity_mapping_profile_edit_create_csv_from_scratch()}
+				</p>
 			{/if}
 
 			{#if activeCsvSchema}
 				<div class="detail-panel">
-					<div class="filter-bar" aria-label="CSV profile detail tabs">
+					<div
+						class="filter-bar"
+						aria-label={$LL.admin_identity_mapping_profile_edit_csv_tabs_aria()}
+					>
 						{#each ['summary', 'parser', 'columns', 'warnings'] as tab (tab)}
 							<button
 								type="button"
 								class:active={csvDetailTab === tab}
 								onclick={() => (csvDetailTab = tab as CsvDetailTab)}
 							>
-								{tab}
+								{csvDetailTabLabel(tab as CsvDetailTab)}
 							</button>
 						{/each}
 					</div>
 					{#if csvDetailTab === 'summary'}
 						<div class="metrics-grid">
-							<div><span>Columns</span><strong>{activeCsvSchema.columns.length}</strong></div>
 							<div>
-								<span>PII / regulated candidates</span><strong>{csvBlockingWarningCount}</strong>
+								<span>{$LL.admin_identity_mapping_profile_edit_columns()}</span><strong
+									>{activeCsvSchema.columns.length}</strong
+								>
 							</div>
 							<div>
-								<span>Rows sampled</span><strong
+								<span>{$LL.admin_identity_mapping_profile_edit_pii_regulated_candidates()}</span
+								><strong>{csvBlockingWarningCount}</strong>
+							</div>
+							<div>
+								<span>{$LL.admin_identity_mapping_profile_edit_rows_sampled()}</span><strong
 									>{activeCsvSchema.summary?.rowSampleCount ?? 0}</strong
 								>
 							</div>
@@ -1672,12 +1801,18 @@
 						<pre>{JSON.stringify(activeCsvSchema.parser ?? parsedCsvParserOptions, null, 2)}</pre>
 					{:else if csvDetailTab === 'warnings'}
 						{#if (activeCsvSchema.warnings ?? []).length === 0}
-							<div class="empty-state">No parser warnings for this profile draft.</div>
+							<div class="empty-state">
+								{$LL.admin_identity_mapping_profile_edit_no_parser_warnings()}
+							</div>
 						{:else}
 							<div class="warning-list">
 								{#each activeCsvSchema.warnings ?? [] as warning, index (index)}
 									<div>
-										<strong>{String(warning.code ?? 'warning')}</strong>
+										<strong
+											>{String(
+												warning.code ?? $LL.admin_identity_mapping_profile_edit_warning()
+											)}</strong
+										>
 										<span>{String(warning.message ?? '')}</span>
 									</div>
 								{/each}
@@ -1692,16 +1827,22 @@
 									checked={sourceAdvancedSettings}
 									onchange={(event) => (sourceAdvancedSettings = getCheckboxValue(event))}
 								/>
-								<span>Advanced settings</span>
+								<span>{$LL.admin_identity_mapping_profile_edit_advanced_settings()}</span>
 							</label>
 						</div>
 						<div class="column-table">
 							<div class="column-header" class:advanced={sourceAdvancedSettings}>
-								<span>Header</span><span>Label</span><span>Type</span><span>Allowed</span><span
-									>Multiplicity</span
-								><span>Nullable</span><span>Class</span><span>Required</span>{#if sourceAdvancedSettings}<span
-										>Examples</span
-									><span>Note</span>{/if}<span></span>
+								<span>{$LL.admin_identity_mapping_profile_edit_header()}</span><span
+									>{$LL.admin_identity_mapping_profile_edit_label()}</span
+								><span>{$LL.admin_identity_mapping_profile_edit_type()}</span><span
+									>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
+								><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
+									>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
+								><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
+									>{$LL.admin_identity_mapping_profile_edit_required()}</span
+								>{#if sourceAdvancedSettings}<span
+										>{$LL.admin_identity_mapping_profile_edit_examples()}</span
+									><span>{$LL.admin_identity_mapping_profile_edit_note()}</span>{/if}<span></span>
 							</div>
 							{#each activeCsvSchema.columns as column, index (column.stableColumnId)}
 								<div class="column-row" class:advanced={sourceAdvancedSettings}>
@@ -1723,7 +1864,7 @@
 									</select>
 									<input
 										value={(column.allowedValues ?? []).join(',')}
-										placeholder="student,faculty"
+										placeholder={$LL.admin_identity_mapping_profile_edit_allowed_values_placeholder()}
 										oninput={(event) =>
 											updateCsvColumn(index, 'allowedValues', splitCsv(getInputValue(event)))}
 									/>
@@ -1764,25 +1905,29 @@
 									{#if sourceAdvancedSettings}
 										<input
 											value={(column.examples ?? []).map(String).join(',')}
-											placeholder="sample1,sample2"
+											placeholder={$LL.admin_identity_mapping_profile_edit_examples_placeholder()}
 											oninput={(event) =>
 												updateCsvColumn(index, 'examples', splitCsv(getInputValue(event)))}
 										/>
 										<input
 											value={column.note ?? ''}
-											placeholder="Field note"
+											placeholder={$LL.admin_identity_mapping_profile_edit_note_placeholder()}
 											oninput={(event) => updateCsvColumn(index, 'note', getInputValue(event))}
 										/>
 									{/if}
 									{#if csvMode === 'manual'}
-										<button type="button" onclick={() => removeManualColumn(index)}>Remove</button>
+										<button type="button" onclick={() => removeManualColumn(index)}
+											>{$LL.admin_identity_mapping_profile_edit_remove()}</button
+										>
 									{/if}
 								</div>
 							{/each}
 						</div>
 						{#if csvMode === 'manual'}
 							<div class="table-add-action">
-								<button type="button" onclick={addManualColumn}>Add column</button>
+								<button type="button" onclick={addManualColumn}
+									>{$LL.admin_identity_mapping_profile_edit_add_column()}</button
+								>
 							</div>
 						{/if}
 					{/if}
@@ -1796,13 +1941,15 @@
 						checked={blockingWarningsConfirmed}
 						onchange={(event) => (blockingWarningsConfirmed = getCheckboxValue(event))}
 					/>
-					<span>Confirm PII and regulated candidates for this CSV profile version</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_confirm_csv_warnings()}</span>
 				</label>
 			{/if}
 
 			<div class="profile-actions">
 				<button type="button" onclick={saveCsvProfile} disabled={savingCsv || !canSaveCsvDraft}>
-					{savingCsv ? 'Saving...' : 'Save draft profile'}
+					{savingCsv
+						? $LL.admin_identity_mapping_profile_edit_saving()
+						: $LL.admin_identity_mapping_profile_edit_save_draft_profile()}
 				</button>
 				<div class="profile-action-row">
 					<button
@@ -1810,14 +1957,18 @@
 						onclick={reviewCurrentProfileVersion}
 						disabled={!canReviewCsvDraft || reviewingProfile}
 					>
-						{reviewingProfile ? 'Reviewing...' : 'Review'}
+						{reviewingProfile
+							? $LL.admin_identity_mapping_profile_edit_reviewing()
+							: $LL.admin_identity_mapping_profile_edit_review()}
 					</button>
 					<button
 						type="button"
 						onclick={activateCurrentProfileVersion}
 						disabled={!canActivateCsvDraft || activatingProfile}
 					>
-						{activatingProfile ? 'Activating...' : 'Activate'}
+						{activatingProfile
+							? $LL.admin_identity_mapping_profile_edit_activating()
+							: $LL.admin_identity_mapping_profile_edit_activate()}
 					</button>
 				</div>
 			</div>
@@ -1827,43 +1978,52 @@
 			<section class="panel">
 				<div class="panel-heading">
 					<div>
-						<p class="eyebrow">Create method</p>
-						<h2>Start from a profile source</h2>
+						<p class="eyebrow">{$LL.admin_identity_mapping_profile_edit_create_method()}</p>
+						<h2>{$LL.admin_identity_mapping_profile_edit_start_from_source()}</h2>
 					</div>
 				</div>
-				<div class="profile-tabs" aria-label="Destination create method">
+				<div
+					class="profile-tabs"
+					aria-label={$LL.admin_identity_mapping_profile_edit_destination_method_aria()}
+				>
 					<button
 						type="button"
 						class:active={destinationCreateMode === 'existing'}
 						onclick={() => (destinationCreateMode = 'existing')}
 					>
-						Create from existing
+						{$LL.admin_identity_mapping_profile_edit_create_from_existing()}
 					</button>
 					<button
 						type="button"
 						class:active={destinationCreateMode === 'template'}
 						onclick={() => (destinationCreateMode = 'template')}
 					>
-						Create from template
+						{$LL.admin_identity_mapping_profile_edit_create_from_template()}
 					</button>
 					<button
 						type="button"
 						class:active={destinationCreateMode === 'manual'}
 						onclick={() => (destinationCreateMode = 'manual')}
 					>
-						Manual
+						{$LL.admin_identity_mapping_profile_edit_manual()}
 					</button>
 				</div>
 
 				{#if destinationCreateMode === 'existing'}
 					<div class="creation-source-grid">
 						<label>
-							<span>Existing {destinationKind.toUpperCase()} destination</span>
+							<span
+								>{$LL.admin_identity_mapping_profile_edit_existing_destination({
+									kind: destinationKind.toUpperCase()
+								})}</span
+							>
 							<select
 								value={selectedExistingDestinationId}
 								onchange={(event) => (selectedExistingDestinationId = getInputValue(event))}
 							>
-								<option value="">Choose destination profile</option>
+								<option value=""
+									>{$LL.admin_identity_mapping_profile_edit_choose_destination_profile()}</option
+								>
 								{#each destinationProfilesForCurrentKind() as profile (profile.id)}
 									<option value={profile.id}>{profile.displayName}</option>
 								{/each}
@@ -1874,11 +2034,14 @@
 							onclick={copyExistingDestinationProfile}
 							disabled={!selectedExistingDestinationId}
 						>
-							Copy
+							{$LL.admin_identity_mapping_profile_edit_copy()}
 						</button>
 					</div>
 				{:else if destinationCreateMode === 'template'}
-					<div class="template-browser" aria-label="Destination template browser">
+					<div
+						class="template-browser"
+						aria-label={$LL.admin_identity_mapping_profile_edit_template_browser_aria()}
+					>
 						<div class="template-pane template-category-pane">
 							{#each destinationTemplateCategories() as category (category)}
 								<button
@@ -1911,37 +2074,43 @@
 						</div>
 						<div class="template-detail">
 							{#if selectedTemplate}
-								<span>{selectedTemplate.destinationType.toUpperCase()} template</span>
+								<span
+									>{$LL.admin_identity_mapping_profile_edit_template({
+										kind: selectedTemplate.destinationType.toUpperCase()
+									})}</span
+								>
 								<strong>{selectedTemplate.displayName}</strong>
 								<p>{selectedTemplate.description}</p>
 								<dl>
 									<div>
-										<dt>Version</dt>
+										<dt>{$LL.admin_identity_mapping_profile_edit_version()}</dt>
 										<dd>{selectedTemplate.version}</dd>
 									</div>
 									<div>
-										<dt>Updated</dt>
+										<dt>{$LL.admin_identity_mapping_profile_edit_updated()}</dt>
 										<dd>{selectedTemplate.updatedAt}</dd>
 									</div>
 								</dl>
 								<div class="template-detail-actions">
 									<button type="button" onclick={() => (previewTemplate = selectedTemplate)}>
-										Preview
+										{$LL.admin_identity_mapping_profile_edit_preview()}
 									</button>
 									<button type="button" onclick={() => copyDestinationTemplate(selectedTemplate)}>
-										Use template
+										{$LL.admin_identity_mapping_profile_edit_use_template()}
 									</button>
 								</div>
 							{:else}
 								<div class="empty-state">
-									No templates are registered for this destination type.
+									{$LL.admin_identity_mapping_profile_edit_no_templates()}
 								</div>
 							{/if}
 						</div>
 					</div>
 				{:else}
 					<div class="empty-state">
-						Start with a blank {destinationKind.toUpperCase()} destination profile.
+						{$LL.admin_identity_mapping_profile_edit_blank_destination({
+							kind: destinationKind.toUpperCase()
+						})}
 					</div>
 				{/if}
 			</section>
@@ -1952,23 +2121,27 @@
 				<div>
 					<p class="eyebrow">
 						{editingDestinationProfileId
-							? 'Edit Destination Profile'
-							: 'Create Destination Profile'}
+							? $LL.admin_identity_mapping_profile_edit_edit_destination()
+							: $LL.admin_identity_mapping_profile_edit_create_destination()}
 					</p>
-					<h2>{destinationKind.toUpperCase()} destination profile</h2>
+					<h2>
+						{$LL.admin_identity_mapping_profile_edit_destination_profile_heading({
+							kind: destinationKind.toUpperCase()
+						})}
+					</h2>
 				</div>
 			</div>
 
 			<div class="settings-grid">
 				<label>
-					<span>Display name</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span>
 					<input
 						value={destinationDisplayName}
 						placeholder={destinationKind === 'oidc'
-							? 'Library OIDC claims'
+							? $LL.admin_identity_mapping_profile_edit_oidc_display_placeholder()
 							: destinationKind === 'saml'
-								? 'Library SAML attributes'
-								: 'Weekly CSV export'}
+								? $LL.admin_identity_mapping_profile_edit_saml_display_placeholder()
+								: $LL.admin_identity_mapping_profile_edit_csv_destination_display_placeholder()}
 						oninput={(event) => {
 							destinationDisplayName = getInputValue(event);
 							if (!destinationProfileKey.trim())
@@ -1980,7 +2153,7 @@
 
 			{#if destinationKind === 'oidc'}
 				<p class="profile-note">
-					OIDC sub is required. Subject strategy is tenant default with client override.
+					{$LL.admin_identity_mapping_profile_edit_oidc_note()}
 				</p>
 				<div class="table-toolbar">
 					<span></span>
@@ -1990,15 +2163,23 @@
 							checked={destinationAdvancedSettings}
 							onchange={(event) => (destinationAdvancedSettings = getCheckboxValue(event))}
 						/>
-						<span>Advanced settings</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_advanced_settings()}</span>
 					</label>
 				</div>
 				<div class="claim-table">
 					<div class="claim-header" class:advanced={destinationAdvancedSettings}>
-						<span>Claim</span><span>Label</span><span>Type</span><span>Allowed</span><span
-							>Multiplicity</span
-						><span>Nullable</span><span>Class</span><span>Surfaces</span><span>Scopes</span
-						>{#if destinationAdvancedSettings}<span>Legal basis</span>{/if}<span></span>
+						<span>{$LL.admin_identity_mapping_profile_edit_claim()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_label()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_type()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_surfaces()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_scopes()}</span
+						>{#if destinationAdvancedSettings}<span
+								>{$LL.admin_identity_mapping_profile_edit_legal_basis()}</span
+							>{/if}<span></span>
 					</div>
 					<!-- ALLOWED may move behind Advanced if fixed-value constraints make the main table too dense. -->
 					<!-- OIDC SURFACES may move behind Advanced, but it stays visible for now because ID Token vs UserInfo changes the release surface. -->
@@ -2021,7 +2202,7 @@
 							</select>
 							<input
 								value={claim.allowedValues}
-								placeholder="student,faculty"
+								placeholder={$LL.admin_identity_mapping_profile_edit_allowed_values_placeholder()}
 								oninput={(event) => updateOidcClaim(index, 'allowedValues', getInputValue(event))}
 							/>
 							<select
@@ -2075,16 +2256,19 @@
 							<button
 								type="button"
 								onclick={() => removeOidcClaim(index)}
-								disabled={claim.claimName === 'sub'}>Remove</button
+								disabled={claim.claimName === 'sub'}
+								>{$LL.admin_identity_mapping_profile_edit_remove()}</button
 							>
 						</div>
 					{/each}
 				</div>
 				<div class="table-add-action">
-					<button type="button" onclick={addOidcClaim}>Add claim</button>
+					<button type="button" onclick={addOidcClaim}
+						>{$LL.admin_identity_mapping_profile_edit_add_claim()}</button
+					>
 				</div>
 				<label>
-					<span>Claims parameter policy JSON</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_claims_parameter_policy_json()}</span>
 					<textarea
 						rows="4"
 						value={oidcClaimsParameterJson}
@@ -2094,7 +2278,7 @@
 			{:else if destinationKind === 'csv'}
 				<div class="settings-grid">
 					<label>
-						<span>Encoding default</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_encoding_default()}</span>
 						<select
 							value={csvDestinationEncoding}
 							onchange={(event) => (csvDestinationEncoding = getInputValue(event))}
@@ -2111,10 +2295,10 @@
 							checked={csvDestinationIncludeHeader}
 							onchange={(event) => (csvDestinationIncludeHeader = getCheckboxValue(event))}
 						/>
-						<span>Include header row by default</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_include_header_default()}</span>
 					</label>
 					<label>
-						<span>Null handling default</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_null_handling_default()}</span>
 						<select
 							value={csvDestinationNullHandling}
 							onchange={(event) => (csvDestinationNullHandling = getInputValue(event))}
@@ -2124,7 +2308,7 @@
 						</select>
 					</label>
 					<label>
-						<span>Required missing policy</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_required_missing_policy()}</span>
 						<select
 							value={csvDestinationRequiredMissingPolicy}
 							onchange={(event) => (csvDestinationRequiredMissingPolicy = getInputValue(event))}
@@ -2143,7 +2327,7 @@
 							checked={destinationAdvancedSettings}
 							onchange={(event) => (destinationAdvancedSettings = getCheckboxValue(event))}
 						/>
-						<span>Advanced settings</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_advanced_settings()}</span>
 					</label>
 				</div>
 				<div class="column-table">
@@ -2169,7 +2353,7 @@
 							</select>
 							<input
 								value={column.allowedValues}
-								placeholder="student,faculty"
+								placeholder={$LL.admin_identity_mapping_profile_edit_allowed_values_placeholder()}
 								oninput={(event) =>
 									updateCsvDestinationColumn(index, 'allowedValues', getInputValue(event))}
 							/>
@@ -2214,18 +2398,21 @@
 										updateCsvDestinationColumn(index, 'legalBasis', getInputValue(event))}
 								/>
 							{/if}
-							<button type="button" onclick={() => removeCsvDestinationColumn(index)}>Remove</button
+							<button type="button" onclick={() => removeCsvDestinationColumn(index)}
+								>{$LL.admin_identity_mapping_profile_edit_remove()}</button
 							>
 						</div>
 					{/each}
 				</div>
 				<div class="table-add-action">
-					<button type="button" onclick={addCsvDestinationColumn}>Add column</button>
+					<button type="button" onclick={addCsvDestinationColumn}
+						>{$LL.admin_identity_mapping_profile_edit_add_column()}</button
+					>
 				</div>
 			{:else}
 				<div class="settings-grid">
 					<label>
-						<span>NameID format</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_nameid_format()}</span>
 						<select
 							value={samlNameIdFormatOption}
 							onchange={(event) => setSamlNameIdFormatOption(getInputValue(event))}
@@ -2236,7 +2423,7 @@
 						</select>
 					</label>
 					<label>
-						<span>NameID value</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_nameid_value()}</span>
 						<select
 							value={samlNameIdValueOption}
 							onchange={(event) => setSamlNameIdValueOption(getInputValue(event))}
@@ -2248,27 +2435,27 @@
 					</label>
 					{#if samlNameIdFormatOption === customOptionValue}
 						<label>
-							<span>Custom NameID format</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_custom_nameid_format()}</span>
 							<input
 								value={customSamlNameIdFormat}
-								placeholder="urn:oasis:names:tc:SAML:..."
+								placeholder={$LL.admin_identity_mapping_profile_edit_nameid_format_placeholder()}
 								oninput={(event) => (customSamlNameIdFormat = getInputValue(event))}
 							/>
 						</label>
 					{/if}
 					{#if samlNameIdValueOption === customOptionValue}
 						<label>
-							<span>Custom NameID value</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_custom_nameid_value()}</span>
 							<input
 								value={customSamlNameIdValue}
-								placeholder="field_key"
+								placeholder={$LL.admin_identity_mapping_profile_edit_nameid_value_placeholder()}
 								oninput={(event) => (customSamlNameIdValue = getInputValue(event))}
 							/>
 						</label>
 					{/if}
 				</div>
 				<p class="profile-note">
-					SAML attributes are defined here for destination profile creation.
+					{$LL.admin_identity_mapping_profile_edit_saml_note()}
 				</p>
 				<div class="table-toolbar">
 					<span></span>
@@ -2278,17 +2465,23 @@
 							checked={destinationAdvancedSettings}
 							onchange={(event) => (destinationAdvancedSettings = getCheckboxValue(event))}
 						/>
-						<span>Advanced settings</span>
+						<span>{$LL.admin_identity_mapping_profile_edit_advanced_settings()}</span>
 					</label>
 				</div>
 				<div class="saml-attribute-table">
 					<div class="saml-attribute-header" class:advanced={destinationAdvancedSettings}>
-						<span>Name</span><span>Label</span>{#if destinationAdvancedSettings}<span
-								>Name format</span
-							>{/if}<span>Type</span><span>Allowed</span><span>Multiplicity</span><span
-							>Nullable</span
-						><span>Class</span><span>Required</span>{#if destinationAdvancedSettings}<span
-								>Legal basis</span
+						<span>{$LL.admin_identity_mapping_profile_edit_name()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_label()}</span
+						>{#if destinationAdvancedSettings}<span
+								>{$LL.admin_identity_mapping_profile_edit_name_format()}</span
+							>{/if}<span>{$LL.admin_identity_mapping_profile_edit_type()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_required()}</span
+						>{#if destinationAdvancedSettings}<span
+								>{$LL.admin_identity_mapping_profile_edit_legal_basis()}</span
 							>{/if}<span></span>
 					</div>
 					{#each samlAttributes as attribute, index (`${attribute.name}-${index}`)}
@@ -2317,7 +2510,7 @@
 							</select>
 							<input
 								value={attribute.allowedValues}
-								placeholder="student,faculty"
+								placeholder={$LL.admin_identity_mapping_profile_edit_allowed_values_placeholder()}
 								oninput={(event) =>
 									updateSamlAttribute(index, 'allowedValues', getInputValue(event))}
 							/>
@@ -2362,12 +2555,16 @@
 										updateSamlAttribute(index, 'legalBasis', getInputValue(event))}
 								/>
 							{/if}
-							<button type="button" onclick={() => removeSamlAttribute(index)}>Remove</button>
+							<button type="button" onclick={() => removeSamlAttribute(index)}
+								>{$LL.admin_identity_mapping_profile_edit_remove()}</button
+							>
 						</div>
 					{/each}
 				</div>
 				<div class="table-add-action">
-					<button type="button" onclick={addSamlAttribute}>Add SAML attribute</button>
+					<button type="button" onclick={addSamlAttribute}
+						>{$LL.admin_identity_mapping_profile_edit_add_saml_attribute()}</button
+					>
 				</div>
 			{/if}
 
@@ -2378,35 +2575,47 @@
 						checked={destinationBlockingWarningsConfirmed}
 						onchange={(event) => (destinationBlockingWarningsConfirmed = getCheckboxValue(event))}
 					/>
-					<span>Confirm blocking release warnings for this destination profile version</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_confirm_destination_warnings()}</span>
 				</label>
 			{/if}
 
 			<div class="impact-preview">
-				<span>Release impact</span>
+				<span>{$LL.admin_identity_mapping_profile_edit_release_impact()}</span>
 				<strong>
 					{#if destinationKind === 'oidc'}
-						{oidcClaims.length} claims
+						{$LL.admin_identity_mapping_profile_edit_claims_count({
+							count: oidcClaims.length
+						})}
 					{:else if destinationKind === 'saml'}
-						{samlAttributes.length} attributes
+						{$LL.admin_identity_mapping_profile_edit_attributes_count({
+							count: samlAttributes.length
+						})}
 					{:else}
-						{csvDestinationColumns.length} columns
+						{$LL.admin_identity_mapping_profile_edit_columns_count({
+							count: csvDestinationColumns.length
+						})}
 					{/if}
 				</strong>
-				<small>{destinationBlockingWarningCount} blocking warning(s)</small>
+				<small
+					>{$LL.admin_identity_mapping_profile_edit_blocking_warnings({
+						count: destinationBlockingWarningCount
+					})}</small
+				>
 			</div>
 
 			<div class="profile-actions">
 				<div class="profile-action-row">
 					<button type="button" onclick={scrollToReleaseConsent}>
-						Configure Release Consent
+						{$LL.admin_identity_mapping_profile_edit_configure_release_consent()}
 					</button>
 					<button
 						type="button"
 						onclick={saveDestinationProfile}
 						disabled={savingDestination || !canSaveDestinationDraft}
 					>
-						{savingDestination ? 'Saving...' : 'Save destination draft'}
+						{savingDestination
+							? $LL.admin_identity_mapping_profile_edit_saving()
+							: $LL.admin_identity_mapping_profile_edit_save_destination_draft()}
 					</button>
 				</div>
 				<div class="profile-action-row">
@@ -2415,27 +2624,37 @@
 						onclick={reviewCurrentProfileVersion}
 						disabled={!canReviewDestinationDraft || reviewingProfile}
 					>
-						{reviewingProfile ? 'Reviewing...' : 'Review'}
+						{reviewingProfile
+							? $LL.admin_identity_mapping_profile_edit_reviewing()
+							: $LL.admin_identity_mapping_profile_edit_review()}
 					</button>
 					<button
 						type="button"
 						onclick={activateCurrentProfileVersion}
 						disabled={!canActivateDestinationDraft || activatingProfile}
 					>
-						{activatingProfile ? 'Activating...' : 'Activate'}
+						{activatingProfile
+							? $LL.admin_identity_mapping_profile_edit_activating()
+							: $LL.admin_identity_mapping_profile_edit_activate()}
 					</button>
 				</div>
 			</div>
 		</section>
 
-		<section id="destination-consent" class="panel" aria-label="Destination consent settings">
+		<section
+			id="destination-consent"
+			class="panel"
+			aria-label={$LL.admin_identity_mapping_profile_edit_destination_consent_aria()}
+		>
 			<div>
-				<p class="eyebrow">Destination Consent Settings</p>
-				<h2>Release consent</h2>
+				<p class="eyebrow">
+					{$LL.admin_identity_mapping_profile_edit_destination_consent_settings()}
+				</p>
+				<h2>{$LL.admin_identity_mapping_profile_edit_release_consent()}</h2>
 			</div>
 			<div class="settings-grid">
 				<label>
-					<span>Scope</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_scope()}</span>
 					<select
 						value={consentDraft.scope}
 						onchange={(event) =>
@@ -2443,12 +2662,16 @@
 								scope: getInputValue(event) as DestinationConsentSettingsDraft['scope']
 							})}
 					>
-						<option value="tenant_default">Tenant default</option>
-						<option value="destination_override">Destination override</option>
+						<option value="tenant_default"
+							>{$LL.admin_identity_mapping_profile_edit_tenant_default()}</option
+						>
+						<option value="destination_override"
+							>{$LL.admin_identity_mapping_profile_edit_destination_override()}</option
+						>
 					</select>
 				</label>
 				<label>
-					<span>Consent mode</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_consent_mode()}</span>
 					<select
 						value={consentDraft.consentMode}
 						onchange={(event) =>
@@ -2456,9 +2679,13 @@
 								consentMode: getInputValue(event) as DestinationConsentSettingsDraft['consentMode']
 							})}
 					>
-						<option value="once">Once</option>
-						<option value="every_time">Every time</option>
-						<option value="until_attributes_change">Until attributes change</option>
+						<option value="once">{$LL.admin_identity_mapping_profile_edit_once()}</option>
+						<option value="every_time"
+							>{$LL.admin_identity_mapping_profile_edit_every_time()}</option
+						>
+						<option value="until_attributes_change"
+							>{$LL.admin_identity_mapping_profile_edit_until_attributes_change()}</option
+						>
 					</select>
 				</label>
 				<label class="checkbox-row">
@@ -2468,28 +2695,35 @@
 						onchange={(event) =>
 							updateConsentDraft({ regulatedPurposeGuard: getCheckboxValue(event) })}
 					/>
-					<span>Require purpose guard for regulated attributes</span>
+					<span>{$LL.admin_identity_mapping_profile_edit_require_purpose_guard()}</span>
 				</label>
 			</div>
 			<div class="impact-preview">
-				<span>Preview</span>
-				<strong>{summarizeDestinationConsentSettings(consentDraft)}</strong>
-				<small>Raw attribute values remain {consentDraft.rawValueDisplay}.</small>
+				<span>{$LL.admin_identity_mapping_profile_edit_preview()}</span>
+				<strong>{localizedConsentSummary(consentDraft)}</strong>
+				<small
+					>{$LL.admin_identity_mapping_profile_edit_raw_values_remain({
+						display:
+							consentDraft.rawValueDisplay === 'hidden'
+								? $LL.admin_identity_mapping_profile_edit_raw_value_hidden()
+								: consentDraft.rawValueDisplay
+					})}</small
+				>
 			</div>
 		</section>
 
 		<section id="registries" class="panel">
 			<div class="panel-heading">
 				<div>
-					<p class="eyebrow">Attribute Registry</p>
-					<h2>Groups and fields</h2>
+					<p class="eyebrow">{$LL.admin_identity_mapping_profile_edit_attribute_registry()}</p>
+					<h2>{$LL.admin_identity_mapping_profile_edit_groups_and_fields()}</h2>
 				</div>
 			</div>
 			<div class="registry-grid">
 				<div class="registry-card">
-					<h2>Attribute group</h2>
+					<h2>{$LL.admin_identity_mapping_profile_edit_attribute_group()}</h2>
 					<label
-						><span>Protocol</span><select
+						><span>{$LL.admin_identity_mapping_profile_edit_protocol()}</span><select
 							value={groupProtocol}
 							onchange={(event) =>
 								(groupProtocol = getInputValue(event) as IdentityMappingAttributeProtocol)}
@@ -2499,7 +2733,7 @@
 						></label
 					>
 					<label
-						><span>Group type</span><select
+						><span>{$LL.admin_identity_mapping_profile_edit_group_type()}</span><select
 							value={groupType}
 							onchange={(event) => (groupType = getInputValue(event))}
 							>{#each attributeGroupTypeOptions as option (option)}<option value={option}
@@ -2508,21 +2742,21 @@
 						></label
 					>
 					<label
-						><span>Group key</span><input
+						><span>{$LL.admin_identity_mapping_profile_edit_group_key()}</span><input
 							value={groupKey}
-							placeholder="library"
+							placeholder={$LL.admin_identity_mapping_profile_edit_group_key_placeholder()}
 							oninput={(event) => (groupKey = getInputValue(event))}
 						/></label
 					>
 					<label
-						><span>Display name</span><input
+						><span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span><input
 							value={groupDisplayName}
-							placeholder="Library"
+							placeholder={$LL.admin_identity_mapping_profile_edit_group_display_placeholder()}
 							oninput={(event) => (groupDisplayName = getInputValue(event))}
 						/></label
 					>
 					<label
-						><span>Owner scope</span><select
+						><span>{$LL.admin_identity_mapping_profile_edit_owner_scope()}</span><select
 							value={groupOwnerScopeType}
 							onchange={(event) =>
 								(groupOwnerScopeType = getInputValue(event) as typeof groupOwnerScopeType)}
@@ -2532,14 +2766,14 @@
 						></label
 					>
 					<label
-						><span>Field keys</span><input
+						><span>{$LL.admin_identity_mapping_profile_edit_field_keys()}</span><input
 							value={groupFieldKeys}
-							placeholder="library_card,patron_type"
+							placeholder={$LL.admin_identity_mapping_profile_edit_field_keys_placeholder()}
 							oninput={(event) => (groupFieldKeys = getInputValue(event))}
 						/></label
 					>
 					<label
-						><span>Description</span><input
+						><span>{$LL.admin_identity_mapping_profile_edit_description()}</span><input
 							value={groupDescription}
 							oninput={(event) => (groupDescription = getInputValue(event))}
 						/></label
@@ -2550,13 +2784,14 @@
 						disabled={savingRegistry ||
 							!groupType.trim() ||
 							!groupKey.trim() ||
-							!groupDisplayName.trim()}>Save attribute group</button
+							!groupDisplayName.trim()}
+						>{$LL.admin_identity_mapping_profile_edit_save_attribute_group()}</button
 					>
 				</div>
 				<div class="registry-card">
-					<h2>Attribute field</h2>
+					<h2>{$LL.admin_identity_mapping_profile_edit_attribute_field()}</h2>
 					<label
-						><span>Protocol</span><select
+						><span>{$LL.admin_identity_mapping_profile_edit_protocol()}</span><select
 							value={fieldProtocol}
 							onchange={(event) =>
 								(fieldProtocol = getInputValue(event) as IdentityMappingAttributeProtocol)}
@@ -2566,21 +2801,21 @@
 						></label
 					>
 					<label
-						><span>Field key</span><input
+						><span>{$LL.admin_identity_mapping_profile_edit_field_key()}</span><input
 							value={fieldKey}
-							placeholder="library_card"
+							placeholder={$LL.admin_identity_mapping_profile_edit_field_key_placeholder()}
 							oninput={(event) => (fieldKey = getInputValue(event))}
 						/></label
 					>
 					<label
-						><span>Display name</span><input
+						><span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span><input
 							value={fieldDisplayName}
-							placeholder="Library card"
+							placeholder={$LL.admin_identity_mapping_profile_edit_field_display_placeholder()}
 							oninput={(event) => (fieldDisplayName = getInputValue(event))}
 						/></label
 					>
 					<label
-						><span>Owner scope</span><select
+						><span>{$LL.admin_identity_mapping_profile_edit_owner_scope()}</span><select
 							value={fieldOwnerScopeType}
 							onchange={(event) =>
 								(fieldOwnerScopeType = getInputValue(event) as typeof fieldOwnerScopeType)}
@@ -2590,7 +2825,7 @@
 						></label
 					>
 					<label
-						><span>Value type</span><select
+						><span>{$LL.admin_identity_mapping_profile_edit_value_type()}</span><select
 							value={fieldValueType}
 							onchange={(event) => (fieldValueType = getInputValue(event))}
 							>{#each valueTypeOptions as option (option)}<option value={option}>{option}</option
@@ -2598,7 +2833,7 @@
 						></label
 					>
 					<label
-						><span>Classification</span><select
+						><span>{$LL.admin_identity_mapping_profile_edit_classification()}</span><select
 							value={fieldClassification}
 							onchange={(event) => (fieldClassification = getInputValue(event))}
 							>{#each classificationOptions as option (option)}<option value={option}
@@ -2624,13 +2859,14 @@
 						disabled={savingRegistry ||
 							!fieldKey.trim() ||
 							!fieldDisplayName.trim() ||
-							(fieldProtocol === 'oidc' && fieldSurfaces.length === 0)}>Save attribute field</button
+							(fieldProtocol === 'oidc' && fieldSurfaces.length === 0)}
+						>{$LL.admin_identity_mapping_profile_edit_save_attribute_field()}</button
 					>
 				</div>
 			</div>
 			<div class="registry-grid">
 				<div class="registry-card">
-					<h2>Groups</h2>
+					<h2>{$LL.admin_identity_mapping_profile_edit_groups()}</h2>
 					{#each attributeGroups as group (group.id)}
 						<p>
 							<strong>{group.groupKey}</strong> / {group.protocol} / {group.groupType} / {group.fieldKeys.join(
@@ -2638,11 +2874,11 @@
 							)}
 						</p>
 					{:else}
-						<p>No attribute groups registered.</p>
+						<p>{$LL.admin_identity_mapping_profile_edit_no_attribute_groups()}</p>
 					{/each}
 				</div>
 				<div class="registry-card">
-					<h2>Fields</h2>
+					<h2>{$LL.admin_identity_mapping_profile_edit_fields()}</h2>
 					{#each attributeFields as field (field.id)}
 						<p>
 							<strong>{field.fieldKey}</strong> / {field.protocol} / {field.classification} / {field.surfaces.join(
@@ -2650,7 +2886,7 @@
 							)}
 						</p>
 					{:else}
-						<p>No attribute fields registered.</p>
+						<p>{$LL.admin_identity_mapping_profile_edit_no_attribute_fields()}</p>
 					{/each}
 				</div>
 			</div>
@@ -2672,27 +2908,39 @@
 		>
 			<div class="template-preview-heading">
 				<div>
-					<p class="eyebrow">Template preview</p>
+					<p class="eyebrow">{$LL.admin_identity_mapping_profile_edit_template_preview()}</p>
 					<h2 id="template-preview-title">{previewTemplate.displayName}</h2>
 				</div>
-				<button type="button" onclick={() => (previewTemplate = null)}>Close</button>
+				<button type="button" onclick={() => (previewTemplate = null)}
+					>{$LL.admin_identity_mapping_profile_edit_close()}</button
+				>
 			</div>
-			<div class="template-preview-table" role="table" aria-label="Template attribute preview">
+			<div
+				class="template-preview-table"
+				role="table"
+				aria-label={$LL.admin_identity_mapping_profile_edit_template_attribute_preview_aria()}
+			>
 				<div class="template-preview-row template-preview-header" role="row">
-					<span role="columnheader">Name</span>
-					<span role="columnheader">Label</span>
-					<span role="columnheader">Type</span>
-					<span role="columnheader">Required</span>
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_name()}</span>
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_label()}</span>
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_type()}</span>
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_required()}</span>
 				</div>
 				{#each templatePreviewRows(previewTemplate) as row, index (`${row.name}-${index}`)}
 					<div class="template-preview-row" role="row">
 						<span role="cell">{row.name}</span>
 						<span role="cell">{row.label}</span>
 						<span role="cell">{row.type}</span>
-						<span role="cell">{row.required ? 'Yes' : 'No'}</span>
+						<span role="cell"
+							>{row.required
+								? $LL.admin_identity_mapping_profile_edit_yes()
+								: $LL.admin_identity_mapping_profile_edit_no()}</span
+						>
 					</div>
 				{:else}
-					<div class="template-preview-empty">No attributes are defined in this template.</div>
+					<div class="template-preview-empty">
+						{$LL.admin_identity_mapping_profile_edit_no_template_attributes()}
+					</div>
 				{/each}
 			</div>
 		</div>

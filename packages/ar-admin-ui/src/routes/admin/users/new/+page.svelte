@@ -4,6 +4,7 @@
 	import { adminUsersAPI, type CreateUserInput } from '$lib/api/admin-users';
 	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let saving = $state(false);
 	let error = $state('');
@@ -19,7 +20,7 @@
 
 	async function handleSubmit() {
 		if (!form.email?.trim()) {
-			error = 'Email is required';
+			error = $LL.admin_users_email_required();
 			return;
 		}
 
@@ -37,7 +38,7 @@
 			goto(`/admin/users/${user.id}`);
 		} catch (err) {
 			console.error('Failed to create user:', err);
-			error = err instanceof Error ? err.message : 'Failed to create user';
+			error = err instanceof Error ? err.message : $LL.admin_users_error_create();
 		} finally {
 			saving = false;
 		}
@@ -49,19 +50,19 @@
 </script>
 
 <svelte:head>
-	<title>Create User - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_users_create_page_title()}</title>
 </svelte:head>
 
 <div>
 	<!-- Header -->
 	<div style="margin-bottom: 24px;">
 		<a href="/admin/users" style="color: #3b82f6; text-decoration: none; font-size: 14px;">
-			← Back to Users
+			← {$LL.admin_users_back_to_users()}
 		</a>
 	</div>
 
 	<h1 style="font-size: 24px; font-weight: bold; color: #1f2937; margin: 0 0 24px 0;">
-		Create User
+		{$LL.admin_users_create()}
 	</h1>
 
 	{#if error}
@@ -88,7 +89,7 @@
 						for="email"
 						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
 					>
-						Email <span style="color: #ef4444;">*</span>
+						{$LL.admin_users_email()} <span style="color: #ef4444;">*</span>
 					</label>
 					<input
 						id="email"
@@ -113,13 +114,13 @@
 						for="name"
 						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
 					>
-						Name
+						{$LL.admin_users_name()}
 					</label>
 					<input
 						id="name"
 						type="text"
 						bind:value={form.name}
-						placeholder="Full name"
+						placeholder={$LL.common_namePlaceholder()}
 						style="
 							width: 100%;
 							padding: 10px 12px;
@@ -137,13 +138,13 @@
 						for="given_name"
 						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
 					>
-						Given Name
+						{$LL.admin_users_given_name()}
 					</label>
 					<input
 						id="given_name"
 						type="text"
 						bind:value={form.given_name}
-						placeholder="First name"
+						placeholder={$LL.admin_users_given_name_placeholder()}
 						style="
 							width: 100%;
 							padding: 10px 12px;
@@ -161,13 +162,13 @@
 						for="family_name"
 						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
 					>
-						Family Name
+						{$LL.admin_users_family_name()}
 					</label>
 					<input
 						id="family_name"
 						type="text"
 						bind:value={form.family_name}
-						placeholder="Last name"
+						placeholder={$LL.admin_users_family_name_placeholder()}
 						style="
 							width: 100%;
 							padding: 10px 12px;
@@ -183,8 +184,8 @@
 				<div>
 					<ToggleSwitch
 						bind:checked={form.email_verified}
-						label="Email Verified"
-						description="Mark the email as verified (skip email verification)"
+						label={$LL.admin_users_verified_label()}
+						description={$LL.admin_users_verified_description()}
 					/>
 				</div>
 			</div>
@@ -205,7 +206,7 @@
 						font-weight: 500;
 					"
 				>
-					{saving ? 'Creating...' : 'Create User'}
+					{saving ? $LL.admin_users_creating() : $LL.admin_users_create()}
 				</button>
 				<a
 					href="/admin/users"
@@ -220,7 +221,7 @@
 						font-weight: 500;
 					"
 				>
-					Cancel
+					{$LL.common_cancel()}
 				</a>
 			</div>
 		</form>
