@@ -58,7 +58,7 @@ const adminShell = {
 	admin_nav_resolution_center: '解決センター',
 	admin_nav_login_methods: 'ログイン方法',
 	admin_nav_login_ui: 'ログインUI',
-	admin_nav_tenant_discovery: 'テナント検出',
+	admin_nav_tenant_discovery: 'テナントディスカバリー',
 	admin_nav_info: '情報',
 	admin_nav_settings: '設定',
 	admin_nav_email_settings: 'メール設定',

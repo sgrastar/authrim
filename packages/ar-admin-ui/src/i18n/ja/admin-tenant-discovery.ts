@@ -1,16 +1,16 @@
 const adminTenantDiscovery = {
-	admin_tenant_discovery_head_title: 'Tenant Discovery - Authrim Admin',
-	admin_tenant_discovery_title: 'Tenant Discovery',
+	admin_tenant_discovery_head_title: 'テナントディスカバリー - Authrim Admin',
+	admin_tenant_discovery_title: 'テナントディスカバリー',
 	admin_tenant_discovery_description_single:
-		'Multi-tenant modeを有効にすると利用できます。このページではtenant discovery flowを設定します。',
+		'Multi-tenant modeを有効にすると利用できます。このページではテナントディスカバリーflowを設定します。',
 	admin_tenant_discovery_description_multi:
-		'Tenant resolutionの動作を設定し、discovery screenをカスタマイズします。',
-	admin_tenant_discovery_loading: 'Tenant discovery settingsを読み込み中...',
+		'Tenant resolutionの動作を設定し、ディスカバリー画面をカスタマイズします。',
+	admin_tenant_discovery_loading: 'テナントディスカバリー設定を読み込み中...',
 	admin_tenant_discovery_single_mode_disabled:
-		'このdeploymentがsingle-tenant modeで実行されている間、tenant discoveryは無効です。`workers.dev`から開始し、後でAPI custom domainを追加してからSetupでmulti-tenant modeを有効にできます。',
-	admin_tenant_discovery_controls_title: 'Discovery Controls',
+		'このdeploymentがsingle-tenant modeで実行されている間、テナントディスカバリーは無効です。`workers.dev`から開始し、後でAPI custom domainを追加してからSetupでmulti-tenant modeを有効にできます。',
+	admin_tenant_discovery_controls_title: 'ディスカバリー制御',
 	admin_tenant_discovery_controls_description:
-		'Common entry、tenant resolution、discovery screen overrideはmulti-tenant modeを有効にすると利用できます。',
+		'Common entry、tenant resolution、ディスカバリー画面overrideはmulti-tenant modeを有効にすると利用できます。',
 	admin_tenant_discovery_enable_in_setup: 'Setupで有効化',
 	admin_tenant_discovery_common_behavior_title: 'Common Entry Login Behavior',
 	admin_tenant_discovery_common_behavior_description:
@@ -18,15 +18,15 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_platform_readonly_behavior:
 		'Common entry behaviorはplatform settingです。Tenant adminは確認できますが、編集はできません。',
 	admin_tenant_discovery_entry_mode: 'Entry Mode',
-	admin_tenant_discovery_entry_mode_tenant_only: 'Tenant-specific entry only',
-	admin_tenant_discovery_entry_mode_discovery_optional: 'Discovery optional',
-	admin_tenant_discovery_entry_mode_discovery_required: 'Discovery required',
+	admin_tenant_discovery_entry_mode_tenant_only: 'テナント専用エントリのみ',
+	admin_tenant_discovery_entry_mode_discovery_optional: 'ディスカバリー任意',
+	admin_tenant_discovery_entry_mode_discovery_required: 'ディスカバリー必須',
 	admin_tenant_discovery_entry_mode_tenant_only_description:
 		'ユーザーはtenant-specific entry pointからsign inします。他のflowが送らない限り、shared discovery pageは迂回されます。',
 	admin_tenant_discovery_entry_mode_tenant_only_sample:
 		'すべてのappまたは招待がすでにtenantを把握している場合に使います。',
 	admin_tenant_discovery_entry_mode_discovery_optional_description:
-		'ユーザーはtenant discoveryを利用できますが、tenant-specific login URLも引き続き有効です。',
+		'ユーザーはテナントディスカバリーを利用できますが、tenant-specific login URLも引き続き有効です。',
 	admin_tenant_discovery_entry_mode_discovery_optional_sample:
 		'Multi-tenant rolloutを段階的に進める場合の無難なdefaultです。',
 	admin_tenant_discovery_entry_mode_discovery_required_description:
@@ -53,18 +53,18 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_email_resolution_disabled_policy_description:
 		'Email addressからtenantを解決しません。',
 	admin_tenant_discovery_email_resolution_disabled_policy_sample:
-		'ユーザーは別の有効なdiscovery methodを使う必要があります。',
-	admin_tenant_discovery_selection_policy: 'Selection Policy',
+		'ユーザーは別の有効なディスカバリー方法を使う必要があります。',
+	admin_tenant_discovery_selection_policy: '選択ポリシー',
 	admin_tenant_discovery_selection_auto_if_single: 'Auto if single',
 	admin_tenant_discovery_selection_always_select: 'Always select',
 	admin_tenant_discovery_selection_select_if_multiple: 'Select if multiple',
 	admin_tenant_discovery_selection_manual_only: 'Manual only',
 	admin_tenant_discovery_selection_auto_if_single_description:
-		'Discovery結果がtenant 1件だけなら自動で続行します。複数matchする場合はselection screenを表示します。',
+		'ディスカバリー結果がtenant 1件だけなら自動で続行します。複数matchする場合はselection screenを表示します。',
 	admin_tenant_discovery_selection_auto_if_single_sample:
 		'Mappingの信頼性が高く、明確な1件matchが多い場合に適しています。',
 	admin_tenant_discovery_selection_always_select_description:
-		'1件だけmatchした場合でも、discovery後に常にtenant selection stepを表示します。',
+		'1件だけmatchした場合でも、ディスカバリー後に常にtenant selection stepを表示します。',
 	admin_tenant_discovery_selection_always_select_sample:
 		'ユーザーにtenantを明示確認させたい場合に使います。',
 	admin_tenant_discovery_selection_select_if_multiple_description:
@@ -75,7 +75,7 @@ const adminTenantDiscovery = {
 		'Email resolutionから自動選択しません。ユーザーがtenantを入力または選択する必要があります。',
 	admin_tenant_discovery_selection_manual_only_sample:
 		'Tenant code、tenant slug、WAYF discoveryのいずれかを有効にしておく必要があります。',
-	admin_tenant_discovery_enabled_methods: 'Enabled Discovery Methods',
+	admin_tenant_discovery_enabled_methods: '有効なディスカバリー方法',
 	admin_tenant_discovery_method_email: 'Email address',
 	admin_tenant_discovery_method_email_description:
 		'任意のemail-domain fallbackを使って、email addressからtenantを特定できるようにします。',
@@ -94,7 +94,7 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_remember_last: '最後のtenantを記憶',
 	admin_tenant_discovery_remember_last_description:
 		'このbrowserで直近に解決されたtenantを記憶します。',
-	admin_tenant_discovery_redirect_default_login: 'Default loginをdiscoveryへredirect',
+	admin_tenant_discovery_redirect_default_login: 'Default loginをディスカバリーへredirect',
 	admin_tenant_discovery_redirect_default_login_description:
 		'適切な場合、common-entry /login requestを/discoverへredirectします。',
 	admin_tenant_discovery_require_common_before_login:
@@ -108,12 +108,12 @@ const adminTenantDiscovery = {
 		'tenant-hostとvanity-hostの/discoverをcommon entryへredirectします。',
 	admin_tenant_discovery_redirect_tenant_discover_tenant_description:
 		'このtenant hostとvanity hostの/discoverをcommon entryへredirectします。',
-	admin_tenant_discovery_skip_if_one: 'Tenantが1件だけならdiscoveryをskip',
+	admin_tenant_discovery_skip_if_one: 'テナントが1件だけならディスカバリーをスキップ',
 	admin_tenant_discovery_skip_if_one_description:
 		'有効な場合、active tenantが1件だけならshared /discover flowはすぐにtenant login pageへ進みます。',
 	admin_tenant_discovery_save_common_behavior: 'Common Entry Behaviorを保存',
 	admin_tenant_discovery_saving: '保存中...',
-	admin_tenant_discovery_tenant_behavior_title_single: 'Discovery Behavior',
+	admin_tenant_discovery_tenant_behavior_title_single: 'ディスカバリー動作',
 	admin_tenant_discovery_tenant_behavior_title_multi: 'Tenant Entry Override',
 	admin_tenant_discovery_tenant_behavior_description_single:
 		'Login前にこのtenantを解決する方法を制御します。',
@@ -123,7 +123,7 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_enable_tenant_override: 'Tenant entry overrideを有効化',
 	admin_tenant_discovery_enable_tenant_override_description:
 		'無効な場合、このtenantはcommon entry behaviorを使用します。既存のtenant値は保持されますが、このoverrideが有効になるまで無視されます。',
-	admin_tenant_discovery_save_behavior: 'Discovery Behaviorを保存',
+	admin_tenant_discovery_save_behavior: 'ディスカバリー動作を保存',
 	admin_tenant_discovery_common_behavior_active:
 		'このtenantではcommon entry behaviorが有効です。tenant-specific entry behaviorを設定するにはoverrideを有効にしてください。',
 	admin_tenant_discovery_save_tenant_entry_override: 'Tenant Entry Overrideを保存',
@@ -165,7 +165,7 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_common_screen_active:
 		'このtenantではcommon discovery screen contentが有効です。tenant-specific discovery screenをカスタマイズするにはoverrideを有効にしてください。',
 	admin_tenant_discovery_save_tenant_screen_override: 'Tenant Screen Overrideを保存',
-	admin_tenant_discovery_validation_enable_method: 'Discovery methodを1つ以上有効にしてください。',
+	admin_tenant_discovery_validation_enable_method: 'ディスカバリー方法を1つ以上有効にしてください。',
 	admin_tenant_discovery_validation_manual_requires_method:
 		'manual_onlyではtenant code、tenant slug、WAYFのいずれかを有効にしておく必要があります。',
 	admin_tenant_discovery_common_url_fallback: 'shared /discover URL',
@@ -173,18 +173,18 @@ const adminTenantDiscovery = {
 		'Common entry behaviorの読み込みに失敗しました',
 	admin_tenant_discovery_load_common_screen_failed:
 		'Common entry screen settingsの読み込みに失敗しました',
-	admin_tenant_discovery_load_failed: 'Tenant discovery settingsの読み込みに失敗しました',
+	admin_tenant_discovery_load_failed: 'テナントディスカバリー設定の読み込みに失敗しました',
 	admin_tenant_discovery_conflict:
 		'Settingsが別のユーザーにより変更されました。再読み込みしてから再試行してください。',
-	admin_tenant_discovery_behavior_saved: 'Discovery behaviorを保存しました',
-	admin_tenant_discovery_behavior_save_failed: 'Discovery behaviorの保存に失敗しました',
+	admin_tenant_discovery_behavior_saved: 'ディスカバリー動作を保存しました',
+	admin_tenant_discovery_behavior_save_failed: 'ディスカバリー動作の保存に失敗しました',
 	admin_tenant_discovery_common_behavior_saved: 'Common entry discovery behaviorを保存しました',
 	admin_tenant_discovery_common_behavior_save_failed:
 		'Common entry discovery behaviorの保存に失敗しました',
 	admin_tenant_discovery_common_screen_saved: 'Common entry screenを保存しました',
 	admin_tenant_discovery_common_screen_save_failed: 'Common entry screenの保存に失敗しました',
-	admin_tenant_discovery_tenant_screen_saved: 'Tenant discovery screenを保存しました',
-	admin_tenant_discovery_tenant_screen_save_failed: 'Tenant discovery screenの保存に失敗しました'
+	admin_tenant_discovery_tenant_screen_saved: 'テナントディスカバリー画面を保存しました',
+	admin_tenant_discovery_tenant_screen_save_failed: 'テナントディスカバリー画面の保存に失敗しました'
 } as const;
 
 export default adminTenantDiscovery;

@@ -123,7 +123,7 @@ const adminPolicies = {
 	admin_policies_type_country_in: '国がリスト内',
 	admin_policies_type_country_not_in: '国がリスト外',
 	admin_policies_type_ip_in_range: 'IPが範囲内',
-	admin_policies_type_request_count_lt: 'Request countが未満',
+	admin_policies_type_request_count_lt: 'リクエスト数が指定値未満',
 	admin_policies_type_request_count_lte: 'Request countが以下',
 	admin_policies_type_request_count_gt: 'Request countが超過',
 	admin_policies_type_request_count_gte: 'Request countが以上',

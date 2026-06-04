@@ -150,11 +150,11 @@ const adminTenants = {
 	admin_tenants_delete: '削除',
 	admin_tenants_login_entry_title: 'Login Entry Settings',
 	admin_tenants_login_entry_description:
-		'Discovery behaviorとdiscovery screen customizationは専用のTenant Discovery pageで管理します。',
-	admin_tenants_open_tenant_discovery: 'Tenant Discoveryを開く',
+		'ディスカバリー動作とディスカバリー画面のカスタマイズは専用のテナントディスカバリーページで管理します。',
+	admin_tenants_open_tenant_discovery: 'テナントディスカバリーを開く',
 	admin_tenants_entry_mode: 'Entry Mode',
 	admin_tenants_selection_policy: 'Selection Policy',
-	admin_tenants_discovery_methods: 'Discovery Methods',
+	admin_tenants_discovery_methods: 'ディスカバリー方法',
 	admin_tenants_danger_zone: 'Danger Zone',
 	admin_tenants_delete_tenant: 'Tenantを削除',
 	admin_tenants_delete_description:

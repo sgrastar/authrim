@@ -25,7 +25,7 @@ const adminJobs = {
 	admin_jobs_no_jobs: 'Jobはありません。',
 	admin_jobs_current_filters: '現在のフィルター:',
 	admin_jobs_empty_hint:
-		'import、tenant database request、report jobを作成するとwork trackingを開始できます。',
+		'インポート、テナントDBリクエスト、レポートジョブを作成すると、ここで進捗を確認できます',
 	admin_jobs_progress: 'Progress',
 	admin_jobs_duration: 'Duration',
 	admin_jobs_created: 'Created',

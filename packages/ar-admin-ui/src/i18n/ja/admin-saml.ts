@@ -44,7 +44,7 @@ const adminSaml = {
 	admin_saml_local_back: 'SAMLに戻る',
 	admin_saml_local_description:
 		'フェデレーション登録に使うAuthrimのSAML endpoint、entityID、証明書、署名メタデータを確認します。',
-	admin_saml_local_error_load_discovery: 'テナント検出設定を読み込めませんでした',
+	admin_saml_local_error_load_discovery: 'テナントディスカバリー設定を読み込めませんでした',
 	admin_saml_local_error_load_entity: 'SAML entity情報を読み込めませんでした',
 	admin_saml_local_error_parse_certificate: '証明書を解析できませんでした',
 	admin_saml_local_error_load_metadata: 'メタデータを読み込めませんでした',
@@ -115,28 +115,28 @@ const adminSaml = {
 	admin_saml_local_login_url: 'Login URL',
 	admin_saml_local_displayed_page_flow: '表示ページの流れ',
 	admin_saml_local_route_saml_redirect: 'SAML redirect',
-	admin_saml_local_route_common_discovery_gate: '共通テナント検出',
+	admin_saml_local_route_common_discovery_gate: '共通テナントディスカバリー',
 	admin_saml_local_route_first_visible_page: '最初に表示されるページ',
 	admin_saml_local_route_after_tenant_resolution: 'テナント解決後',
 	admin_saml_local_route_tenant_login_detail: 'ブラウザはこのテナントのlogin URLへ送られます。',
 	admin_saml_local_route_common_discovery_detail:
-		'テナントloginで共通テナント検出が必須のため、最初に表示されるページはテナント検出です。テナント確認後、テナントloginページへ戻ります。',
+		'テナントloginで共通テナントディスカバリーが必須のため、最初に表示されるページはテナントディスカバリーです。テナント確認後、テナントloginページへ戻ります。',
 	admin_saml_local_route_direct_login_detail:
-		'共通テナント検出を挟まず、loginページが直接表示されます。',
+		'共通テナントディスカバリーを挟まず、loginページが直接表示されます。',
 	admin_saml_local_route_ui_base_detail:
 		'ブラウザはtenant_hint付きのグローバルLogin UI /login URLへ送られます。',
 	admin_saml_local_route_after_resolution_detail:
-		'テナント検出がtenant verification grantを発行し、その後テナントloginページへredirectします。',
+		'テナントディスカバリーがtenant verification grantを発行し、その後テナントloginページへredirectします。',
 	admin_saml_local_discovery_no_url:
-		'共通テナント検出URLが設定されていないため、Login UIはloginページを直接表示する想定です。',
+		'共通テナントディスカバリーURLが設定されていないため、Login UIはloginページを直接表示する想定です。',
 	admin_saml_local_discovery_load_failed:
-		'共通entry /login は /discover へredirectしますが、テナント検出設定を読み込めませんでした。',
+		'共通entry /login は /discover へredirectしますが、テナントディスカバリー設定を読み込めませんでした。',
 	admin_saml_local_discovery_tenant_only:
 		'共通entry /login は /discover へredirectします。Tenant-only modeでは、discoveryがexpected_tenant_idとreturn_toを受け取った場合のみ自動で戻れます。このUI Base URLは /login から始まるため、single-tenant skipが適用されない限り、最初に表示されるページはdiscoveryページです。',
 	admin_saml_local_discovery_wayf:
 		'共通entry /login はWAYFテナント選択へredirectします。テナントのドロップダウンだけが表示されます。',
 	admin_saml_local_discovery_methods:
-		'共通entry /login はテナント検出へredirectします。表示される方法: {methods}。',
+		'共通entry /login はテナントディスカバリーへredirectします。表示される方法: {methods}。',
 	admin_saml_local_discovery_none_configured: '未設定',
 	admin_saml_local_discovery_email_domain: 'email/domain',
 	admin_saml_local_discovery_tenant_code: 'tenant code',
