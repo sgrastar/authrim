@@ -54,9 +54,10 @@ export function sanitizeText(str: string): string {
 	// Process character-by-character to avoid multi-character replacement issues
 	const dangerousSchemes = ['javascript', 'vbscript', 'data'];
 	for (const scheme of dangerousSchemes) {
-		// Build regex that matches the scheme followed by optional whitespace and colon
+		const obfuscatedScheme = scheme.split('').join('[\\s\\x00-\\x1f]*');
+		// Match schemes even when control whitespace is inserted between letters.
 		// Replace only the colon to break the URL scheme
-		const regex = new RegExp(`(${scheme})\\s*:`, 'gi');
+		const regex = new RegExp(`(${obfuscatedScheme})\\s*:`, 'gi');
 		result = result.replace(regex, '$1');
 	}
 

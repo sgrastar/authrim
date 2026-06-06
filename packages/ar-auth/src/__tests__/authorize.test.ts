@@ -109,6 +109,19 @@ function createMockDO() {
   };
 }
 
+function createMockPARRequestStore(consumedRequest: Record<string, unknown>) {
+  const consumeRequestRpc = vi.fn().mockResolvedValue(consumedRequest);
+
+  return {
+    idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-par-request-id' }),
+    get: vi.fn().mockReturnValue({
+      consumeRequestRpc,
+      fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+    }),
+    _consumeRequestRpc: consumeRequestRpc,
+  };
+}
+
 /**
  * Mock SessionStore Durable Object with RPC methods
  */
@@ -1549,6 +1562,54 @@ describe('Authorization Handler', () => {
               creditorAccount: { iban: 'DE89370400440532013000' },
             },
           ]),
+        })
+      );
+    });
+
+    it('should preserve PAR authorization_details on the authorization code', async () => {
+      env.ENABLE_RAR = 'true';
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+        'client.consent_required': false,
+      });
+      seedSession(env);
+      const authCodeStore = getAuthCodeStore(env);
+      const authorizationDetails = JSON.stringify([
+        {
+          type: 'payment_initiation',
+          instructedAmount: { amount: '100.00', currency: 'EUR' },
+          creditorAccount: { iban: 'DE89370400440532013000' },
+        },
+      ]);
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_test';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'rar-par-stored',
+        authorization_details: authorizationDetails,
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+      expect(authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientId: 'test-client',
+          state: 'rar-par-stored',
+          authorizationDetails: authorizationDetails,
         })
       );
     });

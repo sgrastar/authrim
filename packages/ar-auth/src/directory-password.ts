@@ -35,11 +35,11 @@ export interface DirectoryPasswordSuccess {
 }
 
 export interface DirectoryPasswordFailure {
-  result: 'failure';
+  result: 'failure' | 'policy_required';
   request_id: string;
   tenant_id: string;
   connector_id: string;
-  reason: 'invalid_credentials';
+  reason?: string;
   directory_status: 'ok';
 }
 
@@ -86,11 +86,24 @@ export class DirectoryPasswordClient {
     this.fetcher = fetcher;
   }
 
-  async verifyPassword(input: DirectoryPasswordVerifyInput): Promise<DirectoryPasswordVerifyResult> {
+  async verifyPassword(
+    input: DirectoryPasswordVerifyInput
+  ): Promise<DirectoryPasswordVerifyResult> {
     const requestId = input.requestId || crypto.randomUUID();
     const nonce = input.nonce || crypto.randomUUID();
     const timestamp = input.timestamp || new Date();
-    const url = new URL('/v1/auth/verify-password', this.config.endpoint);
+    const endpoint = parseDirectoryPasswordEndpoint(this.config.endpoint);
+    if (!endpoint) {
+      throw new DirectoryPasswordError({
+        requestId,
+        tenantId: this.config.tenantId,
+        connectorId: this.config.connectorId,
+        code: 'invalid_connector_endpoint',
+        retryable: false,
+        status: 0,
+      });
+    }
+    const url = new URL('/v1/auth/verify-password', endpoint);
     const body = JSON.stringify({
       request_id: requestId,
       tenant_id: this.config.tenantId,
@@ -109,16 +122,6 @@ export class DirectoryPasswordClient {
       'x-authrim-timestamp',
     ];
     const timestampValue = timestamp.toISOString();
-    const canonical = await buildDirectoryPasswordCanonicalRequest({
-      method: 'POST',
-      url,
-      body,
-      signedHeaders,
-      timestamp: timestampValue,
-      nonce,
-    });
-    const signature = await signDirectoryPasswordCanonicalRequest(canonical, this.config.secret);
-
     const headers = new Headers({
       'Content-Type': 'application/json',
       'X-Authrim-Connector-Id': this.config.connectorId,
@@ -127,8 +130,19 @@ export class DirectoryPasswordClient {
       'X-Authrim-Timestamp': timestampValue,
       'X-Authrim-Nonce': nonce,
       'X-Authrim-Signed-Headers': signedHeaders.join(';'),
-      'X-Authrim-Signature': signature,
     });
+    const canonical = await buildDirectoryPasswordCanonicalRequest({
+      method: 'POST',
+      url,
+      body,
+      headers,
+      signedHeaders,
+      timestamp: timestampValue,
+      nonce,
+    });
+    const signature = await signDirectoryPasswordCanonicalRequest(canonical, this.config.secret);
+
+    headers.set('X-Authrim-Signature', signature);
 
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -149,7 +163,8 @@ export class DirectoryPasswordClient {
         requestId,
         tenantId: this.config.tenantId,
         connectorId: this.config.connectorId,
-        code: error instanceof DOMException && error.name === 'AbortError' ? 'timeout' : 'fetch_error',
+        code:
+          error instanceof DOMException && error.name === 'AbortError' ? 'timeout' : 'fetch_error',
         retryable: true,
         status: 0,
       });
@@ -159,17 +174,35 @@ export class DirectoryPasswordClient {
 
     if (!response.ok) {
       const parsed = await safeParseWordwardenError(response);
+      if (
+        (parsed.request_id && parsed.request_id !== requestId) ||
+        (parsed.tenant_id && parsed.tenant_id !== this.config.tenantId) ||
+        (parsed.connector_id && parsed.connector_id !== this.config.connectorId)
+      ) {
+        throw new DirectoryPasswordError({
+          requestId,
+          tenantId: this.config.tenantId,
+          connectorId: this.config.connectorId,
+          code: 'connector_error_response_mismatch',
+          retryable: false,
+          status: response.status,
+        });
+      }
       throw new DirectoryPasswordError({
-        requestId: parsed.request_id || requestId,
-        tenantId: parsed.tenant_id || this.config.tenantId,
-        connectorId: parsed.connector_id || this.config.connectorId,
+        requestId,
+        tenantId: this.config.tenantId,
+        connectorId: this.config.connectorId,
         code: parsed.error?.code || 'wordwarden_error',
         retryable: parsed.error?.retryable ?? response.status >= 500,
         status: response.status,
       });
     }
 
-    return response.json() as Promise<DirectoryPasswordVerifyResult>;
+    return validateDirectoryPasswordVerifyResult(
+      await safeParseJson(response),
+      this.config,
+      requestId
+    );
   }
 }
 
@@ -177,6 +210,7 @@ export interface DirectoryPasswordCanonicalRequestInput {
   method: string;
   url: URL;
   body: string;
+  headers: Headers;
   signedHeaders: string[];
   timestamp: string;
   nonce: string;
@@ -186,7 +220,8 @@ export async function buildDirectoryPasswordCanonicalRequest(
   input: DirectoryPasswordCanonicalRequestInput
 ): Promise<string> {
   const bodyHash = await sha256Hex(input.body);
-  const signedHeaders = input.signedHeaders.map((header) => header.toLowerCase()).sort().join(';');
+  const signedHeaders = canonicalSignedHeaders(input.signedHeaders);
+  const canonicalHeadersValue = canonicalHeaders(input.headers, signedHeaders);
   return [
     HMAC_ALGORITHM,
     input.timestamp,
@@ -194,6 +229,7 @@ export async function buildDirectoryPasswordCanonicalRequest(
     input.method,
     input.url.pathname,
     canonicalQuery(input.url.searchParams),
+    canonicalHeadersValue,
     signedHeaders,
     bodyHash,
   ].join('\n');
@@ -223,6 +259,29 @@ function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+function canonicalSignedHeaders(signedHeaders: string[]): string {
+  return [...new Set(signedHeaders.map((header) => header.trim().toLowerCase()).filter(Boolean))]
+    .sort()
+    .join(';');
+}
+
+function canonicalHeaders(headers: Headers, signedHeaders: string): string {
+  return signedHeaders
+    .split(';')
+    .map((header) => {
+      const value = headers.get(header);
+      if (!value) {
+        throw new Error(`missing signed header ${header}`);
+      }
+      const normalized = value.trim().replace(/\s+/g, ' ');
+      if (!normalized) {
+        throw new Error(`empty signed header ${header}`);
+      }
+      return `${header}:${normalized}`;
+    })
+    .join('\n');
+}
+
 function canonicalQuery(params: URLSearchParams): string {
   const keys = [...new Set(params.keys())].sort();
   const parts: string[] = [];
@@ -235,10 +294,135 @@ function canonicalQuery(params: URLSearchParams): string {
   return parts.join('&');
 }
 
+function parseDirectoryPasswordEndpoint(endpoint: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return null;
+  }
+  if (url.protocol === 'https:') return url;
+  if (url.protocol === 'http:' && isLoopbackHost(url.hostname)) return url;
+  return null;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
 async function safeParseWordwardenError(response: Response): Promise<WordwardenErrorResponse> {
   try {
     return (await response.json()) as WordwardenErrorResponse;
   } catch {
     return {};
   }
+}
+
+async function safeParseJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function validateDirectoryPasswordVerifyResult(
+  value: unknown,
+  config: DirectoryPasswordConnectorConfig,
+  requestId: string
+): DirectoryPasswordVerifyResult {
+  if (!isRecord(value)) {
+    throw connectorResponseError(config, requestId, 'invalid_connector_response');
+  }
+
+  const responseRequestId = stringField(value, 'request_id');
+  const responseTenantId = stringField(value, 'tenant_id');
+  const responseConnectorId = stringField(value, 'connector_id');
+  if (
+    responseRequestId !== requestId ||
+    responseTenantId !== config.tenantId ||
+    responseConnectorId !== config.connectorId
+  ) {
+    throw connectorResponseError(config, requestId, 'connector_response_mismatch');
+  }
+
+  const result = stringField(value, 'result');
+  const directoryStatus = stringField(value, 'directory_status') || 'ok';
+  if (directoryStatus !== 'ok') {
+    throw connectorResponseError(config, requestId, 'unexpected_directory_status');
+  }
+  if (result === 'success') {
+    const subject = value.subject;
+    if (!isRecord(subject)) {
+      throw connectorResponseError(config, requestId, 'invalid_connector_response');
+    }
+    const directoryId = stringField(subject, 'directory_id');
+    const username = stringField(subject, 'username');
+    if (!directoryId || !username) {
+      throw connectorResponseError(config, requestId, 'invalid_connector_response');
+    }
+
+    return {
+      result,
+      request_id: responseRequestId,
+      tenant_id: responseTenantId,
+      connector_id: responseConnectorId,
+      subject: {
+        directory_id: directoryId,
+        username,
+      },
+      attributes: normalizeAttributes(value.attributes),
+      directory_status: directoryStatus,
+    };
+  }
+
+  if (result === 'failure' || result === 'policy_required') {
+    return {
+      result,
+      request_id: responseRequestId,
+      tenant_id: responseTenantId,
+      connector_id: responseConnectorId,
+      reason: stringField(value, 'reason') || result,
+      directory_status: directoryStatus,
+    };
+  }
+
+  throw connectorResponseError(config, requestId, 'unexpected_connector_result');
+}
+
+function connectorResponseError(
+  config: DirectoryPasswordConnectorConfig,
+  requestId: string,
+  code: string
+): DirectoryPasswordError {
+  return new DirectoryPasswordError({
+    requestId,
+    tenantId: config.tenantId,
+    connectorId: config.connectorId,
+    code,
+    retryable: false,
+    status: 502,
+  });
+}
+
+function normalizeAttributes(value: unknown): Record<string, string[]> | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: Record<string, string[]> = {};
+  for (const [key, rawValues] of Object.entries(value)) {
+    if (!Array.isArray(rawValues)) continue;
+    const values = rawValues.filter((item): item is string => typeof item === 'string');
+    if (values.length > 0) {
+      result[key] = values;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringField(value: Record<string, unknown>, key: string): string | undefined {
+  const field = value[key];
+  return typeof field === 'string' && field.length > 0 ? field : undefined;
 }

@@ -592,11 +592,11 @@ export class KeyManager extends DurableObject<Env> {
   /**
    * Generate a new key and add it to the key set
    */
-  async generateNewKey(): Promise<StoredKey> {
+  async generateNewKey(options: { modulusLength?: number } = {}): Promise<StoredKey> {
     await this.initializeState();
 
     const kid = this.generateKeyId();
-    const keySet = await generateKeySet(kid);
+    const keySet = await generateKeySet(kid, options.modulusLength);
 
     log.debug('generateNewKey - keySet', {
       kid,
@@ -691,11 +691,11 @@ export class KeyManager extends DurableObject<Env> {
   /**
    * Rotate keys (generate new key and set as active)
    */
-  async rotateKeys(): Promise<StoredKey> {
+  async rotateKeys(options: { modulusLength?: number } = {}): Promise<StoredKey> {
     await this.initializeState();
 
     // Generate new key
-    const newKey = await this.generateNewKey();
+    const newKey = await this.generateNewKey(options);
 
     // Set new key as active
     await this.setActiveKey(newKey.kid);
@@ -1459,10 +1459,18 @@ export class KeyManager extends DurableObject<Env> {
 
       // POST /internal/rotate - Trigger key rotation and return with private key (for internal use)
       if (path === '/internal/rotate' && request.method === 'POST') {
-        const newKey = await this.rotateKeys();
+        const body = request.headers.get('Content-Type')?.includes('application/json')
+          ? ((await request.json().catch(() => ({}))) as { modulusLength?: unknown })
+          : {};
+        const modulusLength =
+          body.modulusLength === 2048 || body.modulusLength === 3072 || body.modulusLength === 4096
+            ? body.modulusLength
+            : undefined;
+        const newKey = await this.rotateKeys({ modulusLength });
 
         log.debug('/internal/rotate - newKey', {
           kid: newKey.kid,
+          modulusLength,
           hasPEM: !!newKey.privatePEM,
           pemLength: newKey.privatePEM?.length,
         });

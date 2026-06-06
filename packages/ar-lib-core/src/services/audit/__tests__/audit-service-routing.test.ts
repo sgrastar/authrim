@@ -6,6 +6,7 @@ import type { IAuditStorageAdapter } from '../storage';
 import type { DatabaseAdapter } from '../../../db';
 
 const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const PII_ENCRYPTION_KEY = '89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567';
 
 function createMockD1(firstResults: unknown[] = [null]): D1Database {
   const firstQueue = [...firstResults];
@@ -330,6 +331,7 @@ describe('AuditService routing', () => {
       coreSource,
       piiSource: piiSourceForTest,
       r2Bucket,
+      piiEncryptionKey: PII_ENCRYPTION_KEY,
       resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
       resolvePrimaryAdapter: vi.fn().mockResolvedValue(primaryAdapter),
     });
@@ -344,6 +346,36 @@ describe('AuditService routing', () => {
 
     expect(piiSourceForTest.prepare).toHaveBeenCalled();
     expect(primaryAdapter.writePIILog).toHaveBeenCalledOnce();
+  });
+
+  it('fails PII audit encryption when no PII encryption key is configured', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'audit-d1-primary',
+      kind: 'audit',
+      label: 'D1 Primary',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'pii_log' },
+      archive: null,
+      sinks: [],
+      archiveFailureMode: 'best_effort',
+      sinkFailureMode: 'best_effort',
+    };
+    const piiSourceForTest = createMockD1([null, { anonymized_user_id: 'anon-1' }]);
+    const service = new AuditService({
+      coreSource,
+      piiSource: piiSourceForTest,
+      r2Bucket,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+
+    await expect(
+      service.logPIIChange('tenant-a', {
+        userId: 'user-1',
+        changeType: 'update',
+        affectedFields: ['email'],
+        newValues: { email: 'u@example.com' },
+        actorType: 'admin',
+      })
+    ).rejects.toThrow('PII_ENCRYPTION_KEY is required for audit PII encryption');
   });
 
   it('accepts pre-resolved database adapters for transitional audit paths', async () => {
@@ -433,6 +465,7 @@ describe('AuditService routing', () => {
       r2Bucket,
       sensitiveDetailBucket: r2Bucket,
       objectEncryptionRootKey: OBJECT_ROOT_KEY,
+      piiEncryptionKey: PII_ENCRYPTION_KEY,
       resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
       tenantKeyResolver: vi.fn().mockResolvedValue('t_registry_pii'),
     });

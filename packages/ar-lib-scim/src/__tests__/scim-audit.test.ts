@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+import { SCIM_EVENTS } from '@authrim/ar-lib-core/types/events/event-types';
 
 // Mock createAuditLog before importing scim-audit
 const mockCreateAuditLog = vi.fn().mockResolvedValue(undefined);
@@ -9,7 +10,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   DEFAULT_TENANT_ID: 'default',
 }));
 
-import { createScimAuditLog, logScimAudit } from '../utils/scim-audit';
+import { createScimAuditLog, logScimAudit, type ScimAuditAction } from '../utils/scim-audit';
 
 /**
  * SCIM Audit Log Utility Tests
@@ -61,6 +62,24 @@ describe('createScimAuditLog', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('keeps emitted SCIM audit actions aligned with event constants', () => {
+    const emittedActions: ScimAuditAction[] = [
+      'scim.user.create',
+      'scim.user.replace',
+      'scim.user.patch',
+      'scim.user.delete',
+      'scim.group.create',
+      'scim.group.replace',
+      'scim.group.patch',
+      'scim.group.delete',
+      'scim.bulk.execute',
+      'scim.token.create',
+      'scim.token.revoke',
+    ];
+
+    expect(new Set(Object.values(SCIM_EVENTS))).toEqual(new Set(emittedActions));
   });
 
   it('should create an audit log with scim-service as userId (M2M identifier)', async () => {

@@ -394,7 +394,7 @@ export function formatWildcardDnsManualAction(action: WildcardDnsManualAction): 
 
 export function isWildcardDnsPermissionError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /zone:read|dns:edit permission|verify\/create wildcard dns/i.test(message);
+  return /wildcard dns|verify\/create wildcard dns/i.test(message);
 }
 
 function getCloudflareDnsZoneName(domainOrZoneName: string): string {

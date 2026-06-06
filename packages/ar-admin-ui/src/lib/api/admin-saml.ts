@@ -25,12 +25,17 @@ export interface SAMLMetadataRefreshStatus {
 
 export interface SAMLSigningKeyReference {
 	slot: 'active' | 'next' | 'backup';
+	id?: string;
 	keyRef?: string;
 	kid?: string;
 	certificate?: string;
 	state?: string;
 	metadataPublishFrom?: number;
 	plannedActivationAt?: number;
+	validFrom?: number;
+	validTo?: number;
+	publicKeyAlgorithm?: 'RSA';
+	publicKeySizeBits?: number;
 }
 
 export interface SAMLSigningKeyPolicy {
@@ -38,6 +43,7 @@ export interface SAMLSigningKeyPolicy {
 	metadataCertificatePublication?: 'active_only' | 'active_next' | 'active_next_backup';
 	active?: SAMLSigningKeyReference;
 	next?: SAMLSigningKeyReference;
+	nextCandidates?: SAMLSigningKeyReference[];
 	backup?: SAMLSigningKeyReference;
 }
 
@@ -542,9 +548,15 @@ export const adminSAMLAPI = {
 
 	async updateLocalSigning(request: {
 		role: 'idp' | 'sp';
-		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup';
+		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup' | 'delete_next';
 		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
 		keepPreviousAsBackup?: boolean;
+		targetKid?: string;
+		targetKeyRef?: string;
+		validFrom?: string;
+		validTo?: string;
+		publicKeyAlgorithm?: 'RSA';
+		publicKeySizeBits?: 2048 | 3072 | 4096;
 	}): Promise<SAMLSettings> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings/local-signing`, {
 			method: 'POST',

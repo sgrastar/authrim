@@ -948,9 +948,15 @@ app.all('/did/*', async (c) => {
  * - /auth/external/:provider/start - Start external IdP login
  * - /auth/external/:provider/callback - Handle OAuth callback
  * - /auth/external/link - Link/unlink external identities
+ * - /api/external/* - Backward-compatible external IdP path
  * - /external-idp/admin/* - Admin API for external IdP management
  */
 app.all('/auth/external/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.EXTERNAL_IDP.fetch(request);
+});
+
+app.all('/api/external/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.EXTERNAL_IDP.fetch(request);
 });

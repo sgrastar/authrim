@@ -4173,10 +4173,6 @@ type RootTranslation = {
 	 */
 	admin_saml_local_error_update_settings: string;
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​ ​s​u​b​j​e​c​t
-	 */
-	admin_saml_local_error_save_subject: string;
-	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
 	admin_saml_local_error_update_certificate: string;
@@ -4184,10 +4180,6 @@ type RootTranslation = {
 	 * S​A​M​L​ ​s​e​t​t​i​n​g​s​ ​u​p​d​a​t​e​d
 	 */
 	admin_saml_local_settings_updated: string;
-	/**
-	 * S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​ ​s​u​b​j​e​c​t​ ​s​a​v​e​d
-	 */
-	admin_saml_local_subject_saved: string;
 	/**
 	 * S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​ ​s​e​t​t​i​n​g​s​ ​u​p​d​a​t​e​d
 	 */
@@ -4543,13 +4535,41 @@ type RootTranslation = {
 	 */
 	admin_saml_local_saving: string;
 	/**
-	 * S​i​g​n​i​n​g​ ​C​e​r​t​i​f​i​c​a​t​e​ ​S​u​b​j​e​c​t
+	 * C​r​e​a​t​e​ ​r​o​l​l​o​v​e​r​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
 	admin_saml_local_signing_subject: string;
 	/**
-	 * S​e​t​ ​t​h​e​ ​X​.​5​0​9​ ​s​u​b​j​e​c​t​ ​u​s​e​d​ ​w​h​e​n​ ​A​u​t​h​r​i​m​ ​c​r​e​a​t​e​s​ ​l​o​c​a​l​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s​.
+	 * C​r​e​a​t​e​ ​a​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​ ​t​h​a​t​ ​c​a​n​ ​b​e​ ​s​w​i​t​c​h​e​d​ ​i​n​t​o​ ​u​s​e​ ​l​a​t​e​r​.
 	 */
 	admin_saml_local_signing_subject_desc: string;
+	/**
+	 * T​a​r​g​e​t
+	 */
+	admin_saml_local_rollover_role: string;
+	/**
+	 * U​s​e​ ​t​h​e​ ​s​a​m​e​ ​s​u​b​j​e​c​t​ ​a​s​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_saml_local_use_current_subject: string;
+	/**
+	 * C​r​e​a​t​e​ ​r​o​l​l​o​v​e​r​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_saml_local_create_rollover_certificate: string;
+	/**
+	 * V​a​l​i​d​ ​f​r​o​m
+	 */
+	admin_saml_local_certificate_valid_from: string;
+	/**
+	 * E​x​p​i​r​e​s​ ​a​t
+	 */
+	admin_saml_local_certificate_valid_to: string;
+	/**
+	 * P​u​b​l​i​c​ ​k​e​y​ ​t​y​p​e
+	 */
+	admin_saml_local_certificate_public_key_algorithm: string;
+	/**
+	 * P​u​b​l​i​c​ ​k​e​y​ ​b​i​t​s
+	 */
+	admin_saml_local_certificate_public_key_bits: string;
 	/**
 	 * C​ ​(​C​o​u​n​t​r​y​)
 	 */
@@ -4575,13 +4595,9 @@ type RootTranslation = {
 	 */
 	admin_saml_local_common_name: string;
 	/**
-	 * S​u​b​j​e​c​t​ ​c​h​a​n​g​e​s​ ​a​p​p​l​y​ ​t​o​ ​n​e​w​l​y​ ​c​r​e​a​t​e​d​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s​.​ ​E​x​i​s​t​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s​ ​k​e​e​p​ ​t​h​e​i​r​ ​c​u​r​r​e​n​t​ ​s​u​b​j​e​c​t​.
+	 * T​h​e​ ​c​e​r​t​i​f​i​c​a​t​e​ ​c​r​e​a​t​e​d​ ​h​e​r​e​ ​i​s​ ​n​o​t​ ​u​s​e​d​ ​f​o​r​ ​s​i​g​n​i​n​g​ ​i​m​m​e​d​i​a​t​e​l​y​.​ ​S​e​l​e​c​t​ ​i​t​ ​i​n​ ​t​h​e​ ​s​t​o​r​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​ ​l​i​s​t​ ​a​n​d​ ​s​t​a​r​t​ ​u​s​i​n​g​ ​i​t​ ​w​h​e​n​ ​r​e​a​d​y​.
 	 */
 	admin_saml_local_subject_warning: string;
-	/**
-	 * S​a​v​e​ ​S​i​g​n​i​n​g​ ​C​e​r​t​i​f​i​c​a​t​e​ ​S​u​b​j​e​c​t
-	 */
-	admin_saml_local_save_subject: string;
 	/**
 	 * S​i​g​n​i​n​g​ ​R​o​l​l​o​v​e​r
 	 */
@@ -4591,45 +4607,195 @@ type RootTranslation = {
 	 */
 	admin_saml_local_signing_rollover_desc: string;
 	/**
-	 * {​r​o​l​e​}​ ​S​i​g​n​i​n​g​ ​R​o​l​l​o​v​e​r
+	 * I​d​P​ ​a​n​d​ ​S​P​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s​ ​a​r​e​ ​m​a​n​a​g​e​d​ ​s​e​p​a​r​a​t​e​l​y​ ​b​e​c​a​u​s​e​ ​A​u​t​h​r​i​m​ ​p​u​b​l​i​s​h​e​s​ ​s​e​p​a​r​a​t​e​ ​I​d​P​ ​a​n​d​ ​S​P​ ​m​e​t​a​d​a​t​a​ ​a​n​d​ ​u​s​e​s​ ​e​a​c​h​ ​r​o​l​e​ ​f​o​r​ ​d​i​f​f​e​r​e​n​t​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​o​p​e​r​a​t​i​o​n​s​.
+	 */
+	admin_saml_local_signing_rollover_role_note: string;
+	/**
+	 * {​r​o​l​e​}​ ​s​t​o​r​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​s
 	 * @param {string} role
 	 */
-	admin_saml_local_signing_rollover_heading: RequiredParams<'role'>;
+	admin_saml_local_rollover_saved_certificates: RequiredParams<'role'>;
 	/**
-	 * d​e​f​a​u​l​t​ ​a​c​t​i​v​e​ ​k​e​y
+	 * S​e​l​e​c​t
 	 */
-	admin_saml_local_default_active_key: string;
+	admin_saml_local_rollover_select_certificate: string;
 	/**
-	 * a​c​t​i​v​e​ ​{​k​i​d​}
-	 * @param {string} kid
+	 * S​e​l​e​c​t​ ​{​r​o​l​e​}​ ​{​s​l​o​t​}
+	 * @param {string} role
+	 * @param {string} slot
 	 */
-	admin_saml_local_active_key: RequiredParams<'kid'>;
+	admin_saml_local_rollover_select_slot: RequiredParams<'role' | 'slot'>;
 	/**
-	 * ,​ ​n​e​x​t​ ​{​k​i​d​}
-	 * @param {string} kid
+	 * A​c​t​i​o​n​s​ ​f​o​r​ ​s​e​l​e​c​t​e​d​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
-	admin_saml_local_next_key: RequiredParams<'kid'>;
+	admin_saml_local_rollover_selected_actions: string;
 	/**
-	 * ,​ ​b​a​c​k​u​p​ ​{​k​i​d​}
-	 * @param {string} kid
-	 */
-	admin_saml_local_backup_key: RequiredParams<'kid'>;
-	/**
-	 * R​e​c​r​e​a​t​e​ ​a​c​t​i​v​e
+	 * I​m​m​e​d​i​a​t​e​l​y​ ​r​e​c​r​e​a​t​e​ ​c​u​r​r​e​n​t​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
 	admin_saml_local_recreate_active: string;
 	/**
-	 * P​u​b​l​i​s​h​ ​n​e​x​t
+	 * I​m​m​e​d​i​a​t​e​l​y​ ​r​e​c​r​e​a​t​e​ ​c​u​r​r​e​n​t​ ​{​r​o​l​e​}​ ​c​e​r​t​i​f​i​c​a​t​e
+	 * @param {string} role
+	 */
+	admin_saml_local_recreate_active_for_role: RequiredParams<'role'>;
+	/**
+	 * C​r​e​a​t​e​ ​r​o​l​l​o​v​e​r​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
 	admin_saml_local_publish_next: string;
 	/**
-	 * P​r​o​m​o​t​e​ ​n​e​x​t
+	 * S​t​a​r​t​ ​u​s​i​n​g​ ​s​e​l​e​c​t​e​d​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
 	admin_saml_local_promote_next: string;
 	/**
-	 * R​e​t​i​r​e​ ​b​a​c​k​u​p
+	 * D​e​l​e​t​e​ ​o​l​d​ ​c​e​r​t​i​f​i​c​a​t​e
 	 */
 	admin_saml_local_retire_backup: string;
+	/**
+	 * C​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_saml_local_rollover_certificate: string;
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_saml_local_rollover_status: string;
+	/**
+	 * S​i​g​n​i​n​g
+	 */
+	admin_saml_local_rollover_signing: string;
+	/**
+	 * S​t​o​r​e​d
+	 */
+	admin_saml_local_rollover_stored: string;
+	/**
+	 * P​u​b​l​i​s​h​e​d
+	 */
+	admin_saml_local_rollover_published: string;
+	/**
+	 * C​r​e​a​t​e​d
+	 */
+	admin_saml_local_rollover_created: string;
+	/**
+	 * V​a​l​i​d​ ​f​r​o​m
+	 */
+	admin_saml_local_rollover_valid_from: string;
+	/**
+	 * V​a​l​i​d​ ​t​o
+	 */
+	admin_saml_local_rollover_valid_to: string;
+	/**
+	 * M​a​x​ ​r​e​f​e​r​e​n​c​e​ ​u​n​t​i​l
+	 */
+	admin_saml_local_rollover_max_reference_until: string;
+	/**
+	 * A​c​t​i​o​n​s
+	 */
+	admin_saml_local_rollover_row_actions: string;
+	/**
+	 * V​i​e​w
+	 */
+	admin_saml_local_rollover_view_certificate: string;
+	/**
+	 * D​e​l​e​t​e​ ​s​e​l​e​c​t​e​d​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_saml_local_rollover_delete_certificate: string;
+	/**
+	 * T​h​e​ ​c​u​r​r​e​n​t​l​y​ ​u​s​e​d​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​ ​c​a​n​n​o​t​ ​b​e​ ​d​e​l​e​t​e​d​ ​f​r​o​m​ ​t​h​i​s​ ​a​c​t​i​o​n​.
+	 */
+	admin_saml_local_rollover_delete_active_disabled: string;
+	/**
+	 * C​u​r​r​e​n​t​l​y​ ​u​s​e​d
+	 */
+	admin_saml_local_rollover_active_label: string;
+	/**
+	 * C​u​r​r​e​n​t​l​y​ ​u​s​e​d​ ​t​o​ ​s​i​g​n​ ​S​A​M​L​ ​m​e​s​s​a​g​e​s​.
+	 */
+	admin_saml_local_rollover_active_desc: string;
+	/**
+	 * S​w​i​t​c​h​a​b​l​e
+	 */
+	admin_saml_local_rollover_next_label: string;
+	/**
+	 * C​r​e​a​t​e​d​ ​a​n​d​ ​p​u​b​l​i​s​h​e​d​ ​i​n​ ​a​d​v​a​n​c​e​ ​s​o​ ​i​t​ ​c​a​n​ ​b​e​ ​s​w​i​t​c​h​e​d​ ​i​n​t​o​ ​u​s​e​.
+	 */
+	admin_saml_local_rollover_next_desc: string;
+	/**
+	 * O​l​d​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_saml_local_rollover_backup_label: string;
+	/**
+	 * P​r​e​v​i​o​u​s​ ​c​e​r​t​i​f​i​c​a​t​e​ ​k​e​p​t​ ​t​e​m​p​o​r​a​r​i​l​y​ ​d​u​r​i​n​g​ ​t​h​e​ ​m​e​t​a​d​a​t​a​ ​c​a​c​h​e​ ​w​i​n​d​o​w​.
+	 */
+	admin_saml_local_rollover_backup_desc: string;
+	/**
+	 * D​e​f​a​u​l​t​ ​c​u​r​r​e​n​t​l​y​ ​u​s​e​d​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_saml_local_rollover_status_default_active: string;
+	/**
+	 * N​o​t​ ​c​o​n​f​i​g​u​r​e​d
+	 */
+	admin_saml_local_rollover_status_not_configured: string;
+	/**
+	 * I​n​ ​u​s​e​ ​+​ ​p​u​b​l​i​s​h​e​d
+	 */
+	admin_saml_local_rollover_status_signing_published: string;
+	/**
+	 * I​n​ ​u​s​e
+	 */
+	admin_saml_local_rollover_status_signing: string;
+	/**
+	 * S​t​o​r​e​d​ ​+​ ​p​u​b​l​i​s​h​e​d
+	 */
+	admin_saml_local_rollover_status_stored_published: string;
+	/**
+	 * S​t​o​r​e​d​ ​o​n​l​y
+	 */
+	admin_saml_local_rollover_status_stored_only: string;
+	/**
+	 * Y​e​s
+	 */
+	admin_saml_local_yes: string;
+	/**
+	 * N​o
+	 */
+	admin_saml_local_no: string;
+	/**
+	 * I​m​m​e​d​i​a​t​e​l​y​ ​r​e​c​r​e​a​t​e​s​ ​t​h​e​ ​c​u​r​r​e​n​t​l​y​ ​u​s​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​ ​w​i​t​h​o​u​t​ ​p​r​e​-​p​u​b​l​i​c​a​t​i​o​n​.​ ​A​v​o​i​d​ ​t​h​i​s​ ​i​n​ ​n​o​r​m​a​l​ ​o​p​e​r​a​t​i​o​n​s​.
+	 */
+	admin_saml_local_rollover_recreate_active_note: string;
+	/**
+	 * C​r​e​a​t​e​s​ ​a​ ​s​w​i​t​c​h​a​b​l​e​ ​c​e​r​t​i​f​i​c​a​t​e​ ​a​n​d​ ​p​u​b​l​i​s​h​e​s​ ​i​t​ ​a​l​o​n​g​s​i​d​e​ ​t​h​e​ ​c​u​r​r​e​n​t​l​y​ ​u​s​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​.
+	 */
+	admin_saml_local_rollover_publish_next_note: string;
+	/**
+	 * S​t​a​r​t​s​ ​u​s​i​n​g​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​ ​a​f​t​e​r​ ​r​e​l​y​i​n​g​ ​p​a​r​t​i​e​s​ ​h​a​v​e​ ​h​a​d​ ​t​i​m​e​ ​t​o​ ​c​a​c​h​e​ ​i​t​.
+	 */
+	admin_saml_local_rollover_promote_next_note: string;
+	/**
+	 * R​e​m​o​v​e​s​ ​t​h​e​ ​o​l​d​ ​c​e​r​t​i​f​i​c​a​t​e​ ​a​f​t​e​r​ ​t​h​e​ ​m​e​t​a​d​a​t​a​ ​c​a​c​h​e​ ​w​i​n​d​o​w​ ​h​a​s​ ​p​a​s​s​e​d​.
+	 */
+	admin_saml_local_rollover_retire_backup_note: string;
+	/**
+	 * E​m​e​r​g​e​n​c​y​ ​o​p​e​r​a​t​i​o​n​s
+	 */
+	admin_saml_local_emergency_operations: string;
+	/**
+	 * U​s​e​ ​o​n​l​y​ ​w​h​e​n​ ​y​o​u​ ​c​a​n​n​o​t​ ​w​a​i​t​ ​f​o​r​ ​p​r​e​-​p​u​b​l​i​c​a​t​i​o​n​,​ ​s​u​c​h​ ​a​s​ ​a​ ​l​e​a​k​e​d​ ​p​r​i​v​a​t​e​ ​k​e​y​.​ ​R​e​l​y​i​n​g​ ​p​a​r​t​i​e​s​ ​t​h​a​t​ ​c​a​c​h​e​ ​o​l​d​ ​m​e​t​a​d​a​t​a​ ​m​a​y​ ​f​a​i​l​ ​s​i​g​n​a​t​u​r​e​ ​v​e​r​i​f​i​c​a​t​i​o​n​.
+	 */
+	admin_saml_local_emergency_operations_desc: string;
+	/**
+	 * {​r​o​l​e​}​ ​{​s​l​o​t​}​ ​c​e​r​t​i​f​i​c​a​t​e
+	 * @param {string} role
+	 * @param {string} slot
+	 */
+	admin_saml_local_rollover_detail_title: RequiredParams<'role' | 'slot'>;
+	/**
+	 * N​o​ ​c​e​r​t​i​f​i​c​a​t​e​ ​m​a​t​e​r​i​a​l​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​t​h​i​s​ ​r​o​w​.
+	 */
+	admin_saml_local_rollover_detail_no_certificate: string;
+	/**
+	 * L​o​a​d​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​ ​d​e​t​a​i​l​s​.​.​.
+	 */
+	admin_saml_local_rollover_detail_loading: string;
 	/**
 	 * S​i​g​n​e​d​ ​m​e​t​a​d​a​t​a
 	 */
@@ -29923,10 +30089,6 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_error_update_settings: () => LocalizedString;
 	/**
-	 * Failed to save SAML signing certificate subject
-	 */
-	admin_saml_local_error_save_subject: () => LocalizedString;
-	/**
 	 * Failed to update SAML signing certificate
 	 */
 	admin_saml_local_error_update_certificate: () => LocalizedString;
@@ -29934,10 +30096,6 @@ export type TranslationFunctions = {
 	 * SAML settings updated
 	 */
 	admin_saml_local_settings_updated: () => LocalizedString;
-	/**
-	 * SAML signing certificate subject saved
-	 */
-	admin_saml_local_subject_saved: () => LocalizedString;
 	/**
 	 * SAML signing certificate settings updated
 	 */
@@ -30287,13 +30445,41 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_saving: () => LocalizedString;
 	/**
-	 * Signing Certificate Subject
+	 * Create rollover certificate
 	 */
 	admin_saml_local_signing_subject: () => LocalizedString;
 	/**
-	 * Set the X.509 subject used when Authrim creates local SAML signing certificates.
+	 * Create a signing certificate that can be switched into use later.
 	 */
 	admin_saml_local_signing_subject_desc: () => LocalizedString;
+	/**
+	 * Target
+	 */
+	admin_saml_local_rollover_role: () => LocalizedString;
+	/**
+	 * Use the same subject as the current certificate
+	 */
+	admin_saml_local_use_current_subject: () => LocalizedString;
+	/**
+	 * Create rollover certificate
+	 */
+	admin_saml_local_create_rollover_certificate: () => LocalizedString;
+	/**
+	 * Valid from
+	 */
+	admin_saml_local_certificate_valid_from: () => LocalizedString;
+	/**
+	 * Expires at
+	 */
+	admin_saml_local_certificate_valid_to: () => LocalizedString;
+	/**
+	 * Public key type
+	 */
+	admin_saml_local_certificate_public_key_algorithm: () => LocalizedString;
+	/**
+	 * Public key bits
+	 */
+	admin_saml_local_certificate_public_key_bits: () => LocalizedString;
 	/**
 	 * C (Country)
 	 */
@@ -30319,13 +30505,9 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_common_name: () => LocalizedString;
 	/**
-	 * Subject changes apply to newly created signing certificates. Existing certificates keep their current subject.
+	 * The certificate created here is not used for signing immediately. Select it in the stored certificate list and start using it when ready.
 	 */
 	admin_saml_local_subject_warning: () => LocalizedString;
-	/**
-	 * Save Signing Certificate Subject
-	 */
-	admin_saml_local_save_subject: () => LocalizedString;
 	/**
 	 * Signing Rollover
 	 */
@@ -30335,41 +30517,189 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_signing_rollover_desc: () => LocalizedString;
 	/**
-	 * {role} Signing Rollover
+	 * IdP and SP signing certificates are managed separately because Authrim publishes separate IdP and SP metadata and uses each role for different SAML signing operations.
 	 */
-	admin_saml_local_signing_rollover_heading: (arg: { role: string }) => LocalizedString;
+	admin_saml_local_signing_rollover_role_note: () => LocalizedString;
 	/**
-	 * default active key
+	 * {role} stored certificates
 	 */
-	admin_saml_local_default_active_key: () => LocalizedString;
+	admin_saml_local_rollover_saved_certificates: (arg: { role: string }) => LocalizedString;
 	/**
-	 * active {kid}
+	 * Select
 	 */
-	admin_saml_local_active_key: (arg: { kid: string }) => LocalizedString;
+	admin_saml_local_rollover_select_certificate: () => LocalizedString;
 	/**
-	 * , next {kid}
+	 * Select {role} {slot}
 	 */
-	admin_saml_local_next_key: (arg: { kid: string }) => LocalizedString;
+	admin_saml_local_rollover_select_slot: (arg: { role: string; slot: string }) => LocalizedString;
 	/**
-	 * , backup {kid}
+	 * Actions for selected certificate
 	 */
-	admin_saml_local_backup_key: (arg: { kid: string }) => LocalizedString;
+	admin_saml_local_rollover_selected_actions: () => LocalizedString;
 	/**
-	 * Recreate active
+	 * Immediately recreate current certificate
 	 */
 	admin_saml_local_recreate_active: () => LocalizedString;
 	/**
-	 * Publish next
+	 * Immediately recreate current {role} certificate
+	 */
+	admin_saml_local_recreate_active_for_role: (arg: { role: string }) => LocalizedString;
+	/**
+	 * Create rollover certificate
 	 */
 	admin_saml_local_publish_next: () => LocalizedString;
 	/**
-	 * Promote next
+	 * Start using selected certificate
 	 */
 	admin_saml_local_promote_next: () => LocalizedString;
 	/**
-	 * Retire backup
+	 * Delete old certificate
 	 */
 	admin_saml_local_retire_backup: () => LocalizedString;
+	/**
+	 * Certificate
+	 */
+	admin_saml_local_rollover_certificate: () => LocalizedString;
+	/**
+	 * Status
+	 */
+	admin_saml_local_rollover_status: () => LocalizedString;
+	/**
+	 * Signing
+	 */
+	admin_saml_local_rollover_signing: () => LocalizedString;
+	/**
+	 * Stored
+	 */
+	admin_saml_local_rollover_stored: () => LocalizedString;
+	/**
+	 * Published
+	 */
+	admin_saml_local_rollover_published: () => LocalizedString;
+	/**
+	 * Created
+	 */
+	admin_saml_local_rollover_created: () => LocalizedString;
+	/**
+	 * Valid from
+	 */
+	admin_saml_local_rollover_valid_from: () => LocalizedString;
+	/**
+	 * Valid to
+	 */
+	admin_saml_local_rollover_valid_to: () => LocalizedString;
+	/**
+	 * Max reference until
+	 */
+	admin_saml_local_rollover_max_reference_until: () => LocalizedString;
+	/**
+	 * Actions
+	 */
+	admin_saml_local_rollover_row_actions: () => LocalizedString;
+	/**
+	 * View
+	 */
+	admin_saml_local_rollover_view_certificate: () => LocalizedString;
+	/**
+	 * Delete selected certificate
+	 */
+	admin_saml_local_rollover_delete_certificate: () => LocalizedString;
+	/**
+	 * The currently used signing certificate cannot be deleted from this action.
+	 */
+	admin_saml_local_rollover_delete_active_disabled: () => LocalizedString;
+	/**
+	 * Currently used
+	 */
+	admin_saml_local_rollover_active_label: () => LocalizedString;
+	/**
+	 * Currently used to sign SAML messages.
+	 */
+	admin_saml_local_rollover_active_desc: () => LocalizedString;
+	/**
+	 * Switchable
+	 */
+	admin_saml_local_rollover_next_label: () => LocalizedString;
+	/**
+	 * Created and published in advance so it can be switched into use.
+	 */
+	admin_saml_local_rollover_next_desc: () => LocalizedString;
+	/**
+	 * Old certificate
+	 */
+	admin_saml_local_rollover_backup_label: () => LocalizedString;
+	/**
+	 * Previous certificate kept temporarily during the metadata cache window.
+	 */
+	admin_saml_local_rollover_backup_desc: () => LocalizedString;
+	/**
+	 * Default currently used certificate
+	 */
+	admin_saml_local_rollover_status_default_active: () => LocalizedString;
+	/**
+	 * Not configured
+	 */
+	admin_saml_local_rollover_status_not_configured: () => LocalizedString;
+	/**
+	 * In use + published
+	 */
+	admin_saml_local_rollover_status_signing_published: () => LocalizedString;
+	/**
+	 * In use
+	 */
+	admin_saml_local_rollover_status_signing: () => LocalizedString;
+	/**
+	 * Stored + published
+	 */
+	admin_saml_local_rollover_status_stored_published: () => LocalizedString;
+	/**
+	 * Stored only
+	 */
+	admin_saml_local_rollover_status_stored_only: () => LocalizedString;
+	/**
+	 * Yes
+	 */
+	admin_saml_local_yes: () => LocalizedString;
+	/**
+	 * No
+	 */
+	admin_saml_local_no: () => LocalizedString;
+	/**
+	 * Immediately recreates the currently used certificate without pre-publication. Avoid this in normal operations.
+	 */
+	admin_saml_local_rollover_recreate_active_note: () => LocalizedString;
+	/**
+	 * Creates a switchable certificate and publishes it alongside the currently used certificate.
+	 */
+	admin_saml_local_rollover_publish_next_note: () => LocalizedString;
+	/**
+	 * Starts using the selected certificate after relying parties have had time to cache it.
+	 */
+	admin_saml_local_rollover_promote_next_note: () => LocalizedString;
+	/**
+	 * Removes the old certificate after the metadata cache window has passed.
+	 */
+	admin_saml_local_rollover_retire_backup_note: () => LocalizedString;
+	/**
+	 * Emergency operations
+	 */
+	admin_saml_local_emergency_operations: () => LocalizedString;
+	/**
+	 * Use only when you cannot wait for pre-publication, such as a leaked private key. Relying parties that cache old metadata may fail signature verification.
+	 */
+	admin_saml_local_emergency_operations_desc: () => LocalizedString;
+	/**
+	 * {role} {slot} certificate
+	 */
+	admin_saml_local_rollover_detail_title: (arg: { role: string; slot: string }) => LocalizedString;
+	/**
+	 * No certificate material is available for this row.
+	 */
+	admin_saml_local_rollover_detail_no_certificate: () => LocalizedString;
+	/**
+	 * Loading certificate details...
+	 */
+	admin_saml_local_rollover_detail_loading: () => LocalizedString;
 	/**
 	 * Signed metadata
 	 */

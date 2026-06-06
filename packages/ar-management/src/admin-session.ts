@@ -245,7 +245,6 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json({
       active: true,
-      session_id: session.id,
       user_id: session.admin_user_id,
       tenant_id: session.tenant_id,
       email: userEmail,

@@ -146,6 +146,8 @@ function getUnifiedAuditService(env: Env): IAuditService {
     sensitiveDetailBucket: env.SENSITIVE_DETAILS,
     objectEncryptionRootKey: env.OBJECT_ENCRYPTION_ROOT_KEY,
     objectEncryptionKeyVersion: Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
+    piiEncryptionKey: env.PII_ENCRYPTION_KEY,
+    piiEncryptionKeyVersion: Number.parseInt(env.PII_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
     auditQueue: env.AUDIT_QUEUE,
     configKv: env.AUTHRIM_CONFIG,
     logger: log.module('UNIFIED-MIRROR'),

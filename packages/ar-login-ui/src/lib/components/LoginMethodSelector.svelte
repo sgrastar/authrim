@@ -8,15 +8,21 @@
 	interface Props {
 		passkeyEnabled: boolean;
 		emailCodeEnabled: boolean;
+		directoryPasswordEnabled?: boolean;
+		directoryPasswordLabel?: string;
 		externalEnabled: boolean;
 		externalProviders: ExternalProvider[];
 		passkeyLoading?: boolean;
 		emailCodeLoading?: boolean;
+		directoryPasswordLoading?: boolean;
 		externalIdpLoading?: string | null;
 		error?: string;
 		email?: string;
+		directoryUsername?: string;
+		directoryPassword?: string;
 		onPasskeyLogin?: () => void;
 		onEmailCodeSend?: (email: string) => void;
+		onDirectoryPasswordLogin?: (username: string, password: string) => void;
 		onExternalLogin?: (provider: ExternalProvider) => void;
 		onErrorDismiss?: () => void;
 	}
@@ -24,15 +30,21 @@
 	let {
 		passkeyEnabled,
 		emailCodeEnabled,
+		directoryPasswordEnabled = false,
+		directoryPasswordLabel = 'Organization ID',
 		externalEnabled,
 		externalProviders,
 		passkeyLoading = false,
 		emailCodeLoading = false,
+		directoryPasswordLoading = false,
 		externalIdpLoading = null,
 		error = '',
 		email = $bindable(''),
+		directoryUsername = $bindable(''),
+		directoryPassword = $bindable(''),
 		onPasskeyLogin,
 		onEmailCodeSend,
+		onDirectoryPasswordLogin,
 		onExternalLogin,
 		onErrorDismiss
 	}: Props = $props();
@@ -60,6 +72,12 @@
 			onEmailCodeSend(email);
 		}
 	}
+
+	function handleDirectoryKeyPress(event: KeyboardEvent) {
+		if (event.key === 'Enter' && onDirectoryPasswordLogin) {
+			onDirectoryPasswordLogin(directoryUsername, directoryPassword);
+		}
+	}
 </script>
 
 <!--
@@ -82,11 +100,65 @@
 		variant="primary"
 		class="w-full mb-4"
 		loading={passkeyLoading}
-		disabled={emailCodeLoading}
+		disabled={emailCodeLoading || directoryPasswordLoading || externalIdpLoading !== null}
 		onclick={onPasskeyLogin}
 	>
 		<div class="i-heroicons-key h-5 w-5"></div>
 		{$LL.login_signInWithPasskey()}
+	</Button>
+
+	{#if directoryPasswordEnabled || emailCodeEnabled}
+		<div class="auth-divider">
+			<div class="auth-divider__line"></div>
+			<span class="auth-divider__text">{$LL.common_or()}</span>
+			<div class="auth-divider__line"></div>
+		</div>
+	{/if}
+{/if}
+
+<!-- Directory Password -->
+{#if directoryPasswordEnabled}
+	<div class="mb-4">
+		<Input
+			label={directoryPasswordLabel}
+			type="text"
+			placeholder={$LL.login_directoryUsernamePlaceholder()}
+			bind:value={directoryUsername}
+			onkeypress={handleDirectoryKeyPress}
+			autocomplete="username"
+			disabled={passkeyLoading ||
+				emailCodeLoading ||
+				directoryPasswordLoading ||
+				externalIdpLoading !== null}
+			required
+		/>
+	</div>
+
+	<div class="mb-4">
+		<Input
+			label={$LL.login_directoryPasswordLabel()}
+			type="password"
+			placeholder={$LL.login_directoryPasswordPlaceholder()}
+			bind:value={directoryPassword}
+			onkeypress={handleDirectoryKeyPress}
+			autocomplete="current-password"
+			disabled={passkeyLoading ||
+				emailCodeLoading ||
+				directoryPasswordLoading ||
+				externalIdpLoading !== null}
+			required
+		/>
+	</div>
+
+	<Button
+		variant="secondary"
+		class="w-full"
+		loading={directoryPasswordLoading}
+		disabled={passkeyLoading || emailCodeLoading || externalIdpLoading !== null}
+		onclick={() => onDirectoryPasswordLogin?.(directoryUsername, directoryPassword)}
+	>
+		<div class="i-heroicons-identification h-5 w-5"></div>
+		{$LL.login_signInWithDirectory({ label: directoryPasswordLabel })}
 	</Button>
 
 	{#if emailCodeEnabled}
@@ -108,6 +180,10 @@
 			bind:value={email}
 			onkeypress={handleKeyPress}
 			autocomplete="email"
+			disabled={passkeyLoading ||
+				emailCodeLoading ||
+				directoryPasswordLoading ||
+				externalIdpLoading !== null}
 			required
 		>
 			{#snippet icon()}
@@ -120,7 +196,7 @@
 		variant="secondary"
 		class="w-full"
 		loading={emailCodeLoading}
-		disabled={passkeyLoading || externalIdpLoading !== null}
+		disabled={passkeyLoading || directoryPasswordLoading || externalIdpLoading !== null}
 		onclick={() => onEmailCodeSend?.(email)}
 	>
 		<div class="i-heroicons-envelope h-5 w-5"></div>
@@ -145,6 +221,7 @@
 				loading={externalIdpLoading === provider.id}
 				disabled={passkeyLoading ||
 					emailCodeLoading ||
+					directoryPasswordLoading ||
 					(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
 				onclick={() => onExternalLogin?.(provider)}
 				style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}

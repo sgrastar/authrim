@@ -1135,6 +1135,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge_method?: string;
         claims?: string;
         response_mode?: string;
+        authorization_details?: string;
       } | null = null;
 
       if (!c.env.PAR_REQUEST_STORE) {
@@ -1194,6 +1195,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           code_challenge: consumed.code_challenge,
           code_challenge_method: consumed.code_challenge_method,
           claims: consumed.claims,
+          authorization_details: consumed.authorization_details,
           response_mode: undefined,
         };
       } catch {

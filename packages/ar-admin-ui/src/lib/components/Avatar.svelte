@@ -59,7 +59,7 @@
 </script>
 
 <div class="avatar avatar-{size} {className}" class:ring class:loaded={imageLoaded}>
-	{#if !imageError}
+	{#if avatarUrl && !imageError}
 		<img
 			src={avatarUrl}
 			alt={name || email || 'Avatar'}

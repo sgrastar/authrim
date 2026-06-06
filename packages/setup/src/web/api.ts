@@ -196,6 +196,7 @@ interface SetupState {
 
 interface ProgressLogState {
   filePath: string;
+  detailFilePath: string;
   writeChain: Promise<void>;
 }
 
@@ -290,13 +291,18 @@ async function beginProgressLog(
         ? join(findAuthrimBaseDir(process.cwd()), AUTHRIM_DIR, 'logs', env)
         : join(resolveProgressLogKeysDir(env), 'logs');
     await mkdir(logsDir, { recursive: true, mode: 0o700 });
-    const filePath = join(logsDir, `${formatLogTimestamp()}-${operation}.log`);
+    const baseName = `${formatLogTimestamp()}-${operation}`;
+    const filePath = join(logsDir, `${baseName}.log`);
+    const detailFilePath = join(logsDir, `${baseName}.detail.log`);
     await writeFile(filePath, '', { encoding: 'utf-8', mode: 0o600 });
+    await writeFile(detailFilePath, '', { encoding: 'utf-8', mode: 0o600 });
     progressLogState = {
       filePath,
+      detailFilePath,
       writeChain: Promise.resolve(),
     };
     state.logPath = filePath;
+    appendProgressLogLine(`📝 Detailed log: ${detailFilePath}\n`, { detailOnly: false });
     return filePath;
   } catch {
     state.logPath = null;
@@ -304,13 +310,18 @@ async function beginProgressLog(
   }
 }
 
-function appendProgressLogLine(line: string): void {
+function appendProgressLogLine(line: string, options: { detailOnly?: boolean } = {}): void {
   if (!progressLogState) {
     return;
   }
 
   progressLogState.writeChain = progressLogState.writeChain
-    .then(() => appendFile(progressLogState!.filePath, line, 'utf-8'))
+    .then(async () => {
+      if (!options.detailOnly) {
+        await appendFile(progressLogState!.filePath, line, 'utf-8');
+      }
+      await appendFile(progressLogState!.detailFilePath, line, 'utf-8');
+    })
     .catch(() => {
       // Ignore log persistence failures so setup can continue
     });
@@ -332,6 +343,28 @@ function addProgress(message: string): void {
   appendProgressLogLine(`[${timestamp}] ${message}\n`);
 }
 
+function addDetailProgress(message: string): void {
+  const timestamp = new Date().toISOString();
+  appendProgressLogLine(`[${timestamp}] ${message}\n`, { detailOnly: true });
+}
+
+function getStateConfigForEnv(env: string): Partial<AuthrimConfig> | null {
+  if (!state.config) {
+    return null;
+  }
+  return state.config.environment?.prefix === env ? state.config : null;
+}
+
+export function parseEnvironmentConfigForEnv(rawConfig: unknown, env: string): AuthrimConfig {
+  const config = AuthrimConfigSchema.parse(rawConfig);
+  if (config.environment.prefix !== env) {
+    throw new Error(
+      `Config environment mismatch: requested "${env}" but config is for "${config.environment.prefix}"`
+    );
+  }
+  return config;
+}
+
 async function loadEnvironmentConfigForUpdate(
   baseDir: string,
   env: string
@@ -348,7 +381,7 @@ async function loadEnvironmentConfigForUpdate(
   const configContent = await readFile(envPaths.config, 'utf-8');
   return {
     envPaths,
-    config: AuthrimConfigSchema.parse(JSON.parse(configContent)),
+    config: parseEnvironmentConfigForEnv(JSON.parse(configContent), env),
   };
 }
 
@@ -496,6 +529,53 @@ function getWildcardDnsManualActionPayload(
     kind: 'wildcard-dns',
     baseDomain,
   };
+}
+
+function canContinueAfterRouterReadinessFailure(
+  cfg: Partial<AuthrimConfig> | null | undefined,
+  error: string | undefined
+): boolean {
+  if (cfg?.urls?.api?.customDomainBinding !== true) {
+    return false;
+  }
+  return /ENOTFOUND|getaddrinfo|dns/i.test(error || '');
+}
+
+function handleRouterReadinessFailure(
+  cfg: Partial<AuthrimConfig> | null | undefined,
+  checkedUrl: string,
+  error: string | undefined,
+  addProgress: (message: string) => void
+): void {
+  addDetailProgress(
+    `Router readiness failure detail: ${JSON.stringify({
+      checkedUrl,
+      error: error || null,
+      apiCustom: cfg?.urls?.api?.custom || null,
+      apiAuto: cfg?.urls?.api?.auto || null,
+      customDomainBinding: cfg?.urls?.api?.customDomainBinding === true,
+      multiTenant: cfg?.tenant?.multiTenant === true,
+      baseDomain: cfg?.tenant?.baseDomain || null,
+      nakedDomain: cfg?.tenant?.nakedDomain === true,
+    })}`
+  );
+
+  if (canContinueAfterRouterReadinessFailure(cfg, error)) {
+    addProgress(
+      `⚠️ API router custom domain could not be resolved by this setup process: ${checkedUrl}`
+    );
+    addProgress(
+      '⚠️ Continuing because Worker deployment is visible and the API uses Cloudflare custom domain binding.'
+    );
+    addProgress(
+      '⚠️ If the browser can reach the URL, this is likely local DNS resolver lag in the setup environment.'
+    );
+    return;
+  }
+
+  throw new Error(
+    `API router did not become reachable at ${checkedUrl}: ${error || 'unknown readiness error'}`
+  );
 }
 
 // =============================================================================
@@ -811,10 +891,14 @@ export function createApiRoutes(): Hono {
           config.profiles = AuthrimConfigSchema.parse({ ...config, profiles }).profiles;
         }
 
-        state.config = config;
+        const parsedConfig = AuthrimConfigSchema.parse(config);
+        state.config = parsedConfig;
 
-        return c.json({ success: true, config });
+        return c.json({ success: true, config: parsedConfig });
       } catch (error) {
+        if (error instanceof z.ZodError) {
+          return c.json({ success: false, errors: error.errors }, 400);
+        }
         return c.json({ success: false, error: sanitizeError(error) }, 500);
       }
     });
@@ -878,7 +962,7 @@ export function createApiRoutes(): Hono {
 
   // Save email provider configuration (with lock)
   const EmailConfigSchema = z.object({
-    env: z.string().min(1).max(32),
+    env: EnvNameSchema,
     provider: z.enum(['cloudflare', 'resend', 'sendgrid', 'ses']),
     apiKey: z.string().optional(),
     fromAddress: z.string().email(),
@@ -944,8 +1028,9 @@ export function createApiRoutes(): Hono {
         };
 
         if (existsSync(envPaths.config)) {
-          const currentConfig = AuthrimConfigSchema.parse(
-            JSON.parse(await readFile(envPaths.config, 'utf-8'))
+          const currentConfig = parseEnvironmentConfigForEnv(
+            JSON.parse(await readFile(envPaths.config, 'utf-8')),
+            env
           );
           const updatedConfig = AuthrimConfigSchema.parse({
             ...currentConfig,
@@ -958,13 +1043,23 @@ export function createApiRoutes(): Hono {
           await saveEnvironmentConfig(envPaths, updatedConfig);
           state.config = updatedConfig;
           addProgress(`Updated config: ${envPaths.config}`);
-        } else if (state.config) {
+        } else {
+          const stateConfig = getStateConfigForEnv(env);
+          if (!stateConfig) {
+            return c.json(
+              {
+                success: false,
+                error: `Config file not found for environment "${env}"`,
+              },
+              404
+            );
+          }
           const defaultFeatures = createDefaultConfig(env).features;
           state.config = {
-            ...state.config,
+            ...stateConfig,
             features: {
-              queue: state.config.features?.queue ?? defaultFeatures.queue,
-              r2: state.config.features?.r2 ?? defaultFeatures.r2,
+              queue: stateConfig.features?.queue ?? defaultFeatures.queue,
+              r2: stateConfig.features?.r2 ?? defaultFeatures.r2,
               email: emailConfig,
             },
           };
@@ -1237,7 +1332,7 @@ export function createApiRoutes(): Hono {
           createQueues !== undefined ||
           createR2 !== undefined
         ) {
-          const baseConfig = state.config ?? createDefaultConfig(env);
+          const baseConfig = getStateConfigForEnv(env) ?? createDefaultConfig(env);
           state.config = AuthrimConfigSchema.parse({
             ...baseConfig,
             database: databaseConfig
@@ -1293,12 +1388,13 @@ export function createApiRoutes(): Hono {
         // Use existing state.config if available (from /config/default), otherwise create new
         // Merge with default config to ensure all required fields are present
         const baseConfig = createDefaultConfig(env);
-        const config = state.config
+        const stateConfig = getStateConfigForEnv(env);
+        const config = stateConfig
           ? {
               ...baseConfig,
-              ...state.config,
+              ...stateConfig,
               // Preserve components from state.config
-              components: { ...baseConfig.components, ...state.config.components },
+              components: { ...baseConfig.components, ...stateConfig.components },
             }
           : baseConfig;
         config.createdAt = new Date().toISOString();
@@ -1404,7 +1500,12 @@ export function createApiRoutes(): Hono {
     return withLock(async () => {
       try {
         const body = await c.req.json();
-        const { env, rootDir = '.' } = body;
+        const parseResult = EnvNameSchema.safeParse(body?.env);
+        if (!parseResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
+        const { rootDir = '.' } = body;
+        const env = parseResult.data;
 
         // Load lock file (use loadLockFileAuto to correctly resolve new structure path)
         const { loadLockFileAuto } = await import('../core/lock.js');
@@ -1415,8 +1516,9 @@ export function createApiRoutes(): Hono {
 
         // Load config
         let config: AuthrimConfig;
-        if (state.config) {
-          config = AuthrimConfigSchema.parse(state.config);
+        const stateConfig = getStateConfigForEnv(env);
+        if (stateConfig) {
+          config = AuthrimConfigSchema.parse(stateConfig);
         } else {
           config = createDefaultConfig(env);
         }
@@ -1486,14 +1588,18 @@ export function createApiRoutes(): Hono {
       let cleanupKeysDir: string | undefined;
       try {
         const body = await c.req.json();
+        const envParseResult = EnvNameSchema.safeParse(body?.env);
+        if (!envParseResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
         const {
-          env,
           rootDir = process.cwd(),
           dryRun = false,
           components,
           skipBuild = false,
           runMigrations = true,
         } = body;
+        const env = envParseResult.data;
         cleanupEnv = env;
 
         state.status = 'deploying';
@@ -1531,7 +1637,7 @@ export function createApiRoutes(): Hono {
         const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
         let enabledComponents: WorkerComponent[] | undefined = components;
-        let cfg = state.config;
+        let cfg = getStateConfigForEnv(env);
 
         if (!enabledComponents && !cfg) {
           try {
@@ -1542,7 +1648,7 @@ export function createApiRoutes(): Hono {
 
             if (existsSync(configPath)) {
               const configContent = await readFile(configPath, 'utf-8');
-              cfg = JSON.parse(configContent);
+              cfg = parseEnvironmentConfigForEnv(JSON.parse(configContent), env);
               state.config = cfg;
               addProgress(`Loaded config from ${configPath}`);
             }
@@ -1654,8 +1760,9 @@ export function createApiRoutes(): Hono {
 
             const workersSubdomain = await getWorkersSubdomain();
             let config: AuthrimConfig;
-            if (state.config) {
-              config = AuthrimConfigSchema.parse(state.config);
+            const stateConfig = getStateConfigForEnv(env);
+            if (stateConfig) {
+              config = AuthrimConfigSchema.parse(stateConfig);
             } else {
               config = createDefaultConfig(env);
             }
@@ -1880,8 +1987,11 @@ export function createApiRoutes(): Hono {
             onProgress: addProgress,
           });
           if (!readinessResult.ready) {
-            throw new Error(
-              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+            handleRouterReadinessFailure(
+              cfg,
+              readinessResult.checkedUrl,
+              readinessResult.error,
+              addProgress
             );
           }
         }
@@ -2312,7 +2422,10 @@ export function createApiRoutes(): Hono {
               ? (resolved.paths as EnvironmentPaths).config
               : (resolved.paths as LegacyPaths).config;
           if (existsSync(configPath)) {
-            const cfg = AuthrimConfigSchema.parse(JSON.parse(await readFile(configPath, 'utf-8')));
+            const cfg = parseEnvironmentConfigForEnv(
+              JSON.parse(await readFile(configPath, 'utf-8')),
+              env
+            );
             resolvedBaseUrl = resolveIssuerUrl(cfg, { env });
           }
         } catch {
@@ -2435,8 +2548,9 @@ export function createApiRoutes(): Hono {
                 ? (resolved.paths as EnvironmentPaths).config
                 : (resolved.paths as LegacyPaths).config;
             if (existsSync(configPath)) {
-              const cfg = AuthrimConfigSchema.parse(
-                JSON.parse(await readFile(configPath, 'utf-8'))
+              const cfg = parseEnvironmentConfigForEnv(
+                JSON.parse(await readFile(configPath, 'utf-8')),
+                envName
               );
               resolvedBaseUrl = resolveIssuerUrl(cfg, { env: envName });
             }
@@ -2512,7 +2626,10 @@ export function createApiRoutes(): Hono {
     if (!existsSync(envPaths.config)) {
       return { config: null, configPath: envPaths.config };
     }
-    const config = AuthrimConfigSchema.parse(JSON.parse(await readFile(envPaths.config, 'utf-8')));
+    const config = parseEnvironmentConfigForEnv(
+      JSON.parse(await readFile(envPaths.config, 'utf-8')),
+      env
+    );
     return { config, configPath: envPaths.config };
   }
 
@@ -2720,9 +2837,10 @@ export function createApiRoutes(): Hono {
           return c.json({ success: false, error: `Lock file not found for ${env}` }, 404);
         }
 
-        const config = AuthrimConfigSchema.parse(
-          JSON.parse(await readFile(envPaths.config, 'utf-8'))
-        ) as AuthrimConfig;
+        const config = parseEnvironmentConfigForEnv(
+          JSON.parse(await readFile(envPaths.config, 'utf-8')),
+          env
+        );
         addProgress(`Provisioning dedicated R2 buckets for ${env}...`);
         const buckets = await provisionR2Buckets(env, {
           existing: lock.r2,
@@ -3018,7 +3136,7 @@ export function createApiRoutes(): Hono {
         }
 
         const configContent = await readFile(envPaths.config, 'utf-8');
-        const config = AuthrimConfigSchema.parse(JSON.parse(configContent));
+        const config = parseEnvironmentConfigForEnv(JSON.parse(configContent), env);
         const resourceIds = buildResourceIdsFromLock(lock);
 
         addProgress('Refreshing generated wrangler configs...');
@@ -3176,8 +3294,11 @@ export function createApiRoutes(): Hono {
             onProgress: addProgress,
           });
           if (!readinessResult.ready) {
-            throw new Error(
-              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+            handleRouterReadinessFailure(
+              config,
+              readinessResult.checkedUrl,
+              readinessResult.error,
+              addProgress
             );
           }
         }
@@ -3290,7 +3411,7 @@ export function createApiRoutes(): Hono {
         // Load config for API URL (needed for UI Worker deployment)
         const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
-        let cfg = state.config;
+        let cfg = getStateConfigForEnv(env);
         if (!cfg) {
           try {
             const configPath =
@@ -3299,7 +3420,7 @@ export function createApiRoutes(): Hono {
                 : (resolved.paths as LegacyPaths).config;
             if (existsSync(configPath)) {
               const configContent = await readFile(configPath, 'utf-8');
-              cfg = JSON.parse(configContent);
+              cfg = parseEnvironmentConfigForEnv(JSON.parse(configContent), env);
               state.config = cfg;
             }
           } catch {
@@ -3350,8 +3471,11 @@ export function createApiRoutes(): Hono {
                   onProgress: addProgress,
                 });
                 if (!readinessResult.ready) {
-                  throw new Error(
-                    `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+                  handleRouterReadinessFailure(
+                    cfg,
+                    readinessResult.checkedUrl,
+                    readinessResult.error,
+                    addProgress
                   );
                 }
 
@@ -3474,7 +3598,6 @@ export function createApiRoutes(): Hono {
           try {
             const { loadLockFileAuto } = await import('../core/lock.js');
             const { getEnvironmentPaths } = await import('../core/paths.js');
-            const { AuthrimConfigSchema } = await import('../core/config.js');
 
             const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
             const { lock: currentLock } = await loadLockFileAuto(rootDir, env);
@@ -3483,7 +3606,7 @@ export function createApiRoutes(): Hono {
               addProgress('Warning: No lock file or config found, wrangler config may be missing');
             } else {
               const configContent = await readFile(envPaths.config, 'utf-8');
-              const parsedConfig = AuthrimConfigSchema.parse(JSON.parse(configContent));
+              const parsedConfig = parseEnvironmentConfigForEnv(JSON.parse(configContent), env);
               const resourceIds = buildResourceIdsFromLock(currentLock);
 
               const masterResult = await saveMasterWranglerConfigs(parsedConfig, resourceIds, {

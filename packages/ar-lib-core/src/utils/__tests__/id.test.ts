@@ -146,6 +146,19 @@ describe('ID Generation Utilities', () => {
       expect(format).toBe('uuid');
     });
 
+    it('should prefer USER_ID_FORMAT from environment over KV settings', async () => {
+      const mockKv = {
+        get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'nanoid' })),
+      };
+
+      const format = await getUserIdFormatFromSettings(mockKv, 'default', {
+        USER_ID_FORMAT: 'uuid',
+      });
+
+      expect(format).toBe('uuid');
+      expect(mockKv.get).not.toHaveBeenCalled();
+    });
+
     it('should return default when setting is not found', async () => {
       const mockKv = {
         get: vi.fn().mockResolvedValue(null),
@@ -214,6 +227,14 @@ describe('ID Generation Utilities', () => {
       };
 
       const id = await generateUserIdFromSettings(mockKv, 'default');
+
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    });
+
+    it('should generate UUID when USER_ID_FORMAT is "uuid"', async () => {
+      const id = await generateUserIdFromSettings(undefined, 'default', {
+        USER_ID_FORMAT: 'uuid',
+      });
 
       expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     });

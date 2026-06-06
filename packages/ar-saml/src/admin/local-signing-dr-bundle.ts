@@ -25,7 +25,32 @@ export const SAML_LOCAL_SIGNING_ENCRYPTED_DR_BUNDLE_KIND =
   'authrim.saml_local_signing_secret_dr_bundle.encrypted.v1';
 const DR_BUNDLE_PASSPHRASE_MIN_LENGTH = 12;
 const DR_BUNDLE_PASSPHRASE_MAX_LENGTH = 1024;
-const DR_BUNDLE_KDF_ITERATIONS = 210_000;
+const DR_BUNDLE_KDF_MIN_ITERATIONS = 100_000;
+const DR_BUNDLE_KDF_MAX_ITERATIONS = 100_000;
+const DR_BUNDLE_KDF_ITERATIONS = 100_000;
+
+export type SAMLDRBundleFailureStage =
+  | 'validate_passphrase'
+  | 'load_settings'
+  | 'resolve_entity_ids'
+  | 'export_signing_keys'
+  | 'encrypt_bundle'
+  | 'parse_encrypted_bundle'
+  | 'decrypt_bundle'
+  | 'validate_bundle'
+  | 'import_signing_keys'
+  | 'store_settings';
+
+export class SAMLDRBundleOperationError extends Error {
+  constructor(
+    public readonly stage: SAMLDRBundleFailureStage,
+    message: string,
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
+    this.name = 'SAMLDRBundleOperationError';
+  }
+}
 
 export interface SAMLLocalSigningSecretDRKey extends SAMLExportedSigningKey {
   role: SAMLSigningRole;
@@ -79,9 +104,15 @@ export async function buildSAMLLocalSigningSecretDRBundle(
   tenantId: string
 ): Promise<SAMLLocalSigningSecretDRBundle> {
   const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML local signing DR bundle tenant');
-  const settings = await getSAMLPublicSettings(env, resolvedTenantId);
-  const generated = await getSAMLLocalEntityIds(env, resolvedTenantId);
-  const keys = await collectSAMLSigningKeysForDRBundle(env, resolvedTenantId, settings);
+  const settings = await runSAMLDRBundleStage('load_settings', () =>
+    getSAMLPublicSettings(env, resolvedTenantId)
+  );
+  const generated = await runSAMLDRBundleStage('resolve_entity_ids', () =>
+    getSAMLLocalEntityIds(env, resolvedTenantId)
+  );
+  const keys = await runSAMLDRBundleStage('export_signing_keys', () =>
+    collectSAMLSigningKeysForDRBundle(env, resolvedTenantId, settings)
+  );
 
   return {
     kind: SAML_LOCAL_SIGNING_SECRET_DR_BUNDLE_KIND,
@@ -107,9 +138,13 @@ export async function buildEncryptedSAMLLocalSigningSecretDRBundle(
   tenantId: string,
   passphrase: unknown
 ): Promise<SAMLLocalSigningEncryptedDRBundle> {
-  const normalizedPassphrase = normalizeDRBundlePassphrase(passphrase);
+  const normalizedPassphrase = runSAMLDRBundleSyncStage('validate_passphrase', () =>
+    normalizeDRBundlePassphrase(passphrase)
+  );
   const rawBundle = await buildSAMLLocalSigningSecretDRBundle(env, tenantId);
-  return encryptSAMLLocalSigningSecretDRBundle(rawBundle, normalizedPassphrase);
+  return runSAMLDRBundleStage('encrypt_bundle', () =>
+    encryptSAMLLocalSigningSecretDRBundle(rawBundle, normalizedPassphrase)
+  );
 }
 
 export async function restoreSAMLLocalSigningSecretDRBundle(
@@ -118,24 +153,35 @@ export async function restoreSAMLLocalSigningSecretDRBundle(
   input: unknown
 ): Promise<{ importedKeys: number; restoredRoles: string[] }> {
   const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML local signing DR bundle tenant');
-  const bundle = normalizeSAMLLocalSigningSecretDRBundle(input);
+  const bundle = runSAMLDRBundleSyncStage('validate_bundle', () =>
+    normalizeSAMLLocalSigningSecretDRBundle(input)
+  );
   if (bundle.tenantId !== resolvedTenantId) {
-    throw new Error('SAML DR bundle tenant does not match the current tenant');
+    throw new SAMLDRBundleOperationError(
+      'validate_bundle',
+      'SAML DR bundle tenant does not match the current tenant'
+    );
   }
 
-  validateRestoredSigningKeyPolicies(bundle, resolvedTenantId);
+  runSAMLDRBundleSyncStage('validate_bundle', () =>
+    validateRestoredSigningKeyPolicies(bundle, resolvedTenantId)
+  );
 
-  for (const key of bundle.keys) {
-    assertSAMLKeyRefTenantBound(key.keyRef, resolvedTenantId);
-    await importSigningKeyWithPrivateMaterial(env, resolvedTenantId, key);
-  }
-
-  await putSAMLPublicSettings(env, resolvedTenantId, {
-    entityIdStyle: bundle.settings.entityIdStyle,
-    interactiveLoginUrlPolicy: bundle.settings.interactiveLoginUrlPolicy,
-    certificateSubject: bundle.settings.certificateSubject,
-    signingKeyPolicies: bundle.settings.signingKeyPolicies,
+  await runSAMLDRBundleStage('import_signing_keys', async () => {
+    for (const key of bundle.keys) {
+      assertSAMLKeyRefTenantBound(key.keyRef, resolvedTenantId);
+      await importSigningKeyWithPrivateMaterial(env, resolvedTenantId, key);
+    }
   });
+
+  await runSAMLDRBundleStage('store_settings', () =>
+    putSAMLPublicSettings(env, resolvedTenantId, {
+      entityIdStyle: bundle.settings.entityIdStyle,
+      interactiveLoginUrlPolicy: bundle.settings.interactiveLoginUrlPolicy,
+      certificateSubject: bundle.settings.certificateSubject,
+      signingKeyPolicies: bundle.settings.signingKeyPolicies,
+    })
+  );
 
   return {
     importedKeys: bundle.keys.length,
@@ -151,8 +197,12 @@ export async function restoreEncryptedSAMLLocalSigningSecretDRBundle(
   input: unknown,
   passphrase: unknown
 ): Promise<{ importedKeys: number; restoredRoles: string[] }> {
-  const normalizedPassphrase = normalizeDRBundlePassphrase(passphrase);
-  const bundle = await decryptSAMLLocalSigningSecretDRBundle(input, normalizedPassphrase);
+  const normalizedPassphrase = runSAMLDRBundleSyncStage('validate_passphrase', () =>
+    normalizeDRBundlePassphrase(passphrase)
+  );
+  const bundle = await runSAMLDRBundleStage('decrypt_bundle', () =>
+    decryptSAMLLocalSigningSecretDRBundle(input, normalizedPassphrase)
+  );
   return restoreSAMLLocalSigningSecretDRBundle(env, tenantId, bundle);
 }
 
@@ -192,11 +242,45 @@ async function encryptSAMLLocalSigningSecretDRBundle(
   };
 }
 
+async function runSAMLDRBundleStage<T>(
+  stage: SAMLDRBundleFailureStage,
+  operation: () => Promise<T>
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof SAMLDRBundleOperationError) {
+      throw error;
+    }
+    throw new SAMLDRBundleOperationError(stage, getErrorMessage(error), { cause: error });
+  }
+}
+
+function runSAMLDRBundleSyncStage<T>(stage: SAMLDRBundleFailureStage, operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (error instanceof SAMLDRBundleOperationError) {
+      throw error;
+    }
+    throw new SAMLDRBundleOperationError(stage, getErrorMessage(error), { cause: error });
+  }
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return 'Unknown error';
+}
+
 async function decryptSAMLLocalSigningSecretDRBundle(
   input: unknown,
   passphrase: string
 ): Promise<SAMLLocalSigningSecretDRBundle> {
-  const encrypted = normalizeEncryptedSAMLLocalSigningDRBundle(input);
+  const encrypted = runSAMLDRBundleSyncStage('parse_encrypted_bundle', () =>
+    normalizeEncryptedSAMLLocalSigningDRBundle(input)
+  );
   const salt = base64ToBytes(encrypted.kdf.salt, 'salt');
   const iv = base64ToBytes(encrypted.cipher.iv, 'iv');
   const payload = base64ToBytes(encrypted.payload, 'payload');
@@ -251,6 +335,13 @@ async function collectSAMLSigningKeysForDRBundle(
   const seen = new Set<string>();
   for (const role of ['idp', 'sp'] as const) {
     const policy = settings.signingKeyPolicies[role] ?? {};
+    const nextRefs = [policy.next, ...(policy.nextCandidates ?? [])]
+      .map((reference) =>
+        reference?.keyRef ? { role, slot: 'next' as const, keyRef: reference.keyRef } : null
+      )
+      .filter((ref): ref is { role: SAMLSigningRole; slot: 'next'; keyRef: string } =>
+        Boolean(ref)
+      );
     const refs = [
       {
         role,
@@ -263,7 +354,7 @@ async function collectSAMLSigningKeysForDRBundle(
             policy,
           }),
       },
-      policy.next?.keyRef ? { role, slot: 'next' as const, keyRef: policy.next.keyRef } : null,
+      ...nextRefs,
       policy.backup?.keyRef
         ? { role, slot: 'backup' as const, keyRef: policy.backup.keyRef }
         : null,
@@ -334,8 +425,8 @@ function normalizeEncryptedSAMLLocalSigningDRBundle(
   if (
     kdf.name !== 'PBKDF2' ||
     kdf.hash !== 'SHA-256' ||
-    iterations < 100_000 ||
-    iterations > 1_000_000 ||
+    iterations < DR_BUNDLE_KDF_MIN_ITERATIONS ||
+    iterations > DR_BUNDLE_KDF_MAX_ITERATIONS ||
     cipher.name !== 'AES-GCM'
   ) {
     throw new Error('Unsupported encrypted SAML DR bundle parameters');

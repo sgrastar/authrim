@@ -560,7 +560,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
     // Create user in database
     const tenantId = getTenantIdFromContext(c);
     rollbackTenantId = tenantId;
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
+    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
 
     // Use DB_ADMIN when available (new Admin/EndUser separation architecture)
     if (c.env.DB_ADMIN) {

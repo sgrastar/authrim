@@ -215,6 +215,62 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			}
 		});
 	});
+
+	it('uses the Directory Password endpoint and preserves authorization continuation', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					ok: true,
+					redirect_url: '/authorize?client_id=rp_directory&_confirmation_challenge=confirm',
+					session: {
+						userId: 'user_directory',
+						createdAt: 1,
+						expiresAt: 2,
+						authTime: 1700000789,
+						acr: 'urn:mace:incommon:iap:bronze',
+						amr: ['pwd', 'directory']
+					},
+					user: {
+						id: 'user_directory',
+						email: 'alice@example.com',
+						name: 'Alice Example'
+					}
+				}),
+				{
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				}
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const verified = await directoryPasswordAPI.login({
+			username: 'alice',
+			password: 'correct',
+			authorizationChallengeId: 'oauth_directory_challenge'
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain('/api/auth/directory-password/login');
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			username: 'alice',
+			password: 'correct',
+			authorization_challenge_id: 'oauth_directory_challenge'
+		});
+		expect(verified.data).toMatchObject({
+			success: true,
+			userId: 'user_directory',
+			redirect_url: '/authorize?client_id=rp_directory&_confirmation_challenge=confirm',
+			session: {
+				authTime: 1700000789,
+				acr: 'urn:mace:incommon:iap:bronze',
+				amr: ['pwd', 'directory']
+			}
+		});
+	});
 });
 
 describe('LoginUI challenge and consent adapter boundary', () => {

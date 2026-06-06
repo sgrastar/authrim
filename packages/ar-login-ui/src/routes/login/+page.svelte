@@ -2,7 +2,13 @@
 	import { Button, Input, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { passkeyAPI, emailCodeAPI, externalIdpAPI, loginChallengeAPI } from '$lib/api/client';
+	import {
+		passkeyAPI,
+		emailCodeAPI,
+		directoryPasswordAPI,
+		externalIdpAPI,
+		loginChallengeAPI
+	} from '$lib/api/client';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import {
 		isValidRedirectUrl,
@@ -24,12 +30,15 @@
 	// State
 	// ---------------------------------------------------------------------------
 	let email = $state('');
+	let directoryUsername = $state('');
+	let directoryPassword = $state('');
 	let error = $state('');
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
+	let directoryPasswordLoading = $state(false);
 	let externalIdpLoading = $state<string | null>(null);
 	const authActionLoading = $derived(
-		passkeyLoading || emailCodeLoading || externalIdpLoading !== null
+		passkeyLoading || emailCodeLoading || directoryPasswordLoading || externalIdpLoading !== null
 	);
 
 	// Login methods (from API)
@@ -37,6 +46,8 @@
 	let methodsError = $state('');
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);
+	let directoryPasswordEnabled = $state(false);
+	let directoryPasswordLabel = $state('Organization ID');
 	let externalEnabled = $state(false);
 	let externalProviders = $state<ExternalProvider[]>([]);
 
@@ -187,6 +198,8 @@
 			if (data) {
 				passkeyEnabled = data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.enabled;
+				directoryPasswordEnabled = data.methods.directoryPassword.enabled;
+				directoryPasswordLabel = data.methods.directoryPassword.label || 'Organization ID';
 				externalEnabled = data.methods.external.enabled;
 				externalProviders = data.methods.external.providers;
 			}
@@ -324,6 +337,49 @@
 		}
 	}
 
+	async function handleDirectoryPasswordLogin() {
+		if (authActionLoading) return;
+		error = '';
+
+		const username = directoryUsername.trim();
+		if (!username) {
+			error = $LL.login_errorDirectoryUsernameRequired();
+			return;
+		}
+		if (!directoryPassword) {
+			error = $LL.login_errorDirectoryPasswordRequired();
+			return;
+		}
+
+		directoryPasswordLoading = true;
+		try {
+			const { data, error: apiError } = await directoryPasswordAPI.login({
+				username,
+				password: directoryPassword,
+				authorizationChallengeId: authorizationChallengeId || undefined
+			});
+			if (apiError) {
+				if (apiError.error === 'invalid_credentials') {
+					throw new Error($LL.login_errorDirectoryInvalidCredentials());
+				}
+				if (apiError.error === 'connector_unavailable') {
+					throw new Error($LL.login_errorDirectoryUnavailable());
+				}
+				if (apiError.error === 'directory_identity_unmapped') {
+					throw new Error($LL.login_errorDirectoryUnmapped());
+				}
+				throw new Error(getApiErrorMessage(apiError));
+			}
+
+			await auth.refreshFromSession();
+			window.location.href = buildPostAuthRedirect(data?.redirect_url);
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.login_errorDirectoryFailed();
+		} finally {
+			directoryPasswordLoading = false;
+		}
+	}
+
 	async function handleExternalLogin(provider: ExternalProvider) {
 		const providerId = provider.id;
 		if (authActionLoading) return;
@@ -371,6 +427,12 @@
 	function handleKeyPress(event: KeyboardEvent) {
 		if (event.key === 'Enter') {
 			handleEmailCodeSend();
+		}
+	}
+
+	function handleDirectoryKeyPress(event: KeyboardEvent) {
+		if (event.key === 'Enter') {
+			handleDirectoryPasswordLogin();
 		}
 	}
 </script>
@@ -540,11 +602,59 @@
 						variant="primary"
 						class="w-full mb-4"
 						loading={passkeyLoading}
-						disabled={emailCodeLoading || externalIdpLoading !== null}
+						disabled={emailCodeLoading || directoryPasswordLoading || externalIdpLoading !== null}
 						onclick={handlePasskeyLogin}
 					>
 						<div class="i-heroicons-key h-5 w-5"></div>
 						{$LL.login_signInWithPasskey()}
+					</Button>
+
+					{#if directoryPasswordEnabled || emailCodeEnabled}
+						<div class="auth-divider">
+							<div class="auth-divider__line"></div>
+							<span class="auth-divider__text">{$LL.common_or()}</span>
+							<div class="auth-divider__line"></div>
+						</div>
+					{/if}
+				{/if}
+
+				<!-- Directory Password -->
+				{#if directoryPasswordEnabled}
+					<div class="mb-4">
+						<Input
+							label={directoryPasswordLabel}
+							type="text"
+							placeholder={$LL.login_directoryUsernamePlaceholder()}
+							bind:value={directoryUsername}
+							onkeypress={handleDirectoryKeyPress}
+							autocomplete="username"
+							disabled={authActionLoading}
+							required
+						/>
+					</div>
+
+					<div class="mb-4">
+						<Input
+							label={$LL.login_directoryPasswordLabel()}
+							type="password"
+							placeholder={$LL.login_directoryPasswordPlaceholder()}
+							bind:value={directoryPassword}
+							onkeypress={handleDirectoryKeyPress}
+							autocomplete="current-password"
+							disabled={authActionLoading}
+							required
+						/>
+					</div>
+
+					<Button
+						variant="secondary"
+						class="w-full"
+						loading={directoryPasswordLoading}
+						disabled={passkeyLoading || emailCodeLoading || externalIdpLoading !== null}
+						onclick={handleDirectoryPasswordLogin}
+					>
+						<div class="i-heroicons-identification h-5 w-5"></div>
+						{$LL.login_signInWithDirectory({ label: directoryPasswordLabel })}
 					</Button>
 
 					{#if emailCodeEnabled}
@@ -575,7 +685,7 @@
 						variant="secondary"
 						class="w-full"
 						loading={emailCodeLoading}
-						disabled={passkeyLoading || externalIdpLoading !== null}
+						disabled={passkeyLoading || directoryPasswordLoading || externalIdpLoading !== null}
 						onclick={handleEmailCodeSend}
 					>
 						<div class="i-heroicons-envelope h-5 w-5"></div>
@@ -603,6 +713,7 @@
 								loading={externalIdpLoading === provider.id}
 								disabled={passkeyLoading ||
 									emailCodeLoading ||
+									directoryPasswordLoading ||
 									(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
 								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}

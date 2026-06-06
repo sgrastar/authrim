@@ -86,6 +86,7 @@ packages/setup/.tmp-tests/
 *.cert
 *.csr
 *.jwk
+authrim-saml-local-signing-dr-bundle-*.json
 id_rsa*
 id_ed25519*
 

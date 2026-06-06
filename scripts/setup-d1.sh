@@ -117,6 +117,11 @@ echo ""
 REMOTE_FLAG="--remote"
 
 if [ "$RESET_MODE" = true ]; then
+    if [[ "$DEPLOY_ENV" =~ ^(prod|production)$ ]] && [ "${AUTHRIM_ALLOW_PROD_RESET:-}" != "YES" ]; then
+        echo "❌ Refusing to reset production D1 databases without AUTHRIM_ALLOW_PROD_RESET=YES"
+        exit 1
+    fi
+
     echo "⚠️  RESET MODE ENABLED"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "The following databases will be DELETED and recreated:"
@@ -177,7 +182,10 @@ create_or_get_database() {
     # Handle reset mode
     if [ "$RESET_MODE" = true ] && [ "$db_exists" = true ]; then
         echo "  🗑️  Deleting existing database..."
-        wrangler d1 delete "$db_name" --skip-confirmation 2>/dev/null || true
+        if ! wrangler d1 delete "$db_name" --skip-confirmation; then
+            echo "  ❌ Failed to delete database: $db_name"
+            return 1
+        fi
         echo "  ✅ Deleted"
         db_exists=false
         sleep 2  # Wait for deletion to propagate
