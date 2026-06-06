@@ -481,12 +481,12 @@
 		const references = [policy.next, ...(policy.nextCandidates ?? [])].filter(
 			(reference): reference is SAMLSigningKeyReference => !!reference
 		);
-		const seen = new Set<string>();
+		const seen: string[] = [];
 		return references.filter((reference) => {
 			const key = reference.kid ?? reference.keyRef ?? reference.certificate ?? reference.id;
 			if (!key) return true;
-			if (seen.has(key)) return false;
-			seen.add(key);
+			if (seen.includes(key)) return false;
+			seen.push(key);
 			return true;
 		});
 	}
@@ -543,9 +543,18 @@
 	}
 
 	function defaultCertificateValidTo() {
-		const date = new Date();
-		date.setUTCFullYear(date.getUTCFullYear() + 10);
-		return dateToLocalDateTime(date);
+		const now = new Date();
+		return dateToLocalDateTime(
+			new Date(
+				Date.UTC(
+					now.getUTCFullYear() + 10,
+					now.getUTCMonth(),
+					now.getUTCDate(),
+					now.getUTCHours(),
+					now.getUTCMinutes()
+				)
+			)
+		);
 	}
 
 	function dateToLocalDateTime(date: Date) {
