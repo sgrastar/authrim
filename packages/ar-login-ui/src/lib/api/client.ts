@@ -1032,6 +1032,44 @@ export const emailCodeAPI = {
 	}
 };
 
+/**
+ * Auth API - Directory Password
+ */
+export const directoryPasswordAPI = {
+	async login(data: { username: string; password: string; authorizationChallengeId?: string }) {
+		const session = await apiFetch<ManagedDirectSessionResponse>(
+			'/api/auth/directory-password/login',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					username: data.username,
+					password: data.password,
+					authorization_challenge_id: data.authorizationChallengeId
+				})
+			}
+		);
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					success: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
+
+		return {
+			data: {
+				success: true,
+				...directSessionToLegacyAuthResponse(session.data)
+			},
+			error: undefined
+		};
+	}
+};
+
 // =============================================================================
 // Login Challenge API (OIDC Dynamic OP - logo_uri, policy_uri, tos_uri)
 // =============================================================================

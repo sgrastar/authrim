@@ -233,6 +233,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'RATE_LIMITER',
     'DPOP_JTI_STORE',
     'TOKEN_REVOCATION_STORE',
+    'DEVICE_CODE_STORE',
+    'CIBA_REQUEST_STORE',
     'VERSION_MANAGER',
   ],
   'ar-userinfo': [

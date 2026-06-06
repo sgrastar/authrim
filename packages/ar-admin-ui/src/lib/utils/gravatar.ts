@@ -1,10 +1,9 @@
 /**
  * Gravatar Utility Functions
  *
- * Provides functions to generate Gravatar URLs from email addresses.
- * Gravatar uses MD5 hash of lowercase email to identify users.
+ * Provides avatar utility functions.
  *
- * @see https://docs.gravatar.com/api/avatars/
+ * Admin UI must not send admin email hashes to third-party avatar services.
  */
 
 /**
@@ -240,47 +239,17 @@ export interface GravatarOptions {
 }
 
 /**
- * Generate Gravatar URL from email address
+ * Gravatar is intentionally disabled for Admin UI privacy.
  *
  * @param email - User's email address
  * @param options - Gravatar options
- * @returns Gravatar URL
- *
- * @example
- * ```ts
- * const url = getGravatarUrl('user@example.com', { size: 80, default: 'identicon' });
- * // => "https://www.gravatar.com/avatar/abc123...?s=80&d=identicon&r=g"
- * ```
+ * @returns Empty string so callers use local fallback UI
  */
 export function getGravatarUrl(
-	email: string | null | undefined,
-	options: GravatarOptions = {}
+	_email: string | null | undefined,
+	_options: GravatarOptions = {}
 ): string {
-	const {
-		size = 80,
-		default: defaultImg = 'identicon',
-		forceDefault = false,
-		rating = 'g'
-	} = options;
-
-	// Normalize email: lowercase, trim whitespace
-	const normalizedEmail = (email || '').toLowerCase().trim();
-
-	// Generate MD5 hash
-	const hash = normalizedEmail ? md5(normalizedEmail) : '00000000000000000000000000000000';
-
-	// Build URL with query parameters
-	const params = new URLSearchParams({
-		s: String(size),
-		d: defaultImg,
-		r: rating
-	});
-
-	if (forceDefault) {
-		params.set('f', 'y');
-	}
-
-	return `https://www.gravatar.com/avatar/${hash}?${params.toString()}`;
+	return '';
 }
 
 /**
@@ -312,7 +281,7 @@ export function getInitials(email: string | null | undefined, name?: string | nu
 /**
  * Get avatar URL with fallback chain:
  * 1. Custom picture URL (if provided)
- * 2. Gravatar URL
+ * 2. Empty string, so callers render local initials
  *
  * @param email - User's email address
  * @param picture - Custom avatar URL (optional)
@@ -329,6 +298,6 @@ export function getAvatarUrl(
 		return picture;
 	}
 
-	// Fall back to Gravatar
+	// Do not derive external avatar URLs from admin email addresses.
 	return getGravatarUrl(email, options);
 }

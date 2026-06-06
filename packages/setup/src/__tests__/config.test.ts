@@ -76,6 +76,40 @@ describe('AuthrimConfigSchema', () => {
       expect(result.data.urls?.api?.custom).toBe('https://auth.example.com');
     }
   });
+
+  it('rejects tenant identifiers with uppercase characters', () => {
+    const baseConfig = {
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      environment: { prefix: 'prod' },
+      components: { api: true },
+      profile: 'basic-op',
+      oidc: {},
+      sharding: {},
+      features: {},
+      keys: {},
+    };
+
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        tenant: { name: 'OIDC' },
+      }).success
+    ).toBe(false);
+
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        tenant: {
+          name: 'default',
+          multiTenant: true,
+          baseDomain: 'conformance.authrim.com',
+          nakedDomain: true,
+          primaryTenant: 'OIDC',
+        },
+      }).success
+    ).toBe(false);
+  });
 });
 
 describe('createDefaultConfig', () => {

@@ -9,6 +9,7 @@
 		type SAMLEntityIdStyle,
 		type SAMLInteractiveLoginUrlPolicy,
 		type SAMLSigningCertificateSubject,
+		type SAMLSigningKeyReference,
 		type SAMLSigningKeyPolicy,
 		type SAMLSettings,
 		type SAMLTrustCertificatePreview
@@ -19,6 +20,13 @@
 
 	type MetadataRole = 'idp' | 'sp';
 	type LoginEntryMode = 'tenant_only' | 'discovery_optional' | 'discovery_required';
+	type SigningCertificateSlot = 'active' | 'next' | 'backup';
+	type LocalSigningAction =
+		| 'recreate_active'
+		| 'publish_next'
+		| 'promote_next'
+		| 'retire_backup'
+		| 'delete_next';
 
 	interface PublishedCertificate {
 		id: string;
@@ -57,6 +65,23 @@
 		detail: string;
 	}
 
+	interface SigningCertificateStatusRow {
+		id: string;
+		slot: SigningCertificateSlot;
+		label: string;
+		description: string;
+		status: string;
+		reference?: SAMLSigningKeyReference;
+		publishedCertificate?: PublishedCertificate;
+		isSigning: boolean;
+		isStored: boolean;
+		isPublished: boolean;
+		createdAt?: string | number;
+		validFrom?: string | number;
+		validTo?: string | number;
+		maxReferenceUntil?: number;
+	}
+
 	let tenantInfo = $state<TenantInfo | null>(null);
 	let samlSettings = $state<SAMLSettings | null>(null);
 	let metadataDocs = $state<MetadataDocument[]>([]);
@@ -69,8 +94,25 @@
 	let error = $state('');
 	let actionMessage = $state('');
 	let copiedKey = $state('');
+	let selectedSigningRows = $state<Record<MetadataRole, string>>({
+		idp: 'active',
+		sp: 'active'
+	});
+	let selectedCertificateDetail = $state<{
+		role: MetadataRole;
+		row: SigningCertificateStatusRow;
+		certificate: string;
+		preview?: SAMLTrustCertificatePreview;
+		error?: string;
+		loading: boolean;
+	} | null>(null);
 	let draftEntityIdStyle = $state<SAMLEntityIdStyle>('metadata_url');
 	let draftInteractiveLoginUrlPolicy = $state<SAMLInteractiveLoginUrlPolicy>('tenant_host');
+	let draftCertificateRole = $state<MetadataRole>('idp');
+	let draftCertificateValidFrom = $state('');
+	let draftCertificateValidTo = $state(defaultCertificateValidTo());
+	let draftCertificatePublicKeyAlgorithm = $state<'RSA'>('RSA');
+	let draftCertificatePublicKeySizeBits = $state<2048 | 3072 | 4096>(3072);
 	let draftCertificateSubject = $state<SAMLSigningCertificateSubject>({
 		countryName: '',
 		stateOrProvinceName: '',
@@ -86,10 +128,6 @@
 		!!samlSettings &&
 			(samlSettings.entityIdStyle !== draftEntityIdStyle ||
 				samlSettings.interactiveLoginUrlPolicy !== draftInteractiveLoginUrlPolicy)
-	);
-	const hasCertificateSubjectChanges = $derived(
-		!!samlSettings &&
-			JSON.stringify(currentCertificateSubject()) !== JSON.stringify(draftCertificateSubject)
 	);
 	const effectiveTenantLoginEntrySettings = $derived(
 		tenantLoginEntrySettings?.overrideEnabled ? tenantLoginEntrySettings : commonLoginEntrySettings
@@ -164,7 +202,12 @@
 		url: string;
 	}): Promise<MetadataDocument> {
 		try {
-			const response = await fetch(target.url, { credentials: 'include' });
+			const url = new URL(target.url);
+			url.searchParams.set('_authrim_admin_preview', String(Date.now()));
+			const response = await fetch(url, {
+				cache: 'no-store',
+				credentials: 'include'
+			});
 			if (!response.ok) {
 				throw new Error(`Metadata request failed with ${response.status}`);
 			}
@@ -180,7 +223,8 @@
 					} catch (err) {
 						return {
 							...certificate,
-							error: err instanceof Error ? err.message : $LL.admin_saml_local_error_parse_certificate()
+							error:
+								err instanceof Error ? err.message : $LL.admin_saml_local_error_parse_certificate()
 						};
 					}
 				})
@@ -327,15 +371,233 @@
 			: (samlSettings?.localSigning?.spSigningKeyPolicy ?? {});
 	}
 
-	function policySummary(policy: SAMLSigningKeyPolicy) {
-		const active = policy.active?.kid
-			? $LL.admin_saml_local_active_key({ kid: policy.active.kid })
-			: $LL.admin_saml_local_default_active_key();
-		const next = policy.next?.kid ? $LL.admin_saml_local_next_key({ kid: policy.next.kid }) : '';
-		const backup = policy.backup?.kid
-			? $LL.admin_saml_local_backup_key({ kid: policy.backup.kid })
-			: '';
-		return `${active}${next}${backup}`;
+	function rolloverCertificateRows(
+		role: MetadataRole,
+		policy: SAMLSigningKeyPolicy
+	): SigningCertificateStatusRow[] {
+		const activePublished = metadataCertificateForSlot(role, 'active');
+		const nextReferences = nextSigningReferences(policy);
+		const backupPublished = publishedCertificateForReference(
+			role,
+			policy.backup,
+			nextReferences.length + 1
+		);
+
+		const rows = [
+			buildSigningCertificateStatusRow(
+				'active',
+				'active',
+				$LL.admin_saml_local_rollover_active_label(),
+				$LL.admin_saml_local_rollover_active_desc(),
+				policy.active,
+				activePublished,
+				true
+			),
+			...nextReferences.map((reference, index) =>
+				buildSigningCertificateStatusRow(
+					signingReferenceRowId('next', reference, index),
+					'next',
+					nextReferences.length > 1
+						? `${$LL.admin_saml_local_rollover_next_label()} ${index + 1}`
+						: $LL.admin_saml_local_rollover_next_label(),
+					$LL.admin_saml_local_rollover_next_desc(),
+					reference,
+					publishedCertificateForReference(role, reference, index + 1),
+					false
+				)
+			),
+			buildSigningCertificateStatusRow(
+				'backup',
+				'backup',
+				$LL.admin_saml_local_rollover_backup_label(),
+				$LL.admin_saml_local_rollover_backup_desc(),
+				policy.backup,
+				backupPublished,
+				false
+			)
+		];
+		return rows;
+	}
+
+	function buildSigningCertificateStatusRow(
+		id: string,
+		slot: SigningCertificateSlot,
+		label: string,
+		description: string,
+		reference: SAMLSigningKeyReference | undefined,
+		publishedCertificate: PublishedCertificate | undefined,
+		isSigning: boolean
+	): SigningCertificateStatusRow {
+		const isStored = !!reference?.kid || !!reference?.keyRef || !!publishedCertificate;
+		const isPublished = !!publishedCertificate;
+		const createdAt = certificateCreatedAt(reference, publishedCertificate);
+		const maxReferenceUntil =
+			isPublished && samlSettings
+				? Date.now() + parseMetadataCacheDurationMs(samlSettings.metadata.cacheDuration)
+				: undefined;
+
+		return {
+			id,
+			slot,
+			label,
+			description,
+			status: certificateStatusLabel(slot, isSigning, isStored, isPublished),
+			reference,
+			publishedCertificate,
+			isSigning: isSigning && isStored,
+			isStored,
+			isPublished,
+			createdAt,
+			validFrom: publishedCertificate?.preview?.validFrom ?? reference?.validFrom,
+			validTo: publishedCertificate?.preview?.validTo ?? reference?.validTo,
+			maxReferenceUntil
+		};
+	}
+
+	function metadataCertificateForSlot(role: MetadataRole, slot: SigningCertificateSlot) {
+		const doc = metadataDocs.find((entry) => entry.role === role);
+		if (!doc) return undefined;
+		const index = slot === 'active' ? 0 : slot === 'next' ? 1 : 2;
+		return doc.certificates[index];
+	}
+
+	function publishedCertificateForReference(
+		role: MetadataRole,
+		reference: SAMLSigningKeyReference | undefined,
+		fallbackIndex: number
+	) {
+		const doc = metadataDocs.find((entry) => entry.role === role);
+		if (!doc) return undefined;
+		if (reference?.certificate) {
+			const matched = doc.certificates.find(
+				(certificate) => certificate.certificate === reference.certificate
+			);
+			if (matched) return matched;
+		}
+		return doc.certificates[fallbackIndex];
+	}
+
+	function nextSigningReferences(policy: SAMLSigningKeyPolicy) {
+		const references = [policy.next, ...(policy.nextCandidates ?? [])].filter(
+			(reference): reference is SAMLSigningKeyReference => !!reference
+		);
+		const seen: string[] = [];
+		return references.filter((reference) => {
+			const key = reference.kid ?? reference.keyRef ?? reference.certificate ?? reference.id;
+			if (!key) return true;
+			if (seen.includes(key)) return false;
+			seen.push(key);
+			return true;
+		});
+	}
+
+	function signingReferenceRowId(
+		slot: SigningCertificateSlot,
+		reference: SAMLSigningKeyReference | undefined,
+		index = 0
+	) {
+		return reference?.kid ?? reference?.keyRef ?? reference?.id ?? `${slot}:${index}`;
+	}
+
+	function certificateStatusLabel(
+		slot: SigningCertificateSlot,
+		isSigning: boolean,
+		isStored: boolean,
+		_isPublished: boolean
+	) {
+		if (!isStored) {
+			return slot === 'active'
+				? $LL.admin_saml_local_rollover_status_default_active()
+				: $LL.admin_saml_local_rollover_status_not_configured();
+		}
+		if (isSigning) return $LL.admin_saml_local_rollover_status_signing();
+		return $LL.admin_saml_local_rollover_status_stored_only();
+	}
+
+	function certificateCreatedAt(
+		reference: SAMLSigningKeyReference | undefined,
+		publishedCertificate: PublishedCertificate | undefined
+	) {
+		return (
+			reference?.plannedActivationAt ??
+			reference?.metadataPublishFrom ??
+			keyCreatedAt(reference?.kid) ??
+			publishedCertificate?.preview?.validFrom
+		);
+	}
+
+	function keyCreatedAt(kid: string | undefined) {
+		const match = /^key-(\d{12,})-/.exec(kid ?? '');
+		if (!match) return undefined;
+		const value = Number(match[1]);
+		return Number.isFinite(value) ? value : undefined;
+	}
+
+	function parseMetadataCacheDurationMs(value: string | undefined) {
+		const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(value ?? '');
+		if (!match) return 24 * 60 * 60 * 1000;
+		const hours = Number(match[1] ?? 0);
+		const minutes = Number(match[2] ?? 0);
+		const seconds = Number(match[3] ?? 0);
+		return ((hours * 60 + minutes) * 60 + seconds) * 1000;
+	}
+
+	function defaultCertificateValidTo() {
+		const now = new Date();
+		return dateToLocalDateTime(
+			new Date(
+				Date.UTC(
+					now.getUTCFullYear() + 10,
+					now.getUTCMonth(),
+					now.getUTCDate(),
+					now.getUTCHours(),
+					now.getUTCMinutes()
+				)
+			)
+		);
+	}
+
+	function dateToLocalDateTime(date: Date) {
+		const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+		return local.toISOString().slice(0, 16);
+	}
+
+	function localDateTimeToIso(value: string) {
+		if (!value) return undefined;
+		const date = new Date(value);
+		return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+	}
+
+	function yesNo(value: boolean) {
+		return value ? $LL.admin_saml_local_yes() : $LL.admin_saml_local_no();
+	}
+
+	function selectedSigningRowId(role: MetadataRole) {
+		return selectedSigningRows[role] ?? 'active';
+	}
+
+	function selectSigningRow(role: MetadataRole, row: SigningCertificateStatusRow) {
+		selectedSigningRows[role] = row.id;
+	}
+
+	function selectedSigningRow(
+		role: MetadataRole,
+		policy: SAMLSigningKeyPolicy
+	): SigningCertificateStatusRow {
+		const rows = rolloverCertificateRows(role, policy);
+		return rows.find((row) => row.id === selectedSigningRowId(role)) ?? rows[0];
+	}
+
+	function selectedSlotCanRun(
+		role: MetadataRole,
+		policy: SAMLSigningKeyPolicy,
+		slot: SigningCertificateSlot
+	) {
+		const row = selectedSigningRow(role, policy);
+		if (signingAction || row.slot !== slot) return false;
+		if (slot === 'next') return !!row.reference?.kid || !!row.reference?.keyRef;
+		if (slot === 'backup') return !!row.reference?.kid || !!row.reference?.keyRef;
+		return true;
 	}
 
 	function buildEntityIdPreview(role: MetadataRole, style: SAMLEntityIdStyle) {
@@ -578,20 +840,51 @@
 		}
 	}
 
-	async function saveCertificateSubject() {
-		if (!samlSettings || !hasCertificateSubjectChanges || savingSettings) return;
+	function applyActiveCertificateSubject() {
+		const activeSubject = metadataCertificateForSlot(draftCertificateRole, 'active')?.preview
+			?.subject;
+		const parsed = parseCertificateSubject(activeSubject);
+		if (!parsed) return;
+		draftCertificateSubject = parsed;
+	}
+
+	function parseCertificateSubject(
+		subject: string | undefined
+	): SAMLSigningCertificateSubject | null {
+		if (!subject) return null;
+		const values: Partial<SAMLSigningCertificateSubject> = {};
+		for (const part of subject.split(',')) {
+			const [rawKey, ...rawValueParts] = part.trim().split('=');
+			const value = rawValueParts.join('=').trim();
+			switch (rawKey?.trim()) {
+				case 'C':
+					values.countryName = value;
+					break;
+				case 'ST':
+					values.stateOrProvinceName = value;
+					break;
+				case 'L':
+					values.localityName = value;
+					break;
+				case 'O':
+					values.organizationName = value;
+					break;
+				case 'OU':
+					values.organizationalUnitName = value;
+					break;
+				case 'CN':
+					values.commonName = value;
+					break;
+			}
+		}
+		return normalizeSubjectForForm(values);
+	}
+
+	async function createRolloverCertificate() {
+		if (!samlSettings || savingSettings || signingAction) return;
 		savingSettings = true;
-		actionMessage = '';
-		error = '';
 		try {
-			samlSettings = await adminSAMLAPI.updateSettings({
-				certificateSubject: draftCertificateSubject
-			});
-			draftCertificateSubject = currentCertificateSubject();
-			actionMessage = $LL.admin_saml_local_subject_saved();
-		} catch (err) {
-			error =
-				err instanceof Error ? err.message : $LL.admin_saml_local_error_save_subject();
+			await runLocalSigningAction(draftCertificateRole, 'publish_next');
 		} finally {
 			savingSettings = false;
 		}
@@ -599,7 +892,8 @@
 
 	async function runLocalSigningAction(
 		role: MetadataRole,
-		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup'
+		action: LocalSigningAction,
+		row?: SigningCertificateStatusRow
 	) {
 		if (signingAction) return;
 		signingAction = `${role}:${action}`;
@@ -609,8 +903,14 @@
 			samlSettings = await adminSAMLAPI.updateLocalSigning({
 				role,
 				action,
-				certificateSubject: currentCertificateSubject(),
-				keepPreviousAsBackup: true
+				certificateSubject: draftCertificateSubject,
+				keepPreviousAsBackup: true,
+				targetKid: row?.reference?.kid,
+				targetKeyRef: row?.reference?.keyRef,
+				validFrom: localDateTimeToIso(draftCertificateValidFrom),
+				validTo: localDateTimeToIso(draftCertificateValidTo),
+				publicKeyAlgorithm: draftCertificatePublicKeyAlgorithm,
+				publicKeySizeBits: draftCertificatePublicKeySizeBits
 			});
 			draftCertificateSubject = currentCertificateSubject();
 			actionMessage = $LL.admin_saml_local_certificate_settings_updated();
@@ -622,6 +922,73 @@
 		} finally {
 			signingAction = '';
 		}
+	}
+
+	async function openCertificateDetail(role: MetadataRole, row: SigningCertificateStatusRow) {
+		const certificate = row.reference?.certificate ?? row.publishedCertificate?.certificate ?? '';
+		if (!certificate) {
+			selectedCertificateDetail = {
+				role,
+				row,
+				certificate,
+				loading: false,
+				error: $LL.admin_saml_local_rollover_detail_no_certificate()
+			};
+			return;
+		}
+
+		selectedCertificateDetail = {
+			role,
+			row,
+			certificate,
+			preview: row.publishedCertificate?.preview,
+			loading: !row.publishedCertificate?.preview
+		};
+
+		if (row.publishedCertificate?.preview) return;
+
+		try {
+			const preview = await adminSAMLAPI.previewTrustCertificate({ certificate });
+			if (selectedCertificateDetail?.role === role && selectedCertificateDetail.row.id === row.id) {
+				selectedCertificateDetail = {
+					...selectedCertificateDetail,
+					preview,
+					loading: false
+				};
+			}
+		} catch (err) {
+			if (selectedCertificateDetail?.role === role && selectedCertificateDetail.row.id === row.id) {
+				selectedCertificateDetail = {
+					...selectedCertificateDetail,
+					loading: false,
+					error: err instanceof Error ? err.message : $LL.admin_saml_local_error_parse_certificate()
+				};
+			}
+		}
+	}
+
+	function closeCertificateDetail() {
+		selectedCertificateDetail = null;
+	}
+
+	function canDeleteSelectedSlot(role: MetadataRole, policy: SAMLSigningKeyPolicy) {
+		const row = selectedSigningRow(role, policy);
+		if (signingAction || row.slot === 'active') return false;
+		return !!row.reference?.kid || !!row.reference?.certificate;
+	}
+
+	async function deleteSelectedSigningCertificate(
+		role: MetadataRole,
+		policy: SAMLSigningKeyPolicy
+	) {
+		await deleteSigningCertificate(role, selectedSigningRow(role, policy));
+	}
+
+	async function deleteSigningCertificate(role: MetadataRole, row: SigningCertificateStatusRow) {
+		if (row.slot === 'active' || signingAction) return;
+		if (!row.reference?.kid && !row.reference?.certificate) return;
+		await runLocalSigningAction(role, row.slot === 'next' ? 'delete_next' : 'retire_backup', row);
+		selectedSigningRows[role] = 'active';
 	}
 </script>
 
@@ -769,13 +1136,13 @@
 										'saml_idp_metadata',
 										tenantInfo.saml.idp_metadata
 									)}
-									{@render fieldRow($LL.admin_saml_local_slo(), tenantInfo.saml.slo, 'saml_idp_slo')}
-								{:else}
 									{@render fieldRow(
-										$LL.admin_saml_local_acs(),
-										tenantInfo.saml.acs,
-										'saml_acs'
+										$LL.admin_saml_local_slo(),
+										tenantInfo.saml.slo,
+										'saml_idp_slo'
 									)}
+								{:else}
+									{@render fieldRow($LL.admin_saml_local_acs(), tenantInfo.saml.acs, 'saml_acs')}
 									{@render fieldRow(
 										$LL.admin_saml_local_sp_metadata_url(),
 										tenantInfo.saml.sp_metadata ?? tenantInfo.saml.metadata,
@@ -964,7 +1331,11 @@
 				</div>
 
 				<div class="entity-layout">
-					<div class="entity-options" role="radiogroup" aria-label={$LL.admin_saml_local_entity_id_style_aria()}>
+					<div
+						class="entity-options"
+						role="radiogroup"
+						aria-label={$LL.admin_saml_local_entity_id_style_aria()}
+					>
 						<label class="entity-option">
 							<input
 								type="radio"
@@ -1033,7 +1404,11 @@
 
 					<div class="login-policy-layout">
 						<div class="login-policy-choice">
-							<div class="entity-options" role="radiogroup" aria-label={$LL.admin_saml_local_login_policy_aria()}>
+							<div
+								class="entity-options"
+								role="radiogroup"
+								aria-label={$LL.admin_saml_local_login_policy_aria()}
+							>
 								<label class="entity-option">
 									<input
 										type="radio"
@@ -1065,7 +1440,11 @@
 
 						<div class="login-policy-preview">
 							<div class="preview-heading">{$LL.admin_saml_local_selected_login_url()}</div>
-							{@render fieldRow($LL.admin_saml_local_login_url(), selectedSAMLLoginUrl, 'selected_saml_login_url')}
+							{@render fieldRow(
+								$LL.admin_saml_local_login_url(),
+								selectedSAMLLoginUrl,
+								'selected_saml_login_url'
+							)}
 
 							<div class="route-preview">
 								<div class="preview-heading">{$LL.admin_saml_local_displayed_page_flow()}</div>
@@ -1125,7 +1504,11 @@
 						</div>
 						<div>
 							<span class="preview-label">{$LL.admin_saml_local_validity_window()}</span>
-							<strong>{$LL.admin_saml_local_validity_days({ days: samlSettings.metadata.validityDays })}</strong>
+							<strong
+								>{$LL.admin_saml_local_validity_days({
+									days: samlSettings.metadata.validityDays
+								})}</strong
+							>
 						</div>
 						<div>
 							<span class="preview-label">{$LL.admin_saml_local_cache_duration()}</span>
@@ -1153,9 +1536,191 @@
 			<div class="panel">
 				<div class="panel-header compact-panel-header">
 					<div>
+						<h2 class="panel-title">{$LL.admin_saml_local_signing_rollover()}</h2>
+						<p class="form-hint">{$LL.admin_saml_local_signing_rollover_desc()}</p>
+						<p class="form-hint">{$LL.admin_saml_local_signing_rollover_role_note()}</p>
+					</div>
+				</div>
+
+				<div class="local-signing-grid">
+					{#each signingRoles as role (role)}
+						{@const policy = localSigningPolicy(role)}
+						<section class="local-signing-card">
+							<div>
+								<div class="preview-heading">
+									{$LL.admin_saml_local_rollover_saved_certificates({ role: roleLabel(role) })}
+								</div>
+							</div>
+							<div class="rollover-table-wrap">
+								<table class="rollover-table">
+									<thead>
+										<tr>
+											<th>{$LL.admin_saml_local_rollover_select_certificate()}</th>
+											<th>{$LL.admin_saml_local_rollover_certificate()}</th>
+											<th>{$LL.admin_saml_local_rollover_status()}</th>
+											<th>{$LL.admin_saml_local_rollover_signing()}</th>
+											<th>{$LL.admin_saml_local_rollover_stored()}</th>
+											<th>{$LL.admin_saml_local_rollover_published()}</th>
+											<th>{$LL.admin_saml_local_rollover_created()}</th>
+											<th>{$LL.admin_saml_local_rollover_valid_from()}</th>
+											<th>{$LL.admin_saml_local_rollover_valid_to()}</th>
+											<th>{$LL.admin_saml_local_rollover_max_reference_until()}</th>
+											<th>{$LL.admin_saml_local_rollover_row_actions()}</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each rolloverCertificateRows(role, policy) as row (row.id)}
+											<tr>
+												<td>
+													<input
+														type="radio"
+														name={`saml-signing-slot-${role}`}
+														checked={selectedSigningRowId(role) === row.id}
+														aria-label={$LL.admin_saml_local_rollover_select_slot({
+															role: roleLabel(role),
+															slot: row.label
+														})}
+														onchange={() => selectSigningRow(role, row)}
+													/>
+												</td>
+												<td>
+													<strong>{row.label}</strong>
+													<span>{row.description}</span>
+													{#if row.reference?.kid}
+														<code>{row.reference.kid}</code>
+													{/if}
+												</td>
+												<td>
+													<span
+														class:status-active={row.isSigning}
+														class:status-published={!row.isSigning && row.isPublished}
+														class:status-muted={!row.isStored}
+														class="rollover-status"
+													>
+														{row.status}
+													</span>
+												</td>
+												<td>{yesNo(row.isSigning)}</td>
+												<td>{yesNo(row.isStored)}</td>
+												<td>{yesNo(row.isPublished)}</td>
+												<td>{formatDateTime(row.createdAt)}</td>
+												<td>{formatDateTime(row.validFrom)}</td>
+												<td>{formatDateTime(row.validTo)}</td>
+												<td>{formatDateTime(row.maxReferenceUntil)}</td>
+												<td>
+													<div class="rollover-row-actions">
+														<button
+															class="btn btn-secondary btn-xs"
+															onclick={() => openCertificateDetail(role, row)}
+															disabled={!row.reference?.certificate &&
+																!row.publishedCertificate?.certificate}
+														>
+															{$LL.admin_saml_local_rollover_view_certificate()}
+														</button>
+														<button
+															class="btn btn-danger btn-xs"
+															onclick={() => {
+																selectSigningRow(role, row);
+																void deleteSigningCertificate(role, row);
+															}}
+															disabled={row.slot === 'active' ||
+																!!signingAction ||
+																(!row.reference?.kid && !row.reference?.certificate)}
+															title={row.slot === 'active'
+																? $LL.admin_saml_local_rollover_delete_active_disabled()
+																: undefined}
+														>
+															{$LL.admin_saml_local_rollover_delete_certificate()}
+														</button>
+													</div>
+												</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+							<div class="selected-action-label">
+								{$LL.admin_saml_local_rollover_selected_actions()}
+							</div>
+							<div class="local-signing-actions">
+								<button
+									class="btn btn-secondary btn-sm"
+									onclick={() =>
+										runLocalSigningAction(role, 'promote_next', selectedSigningRow(role, policy))}
+									disabled={!selectedSlotCanRun(role, policy, 'next')}
+								>
+									{$LL.admin_saml_local_promote_next()}
+								</button>
+								<button
+									class="btn btn-secondary btn-sm"
+									onclick={() =>
+										runLocalSigningAction(role, 'retire_backup', selectedSigningRow(role, policy))}
+									disabled={!selectedSlotCanRun(role, policy, 'backup')}
+								>
+									{$LL.admin_saml_local_retire_backup()}
+								</button>
+								<button
+									class="btn btn-danger btn-sm"
+									onclick={() => deleteSelectedSigningCertificate(role, policy)}
+									disabled={!canDeleteSelectedSlot(role, policy)}
+									title={selectedSigningRow(role, policy).slot === 'active'
+										? $LL.admin_saml_local_rollover_delete_active_disabled()
+										: undefined}
+								>
+									{$LL.admin_saml_local_rollover_delete_certificate()}
+								</button>
+							</div>
+						</section>
+					{/each}
+				</div>
+
+				<div class="rollover-action-notes">
+					<div>
+						<strong>{$LL.admin_saml_local_recreate_active()}</strong>
+						<span>{$LL.admin_saml_local_rollover_recreate_active_note()}</span>
+					</div>
+					<div>
+						<strong>{$LL.admin_saml_local_publish_next()}</strong>
+						<span>{$LL.admin_saml_local_rollover_publish_next_note()}</span>
+					</div>
+					<div>
+						<strong>{$LL.admin_saml_local_promote_next()}</strong>
+						<span>{$LL.admin_saml_local_rollover_promote_next_note()}</span>
+					</div>
+					<div>
+						<strong>{$LL.admin_saml_local_retire_backup()}</strong>
+						<span>{$LL.admin_saml_local_rollover_retire_backup_note()}</span>
+					</div>
+				</div>
+			</div>
+
+			<div class="panel">
+				<div class="panel-header compact-panel-header">
+					<div>
 						<h2 class="panel-title">{$LL.admin_saml_local_signing_subject()}</h2>
 						<p class="form-hint">{$LL.admin_saml_local_signing_subject_desc()}</p>
 					</div>
+				</div>
+
+				<div class="certificate-create-controls">
+					<label>
+						<span>{$LL.admin_saml_local_rollover_role()}</span>
+						<select
+							class="form-input"
+							bind:value={draftCertificateRole}
+							disabled={savingSettings || !!signingAction}
+						>
+							<option value="idp">IdP</option>
+							<option value="sp">SP</option>
+						</select>
+					</label>
+					<button
+						class="btn btn-secondary btn-sm"
+						onclick={applyActiveCertificateSubject}
+						disabled={!metadataCertificateForSlot(draftCertificateRole, 'active')?.preview}
+					>
+						{$LL.admin_saml_local_use_current_subject()}
+					</button>
 				</div>
 
 				<div class="subject-grid">
@@ -1215,6 +1780,49 @@
 					</label>
 				</div>
 
+				<div class="subject-grid">
+					<label>
+						<span>{$LL.admin_saml_local_certificate_valid_from()}</span>
+						<input
+							class="form-input"
+							type="datetime-local"
+							bind:value={draftCertificateValidFrom}
+							disabled={savingSettings}
+						/>
+					</label>
+					<label>
+						<span>{$LL.admin_saml_local_certificate_valid_to()}</span>
+						<input
+							class="form-input"
+							type="datetime-local"
+							bind:value={draftCertificateValidTo}
+							disabled={savingSettings}
+						/>
+					</label>
+					<label>
+						<span>{$LL.admin_saml_local_certificate_public_key_algorithm()}</span>
+						<select
+							class="form-input"
+							bind:value={draftCertificatePublicKeyAlgorithm}
+							disabled={savingSettings}
+						>
+							<option value="RSA">RSA</option>
+						</select>
+					</label>
+					<label>
+						<span>{$LL.admin_saml_local_certificate_public_key_bits()}</span>
+						<select
+							class="form-input"
+							bind:value={draftCertificatePublicKeySizeBits}
+							disabled={savingSettings}
+						>
+							<option value={2048}>2048</option>
+							<option value={3072}>3072</option>
+							<option value={4096}>4096</option>
+						</select>
+					</label>
+				</div>
+
 				<div class="entity-warning">
 					<i class="i-ph-warning-circle"></i>
 					<span>{$LL.admin_saml_local_subject_warning()}</span>
@@ -1223,69 +1831,175 @@
 				<div class="form-actions">
 					<button
 						class="btn btn-primary btn-sm"
-						onclick={saveCertificateSubject}
-						disabled={savingSettings || !hasCertificateSubjectChanges}
+						onclick={createRolloverCertificate}
+						disabled={savingSettings || !!signingAction}
 					>
-						{savingSettings ? $LL.admin_saml_local_saving() : $LL.admin_saml_local_save_subject()}
+						{savingSettings
+							? $LL.admin_saml_local_saving()
+							: $LL.admin_saml_local_create_rollover_certificate()}
 					</button>
 				</div>
 			</div>
 
-			<div class="panel">
+			<div class="panel emergency-panel">
 				<div class="panel-header compact-panel-header">
 					<div>
-						<h2 class="panel-title">{$LL.admin_saml_local_signing_rollover()}</h2>
-						<p class="form-hint">{$LL.admin_saml_local_signing_rollover_desc()}</p>
+						<h2 class="panel-title">{$LL.admin_saml_local_emergency_operations()}</h2>
+						<p class="form-hint">{$LL.admin_saml_local_emergency_operations_desc()}</p>
 					</div>
 				</div>
-
-				<div class="local-signing-grid">
+				<div class="local-signing-actions">
 					{#each signingRoles as role (role)}
-						{@const policy = localSigningPolicy(role)}
-						<section class="local-signing-card">
-							<div>
-								<div class="preview-heading">
-									{$LL.admin_saml_local_signing_rollover_heading({ role: roleLabel(role) })}
-								</div>
-								<p class="form-hint">{policySummary(policy)}</p>
-							</div>
-							<div class="local-signing-actions">
-								<button
-									class="btn btn-secondary btn-sm"
-									onclick={() => runLocalSigningAction(role, 'recreate_active')}
-									disabled={!!signingAction}
-								>
-									{$LL.admin_saml_local_recreate_active()}
-								</button>
-								<button
-									class="btn btn-secondary btn-sm"
-									onclick={() => runLocalSigningAction(role, 'publish_next')}
-									disabled={!!signingAction}
-								>
-									{$LL.admin_saml_local_publish_next()}
-								</button>
-								<button
-									class="btn btn-secondary btn-sm"
-									onclick={() => runLocalSigningAction(role, 'promote_next')}
-									disabled={!!signingAction || !policy.next?.kid}
-								>
-									{$LL.admin_saml_local_promote_next()}
-								</button>
-								<button
-									class="btn btn-secondary btn-sm"
-									onclick={() => runLocalSigningAction(role, 'retire_backup')}
-									disabled={!!signingAction || !policy.backup?.kid}
-								>
-									{$LL.admin_saml_local_retire_backup()}
-								</button>
-							</div>
-						</section>
+						<button
+							class="btn btn-danger btn-sm"
+							onclick={() => runLocalSigningAction(role, 'recreate_active')}
+							disabled={!!signingAction}
+						>
+							{$LL.admin_saml_local_recreate_active_for_role({ role: roleLabel(role) })}
+						</button>
 					{/each}
 				</div>
 			</div>
 		{/if}
 	{/if}
 </div>
+
+{#if selectedCertificateDetail}
+	<div class="modal-backdrop">
+		<div
+			class="certificate-detail-modal"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="certificate-detail-title"
+			tabindex="-1"
+		>
+			<div class="modal-header">
+				<div>
+					<h2 id="certificate-detail-title">
+						{$LL.admin_saml_local_rollover_detail_title({
+							role: roleLabel(selectedCertificateDetail.role),
+							slot: selectedCertificateDetail.row.label
+						})}
+					</h2>
+					<p>{selectedCertificateDetail.row.status}</p>
+				</div>
+				<button
+					class="icon-btn"
+					onclick={closeCertificateDetail}
+					aria-label={$LL.dialog_close()}
+					title={$LL.dialog_close()}
+				>
+					<i class="i-ph-x"></i>
+				</button>
+			</div>
+
+			<div class="modal-body">
+				{#if selectedCertificateDetail.loading}
+					<div class="alert alert-info">
+						{$LL.admin_saml_local_rollover_detail_loading()}
+					</div>
+				{:else if selectedCertificateDetail.error}
+					<div class="alert alert-error">{selectedCertificateDetail.error}</div>
+				{/if}
+
+				{#if selectedCertificateDetail.preview}
+					<div class="certificate-info-grid modal-certificate-grid">
+						<div>
+							<span>{$LL.admin_saml_local_subject()}</span>
+							<strong>{selectedCertificateDetail.preview.subject}</strong>
+						</div>
+						<div>
+							<span>{$LL.admin_saml_local_issuer()}</span>
+							<strong>{selectedCertificateDetail.preview.issuer}</strong>
+						</div>
+						<div>
+							<span>{$LL.admin_saml_local_valid_from()}</span>
+							<strong>{formatDateTime(selectedCertificateDetail.preview.validFrom)}</strong>
+						</div>
+						<div>
+							<span>{$LL.admin_saml_local_valid_to()}</span>
+							<strong>{formatDateTime(selectedCertificateDetail.preview.validTo)}</strong>
+						</div>
+						<div>
+							<span>{$LL.admin_saml_local_signature()}</span>
+							<strong>{selectedCertificateDetail.preview.signatureAlgorithm}</strong>
+						</div>
+						<div>
+							<span>{$LL.admin_saml_local_public_key()}</span>
+							<strong>
+								{selectedCertificateDetail.preview.publicKeyAlgorithm}
+								{selectedCertificateDetail.preview.publicKeySizeBits
+									? ` ${selectedCertificateDetail.preview.publicKeySizeBits} bit`
+									: ''}
+							</strong>
+						</div>
+					</div>
+
+					<div class="fingerprint-grid">
+						{@render fieldRow(
+							$LL.admin_saml_local_sha1_fingerprint(),
+							fingerprint(selectedCertificateDetail.preview.fingerprintSha1),
+							`${selectedCertificateDetail.role}_${selectedCertificateDetail.row.slot}_sha1`
+						)}
+						{@render fieldRow(
+							$LL.admin_saml_local_sha256_fingerprint(),
+							fingerprint(selectedCertificateDetail.preview.fingerprintSha256),
+							`${selectedCertificateDetail.role}_${selectedCertificateDetail.row.slot}_sha256`
+						)}
+					</div>
+
+					{#if selectedCertificateDetail.preview.warnings.length > 0}
+						<div class="certificate-warnings">
+							{#each selectedCertificateDetail.preview.warnings as warning (warning)}
+								<span><i class="i-ph-warning-circle"></i>{warning}</span>
+							{/each}
+						</div>
+					{/if}
+				{/if}
+
+				{#if selectedCertificateDetail.certificate}
+					<details class="certificate-pem">
+						<summary>
+							<i class="i-ph-caret-right"></i>
+							<span>{$LL.admin_saml_local_certificate_pem()}</span>
+						</summary>
+						<div class="field-copy-row">
+							<textarea
+								class="copy-textarea certificate-textarea"
+								readonly
+								value={selectedCertificateDetail.certificate}
+							></textarea>
+							<button
+								class="icon-btn"
+								class:copied={copiedKey ===
+									`detail_cert_pem_${selectedCertificateDetail.role}_${selectedCertificateDetail.row.slot}`}
+								onclick={() =>
+									copy(
+										selectedCertificateDetail?.certificate ?? '',
+										`detail_cert_pem_${selectedCertificateDetail?.role}_${selectedCertificateDetail?.row.slot}`
+									)}
+								title={$LL.admin_saml_local_copy()}
+							>
+								<i
+									class={copiedKey ===
+									`detail_cert_pem_${selectedCertificateDetail.role}_${selectedCertificateDetail.row.slot}`
+										? 'i-ph-check'
+										: 'i-ph-copy'}
+								></i>
+							</button>
+						</div>
+					</details>
+				{/if}
+			</div>
+
+			<div class="modal-footer">
+				<button class="btn btn-secondary" onclick={closeCertificateDetail}>
+					{$LL.dialog_close()}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.link-button {
@@ -1687,6 +2401,25 @@
 		gap: 10px;
 	}
 
+	.certificate-create-controls {
+		display: flex;
+		align-items: end;
+		gap: 10px;
+		margin-bottom: 14px;
+	}
+
+	.certificate-create-controls label {
+		display: grid;
+		gap: 5px;
+		min-width: 140px;
+	}
+
+	.certificate-create-controls span {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 700;
+	}
+
 	.subject-grid label {
 		display: grid;
 		gap: 5px;
@@ -1701,7 +2434,7 @@
 
 	.local-signing-grid {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: 1fr;
 		gap: 12px;
 		margin-top: 14px;
 	}
@@ -1719,6 +2452,204 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
+	}
+
+	.emergency-panel {
+		border-color: rgba(239, 68, 68, 0.3);
+	}
+
+	.rollover-table-wrap {
+		width: 100%;
+		overflow-x: auto;
+	}
+
+	.rollover-table {
+		width: 100%;
+		min-width: 1240px;
+		border-collapse: collapse;
+		font-size: 0.8125rem;
+	}
+
+	.rollover-table th,
+	.rollover-table td {
+		padding: 9px 10px;
+		border-bottom: 1px solid var(--border-color);
+		text-align: left;
+		vertical-align: top;
+		white-space: nowrap;
+	}
+
+	.rollover-table th {
+		color: var(--text-secondary);
+		font-size: 0.7rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.rollover-table th:first-child,
+	.rollover-table td:first-child {
+		width: 54px;
+		text-align: center;
+	}
+
+	.rollover-table td:nth-child(2) {
+		white-space: normal;
+		min-width: 260px;
+	}
+
+	.rollover-table td:nth-child(2) strong,
+	.rollover-table td:nth-child(2) span,
+	.rollover-table td:nth-child(2) code {
+		display: block;
+	}
+
+	.rollover-table td:nth-child(2) span {
+		margin-top: 2px;
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		line-height: 1.35;
+	}
+
+	.rollover-table td:nth-child(2) code {
+		margin-top: 4px;
+		color: var(--text-secondary);
+		font-size: 0.7rem;
+		overflow-wrap: anywhere;
+	}
+
+	.selected-action-label {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.rollover-row-actions {
+		display: flex;
+		gap: 6px;
+		justify-content: flex-end;
+	}
+
+	.btn-xs {
+		padding: 4px 8px;
+		font-size: 0.75rem;
+		line-height: 1.2;
+	}
+
+	.rollover-status {
+		display: inline-flex;
+		align-items: center;
+		width: max-content;
+		padding: 3px 8px;
+		border-radius: 999px;
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 700;
+	}
+
+	.rollover-status.status-active {
+		background: rgba(34, 197, 94, 0.14);
+		color: var(--success);
+	}
+
+	.rollover-status.status-published {
+		background: rgba(59, 130, 246, 0.14);
+		color: var(--primary);
+	}
+
+	.rollover-status.status-muted {
+		opacity: 0.72;
+	}
+
+	.rollover-action-notes {
+		display: grid;
+		gap: 8px;
+		margin-top: 14px;
+		padding: 12px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+	}
+
+	.rollover-action-notes div {
+		display: grid;
+		grid-template-columns: 160px minmax(0, 1fr);
+		gap: 12px;
+		align-items: baseline;
+	}
+
+	.rollover-action-notes strong {
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+	}
+
+	.rollover-action-notes span {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 1000;
+		display: grid;
+		place-items: center;
+		padding: 24px;
+		background: rgba(0, 0, 0, 0.5);
+	}
+
+	.certificate-detail-modal {
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr) auto;
+		width: min(920px, 100%);
+		max-height: min(860px, calc(100vh - 48px));
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-lg);
+		background: var(--surface);
+		box-shadow: var(--shadow-lg);
+		overflow: hidden;
+	}
+
+	.modal-header,
+	.modal-footer {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 16px;
+		border-bottom: 1px solid var(--border-color);
+	}
+
+	.modal-header h2 {
+		margin: 0;
+		color: var(--text-primary);
+		font-size: 1.125rem;
+	}
+
+	.modal-header p {
+		margin: 4px 0 0;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+	}
+
+	.modal-body {
+		min-height: 0;
+		overflow: auto;
+		padding: 16px;
+	}
+
+	.modal-footer {
+		justify-content: flex-end;
+		border-top: 1px solid var(--border-color);
+		border-bottom: 0;
+	}
+
+	.modal-certificate-grid {
+		margin-top: 0;
 	}
 
 	.certificate-info-grid {
@@ -1868,7 +2799,8 @@
 		.local-signing-grid,
 		.certificate-info-grid,
 		.metadata-summary-header,
-		.certificate-header {
+		.certificate-header,
+		.rollover-action-notes div {
 			grid-template-columns: 1fr;
 			display: grid;
 		}

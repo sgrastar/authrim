@@ -182,6 +182,28 @@ export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
   }
 
   /**
+   * Delete a passkey only when the Admin user has another passkey.
+   *
+   * Keeps the last-key lockout check in the DELETE statement so concurrent
+   * delete requests cannot both pass a separate count check.
+   */
+  async deletePasskeyIfUserHasAnother(id: string, adminUserId: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `DELETE FROM admin_passkeys
+        WHERE id = ?
+          AND admin_user_id = ?
+          AND EXISTS (
+            SELECT 1 FROM admin_passkeys
+             WHERE admin_user_id = ?
+               AND id <> ?
+             LIMIT 1
+          )`,
+      [id, adminUserId, adminUserId, id]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
    * Delete all passkeys for an Admin user
    *
    * @param adminUserId - Admin user ID

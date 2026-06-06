@@ -39,6 +39,11 @@ describe('Event Type Constants', () => {
       expect(AUTH_EVENTS.PASSWORD_FAILED).toBe('auth.password.failed');
     });
 
+    it('should have correct directory password event types', () => {
+      expect(AUTH_EVENTS.DIRECTORY_PASSWORD_SUCCEEDED).toBe('auth.directory_password.succeeded');
+      expect(AUTH_EVENTS.DIRECTORY_PASSWORD_FAILED).toBe('auth.directory_password.failed');
+    });
+
     it('should have correct email code event types', () => {
       expect(AUTH_EVENTS.EMAIL_CODE_SUCCEEDED).toBe('auth.email_code.succeeded');
       expect(AUTH_EVENTS.EMAIL_CODE_FAILED).toBe('auth.email_code.failed');
@@ -210,6 +215,7 @@ describe('Event Data Types', () => {
       const methods: AuthEventData['method'][] = [
         'passkey',
         'password',
+        'directory_password',
         'email_code',
         'magic_link',
         'external_idp',

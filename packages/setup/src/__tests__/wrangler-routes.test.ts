@@ -115,6 +115,12 @@ describe('generateRoutes', () => {
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
 
+    expect(tokenConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'DEVICE_CODE_STORE' }),
+        expect.objectContaining({ name: 'CIBA_REQUEST_STORE' }),
+      ])
+    );
     expect(authConfig.send_email).toEqual([{ name: 'EMAIL' }]);
     expect(managementConfig.send_email).toEqual([{ name: 'EMAIL' }]);
     expect(tokenConfig.send_email).toBeUndefined();

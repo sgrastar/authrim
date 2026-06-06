@@ -352,6 +352,8 @@ export type SAMLSigningRolloverState =
 export interface SAMLSigningKeyReference {
   /** Slot in the SAML certificate lifecycle */
   slot: SAMLSigningCertificateSlot;
+  /** Stable row identifier for multiple certificates in the same lifecycle slot */
+  id?: string;
   /** KeyManager Durable Object reference name */
   keyRef?: string;
   /** Optional KeyManager key id, for audit/display and future lookup */
@@ -364,6 +366,14 @@ export interface SAMLSigningKeyReference {
   metadataPublishFrom?: number;
   /** Planned manual or automated activation time */
   plannedActivationAt?: number;
+  /** Certificate validity start time */
+  validFrom?: number;
+  /** Certificate validity end time */
+  validTo?: number;
+  /** Public key algorithm used for this certificate */
+  publicKeyAlgorithm?: 'RSA';
+  /** Public key size in bits */
+  publicKeySizeBits?: number;
 }
 
 export interface SAMLSigningKeyPolicy {
@@ -375,6 +385,8 @@ export interface SAMLSigningKeyPolicy {
   active?: SAMLSigningKeyReference;
   /** Next signing certificate, normally published before activation */
   next?: SAMLSigningKeyReference;
+  /** Additional switchable signing certificates published before activation */
+  nextCandidates?: SAMLSigningKeyReference[];
   /** Backup/DR certificate reference. Private key export is handled by DR bundle policy. */
   backup?: SAMLSigningKeyReference;
 }

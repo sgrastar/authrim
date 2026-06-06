@@ -149,9 +149,9 @@ describe('Admin Session Handlers', () => {
     const response = await adminSessionStatusHandler(createMockContext({}));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json();
+    expect(body).toMatchObject({
       active: true,
-      session_id: 'admin-session-123',
       user_id: 'admin-user-1',
       tenant_id: 'tenant-a',
       email: 'admin@example.com',
@@ -162,6 +162,7 @@ describe('Admin Session Handlers', () => {
       is_platform_admin: false,
       last_login_at: 1700000000,
     });
+    expect(body).not.toHaveProperty('session_id');
     expect(mockAdminAdapter.query).toHaveBeenCalledWith(expect.any(String), [
       'admin-user-1',
       'tenant-a',

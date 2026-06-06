@@ -288,6 +288,100 @@ describe('ensureWildcardDnsForMultiTenant', () => {
     );
   });
 
+  it('creates API base DNS before wildcard DNS when api.auto is available', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: true, result: [] }))
+      .mockResolvedValueOnce(jsonResponse({ result: { id: 'record-base' } }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, result: [] }))
+      .mockResolvedValueOnce(jsonResponse({ result: { id: 'record-wildcard' } }));
+    const onProgress = vi.fn();
+
+    await cloudflare.ensureWildcardDnsForMultiTenant(
+      {
+        tenant: {
+          multiTenant: true,
+          baseDomain: 'test.example.com',
+        },
+        urls: {
+          api: {
+            auto: 'https://test-ar-router.account.workers.dev',
+            zoneId: 'zone-123',
+          },
+        },
+      },
+      onProgress
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records?name=test.example.com'
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      type: 'CNAME',
+      name: 'test.example.com',
+      content: 'test-ar-router.account.workers.dev',
+      proxied: true,
+      ttl: 1,
+    });
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records?name=*.test.example.com'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(1, 'Ensuring API DNS for test.example.com...');
+    expect(onProgress).toHaveBeenNthCalledWith(
+      2,
+      '✓ API DNS created: test.example.com -> test-ar-router.account.workers.dev'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(
+      3,
+      'Ensuring wildcard DNS for *.test.example.com...'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(
+      4,
+      '✓ Wildcard DNS created: *.test.example.com -> test.example.com'
+    );
+  });
+
+  it('does not create API base DNS when Worker custom domain binding is enabled', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ success: true, result: [] }))
+      .mockResolvedValueOnce(jsonResponse({ result: { id: 'record-wildcard' } }));
+    const onProgress = vi.fn();
+
+    await cloudflare.ensureWildcardDnsForMultiTenant(
+      {
+        tenant: {
+          multiTenant: true,
+          baseDomain: 'test.example.com',
+        },
+        urls: {
+          api: {
+            auto: 'https://test-ar-router.account.workers.dev',
+            zoneId: 'zone-123',
+            customDomainBinding: true,
+          },
+        },
+      },
+      onProgress
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records?name=*.test.example.com'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(
+      1,
+      '✓ API DNS will be managed by Worker custom domain binding: test.example.com'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(
+      2,
+      'Ensuring wildcard DNS for *.test.example.com...'
+    );
+  });
+
   it('fails when wildcard DNS cannot be verified through the API', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);

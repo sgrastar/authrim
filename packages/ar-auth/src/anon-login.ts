@@ -459,7 +459,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       // Create new anonymous user if not found
       if (!userId) {
         isNewUser = true;
-        const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
+        const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
 
         // Load client contract for expiration settings
         const clientContract = await loadClientContractCached(

@@ -150,6 +150,9 @@ describe('Login Methods API', () => {
       expect(body.methods.passkey.capabilities).toEqual(['conditional', 'discoverable']);
       expect(body.methods.emailCode.enabled).toBe(true);
       expect(body.methods.emailCode.steps).toEqual(['email', 'code']);
+      expect(body.methods.directoryPassword.enabled).toBe(false);
+      expect(body.methods.directoryPassword.label).toBe('Organization ID');
+      expect(body.methods.directoryPassword.steps).toEqual([]);
       // No EXTERNAL_IDP → external login disabled
       expect(body.methods.external.enabled).toBe(false);
       expect(body.methods.external.providers).toEqual([]);
@@ -239,6 +242,34 @@ describe('Login Methods API', () => {
       expect(body.methods.passkey.enabled).toBe(true);
       expect(body.methods.emailCode.enabled).toBe(false);
       expect(body.methods.emailCode.steps).toEqual([]);
+    });
+
+    it('should enable directory password from login-methods settings without exposing connector secrets', async () => {
+      const settingsKV = createMockKV({
+        system_settings: JSON.stringify({
+          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        }),
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.directory_password.enabled': true,
+          'login-methods.directory_password.label': 'Campus ID',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
+
+      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.passkey.enabled).toBe(false);
+      expect(body.methods.emailCode.enabled).toBe(false);
+      expect(body.methods.directoryPassword).toEqual({
+        enabled: true,
+        label: 'Campus ID',
+        steps: ['username', 'password'],
+      });
+      expect(JSON.stringify(body)).not.toContain('secret');
+      expect(JSON.stringify(body)).not.toContain('endpoint');
+      expect(JSON.stringify(body)).not.toContain('connector_id');
     });
   });
 

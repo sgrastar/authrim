@@ -244,7 +244,7 @@ export function computeApiDomainUiState(input: ApiDomainFormInput): ApiDomainUiS
     showWorkersDevNote: !hasBaseDomain,
     showNakedDomainControls: multiTenantEnabled,
     showTenantFields: !hasBaseDomain || (multiTenantEnabled && !nakedDomainEnabled),
-    showPrimaryTenantRow: nakedDomainEnabled,
+    showPrimaryTenantRow: false,
     showExamples: multiTenantEnabled,
     baseDomainPlaceholder: nakedDomainEnabled
       ? 'example.com'

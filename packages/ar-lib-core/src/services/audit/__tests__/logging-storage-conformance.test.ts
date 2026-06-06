@@ -3,6 +3,7 @@ import { AuditService } from '../audit-service';
 import type { AuditProfile } from '../../../types/runtime-profile';
 
 const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const PII_ENCRYPTION_KEY = '89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567';
 
 interface PreparedStatementCall {
   sql: string;
@@ -143,6 +144,7 @@ describe('logging/storage conformance', () => {
       sensitiveDetailBucket: bucket,
       objectEncryptionRootKey: OBJECT_ROOT_KEY,
       objectEncryptionKeyVersion: 7,
+      piiEncryptionKey: PII_ENCRYPTION_KEY,
       resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile('pii_log')),
       tenantKeyResolver: vi.fn(async () => 't_conf_pii'),
     });

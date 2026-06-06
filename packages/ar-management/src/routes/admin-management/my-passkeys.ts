@@ -443,9 +443,10 @@ myPasskeysRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
-    // Check if this is the last passkey (prevent lockout)
-    const passkeyCount = await passkeyRepo.countByUser(authContext.userId);
-    if (passkeyCount <= 1) {
+    // Delete only when another passkey remains. The repository performs this
+    // as one conditional DELETE to avoid concurrent last-key deletion races.
+    const deleted = await passkeyRepo.deletePasskeyIfUserHasAnother(passkeyId, authContext.userId);
+    if (!deleted) {
       return c.json(
         {
           error: 'last_passkey',
@@ -455,9 +456,6 @@ myPasskeysRouter.delete('/:id', async (c) => {
         400
       );
     }
-
-    // Delete passkey
-    await passkeyRepo.deletePasskey(passkeyId);
 
     // Create audit log
     await createAuditLog(c, 'passkey.deleted', passkeyId, 'success', {

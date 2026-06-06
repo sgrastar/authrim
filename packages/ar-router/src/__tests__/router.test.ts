@@ -741,6 +741,14 @@ describe('Router Worker', () => {
       expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it('should route legacy api external IdP callbacks to the bridge', async () => {
+      const req = new Request('https://example.com/api/external/github/callback?code=code');
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
+    });
+
     it('should route handoff finalize to external IdP bridge', async () => {
       const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
       const req = new Request('https://example.com/handoff/finalize', {

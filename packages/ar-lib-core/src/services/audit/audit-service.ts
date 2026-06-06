@@ -73,6 +73,12 @@ export interface AuditServiceDependencies {
   /** Object-plane encryption key version */
   objectEncryptionKeyVersion?: number;
 
+  /** Hex-encoded AES-256 key for PII audit value encryption */
+  piiEncryptionKey?: string;
+
+  /** PII audit encryption key version */
+  piiEncryptionKeyVersion?: number;
+
   /** Audit queue for async processing (optional) */
   auditQueue?: Queue<AuditQueueMessage>;
 
@@ -114,6 +120,8 @@ export class AuditService implements IAuditService {
   private readonly sensitiveDetailBucket?: R2Bucket;
   private readonly objectEncryptionRootKey?: string;
   private readonly objectEncryptionKeyVersion?: number;
+  private readonly piiEncryptionKey?: string;
+  private readonly piiEncryptionKeyVersion: number;
   private readonly auditQueue?: Queue<AuditQueueMessage>;
   private readonly configKv?: KVNamespace;
   private readonly logger: Logger;
@@ -137,6 +145,11 @@ export class AuditService implements IAuditService {
     this.sensitiveDetailBucket = deps.sensitiveDetailBucket;
     this.objectEncryptionRootKey = deps.objectEncryptionRootKey;
     this.objectEncryptionKeyVersion = deps.objectEncryptionKeyVersion;
+    this.piiEncryptionKey = deps.piiEncryptionKey;
+    this.piiEncryptionKeyVersion =
+      Number.isInteger(deps.piiEncryptionKeyVersion) && (deps.piiEncryptionKeyVersion ?? 0) > 0
+        ? deps.piiEncryptionKeyVersion!
+        : 1;
     this.auditQueue = deps.auditQueue;
     this.configKv = deps.configKv;
     this.logger = deps.logger ?? createLogger().module('AuditService');
@@ -751,15 +764,13 @@ export class AuditService implements IAuditService {
 
   /**
    * Encrypt PII values using AES-256-GCM.
-   * Key management is simplified here - in production, use KeyManager DO.
    */
   private async encryptPIIValues(
     values: Record<string, unknown>,
     tenantId: string,
     affectedFields: string[]
   ): Promise<EncryptedValue> {
-    // For now, use a static key ID - in production, integrate with KeyManager
-    const keyId = 'default-pii-key-v1';
+    const keyId = `pii-key-v${this.piiEncryptionKeyVersion}`;
 
     // Generate random IV (12 bytes for GCM)
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -767,8 +778,6 @@ export class AuditService implements IAuditService {
     // Generate AAD from tenant and fields
     const aad = generateAAD(tenantId, affectedFields);
 
-    // Import key (in production, get from KeyManager or KV)
-    // This is a placeholder - you should inject the key from environment or KeyManager
     const keyMaterial = await this.getEncryptionKey();
 
     // Encrypt
@@ -790,16 +799,19 @@ export class AuditService implements IAuditService {
     };
   }
 
-  /**
-   * Get encryption key for PII.
-   * Placeholder - in production, get from KeyManager or environment.
-   */
   private async getEncryptionKey(): Promise<CryptoKey> {
-    // Derive a deterministic 32-byte key from a placeholder seed.
-    // In production, inject PII_ENCRYPTION_KEY from environment or KeyManager.
-    const seed = new TextEncoder().encode('placeholder-pii-encryption-key');
-    const digest = await crypto.subtle.digest('SHA-256', seed);
-    return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, [
+    const keyHex = this.piiEncryptionKey?.trim();
+    if (!keyHex) {
+      throw new Error('PII_ENCRYPTION_KEY is required for audit PII encryption');
+    }
+    if (keyHex.length !== 64 || !/^[0-9a-fA-F]+$/.test(keyHex)) {
+      throw new Error('PII_ENCRYPTION_KEY must be exactly 64 hex characters');
+    }
+
+    const keyBytes = new Uint8Array(
+      keyHex.match(/.{2}/g)!.map((byte) => Number.parseInt(byte, 16))
+    );
+    return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [
       'encrypt',
       'decrypt',
     ]);

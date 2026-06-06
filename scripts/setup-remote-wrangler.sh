@@ -548,6 +548,10 @@ zone_name = \"$ZONE_NAME\""
             routes="
 [[routes]]
 pattern = \"$DOMAIN_ONLY/api/external/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/auth/external/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         ar-policy)

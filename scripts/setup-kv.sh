@@ -70,6 +70,11 @@ elif [[ "$DEPLOY_ENV" =~ \.\. ]] || [[ "$DEPLOY_ENV" =~ / ]] || [[ "$DEPLOY_ENV"
 fi
 
 if [ "$RESET_MODE" = true ]; then
+    if [[ "$DEPLOY_ENV" =~ ^(prod|production)$ ]] && [ "${AUTHRIM_ALLOW_PROD_RESET:-}" != "YES" ]; then
+        echo "❌ Refusing to reset production KV namespaces without AUTHRIM_ALLOW_PROD_RESET=YES"
+        exit 1
+    fi
+
     echo "⚠️  RESET MODE ENABLED for environment: $DEPLOY_ENV"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "All existing KV namespaces for $DEPLOY_ENV will be deleted and recreated."
@@ -196,6 +201,17 @@ get_namespace_id_by_title() {
     fi
 }
 
+get_preview_namespace_id_by_name() {
+    local name=$1
+    local list_output=$2
+
+    get_namespace_id_by_title "${name}_preview" "$list_output"
+}
+
+is_valid_kv_namespace_id() {
+    [[ "$1" =~ ^[a-f0-9]{32}$ ]]
+}
+
 # Check if all namespaces exist
 if [ "$RESET_MODE" = false ]; then
     echo "🔍 Checking for existing KV namespaces..."
@@ -216,21 +232,10 @@ if [ "$RESET_MODE" = false ]; then
             # Check for production namespace
             if command -v jq &> /dev/null; then
                 prod_id=$(echo "$list_output" | jq -r ".[] | select(.title == \"$namespace\") | .id" 2>/dev/null | head -1)
-                preview_id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${namespace}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
+                preview_id=$(echo "$list_output" | jq -r ".[] | select(.title == \"${namespace}_preview\") | .id" 2>/dev/null | head -1)
             else
                 prod_id=$(get_namespace_id_by_title "$namespace" "$list_output")
-                preview_id=$(echo "$list_output" | awk -v ns="$namespace" '
-                    /"id"/ {
-                        match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
-                        if (arr[1]) current_id = arr[1]
-                    }
-                    /"title"/ {
-                        if (tolower($0) ~ tolower(ns "_preview")) {
-                            print current_id
-                            exit
-                        }
-                    }
-                ')
+                preview_id=$(get_preview_namespace_id_by_name "$namespace" "$list_output")
             fi
 
             if [ -z "$prod_id" ] || [ -z "$preview_id" ]; then
@@ -326,32 +331,20 @@ create_kv_namespace() {
     local id=""
 
     if [ "$preview_flag" = "--preview" ]; then
-        # For preview namespaces, try to find any namespace with the name followed by _preview
+        # For preview namespaces, require the exact preview title to avoid cross-environment matches.
         if command -v jq &> /dev/null; then
-            id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${name}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
+            id=$(echo "$list_output" | jq -r ".[] | select(.title == \"${name}_preview\") | .id" 2>/dev/null | head -1)
         else
-            # Fallback: awk-based parsing for preview namespace
-            id=$(echo "$list_output" | awk -v ns="$name" '
-                /"id"/ {
-                    match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
-                    if (arr[1]) current_id = arr[1]
-                }
-                /"title"/ {
-                    if (tolower($0) ~ tolower(ns "_preview")) {
-                        print current_id
-                        exit
-                    }
-                }
-            ')
-        fi
-
-        # If we didn't find a preview namespace, try exact match
-        if [ -z "$id" ]; then
-            id=$(get_namespace_id_by_title "$title" "$list_output")
+            id=$(get_preview_namespace_id_by_name "$name" "$list_output")
         fi
     else
         # For production namespaces, look for exact title match
         id=$(get_namespace_id_by_title "$title" "$list_output")
+    fi
+
+    if [ -n "$id" ] && ! is_valid_kv_namespace_id "$id"; then
+        echo "  ❌ Invalid namespace ID returned for $name $preview_flag: $id" >&2
+        exit 1
     fi
 
     if [ -n "$id" ]; then
@@ -423,21 +416,8 @@ create_kv_namespace() {
                         # Check if it's because the namespace is in use
                         if echo "$delete_output" | grep -q "associated scripts"; then
                             echo "  ⚠️  The namespace is currently being used by deployed workers." >&2
-                            echo "  You need to either:" >&2
-                            echo "    - Undeploy the workers using this namespace first" >&2
-                            echo "    - Or use the existing namespace (option 1)" >&2
-                            echo "" >&2
-                            echo "  Would you like to use the existing namespace instead?" >&2
-                            read -p "  Use existing namespace? (y/n): " -r use_existing >&2
-
-                            if [[ $use_existing =~ ^[Yy]$ ]]; then
-                                echo "  ✓ Using existing namespace with ID: $id" >&2
-                                echo "$id"
-                                return 0
-                            else
-                                echo "  ❌ Cannot proceed without deleting or using existing namespace" >&2
-                                exit 1
-                            fi
+                            echo "  ❌ Cannot continue after a requested namespace deletion failed" >&2
+                            exit 1
                         else
                             echo "  ❌ Script aborted due to deletion failure" >&2
                             exit 1
@@ -481,36 +461,20 @@ create_kv_namespace() {
 
             if [ "$preview_flag" = "--preview" ]; then
                 if command -v jq &> /dev/null; then
-                    id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${name}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
+                    id=$(echo "$list_output" | jq -r ".[] | select(.title == \"${name}_preview\") | .id" 2>/dev/null | head -1)
                 else
-                    # Fallback: awk-based parsing for preview namespace
-                    id=$(echo "$list_output" | awk -v ns="$name" '
-                        /"id"/ {
-                            match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
-                            if (arr[1]) current_id = arr[1]
-                        }
-                        /"title"/ {
-                            if (tolower($0) ~ tolower(ns "_preview")) {
-                                print current_id
-                                exit
-                            }
-                        }
-                    ')
-                fi
-
-                if [ -z "$id" ]; then
-                    id=$(get_namespace_id_by_title "$name" "$list_output")
+                    id=$(get_preview_namespace_id_by_name "$name" "$list_output")
                 fi
             else
                 id=$(get_namespace_id_by_title "$name" "$list_output")
             fi
 
-            if [ -n "$id" ]; then
+            if [ -n "$id" ] && is_valid_kv_namespace_id "$id"; then
                 echo "  ✓ Found existing namespace with ID: $id" >&2
                 echo "$id"
                 return 0
             else
-                echo "❌ Could not find existing namespace ID" >&2
+                echo "❌ Could not find a valid existing namespace ID" >&2
                 echo "Full list output:" >&2
                 echo "$list_output" >&2
                 exit 1
@@ -536,6 +500,10 @@ create_kv_namespace() {
         echo "❌ Failed to create namespace: $name $preview_flag" >&2
         echo "Full output was:" >&2
         echo "$output" >&2
+        exit 1
+    fi
+    if ! is_valid_kv_namespace_id "$id"; then
+        echo "❌ Invalid namespace ID extracted from wrangler output: $id" >&2
         exit 1
     fi
 
@@ -611,22 +579,27 @@ update_wrangler_toml() {
 
     # Check if file exists
     if [ ! -f "$file" ]; then
-        echo "    ⚠️  Warning: File not found: $file"
+        echo "    ❌ File not found: $file"
         echo "    💡 Hint: Run './scripts/setup-dev.sh' first to generate wrangler.toml files"
-        return 1
+        exit 1
     fi
 
     # Check if IDs are provided
     if [ -z "$id" ] || [ -z "$preview_id" ]; then
-        echo "    ⚠️  Warning: Empty ID provided for $binding (id: '$id', preview_id: '$preview_id')"
-        return 1
+        echo "    ❌ Empty ID provided for $binding (id: '$id', preview_id: '$preview_id')"
+        exit 1
+    fi
+
+    if ! is_valid_kv_namespace_id "$id" || ! is_valid_kv_namespace_id "$preview_id"; then
+        echo "    ❌ Invalid KV namespace ID for $binding (id: '$id', preview_id: '$preview_id')"
+        exit 1
     fi
 
     # Check if the binding exists in the file
     if ! grep -q "binding = \"$binding\"" "$file"; then
-        echo "    ⚠️  Warning: Binding '$binding' not found in $file"
+        echo "    ❌ Binding '$binding' not found in $file"
         echo "    💡 Hint: The wrangler.toml file may need to be regenerated with './scripts/setup-dev.sh'"
-        return 1
+        exit 1
     fi
 
     # Create a temporary file
@@ -658,9 +631,9 @@ update_wrangler_toml() {
         mv "$temp_file" "$file"
         echo "    ✓ Updated $binding: $id / $preview_id"
     else
-        echo "    ⚠️  Warning: Failed to update $binding in $file"
+        echo "    ❌ Failed to update $binding in $file"
         rm "$temp_file"
-        return 1
+        exit 1
     fi
 }
 

@@ -38,6 +38,8 @@ const QUEUE_PROVISIONING_DEFINITIONS = [
   { binding: 'LOGGING_DELIVERY_QUEUE', nameSuffix: 'logging-delivery-queue' },
   { binding: 'LOGGING_DELIVERY_BULK_QUEUE', nameSuffix: 'logging-delivery-bulk-queue' },
 ] as const;
+const QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS = 15_000;
+const WORKER_DELETE_PROPAGATION_DELAY_MS = 20_000;
 
 // =============================================================================
 // Types
@@ -1381,17 +1383,46 @@ export async function ensureWildcardDnsRecord(
   baseDomain: string,
   zoneId?: string | null
 ): Promise<EnsureWildcardDnsResult> {
+  return ensureProxiedCnameDnsRecord({
+    recordName: `*.${baseDomain}`,
+    recordTarget: baseDomain,
+    zoneLookupName: baseDomain,
+    zoneId,
+    permissionErrorName: 'wildcard DNS record',
+  });
+}
+
+export async function ensureApiBaseDnsRecord(
+  baseDomain: string,
+  targetHostname: string,
+  zoneId?: string | null
+): Promise<EnsureWildcardDnsResult> {
+  return ensureProxiedCnameDnsRecord({
+    recordName: baseDomain,
+    recordTarget: targetHostname,
+    zoneLookupName: baseDomain,
+    zoneId,
+    permissionErrorName: 'API base DNS record',
+  });
+}
+
+async function ensureProxiedCnameDnsRecord(options: {
+  recordName: string;
+  recordTarget: string;
+  zoneLookupName: string;
+  zoneId?: string | null;
+  permissionErrorName: string;
+}): Promise<EnsureWildcardDnsResult> {
   const tokenInfo = await getCloudflareApiToken();
   if (!tokenInfo) {
     throw new Error('Not logged in to Cloudflare (run: wrangler login)');
   }
 
-  const recordName = `*.${baseDomain}`;
-  const recordTarget = baseDomain;
+  const { recordName, recordTarget, zoneLookupName, zoneId, permissionErrorName } = options;
 
   let resolvedZoneId = zoneId || undefined;
   if (!resolvedZoneId) {
-    const zoneResult = await checkZoneExists(baseDomain);
+    const zoneResult = await checkZoneExists(zoneLookupName);
     if (!zoneResult.found || !zoneResult.zone?.id) {
       if (zoneResult.diagnostic?.code === 'zone_read_forbidden') {
         return {
@@ -1402,7 +1433,7 @@ export async function ensureWildcardDnsRecord(
           verificationLimited: true,
         };
       }
-      throw new Error(`Cloudflare zone not found for ${baseDomain}`);
+      throw new Error(`Cloudflare zone not found for ${zoneLookupName}`);
     }
     resolvedZoneId = zoneResult.zone.id;
   }
@@ -1463,10 +1494,10 @@ export async function ensureWildcardDnsRecord(
             verificationLimited: true,
           };
         }
-        throw new Error('Token lacks dns:edit permission to create wildcard DNS record');
+        throw new Error(`Token lacks dns:edit permission to create ${permissionErrorName}`);
       }
 
-      throw new Error(`Failed to create wildcard DNS record (${createResponse.status})`);
+      throw new Error(`Failed to create ${permissionErrorName} (${createResponse.status})`);
     }
 
     return {
@@ -1517,7 +1548,7 @@ export async function ensureWildcardDnsRecord(
     );
 
     if (!updateResponse.ok) {
-      throw new Error(`Failed to update wildcard DNS record (${updateResponse.status})`);
+      throw new Error(`Failed to update ${permissionErrorName} (${updateResponse.status})`);
     }
 
     return {
@@ -1542,6 +1573,34 @@ export async function ensureWildcardDnsForMultiTenant(
     return;
   }
 
+  const apiAutoHostname = extractHostnameFromUrl(cfg?.urls?.api?.auto);
+  const apiUsesCustomDomainBinding = cfg?.urls?.api?.customDomainBinding === true;
+  if (apiAutoHostname && apiAutoHostname !== baseDomain && !apiUsesCustomDomainBinding) {
+    onProgress?.(`Ensuring API DNS for ${baseDomain}...`);
+    const apiDnsResult = await ensureApiBaseDnsRecord(
+      baseDomain,
+      apiAutoHostname,
+      cfg?.urls?.api?.zoneId ?? null
+    );
+    if (apiDnsResult.created) {
+      onProgress?.(`✓ API DNS created: ${apiDnsResult.name} -> ${apiDnsResult.target}`);
+    } else if (apiDnsResult.updated) {
+      onProgress?.(`✓ API DNS updated: ${apiDnsResult.name} -> ${apiDnsResult.target}`);
+    } else if (apiDnsResult.verificationLimited) {
+      if (await verifyHostnameDnsPublicResolution(baseDomain)) {
+        onProgress?.(`✓ API DNS resolves publicly: ${apiDnsResult.name}`);
+      } else {
+        throw new Error(
+          `Token lacks zone:read or dns:edit permission to verify/create DNS record for ${apiDnsResult.name}`
+        );
+      }
+    } else {
+      onProgress?.(`✓ API DNS already present: ${apiDnsResult.name} -> ${apiDnsResult.target}`);
+    }
+  } else if (apiUsesCustomDomainBinding) {
+    onProgress?.(`✓ API DNS will be managed by Worker custom domain binding: ${baseDomain}`);
+  }
+
   onProgress?.(`Ensuring wildcard DNS for *.${baseDomain}...`);
 
   const result = await ensureWildcardDnsRecord(baseDomain, cfg?.urls?.api?.zoneId ?? null);
@@ -1562,14 +1621,23 @@ export async function ensureWildcardDnsForMultiTenant(
   }
 }
 
-export async function verifyWildcardDnsPublicResolution(baseDomain: string): Promise<boolean> {
-  const hostname = `authrim-wildcard-check-${Date.now()}.${baseDomain}`;
+function extractHostnameFromUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+}
 
+export async function verifyHostnameDnsPublicResolution(hostname: string): Promise<boolean> {
   const attempts = [
     () => resolveCname(hostname),
     () => resolve4(hostname),
     () => resolve6(hostname),
-  ] as const;
+  ];
 
   for (const attempt of attempts) {
     try {
@@ -1583,6 +1651,12 @@ export async function verifyWildcardDnsPublicResolution(baseDomain: string): Pro
   }
 
   return false;
+}
+
+export async function verifyWildcardDnsPublicResolution(baseDomain: string): Promise<boolean> {
+  const hostname = `authrim-wildcard-check-${Date.now()}.${baseDomain}`;
+
+  return verifyHostnameDnsPublicResolution(hostname);
 }
 
 // =============================================================================
@@ -3544,14 +3618,13 @@ export function getQueueConsumerWorkerNamesForDeletion(
   env: string,
   workers: Array<{ name: string }>
 ): string[] {
-  const workerNames = Array.from(new Set(workers.map((worker) => worker.name))).sort();
-  const managementWorkerName = `${env}-ar-management`;
-  if (workerNames.includes(managementWorkerName)) {
-    return [managementWorkerName];
-  }
-  return workerNames.filter(
-    (workerName) => workerName.startsWith(`${env}-`) && workerName.endsWith('-ar-management')
-  );
+  return Array.from(
+    new Set(
+      workers
+        .map((worker) => worker.name)
+        .filter((workerName) => workerName.startsWith(`${env}-ar-`))
+    )
+  ).sort();
 }
 
 export async function deleteQueueConsumer(queueName: string, workerName: string): Promise<boolean> {
@@ -4008,6 +4081,8 @@ export interface DeleteOptions {
   deletePages?: boolean;
   knownD1Names?: string[];
   knownQueueNames?: string[];
+  queueConsumerDetachPropagationDelayMs?: number;
+  workerDeletePropagationDelayMs?: number;
   onProgress?: (message: string) => void;
 }
 
@@ -4836,6 +4911,8 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deletePages = true,
     knownD1Names = [],
     knownQueueNames = [],
+    queueConsumerDetachPropagationDelayMs = QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS,
+    workerDeletePropagationDelayMs = WORKER_DELETE_PROPAGATION_DELAY_MS,
     onProgress = console.log,
   } = options;
 
@@ -4900,6 +4977,14 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     if (queueConsumerWorkerNames.length > 0) {
       onProgress(`📨 Detaching Queue Consumers (${envInfo.queues.length})...`);
       await deleteQueueConsumersForWorkers(envInfo.queues, queueConsumerWorkerNames, onProgress);
+      if (queueConsumerDetachPropagationDelayMs > 0) {
+        onProgress(
+          `  ⏳ Waiting ${Math.ceil(
+            queueConsumerDetachPropagationDelayMs / 1000
+          )}s for Queue detachments to propagate...`
+        );
+        await sleep(queueConsumerDetachPropagationDelayMs);
+      }
       onProgress('');
     }
   }
@@ -4916,6 +5001,14 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       } else {
         onProgress(`  ⚠️ ${worker.name} (not found or already deleted)`);
       }
+    }
+    if (envInfo.queues.length > 0 && workerDeletePropagationDelayMs > 0) {
+      onProgress(
+        `  ⏳ Waiting ${Math.ceil(
+          workerDeletePropagationDelayMs / 1000
+        )}s for Worker deletions to propagate before deleting Queues...`
+      );
+      await sleep(workerDeletePropagationDelayMs);
     }
     onProgress('');
   }
@@ -4977,23 +5070,6 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress('');
   }
 
-  // Delete Queues
-  if (deleteQueues && envInfo.queues.length > 0) {
-    onProgress(`📨 Deleting Queues (${envInfo.queues.length})...`);
-    for (const queue of envInfo.queues) {
-      onProgress(`  ⏳ Deleting: ${queue.name}...`);
-      const success = await deleteQueue(queue.name);
-      if (success) {
-        deleted.queues.push(queue.name);
-        onProgress(`  ✅ ${queue.name}`);
-      } else {
-        errors.push(`Failed to delete Queue: ${queue.name}`);
-        onProgress(`  ❌ ${queue.name}`);
-      }
-    }
-    onProgress('');
-  }
-
   // Delete legacy Pages projects
   if (deletePages && envInfo.pages.length > 0) {
     onProgress(`📄 Deleting legacy Pages Projects (${envInfo.pages.length})...`);
@@ -5006,6 +5082,24 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       } else {
         errors.push(`Failed to delete legacy Pages project: ${project.name}`);
         onProgress(`  ❌ ${project.name}`);
+      }
+    }
+    onProgress('');
+  }
+
+  // Delete Queues last. Cloudflare can keep transient Worker/Queue references briefly after detach
+  // and script deletion, so Queue removal is intentionally delayed until all Worker work is complete.
+  if (deleteQueues && envInfo.queues.length > 0) {
+    onProgress(`📨 Deleting Queues (${envInfo.queues.length})...`);
+    for (const queue of envInfo.queues) {
+      onProgress(`  ⏳ Deleting: ${queue.name}...`);
+      const success = await deleteQueue(queue.name);
+      if (success) {
+        deleted.queues.push(queue.name);
+        onProgress(`  ✅ ${queue.name}`);
+      } else {
+        errors.push(`Failed to delete Queue: ${queue.name}`);
+        onProgress(`  ❌ ${queue.name}`);
       }
     }
     onProgress('');

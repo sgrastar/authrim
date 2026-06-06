@@ -43,6 +43,7 @@ import {
   passkeyLoginVerifyHandler,
 } from './passkey';
 import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
+import { directoryPasswordLoginHandler } from './directory-password-login';
 import { consentGetHandler, consentPostHandler } from './consent';
 import { loginChallengeGetHandler } from './login-challenge';
 import {
@@ -251,6 +252,16 @@ app.use('/api/auth/anon-login/*', async (c, next) => {
   })(c, next);
 });
 
+// Rate limiting for directory password login. This endpoint reaches an external connector
+// and verifies reusable credentials, so keep it stricter than ordinary session reads.
+app.use('/api/auth/directory-password/login', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/directory-password/login'],
+  })(c, next);
+});
+
 // Rate limiting for upgrade endpoints (architecture-decisions.md §17)
 // Moderate profile: balance security and usability for account upgrade
 app.use('/api/auth/upgrade', async (c, next) => {
@@ -334,6 +345,9 @@ app.post('/api/auth/passkeys/login/verify', passkeyLoginVerifyHandler);
 // Email Code (OTP) endpoints
 app.post('/api/auth/email-codes/send', emailCodeSendHandler);
 app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
+
+// Directory Password endpoint
+app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);
 
 // DID Authentication endpoints (Phase 9)
 // Challenge-response pattern for DID-based authentication

@@ -25,6 +25,10 @@ export const AUTH_EVENTS = {
   PASSWORD_SUCCEEDED: 'auth.password.succeeded',
   PASSWORD_FAILED: 'auth.password.failed',
 
+  // Directory Password (Authrim Wordwarden)
+  DIRECTORY_PASSWORD_SUCCEEDED: 'auth.directory_password.succeeded',
+  DIRECTORY_PASSWORD_FAILED: 'auth.directory_password.failed',
+
   // Email OTP
   EMAIL_CODE_SUCCEEDED: 'auth.email_code.succeeded',
   EMAIL_CODE_FAILED: 'auth.email_code.failed',
@@ -258,21 +262,23 @@ export type SettingsEventType = (typeof SETTINGS_EVENTS)[keyof typeof SETTINGS_E
  */
 export const SCIM_EVENTS = {
   // User provisioning (SCIM_ prefix to avoid collision with SESSION_EVENTS)
-  SCIM_USER_CREATED: 'scim.user.created',
-  SCIM_USER_UPDATED: 'scim.user.updated',
-  SCIM_USER_DELETED: 'scim.user.deleted',
+  SCIM_USER_CREATE: 'scim.user.create',
+  SCIM_USER_REPLACE: 'scim.user.replace',
+  SCIM_USER_PATCH: 'scim.user.patch',
+  SCIM_USER_DELETE: 'scim.user.delete',
 
   // Group provisioning
-  SCIM_GROUP_CREATED: 'scim.group.created',
-  SCIM_GROUP_UPDATED: 'scim.group.updated',
-  SCIM_GROUP_DELETED: 'scim.group.deleted',
+  SCIM_GROUP_CREATE: 'scim.group.create',
+  SCIM_GROUP_REPLACE: 'scim.group.replace',
+  SCIM_GROUP_PATCH: 'scim.group.patch',
+  SCIM_GROUP_DELETE: 'scim.group.delete',
 
   // Bulk operations
-  SCIM_BULK_COMPLETED: 'scim.bulk.completed',
+  SCIM_BULK_EXECUTE: 'scim.bulk.execute',
 
   // Token management
-  SCIM_TOKEN_CREATED: 'scim.token.created',
-  SCIM_TOKEN_REVOKED: 'scim.token.revoked',
+  SCIM_TOKEN_CREATE: 'scim.token.create',
+  SCIM_TOKEN_REVOKE: 'scim.token.revoke',
 } as const;
 
 export type ScimEventType = (typeof SCIM_EVENTS)[keyof typeof SCIM_EVENTS];
@@ -331,6 +337,7 @@ export interface AuthEventData extends BaseEventData {
   method:
     | 'passkey'
     | 'password'
+    | 'directory_password'
     | 'email_code'
     | 'magic_link'
     | 'external_idp'
@@ -342,6 +349,10 @@ export interface AuthEventData extends BaseEventData {
   clientId: string;
   /** Session ID (for successful auth) */
   sessionId?: string;
+  /** Connector ID for connector-backed auth methods */
+  connectorId?: string;
+  /** Upstream/correlation request ID for connector-backed auth methods */
+  requestId?: string;
   /** Error code (for failed auth) */
   errorCode?: string;
   /** IP address (hashed for privacy) */

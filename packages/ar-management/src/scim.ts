@@ -1433,7 +1433,7 @@ app.post('/Users', async (c) => {
     }
 
     // Generate ID
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
+    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
 
     // Hash password if provided
     if (scimUser.password) {
@@ -2748,7 +2748,7 @@ async function processUserOperation(
           },
         };
       }
-      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
+      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const now = new Date().toISOString();
       internalUser.created_at = now;
       internalUser.updated_at = now;
