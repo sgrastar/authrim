@@ -666,8 +666,7 @@ async function resolveDirectoryPasswordMethod(
         defaults.enabled
       ),
       label:
-        truncateString(kvSettings['login-methods.directory_password.label'], 80) ||
-        defaults.label,
+        truncateString(kvSettings['login-methods.directory_password.label'], 80) || defaults.label,
     };
   } catch {
     return defaults;
@@ -769,19 +768,14 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
 
     // Fetch data in parallel
-    const [
-      settings,
-      bridgeProviders,
-      samlProviders,
-      configuredProviders,
-      directoryPassword,
-    ] = await Promise.all([
-      getSystemSettings(env),
-      fetchExternalLoginProviders(env),
-      fetchSAMLLoginProviders(env, tenantId),
-      fetchConfiguredExternalLoginProviders(env, tenantId),
-      resolveDirectoryPasswordMethod(env, tenantId),
-    ]);
+    const [settings, bridgeProviders, samlProviders, configuredProviders, directoryPassword] =
+      await Promise.all([
+        getSystemSettings(env),
+        fetchExternalLoginProviders(env),
+        fetchSAMLLoginProviders(env, tenantId),
+        fetchConfiguredExternalLoginProviders(env, tenantId),
+        resolveDirectoryPasswordMethod(env, tenantId),
+      ]);
     const externalProviders = mergeExternalLoginProviders([
       bridgeProviders,
       samlProviders,
