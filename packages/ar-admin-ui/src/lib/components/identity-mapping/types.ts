@@ -74,9 +74,9 @@ export interface RuleDetail {
 	purpose: string;
 	attributeSetHash: string;
 	consentMode: 'once' | 'every_time' | 'until_attributes_change' | 'not_applicable';
-	releasePolicyVersion: string;
+	releaseFieldMappingVersion: string;
 	termsVersion: string;
-	privacyPolicyVersion: string;
+	privacyFieldMappingVersion: string;
 	denyReason: string;
 	runtime: string;
 	conflict: string;

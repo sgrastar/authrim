@@ -14,7 +14,7 @@
 	} from '$lib/api/admin-saml';
 	import {
 		adminIdentityMappingAPI,
-		type IdentityMappingPolicySummary
+		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
@@ -45,7 +45,7 @@
 
 	let provider = $state<SAMLProvider | null>(null);
 	let presets = $state<SAMLAttributePreset[]>([]);
-	let mappingPolicies = $state<IdentityMappingPolicySummary[]>([]);
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let loading = $state(true);
 	let saving = $state(false);
 	let busyAction = $state('');
@@ -85,7 +85,7 @@
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
 	let attributePresetId = $state('');
 	let attributeReleaseConsentSetting = $state<'disabled' | AttributeReleaseConsentMode>('disabled');
-	let identityMappingPolicySetId = $state('');
+	let identityMappingFieldMappingSetId = $state('');
 	let attributeMappingJson = $state('{}');
 	let certificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
 	let certificatePreviewError = $state('');
@@ -100,14 +100,14 @@
 		loading = true;
 		error = '';
 		try {
-			const [loadedProvider, presetResult, policyResult] = await Promise.all([
+			const [loadedProvider, presetResult, fieldMappingResult] = await Promise.all([
 				adminSAMLAPI.getProvider(providerId),
 				adminSAMLAPI.listAttributePresets(),
-				adminIdentityMappingAPI.listPolicies()
+				adminIdentityMappingAPI.listFieldMappingSets()
 			]);
 			provider = loadedProvider;
 			presets = presetResult.presets;
-			mappingPolicies = policyResult.policies;
+			fieldMappingSets = fieldMappingResult.fieldMappingSets;
 			populateForm(loadedProvider);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_load();
@@ -156,7 +156,7 @@
 		attributeReleaseConsentSetting = data.config.attributeReleaseConsent?.enabled
 			? data.config.attributeReleaseConsent.mode
 			: 'disabled';
-		identityMappingPolicySetId = data.config.identityMapping?.policySetId || '';
+		identityMappingFieldMappingSetId = data.config.identityMapping?.fieldMappingSetId || '';
 		attributeMappingJson = JSON.stringify(data.config.attributeMapping || {}, null, 2);
 		certificatePreview = null;
 		certificatePreviewError = '';
@@ -310,10 +310,10 @@
 							enabled: true,
 							mode: attributeReleaseConsentSetting
 						},
-			identityMapping: identityMappingPolicySetId
+			identityMapping: identityMappingFieldMappingSetId
 				? {
 						...(provider?.config.identityMapping ?? {}),
-						policySetId: identityMappingPolicySetId,
+						fieldMappingSetId: identityMappingFieldMappingSetId,
 						destinationNamespace:
 							provider?.config.identityMapping?.destinationNamespace ?? 'saml.attribute'
 					}
@@ -827,18 +827,18 @@
 						</div>
 
 						<div class="form-group">
-							<label for="identityMappingPolicy" class="form-label"
+							<label for="identityMappingFieldMapping" class="form-label"
 								>{$LL.admin_saml_detail_identity_mapping_policy()}</label
 							>
 							<select
-								id="identityMappingPolicy"
-								bind:value={identityMappingPolicySetId}
+								id="identityMappingFieldMapping"
+								bind:value={identityMappingFieldMappingSetId}
 								class="form-select"
 							>
 								<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
-								{#each mappingPolicies as policy (policy.id)}
-									<option value={policy.id}>
-										{policy.displayName} ({policy.lifecycleState})
+								{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+									<option value={fieldMappingSet.id}>
+										{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
 									</option>
 								{/each}
 							</select>

@@ -12,8 +12,8 @@ import {
   adminIdentityMappingAttributeGroupCreateHandler,
   adminIdentityMappingDestinationProfileCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
-  adminIdentityMappingPoliciesListHandler,
-  adminIdentityMappingPolicyCreateHandler,
+  adminIdentityFieldMappingSetsListHandler,
+  adminIdentityFieldMappingSetCreateHandler,
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingReviewTasksListHandler,
   adminIdentityMappingSchemaReadinessHandler,
@@ -227,9 +227,9 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
     const adapter = createAdapter({
       queryOneRows: [
         {
-          id: 'mapping_policy_1',
+          id: 'field_mapping_1',
           tenant_id: 'tenant_a',
-          policy_key: 'library',
+          field_mapping_key: 'library',
           display_name: 'Library policy',
           description: null,
           owner_scope_type: 'tenant',
@@ -243,10 +243,10 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    const result = await repository.deletePolicySet('tenant_a', 'mapping_policy_1');
+    const result = await repository.deleteFieldMappingSet('tenant_a', 'field_mapping_1');
 
     expect(result).toEqual({
-      id: 'mapping_policy_1',
+      id: 'field_mapping_1',
       tenantId: 'tenant_a',
       deleted: true,
     });
@@ -259,9 +259,9 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       expect.stringContaining('DELETE FROM dependency_graph_snapshots'),
       expect.stringContaining('DELETE FROM compiled_mapping_snapshots'),
       expect.stringContaining('DELETE FROM mapping_rules'),
-      expect.stringContaining('DELETE FROM mapping_policy_activations'),
-      expect.stringContaining('DELETE FROM mapping_policy_versions'),
-      expect.stringContaining('DELETE FROM mapping_policy_sets'),
+      expect.stringContaining('DELETE FROM field_mapping_activations'),
+      expect.stringContaining('DELETE FROM field_mapping_versions'),
+      expect.stringContaining('DELETE FROM field_mapping_sets'),
     ]);
   });
 
@@ -269,9 +269,9 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
     const adapter = createAdapter({
       queryOneRows: [
         {
-          id: 'mapping_policy_1',
+          id: 'field_mapping_1',
           tenant_id: 'tenant_a',
-          policy_key: 'library',
+          field_mapping_key: 'library',
           display_name: 'Library policy',
           description: null,
           owner_scope_type: 'tenant',
@@ -285,7 +285,9 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    await expect(repository.deletePolicySet('tenant_a', 'mapping_policy_1')).rejects.toMatchObject({
+    await expect(
+      repository.deleteFieldMappingSet('tenant_a', 'field_mapping_1')
+    ).rejects.toMatchObject({
       status: 409,
       code: 'conflict',
     });
@@ -1068,10 +1070,10 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
           {
             id: 'policy_version_1',
             tenant_id: 'tenant_a',
-            policy_set_id: 'policy_1',
+            field_mapping_set_id: 'policy_1',
             version_label: 'draft-1',
             lifecycle_state: 'draft',
-            policy_hash: 'policy_hash_1',
+            field_mapping_hash: 'field_mapping_hash_1',
             compatibility_range: '^1',
             author_id: null,
             published_at: null,
@@ -1085,7 +1087,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         ],
         [
           {
-            policy_version_id: 'policy_version_1',
+            field_mapping_version_id: 'policy_version_1',
             rule_id: 'rule_1',
             rule_key: 'email-source',
             rule_kind: 'source_mapping',
@@ -1099,7 +1101,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             display_order: 0,
           },
           {
-            policy_version_id: 'policy_version_1',
+            field_mapping_version_id: 'policy_version_1',
             rule_id: 'rule_2',
             rule_key: 'email-destination',
             rule_kind: 'destination_release',
@@ -1115,7 +1117,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         ],
         [
           {
-            policy_version_id: 'policy_version_1',
+            field_mapping_version_id: 'policy_version_1',
             rule_id: 'rule_2',
             transform_id: 'transform_1',
             edge_id: 'edge_2',
@@ -1128,13 +1130,13 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    const versions = await repository.listPolicyVersions('tenant_a', 'policy_1');
+    const versions = await repository.listFieldMappingVersions('tenant_a', 'policy_1');
 
     expect(adapter.queries[0]).toMatchObject({ params: ['tenant_a', 'policy_1'] });
     expect(versions).toEqual([
       expect.objectContaining({
         id: 'policy_version_1',
-        policySetId: 'policy_1',
+        fieldMappingSetId: 'policy_1',
         versionLabel: 'draft-1',
         directions: { source: true, destination: true },
         sourceProfileIds: ['source-profile-workforce'],
@@ -1185,10 +1187,10 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         {
           id: 'policy_version_1',
           tenant_id: 'tenant_a',
-          policy_set_id: 'policy_1',
+          field_mapping_set_id: 'policy_1',
           version_label: 'v1',
           lifecycle_state: 'published',
-          policy_hash: 'policy_hash_1',
+          field_mapping_hash: 'field_mapping_hash_1',
           compatibility_range: '^1',
         },
         {
@@ -1203,7 +1205,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    const result = await repository.compilePolicyVersion(
+    const result = await repository.compileFieldMappingVersion(
       'tenant_a',
       'policy_1',
       'policy_version_1',
@@ -1213,7 +1215,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     );
 
     expect(result.snapshotHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(result.snapshotHash).not.toBe('policy_hash_1');
+    expect(result.snapshotHash).not.toBe('field_mapping_hash_1');
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO dependency_graph_snapshots'),
       expect.stringContaining('INSERT INTO compiled_mapping_snapshots'),
@@ -1229,15 +1231,15 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         {
           id: 'policy_version_1',
           tenant_id: 'tenant_a',
-          policy_set_id: 'policy_1',
+          field_mapping_set_id: 'policy_1',
           version_label: 'v1',
           lifecycle_state: 'published',
-          policy_hash: 'policy_hash_1',
+          field_mapping_hash: 'field_mapping_hash_1',
         },
         {
           id: 'snapshot_1',
           tenant_id: 'tenant_a',
-          policy_version_id: 'policy_version_1',
+          field_mapping_version_id: 'policy_version_1',
           catalog_version_id: 'catalog_version_1',
           snapshot_hash: 'snapshot_hash_1',
           lifecycle_state: 'draft',
@@ -1251,7 +1253,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
     await expect(
-      repository.activatePolicyVersion('tenant_a', 'policy_1', 'policy_version_1', {
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
         snapshotId: 'snapshot_1',
         activationScope: { kind: 'tenant', id: 'tenant_a' },
         holderId: 'current-holder',
@@ -1267,7 +1269,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    const result = await repository.deactivatePolicyVersion(
+    const result = await repository.deactivateFieldMappingVersion(
       'tenant_a',
       'policy_1',
       'policy_version_1'
@@ -1276,14 +1278,14 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(result).toMatchObject({
       id: 'policy_version_1',
       tenantId: 'tenant_a',
-      policySetId: 'policy_1',
+      fieldMappingSetId: 'policy_1',
       lifecycleState: 'published',
       deactivatedAt: 1000,
     });
     expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('UPDATE mapping_policy_activations'),
+      expect.stringContaining('UPDATE field_mapping_activations'),
       expect.stringContaining('UPDATE compiled_mapping_snapshots'),
-      expect.stringContaining('UPDATE mapping_policy_versions'),
+      expect.stringContaining('UPDATE field_mapping_versions'),
     ]);
   });
 
@@ -1304,7 +1306,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         'tenant_a',
         'policy.create',
         'idem-1',
-        { policyKey: 'new' },
+        { fieldMappingKey: 'new' },
         async () => ({
           id: 'policy_1',
         })
@@ -1322,8 +1324,8 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         {
           id: 'policy_1',
           tenant_id: 'tenant_a',
-          policy_key: 'default',
-          display_name: 'Default policy',
+          field_mapping_key: 'default',
+          display_name: 'Default field mapping set',
           description: null,
           lifecycle_state: 'draft',
         },
@@ -1332,7 +1334,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
     await expect(
-      repository.createPolicyVersion('tenant_a', 'policy_1', {
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
         versionLabel: 'v1',
         rules: [
           {
@@ -1357,7 +1359,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
     await expect(
-      repository.createPolicyVersion('tenant_a', 'policy_1', {
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
         versionLabel: 'v1',
         rules: [
           {
@@ -1392,7 +1394,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
     await expect(
-      repository.createPolicyVersion('tenant_a', 'policy_1', {
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
         versionLabel: 'v1',
         rules: [
           {
@@ -1516,8 +1518,8 @@ describe('IdentityMappingControlPlaneRepository identity registry operations', (
       scope: { tenantId: 'tenant_a', subjectIds: ['subject-1'] },
     });
     const replayJob = await repository.createReplayJob('tenant_a', {
-      replayType: 'mapping_policy_impact',
-      impactScope: { policyVersionId: 'policy-version-1' },
+      replayType: 'field_mapping_impact',
+      impactScope: { fieldMappingVersionId: 'policy-version-1' },
     });
     const projection = await repository.upsertAdminSearchProjection('tenant_a', {
       id: 'projection-1',
@@ -2706,14 +2708,14 @@ describe('IdentityMappingControlPlaneRepository schema and template catalogs', (
 });
 
 describe('identity mapping control plane Admin API handlers', () => {
-  it('lists policy sets through the Admin API response shape', async () => {
+  it('lists field mapping sets through the Admin API response shape', async () => {
     const adapter = createAdapter({
       queryRows: [
         {
           id: 'policy_1',
           tenant_id: 'tenant_a',
-          policy_key: 'default',
-          display_name: 'Default policy',
+          field_mapping_key: 'default',
+          display_name: 'Default field mapping set',
           description: null,
           owner_scope_type: 'tenant',
           owner_scope_id: null,
@@ -2724,7 +2726,10 @@ describe('identity mapping control plane Admin API handlers', () => {
       ],
     });
     const app = new Hono<{ Bindings: Env }>();
-    app.get('/api/admin/field-mapping/field-mapping-sets', adminIdentityMappingPoliciesListHandler);
+    app.get(
+      '/api/admin/field-mapping/field-mapping-sets',
+      adminIdentityFieldMappingSetsListHandler
+    );
 
     const response = await app.request(
       '/api/admin/field-mapping/field-mapping-sets',
@@ -2734,12 +2739,12 @@ describe('identity mapping control plane Admin API handlers', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      policies: [
+      fieldMappingSets: [
         {
           id: 'policy_1',
           tenantId: 'tenant_a',
-          policyKey: 'default',
-          displayName: 'Default policy',
+          fieldMappingKey: 'default',
+          displayName: 'Default field mapping set',
           description: null,
           lifecycleState: 'draft',
         },
@@ -2969,8 +2974,8 @@ describe('identity mapping control plane Admin API handlers', () => {
   it('lists schema readiness with gate state and schema presence from sqlite metadata', async () => {
     const adapter = createAdapter({
       queryRows: [
-        { name: 'mapping_policy_sets' },
-        { name: 'mapping_policy_versions' },
+        { name: 'field_mapping_sets' },
+        { name: 'field_mapping_versions' },
         { name: 'mapping_rule_edges' },
         { name: 'review_tasks' },
         { name: 'attribute_release_consents' },
@@ -3006,7 +3011,7 @@ describe('identity mapping control plane Admin API handlers', () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: 'UIM-SCH-016',
-          schemaObject: 'mapping_policy_sets',
+          schemaObject: 'field_mapping_sets',
           schemaPresent: true,
           gateState: 'pass',
         }),
@@ -3094,7 +3099,7 @@ describe('identity mapping control plane Admin API handlers', () => {
     const app = new Hono<{ Bindings: Env }>();
     app.post(
       '/api/admin/field-mapping/field-mapping-sets',
-      adminIdentityMappingPolicyCreateHandler
+      adminIdentityFieldMappingSetCreateHandler
     );
 
     const response = await app.request(
@@ -3106,8 +3111,8 @@ describe('identity mapping control plane Admin API handlers', () => {
           'X-Tenant-Id': 'tenant_a',
         },
         body: JSON.stringify({
-          policyKey: 'default',
-          displayName: 'Default policy',
+          fieldMappingKey: 'default',
+          displayName: 'Default field mapping set',
         }),
       },
       { DB_ADMIN: adapter } as unknown as Env

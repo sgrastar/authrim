@@ -248,9 +248,9 @@ export interface OAuthErrorResponse {
   error_uri?: string;
 }
 
-export interface OIDCIdentityMappingPolicySelector {
-  policySetId?: string;
-  policyVersionId?: string;
+export interface OIDCIdentityMappingFieldMappingSelector {
+  fieldMappingSetId?: string;
+  fieldMappingVersionId?: string;
   destinationNamespace?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
@@ -438,7 +438,7 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   // Claims Parameter Settings
   allow_claims_without_scope?: boolean; // Allow claims parameter to request claims without corresponding scope (default: false)
   claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
-  identity_mapping?: OIDCIdentityMappingPolicySelector | null;
+  identity_mapping?: OIDCIdentityMappingFieldMappingSelector | null;
   /** User-facing OIDC claim release consent policy. Same shape as SAML attribute release consent. */
   attribute_release_consent?: AttributeReleaseConsentPolicy | null;
   asc_enabled?: boolean;

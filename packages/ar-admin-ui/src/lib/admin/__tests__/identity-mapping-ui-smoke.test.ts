@@ -191,10 +191,10 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(page).toContain('IdentityMappingPageShell');
 		expect(pageShell).toContain('buildIdentityMappingFlowSamples');
 		expect(pageShell).toContain('compileEditorDraft');
-		expect(pageShell).toContain('createPolicyVersion');
-		expect(pageShell).toContain('compilePolicyVersion');
+		expect(pageShell).toContain('createFieldMappingVersion');
+		expect(pageShell).toContain('compileFieldMappingVersion');
 		expect(pageShell).toContain('policyOptionAdapter');
-		expect(pageShell).toContain('`[${adapter}] ${policy.displayName || policy.policyKey}`');
+		expect(pageShell).toContain('`[${adapter}] ${policy.displayName || policy.fieldMappingKey}`');
 		expect(pageShell).toContain('getSchemaReadiness');
 		expect(pageShell).toContain('showControlPlaneStatus && !showProfileModeControl');
 		expect(pageShell).toContain('showInspector={showEditorInspector}');
@@ -206,9 +206,9 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(pageShell).toContain('initialPolicyOptionId={selectedPolicyOptionId}');
 		expect(pageShell).toContain('admin_identity_mapping_editor_policy_version');
 		expect(pageShell).toContain('toggleSelectedPolicyActivation');
-		expect(pageShell).toContain('publishSelectedPolicyVersion');
+		expect(pageShell).toContain('publishSelectedFieldMappingVersion');
 		expect(pageShell).toContain('rollbackSelectedPolicy');
-		expect(pageShell).toContain('deactivatePolicyVersion');
+		expect(pageShell).toContain('deactivateFieldMappingVersion');
 		expect(flowEditor).toContain('initialPolicyOptionId');
 		expect(flowEditor).toContain('applySourcePolicySelection');
 		expect(flowEditor).toContain('applyDestinationPolicySelection');
@@ -269,7 +269,7 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(operations).not.toContain('Action Panel');
 		expect(operations).not.toContain('activePolicyCount');
 		expect(operations).not.toContain('draftPolicyCount');
-		expect(operations).not.toContain('item.policy.policyKey');
+		expect(operations).not.toContain('item.policy.fieldMappingKey');
 		expect(profiles).toContain('listSourceProfiles');
 		expect(profiles).toContain('listDestinationProfiles');
 		expect(profiles).toContain('admin_identity_mapping_profiles_lists_title');

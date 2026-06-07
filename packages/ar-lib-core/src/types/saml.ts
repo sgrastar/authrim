@@ -546,7 +546,7 @@ export interface SAMLSPConfig {
   /** User-facing attribute release consent policy. Protocol-neutral shape for OIDC reuse. */
   attributeReleaseConsent?: AttributeReleaseConsentPolicy;
   /** Runtime identity mapping policy selector for SAML attribute release */
-  identityMapping?: SAMLIdentityMappingPolicySelector;
+  identityMapping?: SAMLIdentityMappingFieldMappingSelector;
   /** Built-in attribute preset used as the clone/edit source for the current release policy */
   attributePresetId?: SAMLAttributePresetId;
   /** Built-in attribute preset version used as the clone/edit source for the current release policy */
@@ -591,11 +591,11 @@ export interface SAMLIdentityMappingAttributeDescriptor {
   required?: boolean;
 }
 
-export interface SAMLIdentityMappingPolicySelector {
+export interface SAMLIdentityMappingFieldMappingSelector {
   /** Active mapping policy set selected for this SP override. Empty falls back to tenant activation scope. */
-  policySetId?: string;
+  fieldMappingSetId?: string;
   /** Optional pinned policy version. Runtime still requires an active activation for the version. */
-  policyVersionId?: string;
+  fieldMappingVersionId?: string;
   destinationNamespace?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;

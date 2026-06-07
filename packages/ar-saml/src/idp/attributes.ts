@@ -1,14 +1,14 @@
-import { executeRuntimeMapping } from '@authrim/ar-lib-identity-mapping';
+import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping';
 import type {
   FieldCatalogBundle,
   FieldRef,
-  MappingPolicy,
+  FieldMappingSet,
   MappingRuleEdge,
   MappingTransformStep,
   ReasonCode,
   SourceValueEnvelope,
   ValidationRule,
-} from '@authrim/ar-lib-identity-mapping';
+} from '@authrim/ar-lib-field-mapping';
 import type {
   SAMLAttribute,
   SAMLAttributeValueType,
@@ -72,7 +72,7 @@ export interface SAMLIdentityMappingRuntimeContext {
   partnerEntityId?: string;
 }
 
-export interface SAMLIdentityMappingPolicyBinding {
+export interface SAMLIdentityMappingFieldMappingBinding {
   id?: string;
   role?: SAMLIdentityMappingRole;
   tenantId?: string;
@@ -82,18 +82,18 @@ export interface SAMLIdentityMappingPolicyBinding {
   edges: MappingRuleEdge[];
   transforms?: MappingTransformStep[];
   validationRules?: ValidationRule[];
-  policy?: MappingPolicy;
+  fieldMappingSet?: FieldMappingSet;
   destinationNamespace?: string;
   attributeDescriptors?: Record<string, SAMLIdentityMappingAttributeDescriptor>;
-  policySetId?: string;
-  policyVersionId?: string;
+  fieldMappingSetId?: string;
+  fieldMappingVersionId?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
 }
 
-export interface SAMLIdentityMappingReleaseConfig extends Partial<SAMLIdentityMappingPolicyBinding> {
-  defaultBinding?: SAMLIdentityMappingPolicyBinding;
-  bindings?: SAMLIdentityMappingPolicyBinding[];
+export interface SAMLIdentityMappingReleaseConfig extends Partial<SAMLIdentityMappingFieldMappingBinding> {
+  defaultBinding?: SAMLIdentityMappingFieldMappingBinding;
+  bindings?: SAMLIdentityMappingFieldMappingBinding[];
 }
 
 export class MissingRequiredSAMLAttributeError extends Error {
@@ -244,7 +244,7 @@ function buildSAMLAttributesFromIdentityMapping(
   config: SAMLIdentityMappingReleaseConfig,
   context: SAMLIdentityMappingRuntimeContext
 ): SAMLAttributeReleaseResult {
-  const binding = resolveSAMLIdentityMappingPolicyBinding(config, context);
+  const binding = resolveSAMLIdentityMappingFieldMappingBinding(config, context);
   const destinationNamespace = binding.destinationNamespace ?? 'saml.attribute';
   const sourceValues = buildIdentityMappingSourceValues(subject, binding.edges);
   const result = executeRuntimeMapping({
@@ -253,7 +253,7 @@ function buildSAMLAttributesFromIdentityMapping(
     edges: binding.edges,
     transforms: binding.transforms,
     validationRules: binding.validationRules,
-    policy: binding.policy,
+    fieldMappingSet: binding.fieldMappingSet,
   });
 
   if (result.status === 'failed') {
@@ -282,20 +282,24 @@ function buildSAMLAttributesFromIdentityMapping(
   };
 }
 
-function resolveSAMLIdentityMappingPolicyBinding(
+function resolveSAMLIdentityMappingFieldMappingBinding(
   config: SAMLIdentityMappingReleaseConfig,
   context: SAMLIdentityMappingRuntimeContext
-): SAMLIdentityMappingPolicyBinding {
+): SAMLIdentityMappingFieldMappingBinding {
   const candidates = [
     ...(config.bindings ?? []),
     ...(config.defaultBinding ? [config.defaultBinding] : []),
     ...(isCompleteSAMLIdentityMappingBinding(config) ? [config] : []),
-  ] as SAMLIdentityMappingPolicyBinding[];
-  const exact = selectBestSAMLIdentityMappingPolicyBinding(candidates, context, true);
+  ] as SAMLIdentityMappingFieldMappingBinding[];
+  const exact = selectBestSAMLIdentityMappingFieldMappingBinding(candidates, context, true);
   if (exact) {
     return exact;
   }
-  const scopedDefault = selectBestSAMLIdentityMappingPolicyBinding(candidates, context, false);
+  const scopedDefault = selectBestSAMLIdentityMappingFieldMappingBinding(
+    candidates,
+    context,
+    false
+  );
   if (scopedDefault) {
     return scopedDefault;
   }
@@ -310,12 +314,12 @@ function resolveSAMLIdentityMappingPolicyBinding(
 
 function isCompleteSAMLIdentityMappingBinding(
   config: SAMLIdentityMappingReleaseConfig
-): config is SAMLIdentityMappingPolicyBinding {
+): config is SAMLIdentityMappingFieldMappingBinding {
   return Boolean(config.catalog && Array.isArray(config.edges));
 }
 
 function bindingMatches(
-  binding: SAMLIdentityMappingPolicyBinding,
+  binding: SAMLIdentityMappingFieldMappingBinding,
   context: SAMLIdentityMappingRuntimeContext,
   requirePartnerMatch: boolean
 ): boolean {
@@ -338,11 +342,11 @@ function bindingMatches(
   return !binding.partnerEntityId;
 }
 
-function selectBestSAMLIdentityMappingPolicyBinding(
-  candidates: SAMLIdentityMappingPolicyBinding[],
+function selectBestSAMLIdentityMappingFieldMappingBinding(
+  candidates: SAMLIdentityMappingFieldMappingBinding[],
   context: SAMLIdentityMappingRuntimeContext,
   requirePartnerMatch: boolean
-): SAMLIdentityMappingPolicyBinding | undefined {
+): SAMLIdentityMappingFieldMappingBinding | undefined {
   return candidates
     .filter((candidate) => bindingMatches(candidate, context, requirePartnerMatch))
     .sort((left, right) => bindingSpecificity(right) - bindingSpecificity(left))[0];
@@ -352,7 +356,7 @@ function scopeMatches(bindingScope: string | undefined, contextScope: string | u
   return !bindingScope || bindingScope === contextScope;
 }
 
-function bindingSpecificity(binding: SAMLIdentityMappingPolicyBinding): number {
+function bindingSpecificity(binding: SAMLIdentityMappingFieldMappingBinding): number {
   return (
     (binding.role ? 1 : 0) +
     (binding.tenantId ? 2 : 0) +
@@ -389,7 +393,7 @@ function buildIdentityMappingSourceValues(
 
 function buildAttributeFromMappedValue(
   mappedValue: SourceValueEnvelope,
-  config: SAMLIdentityMappingPolicyBinding
+  config: SAMLIdentityMappingFieldMappingBinding
 ): SAMLAttribute | null {
   const values = normalizeAttributeValues(mappedValue.value);
   if (values.length === 0) {
@@ -437,7 +441,7 @@ function dedupeAttributeValues(values: string[]): string[] {
 
 function findMissingRequiredMappedAttributes(
   attributes: SAMLAttribute[],
-  config: SAMLIdentityMappingPolicyBinding,
+  config: SAMLIdentityMappingFieldMappingBinding,
   destinationNamespace: string
 ): MissingRequiredSAMLAttribute[] {
   const emittedNames = new Set(attributes.map((attribute) => attribute.name));
@@ -483,13 +487,16 @@ function findMissingRequiredMappedAttributes(
   return dedupeMissingAttributes(missing);
 }
 
-function findCatalogPathById(config: SAMLIdentityMappingPolicyBinding, catalogEntryId: string) {
+function findCatalogPathById(
+  config: SAMLIdentityMappingFieldMappingBinding,
+  catalogEntryId: string
+) {
   return config.catalog.entries.find((entry) => entry.id === catalogEntryId)?.path;
 }
 
 function findMappedAttributeDescriptor(
   fieldRef: FieldRef,
-  config: SAMLIdentityMappingPolicyBinding
+  config: SAMLIdentityMappingFieldMappingBinding
 ): SAMLIdentityMappingAttributeDescriptor | undefined {
   const descriptors = config.attributeDescriptors ?? {};
   return (

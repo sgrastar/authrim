@@ -2,9 +2,9 @@ import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
 import type {
   DiscardedRuleSummary,
-  EffectivePolicyInput,
-  EffectivePolicyResult,
-  MappingPolicyRule,
+  EffectiveFieldMappingSetInput,
+  EffectiveFieldMappingSetResult,
+  FieldMappingRule,
   PolicyMergeTraceEntry,
   PolicyScopeKind,
 } from './types';
@@ -17,11 +17,13 @@ const SCOPE_PRIORITY: Record<PolicyScopeKind, number> = {
   job: 4,
 };
 
-export function resolveEffectivePolicy(input: EffectivePolicyInput): EffectivePolicyResult {
-  const rules = input.policies.flatMap((policy) => policy.rules);
+export function resolveEffectiveFieldMappingSet(
+  input: EffectiveFieldMappingSetInput
+): EffectiveFieldMappingSetResult {
+  const rules = input.sets.flatMap((policy) => policy.rules);
   const groups = groupRulesByTarget(rules);
-  const selected: MappingPolicyRule[] = [];
-  const discarded: MappingPolicyRule[] = [];
+  const selected: FieldMappingRule[] = [];
+  const discarded: FieldMappingRule[] = [];
 
   for (const group of groups.values()) {
     const [winner, ...rest] = [...group].sort(compareRules);
@@ -34,7 +36,7 @@ export function resolveEffectivePolicy(input: EffectivePolicyInput): EffectivePo
   selected.sort(compareRules);
 
   return {
-    mergedPolicy: { id: 'effective', rules: selected },
+    mergedSet: { id: 'effective', rules: selected },
     mergeTrace: [
       ...selected.map(
         (rule): PolicyMergeTraceEntry => ({
@@ -65,8 +67,8 @@ export function resolveEffectivePolicy(input: EffectivePolicyInput): EffectivePo
   };
 }
 
-function groupRulesByTarget(rules: MappingPolicyRule[]): Map<string, MappingPolicyRule[]> {
-  const groups = new Map<string, MappingPolicyRule[]>();
+function groupRulesByTarget(rules: FieldMappingRule[]): Map<string, FieldMappingRule[]> {
+  const groups = new Map<string, FieldMappingRule[]>();
 
   for (const rule of rules) {
     const key = targetKey(rule);
@@ -78,7 +80,7 @@ function groupRulesByTarget(rules: MappingPolicyRule[]): Map<string, MappingPoli
   return groups;
 }
 
-function targetKey(rule: MappingPolicyRule): string {
+function targetKey(rule: FieldMappingRule): string {
   if (!rule.targetRef) {
     return '*';
   }
@@ -87,7 +89,7 @@ function targetKey(rule: MappingPolicyRule): string {
     : `${rule.targetRef.side}:${rule.targetRef.namespace}:${rule.targetRef.path}`;
 }
 
-function compareRules(left: MappingPolicyRule, right: MappingPolicyRule): number {
+function compareRules(left: FieldMappingRule, right: FieldMappingRule): number {
   const leftDeny = left.action === 'deny' || left.action === 'lock' ? 1 : 0;
   const rightDeny = right.action === 'deny' || right.action === 'lock' ? 1 : 0;
   if (leftDeny !== rightDeny) {
@@ -112,7 +114,7 @@ function compareRules(left: MappingPolicyRule, right: MappingPolicyRule): number
   return left.id.localeCompare(right.id);
 }
 
-export function policyTraceForRule(rule: MappingPolicyRule) {
+export function fieldMappingTraceForRule(rule: FieldMappingRule) {
   return buildTraceEntry({
     reason:
       rule.action === 'deny' || rule.action === 'lock'

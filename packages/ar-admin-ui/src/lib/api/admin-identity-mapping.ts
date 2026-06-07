@@ -2,22 +2,22 @@ import { adminFetch } from '$lib/api/admin-request';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
-export interface IdentityMappingPolicySummary {
+export interface IdentityMappingFieldMappingSetSummary {
 	id: string;
 	tenantId: string;
-	policyKey: string;
+	fieldMappingKey: string;
 	displayName: string;
 	description?: string | null;
 	lifecycleState: string;
 }
 
-export interface IdentityMappingPolicyVersionSummary {
+export interface IdentityMappingFieldMappingVersionSummary {
 	id: string;
 	tenantId: string;
-	policySetId: string;
+	fieldMappingSetId: string;
 	versionLabel: string;
 	lifecycleState: string;
-	policyHash?: string | null;
+	fieldMappingHash?: string | null;
 	compatibilityRange?: string | null;
 	authorId?: string | null;
 	publishedAt?: number | null;
@@ -29,7 +29,7 @@ export interface IdentityMappingPolicyVersionSummary {
 	};
 	sourceProfileIds?: string[];
 	destinationProfileIds?: string[];
-	rules?: IdentityMappingPolicyVersionRuleSummary[];
+	rules?: IdentityMappingFieldMappingVersionRuleSummary[];
 	latestSnapshot?: {
 		id: string;
 		catalogVersionId?: string | null;
@@ -38,18 +38,18 @@ export interface IdentityMappingPolicyVersionSummary {
 	} | null;
 }
 
-export interface IdentityMappingPolicyVersionRuleSummary {
+export interface IdentityMappingFieldMappingVersionRuleSummary {
 	id: string;
 	ruleKey: string;
 	ruleKind: string;
 	action: string;
 	priority: number;
 	metadata?: Record<string, unknown>;
-	edges: IdentityMappingPolicyVersionRuleEdgeSummary[];
-	transforms: IdentityMappingPolicyVersionTransformSummary[];
+	edges: IdentityMappingFieldMappingVersionRuleEdgeSummary[];
+	transforms: IdentityMappingFieldMappingVersionTransformSummary[];
 }
 
-export interface IdentityMappingPolicyVersionRuleEdgeSummary {
+export interface IdentityMappingFieldMappingVersionRuleEdgeSummary {
 	id: string;
 	sourceRef: Record<string, unknown>;
 	targetRef: Record<string, unknown>;
@@ -57,7 +57,7 @@ export interface IdentityMappingPolicyVersionRuleEdgeSummary {
 	displayOrder: number;
 }
 
-export interface IdentityMappingPolicyVersionTransformSummary {
+export interface IdentityMappingFieldMappingVersionTransformSummary {
 	id: string;
 	edgeId?: string | null;
 	stepOrder: number;
@@ -431,15 +431,15 @@ export interface IdentityMappingSchemaReadinessSummary {
 	deferred: number;
 }
 
-export interface IdentityMappingPolicyCreateRequest {
-	policyKey: string;
+export interface IdentityMappingFieldMappingSetCreateRequest {
+	fieldMappingKey: string;
 	displayName: string;
 	description?: string | null;
 	ownerScopeType?: 'platform' | 'tenant' | 'client';
 	ownerScopeId?: string | null;
 }
 
-export interface IdentityMappingPolicyVersionCreateRequest {
+export interface IdentityMappingFieldMappingVersionCreateRequest {
 	versionLabel: string;
 	compatibilityRange?: string;
 	authorId?: string;
@@ -464,14 +464,14 @@ export interface IdentityMappingPolicyVersionCreateRequest {
 	}>;
 }
 
-export interface IdentityMappingCompilePolicyRequest {
+export interface IdentityMappingCompileFieldMappingRequest {
 	catalogVersionId: string;
 	compatibilityRange?: string;
 	artifactRef?: string;
 	metadata?: Record<string, unknown>;
 }
 
-export interface IdentityMappingActivatePolicyRequest {
+export interface IdentityMappingActivateFieldMappingRequest {
 	snapshotId: string;
 	activationScope: Record<string, unknown>;
 	holderId?: string;
@@ -514,14 +514,16 @@ function mutationHeaders(): Record<string, string> {
 }
 
 export const adminIdentityMappingAPI = {
-	async listPolicies(): Promise<{ policies: IdentityMappingPolicySummary[] }> {
+	async listFieldMappingSets(): Promise<{
+		fieldMappingSets: IdentityMappingFieldMappingSetSummary[];
+	}> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets`);
 		return parseJson(response, 'Failed to load field mapping sets');
 	},
 
-	async createPolicy(
-		request: IdentityMappingPolicyCreateRequest
-	): Promise<{ result: IdentityMappingPolicySummary }> {
+	async createFieldMappingSet(
+		request: IdentityMappingFieldMappingSetCreateRequest
+	): Promise<{ result: IdentityMappingFieldMappingSetSummary }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets`,
 			{
@@ -533,9 +535,9 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to create field mapping set');
 	},
 
-	async deletePolicy(policySetId: string): Promise<Record<string, unknown>> {
+	async deleteFieldMappingSet(fieldMappingSetId: string): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}`,
 			{
 				method: 'DELETE',
 				headers: mutationHeaders()
@@ -544,14 +546,14 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to delete field mapping set');
 	},
 
-	async createPolicyVersion(
-		policySetId: string,
-		request: IdentityMappingPolicyVersionCreateRequest
+	async createFieldMappingVersion(
+		fieldMappingSetId: string,
+		request: IdentityMappingFieldMappingVersionCreateRequest
 	): Promise<{
-		result: { id: string; tenantId: string; policySetId: string; lifecycleState: string };
+		result: { id: string; tenantId: string; fieldMappingSetId: string; lifecycleState: string };
 	}> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
@@ -561,18 +563,18 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to create field mapping set version');
 	},
 
-	async listPolicyVersions(
-		policySetId: string
-	): Promise<{ policyVersions: IdentityMappingPolicyVersionSummary[] }> {
+	async listFieldMappingVersions(
+		fieldMappingSetId: string
+	): Promise<{ fieldMappingVersions: IdentityMappingFieldMappingVersionSummary[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions`
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions`
 		);
 		return parseJson(response, 'Failed to load field mapping set versions');
 	},
 
-	async rollbackPolicy(policySetId: string): Promise<Record<string, unknown>> {
+	async rollbackFieldMappingSet(fieldMappingSetId: string): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/rollback`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/rollback`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
@@ -582,12 +584,12 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to rollback field mapping set');
 	},
 
-	async publishPolicyVersion(
-		policySetId: string,
-		policyVersionId: string
+	async publishFieldMappingVersion(
+		fieldMappingSetId: string,
+		fieldMappingVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/publish`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions/${encodeURIComponent(fieldMappingVersionId)}/publish`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
@@ -597,13 +599,13 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to publish field mapping set version');
 	},
 
-	async compilePolicyVersion(
-		policySetId: string,
-		policyVersionId: string,
-		request: IdentityMappingCompilePolicyRequest
+	async compileFieldMappingVersion(
+		fieldMappingSetId: string,
+		fieldMappingVersionId: string,
+		request: IdentityMappingCompileFieldMappingRequest
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/compile`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions/${encodeURIComponent(fieldMappingVersionId)}/compile`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
@@ -613,13 +615,13 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to compile field mapping set version');
 	},
 
-	async activatePolicyVersion(
-		policySetId: string,
-		policyVersionId: string,
-		request: IdentityMappingActivatePolicyRequest
+	async activateFieldMappingVersion(
+		fieldMappingSetId: string,
+		fieldMappingVersionId: string,
+		request: IdentityMappingActivateFieldMappingRequest
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/activate`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions/${encodeURIComponent(fieldMappingVersionId)}/activate`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
@@ -629,12 +631,12 @@ export const adminIdentityMappingAPI = {
 		return parseJson(response, 'Failed to activate field mapping set version');
 	},
 
-	async deactivatePolicyVersion(
-		policySetId: string,
-		policyVersionId: string
+	async deactivateFieldMappingVersion(
+		fieldMappingSetId: string,
+		fieldMappingVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/deactivate`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions/${encodeURIComponent(fieldMappingVersionId)}/deactivate`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),

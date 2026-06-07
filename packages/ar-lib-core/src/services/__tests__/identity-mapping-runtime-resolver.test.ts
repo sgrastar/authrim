@@ -37,8 +37,8 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
 
     expect(binding).toMatchObject({
       id: 'activation-sp',
-      policySetId: 'policy_sp',
-      policyVersionId: 'version_sp',
+      fieldMappingSetId: 'field_mapping_sp',
+      fieldMappingVersionId: 'version_sp',
     });
     expect(binding?.edges).toEqual([
       {
@@ -77,8 +77,8 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
             role: 'idp',
           },
           {
-            policySetId: 'policy_override',
-            policyVersionId: 'version_override',
+            fieldMappingSetId: 'field_mapping_override',
+            fieldMappingVersionId: 'version_override',
           }
         ),
       ],
@@ -88,14 +88,14 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
       tenantId: 'tenant_a',
       protocol: 'saml',
       role: 'idp',
-      policySetId: 'policy_override',
+      fieldMappingSetId: 'field_mapping_override',
       partnerEntityId: 'https://sp.example.edu/saml',
     });
 
     expect(binding).toMatchObject({
       id: 'activation-override',
-      policySetId: 'policy_override',
-      policyVersionId: 'version_override',
+      fieldMappingSetId: 'field_mapping_override',
+      fieldMappingVersionId: 'version_override',
       catalog: {
         identity: {
           id: 'catalog_version_1',
@@ -113,10 +113,10 @@ class ResolverAdapter implements DatabaseAdapter {
   constructor(private readonly input: ResolverAdapterInput) {}
 
   async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
-    if (sql.includes('FROM mapping_policy_activations')) {
-      const policySetId = params[2];
+    if (sql.includes('FROM field_mapping_activations')) {
+      const fieldMappingSetId = params[2];
       return this.input.activations
-        .filter((row) => !policySetId || row.policy_set_id === policySetId)
+        .filter((row) => !fieldMappingSetId || row.field_mapping_set_id === fieldMappingSetId)
         .map((row) => row as T);
     }
     if (sql.includes('FROM field_catalog_entries')) {
@@ -219,21 +219,22 @@ class ResolverAdapter implements DatabaseAdapter {
 function activationRow(
   id: string,
   scope: Record<string, unknown>,
-  options: { policySetId?: string; policyVersionId?: string } = {}
+  options: { fieldMappingSetId?: string; fieldMappingVersionId?: string } = {}
 ) {
-  const policySetId =
-    options.policySetId ?? (id === 'activation-sp' ? 'policy_sp' : 'policy_default');
-  const policyVersionId =
-    options.policyVersionId ?? (id === 'activation-sp' ? 'version_sp' : 'version_default');
+  const fieldMappingSetId =
+    options.fieldMappingSetId ??
+    (id === 'activation-sp' ? 'field_mapping_sp' : 'field_mapping_default');
+  const fieldMappingVersionId =
+    options.fieldMappingVersionId ?? (id === 'activation-sp' ? 'version_sp' : 'version_default');
   return {
     activation_id: id,
     tenant_id: 'tenant_a',
-    policy_set_id: policySetId,
-    policy_version_id: policyVersionId,
+    field_mapping_set_id: fieldMappingSetId,
+    field_mapping_version_id: fieldMappingVersionId,
     activation_scope_json: JSON.stringify(scope),
     version_label: 'active',
-    policy_hash: `${policyVersionId}_hash`,
-    policy_compatibility_range: '^0.3.0',
+    field_mapping_hash: `${fieldMappingVersionId}_hash`,
+    field_mapping_compatibility_range: '^0.3.0',
     catalog_version_id: 'catalog_version_1',
     catalog_version_label: '2026-06-06',
     catalog_bundle_hash: 'catalog_hash',

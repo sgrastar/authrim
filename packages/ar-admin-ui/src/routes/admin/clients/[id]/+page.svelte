@@ -13,7 +13,7 @@
 	} from '$lib/api/admin-clients';
 	import {
 		adminIdentityMappingAPI,
-		type IdentityMappingPolicySummary
+		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
 	import {
 		buildClientDownstreamGrantFormFromClient,
@@ -37,7 +37,7 @@
 	let client = $state<Client | null>(null);
 	let usage = $state<ClientUsage | null>(null);
 	let clientSettings = $state<CategorySettings | null>(null);
-	let mappingPolicies = $state<IdentityMappingPolicySummary[]>([]);
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 
@@ -334,10 +334,12 @@
 			.join('\n');
 	}
 
-	function identityMappingPolicyLabel(policySetId?: string | null): string {
-		if (!policySetId) return $LL.admin_client_detail_identity_mapping_policy_default();
-		const policy = mappingPolicies.find((item) => item.id === policySetId);
-		return policy ? `${policy.displayName} (${policy.lifecycleState})` : policySetId;
+	function identityMappingFieldMappingLabel(fieldMappingSetId?: string | null): string {
+		if (!fieldMappingSetId) return $LL.admin_client_detail_identity_mapping_policy_default();
+		const fieldMappingSet = fieldMappingSets.find((item) => item.id === fieldMappingSetId);
+		return fieldMappingSet
+			? `${fieldMappingSet.displayName} (${fieldMappingSet.lifecycleState})`
+			: fieldMappingSetId;
 	}
 
 	function attributeReleaseConsentValue(policy?: AttributeReleaseConsentPolicy | null): string {
@@ -367,11 +369,11 @@
 		}
 	}
 
-	function setIdentityMappingPolicy(policySetId: string) {
-		editForm.identity_mapping = policySetId
+	function setIdentityMappingFieldMappingSet(fieldMappingSetId: string) {
+		editForm.identity_mapping = fieldMappingSetId
 			? {
 					...(editForm.identity_mapping ?? {}),
-					policySetId,
+					fieldMappingSetId,
 					destinationNamespace: editForm.identity_mapping?.destinationNamespace ?? 'oidc.claim'
 				}
 			: null;
@@ -465,7 +467,8 @@
 			(a.scope ?? '') === (b.scope ?? '') &&
 			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
 			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
-			(a.identity_mapping?.policySetId ?? '') === (b.identity_mapping?.policySetId ?? '') &&
+			(a.identity_mapping?.fieldMappingSetId ?? '') ===
+				(b.identity_mapping?.fieldMappingSetId ?? '') &&
 			attributeReleaseConsentValue(a.attribute_release_consent) ===
 				attributeReleaseConsentValue(b.attribute_release_consent) &&
 			(a.asc_enabled ?? true) === (b.asc_enabled ?? true) &&
@@ -853,15 +856,15 @@
 		error = '';
 
 		try {
-			const [loadedClient, loadedMappingPolicies] = await Promise.all([
+			const [loadedClient, loadedFieldMappingSets] = await Promise.all([
 				adminClientsAPI.get(clientId),
 				adminIdentityMappingAPI
-					.listPolicies()
-					.then((result) => result.policies)
-					.catch(() => [] as IdentityMappingPolicySummary[])
+					.listFieldMappingSets()
+					.then((result) => result.fieldMappingSets)
+					.catch(() => [] as IdentityMappingFieldMappingSetSummary[])
 			]);
 			client = normalizeClientArrays(loadedClient);
-			mappingPolicies = loadedMappingPolicies;
+			fieldMappingSets = loadedFieldMappingSets;
 			// Load usage statistics (only on detail page per review feedback)
 			try {
 				usage = await adminClientsAPI.getUsage(clientId);
@@ -919,7 +922,7 @@
 			asc_protected_request_required: client.asc_protected_request_required ?? true,
 			asc_sao_enabled: client.asc_sao_enabled ?? true,
 			asc_transformed_claims_enabled: client.asc_transformed_claims_enabled ?? true,
-			identity_mapping: client.identity_mapping?.policySetId
+			identity_mapping: client.identity_mapping?.fieldMappingSetId
 				? {
 						...(client.identity_mapping ?? {}),
 						destinationNamespace: client.identity_mapping.destinationNamespace ?? 'oidc.claim'
@@ -2625,15 +2628,15 @@
 							{#if isEditing}
 								<select
 									class="form-select"
-									value={editForm.identity_mapping?.policySetId ?? ''}
-									onchange={(event) => setIdentityMappingPolicy(event.currentTarget.value)}
+									value={editForm.identity_mapping?.fieldMappingSetId ?? ''}
+									onchange={(event) => setIdentityMappingFieldMappingSet(event.currentTarget.value)}
 								>
 									<option value=""
 										>{$LL.admin_client_detail_identity_mapping_policy_default()}</option
 									>
-									{#each mappingPolicies as policy (policy.id)}
-										<option value={policy.id}>
-											{policy.displayName} ({policy.lifecycleState})
+									{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+										<option value={fieldMappingSet.id}>
+											{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
 										</option>
 									{/each}
 								</select>
@@ -2642,7 +2645,7 @@
 								</p>
 							{:else}
 								<p class="display-text">
-									{identityMappingPolicyLabel(client.identity_mapping?.policySetId)}
+									{identityMappingFieldMappingLabel(client.identity_mapping?.fieldMappingSetId)}
 								</p>
 								<p class="form-hint">
 									{$LL.admin_client_detail_identity_mapping_policy_display_hint()}

@@ -3119,9 +3119,9 @@
 			purpose: $LL.admin_identity_mapping_flow_not_configured(),
 			attributeSetHash: $LL.admin_identity_mapping_flow_not_configured(),
 			consentMode: 'not_applicable' as const,
-			releasePolicyVersion: $LL.admin_identity_mapping_flow_not_configured(),
+			releaseFieldMappingVersion: $LL.admin_identity_mapping_flow_not_configured(),
 			termsVersion: $LL.admin_identity_mapping_flow_not_configured(),
-			privacyPolicyVersion: $LL.admin_identity_mapping_flow_not_configured(),
+			privacyFieldMappingVersion: $LL.admin_identity_mapping_flow_not_configured(),
 			denyReason: 'none',
 			runtime: 'graph preview',
 			conflict: 'not evaluated',
@@ -3860,7 +3860,7 @@
 					</div>
 					<div class="control-row">
 						<span>{$LL.admin_identity_mapping_flow_release_policy()}</span>
-						<strong>{rule.releasePolicyVersion}</strong>
+						<strong>{rule.releaseFieldMappingVersion}</strong>
 					</div>
 					<div class="control-row">
 						<span>{$LL.admin_identity_mapping_flow_terms()}</span>
@@ -3868,7 +3868,7 @@
 					</div>
 					<div class="control-row">
 						<span>{$LL.admin_identity_mapping_flow_privacy_policy()}</span>
-						<strong>{rule.privacyPolicyVersion}</strong>
+						<strong>{rule.privacyFieldMappingVersion}</strong>
 					</div>
 					<div class="control-row">
 						<span>{$LL.admin_identity_mapping_flow_deny_reason()}</span>

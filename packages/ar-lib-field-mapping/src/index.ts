@@ -9,8 +9,8 @@ export type {
   DiscardedRuleSummary,
   DryRunResult,
   DryRunSummary,
-  EffectivePolicyInput,
-  EffectivePolicyResult,
+  EffectiveFieldMappingSetInput,
+  EffectiveFieldMappingSetResult,
   FieldCatalogBundle,
   FieldCatalogEntry,
   FieldRef,
@@ -19,8 +19,8 @@ export type {
   FormatKind,
   MappingDecisionAction,
   MappingInput,
-  MappingPolicy,
-  MappingPolicyRule,
+  FieldMappingSet,
+  FieldMappingRule,
   MappingResultStatus,
   MappingRuleEdge,
   MappingTransformStep,
@@ -66,7 +66,7 @@ export {
   isSafeMetadataValue,
   SAFE_METADATA_KEYS,
 } from './core/metadata';
-export { resolveEffectivePolicy } from './core/policy';
+export { resolveEffectiveFieldMappingSet } from './core/field-mapping-set';
 export {
   categoryFromCode,
   reason,

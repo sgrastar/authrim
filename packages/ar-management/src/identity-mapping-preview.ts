@@ -3,14 +3,14 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   previewCsvDryRun,
   previewDestinationRelease,
-} from '@authrim/ar-lib-identity-mapping/experimental';
+} from '@authrim/ar-lib-field-mapping/experimental';
 import type {
   CsvDryRunPreviewInput,
   CsvDryRunPreviewResult,
   DestinationPreviewProtocol,
   DestinationReleasePreviewInput,
   DestinationReleasePreviewResult,
-} from '@authrim/ar-lib-identity-mapping/experimental';
+} from '@authrim/ar-lib-field-mapping/experimental';
 
 type AdminContext = Context<{ Bindings: Env }>;
 

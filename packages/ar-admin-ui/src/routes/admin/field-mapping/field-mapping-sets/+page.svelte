@@ -2,8 +2,8 @@
 	import { onMount } from 'svelte';
 	import {
 		adminIdentityMappingAPI,
-		type IdentityMappingPolicyVersionSummary,
-		type IdentityMappingPolicySummary
+		type IdentityMappingFieldMappingVersionSummary,
+		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -11,15 +11,17 @@
 
 	interface PolicyListItem {
 		side: PolicySide;
-		policy: IdentityMappingPolicySummary;
-		version: IdentityMappingPolicyVersionSummary;
+		policy: IdentityMappingFieldMappingSetSummary;
+		version: IdentityMappingFieldMappingVersionSummary;
 		href: string;
 		profileSummary: string;
 		versionSummary: string;
 	}
 
-	let policies = $state<IdentityMappingPolicySummary[]>([]);
-	let policyVersionsByPolicyId = $state<Record<string, IdentityMappingPolicyVersionSummary[]>>({});
+	let policies = $state<IdentityMappingFieldMappingSetSummary[]>([]);
+	let fieldMappingVersionsByFieldMappingSetId = $state<
+		Record<string, IdentityMappingFieldMappingVersionSummary[]>
+	>({});
 	let loading = $state(true);
 	let errorMessage = $state<string | null>(null);
 
@@ -31,18 +33,19 @@
 		loading = true;
 		errorMessage = null;
 		try {
-			const policyResult = await adminIdentityMappingAPI.listPolicies();
-			policies = policyResult.policies;
+			const policyResult = await adminIdentityMappingAPI.listFieldMappingSets();
+			policies = policyResult.fieldMappingSets;
 			const versionPairs = await Promise.all(
-				policyResult.policies.map(
+				policyResult.fieldMappingSets.map(
 					async (policy) =>
 						[
 							policy.id,
-							(await adminIdentityMappingAPI.listPolicyVersions(policy.id)).policyVersions
+							(await adminIdentityMappingAPI.listFieldMappingVersions(policy.id))
+								.fieldMappingVersions
 						] as const
 				)
 			);
-			policyVersionsByPolicyId = Object.fromEntries(versionPairs);
+			fieldMappingVersionsByFieldMappingSetId = Object.fromEntries(versionPairs);
 		} catch (error) {
 			errorMessage =
 				error instanceof Error ? error.message : $LL.admin_identity_mapping_policies_load_failed();
@@ -75,16 +78,16 @@
 	}
 
 	function versionsForSide(
-		policy: IdentityMappingPolicySummary,
+		policy: IdentityMappingFieldMappingSetSummary,
 		side: PolicySide
-	): IdentityMappingPolicyVersionSummary[] {
-		return (policyVersionsByPolicyId[policy.id] ?? []).filter((version) =>
+	): IdentityMappingFieldMappingVersionSummary[] {
+		return (fieldMappingVersionsByFieldMappingSetId[policy.id] ?? []).filter((version) =>
 			versionSupportsSide(version, side)
 		);
 	}
 
 	function versionSupportsSide(
-		version: IdentityMappingPolicyVersionSummary,
+		version: IdentityMappingFieldMappingVersionSummary,
 		side: PolicySide
 	): boolean {
 		if (version.directions) {
@@ -101,8 +104,8 @@
 	}
 
 	function preferredVersion(
-		versions: IdentityMappingPolicyVersionSummary[]
-	): IdentityMappingPolicyVersionSummary | null {
+		versions: IdentityMappingFieldMappingVersionSummary[]
+	): IdentityMappingFieldMappingVersionSummary | null {
 		return (
 			versions.find(
 				(version) =>
@@ -116,8 +119,8 @@
 	}
 
 	function editPolicyHref(
-		policy: IdentityMappingPolicySummary,
-		version: IdentityMappingPolicyVersionSummary,
+		policy: IdentityMappingFieldMappingSetSummary,
+		version: IdentityMappingFieldMappingVersionSummary,
 		side: PolicySide
 	): string {
 		const params = new URLSearchParams({
@@ -133,7 +136,10 @@
 		return `/admin/field-mapping/edit?${params.toString()}`;
 	}
 
-	function profileSummary(version: IdentityMappingPolicyVersionSummary, side: PolicySide): string {
+	function profileSummary(
+		version: IdentityMappingFieldMappingVersionSummary,
+		side: PolicySide
+	): string {
 		const count =
 			side === 'source'
 				? (version.sourceProfileIds?.length ?? 0)

@@ -8,7 +8,7 @@ export type StaticFixtureKind =
   | 'oidc-claims-request'
   | 'malformed-user'
   | 'regulated-user'
-  | 'conflict-policy';
+  | 'conflict-field-mapping-set';
 
 export interface StaticFixtureValidationResult {
   valid: boolean;
@@ -41,8 +41,8 @@ function isStaticFixtureShapeValid(kind: StaticFixtureKind, fixture: unknown): b
       );
     case 'oidc-claims-request':
       return isRecord(fixture) && 'email' in fixture;
-    case 'conflict-policy':
-      return isRecord(fixture) && Array.isArray(fixture.policies);
+    case 'conflict-field-mapping-set':
+      return isRecord(fixture) && Array.isArray(fixture.sets);
     default:
       return false;
   }

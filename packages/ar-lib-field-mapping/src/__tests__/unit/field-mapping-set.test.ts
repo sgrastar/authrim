@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { resolveEffectivePolicy } from '../../core/policy';
+import { resolveEffectiveFieldMappingSet } from '../../core/field-mapping-set';
 
-describe('effective policy resolver', () => {
+describe('effective field mapping set resolver', () => {
   it('orders deny and lock before lower-scope allow', () => {
-    const result = resolveEffectivePolicy({
-      policies: [
+    const result = resolveEffectiveFieldMappingSet({
+      sets: [
         {
           id: 'tenant-policy',
           rules: [
@@ -23,7 +23,7 @@ describe('effective policy resolver', () => {
       ],
     });
 
-    expect(result.mergedPolicy.rules[0]?.id).toBe('deny.tenant');
+    expect(result.mergedSet.rules[0]?.id).toBe('deny.tenant');
     expect(result.mergeTrace[0]?.reason.code).toBe('policy.deny_locked');
     expect(result.discardedRuleSummary).toEqual([
       {
@@ -38,8 +38,8 @@ describe('effective policy resolver', () => {
   });
 
   it('keeps independent target rules selected', () => {
-    const result = resolveEffectivePolicy({
-      policies: [
+    const result = resolveEffectiveFieldMappingSet({
+      sets: [
         {
           id: 'tenant-policy',
           rules: [
@@ -60,7 +60,7 @@ describe('effective policy resolver', () => {
       ],
     });
 
-    expect(result.mergedPolicy.rules.map((rule) => rule.id).sort()).toEqual([
+    expect(result.mergedSet.rules.map((rule) => rule.id).sort()).toEqual([
       'allow.email',
       'allow.name',
     ]);

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { edge, fieldRef, TEST_CATALOG } from '@authrim/ar-lib-identity-mapping/test-support';
-import type { FieldRef } from '@authrim/ar-lib-identity-mapping';
+import { edge, fieldRef, TEST_CATALOG } from '@authrim/ar-lib-field-mapping/test-support';
+import type { FieldRef } from '@authrim/ar-lib-field-mapping';
 import {
   adminCsvDryRunPreviewHandler,
   adminOidcReleasePreviewHandler,

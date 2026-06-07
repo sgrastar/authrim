@@ -1,5 +1,5 @@
 {
-  "name": "@authrim/ar-lib-identity-mapping",
+  "name": "@authrim/ar-lib-field-mapping",
   "version": "0.3.1",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'identity-mapping: lint skipped'",
+    "lint": "echo 'field-mapping: lint skipped'",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"

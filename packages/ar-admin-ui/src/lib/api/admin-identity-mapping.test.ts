@@ -57,7 +57,7 @@ describe('adminIdentityMappingAPI', () => {
 	}
 
 	it('loads field mapping control-plane collections from admin endpoints', async () => {
-		await adminIdentityMappingAPI.listPolicies();
+		await adminIdentityMappingAPI.listFieldMappingSets();
 		await adminIdentityMappingAPI.listCatalogs();
 		await adminIdentityMappingAPI.listProtocolSchemas();
 		await adminIdentityMappingAPI.listExternalSchemas();
@@ -119,11 +119,11 @@ describe('adminIdentityMappingAPI', () => {
 		await adminIdentityMappingAPI.listFederationTrustSources();
 		await adminIdentityMappingAPI.listFederationMetadataDocuments('trust/source 1');
 		await adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 25 });
-		await adminIdentityMappingAPI.createPolicy({
-			policyKey: 'ui_draft',
+		await adminIdentityMappingAPI.createFieldMappingSet({
+			fieldMappingKey: 'ui_draft',
 			displayName: 'UI Draft'
 		});
-		await adminIdentityMappingAPI.createPolicyVersion('policy set 1', {
+		await adminIdentityMappingAPI.createFieldMappingVersion('field mapping set 1', {
 			versionLabel: 'ui-draft',
 			rules: [
 				{
@@ -135,17 +135,17 @@ describe('adminIdentityMappingAPI', () => {
 				}
 			]
 		});
-		await adminIdentityMappingAPI.listPolicyVersions('policy set 1');
-		await adminIdentityMappingAPI.rollbackPolicy('policy set 1');
-		await adminIdentityMappingAPI.publishPolicyVersion('policy set 1', 'version 1');
-		await adminIdentityMappingAPI.compilePolicyVersion('policy set 1', 'version 1', {
+		await adminIdentityMappingAPI.listFieldMappingVersions('field mapping set 1');
+		await adminIdentityMappingAPI.rollbackFieldMappingSet('field mapping set 1');
+		await adminIdentityMappingAPI.publishFieldMappingVersion('field mapping set 1', 'version 1');
+		await adminIdentityMappingAPI.compileFieldMappingVersion('field mapping set 1', 'version 1', {
 			catalogVersionId: 'catalog version 1'
 		});
-		await adminIdentityMappingAPI.activatePolicyVersion('policy set 1', 'version 1', {
+		await adminIdentityMappingAPI.activateFieldMappingVersion('field mapping set 1', 'version 1', {
 			snapshotId: 'snapshot 1',
 			activationScope: { kind: 'tenant', id: 'tenant_a' }
 		});
-		await adminIdentityMappingAPI.deactivatePolicyVersion('policy set 1', 'version 1');
+		await adminIdentityMappingAPI.deactivateFieldMappingVersion('field mapping set 1', 'version 1');
 		await adminIdentityMappingAPI.transitionReviewTask('review task 1', {
 			status: 'resolved',
 			reasonCodes: ['operator_resolved']
@@ -179,13 +179,13 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/field-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
 			'/api/admin/field-mapping/review-tasks?status=open&limit=25',
 			'/api/admin/field-mapping/field-mapping-sets',
-			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions',
-			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions',
-			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/rollback',
-			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/publish',
-			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/compile',
-			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/activate',
-			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/deactivate',
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions',
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions',
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/rollback',
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/publish',
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/compile',
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/activate',
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/deactivate',
 			'/api/admin/field-mapping/review-tasks/review%20task%201/transition'
 		]);
 		expect(fetchMock.mock.calls[6][1]).toMatchObject({ method: 'POST' });
@@ -224,7 +224,7 @@ describe('adminIdentityMappingAPI', () => {
 			})
 		);
 
-		await expect(adminIdentityMappingAPI.listPolicies()).rejects.toThrow(
+		await expect(adminIdentityMappingAPI.listFieldMappingSets()).rejects.toThrow(
 			'schema-readiness gate failed'
 		);
 	});

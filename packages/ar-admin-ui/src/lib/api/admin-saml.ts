@@ -146,8 +146,8 @@ export interface SAMLProviderConfig {
 		mode: AttributeReleaseConsentMode;
 	};
 	identityMapping?: {
-		policySetId?: string;
-		policyVersionId?: string;
+		fieldMappingSetId?: string;
+		fieldMappingVersionId?: string;
 		destinationNamespace?: string;
 		sourceProfileId?: string;
 		destinationProfileId?: string;

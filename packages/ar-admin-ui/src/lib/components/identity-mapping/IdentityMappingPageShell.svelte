@@ -13,8 +13,8 @@
 	} from '$lib/components/identity-mapping/types';
 	import type {
 		IdentityMappingCatalogSummary,
-		IdentityMappingPolicyVersionSummary,
-		IdentityMappingPolicySummary
+		IdentityMappingFieldMappingVersionSummary,
+		IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
 
 	type ViewMode = 'overview' | 'source' | 'destination';
@@ -67,8 +67,10 @@
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
 	let flowSamples = $state<MappingSample[]>([]);
-	let policySummaries = $state<IdentityMappingPolicySummary[]>([]);
-	let policyVersionsByPolicyId = $state<Record<string, IdentityMappingPolicyVersionSummary[]>>({});
+	let fieldMappingSetSummaries = $state<IdentityMappingFieldMappingSetSummary[]>([]);
+	let fieldMappingVersionsByFieldMappingSetId = $state<
+		Record<string, IdentityMappingFieldMappingVersionSummary[]>
+	>({});
 	let catalogSummaries = $state<IdentityMappingCatalogSummary[]>([]);
 	let editSide = $state<MappingSide>('source');
 	let selectedSourceProfileId = $state<string | null>(null);
@@ -78,13 +80,13 @@
 	let editorDraftResetKey = $state(0);
 	let editorHasUnsavedDraftChanges = $state(false);
 	let appliedRoutePolicyOptionId = $state<string | null>(null);
-	let selectedPolicyControlId = $state<string | null>(null);
-	let selectedPolicyVersionId = $state<string | null>(null);
+	let selectedFieldMappingSetId = $state<string | null>(null);
+	let selectedFieldMappingVersionId = $state<string | null>(null);
 	let selectedPolicySide = $state<MappingSide | null>(null);
 	let policyOperationBusy = $state(false);
 	let policyOperationStatus = $state<string | null>(null);
-	let confirmRollbackPolicyId = $state<string | null>(null);
-	let confirmDeletePolicyId = $state<string | null>(null);
+	let confirmRollbackFieldMappingSetId = $state<string | null>(null);
+	let confirmDeleteFieldMappingSetId = $state<string | null>(null);
 	let summary = $state({
 		policies: 0,
 		catalogs: 0,
@@ -103,28 +105,34 @@
 	);
 	const routePolicySide = $derived(routeSideFromSearchParams());
 	const routePolicyOptionId = $derived(routePolicyOptionIdFromSearchParams());
-	const selectedPolicyVersions = $derived(
-		selectedPolicyControlId ? (policyVersionsByPolicyId[selectedPolicyControlId] ?? []) : []
+	const selectedFieldMappingVersions = $derived(
+		selectedFieldMappingSetId
+			? (fieldMappingVersionsByFieldMappingSetId[selectedFieldMappingSetId] ?? [])
+			: []
 	);
-	const selectedPolicySummary = $derived(
-		policySummaries.find((policy) => policy.id === selectedPolicyControlId) ?? null
+	const selectedFieldMappingSetSummary = $derived(
+		fieldMappingSetSummaries.find((policy) => policy.id === selectedFieldMappingSetId) ?? null
 	);
-	const selectedPolicyVersion = $derived(
-		selectedPolicyVersions.find((version) => version.id === selectedPolicyVersionId) ?? null
+	const selectedFieldMappingVersion = $derived(
+		selectedFieldMappingVersions.find((version) => version.id === selectedFieldMappingVersionId) ??
+			null
 	);
-	const selectedPolicyOptionId = $derived(selectedPolicyOptionIdFromState());
-	const selectedPolicySnapshotId = $derived(selectedPolicyVersion?.latestSnapshot?.id ?? null);
-	const selectedPolicyActive = $derived(
-		selectedPolicyVersion?.lifecycleState === 'active' ||
-			selectedPolicyVersion?.latestSnapshot?.lifecycleState === 'active'
+	const selectedFieldMappingOptionId = $derived(selectedFieldMappingOptionIdFromState());
+	const selectedFieldMappingSnapshotId = $derived(
+		selectedFieldMappingVersion?.latestSnapshot?.id ?? null
+	);
+	const selectedFieldMappingActive = $derived(
+		selectedFieldMappingVersion?.lifecycleState === 'active' ||
+			selectedFieldMappingVersion?.latestSnapshot?.lifecycleState === 'active'
 	);
 	const policyNameConflict = $derived(findPolicyNameConflict(policyDisplayName));
 	const policySelectorOptions = $derived(
-		policySummaries.flatMap((policy) =>
-			(policyVersionsByPolicyId[policy.id] ?? [])
+		fieldMappingSetSummaries.flatMap((policy) =>
+			(fieldMappingVersionsByFieldMappingSetId[policy.id] ?? [])
 				.filter(
 					(version) =>
-						isActivePolicyVersion(policy, version) || isRoutePolicyVersion(policy, version)
+						isActiveFieldMappingVersion(policy, version) ||
+						isRouteFieldMappingVersion(policy, version)
 				)
 				.flatMap((version) => {
 					const sides = policyVersionSides(version);
@@ -142,7 +150,7 @@
 						options.push({
 							...base,
 							id: `${base.id}:source`,
-							title: `[${adapter}] ${policy.displayName || policy.policyKey}`,
+							title: `[${adapter}] ${policy.displayName || policy.fieldMappingKey}`,
 							adapter,
 							direction: 'source' as const
 						});
@@ -152,7 +160,7 @@
 						options.push({
 							...base,
 							id: `${base.id}:destination`,
-							title: `[${adapter}] ${policy.displayName || policy.policyKey}`,
+							title: `[${adapter}] ${policy.displayName || policy.fieldMappingKey}`,
 							adapter,
 							direction: 'destination' as const
 						});
@@ -161,7 +169,9 @@
 				})
 		)
 	);
-	const editorLaneSelectorMode = $derived(selectedPolicyOptionId ? 'policy' : laneSelectorMode);
+	const editorLaneSelectorMode = $derived(
+		selectedFieldMappingOptionId ? 'policy' : laneSelectorMode
+	);
 	const editorSamples = $derived(
 		editorLaneSelectorMode === 'policy' && policySelectorOptions.length === 0 ? [] : flowSamples
 	);
@@ -176,8 +186,8 @@
 			return;
 		}
 		if (appliedRoutePolicyOptionId === routePolicyOptionId) return;
-		selectedPolicyControlId = $page.url.searchParams.get('policyId');
-		selectedPolicyVersionId = $page.url.searchParams.get('versionId');
+		selectedFieldMappingSetId = $page.url.searchParams.get('policyId');
+		selectedFieldMappingVersionId = $page.url.searchParams.get('versionId');
 		appliedRoutePolicyOptionId = routePolicyOptionId;
 		resetEditorDraft();
 	});
@@ -227,7 +237,7 @@
 	}
 
 	function policyOptionAdapter(
-		version: IdentityMappingPolicyVersionSummary,
+		version: IdentityMappingFieldMappingVersionSummary,
 		side: MappingSide
 	): MappingAdapter {
 		if (side === 'source') {
@@ -249,7 +259,7 @@
 		return 'OIDC';
 	}
 
-	function policyVersionSides(version: IdentityMappingPolicyVersionSummary) {
+	function policyVersionSides(version: IdentityMappingFieldMappingVersionSummary) {
 		if (version.directions) {
 			return {
 				source: version.directions.source,
@@ -280,44 +290,45 @@
 		return `${policyId}:${versionId}:${direction}`;
 	}
 
-	function selectedPolicyOptionIdFromState(): string | null {
-		if (!selectedPolicyControlId || !selectedPolicyVersionId || !selectedPolicySide) {
+	function selectedFieldMappingOptionIdFromState(): string | null {
+		if (!selectedFieldMappingSetId || !selectedFieldMappingVersionId || !selectedPolicySide) {
 			return null;
 		}
-		return `${selectedPolicyControlId}:${selectedPolicyVersionId}:${selectedPolicySide}`;
+		return `${selectedFieldMappingSetId}:${selectedFieldMappingVersionId}:${selectedPolicySide}`;
 	}
 
-	function selectPolicyVersion(event: Event) {
+	function selectFieldMappingVersion(event: Event) {
 		const versionId = (event.currentTarget as HTMLSelectElement).value || null;
-		if (versionId === selectedPolicyVersionId) return;
+		if (versionId === selectedFieldMappingVersionId) return;
 		if (!confirmDiscardEditorDraft()) return;
-		selectedPolicyVersionId = versionId;
+		selectedFieldMappingVersionId = versionId;
 		policyOperationStatus = null;
-		confirmRollbackPolicyId = null;
-		confirmDeletePolicyId = null;
+		confirmRollbackFieldMappingSetId = null;
+		confirmDeleteFieldMappingSetId = null;
 		resetEditorDraft();
 	}
 
-	async function refreshSelectedPolicyVersions() {
-		if (!selectedPolicyControlId) return;
-		const versions = await adminIdentityMappingAPI.listPolicyVersions(selectedPolicyControlId);
-		policyVersionsByPolicyId = {
-			...policyVersionsByPolicyId,
-			[selectedPolicyControlId]: versions.policyVersions
+	async function refreshSelectedFieldMappingVersions() {
+		if (!selectedFieldMappingSetId) return;
+		const versions =
+			await adminIdentityMappingAPI.listFieldMappingVersions(selectedFieldMappingSetId);
+		fieldMappingVersionsByFieldMappingSetId = {
+			...fieldMappingVersionsByFieldMappingSetId,
+			[selectedFieldMappingSetId]: versions.fieldMappingVersions
 		};
 	}
 
-	async function publishSelectedPolicyVersion() {
-		await runPolicyVersionOperation(
+	async function publishSelectedFieldMappingVersion() {
+		await runFieldMappingVersionOperation(
 			$LL.admin_identity_mapping_editor_policy_published(),
 			async (policyId, version) => {
-				await adminIdentityMappingAPI.publishPolicyVersion(policyId, version.id);
+				await adminIdentityMappingAPI.publishFieldMappingVersion(policyId, version.id);
 				if (!version.latestSnapshot?.id) {
 					const catalogVersionId = catalogSummaries.find((catalog) => catalog.versionId)?.versionId;
 					if (!catalogVersionId) {
 						throw new Error($LL.admin_identity_mapping_editor_no_active_catalog());
 					}
-					await adminIdentityMappingAPI.compilePolicyVersion(policyId, version.id, {
+					await adminIdentityMappingAPI.compileFieldMappingVersion(policyId, version.id, {
 						catalogVersionId,
 						metadata: { source: 'admin-ui-edit', triggeredBy: 'publish' }
 					});
@@ -329,21 +340,21 @@
 	async function toggleSelectedPolicyActivation(event: Event) {
 		const checked = (event.currentTarget as HTMLInputElement).checked;
 		if (checked) {
-			await activateSelectedPolicyVersion();
+			await activateSelectedFieldMappingVersion();
 		} else {
-			await deactivateSelectedPolicyVersion();
+			await deactivateSelectedFieldMappingVersion();
 		}
 	}
 
-	async function activateSelectedPolicyVersion() {
-		await runPolicyVersionOperation(
+	async function activateSelectedFieldMappingVersion() {
+		await runFieldMappingVersionOperation(
 			$LL.admin_identity_mapping_editor_policy_activated(),
 			async (policyId, version) => {
 				const snapshotId = version.latestSnapshot?.id;
 				if (!snapshotId) {
 					throw new Error($LL.admin_identity_mapping_editor_publish_before_activation());
 				}
-				await adminIdentityMappingAPI.activatePolicyVersion(policyId, version.id, {
+				await adminIdentityMappingAPI.activateFieldMappingVersion(policyId, version.id, {
 					snapshotId,
 					activationScope: { kind: 'tenant' }
 				});
@@ -351,33 +362,33 @@
 		);
 	}
 
-	async function deactivateSelectedPolicyVersion() {
-		await runPolicyVersionOperation(
+	async function deactivateSelectedFieldMappingVersion() {
+		await runFieldMappingVersionOperation(
 			$LL.admin_identity_mapping_editor_policy_deactivated(),
 			async (policyId, version) => {
-				await adminIdentityMappingAPI.deactivatePolicyVersion(policyId, version.id);
+				await adminIdentityMappingAPI.deactivateFieldMappingVersion(policyId, version.id);
 			}
 		);
 	}
 
 	async function rollbackSelectedPolicy() {
-		if (!selectedPolicyControlId) {
+		if (!selectedFieldMappingSetId) {
 			policyOperationStatus = $LL.admin_identity_mapping_editor_select_policy_version_first();
 			return;
 		}
-		confirmDeletePolicyId = null;
-		if (confirmRollbackPolicyId !== selectedPolicyControlId) {
-			confirmRollbackPolicyId = selectedPolicyControlId;
+		confirmDeleteFieldMappingSetId = null;
+		if (confirmRollbackFieldMappingSetId !== selectedFieldMappingSetId) {
+			confirmRollbackFieldMappingSetId = selectedFieldMappingSetId;
 			policyOperationStatus = $LL.admin_identity_mapping_editor_confirm_rollback_status();
 			return;
 		}
 		policyOperationBusy = true;
 		policyOperationStatus = null;
 		try {
-			await adminIdentityMappingAPI.rollbackPolicy(selectedPolicyControlId);
-			confirmRollbackPolicyId = null;
+			await adminIdentityMappingAPI.rollbackFieldMappingSet(selectedFieldMappingSetId);
+			confirmRollbackFieldMappingSetId = null;
 			policyOperationStatus = $LL.admin_identity_mapping_editor_rollback_requested();
-			await refreshSelectedPolicyVersions();
+			await refreshSelectedFieldMappingVersions();
 		} catch (error) {
 			policyOperationStatus =
 				error instanceof Error
@@ -389,28 +400,30 @@
 	}
 
 	async function deleteSelectedPolicy() {
-		if (!selectedPolicyControlId) {
+		if (!selectedFieldMappingSetId) {
 			policyOperationStatus = $LL.admin_identity_mapping_editor_select_policy_version_first();
 			return;
 		}
-		confirmRollbackPolicyId = null;
-		if (confirmDeletePolicyId !== selectedPolicyControlId) {
-			confirmDeletePolicyId = selectedPolicyControlId;
+		confirmRollbackFieldMappingSetId = null;
+		if (confirmDeleteFieldMappingSetId !== selectedFieldMappingSetId) {
+			confirmDeleteFieldMappingSetId = selectedFieldMappingSetId;
 			policyOperationStatus = $LL.admin_identity_mapping_editor_confirm_delete_status();
 			return;
 		}
 		policyOperationBusy = true;
 		policyOperationStatus = null;
 		try {
-			await adminIdentityMappingAPI.deletePolicy(selectedPolicyControlId);
-			policySummaries = policySummaries.filter((policy) => policy.id !== selectedPolicyControlId);
-			const { [selectedPolicyControlId]: _removed, ...remainingVersions } =
-				policyVersionsByPolicyId;
-			policyVersionsByPolicyId = remainingVersions;
-			selectedPolicyControlId = null;
-			selectedPolicyVersionId = null;
+			await adminIdentityMappingAPI.deleteFieldMappingSet(selectedFieldMappingSetId);
+			fieldMappingSetSummaries = fieldMappingSetSummaries.filter(
+				(policy) => policy.id !== selectedFieldMappingSetId
+			);
+			const { [selectedFieldMappingSetId]: _removed, ...remainingVersions } =
+				fieldMappingVersionsByFieldMappingSetId;
+			fieldMappingVersionsByFieldMappingSetId = remainingVersions;
+			selectedFieldMappingSetId = null;
+			selectedFieldMappingVersionId = null;
 			selectedPolicySide = null;
-			confirmDeletePolicyId = null;
+			confirmDeleteFieldMappingSetId = null;
 			editorHasUnsavedDraftChanges = false;
 			await goto('/admin/field-mapping/field-mapping-sets');
 		} catch (error) {
@@ -423,15 +436,15 @@
 		}
 	}
 
-	async function runPolicyVersionOperation(
+	async function runFieldMappingVersionOperation(
 		successMessage: string,
 		operation: (
 			policyId: string,
-			version: IdentityMappingPolicyVersionSummary
+			version: IdentityMappingFieldMappingVersionSummary
 		) => Promise<void> | void
 	) {
-		const policyId = selectedPolicyControlId;
-		const version = selectedPolicyVersion;
+		const policyId = selectedFieldMappingSetId;
+		const version = selectedFieldMappingVersion;
 		policyOperationBusy = true;
 		policyOperationStatus = null;
 		try {
@@ -439,10 +452,10 @@
 				throw new Error($LL.admin_identity_mapping_editor_select_policy_version_first());
 			}
 			await operation(policyId, version);
-			confirmRollbackPolicyId = null;
-			confirmDeletePolicyId = null;
+			confirmRollbackFieldMappingSetId = null;
+			confirmDeleteFieldMappingSetId = null;
 			policyOperationStatus = successMessage;
-			await refreshSelectedPolicyVersions();
+			await refreshSelectedFieldMappingVersions();
 		} catch (error) {
 			policyOperationStatus =
 				error instanceof Error
@@ -499,25 +512,26 @@
 		if (!catalogVersionId) {
 			throw new Error($LL.admin_identity_mapping_editor_no_canonical_catalog());
 		}
-		const policyKey = policyKeyFromDisplayName(displayName);
-		let policy = selectedPolicyControlId
-			? (policySummaries.find((candidate) => candidate.id === selectedPolicyControlId) ?? null)
+		const fieldMappingKey = fieldMappingKeyFromDisplayName(displayName);
+		let policy = selectedFieldMappingSetId
+			? (fieldMappingSetSummaries.find((candidate) => candidate.id === selectedFieldMappingSetId) ??
+				null)
 			: null;
 		if (!policy) {
-			const createdPolicy = await adminIdentityMappingAPI.createPolicy({
-				policyKey,
+			const createdPolicy = await adminIdentityMappingAPI.createFieldMappingSet({
+				fieldMappingKey,
 				displayName,
 				description: $LL.admin_identity_mapping_editor_created_description()
 			});
 			policy = createdPolicy.result;
-			policySummaries = [policy, ...policySummaries];
+			fieldMappingSetSummaries = [policy, ...fieldMappingSetSummaries];
 		}
-		const version = await adminIdentityMappingAPI.createPolicyVersion(policy.id, {
+		const version = await adminIdentityMappingAPI.createFieldMappingVersion(policy.id, {
 			versionLabel: draft.versionLabel,
 			compatibilityRange: draft.compatibilityRange,
 			rules: draft.rules
 		});
-		await adminIdentityMappingAPI.compilePolicyVersion(policy.id, version.result.id, {
+		await adminIdentityMappingAPI.compileFieldMappingVersion(policy.id, version.result.id, {
 			catalogVersionId,
 			metadata: {
 				source: 'admin_ui_flow_editor',
@@ -528,7 +542,7 @@
 		editorHasUnsavedDraftChanges = false;
 	}
 
-	function policyKeyFromDisplayName(value: string): string {
+	function fieldMappingKeyFromDisplayName(value: string): string {
 		const key = value
 			.trim()
 			.toLowerCase()
@@ -539,20 +553,23 @@
 		return key || 'identity-mapping-ui-draft';
 	}
 
-	function findPolicyNameConflict(displayName: string): IdentityMappingPolicySummary | null {
-		const policyKey = policyKeyFromDisplayName(
+	function findPolicyNameConflict(
+		displayName: string
+	): IdentityMappingFieldMappingSetSummary | null {
+		const fieldMappingKey = fieldMappingKeyFromDisplayName(
 			displayName.trim() || $LL.admin_identity_mapping_editor_policy_default_name()
 		);
 		return (
-			policySummaries.find(
-				(policy) => policy.policyKey === policyKey && policy.id !== selectedPolicyControlId
+			fieldMappingSetSummaries.find(
+				(policy) =>
+					policy.fieldMappingKey === fieldMappingKey && policy.id !== selectedFieldMappingSetId
 			) ?? null
 		);
 	}
 
-	function isActivePolicyVersion(
-		policy: IdentityMappingPolicySummary,
-		version: IdentityMappingPolicyVersionSummary
+	function isActiveFieldMappingVersion(
+		policy: IdentityMappingFieldMappingSetSummary,
+		version: IdentityMappingFieldMappingVersionSummary
 	): boolean {
 		if (policy.lifecycleState !== 'active') return false;
 		return (
@@ -560,9 +577,9 @@
 		);
 	}
 
-	function isRoutePolicyVersion(
-		policy: IdentityMappingPolicySummary,
-		version: IdentityMappingPolicyVersionSummary
+	function isRouteFieldMappingVersion(
+		policy: IdentityMappingFieldMappingSetSummary,
+		version: IdentityMappingFieldMappingVersionSummary
 	): boolean {
 		if (!routePolicySide) return false;
 		return routePolicyOptionId === `${policy.id}:${version.id}:${routePolicySide}`;
@@ -580,7 +597,7 @@
 				federationTrustSources,
 				schemaReadiness
 			] = await Promise.all([
-				adminIdentityMappingAPI.listPolicies(),
+				adminIdentityMappingAPI.listFieldMappingSets(),
 				adminIdentityMappingAPI.listCatalogs(),
 				adminIdentityMappingAPI.listSourceProfiles(),
 				adminIdentityMappingAPI.listDestinationProfiles(),
@@ -591,7 +608,7 @@
 			]);
 
 			summary = {
-				policies: policies.policies.length,
+				policies: policies.fieldMappingSets.length,
 				catalogs: catalogs.catalogs.length,
 				profiles:
 					sourceProfiles.sourceProfiles.length +
@@ -600,18 +617,18 @@
 					externalSchemas.externalSchemas.length,
 				federationTrustSources: federationTrustSources.federationTrustSources.length
 			};
-			policySummaries = policies.policies;
-			policyVersionsByPolicyId = Object.fromEntries(
+			fieldMappingSetSummaries = policies.fieldMappingSets;
+			fieldMappingVersionsByFieldMappingSetId = Object.fromEntries(
 				await Promise.all(
-					policies.policies.map(async (policy) => {
-						const versions = await adminIdentityMappingAPI.listPolicyVersions(policy.id);
-						return [policy.id, versions.policyVersions] as const;
+					policies.fieldMappingSets.map(async (policy) => {
+						const versions = await adminIdentityMappingAPI.listFieldMappingVersions(policy.id);
+						return [policy.id, versions.fieldMappingVersions] as const;
 					})
 				)
 			);
 			catalogSummaries = catalogs.catalogs;
 			flowSamples = buildIdentityMappingFlowSamples({
-				policies: policies.policies,
+				policies: policies.fieldMappingSets,
 				catalogs: catalogs.catalogs,
 				sourceProfiles: sourceProfiles.sourceProfiles,
 				destinationProfiles: destinationProfiles.destinationProfiles,
@@ -703,22 +720,22 @@
 				<div class="policy-version-heading">
 					<span>{$LL.admin_identity_mapping_editor_policy_version()}</span>
 					<strong>
-						{selectedPolicySummary?.displayName ??
+						{selectedFieldMappingSetSummary?.displayName ??
 							$LL.admin_identity_mapping_editor_no_policy_selected()}
 					</strong>
 				</div>
 				<select
 					aria-label={$LL.admin_identity_mapping_editor_policy_version()}
-					value={selectedPolicyVersionId ?? ''}
-					onchange={selectPolicyVersion}
-					disabled={!selectedPolicyControlId ||
-						selectedPolicyVersions.length === 0 ||
+					value={selectedFieldMappingVersionId ?? ''}
+					onchange={selectFieldMappingVersion}
+					disabled={!selectedFieldMappingSetId ||
+						selectedFieldMappingVersions.length === 0 ||
 						policyOperationBusy}
 				>
 					<option value="" disabled
 						>{$LL.admin_identity_mapping_editor_no_version_selected()}</option
 					>
-					{#each selectedPolicyVersions as version (version.id)}
+					{#each selectedFieldMappingVersions as version (version.id)}
 						<option value={version.id}>{version.versionLabel} / {version.lifecycleState}</option>
 					{/each}
 				</select>
@@ -726,26 +743,26 @@
 					<label class="activation-switch">
 						<input
 							type="checkbox"
-							checked={selectedPolicyActive}
+							checked={selectedFieldMappingActive}
 							onchange={toggleSelectedPolicyActivation}
-							disabled={!selectedPolicyVersion || policyOperationBusy}
+							disabled={!selectedFieldMappingVersion || policyOperationBusy}
 						/>
 						<span aria-hidden="true"></span>
 						<strong>{$LL.admin_identity_mapping_editor_activate()}</strong>
 					</label>
 					<button
 						type="button"
-						onclick={publishSelectedPolicyVersion}
-						disabled={!selectedPolicyVersion || policyOperationBusy}
+						onclick={publishSelectedFieldMappingVersion}
+						disabled={!selectedFieldMappingVersion || policyOperationBusy}
 					>
 						{$LL.admin_identity_mapping_editor_publish()}
 					</button>
 					<button
 						type="button"
 						onclick={rollbackSelectedPolicy}
-						disabled={!selectedPolicyControlId || policyOperationBusy}
+						disabled={!selectedFieldMappingSetId || policyOperationBusy}
 					>
-						{confirmRollbackPolicyId === selectedPolicyControlId
+						{confirmRollbackFieldMappingSetId === selectedFieldMappingSetId
 							? $LL.admin_identity_mapping_editor_confirm_rollback()
 							: $LL.admin_identity_mapping_editor_request_rollback()}
 					</button>
@@ -753,9 +770,9 @@
 						type="button"
 						class="danger-action"
 						onclick={deleteSelectedPolicy}
-						disabled={!selectedPolicyControlId || policyOperationBusy}
+						disabled={!selectedFieldMappingSetId || policyOperationBusy}
 					>
-						{confirmDeletePolicyId === selectedPolicyControlId
+						{confirmDeleteFieldMappingSetId === selectedFieldMappingSetId
 							? $LL.admin_identity_mapping_editor_confirm_delete()
 							: $LL.admin_identity_mapping_editor_delete()}
 					</button>
@@ -769,7 +786,7 @@
 								: $LL.admin_identity_mapping_editor_side_not_selected()}
 					</span>
 					<span>
-						{selectedPolicySnapshotId
+						{selectedFieldMappingSnapshotId
 							? $LL.admin_identity_mapping_editor_snapshot_ready()
 							: $LL.admin_identity_mapping_editor_no_snapshot()}
 					</span>
@@ -826,7 +843,7 @@
 		{showCompileDraftButton}
 		{primaryActionLabel}
 		{primaryActionBusyLabel}
-		initialPolicyOptionId={selectedPolicyOptionId}
+		initialPolicyOptionId={selectedFieldMappingOptionId}
 		selectedViewMode={showProfileModeControl ? editSide : null}
 		selectedProfileId={showProfileModeControl ? selectedEditorProfileId : null}
 		draftResetKey={editorDraftResetKey}

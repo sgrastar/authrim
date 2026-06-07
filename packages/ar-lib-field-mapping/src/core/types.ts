@@ -210,7 +210,7 @@ export interface PolicyScopeRef {
   id: string;
 }
 
-export interface MappingPolicyRule {
+export interface FieldMappingRule {
   id: string;
   scope: PolicyScopeRef;
   action: 'allow' | 'deny' | 'lock';
@@ -219,9 +219,9 @@ export interface MappingPolicyRule {
   targetRef?: FieldRef;
 }
 
-export interface MappingPolicy {
+export interface FieldMappingSet {
   id: string;
-  rules: MappingPolicyRule[];
+  rules: FieldMappingRule[];
 }
 
 export interface PolicyMergeTraceEntry {
@@ -236,12 +236,12 @@ export interface DiscardedRuleSummary {
   reason: ReasonCode;
 }
 
-export interface EffectivePolicyInput {
-  policies: MappingPolicy[];
+export interface EffectiveFieldMappingSetInput {
+  sets: FieldMappingSet[];
 }
 
-export interface EffectivePolicyResult {
-  mergedPolicy: MappingPolicy;
+export interface EffectiveFieldMappingSetResult {
+  mergedSet: FieldMappingSet;
   mergeTrace: PolicyMergeTraceEntry[];
   discardedRuleSummary: DiscardedRuleSummary[];
 }
@@ -323,7 +323,7 @@ export interface MappingInput {
   edges: MappingRuleEdge[];
   transforms?: MappingTransformStep[];
   validationRules?: ValidationRule[];
-  policy?: MappingPolicy;
+  fieldMappingSet?: FieldMappingSet;
   fingerprintProvider?: FingerprintProvider;
 }
 

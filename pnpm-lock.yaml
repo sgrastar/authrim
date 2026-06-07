@@ -311,9 +311,9 @@ importers:
 
   packages/ar-lib-core:
     dependencies:
-      '@authrim/ar-lib-identity-mapping':
+      '@authrim/ar-lib-field-mapping':
         specifier: workspace:*
-        version: link:../ar-lib-identity-mapping
+        version: link:../ar-lib-field-mapping
       '@authrim/ar-lib-logging':
         specifier: workspace:*
         version: link:../ar-lib-logging
@@ -346,7 +346,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  packages/ar-lib-identity-mapping:
+  packages/ar-lib-field-mapping:
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251121.0
@@ -550,9 +550,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
-      '@authrim/ar-lib-identity-mapping':
+      '@authrim/ar-lib-field-mapping':
         specifier: workspace:*
-        version: link:../ar-lib-identity-mapping
+        version: link:../ar-lib-field-mapping
       '@authrim/ar-lib-logging':
         specifier: workspace:*
         version: link:../ar-lib-logging
@@ -637,9 +637,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
-      '@authrim/ar-lib-identity-mapping':
+      '@authrim/ar-lib-field-mapping':
         specifier: workspace:*
-        version: link:../ar-lib-identity-mapping
+        version: link:../ar-lib-field-mapping
       '@xmldom/xmldom':
         specifier: ^0.8.13
         version: 0.8.13

@@ -56,9 +56,9 @@ export type ClientChannel = 'browser' | 'native' | 'server';
 export type BrowserPublicClientMode = 'strict' | 'cookie_fallback';
 export type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 
-export interface ClientIdentityMappingPolicySelector {
-  policySetId?: string;
-  policyVersionId?: string;
+export interface ClientIdentityFieldMappingSetSelector {
+  fieldMappingSetId?: string;
+  fieldMappingVersionId?: string;
   destinationNamespace?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
@@ -233,7 +233,7 @@ export interface CreateClientInput {
     string,
     'scope_required' | 'claims_allowed' | 'forbidden'
   > | null;
-  identity_mapping?: ClientIdentityMappingPolicySelector | null;
+  identity_mapping?: ClientIdentityFieldMappingSetSelector | null;
   attribute_release_consent?: AttributeReleaseConsentPolicy | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;
@@ -303,7 +303,7 @@ export interface UpdateClientInput {
     string,
     'scope_required' | 'claims_allowed' | 'forbidden'
   > | null;
-  identity_mapping?: ClientIdentityMappingPolicySelector | null;
+  identity_mapping?: ClientIdentityFieldMappingSetSelector | null;
   attribute_release_consent?: AttributeReleaseConsentPolicy | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;

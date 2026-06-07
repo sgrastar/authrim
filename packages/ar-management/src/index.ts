@@ -656,16 +656,16 @@ import {
   adminIdentityMappingDestinationProfileReviewHandler,
   adminIdentityMappingDestinationProfileUpdateHandler,
   adminIdentityMappingDestinationProfilesListHandler,
-  adminIdentityMappingPoliciesListHandler,
-  adminIdentityMappingPolicyCreateHandler,
-  adminIdentityMappingPolicyDeleteHandler,
-  adminIdentityMappingPolicyRollbackHandler,
-  adminIdentityMappingPolicyVersionActivateHandler,
-  adminIdentityMappingPolicyVersionCompileHandler,
-  adminIdentityMappingPolicyVersionCreateHandler,
-  adminIdentityMappingPolicyVersionDeactivateHandler,
-  adminIdentityMappingPolicyVersionsListHandler,
-  adminIdentityMappingPolicyVersionPublishHandler,
+  adminIdentityFieldMappingSetsListHandler,
+  adminIdentityFieldMappingSetCreateHandler,
+  adminIdentityFieldMappingSetDeleteHandler,
+  adminIdentityFieldMappingSetRollbackHandler,
+  adminIdentityFieldMappingVersionActivateHandler,
+  adminIdentityFieldMappingVersionCompileHandler,
+  adminIdentityFieldMappingVersionCreateHandler,
+  adminIdentityFieldMappingVersionDeactivateHandler,
+  adminIdentityFieldMappingVersionsListHandler,
+  adminIdentityFieldMappingVersionPublishHandler,
   adminIdentityMappingEntitlementGrantHandler,
   adminIdentityMappingFederationMetadataDocumentCreateHandler,
   adminIdentityMappingFederationMetadataDocumentsListHandler,
@@ -2402,52 +2402,52 @@ app.post(
 app.get(
   '/api/admin/field-mapping/field-mapping-sets',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminIdentityMappingPoliciesListHandler
+  adminIdentityFieldMappingSetsListHandler
 );
 app.post(
   '/api/admin/field-mapping/field-mapping-sets',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyCreateHandler
+  adminIdentityFieldMappingSetCreateHandler
 );
 app.delete(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyDeleteHandler
+  adminIdentityFieldMappingSetDeleteHandler
 );
 app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId/versions',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyVersionCreateHandler
+  adminIdentityFieldMappingVersionCreateHandler
 );
 app.get(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId/versions',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminIdentityMappingPolicyVersionsListHandler
+  adminIdentityFieldMappingVersionsListHandler
 );
 app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId/versions/:policyVersionId/publish',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/publish',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyVersionPublishHandler
+  adminIdentityFieldMappingVersionPublishHandler
 );
 app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId/versions/:policyVersionId/compile',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/compile',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyVersionCompileHandler
+  adminIdentityFieldMappingVersionCompileHandler
 );
 app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId/versions/:policyVersionId/activate',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/activate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyVersionActivateHandler
+  adminIdentityFieldMappingVersionActivateHandler
 );
 app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId/versions/:policyVersionId/deactivate',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/deactivate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyVersionDeactivateHandler
+  adminIdentityFieldMappingVersionDeactivateHandler
 );
 app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:policySetId/rollback',
+  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/rollback',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingPolicyRollbackHandler
+  adminIdentityFieldMappingSetRollbackHandler
 );
 app.get(
   '/api/admin/field-mapping/source-authority-contracts',

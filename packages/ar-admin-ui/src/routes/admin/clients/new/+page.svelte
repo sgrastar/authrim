@@ -9,7 +9,7 @@
 	} from '$lib/api/admin-clients';
 	import {
 		adminIdentityMappingAPI,
-		type IdentityMappingPolicySummary
+		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
 	import {
 		createPresetClientDownstreamGrantForm,
@@ -171,8 +171,8 @@
 		ASC_TRANSFORMED_CLAIMS.map((claim) => claim.id)
 	);
 	let downstreamGrantForm = $state(createPresetClientDownstreamGrantForm('custom'));
-	let identityMappingPolicySetId = $state('');
-	let mappingPolicies = $state<IdentityMappingPolicySummary[]>([]);
+	let identityMappingFieldMappingSetId = $state('');
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 
 	// CORS settings
 	let tenantSettings = $state<CategorySettings | null>(null);
@@ -214,9 +214,9 @@
 
 	onMount(() => {
 		adminIdentityMappingAPI
-			.listPolicies()
+			.listFieldMappingSets()
 			.then((result) => {
-				mappingPolicies = result.policies;
+				fieldMappingSets = result.fieldMappingSets;
 			})
 			.catch((err) => {
 				console.warn('Failed to load field mapping sets:', err);
@@ -518,9 +518,9 @@
 				require_pkce: requirePkce,
 				allow_claims_without_scope: allowClaimsWithoutScope,
 				claims_parameter_policy: claimsParameterPolicy,
-				identity_mapping: identityMappingPolicySetId
+				identity_mapping: identityMappingFieldMappingSetId
 					? {
-							policySetId: identityMappingPolicySetId,
+							fieldMappingSetId: identityMappingFieldMappingSetId,
 							destinationNamespace: 'oidc.claim'
 						}
 					: null,
@@ -876,18 +876,18 @@
 								<h3 class="settings-summary-title">{$LL.admin_clients_new_oidc_claims_asc()}</h3>
 								<div class="advanced-panel" style="padding: 0; border: none;">
 									<div class="form-group">
-										<label for="identityMappingPolicy" class="form-label">
+										<label for="identityMappingFieldMapping" class="form-label">
 											OIDC claims field mapping set
 										</label>
 										<select
-											id="identityMappingPolicy"
+											id="identityMappingFieldMapping"
 											class="form-select"
-											bind:value={identityMappingPolicySetId}
+											bind:value={identityMappingFieldMappingSetId}
 										>
 											<option value="">Tenant default / no client override</option>
-											{#each mappingPolicies as policy (policy.id)}
-												<option value={policy.id}>
-													{policy.displayName} ({policy.lifecycleState})
+											{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+												<option value={fieldMappingSet.id}>
+													{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
 												</option>
 											{/each}
 										</select>

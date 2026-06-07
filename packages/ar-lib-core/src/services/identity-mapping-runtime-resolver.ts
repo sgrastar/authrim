@@ -2,7 +2,7 @@ import type {
   Cardinality,
   FieldCatalogBundle,
   FieldRef,
-  MappingPolicy,
+  FieldMappingSet,
   MappingRuleEdge,
   MappingTransformStep,
   RedactionClassification,
@@ -10,7 +10,7 @@ import type {
   TransformOperation,
   ValidationRule,
   ValidationRuleKind,
-} from '@authrim/ar-lib-identity-mapping';
+} from '@authrim/ar-lib-field-mapping';
 import type { DatabaseAdapter } from '../db/adapter';
 
 export type RuntimeIdentityMappingProtocol = 'saml' | 'oidc' | 'vc' | string;
@@ -20,8 +20,8 @@ export interface RuntimeIdentityMappingResolutionContext {
   tenantId: string;
   protocol: RuntimeIdentityMappingProtocol;
   role: RuntimeIdentityMappingRole;
-  policySetId?: string;
-  policyVersionId?: string;
+  fieldMappingSetId?: string;
+  fieldMappingVersionId?: string;
   localEntityId?: string;
   partnerEntityId?: string;
   clientId?: string;
@@ -31,13 +31,13 @@ export interface RuntimeIdentityMappingResolutionContext {
 export interface RuntimeIdentityMappingBinding {
   id: string;
   tenantId: string;
-  policySetId: string;
-  policyVersionId: string;
+  fieldMappingSetId: string;
+  fieldMappingVersionId: string;
   catalog: FieldCatalogBundle;
   edges: MappingRuleEdge[];
   transforms: MappingTransformStep[];
   validationRules: ValidationRule[];
-  policy: MappingPolicy;
+  fieldMappingSet: FieldMappingSet;
   activationScope: Record<string, unknown>;
   destinationNamespace?: string;
   sourceProfileId?: string;
@@ -47,12 +47,12 @@ export interface RuntimeIdentityMappingBinding {
 interface ActiveActivationRow {
   activation_id: string;
   tenant_id: string;
-  policy_set_id: string;
-  policy_version_id: string;
+  field_mapping_set_id: string;
+  field_mapping_version_id: string;
   activation_scope_json: string;
   version_label: string;
-  policy_hash: string;
-  policy_compatibility_range: string | null;
+  field_mapping_hash: string;
+  field_mapping_compatibility_range: string | null;
   catalog_version_id: string | null;
   catalog_version_label: string | null;
   catalog_bundle_hash: string | null;
@@ -96,7 +96,7 @@ interface ValidationRuleRow {
   parameters_json: string | null;
 }
 
-interface PolicyRuleRow {
+interface FieldMappingRuleRow {
   id: string;
   action: string;
   priority: number;
@@ -114,27 +114,31 @@ export async function resolveRuntimeIdentityMappingBinding(
     return null;
   }
 
-  const [catalogEntries, edges, transforms, validationRules, policyRules] = await Promise.all([
-    loadCatalogEntries(adapter, context.tenantId, selected.catalog_version_id),
-    loadEdges(adapter, context.tenantId, selected.policy_version_id),
-    loadTransforms(adapter, context.tenantId, selected.policy_version_id),
-    loadValidationRules(adapter, context.tenantId, selected.policy_version_id),
-    loadPolicyRules(adapter, context.tenantId, selected.policy_version_id),
-  ]);
+  const [catalogEntries, edges, transforms, validationRules, fieldMappingRules] = await Promise.all(
+    [
+      loadCatalogEntries(adapter, context.tenantId, selected.catalog_version_id),
+      loadEdges(adapter, context.tenantId, selected.field_mapping_version_id),
+      loadTransforms(adapter, context.tenantId, selected.field_mapping_version_id),
+      loadValidationRules(adapter, context.tenantId, selected.field_mapping_version_id),
+      loadFieldMappingRules(adapter, context.tenantId, selected.field_mapping_version_id),
+    ]
+  );
   const activationScope = parseJsonObject(selected.activation_scope_json);
 
   return {
     id: selected.activation_id,
     tenantId: selected.tenant_id,
-    policySetId: selected.policy_set_id,
-    policyVersionId: selected.policy_version_id,
+    fieldMappingSetId: selected.field_mapping_set_id,
+    fieldMappingVersionId: selected.field_mapping_version_id,
     catalog: {
       identity: {
         id: selected.catalog_version_id,
-        version: selected.catalog_version_label ?? selected.policy_version_id,
-        contentHash: selected.catalog_bundle_hash ?? selected.policy_hash,
+        version: selected.catalog_version_label ?? selected.field_mapping_version_id,
+        contentHash: selected.catalog_bundle_hash ?? selected.field_mapping_hash,
         compatibilityRange:
-          selected.catalog_compatibility_range ?? selected.policy_compatibility_range ?? '^0.3.0',
+          selected.catalog_compatibility_range ??
+          selected.field_mapping_compatibility_range ??
+          '^0.3.0',
       },
       entries: catalogEntries.map(toCatalogEntry),
     },
@@ -159,14 +163,14 @@ export async function resolveRuntimeIdentityMappingBinding(
       defaultSeverity: rule.severity as ValidationRule['defaultSeverity'],
       parameters: parseJsonObject(rule.parameters_json ?? '{}'),
     })),
-    policy: {
-      id: selected.policy_version_id,
-      rules: policyRules.map((rule) => ({
+    fieldMappingSet: {
+      id: selected.field_mapping_version_id,
+      rules: fieldMappingRules.map((rule) => ({
         id: rule.id,
-        scope: toPolicyScope(rule.scope_json, activationScope),
-        action: toPolicyAction(rule.action),
+        scope: toFieldMappingScope(rule.scope_json, activationScope),
+        action: toFieldMappingAction(rule.action),
         priority: rule.priority,
-        targetRef: parsePolicyTargetRef(rule.metadata_json),
+        targetRef: parseFieldMappingTargetRef(rule.metadata_json),
       })),
     },
     activationScope,
@@ -181,43 +185,45 @@ async function loadActiveActivationRows(
   context: RuntimeIdentityMappingResolutionContext
 ): Promise<ActiveActivationRow[]> {
   const params: unknown[] = [context.tenantId, 'active'];
-  const policySetFilter = context.policySetId ? 'AND a.policy_set_id = ?' : '';
-  if (context.policySetId) {
-    params.push(context.policySetId);
+  const fieldMappingSetFilter = context.fieldMappingSetId ? 'AND a.field_mapping_set_id = ?' : '';
+  if (context.fieldMappingSetId) {
+    params.push(context.fieldMappingSetId);
   }
-  const policyVersionFilter = context.policyVersionId ? 'AND a.policy_version_id = ?' : '';
-  if (context.policyVersionId) {
-    params.push(context.policyVersionId);
+  const fieldMappingVersionFilter = context.fieldMappingVersionId
+    ? 'AND a.field_mapping_version_id = ?'
+    : '';
+  if (context.fieldMappingVersionId) {
+    params.push(context.fieldMappingVersionId);
   }
   return adapter.query<ActiveActivationRow>(
     `SELECT a.id AS activation_id,
             a.tenant_id,
-            a.policy_set_id,
-            a.policy_version_id,
+            a.field_mapping_set_id,
+            a.field_mapping_version_id,
             a.activation_scope_json,
             v.version_label,
-            v.policy_hash,
-            v.compatibility_range AS policy_compatibility_range,
+            v.field_mapping_hash,
+            v.compatibility_range AS field_mapping_compatibility_range,
             s.catalog_version_id,
             cv.version_label AS catalog_version_label,
             cv.bundle_hash AS catalog_bundle_hash,
             cv.compatibility_range AS catalog_compatibility_range
-       FROM mapping_policy_activations a
-       JOIN mapping_policy_versions v
+       FROM field_mapping_activations a
+       JOIN field_mapping_versions v
          ON v.tenant_id = a.tenant_id
-        AND v.policy_set_id = a.policy_set_id
-        AND v.id = a.policy_version_id
+        AND v.field_mapping_set_id = a.field_mapping_set_id
+        AND v.id = a.field_mapping_version_id
        LEFT JOIN compiled_mapping_snapshots s
          ON s.tenant_id = a.tenant_id
-        AND s.policy_version_id = a.policy_version_id
+        AND s.field_mapping_version_id = a.field_mapping_version_id
         AND s.lifecycle_state = 'active'
        LEFT JOIN field_catalog_versions cv
          ON cv.tenant_id = a.tenant_id
         AND cv.id = s.catalog_version_id
       WHERE a.tenant_id = ?
         AND a.lifecycle_state = ?
-        ${policySetFilter}
-        ${policyVersionFilter}
+        ${fieldMappingSetFilter}
+        ${fieldMappingVersionFilter}
       ORDER BY a.activated_at DESC, a.created_at DESC`,
     params
   );
@@ -292,7 +298,7 @@ async function loadCatalogEntries(
 async function loadEdges(
   adapter: DatabaseAdapter,
   tenantId: string,
-  policyVersionId: string
+  fieldMappingVersionId: string
 ): Promise<EdgeRow[]> {
   return adapter.query<EdgeRow>(
     `SELECT e.id, e.source_ref_json, e.target_ref_json, e.display_order
@@ -300,16 +306,16 @@ async function loadEdges(
        JOIN mapping_rule_edges e
          ON e.tenant_id = r.tenant_id
         AND e.rule_id = r.id
-      WHERE r.tenant_id = ? AND r.policy_version_id = ?
+      WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?
       ORDER BY r.priority ASC, r.created_at ASC, e.display_order ASC`,
-    [tenantId, policyVersionId]
+    [tenantId, fieldMappingVersionId]
   );
 }
 
 async function loadTransforms(
   adapter: DatabaseAdapter,
   tenantId: string,
-  policyVersionId: string
+  fieldMappingVersionId: string
 ): Promise<TransformRow[]> {
   return adapter.query<TransformRow>(
     `SELECT t.id, t.edge_id, t.step_order, t.operation, t.parameters_json, e.target_ref_json
@@ -320,16 +326,16 @@ async function loadTransforms(
        LEFT JOIN mapping_rule_edges e
          ON e.tenant_id = t.tenant_id
         AND e.id = t.edge_id
-      WHERE r.tenant_id = ? AND r.policy_version_id = ?
+      WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?
       ORDER BY r.priority ASC, t.step_order ASC`,
-    [tenantId, policyVersionId]
+    [tenantId, fieldMappingVersionId]
   );
 }
 
 async function loadValidationRules(
   adapter: DatabaseAdapter,
   tenantId: string,
-  policyVersionId: string
+  fieldMappingVersionId: string
 ): Promise<ValidationRuleRow[]> {
   return adapter.query<ValidationRuleRow>(
     `SELECT v.id, v.target_ref_json, v.validation_kind, v.severity, v.parameters_json
@@ -337,23 +343,23 @@ async function loadValidationRules(
        JOIN mapping_validation_rules v
          ON v.tenant_id = r.tenant_id
         AND v.rule_id = r.id
-      WHERE r.tenant_id = ? AND r.policy_version_id = ?
+      WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?
       ORDER BY r.priority ASC, v.created_at ASC`,
-    [tenantId, policyVersionId]
+    [tenantId, fieldMappingVersionId]
   );
 }
 
-async function loadPolicyRules(
+async function loadFieldMappingRules(
   adapter: DatabaseAdapter,
   tenantId: string,
-  policyVersionId: string
-): Promise<PolicyRuleRow[]> {
-  return adapter.query<PolicyRuleRow>(
+  fieldMappingVersionId: string
+): Promise<FieldMappingRuleRow[]> {
+  return adapter.query<FieldMappingRuleRow>(
     `SELECT id, action, priority, scope_json, metadata_json
        FROM mapping_rules
-      WHERE tenant_id = ? AND policy_version_id = ?
+      WHERE tenant_id = ? AND field_mapping_version_id = ?
       ORDER BY priority ASC, created_at ASC`,
-    [tenantId, policyVersionId]
+    [tenantId, fieldMappingVersionId]
   );
 }
 
@@ -381,26 +387,26 @@ function inferTransformOutputTargetRef(transform: TransformRow, edges: EdgeRow[]
     : { side: 'destination', namespace: 'unknown', path: transform.id };
 }
 
-function parsePolicyTargetRef(metadataJson: string | null): FieldRef | undefined {
+function parseFieldMappingTargetRef(metadataJson: string | null): FieldRef | undefined {
   const metadata = parseJsonObject(metadataJson ?? '{}');
   const targetRef = metadata.targetRef;
   return isRecord(targetRef) ? normalizeFieldRef(targetRef) : undefined;
 }
 
-function toPolicyScope(
+function toFieldMappingScope(
   scopeJson: string | null,
   fallbackScope: Record<string, unknown>
-): MappingPolicy['rules'][number]['scope'] {
+): FieldMappingSet['rules'][number]['scope'] {
   const scope = parseJsonObject(scopeJson ?? '{}');
   return {
     kind: (readString(scope.kind) ??
       readString(fallbackScope.kind) ??
-      'tenant') as MappingPolicy['rules'][number]['scope']['kind'],
+      'tenant') as FieldMappingSet['rules'][number]['scope']['kind'],
     id: readString(scope.id) ?? readString(fallbackScope.id) ?? 'default',
   };
 }
 
-function toPolicyAction(action: string): MappingPolicy['rules'][number]['action'] {
+function toFieldMappingAction(action: string): FieldMappingSet['rules'][number]['action'] {
   return action === 'deny' || action === 'lock' ? action : 'allow';
 }
 

@@ -8,7 +8,7 @@ describe('field mapping flow data adapter', () => {
 				{
 					id: 'policy_1',
 					tenantId: 'tenant_a',
-					policyKey: 'default',
+					fieldMappingKey: 'default',
 					displayName: 'Default policy',
 					lifecycleState: 'draft'
 				}

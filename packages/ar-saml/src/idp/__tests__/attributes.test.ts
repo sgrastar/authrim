@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FieldCatalogBundle } from '@authrim/ar-lib-identity-mapping';
+import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping';
 import {
   buildSAMLAttributesForSP,
   buildSAMLAttributesForSPWithDiagnostics,
@@ -480,8 +480,8 @@ describe('buildSAMLAttributesFromMapping', () => {
             id: 'sp-specific',
             role: 'idp' as const,
             partnerEntityId: 'https://sp.example.edu/saml',
-            policySetId: 'policy-set-sp-example',
-            policyVersionId: 'policy-version-1',
+            fieldMappingSetId: 'policy-set-sp-example',
+            fieldMappingVersionId: 'policy-version-1',
             catalog,
             edges: [
               identityMappingEdge(

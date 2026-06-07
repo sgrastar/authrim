@@ -1,6 +1,6 @@
-import { executeRuntimeMapping, type SourceValueEnvelope } from '@authrim/ar-lib-identity-mapping';
+import { executeRuntimeMapping, type SourceValueEnvelope } from '@authrim/ar-lib-field-mapping';
 import type { DatabaseAdapter } from '../db/adapter';
-import type { OIDCIdentityMappingPolicySelector } from '../types/oidc';
+import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
 import {
   resolveRuntimeIdentityMappingBinding,
   type RuntimeIdentityMappingBinding,
@@ -10,7 +10,7 @@ export interface ApplyOIDCIdentityMappingInput {
   adapter: DatabaseAdapter;
   tenantId: string;
   clientId: string;
-  selector?: OIDCIdentityMappingPolicySelector | null;
+  selector?: OIDCIdentityMappingFieldMappingSelector | null;
   claims: Record<string, unknown>;
 }
 
@@ -28,25 +28,25 @@ export async function applyOIDCIdentityMapping(
       tenantId: input.tenantId,
       protocol: 'oidc',
       role: 'op',
-      policySetId: input.selector?.policySetId,
-      policyVersionId: input.selector?.policyVersionId,
+      fieldMappingSetId: input.selector?.fieldMappingSetId,
+      fieldMappingVersionId: input.selector?.fieldMappingVersionId,
       partnerEntityId: input.clientId,
       clientId: input.clientId,
     });
   } catch (error) {
-    if (!input.selector?.policySetId) {
+    if (!input.selector?.fieldMappingSetId) {
       return { claims: input.claims, binding: null };
     }
     throw error;
   }
 
   if (!binding) {
-    if (input.selector?.policySetId) {
+    if (input.selector?.fieldMappingSetId) {
       throw new OIDCIdentityMappingRuntimeError(
         'No active OIDC identity mapping binding found for selected policy',
         {
           code: 'policy.missing_identity_mapping_binding',
-          policySetId: input.selector.policySetId,
+          fieldMappingSetId: input.selector.fieldMappingSetId,
           clientId: input.clientId,
         }
       );
@@ -62,14 +62,14 @@ export async function applyOIDCIdentityMapping(
     edges: binding.edges,
     transforms: binding.transforms,
     validationRules: binding.validationRules,
-    policy: binding.policy,
+    fieldMappingSet: binding.fieldMappingSet,
   });
 
   if (runtimeResult.status === 'failed') {
     throw new OIDCIdentityMappingRuntimeError('OIDC identity mapping failed', {
       code: 'policy.identity_mapping_failed',
-      policySetId: binding.policySetId,
-      policyVersionId: binding.policyVersionId,
+      fieldMappingSetId: binding.fieldMappingSetId,
+      fieldMappingVersionId: binding.fieldMappingVersionId,
       clientId: input.clientId,
     });
   }
@@ -107,8 +107,8 @@ export class OIDCIdentityMappingRuntimeError extends Error {
     message: string,
     public readonly details: {
       code: string;
-      policySetId?: string;
-      policyVersionId?: string;
+      fieldMappingSetId?: string;
+      fieldMappingVersionId?: string;
       clientId?: string;
     }
   ) {

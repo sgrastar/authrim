@@ -20,9 +20,9 @@ export interface AttributeReleaseConsentPolicy {
 	mode: AttributeReleaseConsentMode;
 }
 
-export interface ClientIdentityMappingPolicySelector {
-	policySetId?: string;
-	policyVersionId?: string;
+export interface ClientIdentityMappingFieldMappingSetSelector {
+	fieldMappingSetId?: string;
+	fieldMappingVersionId?: string;
 	destinationNamespace?: string;
 	sourceProfileId?: string;
 	destinationProfileId?: string;
@@ -49,7 +49,7 @@ export interface Client {
 	skip_consent?: boolean;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
-	identity_mapping?: ClientIdentityMappingPolicySelector | null;
+	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
 	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
@@ -123,7 +123,7 @@ export interface CreateClientInput {
 	require_pkce?: boolean;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
-	identity_mapping?: ClientIdentityMappingPolicySelector | null;
+	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
 	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
@@ -157,7 +157,7 @@ export interface UpdateClientInput {
 	require_pkce?: boolean;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
-	identity_mapping?: ClientIdentityMappingPolicySelector | null;
+	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
 	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;

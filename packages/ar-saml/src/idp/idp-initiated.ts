@@ -314,12 +314,12 @@ async function resolveSAMLRuntimeIdentityMapping(
     tenantId,
     protocol: 'saml',
     role: 'idp',
-    policySetId: configured?.policySetId,
+    fieldMappingSetId: configured?.fieldMappingSetId,
     localEntityId: idpEntityId,
     partnerEntityId: spConfig.entityId,
   });
   if (!binding) {
-    if (configured?.policySetId) {
+    if (configured?.fieldMappingSetId) {
       throw new SAMLIdentityMappingRuntimeError([
         {
           category: 'policy',
@@ -341,11 +341,11 @@ async function resolveSAMLRuntimeIdentityMapping(
     edges: binding.edges,
     transforms: binding.transforms,
     validationRules: binding.validationRules,
-    policy: binding.policy,
+    fieldMappingSet: binding.fieldMappingSet,
     destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
     attributeDescriptors: configured?.attributeDescriptors,
-    policySetId: binding.policySetId,
-    policyVersionId: binding.policyVersionId,
+    fieldMappingSetId: binding.fieldMappingSetId,
+    fieldMappingVersionId: binding.fieldMappingVersionId,
     sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
     destinationProfileId: configured?.destinationProfileId ?? binding.destinationProfileId,
   };

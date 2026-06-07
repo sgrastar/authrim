@@ -1,6 +1,6 @@
-# @authrim/ar-lib-identity-mapping
+# @authrim/ar-lib-field-mapping
 
-Pure core package for the Unified Identity Mapping Control Plane PR1 contract.
+Pure core package for the Field Mapping Control Plane PR1 contract.
 
 ## Boundary
 
@@ -10,13 +10,13 @@ Admin API modules, queues, network clients, storage adapters, or repository code
 
 ## Exports
 
-- `@authrim/ar-lib-identity-mapping`: stable public types and pure functions.
-- `@authrim/ar-lib-identity-mapping/experimental`: draft preview types.
-- `@authrim/ar-lib-identity-mapping/test-support`: fixture builders and deterministic test helpers.
+- `@authrim/ar-lib-field-mapping`: stable public types and pure functions.
+- `@authrim/ar-lib-field-mapping/experimental`: draft preview types.
+- `@authrim/ar-lib-field-mapping/test-support`: fixture builders and deterministic test helpers.
 
 Stable root APIs include:
 
-- `resolveEffectivePolicy()`
+- `resolveEffectiveFieldMappingSet()`
 - `validateMappingInput()`
 - `dryRunMapping()`
 - `dryRunMappingBatch()`
@@ -42,7 +42,7 @@ Fixture coverage includes:
 - OIDC claims request shape
 - malformed input shape
 - regulated field shape
-- conflict policy shape
+- conflict field mapping set shape
 
 `./test-support` provides fixture builders, deterministic ID helpers through the stable
 root API, a test-only fingerprint provider, and static fixture validation helpers.
@@ -68,10 +68,10 @@ PR1 tests are split by purpose:
 Useful checks:
 
 ```sh
-pnpm --filter @authrim/ar-lib-identity-mapping typecheck
-pnpm --filter @authrim/ar-lib-identity-mapping test
-pnpm --filter @authrim/ar-lib-identity-mapping build
-pnpm exec prettier --check 'packages/ar-lib-identity-mapping/**/*.ts'
+pnpm --filter @authrim/ar-lib-field-mapping typecheck
+pnpm --filter @authrim/ar-lib-field-mapping test
+pnpm --filter @authrim/ar-lib-field-mapping build
+pnpm exec prettier --check 'packages/ar-lib-field-mapping/**/*.ts'
 ```
 
 ## Compatibility

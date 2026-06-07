@@ -70,30 +70,30 @@ interface DevSettings {
 	sources: Record<string, 'default' | 'kv' | 'env'>;
 }
 
-const policies = [
+const fieldMappingSets = [
 	{
-		id: 'policy-gakunin-basic',
+		id: 'field-mapping-gakunin-basic',
 		tenantId: TENANT_ID,
-		policyKey: 'gakunin-basic',
+		fieldMappingKey: 'gakunin-basic',
 		displayName: 'GakuNin basic profile',
 		description: 'Dev mock field mapping set for SAML attributes and OIDC claims.',
 		lifecycleState: 'active'
 	},
 	{
-		id: 'policy-researcher-oidc',
+		id: 'field-mapping-researcher-oidc',
 		tenantId: TENANT_ID,
-		policyKey: 'researcher-oidc',
+		fieldMappingKey: 'researcher-oidc',
 		displayName: 'Researcher OIDC claims',
 		description: 'Dev mock field mapping set for OIDC claim release testing.',
 		lifecycleState: 'draft'
 	}
 ];
 
-const policyVersions = [
+const fieldMappingVersions = [
 	{
-		id: 'policy-version-gakunin-basic-v1',
+		id: 'field-mapping-version-gakunin-basic-v1',
 		tenantId: TENANT_ID,
-		policySetId: 'policy-gakunin-basic',
+		fieldMappingSetId: 'field-mapping-gakunin-basic',
 		versionLabel: 'v1',
 		lifecycleState: 'active',
 		publishedAt: NOW,
@@ -193,7 +193,7 @@ const clients = new Map<string, DevClient>([
 			browser_refresh_token_policy: 'dpop_bound',
 			scope: 'openid profile email',
 			identity_mapping: {
-				policySetId: 'policy-gakunin-basic',
+				fieldMappingSetId: 'field-mapping-gakunin-basic',
 				destinationNamespace: 'oidc.claim'
 			},
 			attribute_release_consent: null,
@@ -233,7 +233,7 @@ const samlProviders = new Map<string, DevSamlProvider>([
 				logoutRequestSignaturePolicy: 'required',
 				attributePresetId: 'gakunin-basic',
 				identityMapping: {
-					policySetId: 'policy-gakunin-basic',
+					fieldMappingSetId: 'field-mapping-gakunin-basic',
 					destinationNamespace: 'saml.attribute'
 				}
 			}
@@ -469,14 +469,14 @@ function sampleDestinationProfiles() {
 function handleIdentityMapping(event: RequestEvent, segments: string[]): Response | null {
 	const method = event.request.method;
 	if (segments[0] === 'field-mapping-sets' && method === 'GET' && segments.length === 1) {
-		return json({ policies });
+		return json({ fieldMappingSets });
 	}
 	if (segments[0] === 'field-mapping-sets' && method === 'POST' && segments.length === 1) {
 		return json({
 			result: {
-				id: `policy-dev-${policies.length + 1}`,
+				id: `field-mapping-dev-${fieldMappingSets.length + 1}`,
 				tenantId: TENANT_ID,
-				policyKey: 'dev-created-policy',
+				fieldMappingKey: 'dev-created-field-mapping',
 				displayName: 'Dev created field mapping set',
 				lifecycleState: 'draft'
 			}
@@ -484,15 +484,17 @@ function handleIdentityMapping(event: RequestEvent, segments: string[]): Respons
 	}
 	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'GET') {
 		return json({
-			policyVersions: policyVersions.filter((version) => version.policySetId === segments[1])
+			fieldMappingVersions: fieldMappingVersions.filter(
+				(version) => version.fieldMappingSetId === segments[1]
+			)
 		});
 	}
 	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'POST') {
 		return json({
 			result: {
-				id: `policy-version-dev-${Date.now()}`,
+				id: `field-mapping-version-dev-${Date.now()}`,
 				tenantId: TENANT_ID,
-				policySetId: segments[1],
+				fieldMappingSetId: segments[1],
 				lifecycleState: 'draft'
 			}
 		});

@@ -2,7 +2,7 @@ import type {
 	IdentityMappingCatalogSummary,
 	IdentityMappingDestinationProfileSummary,
 	IdentityMappingExternalSchemaSummary,
-	IdentityMappingPolicySummary,
+	IdentityMappingFieldMappingSetSummary,
 	IdentityMappingProtocolSchemaSummary,
 	IdentityMappingSchemaReadinessRow,
 	IdentityMappingSourceProfileSummary
@@ -17,7 +17,7 @@ import type {
 } from './types';
 
 interface IdentityMappingFlowInput {
-	policies: IdentityMappingPolicySummary[];
+	policies: IdentityMappingFieldMappingSetSummary[];
 	catalogs: IdentityMappingCatalogSummary[];
 	sourceProfiles: IdentityMappingSourceProfileSummary[];
 	destinationProfiles: IdentityMappingDestinationProfileSummary[];
@@ -559,9 +559,9 @@ function ruleForNode(node: MappingNode): RuleDetail {
 		purpose: node.role === 'destination' ? 'attribute_release' : 'identity_mapping',
 		attributeSetHash: 'not configured',
 		consentMode: isPii ? 'until_attributes_change' : 'not_applicable',
-		releasePolicyVersion: 'not configured',
+		releaseFieldMappingVersion: 'not configured',
 		termsVersion: isPii ? 'tenant default required' : 'not_required',
-		privacyPolicyVersion: isPii ? 'tenant default required' : 'not_required',
+		privacyFieldMappingVersion: isPii ? 'tenant default required' : 'not_required',
 		denyReason: 'none',
 		runtime: 'loaded control-plane schema',
 		conflict: 'not evaluated',

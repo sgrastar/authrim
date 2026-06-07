@@ -7,8 +7,8 @@ import { adaptOidcClaimsPreview } from '../../adapters/oidc';
 import { adaptSamlAttributesPreview } from '../../adapters/saml';
 import { adaptScimUserPreview } from '../../adapters/scim';
 import { dryRunMapping } from '../../core/dry-run';
-import { resolveEffectivePolicy } from '../../core/policy';
-import type { MappingPolicy } from '../../core/types';
+import { resolveEffectiveFieldMappingSet } from '../../core/field-mapping-set';
+import type { FieldMappingSet } from '../../core/types';
 import { TEST_CATALOG, edge, fieldRef, validateStaticFixture } from '../../test-support';
 import type { StaticFixtureKind } from '../../test-support';
 
@@ -23,7 +23,7 @@ const fixtureNames: StaticFixtureKind[] = [
   'oidc-claims-request',
   'malformed-user',
   'regulated-user',
-  'conflict-policy',
+  'conflict-field-mapping-set',
 ];
 
 const emailEdge = edge(fieldRef('csv', 'email', 'field.csv.email'), {
@@ -110,11 +110,11 @@ describe('static fixtures', () => {
     expect(oidc.input?.sourceValues[0]?.metadata?.oidcClaimName).toBe('email');
   });
 
-  it('uses conflict fixture to explain discarded policy rules', () => {
-    const fixture = readFixture<{ policies: MappingPolicy[] }>('conflict-policy');
-    const result = resolveEffectivePolicy({ policies: fixture.policies });
+  it('uses conflict fixture to explain discarded field mapping rules', () => {
+    const fixture = readFixture<{ sets: FieldMappingSet[] }>('conflict-field-mapping-set');
+    const result = resolveEffectiveFieldMappingSet({ sets: fixture.sets });
 
-    expect(result.mergedPolicy.rules[0]?.id).toBe('deny.tenant.email');
+    expect(result.mergedSet.rules[0]?.id).toBe('deny.tenant.email');
     expect(result.discardedRuleSummary.map((item) => item.ruleId)).toEqual([
       'allow.platform.email',
     ]);
