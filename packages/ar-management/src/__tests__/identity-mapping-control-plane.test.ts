@@ -3092,7 +3092,10 @@ describe('identity mapping control plane Admin API handlers', () => {
   it('requires idempotency keys for mutation handlers', async () => {
     const adapter = createAdapter({});
     const app = new Hono<{ Bindings: Env }>();
-    app.post('/api/admin/field-mapping/field-mapping-sets', adminIdentityMappingPolicyCreateHandler);
+    app.post(
+      '/api/admin/field-mapping/field-mapping-sets',
+      adminIdentityMappingPolicyCreateHandler
+    );
 
     const response = await app.request(
       '/api/admin/field-mapping/field-mapping-sets',
