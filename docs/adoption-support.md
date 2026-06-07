@@ -52,6 +52,7 @@ We also welcome any other use cases where Authrim may be a good fit.
 - Initial setup support
 - Design review
 - Implementation approach consultation
+- Feedback sessions
 - Validation environment support
 
 ## What We Cannot Support
@@ -105,3 +106,5 @@ The time we can dedicate to adoption support and review is limited, so some requ
 Please share your intended use cases and current evaluation stage to the extent possible.
 
 We also welcome inquiries even if you are unsure whether Authrim is the right fit.
+
+Contact: [yuta@sgrastar.org](mailto:yuta@sgrastar.org)
