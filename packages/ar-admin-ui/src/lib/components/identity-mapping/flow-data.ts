@@ -316,6 +316,11 @@ function canonicalTargetNode(input: {
 		id: `canonical-${slug(input.id)}`,
 		ruleId: `canonical-${slug(input.id)}`,
 		role: 'target',
+		fieldRef: {
+			namespace: 'authrim.profile',
+			path: input.path,
+			catalogEntryId: input.stableFieldId
+		},
 		label: input.label,
 		caption: '',
 		type: displayValueType(input.valueType),
@@ -355,6 +360,10 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 			id: nodeKey,
 			ruleId: nodeKey,
 			role,
+			fieldRef: {
+				namespace: namespaceForProfile(profile.adapter),
+				path: field.key
+			},
 			adapter: profile.adapter,
 			profileId: profile.id,
 			profileTitle: profile.title,
@@ -668,6 +677,19 @@ function titleCase(value: string): string {
 function adapterFrom(value: string): MappingAdapter {
 	const normalized = value.toLowerCase();
 	return defaultAdapters.find((adapter) => normalized.includes(adapter.toLowerCase())) ?? 'CSV';
+}
+
+function namespaceForProfile(adapter: MappingAdapter): string {
+	switch (adapter) {
+		case 'OIDC':
+			return 'oidc.claim';
+		case 'SAML':
+			return 'saml.attribute';
+		case 'SCIM':
+			return 'scim.attribute';
+		case 'CSV':
+			return 'csv.column';
+	}
 }
 
 function isSourceProtocol(protocol: string): boolean {

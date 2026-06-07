@@ -64,7 +64,11 @@
 			{ path: '/admin/audit-logs', label: $LL.admin_nav_user_audit_logs(), icon: 'i-ph-file-text' },
 			{ path: '/admin/access-trace', label: $LL.admin_nav_access_trace(), icon: 'i-ph-path' },
 			{ path: '/admin/support-ops', label: $LL.admin_nav_support_ops(), icon: 'i-ph-lifebuoy' },
-			{ path: '/admin/diagnostic-logging', label: $LL.admin_nav_diagnostic_logging(), icon: 'i-ph-bug' }
+			{
+				path: '/admin/diagnostic-logging',
+				label: $LL.admin_nav_diagnostic_logging(),
+				icon: 'i-ph-bug'
+			}
 		]
 	});
 
@@ -88,29 +92,55 @@
 			},
 			{ path: '/admin/saml', label: $LL.admin_nav_saml(), icon: 'i-ph-arrows-left-right' },
 			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
-			{ path: '/admin/consent-statements', label: $LL.admin_nav_consent_statements(), icon: 'i-ph-list-checks' }
+			{
+				path: '/admin/consent-statements',
+				label: $LL.admin_nav_consent_statements(),
+				icon: 'i-ph-list-checks'
+			}
 		],
 		identitySchema: [
 			{ path: '/admin/custom-claims', label: $LL.admin_nav_schema_settings(), icon: 'i-ph-tag' },
-			{ path: '/admin/scim-tokens', label: $LL.admin_nav_scim_tokens(), icon: 'i-ph-identification-card' }
+			{
+				path: '/admin/scim-tokens',
+				label: $LL.admin_nav_scim_tokens(),
+				icon: 'i-ph-identification-card'
+			}
 		],
 		identityMapping: {
-			parent: { href: '/admin/identity-mapping', icon: 'i-ph-graph', label: $LL.admin_nav_identity_mapping() },
+			parent: {
+				href: '/admin/identity-mapping',
+				icon: 'i-ph-graph',
+				label: $LL.admin_nav_identity_mapping()
+			},
 			children: [
 				{ href: '/admin/identity-mapping/profiles', label: $LL.admin_nav_source_destination() },
-				{ href: '/admin/identity-mapping/mapping-policies', label: $LL.admin_nav_mapping_policies() },
-				{ href: '/admin/identity-mapping/resolution-center', label: $LL.admin_nav_resolution_center() }
+				{
+					href: '/admin/identity-mapping/mapping-policies',
+					label: $LL.admin_nav_mapping_policies()
+				},
+				{
+					href: '/admin/identity-mapping/resolution-center',
+					label: $LL.admin_nav_resolution_center()
+				}
 			]
 		},
 		branding: [
 			{ path: '/admin/login-methods', label: $LL.admin_nav_login_methods(), icon: 'i-ph-sign-in' },
 			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
-			{ path: '/admin/tenant-discovery', label: $LL.admin_nav_tenant_discovery(), icon: 'i-ph-signpost' }
+			{
+				path: '/admin/tenant-discovery',
+				label: $LL.admin_nav_tenant_discovery(),
+				icon: 'i-ph-signpost'
+			}
 		],
 		configuration: [
 			{ path: '/admin/info', label: $LL.admin_nav_info(), icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: $LL.admin_nav_settings(), icon: 'i-ph-gear' },
-			{ path: '/admin/email-settings', label: $LL.admin_nav_email_settings(), icon: 'i-ph-envelope-simple' },
+			{
+				path: '/admin/email-settings',
+				label: $LL.admin_nav_email_settings(),
+				icon: 'i-ph-envelope-simple'
+			},
 			{ path: '/admin/plugins', label: $LL.admin_nav_plugins(), icon: 'i-ph-puzzle-piece' }
 		]
 	});
@@ -119,7 +149,11 @@
 	const navPlatform = $derived({
 		tenantManagement: [
 			{ path: '/admin/tenants', label: $LL.admin_nav_tenants(), icon: 'i-ph-buildings' },
-			{ path: '/admin/tenant-vanity-domains', label: $LL.admin_nav_vanity_domains(), icon: 'i-ph-globe' }
+			{
+				path: '/admin/tenant-vanity-domains',
+				label: $LL.admin_nav_vanity_domains(),
+				icon: 'i-ph-globe'
+			}
 		],
 		security: [
 			{ path: '/admin/security', label: $LL.admin_nav_security(), icon: 'i-ph-lock-key' },
@@ -127,19 +161,35 @@
 		],
 		operations: [
 			{ path: '/admin/scale', label: $LL.admin_nav_scale(), icon: 'i-ph-chart-bar' },
-			{ path: '/admin/storage-destinations', label: $LL.admin_nav_storage_destinations(), icon: 'i-ph-archive' },
+			{
+				path: '/admin/storage-destinations',
+				label: $LL.admin_nav_storage_destinations(),
+				icon: 'i-ph-archive'
+			},
 			{
 				path: '/admin/logging-policies',
 				label: $LL.admin_nav_logging_policies(),
 				icon: 'i-ph-list-magnifying-glass'
 			},
-			{ path: '/admin/notifications', label: $LL.admin_nav_notification_center(), icon: 'i-ph-bell' },
-			{ path: '/admin/database-connections', label: $LL.admin_nav_database_connections(), icon: 'i-ph-database' },
+			{
+				path: '/admin/notifications',
+				label: $LL.admin_nav_notification_center(),
+				icon: 'i-ph-bell'
+			},
+			{
+				path: '/admin/database-connections',
+				label: $LL.admin_nav_database_connections(),
+				icon: 'i-ph-database'
+			},
 			{ path: '/admin/dr-backup', label: $LL.admin_nav_dr_backup(), icon: 'i-ph-cloud-arrow-up' },
 			{ path: '/admin/jobs', label: $LL.admin_nav_jobs(), icon: 'i-ph-queue' },
 			{ path: '/admin/approvals', label: $LL.admin_nav_approvals(), icon: 'i-ph-checks' }
 		],
-		adminUsers: { path: '/admin/admins', label: $LL.admin_nav_admin_users(), icon: 'i-ph-user-gear' },
+		adminUsers: {
+			path: '/admin/admins',
+			label: $LL.admin_nav_admin_users(),
+			icon: 'i-ph-user-gear'
+		},
 		adminAccessControl: {
 			parent: {
 				href: '/admin/admin-access-control',
@@ -155,10 +205,22 @@
 		},
 		adminOthers: [
 			{ path: '/admin/machine-access', label: $LL.admin_nav_machine_access(), icon: 'i-ph-robot' },
-			{ path: '/admin/ip-allowlist', label: $LL.admin_nav_ip_allowlist(), icon: 'i-ph-shield-check' },
+			{
+				path: '/admin/ip-allowlist',
+				label: $LL.admin_nav_ip_allowlist(),
+				icon: 'i-ph-shield-check'
+			},
 			{ path: '/admin/admin-logging', label: $LL.admin_nav_admin_logging(), icon: 'i-ph-activity' },
-			{ path: '/admin/admin-audit', label: $LL.admin_nav_admin_audit_log(), icon: 'i-ph-clipboard-text' },
-			{ path: '/admin/operational-logs', label: $LL.admin_nav_operational_logs(), icon: 'i-ph-scroll' }
+			{
+				path: '/admin/admin-audit',
+				label: $LL.admin_nav_admin_audit_log(),
+				icon: 'i-ph-clipboard-text'
+			},
+			{
+				path: '/admin/operational-logs',
+				label: $LL.admin_nav_operational_logs(),
+				icon: 'i-ph-scroll'
+			}
 		]
 	});
 
@@ -224,7 +286,9 @@
 	const currentBreadcrumb = $derived(() => {
 		const path = $page.url.pathname;
 		if (path === '/admin') {
-			return [{ label: $LL.admin_nav_dashboard(), icon: 'i-ph-squares-four', level: 'tenant' as const }];
+			return [
+				{ label: $LL.admin_nav_dashboard(), icon: 'i-ph-squares-four', level: 'tenant' as const }
+			];
 		}
 
 		// Find matching nav item
@@ -233,7 +297,13 @@
 			return [{ label: match.label, icon: match.icon, level: 'tenant' as const }];
 		}
 
-		return [{ label: $LL.admin_header_admin_fallback(), icon: 'i-ph-squares-four', level: 'tenant' as const }];
+		return [
+			{
+				label: $LL.admin_header_admin_fallback(),
+				icon: 'i-ph-squares-four',
+				level: 'tenant' as const
+			}
+		];
 	});
 
 	onMount(async () => {

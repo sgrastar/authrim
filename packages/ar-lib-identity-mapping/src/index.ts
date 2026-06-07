@@ -56,6 +56,8 @@ export type {
 
 export { validateCatalogBundle, findCatalogEntry } from './core/catalog';
 export { dryRunMapping, dryRunMappingBatch } from './core/dry-run';
+export { executeRuntimeMapping } from './core/runtime';
+export type { RuntimeMappingResult } from './core/runtime';
 export { createDeterministicId, shortHash } from './core/ids';
 export {
   filterSafeMetadata,

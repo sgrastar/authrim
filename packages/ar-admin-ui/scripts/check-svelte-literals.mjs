@@ -80,8 +80,12 @@ function compact(value) {
 
 function stripBlocks(content) {
 	return content
-		.replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, (match) => '\n'.repeat(match.split('\n').length - 1))
-		.replace(/<style\b[\s\S]*?<\/style\b[^>]*>/gi, (match) => '\n'.repeat(match.split('\n').length - 1))
+		.replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, (match) =>
+			'\n'.repeat(match.split('\n').length - 1)
+		)
+		.replace(/<style\b[\s\S]*?<\/style\b[^>]*>/gi, (match) =>
+			'\n'.repeat(match.split('\n').length - 1)
+		)
 		.replace(/<!--[\s\S]*?-->/g, (match) => '\n'.repeat(match.split('\n').length - 1));
 }
 

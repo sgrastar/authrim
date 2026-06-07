@@ -73,8 +73,88 @@ export class AttributeReleaseConsentRepository {
     );
   }
 
+  async findLatestGrantedConsentForDestination(input: {
+    tenant_id: string;
+    subject_id: string;
+    destination_type: string;
+    destination_id: string;
+    now?: number;
+  }): Promise<AttributeReleaseConsentRow | null> {
+    const now = input.now ?? getCurrentTimestamp();
+    const rows = await this.adapter.query<AttributeReleaseConsentRow>(
+      `SELECT *
+         FROM attribute_release_consents
+        WHERE tenant_id = ?
+          AND subject_id = ?
+          AND destination_type = ?
+          AND destination_id = ?
+          AND consent_state = ?
+        ORDER BY last_confirmed_at DESC, updated_at DESC
+        LIMIT 5`,
+      [input.tenant_id, input.subject_id, input.destination_type, input.destination_id, 'granted']
+    );
+    return rows.find((row) => row.expires_at === null || row.expires_at > now) ?? null;
+  }
+
   async grant(input: GrantAttributeReleaseConsentInput): Promise<AttributeReleaseConsentRow> {
     const now = getCurrentTimestamp();
+    const existing = await this.adapter.queryOne<AttributeReleaseConsentRow>(
+      `SELECT *
+         FROM attribute_release_consents
+        WHERE tenant_id = ?
+          AND subject_id = ?
+          AND destination_type = ?
+          AND destination_id = ?
+          AND attribute_set_hash = ?
+        LIMIT 1`,
+      [
+        input.tenant_id,
+        input.subject_id,
+        input.destination_type,
+        input.destination_id,
+        input.attribute_set_hash,
+      ]
+    );
+
+    if (existing) {
+      await this.adapter.execute(
+        `UPDATE attribute_release_consents
+            SET account_id = ?, consent_mode = ?, consent_state = ?, consent_record_id = ?, last_confirmed_at = ?, expires_at = ?, revoked_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ?`,
+        [
+          input.account_id ?? existing.account_id ?? null,
+          input.consent_mode,
+          'granted',
+          input.consent_record_id ?? null,
+          now,
+          input.expires_at ?? null,
+          null,
+          now,
+          existing.id,
+          input.tenant_id,
+        ]
+      );
+      return (
+        (await this.adapter.queryOne<AttributeReleaseConsentRow>(
+          `SELECT *
+             FROM attribute_release_consents
+            WHERE id = ? AND tenant_id = ?
+            LIMIT 1`,
+          [existing.id, input.tenant_id]
+        )) ?? {
+          ...existing,
+          account_id: input.account_id ?? existing.account_id ?? null,
+          consent_mode: input.consent_mode,
+          consent_state: 'granted',
+          consent_record_id: input.consent_record_id ?? null,
+          last_confirmed_at: now,
+          expires_at: input.expires_at ?? null,
+          revoked_at: null,
+          updated_at: now,
+        }
+      );
+    }
+
     const row: AttributeReleaseConsentRow = {
       id: input.id ?? generateId(),
       tenant_id: input.tenant_id,
@@ -99,16 +179,7 @@ export class AttributeReleaseConsentRepository {
         id, tenant_id, subject_id, account_id, destination_type, destination_id,
         attribute_set_hash, consent_mode, consent_state, consent_record_id,
         first_granted_at, last_confirmed_at, expires_at, revoked_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(tenant_id, subject_id, destination_type, destination_id, attribute_set_hash)
-      DO UPDATE SET
-        consent_mode = excluded.consent_mode,
-        consent_state = excluded.consent_state,
-        consent_record_id = excluded.consent_record_id,
-        last_confirmed_at = excluded.last_confirmed_at,
-        expires_at = excluded.expires_at,
-        revoked_at = NULL,
-        updated_at = excluded.updated_at`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.tenant_id,

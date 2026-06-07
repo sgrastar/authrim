@@ -64,6 +64,7 @@ import {
   buildStandardUserClaims,
   canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
+  normalizeAttributeReleaseConsentPolicy,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
@@ -2993,12 +2994,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       consentRequired = true; // fail-safe: require consent
     }
 
+    const attributeReleaseConsentPolicy = normalizeAttributeReleaseConsentPolicy(
+      clientMetadata?.attribute_release_consent
+    );
+    const requiresPerAuthorizationAttributeReleaseConsent =
+      attributeReleaseConsentPolicy?.enabled === true &&
+      attributeReleaseConsentPolicy.mode === 'every_time';
+
     // Debug: Log consent decision factors
     log.info('Consent check - settings', {
       action: 'consent_check_settings',
       clientId: validClientId,
       consentRequired,
       firstParty,
+      attributeReleaseConsentMode: attributeReleaseConsentPolicy?.mode ?? null,
+      requiresPerAuthorizationAttributeReleaseConsent,
       // Legacy D1 fields (for migration tracking)
       legacy_is_trusted: clientMetadata?.is_trusted,
       legacy_skip_consent: clientMetadata?.skip_consent,
@@ -3013,13 +3023,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       clientId: validClientId,
       isTrustedClient,
       promptIncludesConsent: prompt?.includes('consent'),
-      willSkipConsent: isTrustedClient && !prompt?.includes('consent'),
+      willSkipConsent:
+        isTrustedClient &&
+        !prompt?.includes('consent') &&
+        !requiresPerAuthorizationAttributeReleaseConsent,
     });
 
     const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
-    if (isTrustedClient && !prompt?.includes('consent')) {
+    if (
+      isTrustedClient &&
+      !prompt?.includes('consent') &&
+      !requiresPerAuthorizationAttributeReleaseConsent
+    ) {
       // Check if consent already exists (using cache)
       const existingConsent = await getCachedConsent(
         c.env,
@@ -3119,6 +3136,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         // Force consent if prompt=consent
         if (prompt?.includes('consent')) {
+          consentRequired = true;
+        }
+        if (requiresPerAuthorizationAttributeReleaseConsent) {
           consentRequired = true;
         }
       } catch (error) {

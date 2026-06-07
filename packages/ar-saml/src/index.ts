@@ -48,7 +48,7 @@ import {
 
 // Import handlers (to be implemented)
 import { handleIdPMetadata } from './idp/metadata';
-import { handleIdPSSO } from './idp/sso';
+import { handleIdPAttributeReleaseConsent, handleIdPSSO } from './idp/sso';
 import { handleIdPInitiated } from './idp/idp-initiated';
 import { handleIdPSLO } from './idp/slo';
 import { handleSPMetadata } from './sp/metadata';
@@ -136,6 +136,12 @@ app.get('/saml/idp/sso', handleIdPSSO);
  * Receives SAML AuthnRequest via POST body
  */
 app.post('/saml/idp/sso', handleIdPSSO);
+
+/**
+ * Attribute release consent callback
+ * Handles the user decision for SAML Attribute release before responding to the SP.
+ */
+app.post('/saml/idp/attribute-release-consent', handleIdPAttributeReleaseConsent);
 
 /**
  * IdP-Initiated SSO

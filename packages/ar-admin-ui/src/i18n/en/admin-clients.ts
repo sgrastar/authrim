@@ -197,6 +197,23 @@ const adminClients = {
 	admin_client_detail_allow_id_token_response: 'Allow ID Token Response',
 	admin_client_detail_allow_id_token_response_desc: 'Enable id_token response type (implicit flow)',
 	admin_client_detail_claims_parameter: 'Claims Parameter',
+	admin_client_detail_identity_mapping_section: 'Identity mapping',
+	admin_client_detail_identity_mapping_policy: 'OIDC claims mapping policy',
+	admin_client_detail_identity_mapping_policy_default: 'Tenant default / no client override',
+	admin_client_detail_identity_mapping_policy_hint:
+		'Selects the active identity mapping policy used for OIDC UserInfo and token claims for this client.',
+	admin_client_detail_identity_mapping_policy_display_hint:
+		'Client override for OIDC identity mapping. Empty uses tenant default activation.',
+	admin_client_detail_attribute_release_consent: 'Claim release consent',
+	admin_client_detail_attribute_release_consent_disabled: 'Do not ask before releasing claims',
+	admin_client_detail_attribute_release_consent_once: 'Ask the first time, then remember',
+	admin_client_detail_attribute_release_consent_every_time: 'Ask every OIDC release',
+	admin_client_detail_attribute_release_consent_until_attributes_change:
+		'Ask again when claims change',
+	admin_client_detail_attribute_release_consent_hint:
+		'Controls whether Authrim must confirm claim release before issuing ID Token or UserInfo claims to this client.',
+	admin_client_detail_attribute_release_consent_display_hint:
+		'Runtime enforcement applies to OIDC ID Token and UserInfo claim release.',
 	admin_client_detail_scope_required: 'Scope required',
 	admin_client_detail_advanced_syntax_claims: 'Advanced Syntax for Claims',
 	admin_client_detail_asc: 'ASC',

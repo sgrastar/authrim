@@ -101,6 +101,7 @@ export interface SAMLAttributeReleaseRule {
 }
 
 export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
+export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
 
 export interface SAMLProviderConfig {
 	description?: string;
@@ -139,6 +140,18 @@ export interface SAMLProviderConfig {
 	attributeMapping?: Record<string, string>;
 	attributeReleasePolicy?: {
 		attributes: SAMLAttributeReleaseRule[];
+	};
+	attributeReleaseConsent?: {
+		enabled: boolean;
+		mode: AttributeReleaseConsentMode;
+	};
+	identityMapping?: {
+		policySetId?: string;
+		policyVersionId?: string;
+		destinationNamespace?: string;
+		sourceProfileId?: string;
+		destinationProfileId?: string;
+		attributeDescriptors?: Record<string, unknown>;
 	};
 	attributePresetId?: string;
 	attributePresetVersion?: string;

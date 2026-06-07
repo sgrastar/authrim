@@ -4,12 +4,17 @@
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import {
 		adminClientsAPI,
+		type AttributeReleaseConsentPolicy,
 		type ClaimReleasePolicy,
 		type ClaimsParameterPolicy,
 		type Client,
 		type ClientUsage,
 		type UpdateClientInput
 	} from '$lib/api/admin-clients';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingPolicySummary
+	} from '$lib/api/admin-identity-mapping';
 	import {
 		buildClientDownstreamGrantFormFromClient,
 		createDefaultClientDownstreamGrantForm,
@@ -32,6 +37,7 @@
 	let client = $state<Client | null>(null);
 	let usage = $state<ClientUsage | null>(null);
 	let clientSettings = $state<CategorySettings | null>(null);
+	let mappingPolicies = $state<IdentityMappingPolicySummary[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 
@@ -328,6 +334,49 @@
 			.join('\n');
 	}
 
+	function identityMappingPolicyLabel(policySetId?: string | null): string {
+		if (!policySetId) return $LL.admin_client_detail_identity_mapping_policy_default();
+		const policy = mappingPolicies.find((item) => item.id === policySetId);
+		return policy ? `${policy.displayName} (${policy.lifecycleState})` : policySetId;
+	}
+
+	function attributeReleaseConsentValue(policy?: AttributeReleaseConsentPolicy | null): string {
+		return policy?.enabled ? policy.mode : 'disabled';
+	}
+
+	function setAttributeReleaseConsent(value: string) {
+		editForm.attribute_release_consent =
+			value === 'disabled'
+				? null
+				: {
+						enabled: true,
+						mode: value === 'every_time' || value === 'until_attributes_change' ? value : 'once'
+					};
+	}
+
+	function attributeReleaseConsentLabel(policy?: AttributeReleaseConsentPolicy | null): string {
+		switch (attributeReleaseConsentValue(policy)) {
+			case 'once':
+				return $LL.admin_client_detail_attribute_release_consent_once();
+			case 'every_time':
+				return $LL.admin_client_detail_attribute_release_consent_every_time();
+			case 'until_attributes_change':
+				return $LL.admin_client_detail_attribute_release_consent_until_attributes_change();
+			default:
+				return $LL.admin_client_detail_attribute_release_consent_disabled();
+		}
+	}
+
+	function setIdentityMappingPolicy(policySetId: string) {
+		editForm.identity_mapping = policySetId
+			? {
+					...(editForm.identity_mapping ?? {}),
+					policySetId,
+					destinationNamespace: editForm.identity_mapping?.destinationNamespace ?? 'oidc.claim'
+				}
+			: null;
+	}
+
 	function formatEnabled(value?: boolean): string {
 		return value === false ? $LL.admin_saml_disabled() : $LL.admin_saml_enabled();
 	}
@@ -416,6 +465,9 @@
 			(a.scope ?? '') === (b.scope ?? '') &&
 			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
 			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
+			(a.identity_mapping?.policySetId ?? '') === (b.identity_mapping?.policySetId ?? '') &&
+			attributeReleaseConsentValue(a.attribute_release_consent) ===
+				attributeReleaseConsentValue(b.attribute_release_consent) &&
 			(a.asc_enabled ?? true) === (b.asc_enabled ?? true) &&
 			(a.asc_protected_request_required ?? true) === (b.asc_protected_request_required ?? true) &&
 			(a.asc_sao_enabled ?? true) === (b.asc_sao_enabled ?? true) &&
@@ -801,7 +853,15 @@
 		error = '';
 
 		try {
-			client = normalizeClientArrays(await adminClientsAPI.get(clientId));
+			const [loadedClient, loadedMappingPolicies] = await Promise.all([
+				adminClientsAPI.get(clientId),
+				adminIdentityMappingAPI
+					.listPolicies()
+					.then((result) => result.policies)
+					.catch(() => [] as IdentityMappingPolicySummary[])
+			]);
+			client = normalizeClientArrays(loadedClient);
+			mappingPolicies = loadedMappingPolicies;
 			// Load usage statistics (only on detail page per review feedback)
 			try {
 				usage = await adminClientsAPI.getUsage(clientId);
@@ -859,6 +919,13 @@
 			asc_protected_request_required: client.asc_protected_request_required ?? true,
 			asc_sao_enabled: client.asc_sao_enabled ?? true,
 			asc_transformed_claims_enabled: client.asc_transformed_claims_enabled ?? true,
+			identity_mapping: client.identity_mapping?.policySetId
+				? {
+						...(client.identity_mapping ?? {}),
+						destinationNamespace: client.identity_mapping.destinationNamespace ?? 'oidc.claim'
+					}
+				: null,
+			attribute_release_consent: client.attribute_release_consent ?? null,
 			asc_allowed_transformed_claims: getEffectiveAscAllowedTransformedClaims(client)
 		};
 		claimsParameterPolicyText = formatClaimsParameterPolicy(client.claims_parameter_policy);
@@ -2546,6 +2613,81 @@
 					</div>
 				{/if}
 			{:else if activeTab === 'claims'}
+				<section class="section-spacing">
+					<h2 class="section-title-border">
+						{$LL.admin_client_detail_identity_mapping_section()}
+					</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">{$LL.admin_client_detail_identity_mapping_policy()}</label>
+							{#if isEditing}
+								<select
+									class="form-select"
+									value={editForm.identity_mapping?.policySetId ?? ''}
+									onchange={(event) => setIdentityMappingPolicy(event.currentTarget.value)}
+								>
+									<option value=""
+										>{$LL.admin_client_detail_identity_mapping_policy_default()}</option
+									>
+									{#each mappingPolicies as policy (policy.id)}
+										<option value={policy.id}>
+											{policy.displayName} ({policy.lifecycleState})
+										</option>
+									{/each}
+								</select>
+								<p class="form-hint">
+									{$LL.admin_client_detail_identity_mapping_policy_hint()}
+								</p>
+							{:else}
+								<p class="display-text">
+									{identityMappingPolicyLabel(client.identity_mapping?.policySetId)}
+								</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_identity_mapping_policy_display_hint()}
+								</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">{$LL.admin_client_detail_attribute_release_consent()}</label
+							>
+							{#if isEditing}
+								<select
+									class="form-select"
+									value={attributeReleaseConsentValue(editForm.attribute_release_consent)}
+									onchange={(event) => setAttributeReleaseConsent(event.currentTarget.value)}
+								>
+									<option value="disabled"
+										>{$LL.admin_client_detail_attribute_release_consent_disabled()}</option
+									>
+									<option value="once"
+										>{$LL.admin_client_detail_attribute_release_consent_once()}</option
+									>
+									<option value="every_time"
+										>{$LL.admin_client_detail_attribute_release_consent_every_time()}</option
+									>
+									<option value="until_attributes_change"
+										>{$LL.admin_client_detail_attribute_release_consent_until_attributes_change()}</option
+									>
+								</select>
+								<p class="form-hint">
+									{$LL.admin_client_detail_attribute_release_consent_hint()}
+								</p>
+							{:else}
+								<p class="display-text">
+									{attributeReleaseConsentLabel(client.attribute_release_consent)}
+								</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_attribute_release_consent_display_hint()}
+								</p>
+							{/if}
+						</div>
+					</div>
+				</section>
+
 				<section class="section-spacing">
 					<h2 class="section-title-border">{$LL.admin_client_detail_claims_parameter()}</h2>
 

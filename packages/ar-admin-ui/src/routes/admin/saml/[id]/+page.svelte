@@ -5,12 +5,17 @@
 	import { onMount } from 'svelte';
 	import {
 		adminSAMLAPI,
+		type AttributeReleaseConsentMode,
 		type SAMLAttributePreset,
 		type SAMLJitEmailLinkingPolicy,
 		type SAMLProvider,
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingPolicySummary
+	} from '$lib/api/admin-identity-mapping';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
@@ -40,6 +45,7 @@
 
 	let provider = $state<SAMLProvider | null>(null);
 	let presets = $state<SAMLAttributePreset[]>([]);
+	let mappingPolicies = $state<IdentityMappingPolicySummary[]>([]);
 	let loading = $state(true);
 	let saving = $state(false);
 	let busyAction = $state('');
@@ -78,6 +84,8 @@
 	);
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
 	let attributePresetId = $state('');
+	let attributeReleaseConsentSetting = $state<'disabled' | AttributeReleaseConsentMode>('disabled');
+	let identityMappingPolicySetId = $state('');
 	let attributeMappingJson = $state('{}');
 	let certificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
 	let certificatePreviewError = $state('');
@@ -92,12 +100,14 @@
 		loading = true;
 		error = '';
 		try {
-			const [loadedProvider, presetResult] = await Promise.all([
+			const [loadedProvider, presetResult, policyResult] = await Promise.all([
 				adminSAMLAPI.getProvider(providerId),
-				adminSAMLAPI.listAttributePresets()
+				adminSAMLAPI.listAttributePresets(),
+				adminIdentityMappingAPI.listPolicies()
 			]);
 			provider = loadedProvider;
 			presets = presetResult.presets;
+			mappingPolicies = policyResult.policies;
 			populateForm(loadedProvider);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_load();
@@ -143,6 +153,10 @@
 		passkeyAuthnContextClassRef =
 			data.config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
 		attributePresetId = data.config.attributePresetId || '';
+		attributeReleaseConsentSetting = data.config.attributeReleaseConsent?.enabled
+			? data.config.attributeReleaseConsent.mode
+			: 'disabled';
+		identityMappingPolicySetId = data.config.identityMapping?.policySetId || '';
 		attributeMappingJson = JSON.stringify(data.config.attributeMapping || {}, null, 2);
 		certificatePreview = null;
 		certificatePreviewError = '';
@@ -286,6 +300,24 @@
 			authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
+			attributeReleaseConsent:
+				attributeReleaseConsentSetting === 'disabled'
+					? {
+							enabled: false,
+							mode: 'once'
+						}
+					: {
+							enabled: true,
+							mode: attributeReleaseConsentSetting
+						},
+			identityMapping: identityMappingPolicySetId
+				? {
+						...(provider?.config.identityMapping ?? {}),
+						policySetId: identityMappingPolicySetId,
+						destinationNamespace:
+							provider?.config.identityMapping?.destinationNamespace ?? 'saml.attribute'
+					}
+				: undefined,
 			...selectedPresetConfig()
 		};
 	}
@@ -792,6 +824,54 @@
 									<option value={preset.id}>{preset.label}</option>
 								{/each}
 							</select>
+						</div>
+
+						<div class="form-group">
+							<label for="identityMappingPolicy" class="form-label"
+								>{$LL.admin_saml_detail_identity_mapping_policy()}</label
+							>
+							<select
+								id="identityMappingPolicy"
+								bind:value={identityMappingPolicySetId}
+								class="form-select"
+							>
+								<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
+								{#each mappingPolicies as policy (policy.id)}
+									<option value={policy.id}>
+										{policy.displayName} ({policy.lifecycleState})
+									</option>
+								{/each}
+							</select>
+							<p class="field-hint">
+								{$LL.admin_saml_detail_identity_mapping_policy_hint()}
+							</p>
+						</div>
+
+						<div class="form-group">
+							<label for="attributeReleaseConsent" class="form-label"
+								>{$LL.admin_saml_detail_attribute_release_consent()}</label
+							>
+							<select
+								id="attributeReleaseConsent"
+								bind:value={attributeReleaseConsentSetting}
+								class="form-select"
+							>
+								<option value="disabled"
+									>{$LL.admin_saml_detail_attribute_release_consent_disabled()}</option
+								>
+								<option value="once"
+									>{$LL.admin_saml_detail_attribute_release_consent_once()}</option
+								>
+								<option value="every_time"
+									>{$LL.admin_saml_detail_attribute_release_consent_every_time()}</option
+								>
+								<option value="until_attributes_change"
+									>{$LL.admin_saml_detail_attribute_release_consent_until_attributes_change()}</option
+								>
+							</select>
+							<p class="field-hint">
+								{$LL.admin_saml_detail_attribute_release_consent_hint()}
+							</p>
 						</div>
 
 						<div class="form-group">

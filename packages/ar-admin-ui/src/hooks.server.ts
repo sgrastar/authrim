@@ -27,6 +27,7 @@ interface ServiceBinding {
 const MAX_PROXY_BODY_BYTES = 10 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 30000;
 const LOCAL_ADMIN_PROXY_FLAG = 'AUTHRIM_ALLOW_LOCAL_ADMIN_PROXY';
+const ADMIN_UI_DEV_MOCK_FLAG = 'AUTHRIM_ADMIN_UI_DEV_MOCK';
 const ADMIN_MACHINE_AUDIENCE = 'authrim:admin-api';
 const ADMIN_UI_BFF_DEFAULT_SCOPE = 'admin-ui:proxy';
 const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
@@ -98,6 +99,30 @@ function getLocalProxyFlag(platformEnv?: Record<string, unknown>): boolean {
 	];
 
 	return candidates.some((candidate) => String(candidate || '').toLowerCase() === 'true');
+}
+
+function isAdminUiDevMockFlagEnabled(platformEnv?: Record<string, unknown>): boolean {
+	const importMetaEnv = import.meta.env as Record<string, string | undefined>;
+	const candidates = [
+		platformEnv?.[ADMIN_UI_DEV_MOCK_FLAG],
+		importMetaEnv[ADMIN_UI_DEV_MOCK_FLAG],
+		typeof process !== 'undefined' ? process.env?.[ADMIN_UI_DEV_MOCK_FLAG] : undefined
+	];
+
+	return candidates.some((candidate) => String(candidate || '').toLowerCase() === 'true');
+}
+
+async function handleDevAdminMockIfEnabled(
+	event: RequestEvent,
+	platformEnv?: Record<string, unknown>
+): Promise<Response | null> {
+	if (!import.meta.env.DEV) return null;
+	if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'production') return null;
+	if (!isLoopbackHost(event.url.hostname)) return null;
+	if (!isAdminUiDevMockFlagEnabled(platformEnv)) return null;
+
+	const { handleDevAdminMock } = await import('$lib/server/dev-admin-mock');
+	return handleDevAdminMock(event, platformEnv);
 }
 
 function getBackendUrlCandidates(platformEnv?: Record<string, unknown>): unknown[] {
@@ -750,6 +775,11 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
 			status: 403
 		});
 		return new Response('Forbidden: CSRF check failed', { status: 403 });
+	}
+
+	const devAdminMockResponse = await handleDevAdminMockIfEnabled(event, platformEnv);
+	if (devAdminMockResponse) {
+		return devAdminMockResponse;
 	}
 
 	const arRouter = platformEnv?.AR_ROUTER as ServiceBinding | undefined;

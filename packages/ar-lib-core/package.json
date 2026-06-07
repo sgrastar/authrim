@@ -59,6 +59,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@authrim/ar-lib-identity-mapping": "workspace:*",
     "@authrim/ar-lib-logging": "workspace:*",
     "hono": "4.12.21",
     "jose": "^6.1.2",

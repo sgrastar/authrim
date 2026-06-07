@@ -20,6 +20,7 @@
 		"lint": "eslint .",
 		"check:i18n": "node scripts/check-i18n-usage.mjs",
 		"check:i18n:strict": "node scripts/check-i18n-usage.mjs --strict",
+		"check:dev-mock-guard": "node scripts/check-dev-mock-guard.mjs",
 		"check:hardcoded-english": "node scripts/check-svelte-literals.mjs",
 		"check:hardcoded-english:strict": "node scripts/check-svelte-literals.mjs --strict",
 		"format": "prettier --write .",

@@ -53,6 +53,10 @@ import {
   hasSAORulesForTarget,
   canIssueTokenWithPIIStatus,
   resolveOIDCPIIRequirement,
+  applyOIDCIdentityMapping,
+  OIDCIdentityMappingRuntimeError,
+  enforceOIDCAttributeReleaseConsent,
+  OIDCAttributeReleaseConsentRequiredError,
 } from '@authrim/ar-lib-core';
 import {
   revokeToken,
@@ -563,6 +567,104 @@ function oauthError(
     },
     status
   );
+}
+
+async function applyOIDCIdentityMappingToIDTokenClaims(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string,
+  clientMetadata: ClientMetadata,
+  claims: Record<string, unknown>
+): Promise<{ ok: true; claims: Record<string, unknown> } | { ok: false; response: Response }> {
+  try {
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const mapped = await applyOIDCIdentityMapping({
+      adapter: authCtx.coreAdapter,
+      tenantId,
+      clientId,
+      selector: clientMetadata.identity_mapping,
+      claims,
+    });
+    return { ok: true, claims: mapped.claims };
+  } catch (error) {
+    getLogger(c)
+      .module('TOKEN')
+      .error('Failed to apply OIDC identity mapping for ID token', { clientId }, error as Error);
+    if (error instanceof OIDCIdentityMappingRuntimeError) {
+      return {
+        ok: false,
+        response: oauthError(
+          c,
+          'invalid_client',
+          'Client identity mapping configuration is invalid',
+          400
+        ),
+      };
+    }
+    return {
+      ok: false,
+      response: oauthError(c, 'server_error', 'Failed to apply identity mapping', 500),
+    };
+  }
+}
+
+async function enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientMetadata: ClientMetadata,
+  claims: Record<string, unknown>
+): Promise<{ ok: true } | { ok: false; response: Response }> {
+  const subjectId = typeof claims.sub === 'string' ? claims.sub : '';
+  if (!subjectId) {
+    return { ok: true };
+  }
+
+  try {
+    await enforceOIDCAttributeReleaseConsent({
+      env: c.env,
+      tenantId,
+      subjectId,
+      clientMetadata,
+      claims,
+      target: 'id_token',
+    });
+    return { ok: true };
+  } catch (error) {
+    getLogger(c)
+      .module('TOKEN')
+      .warn('OIDC ID token claim release consent required', {
+        clientId: clientMetadata.client_id,
+        reasonCodes:
+          error instanceof OIDCAttributeReleaseConsentRequiredError ? error.reasonCodes : [],
+      });
+    if (error instanceof OIDCAttributeReleaseConsentRequiredError) {
+      return {
+        ok: false,
+        response: oauthError(
+          c,
+          'consent_required',
+          describeOIDCClaimReleaseConsentRequired(error),
+          400
+        ),
+      };
+    }
+    return {
+      ok: false,
+      response: oauthError(c, 'server_error', 'Failed to evaluate claim release consent', 500),
+    };
+  }
+}
+
+function describeOIDCClaimReleaseConsentRequired(
+  error: OIDCAttributeReleaseConsentRequiredError
+): string {
+  if (error.reasonCodes.includes('release.attribute_consent.attribute_set_changed')) {
+    return 'User consent is required because the ID token claim set has changed';
+  }
+  if (error.reasonCodes.includes('release.attribute_consent.every_time')) {
+    return 'User consent is required for this ID token claim release';
+  }
+  return 'User consent is required before releasing ID token claims';
 }
 
 type DPoPValidationResult = Awaited<ReturnType<typeof validateDPoPProof>>;
@@ -2152,6 +2254,28 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
+  const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+    c,
+    tenantId,
+    client_id,
+    clientMetadata as ClientMetadata,
+    idTokenClaims
+  );
+  if (!mappedIdTokenClaims.ok) {
+    return mappedIdTokenClaims.response;
+  }
+  idTokenClaims = mappedIdTokenClaims.claims;
+
+  const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+    c,
+    tenantId,
+    clientMetadata as ClientMetadata,
+    idTokenClaims
+  );
+  if (!idTokenConsent.ok) {
+    return idTokenConsent.response;
+  }
+
   let idToken: string;
   try {
     // Check if client requests SD-JWT ID Token (RFC 9901)
@@ -2970,7 +3094,7 @@ async function handleRefreshTokenGrant(
   let idToken: string;
   try {
     const atHash = await calculateAtHash(accessToken);
-    const idTokenClaims = {
+    let idTokenClaims: Record<string, unknown> = {
       iss: getRequestIssuer(c),
       sub: refreshTokenData.sub,
       aud: client_id,
@@ -2980,6 +3104,28 @@ async function handleRefreshTokenGrant(
       // Anonymous user claims (architecture-decisions.md §17)
       ...anonymousClaimsRefresh,
     };
+
+    const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+      c,
+      tenantId,
+      client_id,
+      clientMetadata as ClientMetadata,
+      idTokenClaims
+    );
+    if (!mappedIdTokenClaims.ok) {
+      return mappedIdTokenClaims.response;
+    }
+    idTokenClaims = mappedIdTokenClaims.claims;
+
+    const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+      c,
+      tenantId,
+      clientMetadata as ClientMetadata,
+      idTokenClaims
+    );
+    if (!idTokenConsent.ok) {
+      return idTokenConsent.response;
+    }
 
     // Check if client requests SD-JWT ID Token (RFC 9901)
     const useSDJWT =
@@ -2991,14 +3137,19 @@ async function handleRefreshTokenGrant(
         ? rawSelectiveClaims
         : ['email', 'phone_number', 'address', 'birthdate'];
       idToken = await createSDJWTIDTokenFromClaims(
-        idTokenClaims,
+        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
         privateKey,
         keyId,
         expiresIn,
         selectiveClaims
       );
     } else {
-      idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
+      idToken = await createIDToken(
+        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+        privateKey,
+        keyId,
+        expiresIn
+      );
     }
   } catch (error) {
     log.error('Failed to create ID token', {}, error as Error);
@@ -3713,7 +3864,7 @@ async function handleDeviceCodeGrant(
   }
 
   // Generate ID Token
-  const idTokenClaims = {
+  let idTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
     sub: metadata.sub,
     aud: client_id,
@@ -3722,6 +3873,28 @@ async function handleDeviceCodeGrant(
     // Phase 2 RBAC: Add RBAC claims to ID token
     ...idTokenRBACClaims,
   };
+
+  const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+    c,
+    getTenantIdFromContext(c),
+    client_id,
+    clientMetadata as ClientMetadata,
+    idTokenClaims
+  );
+  if (!mappedIdTokenClaims.ok) {
+    return mappedIdTokenClaims.response;
+  }
+  idTokenClaims = mappedIdTokenClaims.claims;
+
+  const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+    c,
+    getTenantIdFromContext(c),
+    clientMetadata as ClientMetadata,
+    idTokenClaims
+  );
+  if (!idTokenConsent.ok) {
+    return idTokenConsent.response;
+  }
 
   let idToken: string;
   try {
@@ -4293,7 +4466,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const atHash = await calculateAtHash(accessToken);
 
   // Create ID token with at_hash
-  const idTokenClaims = {
+  let idTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
     sub: metadata.sub!,
     aud: metadata.client_id,
@@ -4303,7 +4476,34 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     ...idTokenRBACClaims,
   };
 
-  let idToken = await createIDToken(idTokenClaims, privateKey, kid, expiresIn);
+  const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+    c,
+    getTenantIdFromContext(c),
+    metadata.client_id,
+    clientMetadata as ClientMetadata,
+    idTokenClaims
+  );
+  if (!mappedIdTokenClaims.ok) {
+    return mappedIdTokenClaims.response;
+  }
+  idTokenClaims = mappedIdTokenClaims.claims;
+
+  const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+    c,
+    getTenantIdFromContext(c),
+    clientMetadata as ClientMetadata,
+    idTokenClaims
+  );
+  if (!idTokenConsent.ok) {
+    return idTokenConsent.response;
+  }
+
+  let idToken = await createIDToken(
+    idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+    privateKey,
+    kid,
+    expiresIn
+  );
 
   // Encrypt ID token if required
   if (isIDTokenEncryptionRequired(clientMetadata)) {
@@ -6191,6 +6391,71 @@ async function handleNativeSSOTokenExchange(
   // Include session_id
   if (validatedDeviceSecret.session_id) {
     newIdTokenClaims.sid = validatedDeviceSecret.session_id;
+  }
+
+  try {
+    const mapped = await applyOIDCIdentityMapping({
+      adapter: authCtx.coreAdapter,
+      tenantId,
+      clientId,
+      selector: clientMetadata.identity_mapping,
+      claims: newIdTokenClaims,
+    });
+    if (mapped.claims !== newIdTokenClaims) {
+      Object.keys(newIdTokenClaims).forEach((key) => {
+        delete newIdTokenClaims[key];
+      });
+      Object.assign(newIdTokenClaims, mapped.claims);
+    }
+  } catch (error) {
+    log.error(
+      'Failed to apply OIDC identity mapping for Native SSO ID token',
+      {
+        action: 'NativeSSO',
+        clientId,
+      },
+      error as Error
+    );
+    return exchangeError(
+      error instanceof OIDCIdentityMappingRuntimeError ? 'invalid_client' : 'server_error',
+      error instanceof OIDCIdentityMappingRuntimeError
+        ? 'Client identity mapping configuration is invalid'
+        : 'Failed to apply identity mapping',
+      'native_sso_server_error',
+      error instanceof OIDCIdentityMappingRuntimeError ? 400 : 500,
+      'retry',
+      { retryable: !(error instanceof OIDCIdentityMappingRuntimeError) }
+    );
+  }
+
+  try {
+    await enforceOIDCAttributeReleaseConsent({
+      env: c.env,
+      tenantId,
+      subjectId: idTokenSub,
+      clientMetadata,
+      claims: newIdTokenClaims,
+      target: 'id_token',
+    });
+  } catch (error) {
+    log.warn('OIDC Native SSO ID token claim release consent required', {
+      action: 'NativeSSO',
+      clientId,
+      reasonCodes:
+        error instanceof OIDCAttributeReleaseConsentRequiredError ? error.reasonCodes : [],
+    });
+    return exchangeError(
+      error instanceof OIDCAttributeReleaseConsentRequiredError
+        ? 'consent_required'
+        : 'server_error',
+      error instanceof OIDCAttributeReleaseConsentRequiredError
+        ? 'User consent is required before releasing ID token claims'
+        : 'Failed to evaluate claim release consent',
+      'native_sso_server_error',
+      error instanceof OIDCAttributeReleaseConsentRequiredError ? 400 : 500,
+      'retry',
+      { retryable: false }
+    );
   }
 
   let newIdToken: string;

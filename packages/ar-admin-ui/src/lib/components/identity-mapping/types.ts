@@ -18,6 +18,11 @@ export interface MappingNode {
 	id: string;
 	ruleId: string;
 	role: NodeRole;
+	fieldRef?: {
+		namespace: string;
+		path: string;
+		catalogEntryId?: string;
+	};
 	adapter?: MappingAdapter;
 	profileId?: string;
 	profileTitle?: string;

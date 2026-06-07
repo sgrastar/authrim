@@ -2776,6 +2776,54 @@ type RootTranslation = {
 	 */
 	admin_client_detail_claims_parameter: string;
 	/**
+	 * I​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g
+	 */
+	admin_client_detail_identity_mapping_section: string;
+	/**
+	 * O​I​D​C​ ​c​l​a​i​m​s​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y
+	 */
+	admin_client_detail_identity_mapping_policy: string;
+	/**
+	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​/​ ​n​o​ ​c​l​i​e​n​t​ ​o​v​e​r​r​i​d​e
+	 */
+	admin_client_detail_identity_mapping_policy_default: string;
+	/**
+	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​i​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y​ ​u​s​e​d​ ​f​o​r​ ​O​I​D​C​ ​U​s​e​r​I​n​f​o​ ​a​n​d​ ​t​o​k​e​n​ ​c​l​a​i​m​s​ ​f​o​r​ ​t​h​i​s​ ​c​l​i​e​n​t​.
+	 */
+	admin_client_detail_identity_mapping_policy_hint: string;
+	/**
+	 * C​l​i​e​n​t​ ​o​v​e​r​r​i​d​e​ ​f​o​r​ ​O​I​D​C​ ​i​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​.​ ​E​m​p​t​y​ ​u​s​e​s​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​a​c​t​i​v​a​t​i​o​n​.
+	 */
+	admin_client_detail_identity_mapping_policy_display_hint: string;
+	/**
+	 * C​l​a​i​m​ ​r​e​l​e​a​s​e​ ​c​o​n​s​e​n​t
+	 */
+	admin_client_detail_attribute_release_consent: string;
+	/**
+	 * D​o​ ​n​o​t​ ​a​s​k​ ​b​e​f​o​r​e​ ​r​e​l​e​a​s​i​n​g​ ​c​l​a​i​m​s
+	 */
+	admin_client_detail_attribute_release_consent_disabled: string;
+	/**
+	 * A​s​k​ ​t​h​e​ ​f​i​r​s​t​ ​t​i​m​e​,​ ​t​h​e​n​ ​r​e​m​e​m​b​e​r
+	 */
+	admin_client_detail_attribute_release_consent_once: string;
+	/**
+	 * A​s​k​ ​e​v​e​r​y​ ​O​I​D​C​ ​r​e​l​e​a​s​e
+	 */
+	admin_client_detail_attribute_release_consent_every_time: string;
+	/**
+	 * A​s​k​ ​a​g​a​i​n​ ​w​h​e​n​ ​c​l​a​i​m​s​ ​c​h​a​n​g​e
+	 */
+	admin_client_detail_attribute_release_consent_until_attributes_change: string;
+	/**
+	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​A​u​t​h​r​i​m​ ​m​u​s​t​ ​c​o​n​f​i​r​m​ ​c​l​a​i​m​ ​r​e​l​e​a​s​e​ ​b​e​f​o​r​e​ ​i​s​s​u​i​n​g​ ​I​D​ ​T​o​k​e​n​ ​o​r​ ​U​s​e​r​I​n​f​o​ ​c​l​a​i​m​s​ ​t​o​ ​t​h​i​s​ ​c​l​i​e​n​t​.
+	 */
+	admin_client_detail_attribute_release_consent_hint: string;
+	/**
+	 * R​u​n​t​i​m​e​ ​e​n​f​o​r​c​e​m​e​n​t​ ​a​p​p​l​i​e​s​ ​t​o​ ​O​I​D​C​ ​I​D​ ​T​o​k​e​n​ ​a​n​d​ ​U​s​e​r​I​n​f​o​ ​c​l​a​i​m​ ​r​e​l​e​a​s​e​.
+	 */
+	admin_client_detail_attribute_release_consent_display_hint: string;
+	/**
 	 * S​c​o​p​e​ ​r​e​q​u​i​r​e​d
 	 */
 	admin_client_detail_scope_required: string;
@@ -4599,11 +4647,11 @@ type RootTranslation = {
 	 */
 	admin_saml_local_subject_warning: string;
 	/**
-	 * S​i​g​n​i​n​g​ ​R​o​l​l​o​v​e​r
+	 * C​e​r​t​i​f​i​c​a​t​e​ ​R​o​l​l​o​v​e​r
 	 */
 	admin_saml_local_signing_rollover: string;
 	/**
-	 * M​a​n​a​g​e​ ​a​c​t​i​v​e​,​ ​n​e​x​t​,​ ​a​n​d​ ​b​a​c​k​u​p​ ​s​i​g​n​i​n​g​ ​k​e​y​s​ ​p​u​b​l​i​s​h​e​d​ ​i​n​ ​S​A​M​L​ ​m​e​t​a​d​a​t​a​.
+	 * M​a​n​a​g​e​ ​c​u​r​r​e​n​t​l​y​ ​u​s​e​d​,​ ​s​w​i​t​c​h​a​b​l​e​,​ ​a​n​d​ ​o​l​d​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s​ ​p​u​b​l​i​s​h​e​d​ ​i​n​ ​S​A​M​L​ ​m​e​t​a​d​a​t​a​.
 	 */
 	admin_saml_local_signing_rollover_desc: string;
 	/**
@@ -4735,7 +4783,7 @@ type RootTranslation = {
 	 */
 	admin_saml_local_rollover_status_not_configured: string;
 	/**
-	 * I​n​ ​u​s​e​ ​+​ ​p​u​b​l​i​s​h​e​d
+	 * I​n​ ​u​s​e
 	 */
 	admin_saml_local_rollover_status_signing_published: string;
 	/**
@@ -4743,11 +4791,11 @@ type RootTranslation = {
 	 */
 	admin_saml_local_rollover_status_signing: string;
 	/**
-	 * S​t​o​r​e​d​ ​+​ ​p​u​b​l​i​s​h​e​d
+	 * S​t​o​r​e​d
 	 */
 	admin_saml_local_rollover_status_stored_published: string;
 	/**
-	 * S​t​o​r​e​d​ ​o​n​l​y
+	 * S​t​o​r​e​d
 	 */
 	admin_saml_local_rollover_status_stored_only: string;
 	/**
@@ -5042,6 +5090,42 @@ type RootTranslation = {
 	 * N​o​n​e
 	 */
 	admin_saml_detail_none: string;
+	/**
+	 * I​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y
+	 */
+	admin_saml_detail_identity_mapping_policy: string;
+	/**
+	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​/​ ​l​e​g​a​c​y​ ​r​e​l​e​a​s​e
+	 */
+	admin_saml_detail_identity_mapping_policy_default: string;
+	/**
+	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​i​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y​ ​u​s​e​d​ ​f​o​r​ ​S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​t​o​ ​t​h​i​s​ ​S​P​.
+	 */
+	admin_saml_detail_identity_mapping_policy_hint: string;
+	/**
+	 * A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​c​o​n​s​e​n​t
+	 */
+	admin_saml_detail_attribute_release_consent: string;
+	/**
+	 * D​o​ ​n​o​t​ ​a​s​k​ ​b​e​f​o​r​e​ ​r​e​l​e​a​s​i​n​g​ ​a​t​t​r​i​b​u​t​e​s
+	 */
+	admin_saml_detail_attribute_release_consent_disabled: string;
+	/**
+	 * A​s​k​ ​t​h​e​ ​f​i​r​s​t​ ​t​i​m​e​,​ ​t​h​e​n​ ​r​e​m​e​m​b​e​r
+	 */
+	admin_saml_detail_attribute_release_consent_once: string;
+	/**
+	 * A​s​k​ ​e​v​e​r​y​ ​S​S​O
+	 */
+	admin_saml_detail_attribute_release_consent_every_time: string;
+	/**
+	 * A​s​k​ ​a​g​a​i​n​ ​w​h​e​n​ ​a​t​t​r​i​b​u​t​e​s​ ​c​h​a​n​g​e
+	 */
+	admin_saml_detail_attribute_release_consent_until_attributes_change: string;
+	/**
+	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​A​u​t​h​r​i​m​ ​m​u​s​t​ ​c​o​n​f​i​r​m​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​b​e​f​o​r​e​ ​s​e​n​d​i​n​g​ ​a​ ​S​A​M​L​ ​a​s​s​e​r​t​i​o​n​ ​t​o​ ​t​h​i​s​ ​S​P​.​ ​T​h​e​ ​s​a​m​e​ ​p​o​l​i​c​y​ ​s​h​a​p​e​ ​c​a​n​ ​b​e​ ​r​e​u​s​e​d​ ​f​o​r​ ​O​I​D​C​ ​c​l​i​e​n​t​s​.
+	 */
+	admin_saml_detail_attribute_release_consent_hint: string;
 	/**
 	 * A​u​t​h​n​R​e​q​u​e​s​t​ ​S​i​g​n​a​t​u​r​e
 	 */
@@ -28701,6 +28785,54 @@ export type TranslationFunctions = {
 	 */
 	admin_client_detail_claims_parameter: () => LocalizedString;
 	/**
+	 * Identity mapping
+	 */
+	admin_client_detail_identity_mapping_section: () => LocalizedString;
+	/**
+	 * OIDC claims mapping policy
+	 */
+	admin_client_detail_identity_mapping_policy: () => LocalizedString;
+	/**
+	 * Tenant default / no client override
+	 */
+	admin_client_detail_identity_mapping_policy_default: () => LocalizedString;
+	/**
+	 * Selects the active identity mapping policy used for OIDC UserInfo and token claims for this client.
+	 */
+	admin_client_detail_identity_mapping_policy_hint: () => LocalizedString;
+	/**
+	 * Client override for OIDC identity mapping. Empty uses tenant default activation.
+	 */
+	admin_client_detail_identity_mapping_policy_display_hint: () => LocalizedString;
+	/**
+	 * Claim release consent
+	 */
+	admin_client_detail_attribute_release_consent: () => LocalizedString;
+	/**
+	 * Do not ask before releasing claims
+	 */
+	admin_client_detail_attribute_release_consent_disabled: () => LocalizedString;
+	/**
+	 * Ask the first time, then remember
+	 */
+	admin_client_detail_attribute_release_consent_once: () => LocalizedString;
+	/**
+	 * Ask every OIDC release
+	 */
+	admin_client_detail_attribute_release_consent_every_time: () => LocalizedString;
+	/**
+	 * Ask again when claims change
+	 */
+	admin_client_detail_attribute_release_consent_until_attributes_change: () => LocalizedString;
+	/**
+	 * Controls whether Authrim must confirm claim release before issuing ID Token or UserInfo claims to this client.
+	 */
+	admin_client_detail_attribute_release_consent_hint: () => LocalizedString;
+	/**
+	 * Runtime enforcement applies to OIDC ID Token and UserInfo claim release.
+	 */
+	admin_client_detail_attribute_release_consent_display_hint: () => LocalizedString;
+	/**
 	 * Scope required
 	 */
 	admin_client_detail_scope_required: () => LocalizedString;
@@ -30509,11 +30641,11 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_subject_warning: () => LocalizedString;
 	/**
-	 * Signing Rollover
+	 * Certificate Rollover
 	 */
 	admin_saml_local_signing_rollover: () => LocalizedString;
 	/**
-	 * Manage active, next, and backup signing keys published in SAML metadata.
+	 * Manage currently used, switchable, and old signing certificates published in SAML metadata.
 	 */
 	admin_saml_local_signing_rollover_desc: () => LocalizedString;
 	/**
@@ -30641,7 +30773,7 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_rollover_status_not_configured: () => LocalizedString;
 	/**
-	 * In use + published
+	 * In use
 	 */
 	admin_saml_local_rollover_status_signing_published: () => LocalizedString;
 	/**
@@ -30649,11 +30781,11 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_rollover_status_signing: () => LocalizedString;
 	/**
-	 * Stored + published
+	 * Stored
 	 */
 	admin_saml_local_rollover_status_stored_published: () => LocalizedString;
 	/**
-	 * Stored only
+	 * Stored
 	 */
 	admin_saml_local_rollover_status_stored_only: () => LocalizedString;
 	/**
@@ -30944,6 +31076,42 @@ export type TranslationFunctions = {
 	 * None
 	 */
 	admin_saml_detail_none: () => LocalizedString;
+	/**
+	 * Identity mapping policy
+	 */
+	admin_saml_detail_identity_mapping_policy: () => LocalizedString;
+	/**
+	 * Tenant default / legacy release
+	 */
+	admin_saml_detail_identity_mapping_policy_default: () => LocalizedString;
+	/**
+	 * Selects the active identity mapping policy used for SAML Attribute release to this SP.
+	 */
+	admin_saml_detail_identity_mapping_policy_hint: () => LocalizedString;
+	/**
+	 * Attribute release consent
+	 */
+	admin_saml_detail_attribute_release_consent: () => LocalizedString;
+	/**
+	 * Do not ask before releasing attributes
+	 */
+	admin_saml_detail_attribute_release_consent_disabled: () => LocalizedString;
+	/**
+	 * Ask the first time, then remember
+	 */
+	admin_saml_detail_attribute_release_consent_once: () => LocalizedString;
+	/**
+	 * Ask every SSO
+	 */
+	admin_saml_detail_attribute_release_consent_every_time: () => LocalizedString;
+	/**
+	 * Ask again when attributes change
+	 */
+	admin_saml_detail_attribute_release_consent_until_attributes_change: () => LocalizedString;
+	/**
+	 * Controls whether Authrim must confirm attribute release before sending a SAML assertion to this SP. The same policy shape can be reused for OIDC clients.
+	 */
+	admin_saml_detail_attribute_release_consent_hint: () => LocalizedString;
 	/**
 	 * AuthnRequest Signature
 	 */

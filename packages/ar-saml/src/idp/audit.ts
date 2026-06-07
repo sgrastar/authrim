@@ -7,6 +7,8 @@ export const SAML_POLICY_FAILED_AUDIT_EVENT = 'saml.policy.failed';
 
 export type SAMLPolicyFailureKind =
   | 'required_attribute_missing'
+  | 'attribute_release_consent_required'
+  | 'identity_mapping_failed'
   | 'authn_request_signature_required'
   | 'authn_request_certificate_missing'
   | 'authn_request_unsupported_signature_algorithm'

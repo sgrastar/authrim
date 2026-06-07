@@ -76,12 +76,20 @@
 
 <header class="header">
 	<div class="header-left">
-		<button class="mobile-menu-btn" onclick={onMobileMenuClick} aria-label={$LL.admin_header_toggle_menu()}>
+		<button
+			class="mobile-menu-btn"
+			onclick={onMobileMenuClick}
+			aria-label={$LL.admin_header_toggle_menu()}
+		>
 			<i class="i-ph-list"></i>
 		</button>
 
 		{#if breadcrumbs.length > 0}
-			<div class="hierarchy-breadcrumb" role="navigation" aria-label={$LL.admin_header_breadcrumb()}>
+			<div
+				class="hierarchy-breadcrumb"
+				role="navigation"
+				aria-label={$LL.admin_header_breadcrumb()}
+			>
 				{#each breadcrumbs as crumb, i (crumb.label)}
 					{#if i > 0}
 						<span class="hierarchy-sep" aria-hidden="true">/</span>

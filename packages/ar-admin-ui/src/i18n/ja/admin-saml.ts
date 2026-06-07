@@ -297,6 +297,18 @@ const adminSaml = {
 	admin_saml_detail_profile: 'Profile',
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'なし',
+	admin_saml_detail_identity_mapping_policy: 'Identity Mapping Policy',
+	admin_saml_detail_identity_mapping_policy_default: 'テナント既定 / legacy release',
+	admin_saml_detail_identity_mapping_policy_hint:
+		'このSPへSAML Attributeをreleaseする時に使うactiveなidentity mapping policyを選択します。',
+	admin_saml_detail_attribute_release_consent: '属性提供の同意',
+	admin_saml_detail_attribute_release_consent_disabled: '属性提供前に確認しない',
+	admin_saml_detail_attribute_release_consent_once: '初回だけ確認し、以後は記憶する',
+	admin_saml_detail_attribute_release_consent_every_time: 'SSOのたびに確認する',
+	admin_saml_detail_attribute_release_consent_until_attributes_change:
+		'提供する属性が変わった時に再確認する',
+	admin_saml_detail_attribute_release_consent_hint:
+		'このSPへSAML assertionを送信する前に、Authrimが属性提供の確認を必須にするかを制御します。同じpolicy形状をOIDC clientにも再利用できます。',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest Signature',
 	admin_saml_detail_logout_request_signature: 'LogoutRequest Signature',
 	admin_saml_detail_sp_signature_hint:

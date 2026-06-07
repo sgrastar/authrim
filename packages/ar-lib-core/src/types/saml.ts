@@ -5,6 +5,8 @@
  * Includes types for both IdP (Identity Provider) and SP (Service Provider) roles.
  */
 
+import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
+
 /**
  * SAML Binding types
  */
@@ -541,6 +543,10 @@ export interface SAMLSPConfig {
   attributeMapping: Record<string, string>;
   /** Policy-based SAML attribute release rules */
   attributeReleasePolicy?: SAMLAttributeReleasePolicy;
+  /** User-facing attribute release consent policy. Protocol-neutral shape for OIDC reuse. */
+  attributeReleaseConsent?: AttributeReleaseConsentPolicy;
+  /** Runtime identity mapping policy selector for SAML attribute release */
+  identityMapping?: SAMLIdentityMappingPolicySelector;
   /** Built-in attribute preset used as the clone/edit source for the current release policy */
   attributePresetId?: SAMLAttributePresetId;
   /** Built-in attribute preset version used as the clone/edit source for the current release policy */
@@ -575,6 +581,25 @@ export interface SAMLSPConfig {
   metadataLastFetched?: number;
   /** Aggregate metadata import/verification snapshot when imported from federation metadata */
   aggregateImport?: SAMLMetadataAggregateImportSnapshot;
+}
+
+export interface SAMLIdentityMappingAttributeDescriptor {
+  name?: string;
+  nameFormat?: string;
+  friendlyName?: string;
+  valueType?: 'string' | 'base64Binary' | 'anyType';
+  required?: boolean;
+}
+
+export interface SAMLIdentityMappingPolicySelector {
+  /** Active mapping policy set selected for this SP override. Empty falls back to tenant activation scope. */
+  policySetId?: string;
+  /** Optional pinned policy version. Runtime still requires an active activation for the version. */
+  policyVersionId?: string;
+  destinationNamespace?: string;
+  sourceProfileId?: string;
+  destinationProfileId?: string;
+  attributeDescriptors?: Record<string, SAMLIdentityMappingAttributeDescriptor>;
 }
 
 export interface SAMLAssertionConsumerService {
@@ -692,6 +717,27 @@ export interface SAMLRequestData {
   type: 'authn_request' | 'logout_request' | 'artifact';
   /** Additional data (e.g., parsed AuthnRequest) */
   data?: SAMLAuthnRequest | SAMLLogoutRequest;
+  /** Server-side continuation context for interactive protocol gates. */
+  context?: SAMLRequestContext;
+}
+
+export interface SAMLRequestContext {
+  attributeReleaseConsentChallenge?: {
+    challengeId: string;
+    subjectId: string;
+    destinationType: 'saml_sp' | string;
+    destinationId: string;
+    attributeSetHash: string;
+    consentMode: AttributeReleaseConsentPolicy['mode'];
+    createdAt: number;
+  };
+  attributeReleaseConsentConfirmed?: {
+    subjectId: string;
+    destinationType: 'saml_sp' | string;
+    destinationId: string;
+    attributeSetHash: string;
+    confirmedAt: number;
+  };
 }
 
 /**
