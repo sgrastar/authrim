@@ -181,11 +181,15 @@
 									<div class="activity-text">
 										{#if activity.type === 'user_registration'}
 											{$LL.admin_dashboard_activity_new_user()}
-											<strong>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong>
+											<strong
+												>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong
+											>
 											{$LL.admin_dashboard_activity_registered()}
 										{:else if activity.type === 'login'}
 											{$LL.admin_dashboard_activity_user()}
-											<strong>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong>
+											<strong
+												>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong
+											>
 											{$LL.admin_dashboard_activity_logged_in()}
 										{:else if activity.type === 'client_registration'}
 											{$LL.admin_dashboard_activity_new_client()}
@@ -193,7 +197,9 @@
 											{$LL.admin_dashboard_activity_registered()}
 										{:else}
 											{activity.type} -
-											<strong>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong>
+											<strong
+												>{activity.email || activity.name || $LL.admin_dashboard_unknown()}</strong
+											>
 										{/if}
 									</div>
 									<div class="activity-time">{formatTimestamp(activity.timestamp)}</div>

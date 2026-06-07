@@ -132,7 +132,8 @@
 	function getIntegrationBadges(client: Client): string[] {
 		const badges: string[] = [];
 		if (client.token_exchange_allowed) badges.push($LL.admin_clients_badge_token_exchange());
-		if (client.client_credentials_allowed) badges.push($LL.admin_clients_badge_client_credentials());
+		if (client.client_credentials_allowed)
+			badges.push($LL.admin_clients_badge_client_credentials());
 		if (client.default_audience) {
 			badges.push($LL.admin_clients_badge_audience({ audience: client.default_audience }));
 		}

@@ -2904,12 +2904,22 @@
 		});
 	}
 
-	function nodeFieldRef(node: MappingNode): Record<string, unknown> {
+	function nodeFieldRef(
+		node: MappingNode,
+		side: 'source' | 'destination'
+	): Record<string, unknown> {
+		const fieldRef = node.fieldRef ?? {
+			namespace: namespaceForNode(node),
+			path: node.caption || node.label
+		};
 		return {
+			side,
+			namespace: fieldRef.namespace,
+			path: fieldRef.path,
+			catalogEntryId: fieldRef.catalogEntryId,
 			nodeId: node.id,
 			role: node.role,
 			label: node.label,
-			path: node.caption || node.label,
 			adapter: node.adapter,
 			profileId: node.profileId,
 			profileTitle: node.profileTitle,
@@ -2918,6 +2928,21 @@
 			uiGroupKey: node.uiGroupKey,
 			locked: node.locked
 		};
+	}
+
+	function namespaceForNode(node: MappingNode): string {
+		switch (node.adapter) {
+			case 'OIDC':
+				return 'oidc.claim';
+			case 'SAML':
+				return 'saml.attribute';
+			case 'SCIM':
+				return 'scim.attribute';
+			case 'CSV':
+				return 'csv.column';
+			default:
+				return node.role === 'target' ? 'authrim.profile' : 'unknown';
+		}
 	}
 
 	function stableRuleKey(parts: string[]): string {
@@ -2942,8 +2967,8 @@
 			},
 			edges: [
 				{
-					sourceRef: nodeFieldRef(fromNode),
-					targetRef: nodeFieldRef(toNode),
+					sourceRef: nodeFieldRef(fromNode, 'source'),
+					targetRef: nodeFieldRef(toNode, 'destination'),
 					edgeKind: 'direct'
 				}
 			]
@@ -2975,8 +3000,8 @@
 						transformNodeId: transformNode.id
 					},
 					edges: inputNodes.map((fromNode) => ({
-						sourceRef: nodeFieldRef(fromNode),
-						targetRef: nodeFieldRef(toNode),
+						sourceRef: nodeFieldRef(fromNode, 'source'),
+						targetRef: nodeFieldRef(toNode, 'destination'),
 						edgeKind: 'transform_input'
 					})),
 					transforms: [

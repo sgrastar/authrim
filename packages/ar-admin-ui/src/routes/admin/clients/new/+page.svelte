@@ -8,11 +8,16 @@
 		type CreateClientInput
 	} from '$lib/api/admin-clients';
 	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingPolicySummary
+	} from '$lib/api/admin-identity-mapping';
+	import {
 		createPresetClientDownstreamGrantForm,
 		toClientDownstreamGrantCreateInput
 	} from '$lib/admin/client-downstream-grant';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
+	import { onMount } from 'svelte';
 
 	// Preset configuration
 	interface PresetConfig {
@@ -166,6 +171,8 @@
 		ASC_TRANSFORMED_CLAIMS.map((claim) => claim.id)
 	);
 	let downstreamGrantForm = $state(createPresetClientDownstreamGrantForm('custom'));
+	let identityMappingPolicySetId = $state('');
+	let mappingPolicies = $state<IdentityMappingPolicySummary[]>([]);
 
 	// CORS settings
 	let tenantSettings = $state<CategorySettings | null>(null);
@@ -204,6 +211,17 @@
 			}))
 		};
 	}
+
+	onMount(() => {
+		adminIdentityMappingAPI
+			.listPolicies()
+			.then((result) => {
+				mappingPolicies = result.policies;
+			})
+			.catch((err) => {
+				console.warn('Failed to load identity mapping policies:', err);
+			});
+	});
 
 	/**
 	 * Check if an origin is in the CORS allowlist (with wildcard support)
@@ -500,6 +518,12 @@
 				require_pkce: requirePkce,
 				allow_claims_without_scope: allowClaimsWithoutScope,
 				claims_parameter_policy: claimsParameterPolicy,
+				identity_mapping: identityMappingPolicySetId
+					? {
+							policySetId: identityMappingPolicySetId,
+							destinationNamespace: 'oidc.claim'
+						}
+					: null,
 				asc_enabled: ascEnabled,
 				asc_protected_request_required: ascProtectedRequestRequired,
 				asc_sao_enabled: ascSaoEnabled,
@@ -851,6 +875,28 @@
 							<div class="settings-summary settings-summary-subsection">
 								<h3 class="settings-summary-title">{$LL.admin_clients_new_oidc_claims_asc()}</h3>
 								<div class="advanced-panel" style="padding: 0; border: none;">
+									<div class="form-group">
+										<label for="identityMappingPolicy" class="form-label">
+											OIDC claims mapping policy
+										</label>
+										<select
+											id="identityMappingPolicy"
+											class="form-select"
+											bind:value={identityMappingPolicySetId}
+										>
+											<option value="">Tenant default / no client override</option>
+											{#each mappingPolicies as policy (policy.id)}
+												<option value={policy.id}>
+													{policy.displayName} ({policy.lifecycleState})
+												</option>
+											{/each}
+										</select>
+										<p class="form-hint">
+											Selects the active identity mapping policy used for OIDC UserInfo and token
+											claims for this client.
+										</p>
+									</div>
+
 									<div class="form-group">
 										<ToggleSwitch
 											bind:checked={allowClaimsWithoutScope}

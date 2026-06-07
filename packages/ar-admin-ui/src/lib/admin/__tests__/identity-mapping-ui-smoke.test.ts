@@ -46,6 +46,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 	it('keeps the flow editor graph interaction affordances present', () => {
 		const flowEditor = readComponent('identity-mapping/IdentityMappingFlowEditor.svelte');
+		const flowData = readComponent('identity-mapping/flow-data.ts');
 		const pageShell = readComponent('identity-mapping/IdentityMappingPageShell.svelte');
 		const page = readRoute('admin/identity-mapping/+page.svelte');
 		const editPage = readRoute('admin/identity-mapping/edit/+page.svelte');
@@ -118,6 +119,17 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('normalizeNodeType');
 		expect(flowEditor).toContain('drag-reject-marker');
 		expect(flowEditor).toContain('drag-edge-invalid');
+		expect(flowEditor).toContain('function nodeFieldRef(');
+		expect(flowEditor).toContain("side: 'source' | 'destination'");
+		expect(flowEditor).toContain('namespace: fieldRef.namespace');
+		expect(flowEditor).toContain('path: fieldRef.path');
+		expect(flowEditor).toContain('catalogEntryId: fieldRef.catalogEntryId');
+		expect(flowEditor).toContain("sourceRef: nodeFieldRef(fromNode, 'source')");
+		expect(flowEditor).toContain("targetRef: nodeFieldRef(toNode, 'destination')");
+		expect(flowData).toContain("namespace: 'authrim.profile'");
+		expect(flowData).toContain('namespaceForProfile(profile.adapter)');
+		expect(flowData).toContain("return 'oidc.claim'");
+		expect(flowData).toContain("return 'saml.attribute'");
 		expect(flowEditor).toContain('connection-rejected');
 		expect(flowEditor).toContain('selectEdge');
 		expect(flowEditor).toContain('clearSelection');

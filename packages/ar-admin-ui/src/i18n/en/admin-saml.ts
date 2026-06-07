@@ -299,6 +299,18 @@ const adminSaml = {
 	admin_saml_detail_profile: 'Profile',
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'None',
+	admin_saml_detail_identity_mapping_policy: 'Identity mapping policy',
+	admin_saml_detail_identity_mapping_policy_default: 'Tenant default / legacy release',
+	admin_saml_detail_identity_mapping_policy_hint:
+		'Selects the active identity mapping policy used for SAML Attribute release to this SP.',
+	admin_saml_detail_attribute_release_consent: 'Attribute release consent',
+	admin_saml_detail_attribute_release_consent_disabled: 'Do not ask before releasing attributes',
+	admin_saml_detail_attribute_release_consent_once: 'Ask the first time, then remember',
+	admin_saml_detail_attribute_release_consent_every_time: 'Ask every SSO',
+	admin_saml_detail_attribute_release_consent_until_attributes_change:
+		'Ask again when attributes change',
+	admin_saml_detail_attribute_release_consent_hint:
+		'Controls whether Authrim must confirm attribute release before sending a SAML assertion to this SP. The same policy shape can be reused for OIDC clients.',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest Signature',
 	admin_saml_detail_logout_request_signature: 'LogoutRequest Signature',
 	admin_saml_detail_sp_signature_hint:

@@ -13,8 +13,14 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import type { SAMLAuthnRequest, SAMLRequestData, SAMLSPConfig } from '@authrim/ar-lib-core';
+import type {
+  SAMLAuthnRequest,
+  SAMLRequestContext,
+  SAMLRequestData,
+  SAMLSPConfig,
+} from '@authrim/ar-lib-core';
 import {
+  AttributeReleaseConsentRepository,
   getSessionStoreBySessionId,
   isShardedSessionId,
   getUIConfig,
@@ -24,6 +30,8 @@ import {
   shouldUseBuiltinForms,
   createConfigurationError,
   getLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveRuntimeIdentityMappingBinding,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -47,6 +55,8 @@ import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSPWithDiagnostics,
   MissingRequiredSAMLAttributeError,
+  type SAMLIdentityMappingReleaseConfig,
+  SAMLIdentityMappingRuntimeError,
 } from './attributes';
 import {
   SAMLAuthnRequestSignatureValidationError,
@@ -83,6 +93,10 @@ import {
   buildSAMLIdPErrorResponse,
   getSAMLAttributeReleaseFailureStatusMessage,
 } from './error-response';
+import {
+  enforceSAMLAttributeReleaseConsent,
+  SAMLAttributeReleaseConsentRequiredError,
+} from './attribute-release-consent';
 import { scheduleSAMLPolicyFailureAudit } from './audit';
 import { buildSAMLAssertionTiming } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
@@ -103,6 +117,7 @@ interface ParsedAuthnRequestInput {
   xml: string;
   storedRequestValidated?: boolean;
   redirectSignature?: SAMLRedirectSignatureInput;
+  requestContext?: SAMLRequestContext;
 }
 
 /**
@@ -347,6 +362,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         userInfo,
         tenantId,
         authnInteraction.session,
+        parsedInput.requestContext,
         log
       );
     } catch (error) {
@@ -383,6 +399,76 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           ),
           'required_attribute_missing'
         );
+      } else if (error instanceof SAMLIdentityMappingRuntimeError) {
+        log.warn('SAML identity mapping policy failed', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          reasonCodes: error.reasons.map((reason) => reason.code),
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          failureKind: 'identity_mapping_failed',
+          policyDetails: {
+            reason_codes: error.reasons.map((reason) => reason.code),
+          },
+        });
+
+        responseXml = await generateSAMLProtocolErrorResponse(
+          issuerUrl,
+          idpEntityId,
+          env,
+          authnRequest,
+          spConfig,
+          tenantId,
+          STATUS_CODES.RESPONDER,
+          STATUS_CODES.INVALID_ATTR_NAME_OR_VALUE,
+          'SAML identity mapping policy could not be evaluated',
+          'identity_mapping_failed'
+        );
+      } else if (error instanceof SAMLAttributeReleaseConsentRequiredError) {
+        log.warn('SAML attribute release consent required', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          consentMode: error.consentMode,
+          reasonCodes: error.reasonCodes,
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          failureKind: 'attribute_release_consent_required',
+          policyDetails: {
+            consent_mode: error.consentMode,
+            reason_codes: error.reasonCodes,
+            attribute_set_hash: error.attributeSetHash,
+          },
+        });
+
+        const challengeId = crypto.randomUUID();
+        await storeAuthnRequest(env, tenantId, authnRequest, relayState, {
+          attributeReleaseConsentChallenge: {
+            challengeId,
+            subjectId: authnInteraction.session.userId,
+            destinationType: 'saml_sp',
+            destinationId: spConfig.entityId,
+            attributeSetHash: error.attributeSetHash,
+            consentMode: error.consentMode,
+            createdAt: Date.now(),
+          },
+        });
+
+        return renderSAMLAttributeReleaseConsentPage(c, {
+          requestId: authnRequest.id,
+          spEntityId: spConfig.entityId,
+          challengeId,
+          attributeSetHash: error.attributeSetHash,
+          spDisplayName: spConfig.entityId,
+          attributes: error.attributeSummaries,
+        });
       } else if (error instanceof SAMLAuthnContextPolicyError) {
         log.warn('SAML RequestedAuthnContext policy failed', {
           tenantId,
@@ -458,6 +544,209 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
   }
 }
 
+export async function handleIdPAttributeReleaseConsent(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  const env = c.env;
+  const log = getLogger(c).module('SAML-IDP');
+  const tenantId = resolveSAMLTenantIdFromContext(c);
+  const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
+
+  try {
+    const authSession = await checkUserAuthentication(c, env);
+    if (!authSession) {
+      return createErrorResponse(c, 'Authentication required', STATUS_CODES.UNKNOWN_PRINCIPAL);
+    }
+
+    const body = await c.req.parseBody();
+    const requestId = readFormString(body.saml_request_id);
+    const spEntityId = readFormString(body.saml_sp_entity_id);
+    const challengeId = readFormString(body.challenge_id);
+    const attributeSetHash = readFormString(body.attribute_set_hash);
+    const decision = readFormString(body.decision);
+    if (!requestId || !spEntityId || !challengeId || !attributeSetHash || !decision) {
+      return createErrorResponse(
+        c,
+        'Missing attribute release consent fields',
+        STATUS_CODES.REQUESTER
+      );
+    }
+    if (decision !== 'approve' && decision !== 'deny') {
+      return createErrorResponse(
+        c,
+        'Invalid attribute release consent decision',
+        STATUS_CODES.REQUESTER
+      );
+    }
+
+    const storedRequest = await consumeStoredAuthnRequest(env, tenantId, requestId, spEntityId);
+    const authnRequest = storedRequest.data as SAMLAuthnRequest;
+    const challenge = storedRequest.context?.attributeReleaseConsentChallenge;
+    if (
+      !challenge ||
+      challenge.challengeId !== challengeId ||
+      challenge.subjectId !== authSession.userId ||
+      challenge.destinationType !== 'saml_sp' ||
+      challenge.destinationId !== spEntityId ||
+      challenge.attributeSetHash !== attributeSetHash ||
+      Date.now() - challenge.createdAt > DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000
+    ) {
+      return createErrorResponse(
+        c,
+        'Invalid or expired attribute release consent challenge',
+        STATUS_CODES.REQUEST_DENIED
+      );
+    }
+
+    const spConfig = await getSPConfig(env, tenantId, spEntityId);
+    if (!spConfig) {
+      return createErrorResponse(c, 'Unknown Service Provider', STATUS_CODES.REQUEST_DENIED);
+    }
+
+    if (decision === 'deny') {
+      scheduleSAMLPolicyFailureAudit(c, {
+        tenantId,
+        spEntityId,
+        authnRequestId: authnRequest.id,
+        failureKind: 'attribute_release_consent_required',
+        policyDetails: {
+          user_decision: 'deny',
+          consent_mode: challenge.consentMode,
+          attribute_set_hash: attributeSetHash,
+        },
+      });
+      const responseXml = await generateSAMLProtocolErrorResponse(
+        issuerUrl,
+        idpEntityId,
+        env,
+        authnRequest,
+        spConfig,
+        tenantId,
+        STATUS_CODES.RESPONDER,
+        STATUS_CODES.REQUEST_DENIED,
+        'Attribute release was denied',
+        'attribute_release_consent_required'
+      );
+      return sendSAMLResponse(
+        c,
+        resolveSAMLResponseDestination(authnRequest, spConfig),
+        responseXml,
+        storedRequest.relayState
+      );
+    }
+
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'saml-attribute-release-consent-post'
+    );
+    const repository = new AttributeReleaseConsentRepository(adapter);
+    await repository.grant({
+      tenant_id: tenantId,
+      subject_id: authSession.userId,
+      destination_type: 'saml_sp',
+      destination_id: spEntityId,
+      attribute_set_hash: attributeSetHash,
+      consent_mode: challenge.consentMode,
+    });
+
+    await storeAuthnRequest(env, tenantId, authnRequest, storedRequest.relayState, {
+      attributeReleaseConsentConfirmed: {
+        subjectId: authSession.userId,
+        destinationType: 'saml_sp',
+        destinationId: spEntityId,
+        attributeSetHash,
+        confirmedAt: Date.now(),
+      },
+    });
+
+    return c.redirect(buildSAMLSSOResumeUrl(c.req.url, requestId, spEntityId));
+  } catch (error) {
+    log.error('SAML attribute release consent error', {}, error as Error);
+    return createErrorResponse(
+      c,
+      'Attribute release consent processing failed',
+      STATUS_CODES.RESPONDER
+    );
+  }
+}
+
+function readFormString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function buildSAMLSSOResumeUrl(baseUrl: string, requestId: string, spEntityId: string): string {
+  const url = new URL('/saml/idp/sso', baseUrl);
+  url.searchParams.set('saml_request_id', requestId);
+  url.searchParams.set('saml_sp_entity_id', spEntityId);
+  url.searchParams.set('return_to', 'saml_sso');
+  return url.toString();
+}
+
+function renderSAMLAttributeReleaseConsentPage(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    requestId: string;
+    spEntityId: string;
+    challengeId: string;
+    attributeSetHash: string;
+    spDisplayName: string;
+    attributes: SAMLAttributeReleaseConsentRequiredError['attributeSummaries'];
+  }
+): Response {
+  const rows = input.attributes
+    .map((attribute) => {
+      const label = attribute.friendlyName || attribute.name;
+      const detail =
+        attribute.valueCount === 1
+          ? '1 value'
+          : `${attribute.valueCount.toLocaleString('en-US')} values`;
+      return `<li><span>${escapeHtml(label)}</span><small>${escapeHtml(detail)}</small></li>`;
+    })
+    .join('');
+
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  return c.html(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attribute Release Consent</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f7f9; color: #17202a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(92vw, 560px); background: #fff; border: 1px solid #d8dde6; border-radius: 8px; padding: 28px; box-shadow: 0 18px 46px rgba(28, 35, 45, 0.08); }
+    h1 { font-size: 1.35rem; line-height: 1.25; margin: 0 0 12px; }
+    p { color: #526070; line-height: 1.55; margin: 0 0 18px; }
+    ul { border: 1px solid #e2e7ef; border-radius: 6px; list-style: none; margin: 0 0 22px; padding: 0; overflow: hidden; }
+    li { align-items: center; display: flex; justify-content: space-between; gap: 16px; padding: 12px 14px; border-top: 1px solid #e2e7ef; }
+    li:first-child { border-top: 0; }
+    small { color: #66758a; white-space: nowrap; }
+    .actions { display: flex; gap: 12px; }
+    button { border: 0; border-radius: 6px; cursor: pointer; font-size: 1rem; padding: 11px 16px; }
+    .approve { background: #235ad1; color: #fff; flex: 1; }
+    .deny { background: #e7ebf1; color: #1d2733; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Share attributes with this service?</h1>
+    <p>${escapeHtml(input.spDisplayName)} is requesting the following SAML attributes from Authrim.</p>
+    <ul>${rows}</ul>
+    <form method="post" action="/saml/idp/attribute-release-consent">
+      <input type="hidden" name="saml_request_id" value="${escapeHtml(input.requestId)}">
+      <input type="hidden" name="saml_sp_entity_id" value="${escapeHtml(input.spEntityId)}">
+      <input type="hidden" name="challenge_id" value="${escapeHtml(input.challengeId)}">
+      <input type="hidden" name="attribute_set_hash" value="${escapeHtml(input.attributeSetHash)}">
+      <div class="actions">
+        <button class="deny" type="submit" name="decision" value="deny">Deny</button>
+        <button class="approve" type="submit" name="decision" value="approve">Share attributes</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>`);
+}
+
 async function resolveAttributeReleaseFailureUserMessageMode(
   env: Env,
   tenantId: string,
@@ -525,10 +814,27 @@ async function parseStoredAuthnRequest(
     throw new Error('Missing saml_sp_entity_id parameter');
   }
 
-  const samlRequestStoreId = c.env.SAML_REQUEST_STORE.idFromName(
+  const storedRequest = await consumeStoredAuthnRequest(c.env, tenantId, requestId, spEntityId);
+  return {
+    authnRequest: storedRequest.data as SAMLAuthnRequest,
+    relayState: storedRequest.relayState,
+    binding: storedRequest.binding === 'post' ? 'post' : 'redirect',
+    xml: '',
+    storedRequestValidated: true,
+    requestContext: storedRequest.context,
+  };
+}
+
+async function consumeStoredAuthnRequest(
+  env: Env,
+  tenantId: string,
+  requestId: string,
+  spEntityId: string
+): Promise<SAMLRequestData> {
+  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
     buildSAMLRequestStoreInstanceName(tenantId, 'idp', spEntityId)
   );
-  const samlRequestStore = c.env.SAML_REQUEST_STORE.get(samlRequestStoreId);
+  const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
   const response = await samlRequestStore.fetch(
     `https://saml-request-store/consume/${encodeURIComponent(requestId)}`,
     { method: 'POST' }
@@ -548,13 +854,7 @@ async function parseStoredAuthnRequest(
     throw new Error('Stored SAML request is invalid');
   }
 
-  return {
-    authnRequest: storedRequest.data as SAMLAuthnRequest,
-    relayState: storedRequest.relayState,
-    binding: storedRequest.binding === 'post' ? 'post' : 'redirect',
-    xml: '',
-    storedRequestValidated: true,
-  };
+  return storedRequest;
 }
 
 /**
@@ -769,7 +1069,8 @@ async function storeAuthnRequest(
   env: Env,
   tenantId: string,
   authnRequest: SAMLAuthnRequest,
-  relayState?: string
+  relayState?: string,
+  context?: SAMLRequestContext
 ): Promise<void> {
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
     buildSAMLRequestStoreInstanceName(tenantId, 'idp', authnRequest.issuer)
@@ -788,6 +1089,7 @@ async function storeAuthnRequest(
       type: 'authn_request',
       data: authnRequest,
       relayState,
+      context,
       used: false,
       expiresAt: Date.now() + DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000,
     }),
@@ -817,6 +1119,7 @@ async function generateSAMLResponse(
   userInfo: SAMLUserInfo,
   tenantId: string,
   authSession: AuthenticatedSAMLSession,
+  requestContext?: SAMLRequestContext,
   log?: { debug(message: string, context?: Record<string, unknown>): void }
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
@@ -840,7 +1143,25 @@ async function generateSAMLResponse(
 
   // Determine ACS URL
   const acsUrl = resolveSAMLResponseDestination(authnRequest, spConfig);
-  const attributeRelease = buildSAMLAttributesForSPWithDiagnostics(userInfo, spConfig);
+  const identityMapping = await resolveSAMLRuntimeIdentityMapping(
+    env,
+    tenantId,
+    idpEntityId,
+    spConfig
+  );
+  const attributeRelease = buildSAMLAttributesForSPWithDiagnostics(userInfo, {
+    ...spConfig,
+    localEntityId: idpEntityId,
+    identityMapping,
+  });
+  await enforceSAMLAttributeReleaseConsent({
+    env,
+    tenantId,
+    subjectId: userInfo.id,
+    spConfig,
+    attributes: attributeRelease.attributes,
+    confirmedRelease: requestContext?.attributeReleaseConsentConfirmed,
+  });
   if (attributeRelease.optionalMissingAttributes.length > 0) {
     log?.debug('Optional SAML attributes omitted', {
       tenantId,
@@ -915,6 +1236,59 @@ async function generateSAMLResponse(
   }
 
   return responseXml;
+}
+
+async function resolveSAMLRuntimeIdentityMapping(
+  env: Env,
+  tenantId: string,
+  idpEntityId: string,
+  spConfig: SAMLSPConfig
+): Promise<SAMLIdentityMappingReleaseConfig | undefined> {
+  const configured = spConfig.identityMapping as SAMLIdentityMappingReleaseConfig | undefined;
+  if (configured?.catalog || configured?.defaultBinding || configured?.bindings?.length) {
+    return configured;
+  }
+
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-identity-mapping');
+  const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
+    tenantId,
+    protocol: 'saml',
+    role: 'idp',
+    policySetId: configured?.policySetId,
+    localEntityId: idpEntityId,
+    partnerEntityId: spConfig.entityId,
+  });
+  if (!binding) {
+    if (configured?.policySetId) {
+      throw new SAMLIdentityMappingRuntimeError([
+        {
+          category: 'policy',
+          code: 'policy.missing_identity_mapping_binding',
+          severity: 'critical',
+        },
+      ]);
+    }
+    return configured;
+  }
+
+  return {
+    id: binding.id,
+    role: 'idp',
+    tenantId: binding.tenantId,
+    localEntityId: idpEntityId,
+    partnerEntityId: spConfig.entityId,
+    catalog: binding.catalog,
+    edges: binding.edges,
+    transforms: binding.transforms,
+    validationRules: binding.validationRules,
+    policy: binding.policy,
+    destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
+    attributeDescriptors: configured?.attributeDescriptors,
+    policySetId: binding.policySetId,
+    policyVersionId: binding.policyVersionId,
+    sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
+    destinationProfileId: configured?.destinationProfileId ?? binding.destinationProfileId,
+  };
 }
 
 async function generateSAMLProtocolErrorResponse(

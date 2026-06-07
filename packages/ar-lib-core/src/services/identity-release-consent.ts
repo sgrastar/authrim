@@ -3,6 +3,11 @@ export type ReleaseLegalBasis = 'consent' | 'legal_obligation' | 'contract' | 'l
 export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
 export type ReleaseDecisionAction = 'release' | 'challenge' | 'deny';
 
+export interface AttributeReleaseConsentPolicy {
+  enabled: boolean;
+  mode: AttributeReleaseConsentMode;
+}
+
 export interface AttributeReleaseConsentContext {
   mode: AttributeReleaseConsentMode;
   currentAttributeSetHash: string;

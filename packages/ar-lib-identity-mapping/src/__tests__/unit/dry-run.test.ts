@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dryRunMapping, dryRunMappingBatch } from '../../core/dry-run';
+import { executeRuntimeMapping } from '../../core/runtime';
 import { createTestFingerprintProvider, mappingInput, sourceValue } from '../../test-support';
 
 describe('dry-run mapping', () => {
@@ -96,5 +97,21 @@ describe('dry-run mapping', () => {
     expect(result.status).toBe('failed');
     expect(result.summary.totalRows).toBe(2);
     expect(result.criticalCount).toBe(1);
+  });
+
+  it('returns mapped runtime values for protocol release paths', () => {
+    const input = mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]);
+    const result = executeRuntimeMapping(input);
+
+    expect(result.status).toBe('success');
+    expect(result.values).toEqual([
+      expect.objectContaining({
+        value: 'user@example.test',
+        sourceRef: expect.objectContaining({
+          namespace: 'authrim.profile',
+          path: 'email',
+        }),
+      }),
+    ]);
   });
 });

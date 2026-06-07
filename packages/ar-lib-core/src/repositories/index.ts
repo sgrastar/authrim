@@ -100,6 +100,7 @@ export {
 
 // Canonical identity repositories (Unified Identity Mapping)
 export {
+  AttributeReleaseConsentRepository,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserStore,
@@ -109,6 +110,8 @@ export {
   encodeCanonicalSensitiveValueRef,
   type AssuranceEvidenceRow,
   type AttributeClassification,
+  type AttributeReleaseConsentRow,
+  type AttributeReleaseConsentState,
   type AttributeValueType,
   type CanonicalIdentityGraph,
   type CanonicalRuntimeUserProjection,
@@ -134,6 +137,7 @@ export {
   type CreateProfileInput,
   type CreateStructuredAttributeValueInput,
   type CreateSubjectAccountLinkInput,
+  type GrantAttributeReleaseConsentInput,
   type IdentityAccountRow,
   type IdentityAccountType,
   type IdentityBindingKind,

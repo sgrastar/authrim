@@ -26,6 +26,7 @@ import {
   type WebOriginRegistryDocument,
   type WebOriginRegistryWritePayload,
   DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS,
+  type AttributeReleaseConsentPolicy,
   type ClaimReleasePolicy,
 } from '@authrim/ar-lib-core';
 import {
@@ -41,6 +42,14 @@ type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
 type AdminBrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 type AdminClientChannel = 'browser' | 'native' | 'server';
+
+interface AdminOIDCIdentityMappingSelector {
+  policySetId?: string;
+  policyVersionId?: string;
+  destinationNamespace?: string;
+  sourceProfileId?: string;
+  destinationProfileId?: string;
+}
 
 const VALID_DELEGATION_MODES = new Set(['none', 'delegation', 'impersonation']);
 const VALID_APPLICATION_TYPES = new Set<AdminClientApplicationType>([
@@ -62,6 +71,11 @@ const VALID_CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
   'scope_required',
   'claims_allowed',
   'forbidden',
+]);
+const VALID_ATTRIBUTE_RELEASE_CONSENT_MODES = new Set([
+  'once',
+  'every_time',
+  'until_attributes_change',
 ]);
 const VALID_ASC_TRANSFORMED_CLAIMS = new Set(DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS);
 const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
@@ -230,6 +244,47 @@ function validateOptionalClaimsParameterPolicyField(
   return { ok: true, value: policy };
 }
 
+function validateOptionalIdentityMappingSelectorField(
+  value: unknown,
+  field: string
+):
+  | { ok: true; value: AdminOIDCIdentityMappingSelector | null | undefined }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: `${field} must be an object or null` };
+  }
+
+  const source = value as Record<string, unknown>;
+  const selector: AdminOIDCIdentityMappingSelector = {};
+  for (const key of [
+    'policySetId',
+    'policyVersionId',
+    'destinationNamespace',
+    'sourceProfileId',
+    'destinationProfileId',
+  ] as const) {
+    const raw = source[key];
+    if (raw === undefined || raw === null) {
+      continue;
+    }
+    if (typeof raw !== 'string') {
+      return { ok: false, error: `${field}.${key} must be a string` };
+    }
+    const trimmed = raw.trim();
+    if (trimmed) {
+      selector[key] = trimmed;
+    }
+  }
+
+  return { ok: true, value: Object.keys(selector).length > 0 ? selector : null };
+}
+
 function validateOptionalAscAllowedTransformedClaimsField(
   value: unknown,
   field: string
@@ -282,6 +337,82 @@ function parseClaimsParameterPolicyField(
     }
   }
   return Object.keys(policy).length > 0 ? policy : null;
+}
+
+function parseIdentityMappingSelectorField(
+  value: unknown
+): AdminOIDCIdentityMappingSelector | null {
+  let current = value;
+  if (typeof current === 'string') {
+    const trimmed = current.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      current = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  const validation = validateOptionalIdentityMappingSelectorField(current, 'identity_mapping');
+  return validation.ok ? (validation.value ?? null) : null;
+}
+
+function parseAttributeReleaseConsentPolicyField(
+  value: unknown
+): AttributeReleaseConsentPolicy | null {
+  let current = value;
+  if (typeof current === 'string') {
+    const trimmed = current.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      current = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  const validation = validateOptionalAttributeReleaseConsentPolicyField(
+    current,
+    'attribute_release_consent'
+  );
+  return validation.ok ? (validation.value ?? null) : null;
+}
+
+function validateOptionalAttributeReleaseConsentPolicyField(
+  value: unknown,
+  field: string
+): { ok: true; value?: AttributeReleaseConsentPolicy | null } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: `${field} must be an object or null` };
+  }
+  const input = value as { enabled?: unknown; mode?: unknown };
+  if (typeof input.enabled !== 'boolean') {
+    return { ok: false, error: `${field}.enabled must be boolean` };
+  }
+  if (input.mode !== undefined && !VALID_ATTRIBUTE_RELEASE_CONSENT_MODES.has(String(input.mode))) {
+    return {
+      ok: false,
+      error: `${field}.mode must be one of once, every_time, until_attributes_change`,
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      enabled: input.enabled,
+      mode:
+        input.mode === 'every_time' || input.mode === 'until_attributes_change'
+          ? input.mode
+          : 'once',
+    },
+  };
 }
 
 function validateWebOriginRegistryField(
@@ -383,6 +514,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent?: boolean;
       allow_claims_without_scope?: boolean;
       claims_parameter_policy?: Record<string, ClaimReleasePolicy> | null;
+      attribute_release_consent?: AttributeReleaseConsentPolicy | null;
       asc_enabled?: boolean;
       asc_protected_request_required?: boolean;
       asc_sao_enabled?: boolean;
@@ -583,6 +715,20 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: claimsParameterPolicyValidation.error,
+        },
+        400
+      );
+    }
+
+    const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
+      body.attribute_release_consent,
+      'attribute_release_consent'
+    );
+    if (!attributeReleaseConsentValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: attributeReleaseConsentValidation.error,
         },
         400
       );
@@ -883,6 +1029,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent: body.skip_consent || false,
       allow_claims_without_scope: body.allow_claims_without_scope || false,
       claims_parameter_policy: claimsParameterPolicyValidation.value,
+      attribute_release_consent: attributeReleaseConsentValidation.value,
       asc_enabled: ascEnabledValidation.value ?? true,
       asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? true,
       asc_sao_enabled: ascSaoEnabledValidation.value ?? true,
@@ -970,6 +1117,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope: client.allow_claims_without_scope,
       claims_parameter_policy:
         parseClaimsParameterPolicyField(client.claims_parameter_policy) ?? undefined,
+      attribute_release_consent:
+        parseAttributeReleaseConsentPolicyField(client.attribute_release_consent) ?? undefined,
       asc_enabled: client.asc_enabled,
       asc_protected_request_required: client.asc_protected_request_required,
       asc_sao_enabled: client.asc_sao_enabled,
@@ -1080,6 +1229,9 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           skip_consent: client.skip_consent,
           allow_claims_without_scope: client.allow_claims_without_scope,
           claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+          attribute_release_consent: parseAttributeReleaseConsentPolicyField(
+            client.attribute_release_consent
+          ),
           asc_enabled: client.asc_enabled,
           asc_protected_request_required: client.asc_protected_request_required,
           asc_sao_enabled: client.asc_sao_enabled,
@@ -1157,6 +1309,10 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
           ? parseClientStringArray(client.allowed_channels, [])
           : [],
         claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+        identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
+        attribute_release_consent: parseAttributeReleaseConsentPolicyField(
+          client.attribute_release_consent
+        ),
         asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
           ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
           : null,
@@ -1233,6 +1389,10 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
         ? parseClientStringArray(client.allowed_channels, [])
         : [],
       claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+      identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
+      attribute_release_consent: parseAttributeReleaseConsentPolicyField(
+        client.attribute_release_consent
+      ),
       asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
         ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
         : null,
@@ -1307,6 +1467,8 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent,
       allow_claims_without_scope,
       claims_parameter_policy,
+      identity_mapping,
+      attribute_release_consent,
       asc_enabled,
       asc_protected_request_required,
       asc_sao_enabled,
@@ -1532,6 +1694,34 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: claimsParameterPolicyValidation.error,
+        },
+        400
+      );
+    }
+
+    const identityMappingValidation = validateOptionalIdentityMappingSelectorField(
+      identity_mapping,
+      'identity_mapping'
+    );
+    if (!identityMappingValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: identityMappingValidation.error,
+        },
+        400
+      );
+    }
+
+    const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
+      attribute_release_consent,
+      'attribute_release_consent'
+    );
+    if (!attributeReleaseConsentValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: attributeReleaseConsentValidation.error,
         },
         400
       );
@@ -1798,6 +1988,8 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent,
       allow_claims_without_scope,
       claims_parameter_policy,
+      identity_mapping,
+      attribute_release_consent,
       asc_enabled,
       asc_protected_request_required,
       asc_sao_enabled,
@@ -1855,6 +2047,8 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           skip_consent,
           allow_claims_without_scope,
           claims_parameter_policy: claimsParameterPolicyValidation.value,
+          identity_mapping: identityMappingValidation.value,
+          attribute_release_consent: attributeReleaseConsentValidation.value,
           asc_enabled: ascEnabledValidation.value ?? undefined,
           asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? undefined,
           asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
@@ -1967,6 +2161,10 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
             : [],
           claims_parameter_policy: parseClaimsParameterPolicyField(
             updatedClient.claims_parameter_policy
+          ),
+          identity_mapping: parseIdentityMappingSelectorField(updatedClient.identity_mapping),
+          attribute_release_consent: parseAttributeReleaseConsentPolicyField(
+            updatedClient.attribute_release_consent
           ),
           asc_allowed_transformed_claims: updatedClient.asc_allowed_transformed_claims
             ? parseClientStringArray(updatedClient.asc_allowed_transformed_claims, [])

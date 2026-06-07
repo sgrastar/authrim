@@ -62,6 +62,7 @@ import {
   applySAMLAttributePresetToSPConfig,
   normalizeSAMLSPAttributePresetConfig,
 } from '../idp/attribute-presets';
+import { normalizeAttributeReleaseConsentPolicy } from '../idp/attribute-release-consent';
 import { SAMLMetadataValidationError } from './errors';
 import { applySAMLSPProfileDefaults } from './profile-defaults';
 import {
@@ -215,6 +216,25 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
     ...config,
     jitEmailLinkingPolicy: policy,
     allowSyntheticEmailFallback: config.allowSyntheticEmailFallback === true,
+  };
+}
+
+function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseValidationError {
+  const presetConfig = normalizeSAMLSPAttributePresetConfig(config);
+  if (presetConfig.attributeReleaseConsent === undefined) {
+    return presetConfig;
+  }
+
+  const attributeReleaseConsent = normalizeAttributeReleaseConsentPolicy(
+    presetConfig.attributeReleaseConsent
+  );
+  if (!attributeReleaseConsent) {
+    return { field: 'attributeReleaseConsent.mode' };
+  }
+
+  return {
+    ...presetConfig,
+    attributeReleaseConsent,
   };
 }
 
@@ -1356,7 +1376,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
 
     const normalizedConfig =
       body.providerType === 'saml_sp'
-        ? normalizeSAMLSPAttributePresetConfig(config as SAMLSPConfig)
+        ? normalizeSAMLSPConfig(config as SAMLSPConfig)
         : normalizeSAMLIdPJitLinkingPolicyConfig(config as SAMLIdPConfig);
     if (isResponseValidationError(normalizedConfig)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -1530,7 +1550,7 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     const mergedConfig = body.config ? { ...existingConfig, ...body.config } : existingConfig;
     const newConfig =
       existing.provider_type === 'saml_sp'
-        ? normalizeSAMLSPAttributePresetConfig(mergedConfig as SAMLSPConfig)
+        ? normalizeSAMLSPConfig(mergedConfig as SAMLSPConfig)
         : normalizeSAMLIdPJitLinkingPolicyConfig(mergedConfig as SAMLIdPConfig);
     if (isResponseValidationError(newConfig)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {

@@ -5,6 +5,7 @@
 import type { OrganizationType, PlanType, UserType } from './rbac';
 import type { AuthorizationDetails } from './rar';
 import type { JWKS } from './jwk';
+import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
 
 /**
  * OpenID Provider Metadata (Discovery Document)
@@ -247,6 +248,14 @@ export interface OAuthErrorResponse {
   error_uri?: string;
 }
 
+export interface OIDCIdentityMappingPolicySelector {
+  policySetId?: string;
+  policyVersionId?: string;
+  destinationNamespace?: string;
+  sourceProfileId?: string;
+  destinationProfileId?: string;
+}
+
 /**
  * Dynamic Client Registration Request
  * https://openid.net/specs/openid-connect-registration-1_0.html#ClientMetadata
@@ -429,6 +438,9 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   // Claims Parameter Settings
   allow_claims_without_scope?: boolean; // Allow claims parameter to request claims without corresponding scope (default: false)
   claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
+  identity_mapping?: OIDCIdentityMappingPolicySelector | null;
+  /** User-facing OIDC claim release consent policy. Same shape as SAML attribute release consent. */
+  attribute_release_consent?: AttributeReleaseConsentPolicy | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;
   asc_sao_enabled?: boolean;

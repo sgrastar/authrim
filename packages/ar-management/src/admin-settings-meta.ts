@@ -85,6 +85,8 @@ const OAUTH_CLIENT_CLONE_COLUMNS = [
   'skip_consent',
   'allow_claims_without_scope',
   'claims_parameter_policy',
+  'identity_mapping',
+  'attribute_release_consent',
   'asc_enabled',
   'asc_protected_request_required',
   'asc_sao_enabled',

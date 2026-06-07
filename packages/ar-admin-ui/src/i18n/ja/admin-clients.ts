@@ -199,6 +199,23 @@ const adminClients = {
 	admin_client_detail_allow_id_token_response_desc:
 		'id_token response type（implicit flow）を有効化します',
 	admin_client_detail_claims_parameter: 'Claims Parameter',
+	admin_client_detail_identity_mapping_section: 'Identity Mapping',
+	admin_client_detail_identity_mapping_policy: 'OIDC claim mapping policy',
+	admin_client_detail_identity_mapping_policy_default: 'テナント既定 / client overrideなし',
+	admin_client_detail_identity_mapping_policy_hint:
+		'このclientのOIDC UserInfoとtoken claimsで使用するactive identity mapping policyを選択します。',
+	admin_client_detail_identity_mapping_policy_display_hint:
+		'OIDC identity mappingのclient overrideです。空の場合はテナント既定のactivationを使用します。',
+	admin_client_detail_attribute_release_consent: 'Claim提供の同意',
+	admin_client_detail_attribute_release_consent_disabled: 'claim提供前に確認しない',
+	admin_client_detail_attribute_release_consent_once: '初回のみ確認して記憶する',
+	admin_client_detail_attribute_release_consent_every_time: 'OIDC提供ごとに確認する',
+	admin_client_detail_attribute_release_consent_until_attributes_change:
+		'claimが変わったら再確認する',
+	admin_client_detail_attribute_release_consent_hint:
+		'このclientへID TokenまたはUserInfo claimを提供する前に、Authrimがclaim提供同意を確認するかを制御します。',
+	admin_client_detail_attribute_release_consent_display_hint:
+		'OIDC ID TokenとUserInfoのclaim提供時にruntime enforcementされます。',
 	admin_client_detail_scope_required: 'Scope required',
 	admin_client_detail_advanced_syntax_claims: 'Advanced Syntax for Claims',
 	admin_client_detail_asc: 'ASC',

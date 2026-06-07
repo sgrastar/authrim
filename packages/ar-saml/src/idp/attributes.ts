@@ -1,3 +1,14 @@
+import { executeRuntimeMapping } from '@authrim/ar-lib-identity-mapping';
+import type {
+  FieldCatalogBundle,
+  FieldRef,
+  MappingPolicy,
+  MappingRuleEdge,
+  MappingTransformStep,
+  ReasonCode,
+  SourceValueEnvelope,
+  ValidationRule,
+} from '@authrim/ar-lib-identity-mapping';
 import type {
   SAMLAttribute,
   SAMLAttributeValueType,
@@ -15,10 +26,14 @@ export interface SAMLAttributeSubject {
 }
 
 export interface SAMLAttributeReleaseConfig {
+  entityId?: string;
+  localEntityId?: string;
+  tenantId?: string;
   attributeMapping: Record<string, string>;
   attributeReleasePolicy?: {
     attributes: SAMLAttributeReleaseRule[];
   };
+  identityMapping?: SAMLIdentityMappingReleaseConfig;
 }
 
 export interface SAMLAttributeReleaseRule {
@@ -36,8 +51,49 @@ export interface SAMLAttributeReleaseRule {
 export interface MissingRequiredSAMLAttribute {
   name: string;
   friendlyName?: string;
-  source: SAMLAttributeReleaseSource;
+  source: SAMLAttributeReleaseSource | 'identity_mapping';
   claim?: string;
+}
+
+export interface SAMLIdentityMappingAttributeDescriptor {
+  name?: string;
+  nameFormat?: string;
+  friendlyName?: string;
+  valueType?: SAMLAttributeValueType;
+  required?: boolean;
+}
+
+export type SAMLIdentityMappingRole = 'idp' | 'sp';
+
+export interface SAMLIdentityMappingRuntimeContext {
+  role: SAMLIdentityMappingRole;
+  tenantId?: string;
+  localEntityId?: string;
+  partnerEntityId?: string;
+}
+
+export interface SAMLIdentityMappingPolicyBinding {
+  id?: string;
+  role?: SAMLIdentityMappingRole;
+  tenantId?: string;
+  localEntityId?: string;
+  partnerEntityId?: string;
+  catalog: FieldCatalogBundle;
+  edges: MappingRuleEdge[];
+  transforms?: MappingTransformStep[];
+  validationRules?: ValidationRule[];
+  policy?: MappingPolicy;
+  destinationNamespace?: string;
+  attributeDescriptors?: Record<string, SAMLIdentityMappingAttributeDescriptor>;
+  policySetId?: string;
+  policyVersionId?: string;
+  sourceProfileId?: string;
+  destinationProfileId?: string;
+}
+
+export interface SAMLIdentityMappingReleaseConfig extends Partial<SAMLIdentityMappingPolicyBinding> {
+  defaultBinding?: SAMLIdentityMappingPolicyBinding;
+  bindings?: SAMLIdentityMappingPolicyBinding[];
 }
 
 export class MissingRequiredSAMLAttributeError extends Error {
@@ -49,6 +105,16 @@ export class MissingRequiredSAMLAttributeError extends Error {
     );
     this.name = 'MissingRequiredSAMLAttributeError';
     this.missingAttributes = missingAttributes;
+  }
+}
+
+export class SAMLIdentityMappingRuntimeError extends Error {
+  readonly reasons: ReasonCode[];
+
+  constructor(reasons: ReasonCode[]) {
+    super(`SAML identity mapping failed: ${reasons.map((item) => item.code).join(', ')}`);
+    this.name = 'SAMLIdentityMappingRuntimeError';
+    this.reasons = reasons;
   }
 }
 
@@ -111,6 +177,15 @@ export function buildSAMLAttributesForSPWithDiagnostics(
   subject: SAMLAttributeSubject,
   spConfig: SAMLAttributeReleaseConfig
 ): SAMLAttributeReleaseResult {
+  if (spConfig.identityMapping && hasSAMLIdentityMappingRuntimeConfig(spConfig.identityMapping)) {
+    return buildSAMLAttributesFromIdentityMapping(subject, spConfig.identityMapping, {
+      role: 'idp',
+      tenantId: spConfig.tenantId,
+      localEntityId: spConfig.localEntityId,
+      partnerEntityId: spConfig.entityId,
+    });
+  }
+
   const rules = spConfig.attributeReleasePolicy?.attributes ?? [];
   if (rules.length === 0) {
     return {
@@ -152,6 +227,321 @@ export function buildSAMLAttributesForSPWithDiagnostics(
   }
 
   return { attributes, optionalMissingAttributes };
+}
+
+export function hasSAMLIdentityMappingRuntimeConfig(
+  config: SAMLIdentityMappingReleaseConfig
+): boolean {
+  return (
+    isCompleteSAMLIdentityMappingBinding(config) ||
+    Boolean(config.defaultBinding) ||
+    Boolean(config.bindings?.length)
+  );
+}
+
+function buildSAMLAttributesFromIdentityMapping(
+  subject: SAMLAttributeSubject,
+  config: SAMLIdentityMappingReleaseConfig,
+  context: SAMLIdentityMappingRuntimeContext
+): SAMLAttributeReleaseResult {
+  const binding = resolveSAMLIdentityMappingPolicyBinding(config, context);
+  const destinationNamespace = binding.destinationNamespace ?? 'saml.attribute';
+  const sourceValues = buildIdentityMappingSourceValues(subject, binding.edges);
+  const result = executeRuntimeMapping({
+    catalog: binding.catalog,
+    sourceValues,
+    edges: binding.edges,
+    transforms: binding.transforms,
+    validationRules: binding.validationRules,
+    policy: binding.policy,
+  });
+
+  if (result.status === 'failed') {
+    throw new SAMLIdentityMappingRuntimeError(result.reasons);
+  }
+
+  const attributes = mergeSAMLAttributes(
+    result.values
+      .filter((value) => value.sourceRef.namespace === destinationNamespace)
+      .map((value) => buildAttributeFromMappedValue(value, binding))
+      .filter((attribute): attribute is SAMLAttribute => attribute !== null)
+  );
+  const missingAttributes = findMissingRequiredMappedAttributes(
+    attributes,
+    binding,
+    destinationNamespace
+  );
+
+  if (missingAttributes.length > 0) {
+    throw new MissingRequiredSAMLAttributeError(missingAttributes);
+  }
+
+  return {
+    attributes,
+    optionalMissingAttributes: [],
+  };
+}
+
+function resolveSAMLIdentityMappingPolicyBinding(
+  config: SAMLIdentityMappingReleaseConfig,
+  context: SAMLIdentityMappingRuntimeContext
+): SAMLIdentityMappingPolicyBinding {
+  const candidates = [
+    ...(config.bindings ?? []),
+    ...(config.defaultBinding ? [config.defaultBinding] : []),
+    ...(isCompleteSAMLIdentityMappingBinding(config) ? [config] : []),
+  ] as SAMLIdentityMappingPolicyBinding[];
+  const exact = selectBestSAMLIdentityMappingPolicyBinding(candidates, context, true);
+  if (exact) {
+    return exact;
+  }
+  const scopedDefault = selectBestSAMLIdentityMappingPolicyBinding(candidates, context, false);
+  if (scopedDefault) {
+    return scopedDefault;
+  }
+  throw new SAMLIdentityMappingRuntimeError([
+    {
+      category: 'policy',
+      code: 'policy.missing_identity_mapping_binding',
+      severity: 'critical',
+    },
+  ]);
+}
+
+function isCompleteSAMLIdentityMappingBinding(
+  config: SAMLIdentityMappingReleaseConfig
+): config is SAMLIdentityMappingPolicyBinding {
+  return Boolean(config.catalog && Array.isArray(config.edges));
+}
+
+function bindingMatches(
+  binding: SAMLIdentityMappingPolicyBinding,
+  context: SAMLIdentityMappingRuntimeContext,
+  requirePartnerMatch: boolean
+): boolean {
+  if (binding.role && binding.role !== context.role) {
+    return false;
+  }
+  if (!scopeMatches(binding.tenantId, context.tenantId)) {
+    return false;
+  }
+  if (!scopeMatches(binding.localEntityId, context.localEntityId)) {
+    return false;
+  }
+  if (requirePartnerMatch) {
+    return Boolean(
+      binding.partnerEntityId &&
+      context.partnerEntityId &&
+      binding.partnerEntityId === context.partnerEntityId
+    );
+  }
+  return !binding.partnerEntityId;
+}
+
+function selectBestSAMLIdentityMappingPolicyBinding(
+  candidates: SAMLIdentityMappingPolicyBinding[],
+  context: SAMLIdentityMappingRuntimeContext,
+  requirePartnerMatch: boolean
+): SAMLIdentityMappingPolicyBinding | undefined {
+  return candidates
+    .filter((candidate) => bindingMatches(candidate, context, requirePartnerMatch))
+    .sort((left, right) => bindingSpecificity(right) - bindingSpecificity(left))[0];
+}
+
+function scopeMatches(bindingScope: string | undefined, contextScope: string | undefined): boolean {
+  return !bindingScope || bindingScope === contextScope;
+}
+
+function bindingSpecificity(binding: SAMLIdentityMappingPolicyBinding): number {
+  return (
+    (binding.role ? 1 : 0) +
+    (binding.tenantId ? 2 : 0) +
+    (binding.localEntityId ? 4 : 0) +
+    (binding.partnerEntityId ? 8 : 0)
+  );
+}
+
+function buildIdentityMappingSourceValues(
+  subject: SAMLAttributeSubject,
+  edges: MappingRuleEdge[]
+): SourceValueEnvelope[] {
+  const seen = new Set<string>();
+  const values: SourceValueEnvelope[] = [];
+
+  for (const edge of edges) {
+    const key = fieldRefKey(edge.sourceRef);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    values.push({
+      value: readMappingSourceValue(subject, edge.sourceRef),
+      sourceRef: edge.sourceRef,
+      metadata: {
+        sourceType: edge.sourceRef.namespace,
+        fieldPath: edge.sourceRef.path,
+      },
+    });
+  }
+
+  return values;
+}
+
+function buildAttributeFromMappedValue(
+  mappedValue: SourceValueEnvelope,
+  config: SAMLIdentityMappingPolicyBinding
+): SAMLAttribute | null {
+  const values = normalizeAttributeValues(mappedValue.value);
+  if (values.length === 0) {
+    return null;
+  }
+  const descriptor = findMappedAttributeDescriptor(mappedValue.sourceRef, config);
+
+  return {
+    name: descriptor?.name ?? mappedValue.sourceRef.path,
+    nameFormat: descriptor?.nameFormat,
+    friendlyName: descriptor?.friendlyName,
+    valueType: descriptor?.valueType,
+    values,
+  };
+}
+
+function mergeSAMLAttributes(attributes: SAMLAttribute[]): SAMLAttribute[] {
+  const merged = new Map<string, SAMLAttribute>();
+
+  for (const attribute of attributes) {
+    const key = samlAttributeKey(attribute);
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...attribute, values: dedupeAttributeValues(attribute.values) });
+      continue;
+    }
+    existing.values = dedupeAttributeValues([...existing.values, ...attribute.values]);
+  }
+
+  return Array.from(merged.values());
+}
+
+function samlAttributeKey(attribute: SAMLAttribute): string {
+  return [
+    attribute.name,
+    attribute.nameFormat ?? '',
+    attribute.friendlyName ?? '',
+    attribute.valueType ?? '',
+  ].join('\u0000');
+}
+
+function dedupeAttributeValues(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function findMissingRequiredMappedAttributes(
+  attributes: SAMLAttribute[],
+  config: SAMLIdentityMappingPolicyBinding,
+  destinationNamespace: string
+): MissingRequiredSAMLAttribute[] {
+  const emittedNames = new Set(attributes.map((attribute) => attribute.name));
+  const missing: MissingRequiredSAMLAttribute[] = [];
+
+  for (const entry of config.catalog.entries) {
+    if (entry.namespace !== destinationNamespace || !entry.required) {
+      continue;
+    }
+    const ref: FieldRef = {
+      side: 'destination',
+      namespace: entry.namespace,
+      path: entry.path,
+      catalogEntryId: entry.id,
+    };
+    const descriptor = findMappedAttributeDescriptor(ref, config);
+    const name = descriptor?.name ?? entry.path;
+    if (!emittedNames.has(name)) {
+      missing.push({
+        name,
+        friendlyName: descriptor?.friendlyName,
+        source: 'identity_mapping',
+        claim: entry.path,
+      });
+    }
+  }
+
+  for (const [key, descriptor] of Object.entries(config.attributeDescriptors ?? {})) {
+    if (!descriptor.required) {
+      continue;
+    }
+    const name = descriptor.name ?? findCatalogPathById(config, key) ?? key;
+    if (!emittedNames.has(name)) {
+      missing.push({
+        name,
+        friendlyName: descriptor.friendlyName,
+        source: 'identity_mapping',
+        claim: key,
+      });
+    }
+  }
+
+  return dedupeMissingAttributes(missing);
+}
+
+function findCatalogPathById(config: SAMLIdentityMappingPolicyBinding, catalogEntryId: string) {
+  return config.catalog.entries.find((entry) => entry.id === catalogEntryId)?.path;
+}
+
+function findMappedAttributeDescriptor(
+  fieldRef: FieldRef,
+  config: SAMLIdentityMappingPolicyBinding
+): SAMLIdentityMappingAttributeDescriptor | undefined {
+  const descriptors = config.attributeDescriptors ?? {};
+  return (
+    (fieldRef.catalogEntryId ? descriptors[fieldRef.catalogEntryId] : undefined) ??
+    descriptors[fieldRef.path] ??
+    descriptors[`${fieldRef.namespace}:${fieldRef.path}`]
+  );
+}
+
+function dedupeMissingAttributes(
+  missingAttributes: MissingRequiredSAMLAttribute[]
+): MissingRequiredSAMLAttribute[] {
+  const seen = new Set<string>();
+  const deduped: MissingRequiredSAMLAttribute[] = [];
+  for (const attribute of missingAttributes) {
+    const key = `${attribute.name}:${attribute.friendlyName ?? ''}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(attribute);
+  }
+  return deduped;
+}
+
+function readMappingSourceValue(subject: SAMLAttributeSubject, fieldRef: FieldRef): unknown {
+  switch (fieldRef.namespace) {
+    case 'authrim.profile':
+    case 'authrim.claim':
+    case 'oidc.claim':
+      return readSubjectValue(subject, fieldRef.path);
+    case 'authrim.claims':
+    case 'claims':
+      return readSubjectValue(subject, `claims.${fieldRef.path}`);
+    case 'authrim.custom_claims':
+    case 'custom_claims':
+      return readSubjectValue(subject, `customClaims.${fieldRef.path}`);
+    case 'authrim.custom_fields':
+    case 'custom_fields':
+      return readSubjectValue(subject, `customFields.${fieldRef.path}`);
+    case 'authrim.attributes':
+    case 'attributes':
+      return readSubjectValue(subject, `attributes.${fieldRef.path}`);
+    default:
+      return readSubjectValue(subject, fieldRef.path);
+  }
+}
+
+function fieldRefKey(fieldRef: FieldRef): string {
+  return fieldRef.catalogEntryId
+    ? `id:${fieldRef.catalogEntryId}`
+    : `${fieldRef.side}:${fieldRef.namespace}:${fieldRef.path}`;
 }
 
 function buildAttributeFromRule(

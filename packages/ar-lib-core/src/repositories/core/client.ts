@@ -18,6 +18,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import type { AttributeReleaseConsentPolicy } from '../../services/identity-release-consent';
 import {
   type PaginationOptions,
   type PaginationResult,
@@ -54,6 +55,14 @@ export type ClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 export type ClientChannel = 'browser' | 'native' | 'server';
 export type BrowserPublicClientMode = 'strict' | 'cookie_fallback';
 export type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+
+export interface ClientIdentityMappingPolicySelector {
+  policySetId?: string;
+  policyVersionId?: string;
+  destinationNamespace?: string;
+  sourceProfileId?: string;
+  destinationProfileId?: string;
+}
 
 /**
  * OAuth Client entity
@@ -107,6 +116,8 @@ export interface OAuthClient {
   skip_consent: boolean;
   allow_claims_without_scope: boolean;
   claims_parameter_policy: string | null; // JSON object
+  identity_mapping?: string | null; // JSON object
+  attribute_release_consent?: string | null; // JSON object
   asc_enabled: boolean;
   asc_protected_request_required: boolean;
   asc_sao_enabled: boolean;
@@ -222,6 +233,8 @@ export interface CreateClientInput {
     string,
     'scope_required' | 'claims_allowed' | 'forbidden'
   > | null;
+  identity_mapping?: ClientIdentityMappingPolicySelector | null;
+  attribute_release_consent?: AttributeReleaseConsentPolicy | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;
   asc_sao_enabled?: boolean;
@@ -290,6 +303,8 @@ export interface UpdateClientInput {
     string,
     'scope_required' | 'claims_allowed' | 'forbidden'
   > | null;
+  identity_mapping?: ClientIdentityMappingPolicySelector | null;
+  attribute_release_consent?: AttributeReleaseConsentPolicy | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;
   asc_sao_enabled?: boolean;
@@ -451,6 +466,10 @@ export class ClientRepository {
       claims_parameter_policy: input.claims_parameter_policy
         ? JSON.stringify(input.claims_parameter_policy)
         : null,
+      identity_mapping: input.identity_mapping ? JSON.stringify(input.identity_mapping) : null,
+      attribute_release_consent: input.attribute_release_consent
+        ? JSON.stringify(input.attribute_release_consent)
+        : null,
       asc_enabled: input.asc_enabled ?? true,
       asc_protected_request_required: input.asc_protected_request_required ?? true,
       asc_sao_enabled: input.asc_sao_enabled ?? true,
@@ -515,7 +534,8 @@ export class ClientRepository {
         post_logout_redirect_uris, subject_type, sector_identifier_uri,
         token_endpoint_auth_method, jwks, jwks_uri,
         is_trusted, skip_consent, allow_claims_without_scope,
-        claims_parameter_policy, asc_enabled, asc_protected_request_required,
+        claims_parameter_policy, identity_mapping, attribute_release_consent,
+        asc_enabled, asc_protected_request_required,
         asc_sao_enabled, asc_transformed_claims_enabled, asc_allowed_transformed_claims,
         token_exchange_allowed, allowed_subject_token_clients,
         allowed_token_exchange_resources, delegation_mode,
@@ -531,7 +551,7 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -577,6 +597,8 @@ export class ClientRepository {
         client.skip_consent ? 1 : 0,
         client.allow_claims_without_scope ? 1 : 0,
         client.claims_parameter_policy,
+        client.identity_mapping,
+        client.attribute_release_consent,
         client.asc_enabled ? 1 : 0,
         client.asc_protected_request_required ? 1 : 0,
         client.asc_sao_enabled ? 1 : 0,
@@ -730,6 +752,16 @@ export class ClientRepository {
       updates.push('claims_parameter_policy = ?');
       params.push(
         input.claims_parameter_policy ? JSON.stringify(input.claims_parameter_policy) : null
+      );
+    }
+    if (input.identity_mapping !== undefined) {
+      updates.push('identity_mapping = ?');
+      params.push(input.identity_mapping ? JSON.stringify(input.identity_mapping) : null);
+    }
+    if (input.attribute_release_consent !== undefined) {
+      updates.push('attribute_release_consent = ?');
+      params.push(
+        input.attribute_release_consent ? JSON.stringify(input.attribute_release_consent) : null
       );
     }
     if (input.asc_enabled !== undefined) {
