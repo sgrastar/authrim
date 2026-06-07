@@ -4,7 +4,7 @@ import {
 	summarizeDestinationConsentSettings
 } from '../identity-mapping-profile-settings';
 
-describe('identity mapping destination profile settings', () => {
+describe('field mapping destination profile settings', () => {
 	it('creates privacy-preserving tenant default release consent settings', () => {
 		const draft = createDestinationConsentSettingsDraft('profile_oidc');
 

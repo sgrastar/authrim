@@ -1263,7 +1263,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
-  it('deactivates an active mapping policy version', async () => {
+  it('deactivates an active field mapping set version', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
@@ -2724,10 +2724,10 @@ describe('identity mapping control plane Admin API handlers', () => {
       ],
     });
     const app = new Hono<{ Bindings: Env }>();
-    app.get('/api/admin/identity-mapping/policies', adminIdentityMappingPoliciesListHandler);
+    app.get('/api/admin/field-mapping/field-mapping-sets', adminIdentityMappingPoliciesListHandler);
 
     const response = await app.request(
-      '/api/admin/identity-mapping/policies',
+      '/api/admin/field-mapping/field-mapping-sets',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -2765,12 +2765,12 @@ describe('identity mapping control plane Admin API handlers', () => {
     });
     const app = new Hono<{ Bindings: Env }>();
     app.get(
-      '/api/admin/identity-mapping/protocol-schemas',
+      '/api/admin/field-mapping/protocol-schemas',
       adminIdentityMappingProtocolSchemasListHandler
     );
 
     const response = await app.request(
-      '/api/admin/identity-mapping/protocol-schemas',
+      '/api/admin/field-mapping/protocol-schemas',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -2803,12 +2803,12 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.post(
-      '/api/admin/identity-mapping/destination-profiles',
+      '/api/admin/field-mapping/destination-profiles',
       adminIdentityMappingDestinationProfileCreateHandler
     );
 
     const response = await app.request(
-      '/api/admin/identity-mapping/destination-profiles',
+      '/api/admin/field-mapping/destination-profiles',
       {
         method: 'POST',
         headers: {
@@ -2848,16 +2848,16 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.post(
-      '/api/admin/identity-mapping/attribute-groups',
+      '/api/admin/field-mapping/attribute-groups',
       adminIdentityMappingAttributeGroupCreateHandler
     );
     app.post(
-      '/api/admin/identity-mapping/attribute-fields',
+      '/api/admin/field-mapping/attribute-fields',
       adminIdentityMappingAttributeFieldCreateHandler
     );
 
     const groupResponse = await app.request(
-      '/api/admin/identity-mapping/attribute-groups',
+      '/api/admin/field-mapping/attribute-groups',
       {
         method: 'POST',
         headers: {
@@ -2877,7 +2877,7 @@ describe('identity mapping control plane Admin API handlers', () => {
       { DB_ADMIN: adapter } as unknown as Env
     );
     const fieldResponse = await app.request(
-      '/api/admin/identity-mapping/attribute-fields',
+      '/api/admin/field-mapping/attribute-fields',
       {
         method: 'POST',
         headers: {
@@ -2932,10 +2932,10 @@ describe('identity mapping control plane Admin API handlers', () => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
     });
-    app.get('/api/admin/identity-mapping/review-tasks', adminIdentityMappingReviewTasksListHandler);
+    app.get('/api/admin/field-mapping/review-tasks', adminIdentityMappingReviewTasksListHandler);
 
     const response = await app.request(
-      '/api/admin/identity-mapping/review-tasks?status=open&limit=5',
+      '/api/admin/field-mapping/review-tasks?status=open&limit=5',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -2982,12 +2982,12 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.get(
-      '/api/admin/identity-mapping/schema-readiness',
+      '/api/admin/field-mapping/schema-readiness',
       adminIdentityMappingSchemaReadinessHandler
     );
 
     const response = await app.request(
-      '/api/admin/identity-mapping/schema-readiness',
+      '/api/admin/field-mapping/schema-readiness',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -3058,12 +3058,12 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.get(
-      '/api/admin/identity-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
+      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
       adminIdentityMappingFederationMetadataDocumentsListHandler
     );
 
     const response = await app.request(
-      '/api/admin/identity-mapping/federation-trust-sources/trust-source-1/metadata-documents',
+      '/api/admin/field-mapping/federation-trust-sources/trust-source-1/metadata-documents',
       {},
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -3092,10 +3092,10 @@ describe('identity mapping control plane Admin API handlers', () => {
   it('requires idempotency keys for mutation handlers', async () => {
     const adapter = createAdapter({});
     const app = new Hono<{ Bindings: Env }>();
-    app.post('/api/admin/identity-mapping/policies', adminIdentityMappingPolicyCreateHandler);
+    app.post('/api/admin/field-mapping/field-mapping-sets', adminIdentityMappingPolicyCreateHandler);
 
     const response = await app.request(
-      '/api/admin/identity-mapping/policies',
+      '/api/admin/field-mapping/field-mapping-sets',
       {
         method: 'POST',
         headers: {

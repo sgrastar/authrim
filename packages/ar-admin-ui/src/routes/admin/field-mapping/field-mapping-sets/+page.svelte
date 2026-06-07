@@ -125,12 +125,12 @@
 			versionId: version.id,
 			direction: side
 		});
-		return `/admin/identity-mapping/edit?${params.toString()}`;
+		return `/admin/field-mapping/edit?${params.toString()}`;
 	}
 
 	function newPolicyHref(side: PolicySide): string {
 		const params = new URLSearchParams({ direction: side });
-		return `/admin/identity-mapping/edit?${params.toString()}`;
+		return `/admin/field-mapping/edit?${params.toString()}`;
 	}
 
 	function profileSummary(version: IdentityMappingPolicyVersionSummary, side: PolicySide): string {
@@ -157,7 +157,7 @@
 <div class="operations-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
 			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
 			<h1>{$LL.admin_identity_mapping_policies_title()}</h1>
 			<p class="summary">

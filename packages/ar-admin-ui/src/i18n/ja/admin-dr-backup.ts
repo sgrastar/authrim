@@ -27,7 +27,46 @@ const adminDrBackup = {
 	admin_dr_backup_bundle_exported: 'SAML署名DR bundleをexportしました。',
 	admin_dr_backup_bundle_imported: 'SAML署名DR bundleをimportしました。',
 	admin_dr_backup_error_export_bundle: 'SAML署名DR bundleをexportできませんでした',
-	admin_dr_backup_error_import_bundle: 'SAML署名DR bundleをimportできませんでした'
+	admin_dr_backup_error_import_bundle: 'SAML署名DR bundleをimportできませんでした',
+	admin_dr_backup_error_load_certificates: '保存済みSAML署名証明書を読み込めませんでした',
+	admin_dr_backup_error_preview_certificate: 'SAML署名証明書をpreviewできませんでした',
+	admin_dr_backup_export_certificates_title: 'Exportに含まれる証明書',
+	admin_dr_backup_export_certificates_desc:
+		'暗号化DR bundleに含まれる保存済みSAML署名証明書を確認します。',
+	admin_dr_backup_refresh_certificates: '証明書を更新',
+	admin_dr_backup_no_export_certificates:
+		'DR bundle exportに利用できる保存済みSAML署名証明書はありません。',
+	admin_dr_backup_certificate_role: 'Role',
+	admin_dr_backup_certificate_slot: 'Slot',
+	admin_dr_backup_certificate_status: 'Status',
+	admin_dr_backup_certificate_key_ref: 'Key reference',
+	admin_dr_backup_certificate_valid_from: 'Valid from',
+	admin_dr_backup_certificate_valid_to: 'Valid to',
+	admin_dr_backup_certificate_actions: '操作',
+	admin_dr_backup_view_certificate: 'View',
+	admin_dr_backup_certificate_slot_active: 'Active',
+	admin_dr_backup_certificate_slot_next: 'Next',
+	admin_dr_backup_certificate_slot_next_numbered: 'Next {index}',
+	admin_dr_backup_certificate_slot_backup: 'Backup',
+	admin_dr_backup_certificate_active_desc: '現在の署名証明書',
+	admin_dr_backup_certificate_next_desc: 'Rollover用証明書',
+	admin_dr_backup_certificate_backup_desc: 'DR fallback証明書',
+	admin_dr_backup_certificate_status_signing: 'Signing',
+	admin_dr_backup_certificate_status_rollover: 'Rollover',
+	admin_dr_backup_certificate_status_backup: 'Backup',
+	admin_dr_backup_certificate_detail_title: '{role} {slot} certificate',
+	admin_dr_backup_certificate_detail_loading: '証明書詳細を読み込み中...',
+	admin_dr_backup_certificate_detail_no_certificate:
+		'この保存済みkey referenceにはpreviewできる証明書がありません。',
+	admin_dr_backup_certificate_subject: 'Subject',
+	admin_dr_backup_certificate_issuer: 'Issuer',
+	admin_dr_backup_certificate_serial: 'Serial number',
+	admin_dr_backup_certificate_signature: 'Signature',
+	admin_dr_backup_certificate_public_key: 'Public key',
+	admin_dr_backup_certificate_sha1: 'SHA-1 fingerprint',
+	admin_dr_backup_certificate_sha256: 'SHA-256 fingerprint',
+	admin_dr_backup_certificate_pem: 'Certificate PEM',
+	admin_dr_backup_copy_certificate: '証明書をコピー'
 } as const;
 
 export default adminDrBackup;

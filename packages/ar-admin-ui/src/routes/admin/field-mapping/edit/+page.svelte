@@ -6,7 +6,7 @@
 <IdentityMappingPageShell
 	pageTitle={$LL.admin_identity_mapping_editor_title()}
 	headTitle={$LL.admin_identity_mapping_editor_title()}
-	backHref="/admin/identity-mapping/mapping-policies"
+	backHref="/admin/field-mapping/field-mapping-sets"
 	backLabel={$LL.admin_identity_mapping_back_to_policies()}
 	pageDescription={$LL.admin_identity_mapping_editor_description()}
 	editorAllowedViewModes={['source', 'destination']}

@@ -199,13 +199,13 @@ const adminClients = {
 	admin_client_detail_allow_id_token_response_desc:
 		'id_token response type（implicit flow）を有効化します',
 	admin_client_detail_claims_parameter: 'Claims Parameter',
-	admin_client_detail_identity_mapping_section: 'Identity Mapping',
-	admin_client_detail_identity_mapping_policy: 'OIDC claim mapping policy',
+	admin_client_detail_identity_mapping_section: 'Field Mapping',
+	admin_client_detail_identity_mapping_policy: 'OIDC claim Field Mapping Set',
 	admin_client_detail_identity_mapping_policy_default: 'テナント既定 / client overrideなし',
 	admin_client_detail_identity_mapping_policy_hint:
-		'このclientのOIDC UserInfoとtoken claimsで使用するactive identity mapping policyを選択します。',
+		'このclientのOIDC UserInfoとtoken claimsで使用するactive Field Mapping Setを選択します。',
 	admin_client_detail_identity_mapping_policy_display_hint:
-		'OIDC identity mappingのclient overrideです。空の場合はテナント既定のactivationを使用します。',
+		'OIDC field mappingのclient overrideです。空の場合はテナント既定のactivationを使用します。',
 	admin_client_detail_attribute_release_consent: 'Claim提供の同意',
 	admin_client_detail_attribute_release_consent_disabled: 'claim提供前に確認しない',
 	admin_client_detail_attribute_release_consent_once: '初回のみ確認して記憶する',

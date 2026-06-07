@@ -836,7 +836,7 @@ export const adminSAMLAPI = {
 
 	async listFederationTrustProfiles(): Promise<{ profiles: SAMLFederationTrustProfile[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
 			{ method: 'GET' }
 		);
 
@@ -864,7 +864,7 @@ export const adminSAMLAPI = {
 	): Promise<SAMLFederationTrustProfile> {
 		const sourceRequest = await buildFederationTrustSourceRequest(request);
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -886,7 +886,7 @@ export const adminSAMLAPI = {
 	): Promise<SAMLFederationTrustProfile> {
 		const sourceRequest = await buildFederationTrustSourceRequest(request, id);
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
 			{
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
@@ -904,7 +904,7 @@ export const adminSAMLAPI = {
 
 	async deleteFederationTrustProfile(id: string): Promise<{ success: boolean }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
 			{ method: 'DELETE' }
 		);
 

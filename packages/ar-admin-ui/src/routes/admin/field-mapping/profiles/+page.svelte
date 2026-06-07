@@ -96,23 +96,23 @@
 	function editSourceProfile(profile: ProfileItem) {
 		if (!profile.sourceProfileId) return;
 		void goto(
-			`/admin/identity-mapping/profiles/edit?kind=source&id=${encodeURIComponent(profile.sourceProfileId)}`
+			`/admin/field-mapping/profiles/edit?kind=source&id=${encodeURIComponent(profile.sourceProfileId)}`
 		);
 	}
 
 	function editDestinationProfile(profile: ProfileItem) {
 		if (!profile.destinationProfileId) return;
 		void goto(
-			`/admin/identity-mapping/profiles/edit?kind=destination&id=${encodeURIComponent(profile.destinationProfileId)}`
+			`/admin/field-mapping/profiles/edit?kind=destination&id=${encodeURIComponent(profile.destinationProfileId)}`
 		);
 	}
 
 	function createSourceProfile() {
-		void goto('/admin/identity-mapping/profiles/edit?kind=source');
+		void goto('/admin/field-mapping/profiles/edit?kind=source');
 	}
 
 	function createDestinationProfile() {
-		void goto('/admin/identity-mapping/profiles/edit?kind=destination');
+		void goto('/admin/field-mapping/profiles/edit?kind=destination');
 	}
 </script>
 
@@ -123,7 +123,7 @@
 <div class="profiles-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
 			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
 			<h1>{$LL.admin_identity_mapping_profiles_title()}</h1>
 			<p class="summary">

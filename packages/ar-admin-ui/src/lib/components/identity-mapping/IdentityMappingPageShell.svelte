@@ -21,7 +21,7 @@
 	type MappingSide = Extract<ViewMode, 'source' | 'destination'>;
 
 	const {
-		pageTitle = 'Identity Mapping',
+		pageTitle = 'Field Mapping',
 		pageDescription = 'Preview source profiles, canonical identity targets, and destination projections from one control-plane view.',
 		headTitle = pageTitle,
 		backHref = null,
@@ -412,7 +412,7 @@
 			selectedPolicySide = null;
 			confirmDeletePolicyId = null;
 			editorHasUnsavedDraftChanges = false;
-			await goto('/admin/identity-mapping/mapping-policies');
+			await goto('/admin/field-mapping/field-mapping-sets');
 		} catch (error) {
 			policyOperationStatus =
 				error instanceof Error

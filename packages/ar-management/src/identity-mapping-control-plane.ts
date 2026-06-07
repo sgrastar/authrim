@@ -5872,7 +5872,7 @@ export class IdentityMappingControlPlaneRepository {
       [tenantId, leaseKey]
     );
     if (lease && lease.expires_at > now && lease.holder_id !== holderId) {
-      throw conflict('mapping policy activation is already locked by another holder');
+      throw conflict('field mapping set activation is already locked by another holder');
     }
     await this.adapter.execute(
       `INSERT INTO mapping_activation_leases (

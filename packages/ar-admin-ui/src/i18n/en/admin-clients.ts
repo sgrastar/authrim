@@ -197,13 +197,13 @@ const adminClients = {
 	admin_client_detail_allow_id_token_response: 'Allow ID Token Response',
 	admin_client_detail_allow_id_token_response_desc: 'Enable id_token response type (implicit flow)',
 	admin_client_detail_claims_parameter: 'Claims Parameter',
-	admin_client_detail_identity_mapping_section: 'Identity mapping',
-	admin_client_detail_identity_mapping_policy: 'OIDC claims mapping policy',
+	admin_client_detail_identity_mapping_section: 'Field Mapping',
+	admin_client_detail_identity_mapping_policy: 'OIDC claims Field Mapping Set',
 	admin_client_detail_identity_mapping_policy_default: 'Tenant default / no client override',
 	admin_client_detail_identity_mapping_policy_hint:
-		'Selects the active identity mapping policy used for OIDC UserInfo and token claims for this client.',
+		'Selects the active Field Mapping Set used for OIDC UserInfo and token claims for this client.',
 	admin_client_detail_identity_mapping_policy_display_hint:
-		'Client override for OIDC identity mapping. Empty uses tenant default activation.',
+		'Client override for OIDC field mapping. Empty uses tenant default activation.',
 	admin_client_detail_attribute_release_consent: 'Claim release consent',
 	admin_client_detail_attribute_release_consent_disabled: 'Do not ask before releasing claims',
 	admin_client_detail_attribute_release_consent_once: 'Ask the first time, then remember',

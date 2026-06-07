@@ -299,10 +299,10 @@ const adminSaml = {
 	admin_saml_detail_profile: 'Profile',
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'None',
-	admin_saml_detail_identity_mapping_policy: 'Identity mapping policy',
+	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: 'Tenant default / legacy release',
 	admin_saml_detail_identity_mapping_policy_hint:
-		'Selects the active identity mapping policy used for SAML Attribute release to this SP.',
+		'Selects the active Field Mapping Set used for SAML Attribute release to this SP.',
 	admin_saml_detail_attribute_release_consent: 'Attribute release consent',
 	admin_saml_detail_attribute_release_consent_disabled: 'Do not ask before releasing attributes',
 	admin_saml_detail_attribute_release_consent_once: 'Ask the first time, then remember',

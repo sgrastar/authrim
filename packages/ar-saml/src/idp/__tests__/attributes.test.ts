@@ -345,7 +345,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
-  it('uses identity mapping output before legacy SAML release paths', () => {
+  it('uses field mapping output before legacy SAML release paths', () => {
     const attributes = buildSAMLAttributesForSP(
       {
         id: 'user-123',
@@ -405,7 +405,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
-  it('treats missing required identity mapping destinations as SAML release failures', () => {
+  it('treats missing required field mapping destinations as SAML release failures', () => {
     let error: unknown;
     try {
       buildSAMLAttributesForSP(
@@ -450,7 +450,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
-  it('selects the SAML identity mapping policy binding by IdP role and SP entityID', () => {
+  it('selects the SAML field mapping set binding by IdP role and SP entityID', () => {
     const catalog = identityMappingSamlCatalog({ mailRequired: false });
     const spSpecificConfig = {
       entityId: 'https://sp.example.edu/saml',
@@ -540,7 +540,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
-  it('does not fall back to another SP-specific identity mapping binding', () => {
+  it('does not fall back to another SP-specific field mapping binding', () => {
     let error: unknown;
     try {
       buildSAMLAttributesForSP(
@@ -586,7 +586,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
-  it('merges multiple identity mapping outputs for the same SAML attribute', () => {
+  it('merges multiple field mapping outputs for the same SAML attribute', () => {
     const attributes = buildSAMLAttributesForSP(
       {
         id: 'user-123',
@@ -632,7 +632,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
-  it('prefers a local IdP-specific identity mapping binding over a global SP binding', () => {
+  it('prefers a local IdP-specific field mapping binding over a global SP binding', () => {
     const catalog = identityMappingSamlCatalog({ mailRequired: false });
 
     expect(

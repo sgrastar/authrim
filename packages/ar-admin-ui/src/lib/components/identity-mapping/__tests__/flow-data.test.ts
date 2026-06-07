@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildIdentityMappingFlowSamples } from '../flow-data';
 
-describe('identity mapping flow data adapter', () => {
+describe('field mapping flow data adapter', () => {
 	it('builds graph nodes from control-plane schemas instead of preview fixtures', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [

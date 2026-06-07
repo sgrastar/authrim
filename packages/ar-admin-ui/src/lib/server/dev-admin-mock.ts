@@ -76,7 +76,7 @@ const policies = [
 		tenantId: TENANT_ID,
 		policyKey: 'gakunin-basic',
 		displayName: 'GakuNin basic profile',
-		description: 'Dev mock policy for SAML attributes and OIDC claims.',
+		description: 'Dev mock field mapping set for SAML attributes and OIDC claims.',
 		lifecycleState: 'active'
 	},
 	{
@@ -84,7 +84,7 @@ const policies = [
 		tenantId: TENANT_ID,
 		policyKey: 'researcher-oidc',
 		displayName: 'Researcher OIDC claims',
-		description: 'Dev mock policy for OIDC claim release testing.',
+		description: 'Dev mock field mapping set for OIDC claim release testing.',
 		lifecycleState: 'draft'
 	}
 ];
@@ -468,26 +468,26 @@ function sampleDestinationProfiles() {
 
 function handleIdentityMapping(event: RequestEvent, segments: string[]): Response | null {
 	const method = event.request.method;
-	if (segments[0] === 'policies' && method === 'GET' && segments.length === 1) {
+	if (segments[0] === 'field-mapping-sets' && method === 'GET' && segments.length === 1) {
 		return json({ policies });
 	}
-	if (segments[0] === 'policies' && method === 'POST' && segments.length === 1) {
+	if (segments[0] === 'field-mapping-sets' && method === 'POST' && segments.length === 1) {
 		return json({
 			result: {
 				id: `policy-dev-${policies.length + 1}`,
 				tenantId: TENANT_ID,
 				policyKey: 'dev-created-policy',
-				displayName: 'Dev created policy',
+				displayName: 'Dev created field mapping set',
 				lifecycleState: 'draft'
 			}
 		});
 	}
-	if (segments[0] === 'policies' && segments[2] === 'versions' && method === 'GET') {
+	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'GET') {
 		return json({
 			policyVersions: policyVersions.filter((version) => version.policySetId === segments[1])
 		});
 	}
-	if (segments[0] === 'policies' && segments[2] === 'versions' && method === 'POST') {
+	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'POST') {
 		return json({
 			result: {
 				id: `policy-version-dev-${Date.now()}`,
@@ -497,10 +497,10 @@ function handleIdentityMapping(event: RequestEvent, segments: string[]): Respons
 			}
 		});
 	}
-	if (segments[0] === 'policies' && method === 'DELETE') {
+	if (segments[0] === 'field-mapping-sets' && method === 'DELETE') {
 		return json({ success: true });
 	}
-	if (segments[0] === 'policies' && method === 'POST') {
+	if (segments[0] === 'field-mapping-sets' && method === 'POST') {
 		return json({ success: true, snapshotId: 'snapshot-gakunin-basic-v1' });
 	}
 	if (segments[0] === 'catalogs') {
@@ -891,7 +891,7 @@ export async function handleDevAdminMock(
 			]
 		});
 	}
-	if (segments[0] === 'identity-mapping') return handleIdentityMapping(event, segments.slice(1));
+	if (segments[0] === 'field-mapping') return handleIdentityMapping(event, segments.slice(1));
 	if (
 		segments[0] === 'saml-providers' ||
 		segments[0] === 'saml-settings' ||

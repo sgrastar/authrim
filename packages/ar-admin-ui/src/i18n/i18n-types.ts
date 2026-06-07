@@ -802,7 +802,7 @@ type RootTranslation = {
 	 */
 	admin_nav_scim_tokens: string;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​M​a​p​p​i​n​g
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g
 	 */
 	admin_nav_identity_mapping: string;
 	/**
@@ -810,7 +810,7 @@ type RootTranslation = {
 	 */
 	admin_nav_source_destination: string;
 	/**
-	 * M​a​p​p​i​n​g​ ​P​o​l​i​c​i​e​s
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_nav_mapping_policies: string;
 	/**
@@ -2776,11 +2776,11 @@ type RootTranslation = {
 	 */
 	admin_client_detail_claims_parameter: string;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g
 	 */
 	admin_client_detail_identity_mapping_section: string;
 	/**
-	 * O​I​D​C​ ​c​l​a​i​m​s​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y
+	 * O​I​D​C​ ​c​l​a​i​m​s​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_client_detail_identity_mapping_policy: string;
 	/**
@@ -2788,11 +2788,11 @@ type RootTranslation = {
 	 */
 	admin_client_detail_identity_mapping_policy_default: string;
 	/**
-	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​i​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y​ ​u​s​e​d​ ​f​o​r​ ​O​I​D​C​ ​U​s​e​r​I​n​f​o​ ​a​n​d​ ​t​o​k​e​n​ ​c​l​a​i​m​s​ ​f​o​r​ ​t​h​i​s​ ​c​l​i​e​n​t​.
+	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​O​I​D​C​ ​U​s​e​r​I​n​f​o​ ​a​n​d​ ​t​o​k​e​n​ ​c​l​a​i​m​s​ ​f​o​r​ ​t​h​i​s​ ​c​l​i​e​n​t​.
 	 */
 	admin_client_detail_identity_mapping_policy_hint: string;
 	/**
-	 * C​l​i​e​n​t​ ​o​v​e​r​r​i​d​e​ ​f​o​r​ ​O​I​D​C​ ​i​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​.​ ​E​m​p​t​y​ ​u​s​e​s​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​a​c​t​i​v​a​t​i​o​n​.
+	 * C​l​i​e​n​t​ ​o​v​e​r​r​i​d​e​ ​f​o​r​ ​O​I​D​C​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​.​ ​E​m​p​t​y​ ​u​s​e​s​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​a​c​t​i​v​a​t​i​o​n​.
 	 */
 	admin_client_detail_identity_mapping_policy_display_hint: string;
 	/**
@@ -5091,7 +5091,7 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_none: string;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_saml_detail_identity_mapping_policy: string;
 	/**
@@ -5099,7 +5099,7 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_identity_mapping_policy_default: string;
 	/**
-	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​i​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y​ ​u​s​e​d​ ​f​o​r​ ​S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​t​o​ ​t​h​i​s​ ​S​P​.
+	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​t​o​ ​t​h​i​s​ ​S​P​.
 	 */
 	admin_saml_detail_identity_mapping_policy_hint: string;
 	/**
@@ -5799,6 +5799,153 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​i​m​p​o​r​t​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​D​R​ ​b​u​n​d​l​e
 	 */
 	admin_dr_backup_error_import_bundle: string;
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​s​a​v​e​d​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s
+	 */
+	admin_dr_backup_error_load_certificates: string;
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​p​r​e​v​i​e​w​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_dr_backup_error_preview_certificate: string;
+	/**
+	 * C​e​r​t​i​f​i​c​a​t​e​s​ ​i​n​c​l​u​d​e​d​ ​i​n​ ​e​x​p​o​r​t
+	 */
+	admin_dr_backup_export_certificates_title: string;
+	/**
+	 * R​e​v​i​e​w​ ​t​h​e​ ​s​a​v​e​d​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s​ ​t​h​a​t​ ​w​i​l​l​ ​b​e​ ​i​n​c​l​u​d​e​d​ ​w​i​t​h​ ​t​h​e​ ​e​n​c​r​y​p​t​e​d​ ​D​R​ ​b​u​n​d​l​e​.
+	 */
+	admin_dr_backup_export_certificates_desc: string;
+	/**
+	 * R​e​f​r​e​s​h​ ​c​e​r​t​i​f​i​c​a​t​e​s
+	 */
+	admin_dr_backup_refresh_certificates: string;
+	/**
+	 * N​o​ ​s​a​v​e​d​ ​S​A​M​L​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​D​R​ ​b​u​n​d​l​e​ ​e​x​p​o​r​t​.
+	 */
+	admin_dr_backup_no_export_certificates: string;
+	/**
+	 * R​o​l​e
+	 */
+	admin_dr_backup_certificate_role: string;
+	/**
+	 * S​l​o​t
+	 */
+	admin_dr_backup_certificate_slot: string;
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_dr_backup_certificate_status: string;
+	/**
+	 * K​e​y​ ​r​e​f​e​r​e​n​c​e
+	 */
+	admin_dr_backup_certificate_key_ref: string;
+	/**
+	 * V​a​l​i​d​ ​f​r​o​m
+	 */
+	admin_dr_backup_certificate_valid_from: string;
+	/**
+	 * V​a​l​i​d​ ​t​o
+	 */
+	admin_dr_backup_certificate_valid_to: string;
+	/**
+	 * A​c​t​i​o​n​s
+	 */
+	admin_dr_backup_certificate_actions: string;
+	/**
+	 * V​i​e​w
+	 */
+	admin_dr_backup_view_certificate: string;
+	/**
+	 * A​c​t​i​v​e
+	 */
+	admin_dr_backup_certificate_slot_active: string;
+	/**
+	 * N​e​x​t
+	 */
+	admin_dr_backup_certificate_slot_next: string;
+	/**
+	 * N​e​x​t​ ​{​i​n​d​e​x​}
+	 * @param {number} index
+	 */
+	admin_dr_backup_certificate_slot_next_numbered: RequiredParams<'index'>;
+	/**
+	 * B​a​c​k​u​p
+	 */
+	admin_dr_backup_certificate_slot_backup: string;
+	/**
+	 * C​u​r​r​e​n​t​ ​s​i​g​n​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_dr_backup_certificate_active_desc: string;
+	/**
+	 * R​o​l​l​o​v​e​r​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_dr_backup_certificate_next_desc: string;
+	/**
+	 * D​R​ ​f​a​l​l​b​a​c​k​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_dr_backup_certificate_backup_desc: string;
+	/**
+	 * S​i​g​n​i​n​g
+	 */
+	admin_dr_backup_certificate_status_signing: string;
+	/**
+	 * R​o​l​l​o​v​e​r
+	 */
+	admin_dr_backup_certificate_status_rollover: string;
+	/**
+	 * B​a​c​k​u​p
+	 */
+	admin_dr_backup_certificate_status_backup: string;
+	/**
+	 * {​r​o​l​e​}​ ​{​s​l​o​t​}​ ​c​e​r​t​i​f​i​c​a​t​e
+	 * @param {string} role
+	 * @param {string} slot
+	 */
+	admin_dr_backup_certificate_detail_title: RequiredParams<'role' | 'slot'>;
+	/**
+	 * L​o​a​d​i​n​g​ ​c​e​r​t​i​f​i​c​a​t​e​ ​d​e​t​a​i​l​s​.​.​.
+	 */
+	admin_dr_backup_certificate_detail_loading: string;
+	/**
+	 * T​h​i​s​ ​s​a​v​e​d​ ​k​e​y​ ​r​e​f​e​r​e​n​c​e​ ​h​a​s​ ​n​o​ ​c​e​r​t​i​f​i​c​a​t​e​ ​t​o​ ​p​r​e​v​i​e​w​.
+	 */
+	admin_dr_backup_certificate_detail_no_certificate: string;
+	/**
+	 * S​u​b​j​e​c​t
+	 */
+	admin_dr_backup_certificate_subject: string;
+	/**
+	 * I​s​s​u​e​r
+	 */
+	admin_dr_backup_certificate_issuer: string;
+	/**
+	 * S​e​r​i​a​l​ ​n​u​m​b​e​r
+	 */
+	admin_dr_backup_certificate_serial: string;
+	/**
+	 * S​i​g​n​a​t​u​r​e
+	 */
+	admin_dr_backup_certificate_signature: string;
+	/**
+	 * P​u​b​l​i​c​ ​k​e​y
+	 */
+	admin_dr_backup_certificate_public_key: string;
+	/**
+	 * S​H​A​-​1​ ​f​i​n​g​e​r​p​r​i​n​t
+	 */
+	admin_dr_backup_certificate_sha1: string;
+	/**
+	 * S​H​A​-​2​5​6​ ​f​i​n​g​e​r​p​r​i​n​t
+	 */
+	admin_dr_backup_certificate_sha256: string;
+	/**
+	 * C​e​r​t​i​f​i​c​a​t​e​ ​P​E​M
+	 */
+	admin_dr_backup_certificate_pem: string;
+	/**
+	 * C​o​p​y​ ​c​e​r​t​i​f​i​c​a​t​e
+	 */
+	admin_dr_backup_copy_certificate: string;
 	/**
 	 * S​c​a​l​e​ ​C​o​n​f​i​g​u​r​a​t​i​o​n​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
@@ -21931,11 +22078,11 @@ type RootTranslation = {
 	 */
 	admin_plugins_health_unknown: string;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​M​a​p​p​i​n​g
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g
 	 */
 	admin_identity_mapping_title: string;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​M​a​p​p​i​n​g​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
 	admin_identity_mapping_head_title: string;
 	/**
@@ -21943,7 +22090,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_overview_title: string;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​M​a​p​p​i​n​g​ ​O​v​e​r​v​i​e​w
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​O​v​e​r​v​i​e​w
 	 */
 	admin_identity_mapping_overview_head_title: string;
 	/**
@@ -21955,11 +22102,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_shell_description: string;
 	/**
-	 * B​a​c​k​ ​t​o​ ​I​d​e​n​t​i​t​y​ ​M​a​p​p​i​n​g
+	 * B​a​c​k​ ​t​o​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g
 	 */
 	admin_identity_mapping_back: string;
 	/**
-	 * B​a​c​k​ ​t​o​ ​M​a​p​p​i​n​g​ ​P​o​l​i​c​i​e​s
+	 * B​a​c​k​ ​t​o​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_identity_mapping_back_to_policies: string;
 	/**
@@ -21991,11 +22138,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_destination_profiles: string;
 	/**
-	 * s​o​u​r​c​e​ ​p​o​l​i​c​y
+	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_source_policy: string;
 	/**
-	 * d​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​y
+	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_destination_policy: string;
 	/**
@@ -22041,7 +22188,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_certs_count: RequiredParams<'count'>;
 	/**
-	 * M​a​p​p​i​n​g​ ​P​o​l​i​c​y​ ​E​d​i​t​o​r
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​E​d​i​t​o​r
 	 */
 	admin_identity_mapping_editor_title: string;
 	/**
@@ -22089,24 +22236,24 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_select_destination_profile: string;
 	/**
-	 * P​o​l​i​c​y​ ​n​a​m​e
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​n​a​m​e
 	 */
 	admin_identity_mapping_editor_policy_name: string;
 	/**
-	 * S​o​u​r​c​e​ ​p​r​o​f​i​l​e​ ​P​o​l​i​c​y
+	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_editor_policy_placeholder: string;
 	/**
-	 * {​n​a​m​e​}​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​C​h​o​o​s​e​ ​a​ ​d​i​f​f​e​r​e​n​t​ ​p​o​l​i​c​y​ ​n​a​m​e​.
+	 * {​n​a​m​e​}​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​C​h​o​o​s​e​ ​a​ ​d​i​f​f​e​r​e​n​t​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​n​a​m​e​.
 	 * @param {string} name
 	 */
 	admin_identity_mapping_editor_policy_exists: RequiredParams<'name'>;
 	/**
-	 * N​o​ ​p​o​l​i​c​y​ ​s​e​l​e​c​t​e​d
+	 * N​o​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​s​e​l​e​c​t​e​d
 	 */
 	admin_identity_mapping_editor_no_policy_selected: string;
 	/**
-	 * P​o​l​i​c​y​ ​v​e​r​s​i​o​n
+	 * V​e​r​s​i​o​n
 	 */
 	admin_identity_mapping_editor_policy_version: string;
 	/**
@@ -22162,11 +22309,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_control_plane_ready: string;
 	/**
-	 * L​o​a​d​i​n​g​ ​p​o​l​i​c​y​,​ ​c​a​t​a​l​o​g​,​ ​p​r​o​f​i​l​e​,​ ​a​n​d​ ​f​e​d​e​r​a​t​i​o​n​ ​t​r​u​s​t​ ​s​u​m​m​a​r​i​e​s​.
+	 * L​o​a​d​i​n​g​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​,​ ​c​a​t​a​l​o​g​,​ ​p​r​o​f​i​l​e​,​ ​a​n​d​ ​f​e​d​e​r​a​t​i​o​n​ ​t​r​u​s​t​ ​s​u​m​m​a​r​i​e​s​.
 	 */
 	admin_identity_mapping_editor_loading_summaries: string;
 	/**
-	 * {​p​o​l​i​c​i​e​s​}​ ​p​o​l​i​c​i​e​s​,​ ​{​c​a​t​a​l​o​g​s​}​ ​c​a​t​a​l​o​g​s​,​ ​{​p​r​o​f​i​l​e​s​}​ ​s​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​.
+	 * {​p​o​l​i​c​i​e​s​}​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s​,​ ​{​c​a​t​a​l​o​g​s​}​ ​c​a​t​a​l​o​g​s​,​ ​{​p​r​o​f​i​l​e​s​}​ ​s​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​.
 	 * @param {number} catalogs
 	 * @param {number} policies
 	 * @param {number} profiles
@@ -22175,7 +22322,7 @@ type RootTranslation = {
 		'catalogs' | 'policies' | 'profiles'
 	>;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​M​a​p​p​i​n​g​ ​U​I​ ​D​r​a​f​t
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​U​I​ ​D​r​a​f​t
 	 */
 	admin_identity_mapping_editor_policy_default_name: string;
 	/**
@@ -22183,23 +22330,23 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_destination_profile_fallback: string;
 	/**
-	 * P​o​l​i​c​y
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_editor_policy_default_suffix: string;
 	/**
-	 * P​u​b​l​i​s​h​e​d​ ​p​o​l​i​c​y​ ​v​e​r​s​i​o​n
+	 * P​u​b​l​i​s​h​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​v​e​r​s​i​o​n
 	 */
 	admin_identity_mapping_editor_policy_published: string;
 	/**
-	 * A​c​t​i​v​a​t​e​d​ ​p​o​l​i​c​y​ ​v​e​r​s​i​o​n
+	 * A​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​v​e​r​s​i​o​n
 	 */
 	admin_identity_mapping_editor_policy_activated: string;
 	/**
-	 * D​e​a​c​t​i​v​a​t​e​d​ ​p​o​l​i​c​y​ ​v​e​r​s​i​o​n
+	 * D​e​a​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​v​e​r​s​i​o​n
 	 */
 	admin_identity_mapping_editor_policy_deactivated: string;
 	/**
-	 * N​o​ ​a​c​t​i​v​e​ ​c​a​t​a​l​o​g​ ​v​e​r​s​i​o​n​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​p​r​e​p​a​r​e​ ​t​h​i​s​ ​p​o​l​i​c​y
+	 * N​o​ ​a​c​t​i​v​e​ ​c​a​t​a​l​o​g​ ​v​e​r​s​i​o​n​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​p​r​e​p​a​r​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
 	admin_identity_mapping_editor_no_active_catalog: string;
 	/**
@@ -22207,7 +22354,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_publish_before_activation: string;
 	/**
-	 * S​e​l​e​c​t​ ​a​ ​p​o​l​i​c​y​ ​v​e​r​s​i​o​n​ ​f​i​r​s​t
+	 * S​e​l​e​c​t​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​v​e​r​s​i​o​n​ ​f​i​r​s​t
 	 */
 	admin_identity_mapping_editor_select_policy_version_first: string;
 	/**
@@ -22223,15 +22370,15 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_rollback_failed: string;
 	/**
-	 * C​o​n​f​i​r​m​ ​d​e​l​e​t​e​ ​t​o​ ​r​e​m​o​v​e​ ​t​h​i​s​ ​p​o​l​i​c​y
+	 * C​o​n​f​i​r​m​ ​d​e​l​e​t​e​ ​t​o​ ​r​e​m​o​v​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
 	admin_identity_mapping_editor_confirm_delete_status: string;
 	/**
-	 * P​o​l​i​c​y​ ​d​e​l​e​t​e​ ​f​a​i​l​e​d
+	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​d​e​l​e​t​e​ ​f​a​i​l​e​d
 	 */
 	admin_identity_mapping_editor_policy_delete_failed: string;
 	/**
-	 * P​o​l​i​c​y​ ​o​p​e​r​a​t​i​o​n​ ​f​a​i​l​e​d
+	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​o​p​e​r​a​t​i​o​n​ ​f​a​i​l​e​d
 	 */
 	admin_identity_mapping_editor_policy_operation_failed: string;
 	/**
@@ -22239,7 +22386,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_unsaved_confirm: string;
 	/**
-	 * A​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y​ ​n​a​m​e​d​ ​"​{​n​a​m​e​}​"​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​C​h​o​o​s​e​ ​a​ ​d​i​f​f​e​r​e​n​t​ ​p​o​l​i​c​y​ ​n​a​m​e​.
+	 * A​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​n​a​m​e​d​ ​"​{​n​a​m​e​}​"​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​C​h​o​o​s​e​ ​a​ ​d​i​f​f​e​r​e​n​t​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​n​a​m​e​.
 	 * @param {string} name
 	 */
 	admin_identity_mapping_editor_policy_conflict: RequiredParams<'name'>;
@@ -22248,11 +22395,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_no_canonical_catalog: string;
 	/**
-	 * D​r​a​f​t​ ​p​o​l​i​c​y​ ​s​e​t​ ​c​r​e​a​t​e​d​ ​f​r​o​m​ ​t​h​e​ ​A​d​m​i​n​ ​U​I​ ​F​l​o​w​ ​E​d​i​t​o​r​.
+	 * D​r​a​f​t​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​c​r​e​a​t​e​d​ ​f​r​o​m​ ​t​h​e​ ​A​d​m​i​n​ ​U​I​ ​F​l​o​w​ ​E​d​i​t​o​r​.
 	 */
 	admin_identity_mapping_editor_created_description: string;
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​i​d​e​n​t​i​t​y​ ​m​a​p​p​i​n​g​ ​s​t​a​t​e
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​t​a​t​e
 	 */
 	admin_identity_mapping_editor_load_failed: string;
 	/**
@@ -22304,55 +22451,55 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_head_title: string;
 	/**
-	 * M​a​p​p​i​n​g​ ​P​o​l​i​c​i​e​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
 	admin_identity_mapping_policies_head_title: string;
 	/**
-	 * M​a​p​p​i​n​g​ ​P​o​l​i​c​i​e​s
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_identity_mapping_policies_title: string;
 	/**
-	 * R​e​v​i​e​w​ ​s​o​u​r​c​e​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​i​e​s​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​r​e​l​e​a​s​e​ ​p​o​l​i​c​i​e​s​ ​b​e​f​o​r​e​ ​e​d​i​t​i​n​g​ ​t​h​e​i​r​ ​r​u​l​e​s​.
+	 * R​e​v​i​e​w​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​ ​a​n​d​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​ ​b​e​f​o​r​e​ ​e​d​i​t​i​n​g​ ​t​h​e​i​r​ ​r​u​l​e​s​.
 	 */
 	admin_identity_mapping_policies_description: string;
 	/**
-	 * S​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​y​ ​l​i​s​t​s
+	 * S​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_identity_mapping_policies_lists_title: string;
 	/**
-	 * L​o​a​d​i​n​g​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​i​e​s​.
+	 * L​o​a​d​i​n​g​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s​.
 	 */
 	admin_identity_mapping_policies_loading: string;
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​i​e​s
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s
 	 */
 	admin_identity_mapping_policies_load_failed: string;
 	/**
-	 * N​o​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​i​e​s​ ​a​r​e​ ​r​e​g​i​s​t​e​r​e​d​ ​y​e​t​.
+	 * N​o​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s​ ​a​r​e​ ​r​e​g​i​s​t​e​r​e​d​ ​y​e​t​.
 	 */
 	admin_identity_mapping_policies_empty: string;
 	/**
-	 * S​o​u​r​c​e​ ​p​o​l​i​c​i​e​s
+	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_identity_mapping_policies_source_title: string;
 	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​i​e​s
+	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_identity_mapping_policies_destination_title: string;
 	/**
-	 * C​r​e​a​t​e​ ​n​e​w​ ​s​o​u​r​c​e​ ​p​o​l​i​c​y
+	 * C​r​e​a​t​e​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_policies_create_source: string;
 	/**
-	 * C​r​e​a​t​e​ ​n​e​w​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​y
+	 * C​r​e​a​t​e​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_policies_create_destination: string;
 	/**
-	 * N​o​ ​s​o​u​r​c​e​ ​p​o​l​i​c​i​e​s​.
+	 * N​o​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​.
 	 */
 	admin_identity_mapping_policies_no_source: string;
 	/**
-	 * N​o​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​i​e​s​.
+	 * N​o​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​.
 	 */
 	admin_identity_mapping_policies_no_destination: string;
 	/**
@@ -22538,7 +22685,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_schema_title: string;
 	/**
-	 * C​h​e​c​k​ ​i​n​v​e​n​t​o​r​y​ ​I​D​s​,​ ​e​x​p​e​c​t​e​d​ ​c​o​n​n​e​c​t​i​o​n​ ​p​o​i​n​t​s​,​ ​a​n​d​ ​g​a​t​e​ ​n​o​t​e​s​ ​b​e​f​o​r​e​ ​a​c​t​i​v​a​t​i​n​g​ ​T​i​e​r​ ​2​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​i​e​s​.
+	 * C​h​e​c​k​ ​i​n​v​e​n​t​o​r​y​ ​I​D​s​,​ ​e​x​p​e​c​t​e​d​ ​c​o​n​n​e​c​t​i​o​n​ ​p​o​i​n​t​s​,​ ​a​n​d​ ​g​a​t​e​ ​n​o​t​e​s​ ​b​e​f​o​r​e​ ​a​c​t​i​v​a​t​i​n​g​ ​T​i​e​r​ ​2​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s​.
 	 */
 	admin_identity_mapping_schema_description: string;
 	/**
@@ -23619,15 +23766,15 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_loading_schemas_desc: string;
 	/**
-	 * N​o​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​i​e​s
+	 * N​o​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s
 	 */
 	admin_identity_mapping_flow_no_mapping_policies: string;
 	/**
-	 * N​o​ ​a​c​t​i​v​e​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​i​e​s
+	 * N​o​ ​a​c​t​i​v​e​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s
 	 */
 	admin_identity_mapping_flow_no_active_policies: string;
 	/**
-	 * S​e​l​e​c​t​ ​a​n​ ​a​c​t​i​v​e​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y
+	 * S​e​l​e​c​t​ ​a​n​ ​a​c​t​i​v​e​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
 	admin_identity_mapping_flow_select_active_policy: string;
 	/**
@@ -23635,11 +23782,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_no_profiles_registered: string;
 	/**
-	 * S​a​v​e​,​ ​p​u​b​l​i​s​h​,​ ​c​o​m​p​i​l​e​,​ ​a​n​d​ ​a​c​t​i​v​a​t​e​ ​a​ ​m​a​p​p​i​n​g​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​u​s​i​n​g​ ​t​h​i​s​ ​o​v​e​r​v​i​e​w​.
+	 * S​a​v​e​,​ ​p​u​b​l​i​s​h​,​ ​c​o​m​p​i​l​e​,​ ​a​n​d​ ​a​c​t​i​v​a​t​e​ ​a​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​b​e​f​o​r​e​ ​u​s​i​n​g​ ​t​h​i​s​ ​o​v​e​r​v​i​e​w​.
 	 */
 	admin_identity_mapping_flow_no_active_policies_desc: string;
 	/**
-	 * C​h​o​o​s​e​ ​a​ ​s​o​u​r​c​e​ ​p​o​l​i​c​y​ ​a​n​d​/​o​r​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​y​ ​t​o​ ​r​e​n​d​e​r​ ​i​t​s​ ​n​o​d​e​s​ ​a​n​d​ ​e​d​g​e​s​.
+	 * C​h​o​o​s​e​ ​a​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​a​n​d​/​o​r​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​t​o​ ​r​e​n​d​e​r​ ​i​t​s​ ​n​o​d​e​s​ ​a​n​d​ ​e​d​g​e​s​.
 	 */
 	admin_identity_mapping_flow_select_active_policy_desc: string;
 	/**
@@ -23647,19 +23794,19 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_no_profiles_registered_desc: string;
 	/**
-	 * S​o​u​r​c​e​ ​p​o​l​i​c​y
+	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_flow_source_policy: string;
 	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​y
+	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_flow_destination_policy: string;
 	/**
-	 * S​e​l​e​c​t​ ​s​o​u​r​c​e​ ​p​o​l​i​c​y
+	 * S​e​l​e​c​t​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_flow_select_source_policy: string;
 	/**
-	 * S​e​l​e​c​t​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​o​l​i​c​y
+	 * S​e​l​e​c​t​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_flow_select_destination_policy: string;
 	/**
@@ -26843,7 +26990,7 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_scim_tokens: () => LocalizedString;
 	/**
-	 * Identity Mapping
+	 * Field Mapping
 	 */
 	admin_nav_identity_mapping: () => LocalizedString;
 	/**
@@ -26851,7 +26998,7 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_source_destination: () => LocalizedString;
 	/**
-	 * Mapping Policies
+	 * Field Mapping Sets
 	 */
 	admin_nav_mapping_policies: () => LocalizedString;
 	/**
@@ -28785,11 +28932,11 @@ export type TranslationFunctions = {
 	 */
 	admin_client_detail_claims_parameter: () => LocalizedString;
 	/**
-	 * Identity mapping
+	 * Field Mapping
 	 */
 	admin_client_detail_identity_mapping_section: () => LocalizedString;
 	/**
-	 * OIDC claims mapping policy
+	 * OIDC claims Field Mapping Set
 	 */
 	admin_client_detail_identity_mapping_policy: () => LocalizedString;
 	/**
@@ -28797,11 +28944,11 @@ export type TranslationFunctions = {
 	 */
 	admin_client_detail_identity_mapping_policy_default: () => LocalizedString;
 	/**
-	 * Selects the active identity mapping policy used for OIDC UserInfo and token claims for this client.
+	 * Selects the active Field Mapping Set used for OIDC UserInfo and token claims for this client.
 	 */
 	admin_client_detail_identity_mapping_policy_hint: () => LocalizedString;
 	/**
-	 * Client override for OIDC identity mapping. Empty uses tenant default activation.
+	 * Client override for OIDC field mapping. Empty uses tenant default activation.
 	 */
 	admin_client_detail_identity_mapping_policy_display_hint: () => LocalizedString;
 	/**
@@ -31077,7 +31224,7 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_none: () => LocalizedString;
 	/**
-	 * Identity mapping policy
+	 * Field Mapping Set
 	 */
 	admin_saml_detail_identity_mapping_policy: () => LocalizedString;
 	/**
@@ -31085,7 +31232,7 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_identity_mapping_policy_default: () => LocalizedString;
 	/**
-	 * Selects the active identity mapping policy used for SAML Attribute release to this SP.
+	 * Selects the active Field Mapping Set used for SAML Attribute release to this SP.
 	 */
 	admin_saml_detail_identity_mapping_policy_hint: () => LocalizedString;
 	/**
@@ -31781,6 +31928,153 @@ export type TranslationFunctions = {
 	 * Failed to import SAML signing DR bundle
 	 */
 	admin_dr_backup_error_import_bundle: () => LocalizedString;
+	/**
+	 * Failed to load saved SAML signing certificates
+	 */
+	admin_dr_backup_error_load_certificates: () => LocalizedString;
+	/**
+	 * Failed to preview SAML signing certificate
+	 */
+	admin_dr_backup_error_preview_certificate: () => LocalizedString;
+	/**
+	 * Certificates included in export
+	 */
+	admin_dr_backup_export_certificates_title: () => LocalizedString;
+	/**
+	 * Review the saved SAML signing certificates that will be included with the encrypted DR bundle.
+	 */
+	admin_dr_backup_export_certificates_desc: () => LocalizedString;
+	/**
+	 * Refresh certificates
+	 */
+	admin_dr_backup_refresh_certificates: () => LocalizedString;
+	/**
+	 * No saved SAML signing certificates are available for DR bundle export.
+	 */
+	admin_dr_backup_no_export_certificates: () => LocalizedString;
+	/**
+	 * Role
+	 */
+	admin_dr_backup_certificate_role: () => LocalizedString;
+	/**
+	 * Slot
+	 */
+	admin_dr_backup_certificate_slot: () => LocalizedString;
+	/**
+	 * Status
+	 */
+	admin_dr_backup_certificate_status: () => LocalizedString;
+	/**
+	 * Key reference
+	 */
+	admin_dr_backup_certificate_key_ref: () => LocalizedString;
+	/**
+	 * Valid from
+	 */
+	admin_dr_backup_certificate_valid_from: () => LocalizedString;
+	/**
+	 * Valid to
+	 */
+	admin_dr_backup_certificate_valid_to: () => LocalizedString;
+	/**
+	 * Actions
+	 */
+	admin_dr_backup_certificate_actions: () => LocalizedString;
+	/**
+	 * View
+	 */
+	admin_dr_backup_view_certificate: () => LocalizedString;
+	/**
+	 * Active
+	 */
+	admin_dr_backup_certificate_slot_active: () => LocalizedString;
+	/**
+	 * Next
+	 */
+	admin_dr_backup_certificate_slot_next: () => LocalizedString;
+	/**
+	 * Next {index}
+	 */
+	admin_dr_backup_certificate_slot_next_numbered: (arg: { index: number }) => LocalizedString;
+	/**
+	 * Backup
+	 */
+	admin_dr_backup_certificate_slot_backup: () => LocalizedString;
+	/**
+	 * Current signing certificate
+	 */
+	admin_dr_backup_certificate_active_desc: () => LocalizedString;
+	/**
+	 * Rollover certificate
+	 */
+	admin_dr_backup_certificate_next_desc: () => LocalizedString;
+	/**
+	 * DR fallback certificate
+	 */
+	admin_dr_backup_certificate_backup_desc: () => LocalizedString;
+	/**
+	 * Signing
+	 */
+	admin_dr_backup_certificate_status_signing: () => LocalizedString;
+	/**
+	 * Rollover
+	 */
+	admin_dr_backup_certificate_status_rollover: () => LocalizedString;
+	/**
+	 * Backup
+	 */
+	admin_dr_backup_certificate_status_backup: () => LocalizedString;
+	/**
+	 * {role} {slot} certificate
+	 */
+	admin_dr_backup_certificate_detail_title: (arg: {
+		role: string;
+		slot: string;
+	}) => LocalizedString;
+	/**
+	 * Loading certificate details...
+	 */
+	admin_dr_backup_certificate_detail_loading: () => LocalizedString;
+	/**
+	 * This saved key reference has no certificate to preview.
+	 */
+	admin_dr_backup_certificate_detail_no_certificate: () => LocalizedString;
+	/**
+	 * Subject
+	 */
+	admin_dr_backup_certificate_subject: () => LocalizedString;
+	/**
+	 * Issuer
+	 */
+	admin_dr_backup_certificate_issuer: () => LocalizedString;
+	/**
+	 * Serial number
+	 */
+	admin_dr_backup_certificate_serial: () => LocalizedString;
+	/**
+	 * Signature
+	 */
+	admin_dr_backup_certificate_signature: () => LocalizedString;
+	/**
+	 * Public key
+	 */
+	admin_dr_backup_certificate_public_key: () => LocalizedString;
+	/**
+	 * SHA-1 fingerprint
+	 */
+	admin_dr_backup_certificate_sha1: () => LocalizedString;
+	/**
+	 * SHA-256 fingerprint
+	 */
+	admin_dr_backup_certificate_sha256: () => LocalizedString;
+	/**
+	 * Certificate PEM
+	 */
+	admin_dr_backup_certificate_pem: () => LocalizedString;
+	/**
+	 * Copy certificate
+	 */
+	admin_dr_backup_copy_certificate: () => LocalizedString;
 	/**
 	 * Scale Configuration - Authrim Admin
 	 */
@@ -47727,11 +48021,11 @@ Remove this role from {email}?
 	 */
 	admin_plugins_health_unknown: () => LocalizedString;
 	/**
-	 * Identity Mapping
+	 * Field Mapping
 	 */
 	admin_identity_mapping_title: () => LocalizedString;
 	/**
-	 * Identity Mapping - Authrim Admin
+	 * Field Mapping - Authrim Admin
 	 */
 	admin_identity_mapping_head_title: () => LocalizedString;
 	/**
@@ -47739,7 +48033,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_overview_title: () => LocalizedString;
 	/**
-	 * Identity Mapping Overview
+	 * Field Mapping Overview
 	 */
 	admin_identity_mapping_overview_head_title: () => LocalizedString;
 	/**
@@ -47751,11 +48045,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_shell_description: () => LocalizedString;
 	/**
-	 * Back to Identity Mapping
+	 * Back to Field Mapping
 	 */
 	admin_identity_mapping_back: () => LocalizedString;
 	/**
-	 * Back to Mapping Policies
+	 * Back to Field Mapping Sets
 	 */
 	admin_identity_mapping_back_to_policies: () => LocalizedString;
 	/**
@@ -47787,11 +48081,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_destination_profiles: () => LocalizedString;
 	/**
-	 * source policy
+	 * Source Field Mapping Set
 	 */
 	admin_identity_mapping_source_policy: () => LocalizedString;
 	/**
-	 * destination policy
+	 * Destination Field Mapping Set
 	 */
 	admin_identity_mapping_destination_policy: () => LocalizedString;
 	/**
@@ -47837,7 +48131,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_certs_count: (arg: { count: number }) => LocalizedString;
 	/**
-	 * Mapping Policy Editor
+	 * Field Mapping Set Editor
 	 */
 	admin_identity_mapping_editor_title: () => LocalizedString;
 	/**
@@ -47885,23 +48179,23 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_select_destination_profile: () => LocalizedString;
 	/**
-	 * Policy name
+	 * Field Mapping Set name
 	 */
 	admin_identity_mapping_editor_policy_name: () => LocalizedString;
 	/**
-	 * Source profile Policy
+	 * Source Field Mapping Set
 	 */
 	admin_identity_mapping_editor_policy_placeholder: () => LocalizedString;
 	/**
-	 * {name} already exists. Choose a different policy name.
+	 * {name} already exists. Choose a different field mapping set name.
 	 */
 	admin_identity_mapping_editor_policy_exists: (arg: { name: string }) => LocalizedString;
 	/**
-	 * No policy selected
+	 * No Field Mapping Set selected
 	 */
 	admin_identity_mapping_editor_no_policy_selected: () => LocalizedString;
 	/**
-	 * Policy version
+	 * Version
 	 */
 	admin_identity_mapping_editor_policy_version: () => LocalizedString;
 	/**
@@ -47957,11 +48251,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_control_plane_ready: () => LocalizedString;
 	/**
-	 * Loading policy, catalog, profile, and federation trust summaries.
+	 * Loading field mapping set, catalog, profile, and federation trust summaries.
 	 */
 	admin_identity_mapping_editor_loading_summaries: () => LocalizedString;
 	/**
-	 * {policies} policies, {catalogs} catalogs, {profiles} source and destination profiles.
+	 * {policies} field mapping sets, {catalogs} catalogs, {profiles} source and destination profiles.
 	 */
 	admin_identity_mapping_editor_summary_counts: (arg: {
 		catalogs: number;
@@ -47969,7 +48263,7 @@ Remove this role from {email}?
 		profiles: number;
 	}) => LocalizedString;
 	/**
-	 * Identity Mapping UI Draft
+	 * Field Mapping UI Draft
 	 */
 	admin_identity_mapping_editor_policy_default_name: () => LocalizedString;
 	/**
@@ -47977,23 +48271,23 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_destination_profile_fallback: () => LocalizedString;
 	/**
-	 * Policy
+	 * Field Mapping Set
 	 */
 	admin_identity_mapping_editor_policy_default_suffix: () => LocalizedString;
 	/**
-	 * Published policy version
+	 * Published field mapping set version
 	 */
 	admin_identity_mapping_editor_policy_published: () => LocalizedString;
 	/**
-	 * Activated policy version
+	 * Activated field mapping set version
 	 */
 	admin_identity_mapping_editor_policy_activated: () => LocalizedString;
 	/**
-	 * Deactivated policy version
+	 * Deactivated field mapping set version
 	 */
 	admin_identity_mapping_editor_policy_deactivated: () => LocalizedString;
 	/**
-	 * No active catalog version is available to prepare this policy
+	 * No active catalog version is available to prepare this field mapping set
 	 */
 	admin_identity_mapping_editor_no_active_catalog: () => LocalizedString;
 	/**
@@ -48001,7 +48295,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_publish_before_activation: () => LocalizedString;
 	/**
-	 * Select a policy version first
+	 * Select a Field Mapping Set version first
 	 */
 	admin_identity_mapping_editor_select_policy_version_first: () => LocalizedString;
 	/**
@@ -48017,15 +48311,15 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_rollback_failed: () => LocalizedString;
 	/**
-	 * Confirm delete to remove this policy
+	 * Confirm delete to remove this field mapping set
 	 */
 	admin_identity_mapping_editor_confirm_delete_status: () => LocalizedString;
 	/**
-	 * Policy delete failed
+	 * Field mapping set delete failed
 	 */
 	admin_identity_mapping_editor_policy_delete_failed: () => LocalizedString;
 	/**
-	 * Policy operation failed
+	 * Field mapping set operation failed
 	 */
 	admin_identity_mapping_editor_policy_operation_failed: () => LocalizedString;
 	/**
@@ -48033,7 +48327,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_unsaved_confirm: () => LocalizedString;
 	/**
-	 * A mapping policy named "{name}" already exists. Choose a different policy name.
+	 * A field mapping set named "{name}" already exists. Choose a different field mapping set name.
 	 */
 	admin_identity_mapping_editor_policy_conflict: (arg: { name: string }) => LocalizedString;
 	/**
@@ -48041,11 +48335,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_no_canonical_catalog: () => LocalizedString;
 	/**
-	 * Draft policy set created from the Admin UI Flow Editor.
+	 * Draft field mapping set created from the Admin UI Flow Editor.
 	 */
 	admin_identity_mapping_editor_created_description: () => LocalizedString;
 	/**
-	 * Failed to load identity mapping state
+	 * Failed to load field mapping state
 	 */
 	admin_identity_mapping_editor_load_failed: () => LocalizedString;
 	/**
@@ -48097,55 +48391,55 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_head_title: () => LocalizedString;
 	/**
-	 * Mapping Policies - Authrim Admin
+	 * Field Mapping Sets - Authrim Admin
 	 */
 	admin_identity_mapping_policies_head_title: () => LocalizedString;
 	/**
-	 * Mapping Policies
+	 * Field Mapping Sets
 	 */
 	admin_identity_mapping_policies_title: () => LocalizedString;
 	/**
-	 * Review source mapping policies and destination release policies before editing their rules.
+	 * Review Source Field Mapping Sets and Destination Field Mapping Sets before editing their rules.
 	 */
 	admin_identity_mapping_policies_description: () => LocalizedString;
 	/**
-	 * Source and destination policy lists
+	 * Source and destination Field Mapping Sets
 	 */
 	admin_identity_mapping_policies_lists_title: () => LocalizedString;
 	/**
-	 * Loading mapping policies.
+	 * Loading field mapping sets.
 	 */
 	admin_identity_mapping_policies_loading: () => LocalizedString;
 	/**
-	 * Failed to load mapping policies
+	 * Failed to load field mapping sets
 	 */
 	admin_identity_mapping_policies_load_failed: () => LocalizedString;
 	/**
-	 * No mapping policies are registered yet.
+	 * No field mapping sets are registered yet.
 	 */
 	admin_identity_mapping_policies_empty: () => LocalizedString;
 	/**
-	 * Source policies
+	 * Source Field Mapping Sets
 	 */
 	admin_identity_mapping_policies_source_title: () => LocalizedString;
 	/**
-	 * Destination policies
+	 * Destination Field Mapping Sets
 	 */
 	admin_identity_mapping_policies_destination_title: () => LocalizedString;
 	/**
-	 * Create new source policy
+	 * Create Source Field Mapping Set
 	 */
 	admin_identity_mapping_policies_create_source: () => LocalizedString;
 	/**
-	 * Create new destination policy
+	 * Create Destination Field Mapping Set
 	 */
 	admin_identity_mapping_policies_create_destination: () => LocalizedString;
 	/**
-	 * No source policies.
+	 * No Source Field Mapping Sets.
 	 */
 	admin_identity_mapping_policies_no_source: () => LocalizedString;
 	/**
-	 * No destination policies.
+	 * No Destination Field Mapping Sets.
 	 */
 	admin_identity_mapping_policies_no_destination: () => LocalizedString;
 	/**
@@ -48332,7 +48626,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_schema_title: () => LocalizedString;
 	/**
-	 * Check inventory IDs, expected connection points, and gate notes before activating Tier 2 mapping policies.
+	 * Check inventory IDs, expected connection points, and gate notes before activating Tier 2 field mapping sets.
 	 */
 	admin_identity_mapping_schema_description: () => LocalizedString;
 	/**
@@ -49409,15 +49703,15 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_loading_schemas_desc: () => LocalizedString;
 	/**
-	 * No mapping policies
+	 * No field mapping sets
 	 */
 	admin_identity_mapping_flow_no_mapping_policies: () => LocalizedString;
 	/**
-	 * No active mapping policies
+	 * No active field mapping sets
 	 */
 	admin_identity_mapping_flow_no_active_policies: () => LocalizedString;
 	/**
-	 * Select an active mapping policy
+	 * Select an active field mapping set
 	 */
 	admin_identity_mapping_flow_select_active_policy: () => LocalizedString;
 	/**
@@ -49425,11 +49719,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_no_profiles_registered: () => LocalizedString;
 	/**
-	 * Save, publish, compile, and activate a mapping policy before using this overview.
+	 * Save, publish, compile, and activate a field mapping set before using this overview.
 	 */
 	admin_identity_mapping_flow_no_active_policies_desc: () => LocalizedString;
 	/**
-	 * Choose a source policy and/or destination policy to render its nodes and edges.
+	 * Choose a Source Field Mapping Set and/or Destination Field Mapping Set to render its nodes and edges.
 	 */
 	admin_identity_mapping_flow_select_active_policy_desc: () => LocalizedString;
 	/**
@@ -49437,19 +49731,19 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_no_profiles_registered_desc: () => LocalizedString;
 	/**
-	 * Source policy
+	 * Source Field Mapping Set
 	 */
 	admin_identity_mapping_flow_source_policy: () => LocalizedString;
 	/**
-	 * Destination policy
+	 * Destination Field Mapping Set
 	 */
 	admin_identity_mapping_flow_destination_policy: () => LocalizedString;
 	/**
-	 * Select source policy
+	 * Select Source Field Mapping Set
 	 */
 	admin_identity_mapping_flow_select_source_policy: () => LocalizedString;
 	/**
-	 * Select destination policy
+	 * Select Destination Field Mapping Set
 	 */
 	admin_identity_mapping_flow_select_destination_policy: () => LocalizedString;
 	/**

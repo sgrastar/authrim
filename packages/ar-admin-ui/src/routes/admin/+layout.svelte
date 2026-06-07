@@ -108,18 +108,18 @@
 		],
 		identityMapping: {
 			parent: {
-				href: '/admin/identity-mapping',
+				href: '/admin/field-mapping',
 				icon: 'i-ph-graph',
 				label: $LL.admin_nav_identity_mapping()
 			},
 			children: [
-				{ href: '/admin/identity-mapping/profiles', label: $LL.admin_nav_source_destination() },
+				{ href: '/admin/field-mapping/profiles', label: $LL.admin_nav_source_destination() },
 				{
-					href: '/admin/identity-mapping/mapping-policies',
+					href: '/admin/field-mapping/field-mapping-sets',
 					label: $LL.admin_nav_mapping_policies()
 				},
 				{
-					href: '/admin/identity-mapping/resolution-center',
+					href: '/admin/field-mapping/resolution-center',
 					label: $LL.admin_nav_resolution_center()
 				}
 			]

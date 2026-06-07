@@ -400,7 +400,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           'required_attribute_missing'
         );
       } else if (error instanceof SAMLIdentityMappingRuntimeError) {
-        log.warn('SAML identity mapping policy failed', {
+        log.warn('SAML field mapping set failed', {
           tenantId,
           spEntityId: spConfig.entityId,
           authnRequestId: authnRequest.id,
@@ -425,7 +425,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           tenantId,
           STATUS_CODES.RESPONDER,
           STATUS_CODES.INVALID_ATTR_NAME_OR_VALUE,
-          'SAML identity mapping policy could not be evaluated',
+          'SAML field mapping set could not be evaluated',
           'identity_mapping_failed'
         );
       } else if (error instanceof SAMLAttributeReleaseConsentRequiredError) {

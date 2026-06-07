@@ -17,25 +17,25 @@ function readComponent(relativePath: string): string {
 	return readFileSync(path, 'utf8');
 }
 
-describe('identity mapping Admin UI smoke checks', () => {
-	it('keeps the identity mapping routes in the left navigation instead of bottom cards', () => {
+describe('field mapping Admin UI smoke checks', () => {
+	it('keeps the field mapping routes in the left navigation instead of bottom cards', () => {
 		const layout = readRoute('admin/+layout.svelte');
-		const page = readRoute('admin/identity-mapping/+page.svelte');
+		const page = readRoute('admin/field-mapping/+page.svelte');
 
-		expect(layout).toContain('/admin/identity-mapping');
+		expect(layout).toContain('/admin/field-mapping');
 		expect(layout).toContain('admin_nav_source_destination');
 		expect(layout).toContain('admin_nav_mapping_policies');
 		expect(layout).toContain('admin_nav_resolution_center');
-		expect(layout).toContain('/admin/identity-mapping/profiles');
-		expect(layout).toContain('/admin/identity-mapping/mapping-policies');
-		expect(layout).toContain('/admin/identity-mapping/resolution-center');
+		expect(layout).toContain('/admin/field-mapping/profiles');
+		expect(layout).toContain('/admin/field-mapping/field-mapping-sets');
+		expect(layout).toContain('/admin/field-mapping/resolution-center');
 		expect(layout).not.toContain('Mapping Rules');
-		expect(layout).not.toContain('/admin/identity-mapping/edit');
-		expect(layout).not.toContain('/admin/identity-mapping/operations');
-		expect(layout).not.toContain('/admin/identity-mapping/overview');
-		expect(layout).not.toContain('/admin/identity-mapping/federation-trust');
-		expect(layout).not.toContain('/admin/identity-mapping/schema-readiness');
-		expect(layout).not.toContain('/admin/identity-mapping/profiles#destination-consent');
+		expect(layout).not.toContain('/admin/field-mapping/edit');
+		expect(layout).not.toContain('/admin/field-mapping/operations');
+		expect(layout).not.toContain('/admin/field-mapping/overview');
+		expect(layout).not.toContain('/admin/field-mapping/federation-trust');
+		expect(layout).not.toContain('/admin/field-mapping/schema-readiness');
+		expect(layout).not.toContain('/admin/field-mapping/profiles#destination-consent');
 		expect(page).toContain("editorAllowedViewModes={['overview']}");
 		expect(page).toContain('editorEditable={false}');
 		expect(page).toContain('showEditorInspector={false}');
@@ -48,9 +48,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 		const flowEditor = readComponent('identity-mapping/IdentityMappingFlowEditor.svelte');
 		const flowData = readComponent('identity-mapping/flow-data.ts');
 		const pageShell = readComponent('identity-mapping/IdentityMappingPageShell.svelte');
-		const page = readRoute('admin/identity-mapping/+page.svelte');
-		const editPage = readRoute('admin/identity-mapping/edit/+page.svelte');
-		const overviewPage = readRoute('admin/identity-mapping/overview/+page.svelte');
+		const page = readRoute('admin/field-mapping/+page.svelte');
+		const editPage = readRoute('admin/field-mapping/edit/+page.svelte');
+		const overviewPage = readRoute('admin/field-mapping/overview/+page.svelte');
 
 		expect(flowEditor).toContain('startConnectionDrag');
 		expect(flowEditor).toContain('startEasyConnectionDrag');
@@ -185,7 +185,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('$props');
 		expect(flowEditor).not.toContain('mappingSamples');
 		expect(flowEditor).not.toContain('SAML Salesforce columns');
-		expect(flowEditor).not.toContain('Identity Mapping Control Plane');
+		expect(flowEditor).not.toContain('Field Mapping Control Plane');
 		expect(flowEditor).not.toContain('Authrim Admin');
 		expect(flowEditor).not.toContain('Theme');
 		expect(page).toContain('IdentityMappingPageShell');
@@ -213,7 +213,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('applySourcePolicySelection');
 		expect(flowEditor).toContain('applyDestinationPolicySelection');
 		expect(editPage).toContain('pageTitle={$LL.admin_identity_mapping_editor_title()}');
-		expect(editPage).toContain('backHref="/admin/identity-mapping/mapping-policies"');
+		expect(editPage).toContain('backHref="/admin/field-mapping/field-mapping-sets"');
 		expect(editPage).toContain('backLabel={$LL.admin_identity_mapping_back_to_policies()}');
 		expect(editPage).toContain("editorAllowedViewModes={['source', 'destination']}");
 		expect(editPage).toContain('editorInitialViewMode="source"');
@@ -228,26 +228,26 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 	it('wires operation, profile, resolution, and federation pages to their APIs', () => {
 		const api = readApi('admin-identity-mapping.ts');
-		const operations = readRoute('admin/identity-mapping/mapping-policies/+page.svelte');
-		const profiles = readRoute('admin/identity-mapping/profiles/+page.svelte');
-		const profileEditor = readRoute('admin/identity-mapping/profiles/edit/+page.svelte');
-		const resolution = readRoute('admin/identity-mapping/resolution-center/+page.svelte');
-		const federation = readRoute('admin/identity-mapping/federation-trust/+page.svelte');
+		const operations = readRoute('admin/field-mapping/field-mapping-sets/+page.svelte');
+		const profiles = readRoute('admin/field-mapping/profiles/+page.svelte');
+		const profileEditor = readRoute('admin/field-mapping/profiles/edit/+page.svelte');
+		const resolution = readRoute('admin/field-mapping/resolution-center/+page.svelte');
+		const federation = readRoute('admin/field-mapping/federation-trust/+page.svelte');
 
-		expect(api).toContain('/api/admin/identity-mapping/review-tasks');
-		expect(api).toContain('/api/admin/identity-mapping/federation-trust-sources');
+		expect(api).toContain('/api/admin/field-mapping/review-tasks');
+		expect(api).toContain('/api/admin/field-mapping/federation-trust-sources');
 		expect(api).toContain('/metadata-documents');
-		expect(api).toContain('/api/admin/identity-mapping/protocol-schemas');
-		expect(api).toContain('/api/admin/identity-mapping/external-schemas');
-		expect(api).toContain('/api/admin/identity-mapping/source-profiles');
-		expect(api).toContain('/api/admin/identity-mapping/source-profiles/csv/parse');
-		expect(api).toContain('/api/admin/identity-mapping/destination-profiles');
+		expect(api).toContain('/api/admin/field-mapping/protocol-schemas');
+		expect(api).toContain('/api/admin/field-mapping/external-schemas');
+		expect(api).toContain('/api/admin/field-mapping/source-profiles');
+		expect(api).toContain('/api/admin/field-mapping/source-profiles/csv/parse');
+		expect(api).toContain('/api/admin/field-mapping/destination-profiles');
 		expect(api).toContain('deleteSourceProfile');
 		expect(api).toContain('deleteDestinationProfile');
-		expect(api).toContain('/api/admin/identity-mapping/attribute-groups');
-		expect(api).toContain('/api/admin/identity-mapping/attribute-fields');
-		expect(api).toContain('/api/admin/identity-mapping/templates');
-		expect(api).toContain('/api/admin/identity-mapping/schema-readiness');
+		expect(api).toContain('/api/admin/field-mapping/attribute-groups');
+		expect(api).toContain('/api/admin/field-mapping/attribute-fields');
+		expect(api).toContain('/api/admin/field-mapping/templates');
+		expect(api).toContain('/api/admin/field-mapping/schema-readiness');
 		expect(api).toContain('/rollback');
 		expect(api).toContain('/publish');
 		expect(api).toContain('/compile');
@@ -277,8 +277,8 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(profiles).toContain('destinationProfileListItems');
 		expect(profiles).toContain('admin_identity_mapping_profiles_create_source');
 		expect(profiles).toContain('admin_identity_mapping_profiles_create_destination');
-		expect(profiles).toContain('/admin/identity-mapping/profiles/edit?kind=source');
-		expect(profiles).toContain('/admin/identity-mapping/profiles/edit?kind=destination');
+		expect(profiles).toContain('/admin/field-mapping/profiles/edit?kind=source');
+		expect(profiles).toContain('/admin/field-mapping/profiles/edit?kind=destination');
 		expect(profiles).toContain('onclick={() => editSourceProfile(profile)}');
 		expect(profiles).toContain('onclick={() => editDestinationProfile(profile)}');
 		expect(profiles).not.toContain('listProtocolSchemas');
@@ -325,7 +325,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 	});
 
 	it('loads schema readiness from the control-plane API instead of hardcoded rows', () => {
-		const readiness = readRoute('admin/identity-mapping/schema-readiness/+page.svelte');
+		const readiness = readRoute('admin/field-mapping/schema-readiness/+page.svelte');
 
 		expect(readiness).toContain('getSchemaReadiness');
 		expect(readiness).toContain('schemaPresent');
@@ -334,7 +334,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 	});
 
 	it('keeps operator naming separate from internal review task storage names', () => {
-		const resolution = readRoute('admin/identity-mapping/resolution-center/+page.svelte');
+		const resolution = readRoute('admin/field-mapping/resolution-center/+page.svelte');
 
 		expect(resolution).toContain('admin_identity_mapping_resolution_title');
 		expect(resolution).not.toContain('review_tasks');
