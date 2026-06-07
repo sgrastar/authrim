@@ -56,7 +56,7 @@ describe('adminIdentityMappingAPI', () => {
 		)?.[1];
 	}
 
-	it('loads identity mapping control-plane collections from admin endpoints', async () => {
+	it('loads field mapping control-plane collections from admin endpoints', async () => {
 		await adminIdentityMappingAPI.listPolicies();
 		await adminIdentityMappingAPI.listCatalogs();
 		await adminIdentityMappingAPI.listProtocolSchemas();
@@ -152,41 +152,41 @@ describe('adminIdentityMappingAPI', () => {
 		});
 
 		expect(fetchMock.mock.calls.map((call) => requestPath(call[0]))).toEqual([
-			'/api/admin/identity-mapping/policies',
-			'/api/admin/identity-mapping/catalogs',
-			'/api/admin/identity-mapping/protocol-schemas',
-			'/api/admin/identity-mapping/external-schemas',
-			'/api/admin/identity-mapping/source-profiles',
-			'/api/admin/identity-mapping/destination-profiles',
-			'/api/admin/identity-mapping/source-profiles/csv/parse',
-			'/api/admin/identity-mapping/source-profiles',
-			'/api/admin/identity-mapping/source-profiles/source%20profile%201',
-			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/review',
-			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/activate',
-			'/api/admin/identity-mapping/source-profiles/source%20profile%201',
-			'/api/admin/identity-mapping/destination-profiles',
-			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
-			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
-			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
-			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
-			'/api/admin/identity-mapping/attribute-groups',
-			'/api/admin/identity-mapping/attribute-groups',
-			'/api/admin/identity-mapping/attribute-fields',
-			'/api/admin/identity-mapping/attribute-fields',
-			'/api/admin/identity-mapping/templates',
-			'/api/admin/identity-mapping/schema-readiness',
-			'/api/admin/identity-mapping/federation-trust-sources',
-			'/api/admin/identity-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
-			'/api/admin/identity-mapping/review-tasks?status=open&limit=25',
-			'/api/admin/identity-mapping/policies',
-			'/api/admin/identity-mapping/policies/policy%20set%201/versions',
-			'/api/admin/identity-mapping/policies/policy%20set%201/versions',
-			'/api/admin/identity-mapping/policies/policy%20set%201/rollback',
-			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/publish',
-			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/compile',
-			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/activate',
-			'/api/admin/identity-mapping/policies/policy%20set%201/versions/version%201/deactivate',
-			'/api/admin/identity-mapping/review-tasks/review%20task%201/transition'
+			'/api/admin/field-mapping/field-mapping-sets',
+			'/api/admin/field-mapping/catalogs',
+			'/api/admin/field-mapping/protocol-schemas',
+			'/api/admin/field-mapping/external-schemas',
+			'/api/admin/field-mapping/source-profiles',
+			'/api/admin/field-mapping/destination-profiles',
+			'/api/admin/field-mapping/source-profiles/csv/parse',
+			'/api/admin/field-mapping/source-profiles',
+			'/api/admin/field-mapping/source-profiles/source%20profile%201',
+			'/api/admin/field-mapping/source-profiles/source%20profile%201/versions/version%201/review',
+			'/api/admin/field-mapping/source-profiles/source%20profile%201/versions/version%201/activate',
+			'/api/admin/field-mapping/source-profiles/source%20profile%201',
+			'/api/admin/field-mapping/destination-profiles',
+			'/api/admin/field-mapping/destination-profiles/destination%20profile%201',
+			'/api/admin/field-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
+			'/api/admin/field-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
+			'/api/admin/field-mapping/destination-profiles/destination%20profile%201',
+			'/api/admin/field-mapping/attribute-groups',
+			'/api/admin/field-mapping/attribute-groups',
+			'/api/admin/field-mapping/attribute-fields',
+			'/api/admin/field-mapping/attribute-fields',
+			'/api/admin/field-mapping/templates',
+			'/api/admin/field-mapping/schema-readiness',
+			'/api/admin/field-mapping/federation-trust-sources',
+			'/api/admin/field-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
+			'/api/admin/field-mapping/review-tasks?status=open&limit=25',
+			'/api/admin/field-mapping/field-mapping-sets',
+			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions',
+			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions',
+			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/rollback',
+			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/publish',
+			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/compile',
+			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/activate',
+			'/api/admin/field-mapping/field-mapping-sets/policy%20set%201/versions/version%201/deactivate',
+			'/api/admin/field-mapping/review-tasks/review%20task%201/transition'
 		]);
 		expect(fetchMock.mock.calls[6][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[7][1]).toMatchObject({ method: 'POST' });

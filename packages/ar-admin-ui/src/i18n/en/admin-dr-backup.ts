@@ -27,7 +27,46 @@ const adminDrBackup = {
 	admin_dr_backup_bundle_exported: 'SAML signing DR bundle exported.',
 	admin_dr_backup_bundle_imported: 'SAML signing DR bundle imported.',
 	admin_dr_backup_error_export_bundle: 'Failed to export SAML signing DR bundle',
-	admin_dr_backup_error_import_bundle: 'Failed to import SAML signing DR bundle'
+	admin_dr_backup_error_import_bundle: 'Failed to import SAML signing DR bundle',
+	admin_dr_backup_error_load_certificates: 'Failed to load saved SAML signing certificates',
+	admin_dr_backup_error_preview_certificate: 'Failed to preview SAML signing certificate',
+	admin_dr_backup_export_certificates_title: 'Certificates included in export',
+	admin_dr_backup_export_certificates_desc:
+		'Review the saved SAML signing certificates that will be included with the encrypted DR bundle.',
+	admin_dr_backup_refresh_certificates: 'Refresh certificates',
+	admin_dr_backup_no_export_certificates:
+		'No saved SAML signing certificates are available for DR bundle export.',
+	admin_dr_backup_certificate_role: 'Role',
+	admin_dr_backup_certificate_slot: 'Slot',
+	admin_dr_backup_certificate_status: 'Status',
+	admin_dr_backup_certificate_key_ref: 'Key reference',
+	admin_dr_backup_certificate_valid_from: 'Valid from',
+	admin_dr_backup_certificate_valid_to: 'Valid to',
+	admin_dr_backup_certificate_actions: 'Actions',
+	admin_dr_backup_view_certificate: 'View',
+	admin_dr_backup_certificate_slot_active: 'Active',
+	admin_dr_backup_certificate_slot_next: 'Next',
+	admin_dr_backup_certificate_slot_next_numbered: 'Next {index:number}',
+	admin_dr_backup_certificate_slot_backup: 'Backup',
+	admin_dr_backup_certificate_active_desc: 'Current signing certificate',
+	admin_dr_backup_certificate_next_desc: 'Rollover certificate',
+	admin_dr_backup_certificate_backup_desc: 'DR fallback certificate',
+	admin_dr_backup_certificate_status_signing: 'Signing',
+	admin_dr_backup_certificate_status_rollover: 'Rollover',
+	admin_dr_backup_certificate_status_backup: 'Backup',
+	admin_dr_backup_certificate_detail_title: '{role:string} {slot:string} certificate',
+	admin_dr_backup_certificate_detail_loading: 'Loading certificate details...',
+	admin_dr_backup_certificate_detail_no_certificate:
+		'This saved key reference has no certificate to preview.',
+	admin_dr_backup_certificate_subject: 'Subject',
+	admin_dr_backup_certificate_issuer: 'Issuer',
+	admin_dr_backup_certificate_serial: 'Serial number',
+	admin_dr_backup_certificate_signature: 'Signature',
+	admin_dr_backup_certificate_public_key: 'Public key',
+	admin_dr_backup_certificate_sha1: 'SHA-1 fingerprint',
+	admin_dr_backup_certificate_sha256: 'SHA-256 fingerprint',
+	admin_dr_backup_certificate_pem: 'Certificate PEM',
+	admin_dr_backup_copy_certificate: 'Copy certificate'
 } as const;
 
 export default adminDrBackup;

@@ -515,30 +515,33 @@ function mutationHeaders(): Record<string, string> {
 
 export const adminIdentityMappingAPI = {
 	async listPolicies(): Promise<{ policies: IdentityMappingPolicySummary[] }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/policies`);
-		return parseJson(response, 'Failed to load identity mapping policies');
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets`);
+		return parseJson(response, 'Failed to load field mapping sets');
 	},
 
 	async createPolicy(
 		request: IdentityMappingPolicyCreateRequest
 	): Promise<{ result: IdentityMappingPolicySummary }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/policies`, {
-			method: 'POST',
-			headers: mutationHeaders(),
-			body: JSON.stringify(request)
-		});
-		return parseJson(response, 'Failed to create identity mapping policy');
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create field mapping set');
 	},
 
 	async deletePolicy(policySetId: string): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}`,
 			{
 				method: 'DELETE',
 				headers: mutationHeaders()
 			}
 		);
-		return parseJson(response, 'Failed to delete identity mapping policy');
+		return parseJson(response, 'Failed to delete field mapping set');
 	},
 
 	async createPolicyVersion(
@@ -548,35 +551,35 @@ export const adminIdentityMappingAPI = {
 		result: { id: string; tenantId: string; policySetId: string; lifecycleState: string };
 	}> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to create identity mapping policy version');
+		return parseJson(response, 'Failed to create field mapping set version');
 	},
 
 	async listPolicyVersions(
 		policySetId: string
 	): Promise<{ policyVersions: IdentityMappingPolicyVersionSummary[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions`
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions`
 		);
-		return parseJson(response, 'Failed to load identity mapping policy versions');
+		return parseJson(response, 'Failed to load field mapping set versions');
 	},
 
 	async rollbackPolicy(policySetId: string): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/rollback`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/rollback`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to rollback identity mapping policy');
+		return parseJson(response, 'Failed to rollback field mapping set');
 	},
 
 	async publishPolicyVersion(
@@ -584,14 +587,14 @@ export const adminIdentityMappingAPI = {
 		policyVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/publish`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/publish`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to publish identity mapping policy version');
+		return parseJson(response, 'Failed to publish field mapping set version');
 	},
 
 	async compilePolicyVersion(
@@ -600,14 +603,14 @@ export const adminIdentityMappingAPI = {
 		request: IdentityMappingCompilePolicyRequest
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/compile`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/compile`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to compile identity mapping policy version');
+		return parseJson(response, 'Failed to compile field mapping set version');
 	},
 
 	async activatePolicyVersion(
@@ -616,14 +619,14 @@ export const adminIdentityMappingAPI = {
 		request: IdentityMappingActivatePolicyRequest
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/activate`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/activate`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to activate identity mapping policy version');
+		return parseJson(response, 'Failed to activate field mapping set version');
 	},
 
 	async deactivatePolicyVersion(
@@ -631,49 +634,45 @@ export const adminIdentityMappingAPI = {
 		policyVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/policies/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/deactivate`,
+			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(policySetId)}/versions/${encodeURIComponent(policyVersionId)}/deactivate`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to deactivate identity mapping policy version');
+		return parseJson(response, 'Failed to deactivate field mapping set version');
 	},
 
 	async listCatalogs(): Promise<{ catalogs: IdentityMappingCatalogSummary[] }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/catalogs`);
-		return parseJson(response, 'Failed to load identity mapping catalogs');
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/catalogs`);
+		return parseJson(response, 'Failed to load field mapping catalogs');
 	},
 
 	async listProtocolSchemas(): Promise<{
 		protocolSchemas: IdentityMappingProtocolSchemaSummary[];
 	}> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/protocol-schemas`
-		);
-		return parseJson(response, 'Failed to load identity mapping protocol schemas');
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/protocol-schemas`);
+		return parseJson(response, 'Failed to load field mapping protocol schemas');
 	},
 
 	async listExternalSchemas(): Promise<{
 		externalSchemas: IdentityMappingExternalSchemaSummary[];
 	}> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/external-schemas`
-		);
-		return parseJson(response, 'Failed to load identity mapping external schemas');
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/external-schemas`);
+		return parseJson(response, 'Failed to load field mapping external schemas');
 	},
 
 	async listSourceProfiles(): Promise<{ sourceProfiles: IdentityMappingSourceProfileSummary[] }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/source-profiles`);
-		return parseJson(response, 'Failed to load identity mapping source profiles');
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/source-profiles`);
+		return parseJson(response, 'Failed to load field mapping source profiles');
 	},
 
 	async parseCsvSourceProfile(
 		request: IdentityMappingCsvParseRequest
 	): Promise<{ result: IdentityMappingCsvParseResult }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/csv/parse`,
+			`${API_BASE_URL}/api/admin/field-mapping/source-profiles/csv/parse`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
@@ -686,15 +685,12 @@ export const adminIdentityMappingAPI = {
 	async createSourceProfile(
 		request: IdentityMappingSourceProfileCreateRequest
 	): Promise<{ result: IdentityMappingSourceProfileSummary }> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles`,
-			{
-				method: 'POST',
-				headers: mutationHeaders(),
-				body: JSON.stringify(request)
-			}
-		);
-		return parseJson(response, 'Failed to create identity mapping source profile');
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/source-profiles`, {
+			method: 'POST',
+			headers: mutationHeaders(),
+			body: JSON.stringify(request)
+		});
+		return parseJson(response, 'Failed to create field mapping source profile');
 	},
 
 	async updateSourceProfile(
@@ -702,14 +698,14 @@ export const adminIdentityMappingAPI = {
 		request: IdentityMappingSourceProfileUpdateRequest
 	): Promise<{ result: IdentityMappingSourceProfileSummary }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}`,
 			{
 				method: 'PUT',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to update identity mapping source profile');
+		return parseJson(response, 'Failed to update field mapping source profile');
 	},
 
 	async reviewSourceProfileVersion(
@@ -717,14 +713,14 @@ export const adminIdentityMappingAPI = {
 		sourceProfileVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}/versions/${encodeURIComponent(sourceProfileVersionId)}/review`,
+			`${API_BASE_URL}/api/admin/field-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}/versions/${encodeURIComponent(sourceProfileVersionId)}/review`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to review identity mapping source profile');
+		return parseJson(response, 'Failed to review field mapping source profile');
 	},
 
 	async activateSourceProfileVersion(
@@ -732,49 +728,49 @@ export const adminIdentityMappingAPI = {
 		sourceProfileVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}/versions/${encodeURIComponent(sourceProfileVersionId)}/activate`,
+			`${API_BASE_URL}/api/admin/field-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}/versions/${encodeURIComponent(sourceProfileVersionId)}/activate`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to activate identity mapping source profile');
+		return parseJson(response, 'Failed to activate field mapping source profile');
 	},
 
 	async deleteSourceProfile(sourceProfileId: string): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/source-profiles/${encodeURIComponent(sourceProfileId)}`,
 			{
 				method: 'DELETE',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to delete identity mapping source profile');
+		return parseJson(response, 'Failed to delete field mapping source profile');
 	},
 
 	async listDestinationProfiles(): Promise<{
 		destinationProfiles: IdentityMappingDestinationProfileSummary[];
 	}> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles`
+			`${API_BASE_URL}/api/admin/field-mapping/destination-profiles`
 		);
-		return parseJson(response, 'Failed to load identity mapping destination profiles');
+		return parseJson(response, 'Failed to load field mapping destination profiles');
 	},
 
 	async createDestinationProfile(
 		request: IdentityMappingDestinationProfileCreateRequest
 	): Promise<{ result: IdentityMappingDestinationProfileSummary }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles`,
+			`${API_BASE_URL}/api/admin/field-mapping/destination-profiles`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to create identity mapping destination profile');
+		return parseJson(response, 'Failed to create field mapping destination profile');
 	},
 
 	async updateDestinationProfile(
@@ -782,14 +778,14 @@ export const adminIdentityMappingAPI = {
 		request: IdentityMappingDestinationProfileUpdateRequest
 	): Promise<{ result: IdentityMappingDestinationProfileSummary }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}`,
 			{
 				method: 'PUT',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to update identity mapping destination profile');
+		return parseJson(response, 'Failed to update field mapping destination profile');
 	},
 
 	async reviewDestinationProfileVersion(
@@ -797,14 +793,14 @@ export const adminIdentityMappingAPI = {
 		destinationProfileVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}/versions/${encodeURIComponent(destinationProfileVersionId)}/review`,
+			`${API_BASE_URL}/api/admin/field-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}/versions/${encodeURIComponent(destinationProfileVersionId)}/review`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to review identity mapping destination profile');
+		return parseJson(response, 'Failed to review field mapping destination profile');
 	},
 
 	async activateDestinationProfileVersion(
@@ -812,82 +808,70 @@ export const adminIdentityMappingAPI = {
 		destinationProfileVersionId: string
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}/versions/${encodeURIComponent(destinationProfileVersionId)}/activate`,
+			`${API_BASE_URL}/api/admin/field-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}/versions/${encodeURIComponent(destinationProfileVersionId)}/activate`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to activate identity mapping destination profile');
+		return parseJson(response, 'Failed to activate field mapping destination profile');
 	},
 
 	async deleteDestinationProfile(destinationProfileId: string): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/destination-profiles/${encodeURIComponent(destinationProfileId)}`,
 			{
 				method: 'DELETE',
 				headers: mutationHeaders(),
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to delete identity mapping destination profile');
+		return parseJson(response, 'Failed to delete field mapping destination profile');
 	},
 
 	async listAttributeGroups(): Promise<{ attributeGroups: IdentityMappingAttributeGroup[] }> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/attribute-groups`
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/attribute-groups`);
 		return parseJson(response, 'Failed to load attribute groups');
 	},
 
 	async createAttributeGroup(
 		request: IdentityMappingAttributeGroupCreateRequest
 	): Promise<{ result: IdentityMappingAttributeGroup }> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/attribute-groups`,
-			{
-				method: 'POST',
-				headers: mutationHeaders(),
-				body: JSON.stringify(request)
-			}
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/attribute-groups`, {
+			method: 'POST',
+			headers: mutationHeaders(),
+			body: JSON.stringify(request)
+		});
 		return parseJson(response, 'Failed to create attribute group');
 	},
 
 	async listAttributeFields(): Promise<{ attributeFields: IdentityMappingAttributeField[] }> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/attribute-fields`
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/attribute-fields`);
 		return parseJson(response, 'Failed to load attribute fields');
 	},
 
 	async createAttributeField(
 		request: IdentityMappingAttributeFieldCreateRequest
 	): Promise<{ result: IdentityMappingAttributeField }> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/attribute-fields`,
-			{
-				method: 'POST',
-				headers: mutationHeaders(),
-				body: JSON.stringify(request)
-			}
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/attribute-fields`, {
+			method: 'POST',
+			headers: mutationHeaders(),
+			body: JSON.stringify(request)
+		});
 		return parseJson(response, 'Failed to create attribute field');
 	},
 
 	async listTemplates(): Promise<{ templates: IdentityMappingTemplateSummary[] }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/templates`);
-		return parseJson(response, 'Failed to load identity mapping templates');
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/templates`);
+		return parseJson(response, 'Failed to load field mapping templates');
 	},
 
 	async getSchemaReadiness(): Promise<{
 		rows: IdentityMappingSchemaReadinessRow[];
 		summary: IdentityMappingSchemaReadinessSummary;
 	}> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/schema-readiness`
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/schema-readiness`);
 		return parseJson(response, 'Failed to load schema readiness inventory');
 	},
 
@@ -895,7 +879,7 @@ export const adminIdentityMappingAPI = {
 		federationTrustSources: IdentityMappingFederationTrustSourceSummary[];
 	}> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`
 		);
 		return parseJson(response, 'Failed to load federation trust sources');
 	},
@@ -904,7 +888,7 @@ export const adminIdentityMappingAPI = {
 		request: IdentityMappingFederationTrustSourceRequest
 	): Promise<IdentityMappingFederationTrustSourceSummary> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
@@ -919,7 +903,7 @@ export const adminIdentityMappingAPI = {
 		request: IdentityMappingFederationTrustSourceRequest
 	): Promise<IdentityMappingFederationTrustSourceSummary> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
 			{
 				method: 'PUT',
 				headers: mutationHeaders(),
@@ -931,7 +915,7 @@ export const adminIdentityMappingAPI = {
 
 	async deleteFederationTrustSource(trustSourceId: string): Promise<{ success: boolean }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
 			{
 				method: 'DELETE',
 				headers: mutationHeaders(),
@@ -945,7 +929,7 @@ export const adminIdentityMappingAPI = {
 		trustSourceId: string
 	): Promise<{ federationMetadataDocuments: IdentityMappingFederationMetadataDocument[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}/metadata-documents`
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}/metadata-documents`
 		);
 		return parseJson(response, 'Failed to load federation metadata documents');
 	},
@@ -954,9 +938,9 @@ export const adminIdentityMappingAPI = {
 		filters: IdentityMappingReviewTaskFilters = {}
 	): Promise<{ reviewTasks: IdentityMappingReviewTask[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/review-tasks${toQueryString(filters)}`
+			`${API_BASE_URL}/api/admin/field-mapping/review-tasks${toQueryString(filters)}`
 		);
-		return parseJson(response, 'Failed to load identity mapping review tasks');
+		return parseJson(response, 'Failed to load field mapping review tasks');
 	},
 
 	async transitionReviewTask(
@@ -964,13 +948,13 @@ export const adminIdentityMappingAPI = {
 		request: { status: string; assignedTo?: string | null; reasonCodes?: string[] }
 	): Promise<Record<string, unknown>> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/review-tasks/${encodeURIComponent(reviewTaskId)}/transition`,
+			`${API_BASE_URL}/api/admin/field-mapping/review-tasks/${encodeURIComponent(reviewTaskId)}/transition`,
 			{
 				method: 'POST',
 				headers: mutationHeaders(),
 				body: JSON.stringify(request)
 			}
 		);
-		return parseJson(response, 'Failed to transition identity mapping review task');
+		return parseJson(response, 'Failed to transition field mapping review task');
 	}
 };

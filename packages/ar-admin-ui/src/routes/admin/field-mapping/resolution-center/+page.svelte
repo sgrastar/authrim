@@ -238,7 +238,7 @@
 <div class="resolution-page">
 	<div class="page-heading">
 		<div>
-			<a class="back-link" href="/admin/identity-mapping">{$LL.admin_identity_mapping_back()}</a>
+			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
 			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
 			<h1>{$LL.admin_identity_mapping_resolution_title()}</h1>
 			<p class="summary">

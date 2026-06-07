@@ -297,10 +297,10 @@ const adminSaml = {
 	admin_saml_detail_profile: 'Profile',
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'なし',
-	admin_saml_detail_identity_mapping_policy: 'Identity Mapping Policy',
+	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: 'テナント既定 / legacy release',
 	admin_saml_detail_identity_mapping_policy_hint:
-		'このSPへSAML Attributeをreleaseする時に使うactiveなidentity mapping policyを選択します。',
+		'このSPへSAML Attributeをreleaseする時に使うactiveなField Mapping Setを選択します。',
 	admin_saml_detail_attribute_release_consent: '属性提供の同意',
 	admin_saml_detail_attribute_release_consent_disabled: '属性提供前に確認しない',
 	admin_saml_detail_attribute_release_consent_once: '初回だけ確認し、以後は記憶する',

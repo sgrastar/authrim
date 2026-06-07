@@ -707,7 +707,7 @@
 			} else {
 				await adminIdentityMappingAPI.deleteDestinationProfile(profileId);
 			}
-			await goto('/admin/identity-mapping/profiles');
+			await goto('/admin/field-mapping/profiles');
 		} catch (error) {
 			message =
 				error instanceof Error
@@ -1591,7 +1591,7 @@
 </svelte:head>
 
 <div class="profile-editor-page">
-	<a class="back-link" href="/admin/identity-mapping/profiles"
+	<a class="back-link" href="/admin/field-mapping/profiles"
 		>{$LL.admin_identity_mapping_profile_edit_back()}</a
 	>
 

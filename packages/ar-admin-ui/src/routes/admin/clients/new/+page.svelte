@@ -219,7 +219,7 @@
 				mappingPolicies = result.policies;
 			})
 			.catch((err) => {
-				console.warn('Failed to load identity mapping policies:', err);
+				console.warn('Failed to load field mapping sets:', err);
 			});
 	});
 
@@ -877,7 +877,7 @@
 								<div class="advanced-panel" style="padding: 0; border: none;">
 									<div class="form-group">
 										<label for="identityMappingPolicy" class="form-label">
-											OIDC claims mapping policy
+											OIDC claims field mapping set
 										</label>
 										<select
 											id="identityMappingPolicy"
@@ -892,8 +892,8 @@
 											{/each}
 										</select>
 										<p class="form-hint">
-											Selects the active identity mapping policy used for OIDC UserInfo and token
-											claims for this client.
+											Selects the active Field Mapping Set used for OIDC UserInfo and token claims
+											for this client.
 										</p>
 									</div>
 
