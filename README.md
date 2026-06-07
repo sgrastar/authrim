@@ -41,6 +41,12 @@ Authrim is still under active development, and breaking changes, including datab
 
 Designed for low-latency edge deployment on Cloudflare Workers.
 
+## For Organizations Considering Adoption
+
+Authrim is open source, and we also accept consultations for adoption planning, evaluation, and PoC.
+
+For details, see [Adoption Support and Consultation](./docs/adoption-support.md).
+
 ```bash
 npx @authrim/setup
 ```
