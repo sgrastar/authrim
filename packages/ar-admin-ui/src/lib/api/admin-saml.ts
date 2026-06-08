@@ -25,12 +25,17 @@ export interface SAMLMetadataRefreshStatus {
 
 export interface SAMLSigningKeyReference {
 	slot: 'active' | 'next' | 'backup';
+	id?: string;
 	keyRef?: string;
 	kid?: string;
 	certificate?: string;
 	state?: string;
 	metadataPublishFrom?: number;
 	plannedActivationAt?: number;
+	validFrom?: number;
+	validTo?: number;
+	publicKeyAlgorithm?: 'RSA';
+	publicKeySizeBits?: number;
 }
 
 export interface SAMLSigningKeyPolicy {
@@ -38,6 +43,7 @@ export interface SAMLSigningKeyPolicy {
 	metadataCertificatePublication?: 'active_only' | 'active_next' | 'active_next_backup';
 	active?: SAMLSigningKeyReference;
 	next?: SAMLSigningKeyReference;
+	nextCandidates?: SAMLSigningKeyReference[];
 	backup?: SAMLSigningKeyReference;
 }
 
@@ -95,6 +101,7 @@ export interface SAMLAttributeReleaseRule {
 }
 
 export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
+export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
 
 export interface SAMLProviderConfig {
 	description?: string;
@@ -133,6 +140,18 @@ export interface SAMLProviderConfig {
 	attributeMapping?: Record<string, string>;
 	attributeReleasePolicy?: {
 		attributes: SAMLAttributeReleaseRule[];
+	};
+	attributeReleaseConsent?: {
+		enabled: boolean;
+		mode: AttributeReleaseConsentMode;
+	};
+	identityMapping?: {
+		fieldMappingSetId?: string;
+		fieldMappingVersionId?: string;
+		destinationNamespace?: string;
+		sourceProfileId?: string;
+		destinationProfileId?: string;
+		attributeDescriptors?: Record<string, unknown>;
 	};
 	attributePresetId?: string;
 	attributePresetVersion?: string;
@@ -542,9 +561,15 @@ export const adminSAMLAPI = {
 
 	async updateLocalSigning(request: {
 		role: 'idp' | 'sp';
-		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup';
+		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup' | 'delete_next';
 		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
 		keepPreviousAsBackup?: boolean;
+		targetKid?: string;
+		targetKeyRef?: string;
+		validFrom?: string;
+		validTo?: string;
+		publicKeyAlgorithm?: 'RSA';
+		publicKeySizeBits?: 2048 | 3072 | 4096;
 	}): Promise<SAMLSettings> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings/local-signing`, {
 			method: 'POST',
@@ -811,7 +836,7 @@ export const adminSAMLAPI = {
 
 	async listFederationTrustProfiles(): Promise<{ profiles: SAMLFederationTrustProfile[] }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
 			{ method: 'GET' }
 		);
 
@@ -839,7 +864,7 @@ export const adminSAMLAPI = {
 	): Promise<SAMLFederationTrustProfile> {
 		const sourceRequest = await buildFederationTrustSourceRequest(request);
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -861,7 +886,7 @@ export const adminSAMLAPI = {
 	): Promise<SAMLFederationTrustProfile> {
 		const sourceRequest = await buildFederationTrustSourceRequest(request, id);
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
 			{
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
@@ -879,7 +904,7 @@ export const adminSAMLAPI = {
 
 	async deleteFederationTrustProfile(id: string): Promise<{ success: boolean }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/identity-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
 			{ method: 'DELETE' }
 		);
 

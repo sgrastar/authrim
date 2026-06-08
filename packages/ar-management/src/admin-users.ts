@@ -712,7 +712,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
+    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
 
     try {
       await maybeCreateCanonicalRuntimeUserForAdmin(

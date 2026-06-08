@@ -2,6 +2,9 @@
  * Flow Designer Components
  *
  * Visual editor for authentication/authorization flows using Svelte Flow.
+ *
+ * Product note: Flow may be omitted from Admin UI; keep new i18n work for this
+ * feature paused until product direction is confirmed.
  */
 
 export { default as FlowCanvas } from './FlowCanvas.svelte';

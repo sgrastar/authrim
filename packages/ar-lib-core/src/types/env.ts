@@ -184,6 +184,7 @@ export interface Env {
   ENABLE_POLICY_EMBEDDING?: string; // "true" to enable policy evaluation and permission embedding
   ENABLE_CUSTOM_CLAIMS?: string; // "true" to enable custom claim rules
   ENABLE_ID_LEVEL_PERMISSIONS?: string; // "true" to enable ID-level resource permissions
+  USER_ID_FORMAT?: string; // "nanoid" or "uuid" for generated end-user IDs
 
   // External IdP Integration
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching

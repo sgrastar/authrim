@@ -6,11 +6,11 @@
 -- Each object is linked to schema-readiness-inventory.md by UIM-SCH-* comments.
 -- =============================================================================
 
--- UIM-SCH-016 mapping_policy_sets
-CREATE TABLE IF NOT EXISTS mapping_policy_sets (
+-- UIM-SCH-016 field_mapping_sets
+CREATE TABLE IF NOT EXISTS field_mapping_sets (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_key TEXT NOT NULL,
+  field_mapping_key TEXT NOT NULL,
   display_name TEXT NOT NULL,
   description TEXT,
   owner_scope_type TEXT NOT NULL DEFAULT 'tenant',
@@ -18,34 +18,34 @@ CREATE TABLE IF NOT EXISTS mapping_policy_sets (
   lifecycle_state TEXT NOT NULL DEFAULT 'draft',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, policy_key)
+  UNIQUE (tenant_id, field_mapping_key)
 );
 
--- UIM-SCH-017 mapping_policy_versions
-CREATE TABLE IF NOT EXISTS mapping_policy_versions (
+-- UIM-SCH-017 field_mapping_versions
+CREATE TABLE IF NOT EXISTS field_mapping_versions (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_set_id TEXT NOT NULL,
+  field_mapping_set_id TEXT NOT NULL,
   version_label TEXT NOT NULL,
   lifecycle_state TEXT NOT NULL DEFAULT 'draft',
-  policy_hash TEXT NOT NULL,
+  field_mapping_hash TEXT NOT NULL,
   compatibility_range TEXT,
   author_id TEXT,
   published_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, policy_set_id, version_label),
-  FOREIGN KEY (policy_set_id) REFERENCES mapping_policy_sets(id) ON DELETE CASCADE
+  UNIQUE (tenant_id, field_mapping_set_id, version_label),
+  FOREIGN KEY (field_mapping_set_id) REFERENCES field_mapping_sets(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_mapping_policy_versions_state
-  ON mapping_policy_versions(tenant_id, lifecycle_state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_field_mapping_versions_state
+  ON field_mapping_versions(tenant_id, lifecycle_state, updated_at);
 
 -- UIM-SCH-018 mapping_rules
 CREATE TABLE IF NOT EXISTS mapping_rules (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_version_id TEXT NOT NULL,
+  field_mapping_version_id TEXT NOT NULL,
   rule_key TEXT NOT NULL,
   rule_kind TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -55,8 +55,8 @@ CREATE TABLE IF NOT EXISTS mapping_rules (
   metadata_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, policy_version_id, rule_key),
-  FOREIGN KEY (policy_version_id) REFERENCES mapping_policy_versions(id) ON DELETE CASCADE
+  UNIQUE (tenant_id, field_mapping_version_id, rule_key),
+  FOREIGN KEY (field_mapping_version_id) REFERENCES field_mapping_versions(id) ON DELETE CASCADE
 );
 
 -- UIM-SCH-019 mapping_rule_edges
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS mapping_validation_rules (
 CREATE TABLE IF NOT EXISTS mapping_release_rules (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_version_id TEXT NOT NULL,
+  field_mapping_version_id TEXT NOT NULL,
   destination_type TEXT NOT NULL,
   destination_id TEXT,
   source_ref_json TEXT NOT NULL,
@@ -118,29 +118,29 @@ CREATE TABLE IF NOT EXISTS mapping_release_rules (
   priority INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  FOREIGN KEY (policy_version_id) REFERENCES mapping_policy_versions(id) ON DELETE CASCADE
+  FOREIGN KEY (field_mapping_version_id) REFERENCES field_mapping_versions(id) ON DELETE CASCADE
 );
 
 -- UIM-SCH-023 mapping_conflict_rules
 CREATE TABLE IF NOT EXISTS mapping_conflict_rules (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_version_id TEXT NOT NULL,
+  field_mapping_version_id TEXT NOT NULL,
   target_ref_json TEXT NOT NULL,
   conflict_strategy TEXT NOT NULL,
   source_priority_json TEXT,
   condition_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  FOREIGN KEY (policy_version_id) REFERENCES mapping_policy_versions(id) ON DELETE CASCADE
+  FOREIGN KEY (field_mapping_version_id) REFERENCES field_mapping_versions(id) ON DELETE CASCADE
 );
 
--- UIM-SCH-024 mapping_policy_activations
-CREATE TABLE IF NOT EXISTS mapping_policy_activations (
+-- UIM-SCH-024 field_mapping_activations
+CREATE TABLE IF NOT EXISTS field_mapping_activations (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_set_id TEXT NOT NULL,
-  policy_version_id TEXT NOT NULL,
+  field_mapping_set_id TEXT NOT NULL,
+  field_mapping_version_id TEXT NOT NULL,
   activation_scope_json TEXT NOT NULL,
   lifecycle_state TEXT NOT NULL DEFAULT 'scheduled',
   active_from INTEGER,
@@ -148,15 +148,15 @@ CREATE TABLE IF NOT EXISTS mapping_policy_activations (
   activated_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  FOREIGN KEY (policy_set_id) REFERENCES mapping_policy_sets(id) ON DELETE CASCADE,
-  FOREIGN KEY (policy_version_id) REFERENCES mapping_policy_versions(id) ON DELETE CASCADE
+  FOREIGN KEY (field_mapping_set_id) REFERENCES field_mapping_sets(id) ON DELETE CASCADE,
+  FOREIGN KEY (field_mapping_version_id) REFERENCES field_mapping_versions(id) ON DELETE CASCADE
 );
 
 -- UIM-SCH-025 compiled_mapping_snapshots
 CREATE TABLE IF NOT EXISTS compiled_mapping_snapshots (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_version_id TEXT NOT NULL,
+  field_mapping_version_id TEXT NOT NULL,
   catalog_version_id TEXT,
   snapshot_hash TEXT NOT NULL,
   compatibility_range TEXT,
@@ -166,7 +166,7 @@ CREATE TABLE IF NOT EXISTS compiled_mapping_snapshots (
   activated_at INTEGER,
   expires_at INTEGER,
   metadata_json TEXT,
-  FOREIGN KEY (policy_version_id) REFERENCES mapping_policy_versions(id) ON DELETE CASCADE
+  FOREIGN KEY (field_mapping_version_id) REFERENCES field_mapping_versions(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_compiled_mapping_snapshots_state
@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS mapping_events (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
   event_type TEXT NOT NULL,
-  policy_version_id TEXT,
+  field_mapping_version_id TEXT,
   subject_id TEXT,
   source_id TEXT,
   outcome TEXT NOT NULL,
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS replay_jobs (
 CREATE TABLE IF NOT EXISTS dependency_graph_snapshots (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_version_id TEXT,
+  field_mapping_version_id TEXT,
   snapshot_hash TEXT NOT NULL,
   graph_json TEXT NOT NULL,
   created_at INTEGER NOT NULL

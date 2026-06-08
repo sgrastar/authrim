@@ -25,6 +25,7 @@
 		type LoggingQuotaEvaluation
 	} from '$lib/api/admin-logging-control';
 	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type DangerConfirmationRequest = {
 		title: string;
@@ -202,7 +203,7 @@
 			notifications = notificationResponse.items;
 			messageRepairFindings = [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load logging configuration';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_load_failed();
 			policies = null;
 			deliverySummary = [];
 			deliveryEvents = [];
@@ -236,7 +237,10 @@
 			deliveryEvents = [...deliveryEvents, ...response.items];
 			deliveryCursor = response.page?.next_cursor;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load delivery events';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_logging_policies_delivery_events_load_failed();
 		} finally {
 			deliveryLoading = false;
 		}
@@ -257,7 +261,10 @@
 			deliveryCursor = response.page?.next_cursor;
 			deliveryEventsLoaded = true;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load delivery events';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_logging_policies_delivery_events_load_failed();
 		} finally {
 			deliveryLoading = false;
 		}
@@ -278,7 +285,7 @@
 			dlqItems = [...dlqItems, ...response.items];
 			dlqCursor = response.page?.next_cursor;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load DLQ items';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_dlq_load_failed();
 		} finally {
 			dlqLoading = false;
 		}
@@ -300,7 +307,7 @@
 			dlqCursor = response.page?.next_cursor;
 			dlqItemsLoaded = true;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load DLQ items';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_dlq_load_failed();
 		} finally {
 			dlqLoading = false;
 		}
@@ -314,10 +321,10 @@
 		const confirmation =
 			action === 'purge'
 				? await requestDangerConfirmation({
-						title: 'Purge DLQ Item',
+						title: $LL.admin_logging_policies_purge_dlq_title(),
 						resourceName: item.id,
 						phrase: `PURGE DLQ ${item.id}`,
-						confirmLabel: 'Purge'
+						confirmLabel: $LL.admin_logging_policies_purge_confirm()
 					})
 				: undefined;
 		if (action === 'purge' && !confirmation) return;
@@ -341,7 +348,10 @@
 					: current
 			);
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Failed to ${action} DLQ item`;
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_logging_policies_dlq_action_failed({ action });
 		} finally {
 			dlqActionId = null;
 		}
@@ -359,7 +369,8 @@
 				truncated: response.item.payload.truncated
 			};
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load DLQ payload';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_dlq_payload_load_failed();
 		} finally {
 			dlqActionId = null;
 		}
@@ -373,7 +384,10 @@
 			const response = await adminLoggingControlAPI.resolveNotification(item.id);
 			notifications = notifications.filter((current) => current.id !== response.result.id);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to resolve logging notification';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_logging_policies_notification_resolve_failed();
 		} finally {
 			notificationActionId = null;
 		}
@@ -401,7 +415,8 @@
 			});
 			exportJob = response.result;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create export';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_export_create_failed();
 		} finally {
 			exportLoading = false;
 		}
@@ -415,7 +430,8 @@
 			const response = await adminLoggingControlAPI.getLoggingExport(exportJob.id);
 			exportJob = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to refresh export status';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_export_refresh_failed();
 		} finally {
 			exportLoading = false;
 		}
@@ -439,7 +455,7 @@
 			selectedMessageJob = response.items[0] ?? null;
 			messageJobsLoaded = true;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load message jobs';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_jobs_load_failed();
 		} finally {
 			messageJobsLoading = false;
 		}
@@ -453,10 +469,10 @@
 	async function cancelMessageJob(item: LoggingMessageJob) {
 		if (messageJobActionId || !canCancelMessageJob(item)) return;
 		const confirmation = await requestDangerConfirmation({
-			title: 'Cancel Message Job',
+			title: $LL.admin_logging_policies_cancel_job_title(),
 			resourceName: item.id,
 			phrase: `CANCEL MESSAGE JOB ${item.id}`,
-			confirmLabel: 'Cancel job'
+			confirmLabel: $LL.admin_logging_policies_cancel_job_confirm()
 		});
 		if (!confirmation) return;
 
@@ -474,7 +490,7 @@
 				await refreshExportStatus();
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to cancel message job';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_job_cancel_failed();
 		} finally {
 			messageJobActionId = null;
 		}
@@ -495,7 +511,10 @@
 			const text = await adminLoggingControlAPI.getLoggingExportArtifact(exportJob.id);
 			exportArtifactPreview = text.slice(0, 2000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load export artifact';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_logging_policies_export_artifact_load_failed();
 		} finally {
 			exportLoading = false;
 		}
@@ -518,7 +537,10 @@
 			anchor.remove();
 			URL.revokeObjectURL(url);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to download export artifact';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_logging_policies_export_artifact_download_failed();
 		} finally {
 			exportLoading = false;
 		}
@@ -537,7 +559,8 @@
 			});
 			messageRepairFindings = response.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load message repair findings';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_findings_load_failed();
 		} finally {
 			messageRepairActionId = null;
 		}
@@ -551,7 +574,7 @@
 			await adminLoggingControlAPI.applySafeMessageRepair(item.id);
 			messageRepairFindings = messageRepairFindings.filter((current) => current.id !== item.id);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to apply safe message repair';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_safe_repair_failed();
 		} finally {
 			messageRepairActionId = null;
 		}
@@ -564,16 +587,17 @@
 		try {
 			const preview = await adminLoggingControlAPI.previewDangerousMessageRepair(item.id);
 			const confirmation = await requestDangerConfirmation({
-				title: 'Apply Message Repair',
+				title: $LL.admin_logging_policies_apply_repair_title(),
 				resourceName: item.id,
 				phrase: preview.item.confirmation,
-				confirmLabel: 'Apply'
+				confirmLabel: $LL.admin_logging_policies_apply_confirm()
 			});
 			if (!confirmation) return;
 			await adminLoggingControlAPI.applyDangerousMessageRepair(item.id, confirmation);
 			messageRepairFindings = messageRepairFindings.filter((current) => current.id !== item.id);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to apply dangerous message repair';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_dangerous_repair_failed();
 		} finally {
 			messageRepairActionId = null;
 		}
@@ -592,7 +616,8 @@
 			});
 			snapshotDraft = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create snapshot draft';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_snapshot_draft_failed();
 		} finally {
 			snapshotActionLoading = false;
 		}
@@ -601,10 +626,10 @@
 	async function publishSnapshotDraft() {
 		if (!snapshotDraft || snapshotActionLoading || !canPublishSnapshots) return;
 		const confirmation = await requestDangerConfirmation({
-			title: 'Publish Logging Policy',
+			title: $LL.admin_logging_policies_publish_policy_title(),
 			resourceName: snapshotDraft.id,
 			phrase: snapshotDraft.confirmation,
-			confirmLabel: 'Publish'
+			confirmLabel: $LL.admin_logging_policies_publish_confirm()
 		});
 		if (!confirmation) return;
 
@@ -618,7 +643,8 @@
 			snapshotDraft = null;
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to publish snapshot draft';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_snapshot_publish_failed();
 		} finally {
 			snapshotActionLoading = false;
 		}
@@ -643,7 +669,8 @@
 			runtimeResolution = resolutionResponse.item;
 			runtimeTopology = topologyResponse.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to resolve runtime logging';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_runtime_resolve_failed();
 		} finally {
 			runtimeLoading = false;
 		}
@@ -665,7 +692,8 @@
 			});
 			runtimeVerification = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to verify runtime snapshot';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_runtime_verify_failed();
 		} finally {
 			runtimeVerifyLoading = false;
 		}
@@ -682,7 +710,8 @@
 			});
 			tenantDbHealth = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load tenant database health';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_tenant_db_health_failed();
 		} finally {
 			tenantDbHealthLoading = false;
 		}
@@ -699,7 +728,8 @@
 			});
 			tenantDbProbe = response.result;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to run tenant database probe';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_tenant_db_probe_failed();
 		} finally {
 			tenantDbProbeLoading = false;
 		}
@@ -728,7 +758,7 @@
 			usageSummary = summaryResponse.item;
 			usageAggregates = aggregateResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load usage summary';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_usage_load_failed();
 		} finally {
 			usageLoading = false;
 		}
@@ -747,7 +777,8 @@
 			usageLoading = false;
 			await loadUsageSummary();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to refresh usage aggregates';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_usage_refresh_failed();
 		} finally {
 			usageLoading = false;
 		}
@@ -768,7 +799,7 @@
 			quotaPolicies = policyResponse.items;
 			quotaEvaluations = evaluationResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load quota state';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_quota_load_failed();
 		} finally {
 			quotaLoading = false;
 		}
@@ -784,7 +815,8 @@
 			const policyResponse = await adminLoggingControlAPI.listQuotaPolicies({ limit: 100 });
 			quotaPolicies = policyResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to evaluate quota policies';
+			error =
+				err instanceof Error ? err.message : $LL.admin_logging_policies_quota_evaluate_failed();
 		} finally {
 			quotaLoading = false;
 		}
@@ -802,7 +834,7 @@
 			});
 			bulkDlqPreview = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to preview bulk DLQ replay';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_bulk_preview_failed();
 		} finally {
 			bulkDlqLoading = false;
 		}
@@ -812,10 +844,12 @@
 		if (bulkDlqLoading || !bulkDlqPreview || bulkDlqPreview.item_count === 0 || !canRetryDelivery)
 			return;
 		const confirmation = await requestDangerConfirmation({
-			title: 'Bulk Replay DLQ',
-			resourceName: `${bulkDlqPreview.item_count} DLQ items`,
+			title: $LL.admin_logging_policies_bulk_replay_title(),
+			resourceName: $LL.admin_logging_policies_bulk_replay_resource({
+				count: bulkDlqPreview.item_count
+			}),
 			phrase: `REPLAY ${bulkDlqPreview.item_count} DLQ`,
-			confirmLabel: 'Replay'
+			confirmLabel: $LL.admin_logging_policies_bulk_replay_confirm()
 		});
 		if (!confirmation) return;
 
@@ -832,7 +866,7 @@
 			await loadDlqItems();
 			await loadMessageJobs();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to apply bulk DLQ replay';
+			error = err instanceof Error ? err.message : $LL.admin_logging_policies_bulk_apply_failed();
 		} finally {
 			bulkDlqLoading = false;
 		}
@@ -880,35 +914,40 @@
 </script>
 
 <svelte:head>
-	<title>Logging - Authrim</title>
+	<title>{$LL.admin_logging_policies_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Logging</h1>
+			<h1 class="page-title">{$LL.admin_logging_policies_title()}</h1>
 			<p class="page-description">
-				Review log policy assignments, fallbacks, snapshots, and delivery events.
+				{$LL.admin_logging_policies_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			{#if canFilterByTenant}
-				<input bind:value={tenantId} placeholder="tenant id" />
+				<input
+					bind:value={tenantId}
+					placeholder={$LL.admin_logging_policies_tenant_id_placeholder()}
+				/>
 			{/if}
 			<select bind:value={deliveryWindowPreset}>
-				<option value="1h">Last hour</option>
-				<option value="24h">Last 24 hours</option>
-				<option value="7d">Last 7 days</option>
+				<option value="1h">{$LL.admin_logging_policies_last_hour()}</option>
+				<option value="24h">{$LL.admin_logging_policies_last_24_hours()}</option>
+				<option value="7d">{$LL.admin_logging_policies_last_7_days()}</option>
 			</select>
 			<select bind:value={statusFilter}>
-				<option value="">Any status</option>
-				<option value="queued">Queued</option>
-				<option value="delivered">Delivered</option>
-				<option value="failed">Failed</option>
-				<option value="retrying">Retrying</option>
+				<option value="">{$LL.admin_logging_policies_any_status()}</option>
+				<option value="queued">{$LL.admin_logging_policies_queued()}</option>
+				<option value="delivered">{$LL.admin_logging_policies_delivered()}</option>
+				<option value="failed">{$LL.admin_logging_policies_failed()}</option>
+				<option value="retrying">{$LL.admin_logging_policies_retrying()}</option>
 				<option value="dlq">DLQ</option>
 			</select>
-			<button class="btn btn-secondary" onclick={load} disabled={loading}>Refresh</button>
+			<button class="btn btn-secondary" onclick={load} disabled={loading}>
+				{$LL.admin_logging_policies_refresh()}
+			</button>
 		</div>
 	</div>
 
@@ -917,23 +956,23 @@
 	<div class="grid">
 		<section class="panel">
 			<div class="section-header">
-				<h2>Assignments</h2>
+				<h2>{$LL.admin_logging_policies_assignments()}</h2>
 				<span>{policies?.assignments.length ?? 0}</span>
 			</div>
 			{#if loading}
-				<p class="muted">Loading...</p>
+				<p class="muted">{$LL.admin_logging_policies_loading()}</p>
 			{:else if !policies || policies.assignments.length === 0}
-				<p class="muted">No assignments found.</p>
+				<p class="muted">{$LL.admin_logging_policies_no_assignments()}</p>
 			{:else}
 				<div class="table-wrap">
 					<table>
 						<thead>
 							<tr>
-								<th>Log type</th>
-								<th>Plane</th>
-								<th>Managed by</th>
-								<th>Destination</th>
-								<th>Enabled</th>
+								<th>{$LL.admin_logging_policies_log_type()}</th>
+								<th>{$LL.admin_logging_policies_plane()}</th>
+								<th>{$LL.admin_logging_policies_managed_by()}</th>
+								<th>{$LL.admin_logging_policies_destination()}</th>
+								<th>{$LL.admin_logging_policies_enabled()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -943,7 +982,11 @@
 									<td>{item.plane}</td>
 									<td>{item.managed_by}</td>
 									<td>{item.destination_name ?? item.destination_id}</td>
-									<td>{item.enabled ? 'Enabled' : 'Disabled'}</td>
+									<td
+										>{item.enabled
+											? $LL.admin_logging_policies_enabled()
+											: $LL.admin_logging_policies_disabled()}</td
+									>
 								</tr>
 							{/each}
 						</tbody>
@@ -954,20 +997,20 @@
 
 		<section class="panel">
 			<div class="section-header">
-				<h2>Fallbacks</h2>
+				<h2>{$LL.admin_logging_policies_fallbacks()}</h2>
 				<span>{policies?.fallbacks.length ?? 0}</span>
 			</div>
 			{#if !policies || policies.fallbacks.length === 0}
-				<p class="muted">No fallback policies found.</p>
+				<p class="muted">{$LL.admin_logging_policies_no_fallbacks()}</p>
 			{:else}
 				<div class="table-wrap">
 					<table>
 						<thead>
 							<tr>
-								<th>Scope</th>
-								<th>Log type</th>
-								<th>Mode</th>
-								<th>Fallback</th>
+								<th>{$LL.admin_logging_policies_scope()}</th>
+								<th>{$LL.admin_logging_policies_log_type()}</th>
+								<th>{$LL.admin_logging_policies_mode()}</th>
+								<th>{$LL.admin_logging_policies_fallback()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -988,7 +1031,7 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Policy Snapshots</h2>
+			<h2>{$LL.admin_logging_policies_policy_snapshots()}</h2>
 			<div class="section-actions">
 				<span>{policies?.snapshots.length ?? 0}</span>
 				<button
@@ -996,7 +1039,9 @@
 					onclick={createSnapshotDraft}
 					disabled={snapshotActionLoading || loading || !canPublishSnapshots}
 				>
-					{snapshotActionLoading ? 'Working...' : 'Create draft'}
+					{snapshotActionLoading
+						? $LL.admin_logging_policies_working()
+						: $LL.admin_logging_policies_create_draft()}
 				</button>
 			</div>
 		</div>
@@ -1005,7 +1050,11 @@
 				<div>
 					<strong>{snapshotDraft.id}</strong>
 					<span>v{snapshotDraft.version}</span>
-					<span>compared to v{snapshotDraft.diff.compared_to_version ?? '-'}</span>
+					<span
+						>{$LL.admin_logging_policies_compared_to_version({
+							version: String(snapshotDraft.diff.compared_to_version ?? '-')
+						})}</span
+					>
 				</div>
 				<div class="diff-grid">
 					<span>A +{snapshotDraft.diff.assignment_added}</span>
@@ -1023,21 +1072,21 @@
 					onclick={publishSnapshotDraft}
 					disabled={snapshotActionLoading || !canPublishSnapshots}
 				>
-					Publish
+					{$LL.admin_logging_policies_publish()}
 				</button>
 			</div>
 		{/if}
 		{#if !policies || policies.snapshots.length === 0}
-			<p class="muted">No snapshots found.</p>
+			<p class="muted">{$LL.admin_logging_policies_no_snapshots()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Scope</th>
-							<th>Version</th>
-							<th>Status</th>
-							<th>Published</th>
+							<th>{$LL.admin_logging_policies_scope()}</th>
+							<th>{$LL.admin_logging_policies_version()}</th>
+							<th>{$LL.admin_logging_policies_status()}</th>
+							<th>{$LL.admin_logging_policies_published()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1057,7 +1106,7 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Runtime Resolver</h2>
+			<h2>{$LL.admin_logging_policies_runtime_resolver()}</h2>
 			<span>{runtimeResolution?.target_status.target_type ?? '-'}</span>
 		</div>
 		<div class="export-controls">
@@ -1079,23 +1128,30 @@
 				<option value="diagnostic_detail">diagnostic_detail</option>
 				<option value="delivery_event">delivery_event</option>
 			</select>
-			<input bind:value={runtimeRegion} placeholder="region" />
+			<input
+				bind:value={runtimeRegion}
+				placeholder={$LL.admin_logging_policies_region_placeholder()}
+			/>
 			<button class="btn btn-secondary" onclick={resolveRuntime} disabled={runtimeLoading}>
-				{runtimeLoading ? 'Checking...' : 'Resolve'}
+				{runtimeLoading
+					? $LL.admin_logging_policies_checking()
+					: $LL.admin_logging_policies_resolve()}
 			</button>
 			<select bind:value={runtimeVerifyScope} disabled={!canFilterByTenant}>
-				<option value="tenant">tenant snapshot</option>
-				<option value="platform">platform snapshot</option>
+				<option value="tenant">{$LL.admin_logging_policies_tenant_snapshot()}</option>
+				<option value="platform">{$LL.admin_logging_policies_platform_snapshot()}</option>
 			</select>
 			<button
 				class="btn btn-secondary"
 				onclick={verifyRuntimeSnapshot}
 				disabled={runtimeVerifyLoading || !canPublishSnapshots}
 			>
-				{runtimeVerifyLoading ? 'Verifying...' : 'Verify snapshot'}
+				{runtimeVerifyLoading
+					? $LL.admin_logging_policies_verifying()
+					: $LL.admin_logging_policies_verify_snapshot()}
 			</button>
 			<select bind:value={tenantDbHealthRole}>
-				<option value="">all DB roles</option>
+				<option value="">{$LL.admin_logging_policies_all_db_roles()}</option>
 				<option value="tenant_core">tenant_core</option>
 				<option value="tenant_pii">tenant_pii</option>
 				<option value="tenant_audit">tenant_audit</option>
@@ -1106,42 +1162,68 @@
 				onclick={loadTenantDbHealth}
 				disabled={tenantDbHealthLoading || !canReadDatabaseRouting}
 			>
-				{tenantDbHealthLoading ? 'Checking...' : 'Check tenant DB'}
+				{tenantDbHealthLoading
+					? $LL.admin_logging_policies_checking()
+					: $LL.admin_logging_policies_check_tenant_db()}
 			</button>
 			<button
 				class="btn btn-secondary"
 				onclick={runTenantDbProbe}
 				disabled={tenantDbProbeLoading || !canWriteDatabaseRouting}
 			>
-				{tenantDbProbeLoading ? 'Probing...' : 'Write-read probe'}
+				{tenantDbProbeLoading
+					? $LL.admin_logging_policies_probing()
+					: $LL.admin_logging_policies_write_read_probe()}
 			</button>
 		</div>
 		{#if runtimeResolution}
 			<div class="detail-grid">
-				<span>resolved: {runtimeResolution.resolved ? 'yes' : 'no'}</span>
-				<span>target: {runtimeResolution.target_status.target_type ?? '-'}</span>
-				<span>binding: {runtimeResolution.target_status.binding_ref ?? '-'}</span>
 				<span
-					>configured:
-					{runtimeResolution.target_status.binding_configured ? 'yes' : 'no'}</span
+					>{$LL.admin_logging_policies_resolved()}: {runtimeResolution.resolved
+						? $LL.admin_logging_policies_yes()
+						: $LL.admin_logging_policies_no()}</span
+				>
+				<span
+					>{$LL.admin_logging_policies_target()}: {runtimeResolution.target_status.target_type ??
+						'-'}</span
+				>
+				<span
+					>{$LL.admin_logging_policies_binding()}: {runtimeResolution.target_status.binding_ref ??
+						'-'}</span
+				>
+				<span
+					>{$LL.admin_logging_policies_configured()}:
+					{runtimeResolution.target_status.binding_configured
+						? $LL.admin_logging_policies_yes()
+						: $LL.admin_logging_policies_no()}</span
 				>
 			</div>
 		{/if}
 		{#if runtimeTopology}
 			<div class="detail-grid topology-grid">
 				{#each Object.entries(runtimeTopology.bindings) as [name, configured] (name)}
-					<span>{name}: {configured ? 'yes' : 'no'}</span>
+					<span
+						>{name}: {configured
+							? $LL.admin_logging_policies_yes()
+							: $LL.admin_logging_policies_no()}</span
+					>
 				{/each}
 			</div>
 		{/if}
 		{#if runtimeVerification}
 			<div class="detail-grid topology-grid">
-				<span>pointer: {runtimeVerification.pointer_status}</span>
-				<span>object: {runtimeVerification.object_status}</span>
-				<span>snapshot: {runtimeVerification.snapshot_status}</span>
-				<span>scope: {runtimeVerification.scope_type}:{runtimeVerification.scope_id}</span>
+				<span>{$LL.admin_logging_policies_pointer()}: {runtimeVerification.pointer_status}</span>
+				<span>{$LL.admin_logging_policies_object()}: {runtimeVerification.object_status}</span>
+				<span>{$LL.admin_logging_policies_snapshot()}: {runtimeVerification.snapshot_status}</span>
+				<span
+					>{$LL.admin_logging_policies_scope()}: {runtimeVerification.scope_type}:{runtimeVerification.scope_id}</span
+				>
 				{#each Object.entries(runtimeVerification.checks) as [name, passed] (name)}
-					<span>{name}: {passed ? 'yes' : 'no'}</span>
+					<span
+						>{name}: {passed
+							? $LL.admin_logging_policies_yes()
+							: $LL.admin_logging_policies_no()}</span
+					>
 				{/each}
 			</div>
 			<pre class="summary-preview">{JSON.stringify(
@@ -1157,23 +1239,26 @@
 		{/if}
 		{#if tenantDbHealth}
 			<div class="detail-grid topology-grid">
-				<span>tenant: {tenantDbHealth.tenant_id}</span>
-				<span>healthy: {tenantDbHealth.summary.healthy ?? 0}</span>
-				<span>degraded: {tenantDbHealth.summary.degraded ?? 0}</span>
-				<span>failed: {tenantDbHealth.summary.failed ?? 0}</span>
-				<span>missing binding: {tenantDbHealth.summary.missing_binding ?? 0}</span>
+				<span>{$LL.admin_logging_policies_tenant()}: {tenantDbHealth.tenant_id}</span>
+				<span>{$LL.admin_logging_policies_healthy()}: {tenantDbHealth.summary.healthy ?? 0}</span>
+				<span>{$LL.admin_logging_policies_degraded()}: {tenantDbHealth.summary.degraded ?? 0}</span>
+				<span>{$LL.admin_logging_policies_failed()}: {tenantDbHealth.summary.failed ?? 0}</span>
+				<span
+					>{$LL.admin_logging_policies_missing_binding()}: {tenantDbHealth.summary
+						.missing_binding ?? 0}</span
+				>
 			</div>
 			<div class="table-wrap compact-table">
 				<table>
 					<thead>
 						<tr>
-							<th>Role</th>
-							<th>State</th>
-							<th>Pointer</th>
-							<th>Registry</th>
-							<th>Provider</th>
-							<th>Binding</th>
-							<th>Schema</th>
+							<th>{$LL.admin_logging_policies_role()}</th>
+							<th>{$LL.admin_logging_policies_state()}</th>
+							<th>{$LL.admin_logging_policies_pointer()}</th>
+							<th>{$LL.admin_logging_policies_registry()}</th>
+							<th>{$LL.admin_logging_policies_provider()}</th>
+							<th>{$LL.admin_logging_policies_binding()}</th>
+							<th>{$LL.admin_logging_policies_schema()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1186,8 +1271,8 @@
 								<td>{item.provider ?? '-'}</td>
 								<td
 									>{item.binding_ref ?? item.connection_ref ?? '-'} / {item.binding_configured
-										? 'yes'
-										: 'no'}</td
+										? $LL.admin_logging_policies_yes()
+										: $LL.admin_logging_policies_no()}</td
 								>
 								<td>{item.schema_version ?? '-'}</td>
 							</tr>
@@ -1198,48 +1283,54 @@
 		{/if}
 		{#if tenantDbProbe}
 			<div class="detail-grid topology-grid">
-				<span>probe: {tenantDbProbe.status}</span>
-				<span>role: {tenantDbProbe.role}</span>
-				<span>latency: {tenantDbProbe.latency_ms}ms</span>
-				<span>binding: {tenantDbProbe.binding_ref ?? tenantDbProbe.connection_ref ?? '-'}</span>
-				<span>error: {tenantDbProbe.error_class ?? '-'}</span>
+				<span>{$LL.admin_logging_policies_probe()}: {tenantDbProbe.status}</span>
+				<span>{$LL.admin_logging_policies_role()}: {tenantDbProbe.role}</span>
+				<span>{$LL.admin_logging_policies_latency()}: {tenantDbProbe.latency_ms}ms</span>
+				<span
+					>{$LL.admin_logging_policies_binding()}: {tenantDbProbe.binding_ref ??
+						tenantDbProbe.connection_ref ??
+						'-'}</span
+				>
+				<span>{$LL.admin_logging_policies_error()}: {tenantDbProbe.error_class ?? '-'}</span>
 			</div>
 		{/if}
 	</section>
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Usage Summary</h2>
+			<h2>{$LL.admin_logging_policies_usage_summary()}</h2>
 			<span>{usageSummary ? usageSummary.catalog.length + usageSummary.delivery.length : 0}</span>
 		</div>
 		<div class="panel-actions">
 			<button class="btn btn-secondary" onclick={loadUsageSummary} disabled={usageLoading}>
-				{usageLoading ? 'Loading...' : 'Load usage'}
+				{usageLoading
+					? $LL.admin_logging_policies_loading()
+					: $LL.admin_logging_policies_load_usage()}
 			</button>
 			{#if canManagePlatformLogging}
 				<button class="btn btn-secondary" onclick={refreshUsageAggregates} disabled={usageLoading}>
-					Refresh aggregates
+					{$LL.admin_logging_policies_refresh_aggregates()}
 				</button>
 			{/if}
 		</div>
 		{#if !usageSummary}
-			<p class="muted">Usage summary is loaded on demand.</p>
+			<p class="muted">{$LL.admin_logging_policies_usage_on_demand()}</p>
 		{:else}
 			<div class="health-strip">
 				<div>
-					<span>Catalog groups</span>
+					<span>{$LL.admin_logging_policies_catalog_groups()}</span>
 					<strong>{usageSummary.catalog.length}</strong>
 				</div>
 				<div>
-					<span>Delivery groups</span>
+					<span>{$LL.admin_logging_policies_delivery_groups()}</span>
 					<strong>{usageSummary.delivery.length}</strong>
 				</div>
 				<div>
-					<span>DLQ groups</span>
+					<span>{$LL.admin_logging_policies_dlq_groups()}</span>
 					<strong>{usageSummary.dlq.length}</strong>
 				</div>
 				<div>
-					<span>Sensitive classes</span>
+					<span>{$LL.admin_logging_policies_sensitive_classes()}</span>
 					<strong>{usageSummary.sensitive_detail.length}</strong>
 				</div>
 			</div>
@@ -1255,32 +1346,34 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Quota</h2>
+			<h2>{$LL.admin_logging_policies_quota()}</h2>
 			<span>{quotaPolicies.length}</span>
 		</div>
 		<div class="panel-actions">
 			<button class="btn btn-secondary" onclick={loadQuotaState} disabled={quotaLoading}>
-				{quotaLoading ? 'Loading...' : 'Load quota'}
+				{quotaLoading
+					? $LL.admin_logging_policies_loading()
+					: $LL.admin_logging_policies_load_quota()}
 			</button>
 			{#if canManagePlatformLogging}
 				<button class="btn btn-secondary" onclick={evaluateQuota} disabled={quotaLoading}>
-					Evaluate quota
+					{$LL.admin_logging_policies_evaluate_quota()}
 				</button>
 			{/if}
 		</div>
 		{#if quotaPolicies.length === 0 && quotaEvaluations.length === 0}
-			<p class="muted">Quota policy and evaluation state is loaded on demand.</p>
+			<p class="muted">{$LL.admin_logging_policies_quota_on_demand()}</p>
 		{:else}
 			<div class="table-wrap compact-table">
 				<table>
 					<thead>
 						<tr>
-							<th>Scope</th>
-							<th>Metric</th>
-							<th>Window</th>
-							<th>Soft</th>
-							<th>Hard</th>
-							<th>Mode</th>
+							<th>{$LL.admin_logging_policies_scope()}</th>
+							<th>{$LL.admin_logging_policies_metric()}</th>
+							<th>{$LL.admin_logging_policies_window()}</th>
+							<th>{$LL.admin_logging_policies_soft()}</th>
+							<th>{$LL.admin_logging_policies_hard()}</th>
+							<th>{$LL.admin_logging_policies_mode()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1305,43 +1398,52 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Delivery Summary</h2>
+			<h2>{$LL.admin_logging_policies_delivery_summary()}</h2>
 			<span>{deliverySummary.length}</span>
 		</div>
 		<div class="health-strip">
 			<div>
-				<span>Delivered</span>
+				<span>{$LL.admin_logging_policies_delivered()}</span>
 				<strong>{deliveryBatchCount('delivered')}</strong>
-				<small>{deliveryRecordCount('delivered')} records</small>
+				<small
+					>{$LL.admin_logging_policies_records({ count: deliveryRecordCount('delivered') })}</small
+				>
 			</div>
 			<div>
-				<span>Queued</span>
+				<span>{$LL.admin_logging_policies_queued()}</span>
 				<strong>{deliveryBatchCount('queued')}</strong>
-				<small>{deliveryRecordCount('queued')} records</small>
+				<small>{$LL.admin_logging_policies_records({ count: deliveryRecordCount('queued') })}</small
+				>
 			</div>
 			<div>
-				<span>Retrying</span>
+				<span>{$LL.admin_logging_policies_retrying()}</span>
 				<strong>{deliveryBatchCount('retrying')}</strong>
-				<small>{deliveryRecordCount('retrying')} records</small>
+				<small
+					>{$LL.admin_logging_policies_records({ count: deliveryRecordCount('retrying') })}</small
+				>
 			</div>
 			<div>
-				<span>Failed / DLQ</span>
+				<span>{$LL.admin_logging_policies_failed_dlq()}</span>
 				<strong>{deliveryBatchCount('failed') + deliveryBatchCount('dlq')}</strong>
-				<small>{deliveryRecordCount('failed') + deliveryRecordCount('dlq')} records</small>
+				<small
+					>{$LL.admin_logging_policies_records({
+						count: deliveryRecordCount('failed') + deliveryRecordCount('dlq')
+					})}</small
+				>
 			</div>
 		</div>
 		{#if deliverySummary.length === 0}
-			<p class="muted">No aggregate delivery activity found.</p>
+			<p class="muted">{$LL.admin_logging_policies_no_delivery_activity()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Lane</th>
-							<th>Status</th>
-							<th>Log type</th>
-							<th>Batches</th>
-							<th>Records</th>
+							<th>{$LL.admin_logging_policies_lane()}</th>
+							<th>{$LL.admin_logging_policies_status()}</th>
+							<th>{$LL.admin_logging_policies_log_type()}</th>
+							<th>{$LL.admin_logging_policies_batches()}</th>
+							<th>{$LL.admin_logging_policies_records_header()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1362,15 +1464,18 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Exports</h2>
+			<h2>{$LL.admin_logging_policies_exports()}</h2>
 			<span>{exportJob?.status ?? '-'}</span>
 		</div>
 		<div class="export-controls">
 			{#if canFilterByTenant}
-				<input bind:value={exportTenantKey} placeholder="tenant key" />
+				<input
+					bind:value={exportTenantKey}
+					placeholder={$LL.admin_logging_policies_tenant_key_placeholder()}
+				/>
 			{/if}
 			<select bind:value={exportLogType}>
-				<option value="">Any log type</option>
+				<option value="">{$LL.admin_logging_policies_any_log_type()}</option>
 				<option value="audit">audit</option>
 				<option value="admin_audit">admin_audit</option>
 				<option value="security">security</option>
@@ -1379,7 +1484,7 @@
 				<option value="job">job</option>
 			</select>
 			<select bind:value={exportPlane}>
-				<option value="">Any plane</option>
+				<option value="">{$LL.admin_logging_policies_any_plane()}</option>
 				<option value="primary">primary</option>
 				<option value="archive">archive</option>
 				<option value="external_sink">external_sink</option>
@@ -1399,7 +1504,9 @@
 					!canCreateExport ||
 					(exportPlane === 'sensitive_detail' && !canExportSensitiveDetail)}
 			>
-				{exportLoading ? 'Working...' : 'Create export'}
+				{exportLoading
+					? $LL.admin_logging_policies_working()
+					: $LL.admin_logging_policies_create_export()}
 			</button>
 		</div>
 		{#if exportJob}
@@ -1407,8 +1514,8 @@
 				<div>
 					<strong>{exportJob.id}</strong>
 					<span>{exportJob.status}</span>
-					<span>{exportJob.record_count ?? 0} records</span>
-					<span>{exportJob.byte_count ?? 0} bytes</span>
+					<span>{$LL.admin_logging_policies_records({ count: exportJob.record_count ?? 0 })}</span>
+					<span>{$LL.admin_logging_policies_bytes({ count: exportJob.byte_count ?? 0 })}</span>
 					{#if exportJob.message_job_id}
 						<span>{exportJob.message_job_id}</span>
 					{/if}
@@ -1417,21 +1524,21 @@
 					{/if}
 				</div>
 				<button class="btn btn-secondary" onclick={refreshExportStatus} disabled={exportLoading}>
-					Refresh status
+					{$LL.admin_logging_policies_refresh_status()}
 				</button>
 				<button
 					class="btn btn-secondary"
 					onclick={previewExportArtifact}
 					disabled={exportLoading || exportJob.status !== 'completed' || exportJob.format === 'zip'}
 				>
-					Preview artifact
+					{$LL.admin_logging_policies_preview_artifact()}
 				</button>
 				<button
 					class="btn btn-secondary"
 					onclick={downloadExportArtifact}
 					disabled={exportLoading || exportJob.status !== 'completed'}
 				>
-					Download artifact
+					{$LL.admin_logging_policies_download_artifact()}
 				</button>
 			</div>
 			{#if exportArtifactPreview}
@@ -1442,17 +1549,17 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Message Jobs</h2>
+			<h2>{$LL.admin_logging_policies_message_jobs()}</h2>
 			<span>{messageJobs.length}</span>
 		</div>
 		<div class="message-job-controls">
 			<select bind:value={messageJobKindFilter}>
-				<option value="">Any kind</option>
+				<option value="">{$LL.admin_logging_policies_any_kind()}</option>
 				<option value="retry_delivery">retry_delivery</option>
 				<option value="export_build">export_build</option>
 			</select>
 			<select bind:value={messageJobStatusFilter}>
-				<option value="">Any status</option>
+				<option value="">{$LL.admin_logging_policies_any_status()}</option>
 				<option value="queued">queued</option>
 				<option value="running">running</option>
 				<option value="retrying">retrying</option>
@@ -1462,13 +1569,18 @@
 				<option value="cancelled">cancelled</option>
 				<option value="blocked">blocked</option>
 			</select>
-			<input bind:value={messageJobSourceIdFilter} placeholder="source id" />
+			<input
+				bind:value={messageJobSourceIdFilter}
+				placeholder={$LL.admin_logging_policies_source_id_placeholder()}
+			/>
 			<button
 				class="btn btn-secondary"
 				onclick={() => loadMessageJobs()}
 				disabled={messageJobsLoading || !canReadDeliveryEvents}
 			>
-				{messageJobsLoading ? 'Loading...' : 'Load jobs'}
+				{messageJobsLoading
+					? $LL.admin_logging_policies_loading()
+					: $LL.admin_logging_policies_load_jobs()}
 			</button>
 			{#if exportJob}
 				<button
@@ -1476,26 +1588,26 @@
 					onclick={loadCurrentExportMessageJobs}
 					disabled={messageJobsLoading || !canReadDeliveryEvents}
 				>
-					Load export jobs
+					{$LL.admin_logging_policies_load_export_jobs()}
 				</button>
 			{/if}
 		</div>
 		{#if !messageJobsLoaded}
-			<p class="muted">Message jobs are loaded on demand.</p>
+			<p class="muted">{$LL.admin_logging_policies_jobs_on_demand()}</p>
 		{:else if messageJobs.length === 0}
-			<p class="muted">No message jobs found.</p>
+			<p class="muted">{$LL.admin_logging_policies_no_jobs()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Created</th>
-							<th>Kind</th>
-							<th>Status</th>
-							<th>Lane</th>
-							<th>Source</th>
-							<th>Attempts</th>
-							<th>Actions</th>
+							<th>{$LL.admin_logging_policies_created()}</th>
+							<th>{$LL.admin_logging_policies_kind()}</th>
+							<th>{$LL.admin_logging_policies_status()}</th>
+							<th>{$LL.admin_logging_policies_lane()}</th>
+							<th>{$LL.admin_logging_policies_source()}</th>
+							<th>{$LL.admin_logging_policies_attempts()}</th>
+							<th>{$LL.admin_logging_policies_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1510,7 +1622,7 @@
 								<td>
 									<div class="row-actions">
 										<button class="btn btn-secondary" onclick={() => (selectedMessageJob = item)}>
-											Details
+											{$LL.admin_logging_policies_details()}
 										</button>
 										{#if messageJobIsCancellable(item)}
 											<button
@@ -1518,7 +1630,7 @@
 												onclick={() => cancelMessageJob(item)}
 												disabled={messageJobActionId === item.id || !canCancelMessageJob(item)}
 											>
-												Cancel
+												{$LL.admin_logging_policies_cancel()}
 											</button>
 										{/if}
 									</div>
@@ -1534,17 +1646,32 @@
 						<strong>{selectedMessageJob.id}</strong>
 						<span>{selectedMessageJob.kind}</span>
 						<span>{selectedMessageJob.status}</span>
-						<span>depth {selectedMessageJob.depth}</span>
+						<span>{$LL.admin_logging_policies_depth({ value: selectedMessageJob.depth })}</span>
 					</div>
 					<div class="detail-grid">
-						<span>root: {selectedMessageJob.root_job_id ?? '-'}</span>
-						<span>parent: {selectedMessageJob.parent_job_id ?? '-'}</span>
-						<span
-							>payload: {selectedMessageJob.payload_type} v{selectedMessageJob.payload_schema_version}</span
+						<span>{$LL.admin_logging_policies_root()}: {selectedMessageJob.root_job_id ?? '-'}</span
 						>
-						<span>topology: {selectedMessageJob.topology_type ?? '-'}</span>
-						<span>not before: {formatDate(selectedMessageJob.not_before)}</span>
-						<span>expires: {formatDate(selectedMessageJob.expires_at)}</span>
+						<span
+							>{$LL.admin_logging_policies_parent()}: {selectedMessageJob.parent_job_id ??
+								'-'}</span
+						>
+						<span
+							>{$LL.admin_logging_policies_payload()}: {selectedMessageJob.payload_type} v{selectedMessageJob.payload_schema_version}</span
+						>
+						<span
+							>{$LL.admin_logging_policies_topology()}: {selectedMessageJob.topology_type ??
+								'-'}</span
+						>
+						<span
+							>{$LL.admin_logging_policies_not_before()}: {formatDate(
+								selectedMessageJob.not_before
+							)}</span
+						>
+						<span
+							>{$LL.admin_logging_policies_expires()}: {formatDate(
+								selectedMessageJob.expires_at
+							)}</span
+						>
 					</div>
 					{#if selectedMessageJob.last_error || selectedMessageJob.blocked_reason}
 						<p class="muted">
@@ -1561,7 +1688,7 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Message Repairs</h2>
+			<h2>{$LL.admin_logging_policies_message_repairs()}</h2>
 			<span>{messageRepairFindings.length}</span>
 		</div>
 		<div class="panel-actions">
@@ -1570,22 +1697,24 @@
 				onclick={loadMessageRepairFindings}
 				disabled={messageRepairActionId === 'load' || !canReadDeliveryEvents}
 			>
-				{messageRepairActionId === 'load' ? 'Loading...' : 'Load findings'}
+				{messageRepairActionId === 'load'
+					? $LL.admin_logging_policies_loading()
+					: $LL.admin_logging_policies_load_findings()}
 			</button>
 		</div>
 		{#if messageRepairFindings.length === 0}
-			<p class="muted">No open message repair findings loaded.</p>
+			<p class="muted">{$LL.admin_logging_policies_no_findings()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Detected</th>
-							<th>Severity</th>
-							<th>Type</th>
-							<th>Job</th>
-							<th>Status</th>
-							<th>Actions</th>
+							<th>{$LL.admin_logging_policies_detected()}</th>
+							<th>{$LL.admin_logging_policies_severity()}</th>
+							<th>{$LL.admin_logging_policies_type()}</th>
+							<th>{$LL.admin_logging_policies_job()}</th>
+							<th>{$LL.admin_logging_policies_status()}</th>
+							<th>{$LL.admin_logging_policies_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1604,7 +1733,7 @@
 												onclick={() => applySafeMessageRepair(item)}
 												disabled={messageRepairActionId === item.id || !canRunMessageRepair}
 											>
-												Safe repair
+												{$LL.admin_logging_policies_safe_repair()}
 											</button>
 										{/if}
 										{#if item.dangerous_action}
@@ -1615,7 +1744,7 @@
 													!canReadMessageRepair ||
 													!canRunMessageRepair}
 											>
-												Dangerous
+												{$LL.admin_logging_policies_dangerous()}
 											</button>
 										{/if}
 									</div>
@@ -1630,7 +1759,7 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Delivery Events</h2>
+			<h2>{$LL.admin_logging_policies_delivery_events()}</h2>
 			<span>{deliveryEvents.length}</span>
 		</div>
 		{#if !deliveryEventsLoaded}
@@ -1639,20 +1768,22 @@
 				onclick={loadDeliveryEvents}
 				disabled={deliveryLoading || !canReadDeliveryEvents}
 			>
-				{deliveryLoading ? 'Loading...' : 'Load delivery events'}
+				{deliveryLoading
+					? $LL.admin_logging_policies_loading()
+					: $LL.admin_logging_policies_load_delivery_events()}
 			</button>
 		{:else if deliveryEvents.length === 0}
-			<p class="muted">No delivery events found.</p>
+			<p class="muted">{$LL.admin_logging_policies_no_delivery_events()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Created</th>
-							<th>Lane</th>
-							<th>Log type</th>
-							<th>Status</th>
-							<th>Attempts</th>
+							<th>{$LL.admin_logging_policies_created()}</th>
+							<th>{$LL.admin_logging_policies_lane()}</th>
+							<th>{$LL.admin_logging_policies_log_type()}</th>
+							<th>{$LL.admin_logging_policies_status()}</th>
+							<th>{$LL.admin_logging_policies_attempts()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1675,7 +1806,9 @@
 						onclick={loadMoreDeliveryEvents}
 						disabled={deliveryLoading}
 					>
-						{deliveryLoading ? 'Loading...' : 'Load more'}
+						{deliveryLoading
+							? $LL.admin_logging_policies_loading()
+							: $LL.admin_logging_policies_load_more()}
 					</button>
 				</div>
 			{/if}
@@ -1684,22 +1817,22 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>Operational Alerts</h2>
+			<h2>{$LL.admin_logging_policies_operational_alerts()}</h2>
 			<span>{notifications.length}</span>
 		</div>
 		{#if notifications.length === 0}
-			<p class="muted">No unresolved logging alerts found.</p>
+			<p class="muted">{$LL.admin_logging_policies_no_alerts()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Created</th>
-							<th>Severity</th>
-							<th>Category</th>
-							<th>Event</th>
-							<th>Status</th>
-							<th>Actions</th>
+							<th>{$LL.admin_logging_policies_created()}</th>
+							<th>{$LL.admin_logging_policies_severity()}</th>
+							<th>{$LL.admin_logging_policies_category()}</th>
+							<th>{$LL.admin_logging_policies_event()}</th>
+							<th>{$LL.admin_logging_policies_status()}</th>
+							<th>{$LL.admin_logging_policies_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1716,7 +1849,9 @@
 										onclick={() => resolveNotification(item)}
 										disabled={notificationActionId === item.id}
 									>
-										{notificationActionId === item.id ? 'Resolving...' : 'Resolve'}
+										{notificationActionId === item.id
+											? $LL.admin_logging_policies_resolving()
+											: $LL.admin_logging_policies_resolve_alert()}
 									</button>
 								</td>
 							</tr>
@@ -1729,7 +1864,7 @@
 
 	<section class="panel">
 		<div class="section-header">
-			<h2>DLQ Items</h2>
+			<h2>{$LL.admin_logging_policies_dlq_items()}</h2>
 			<span>{dlqItems.length}</span>
 		</div>
 		<div class="message-job-controls">
@@ -1739,7 +1874,9 @@
 				onclick={previewBulkDlqReplay}
 				disabled={bulkDlqLoading || !canReadDeliveryEvents}
 			>
-				{bulkDlqLoading ? 'Working...' : 'Preview bulk replay'}
+				{bulkDlqLoading
+					? $LL.admin_logging_policies_working()
+					: $LL.admin_logging_policies_preview_bulk_replay()}
 			</button>
 			<button
 				class="btn btn-danger"
@@ -1749,10 +1886,14 @@
 					bulkDlqPreview.item_count === 0 ||
 					!canRetryDelivery}
 			>
-				Apply bulk replay
+				{$LL.admin_logging_policies_apply_bulk_replay()}
 			</button>
 			{#if bulkDlqPreview}
-				<span>{bulkDlqPreview.item_count} items selected</span>
+				<span
+					>{$LL.admin_logging_policies_items_selected({
+						count: bulkDlqPreview.item_count
+					})}</span
+				>
 			{/if}
 		</div>
 		{#if !dlqItemsLoaded}
@@ -1761,21 +1902,23 @@
 				onclick={loadDlqItems}
 				disabled={dlqLoading || !canReadDeliveryEvents}
 			>
-				{dlqLoading ? 'Loading...' : 'Load DLQ items'}
+				{dlqLoading
+					? $LL.admin_logging_policies_loading()
+					: $LL.admin_logging_policies_load_dlq_items()}
 			</button>
 		{:else if dlqItems.length === 0}
-			<p class="muted">No open DLQ items found.</p>
+			<p class="muted">{$LL.admin_logging_policies_no_dlq_items()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Created</th>
-							<th>Lane</th>
-							<th>Payload</th>
-							<th>Status</th>
-							<th>Attempts</th>
-							<th>Actions</th>
+							<th>{$LL.admin_logging_policies_created()}</th>
+							<th>{$LL.admin_logging_policies_lane()}</th>
+							<th>{$LL.admin_logging_policies_dlq_payload()}</th>
+							<th>{$LL.admin_logging_policies_status()}</th>
+							<th>{$LL.admin_logging_policies_attempts()}</th>
+							<th>{$LL.admin_logging_policies_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1793,7 +1936,7 @@
 											onclick={() => previewDlqPayload(item)}
 											disabled={dlqActionId === item.id || !canReadDeliveryEvents}
 										>
-											Preview
+											{$LL.admin_logging_policies_preview()}
 										</button>
 										<button
 											class="btn btn-secondary"
@@ -1802,14 +1945,14 @@
 												item.status !== 'open' ||
 												!canRetryDelivery}
 										>
-											Replay
+											{$LL.admin_logging_policies_replay()}
 										</button>
 										<button
 											class="btn btn-secondary"
 											onclick={() => runDlqAction(item, 'delete')}
 											disabled={dlqActionId === item.id || item.status !== 'open' || !canDeleteDlq}
 										>
-											Delete
+											{$LL.admin_logging_policies_delete()}
 										</button>
 										{#if canPurgeDlq}
 											<button
@@ -1817,7 +1960,7 @@
 												onclick={() => runDlqAction(item, 'purge')}
 												disabled={dlqActionId === item.id || item.status !== 'open' || !canPurgeDlq}
 											>
-												Purge
+												{$LL.admin_logging_policies_purge()}
 											</button>
 										{/if}
 									</div>
@@ -1830,14 +1973,20 @@
 			{#if dlqCursor}
 				<div class="pagination-actions">
 					<button class="btn btn-secondary" onclick={loadMoreDlqItems} disabled={dlqLoading}>
-						{dlqLoading ? 'Loading...' : 'Load more'}
+						{dlqLoading
+							? $LL.admin_logging_policies_loading()
+							: $LL.admin_logging_policies_load_more()}
 					</button>
 				</div>
 			{/if}
 			{#if dlqPayloadPreview}
 				<div class="payload-preview-header">
 					<strong>{dlqPayloadPreview.id}</strong>
-					<span>{dlqPayloadPreview.truncated ? 'truncated preview' : 'full preview'}</span>
+					<span
+						>{dlqPayloadPreview.truncated
+							? $LL.admin_logging_policies_truncated_preview()
+							: $LL.admin_logging_policies_full_preview()}</span
+					>
 				</div>
 				<pre class="artifact-preview">{dlqPayloadPreview.text}</pre>
 			{/if}
@@ -1850,7 +1999,7 @@
 	title={dangerConfirmation?.title ?? ''}
 	resourceName={dangerConfirmation?.resourceName ?? ''}
 	phrase={dangerConfirmation?.phrase ?? ''}
-	confirmLabel={dangerConfirmation?.confirmLabel ?? 'Confirm'}
+	confirmLabel={dangerConfirmation?.confirmLabel ?? $LL.admin_logging_policies_confirm()}
 	onConfirm={confirmDangerConfirmation}
 	onCancel={cancelDangerConfirmation}
 />

@@ -252,7 +252,7 @@ function mockLiveRuntimeSchema(
         (table) => !(options?.missingPiiTables ?? []).includes(table)
       ),
     ],
-    [`${env}-authrim-admin-db`, ['admin_users', 'admin_machine_principals', 'mapping_policy_sets']],
+    [`${env}-authrim-admin-db`, ['admin_users', 'admin_machine_principals', 'field_mapping_sets']],
   ]);
 
   queryD1RowsMock.mockImplementation((dbName: string, sql: string) => {

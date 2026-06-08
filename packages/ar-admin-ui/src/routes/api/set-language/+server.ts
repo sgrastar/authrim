@@ -1,10 +1,11 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { isSupportedLocale } from '$i18n/locales';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	const { language } = await request.json();
 
-	if (!language || !['en', 'ja'].includes(language)) {
+	if (!isSupportedLocale(language)) {
 		return json({ error: 'Invalid language' }, { status: 400 });
 	}
 

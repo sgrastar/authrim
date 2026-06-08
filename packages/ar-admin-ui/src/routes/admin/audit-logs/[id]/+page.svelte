@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { LL } from '$i18n/i18n-svelte';
 	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
@@ -13,7 +14,7 @@
 
 	async function loadEntry() {
 		if (!entryId) {
-			error = 'Invalid audit log entry ID';
+			error = $LL.admin_audit_logs_invalid_entry_id();
 			loading = false;
 			return;
 		}
@@ -24,8 +25,7 @@
 		try {
 			entry = await adminAuditLogsAPI.get(entryId);
 		} catch (err) {
-			console.error('Failed to load audit log entry:', err);
-			error = err instanceof Error ? err.message : 'Failed to load audit log entry';
+			error = err instanceof Error ? err.message : $LL.admin_audit_logs_entry_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -49,6 +49,84 @@
 	}
 
 	function formatAction(action: string): string {
+		switch (action) {
+			case 'user.login':
+				return $LL.admin_audit_logs_action_user_login();
+			case 'user.logout':
+				return $LL.admin_audit_logs_action_user_logout();
+			case 'user.created':
+				return $LL.admin_audit_logs_action_user_created();
+			case 'user.updated':
+				return $LL.admin_audit_logs_action_user_updated();
+			case 'user.deleted':
+				return $LL.admin_audit_logs_action_user_deleted();
+			case 'user.suspend':
+				return $LL.admin_audit_logs_action_user_suspend();
+			case 'user.lock':
+				return $LL.admin_audit_logs_action_user_lock();
+			case 'user.activate':
+				return $LL.admin_audit_logs_action_user_activate();
+			case 'user.anonymized':
+				return $LL.admin_audit_logs_action_user_anonymized();
+			case 'client.created':
+				return $LL.admin_audit_logs_action_client_created();
+			case 'client.updated':
+				return $LL.admin_audit_logs_action_client_updated();
+			case 'client.deleted':
+				return $LL.admin_audit_logs_action_client_deleted();
+			case 'client.config.updated':
+				return $LL.admin_audit_logs_action_client_config_updated();
+			case 'client.config.deleted':
+				return $LL.admin_audit_logs_action_client_config_deleted();
+			case 'client.secret_regenerate':
+				return $LL.admin_audit_logs_action_client_secret_regenerate();
+			case 'session.created':
+				return $LL.admin_audit_logs_action_session_created();
+			case 'session.revoked':
+				return $LL.admin_audit_logs_action_session_revoked();
+			case 'scim.token.create':
+				return $LL.admin_audit_logs_action_scim_token_create();
+			case 'scim.token.revoke':
+				return $LL.admin_audit_logs_action_scim_token_revoke();
+			case 'ai_grant.create':
+				return $LL.admin_audit_logs_action_ai_grant_create();
+			case 'ai_grant.update':
+				return $LL.admin_audit_logs_action_ai_grant_update();
+			case 'ai_grant.revoke':
+				return $LL.admin_audit_logs_action_ai_grant_revoke();
+			case 'webhook.created':
+				return $LL.admin_audit_logs_action_webhook_created();
+			case 'webhook.updated':
+				return $LL.admin_audit_logs_action_webhook_updated();
+			case 'webhook.test':
+				return $LL.admin_audit_logs_action_webhook_test();
+			case 'webhook.test_failed':
+				return $LL.admin_audit_logs_action_webhook_test_failed();
+			case 'webhook.replay':
+				return $LL.admin_audit_logs_action_webhook_replay();
+			case 'webhook.replay_failed':
+				return $LL.admin_audit_logs_action_webhook_replay_failed();
+			case 'role.created':
+				return $LL.admin_audit_logs_action_role_created();
+			case 'access_review.created':
+				return $LL.admin_audit_logs_action_access_review_created();
+			case 'signing_keys.status.read':
+				return $LL.admin_audit_logs_action_signing_keys_status_read();
+			case 'signing_keys.rotate.normal':
+				return $LL.admin_audit_logs_action_signing_keys_rotate_normal();
+			case 'signing_keys.rotate.emergency':
+				return $LL.admin_audit_logs_action_signing_keys_rotate_emergency();
+			case 'security_alert.acknowledge':
+				return $LL.admin_audit_logs_action_security_alert_acknowledge();
+			case 'security.ip_reputation_check':
+				return $LL.admin_audit_logs_action_security_ip_reputation_check();
+			case 'tenant.cloned':
+				return $LL.admin_audit_logs_action_tenant_cloned();
+			case 'job.created':
+				return $LL.admin_audit_logs_action_job_created();
+			case 'email.queued':
+				return $LL.admin_audit_logs_action_email_queued();
+		}
 		return action
 			.split('.')
 			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -72,15 +150,15 @@
 	}
 
 	function formatMetadata(metadata: Record<string, unknown> | null): string {
-		if (!metadata) return 'No metadata';
+		if (!metadata) return $LL.admin_audit_logs_no_metadata();
 		return JSON.stringify(metadata, null, 2);
 	}
 
 	function parseUserAgent(userAgent: string | null): { browser: string; os: string } | null {
 		if (!userAgent) return null;
 
-		let browser = 'Unknown';
-		let os = 'Unknown';
+		let browser: string = $LL.admin_audit_logs_unknown();
+		let os: string = $LL.admin_audit_logs_unknown();
 
 		// Simple UA parsing
 		if (userAgent.includes('Chrome')) browser = 'Chrome';
@@ -99,24 +177,24 @@
 </script>
 
 <svelte:head>
-	<title>Audit Log Details - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_audit_logs_detail_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Back Button -->
-	<a href="/admin/audit-logs" class="back-link">← Back to Audit Logs</a>
+	<a href="/admin/audit-logs" class="back-link">← {$LL.admin_audit_logs_back()}</a>
 
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading audit log entry...</p>
+			<p>{$LL.admin_audit_logs_entry_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if entry}
 		<div class="page-header">
 			<div class="flow-title-row">
-				<h1 class="page-title">Audit Log Entry</h1>
+				<h1 class="page-title">{$LL.admin_audit_logs_entry_title()}</h1>
 				<span class={getActionBadgeClass(entry.action)}>
 					{formatAction(entry.action)}
 				</span>
@@ -125,21 +203,21 @@
 
 		<!-- Basic Information -->
 		<div class="panel">
-			<h2 class="section-title-border">Basic Information</h2>
+			<h2 class="section-title-border">{$LL.admin_audit_logs_basic_information()}</h2>
 
 			<div class="info-grid">
 				<div class="info-item">
-					<dt class="info-label">Entry ID</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_entry_id()}</dt>
 					<dd class="info-value mono">{entry.id}</dd>
 				</div>
 
 				<div class="info-item">
-					<dt class="info-label">Action</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_action()}</dt>
 					<dd class="info-value mono">{entry.action}</dd>
 				</div>
 
 				<div class="info-item">
-					<dt class="info-label">Date/Time</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_date_time()}</dt>
 					<dd class="info-value">{formatDateTime(entry.createdAt)}</dd>
 				</div>
 			</div>
@@ -147,33 +225,38 @@
 
 		<!-- Actor Information -->
 		<div class="panel">
-			<h2 class="section-title-border">Actor Information</h2>
+			<h2 class="section-title-border">{$LL.admin_audit_logs_actor_information()}</h2>
 
 			<div class="info-grid">
 				<div class="info-item">
-					<dt class="info-label">User ID</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_user_id()}</dt>
 					<dd class="info-value">
 						{#if entry.userId}
 							<a href="/admin/users/{entry.userId}" class="mono">
 								{entry.userId}
 							</a>
 						{:else}
-							<span class="text-muted">System / Anonymous</span>
+							<span class="text-muted">{$LL.admin_audit_logs_system_anonymous()}</span>
 						{/if}
 					</dd>
 				</div>
 
 				<div class="info-item">
-					<dt class="info-label">IP Address</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_ip_address()}</dt>
 					<dd class="info-value">{entry.ipAddress || '-'}</dd>
 				</div>
 
 				{#if entry.userAgent}
 					{@const parsedUA = parseUserAgent(entry.userAgent)}
 					<div class="info-item">
-						<dt class="info-label">Browser / OS</dt>
+						<dt class="info-label">{$LL.admin_audit_logs_browser_os_label()}</dt>
 						<dd class="info-value">
-							{parsedUA ? `${parsedUA.browser} on ${parsedUA.os}` : '-'}
+							{parsedUA
+								? $LL.admin_audit_logs_browser_os({
+										browser: parsedUA.browser,
+										os: parsedUA.os
+									})
+								: '-'}
 						</dd>
 					</div>
 				{/if}
@@ -181,7 +264,7 @@
 
 			{#if entry.userAgent}
 				<div class="info-item" style="margin-top: 16px;">
-					<dt class="info-label">Full User Agent</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_full_user_agent()}</dt>
 					<dd
 						class="info-value mono text-secondary"
 						style="word-break: break-all; font-size: 0.75rem;"
@@ -194,16 +277,16 @@
 
 		<!-- Resource Information -->
 		<div class="panel">
-			<h2 class="section-title-border">Resource Information</h2>
+			<h2 class="section-title-border">{$LL.admin_audit_logs_resource_information()}</h2>
 
 			<div class="info-grid">
 				<div class="info-item">
-					<dt class="info-label">Resource Type</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_resource_type()}</dt>
 					<dd class="info-value">{entry.resourceType || '-'}</dd>
 				</div>
 
 				<div class="info-item">
-					<dt class="info-label">Resource ID</dt>
+					<dt class="info-label">{$LL.admin_audit_logs_resource_id()}</dt>
 					<dd class="info-value">
 						{#if entry.resourceId}
 							{#if entry.resourceType === 'user'}
@@ -227,13 +310,13 @@
 
 		<!-- Metadata -->
 		<div class="panel">
-			<h2 class="section-title-border">Metadata</h2>
+			<h2 class="section-title-border">{$LL.admin_audit_logs_metadata()}</h2>
 
 			{#if entry.metadata && Object.keys(entry.metadata).length > 0}
 				<pre class="code-block"><code>{formatMetadata(entry.metadata)}</code></pre>
 			{:else}
 				<p class="text-muted" style="font-style: italic; margin: 0;">
-					No additional metadata recorded for this event.
+					{$LL.admin_audit_logs_no_additional_metadata()}
 				</p>
 			{/if}
 		</div>

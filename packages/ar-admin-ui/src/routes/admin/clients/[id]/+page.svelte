@@ -1,15 +1,20 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import {
 		adminClientsAPI,
+		type AttributeReleaseConsentPolicy,
 		type ClaimReleasePolicy,
 		type ClaimsParameterPolicy,
 		type Client,
 		type ClientUsage,
 		type UpdateClientInput
 	} from '$lib/api/admin-clients';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingFieldMappingSetSummary
+	} from '$lib/api/admin-identity-mapping';
 	import {
 		buildClientDownstreamGrantFormFromClient,
 		createDefaultClientDownstreamGrantForm,
@@ -25,12 +30,14 @@
 		SettingsConflictError
 	} from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import { onMount } from 'svelte';
 
 	const clientId = $derived($page.params.id ?? '');
 
 	let client = $state<Client | null>(null);
 	let usage = $state<ClientUsage | null>(null);
 	let clientSettings = $state<CategorySettings | null>(null);
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 
@@ -305,17 +312,15 @@
 			if (!line) continue;
 			const separatorIndex = line.indexOf(':');
 			if (separatorIndex <= 0) {
-				throw new Error(`Claims policy line ${index + 1} must use "claim: policy"`);
+				throw new Error($LL.admin_clients_new_claim_policy_line_format({ line: index + 1 }));
 			}
 			const claim = line.slice(0, separatorIndex).trim();
 			const policyValue = line.slice(separatorIndex + 1).trim() as ClaimReleasePolicy;
 			if (!claim) {
-				throw new Error(`Claims policy line ${index + 1} has an empty claim name`);
+				throw new Error($LL.admin_clients_new_claim_policy_empty_claim({ line: index + 1 }));
 			}
 			if (!CLAIM_RELEASE_POLICIES.has(policyValue)) {
-				throw new Error(
-					`Claims policy line ${index + 1} must use scope_required, claims_allowed, or forbidden`
-				);
+				throw new Error($LL.admin_clients_new_claim_policy_invalid({ line: index + 1 }));
 			}
 			policy[claim] = policyValue;
 		}
@@ -329,8 +334,53 @@
 			.join('\n');
 	}
 
+	function identityMappingFieldMappingLabel(fieldMappingSetId?: string | null): string {
+		if (!fieldMappingSetId) return $LL.admin_client_detail_identity_mapping_policy_default();
+		const fieldMappingSet = fieldMappingSets.find((item) => item.id === fieldMappingSetId);
+		return fieldMappingSet
+			? `${fieldMappingSet.displayName} (${fieldMappingSet.lifecycleState})`
+			: fieldMappingSetId;
+	}
+
+	function attributeReleaseConsentValue(policy?: AttributeReleaseConsentPolicy | null): string {
+		return policy?.enabled ? policy.mode : 'disabled';
+	}
+
+	function setAttributeReleaseConsent(value: string) {
+		editForm.attribute_release_consent =
+			value === 'disabled'
+				? null
+				: {
+						enabled: true,
+						mode: value === 'every_time' || value === 'until_attributes_change' ? value : 'once'
+					};
+	}
+
+	function attributeReleaseConsentLabel(policy?: AttributeReleaseConsentPolicy | null): string {
+		switch (attributeReleaseConsentValue(policy)) {
+			case 'once':
+				return $LL.admin_client_detail_attribute_release_consent_once();
+			case 'every_time':
+				return $LL.admin_client_detail_attribute_release_consent_every_time();
+			case 'until_attributes_change':
+				return $LL.admin_client_detail_attribute_release_consent_until_attributes_change();
+			default:
+				return $LL.admin_client_detail_attribute_release_consent_disabled();
+		}
+	}
+
+	function setIdentityMappingFieldMappingSet(fieldMappingSetId: string) {
+		editForm.identity_mapping = fieldMappingSetId
+			? {
+					...(editForm.identity_mapping ?? {}),
+					fieldMappingSetId,
+					destinationNamespace: editForm.identity_mapping?.destinationNamespace ?? 'oidc.claim'
+				}
+			: null;
+	}
+
 	function formatEnabled(value?: boolean): string {
-		return value === false ? 'Disabled' : 'Enabled';
+		return value === false ? $LL.admin_saml_disabled() : $LL.admin_saml_enabled();
 	}
 
 	function getEffectiveAscAllowedTransformedClaims(currentClient: Client | null): string[] {
@@ -338,6 +388,47 @@
 			currentClient?.asc_allowed_transformed_claims ??
 			ASC_TRANSFORMED_CLAIMS.map((claim) => claim.id)
 		);
+	}
+
+	function transformedClaimLabel(claimId: string): string {
+		switch (claimId) {
+			case 'age_over_13':
+				return $LL.admin_clients_new_claim_age_over_13();
+			case 'age_over_18':
+				return $LL.admin_clients_new_claim_age_over_18();
+			case 'age_over_20':
+				return $LL.admin_clients_new_claim_age_over_20();
+			case 'email_domain':
+				return $LL.admin_clients_new_claim_email_domain();
+			case 'phone_country_code':
+				return $LL.admin_clients_new_claim_phone_country_code();
+			case 'address_country':
+				return $LL.admin_clients_new_claim_address_country();
+			default:
+				return claimId;
+		}
+	}
+
+	function subjectTypeLabel(subjectType: string): string {
+		switch (subjectType) {
+			case 'pairwise':
+				return $LL.admin_client_detail_subject_pairwise();
+			case 'public':
+			default:
+				return $LL.admin_client_detail_subject_public();
+		}
+	}
+
+	function applicationTypeLabel(applicationType: string): string {
+		switch (applicationType) {
+			case 'native':
+				return $LL.admin_client_detail_application_native();
+			case 'spa':
+				return $LL.admin_client_detail_application_spa();
+			case 'web':
+			default:
+				return $LL.admin_client_detail_application_web();
+		}
 	}
 
 	function syncClientSettingsWithClient(
@@ -376,6 +467,10 @@
 			(a.scope ?? '') === (b.scope ?? '') &&
 			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
 			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
+			(a.identity_mapping?.fieldMappingSetId ?? '') ===
+				(b.identity_mapping?.fieldMappingSetId ?? '') &&
+			attributeReleaseConsentValue(a.attribute_release_consent) ===
+				attributeReleaseConsentValue(b.attribute_release_consent) &&
 			(a.asc_enabled ?? true) === (b.asc_enabled ?? true) &&
 			(a.asc_protected_request_required ?? true) === (b.asc_protected_request_required ?? true) &&
 			(a.asc_sao_enabled ?? true) === (b.asc_sao_enabled ?? true) &&
@@ -611,9 +706,7 @@
 	 */
 	function handleTabChange(newTab: TabId) {
 		if (hasUnsavedChanges) {
-			const confirmChange = confirm(
-				'未保存の変更があります。タブを切り替えると変更が失われますが、よろしいですか?'
-			);
+			const confirmChange = confirm($LL.admin_client_detail_unsaved_tab_confirm());
 			if (!confirmChange) {
 				return;
 			}
@@ -735,7 +828,8 @@
 			return;
 		} catch (err) {
 			console.error('Failed to add to web origin registry:', err);
-			error = err instanceof Error ? err.message : 'Failed to update web origin registry';
+			error =
+				err instanceof Error ? err.message : $LL.admin_client_detail_error_update_origin_registry();
 		} finally {
 			addingToCors = null;
 		}
@@ -762,7 +856,15 @@
 		error = '';
 
 		try {
-			client = normalizeClientArrays(await adminClientsAPI.get(clientId));
+			const [loadedClient, loadedFieldMappingSets] = await Promise.all([
+				adminClientsAPI.get(clientId),
+				adminIdentityMappingAPI
+					.listFieldMappingSets()
+					.then((result) => result.fieldMappingSets)
+					.catch(() => [] as IdentityMappingFieldMappingSetSummary[])
+			]);
+			client = normalizeClientArrays(loadedClient);
+			fieldMappingSets = loadedFieldMappingSets;
 			// Load usage statistics (only on detail page per review feedback)
 			try {
 				usage = await adminClientsAPI.getUsage(clientId);
@@ -791,7 +893,7 @@
 			}
 		} catch (err) {
 			console.error('Failed to load client:', err);
-			error = 'Failed to load client';
+			error = $LL.admin_client_detail_error_load();
 		} finally {
 			loading = false;
 		}
@@ -820,6 +922,13 @@
 			asc_protected_request_required: client.asc_protected_request_required ?? true,
 			asc_sao_enabled: client.asc_sao_enabled ?? true,
 			asc_transformed_claims_enabled: client.asc_transformed_claims_enabled ?? true,
+			identity_mapping: client.identity_mapping?.fieldMappingSetId
+				? {
+						...(client.identity_mapping ?? {}),
+						destinationNamespace: client.identity_mapping.destinationNamespace ?? 'oidc.claim'
+					}
+				: null,
+			attribute_release_consent: client.attribute_release_consent ?? null,
 			asc_allowed_transformed_claims: getEffectiveAscAllowedTransformedClaims(client)
 		};
 		claimsParameterPolicyText = formatClaimsParameterPolicy(client.claims_parameter_policy);
@@ -1058,7 +1167,7 @@
 					if (result.rejected && Object.keys(result.rejected).length > 0) {
 						const rejectedKeys = Object.keys(result.rejected).join(', ');
 						console.warn('Some settings were rejected:', result.rejected);
-						saveError = `Warning: Some settings could not be saved: ${rejectedKeys}`;
+						saveError = $LL.admin_client_detail_error_rejected_settings({ keys: rejectedKeys });
 					}
 
 					// Reload client settings to get the new version
@@ -1068,7 +1177,9 @@
 					);
 				} catch (err) {
 					if (err instanceof SettingsConflictError) {
-						saveError = `設定が他のユーザーによって更新されました。現在の設定を確認して再度お試しください。(Current version: ${err.currentVersion})`;
+						saveError = $LL.admin_client_detail_error_settings_conflict({
+							version: err.currentVersion
+						});
 						// Reload settings to show current state
 						try {
 							clientSettings = syncClientSettingsWithClient(
@@ -1091,7 +1202,7 @@
 			initialSettingsEditForm = null;
 		} catch (err) {
 			console.error('Failed to update client:', err);
-			saveError = err instanceof Error ? err.message : 'Failed to update client';
+			saveError = err instanceof Error ? err.message : $LL.admin_client_detail_error_update();
 		} finally {
 			saving = false;
 		}
@@ -1108,7 +1219,7 @@
 			goto('/admin/clients');
 		} catch (err) {
 			console.error('Failed to delete client:', err);
-			error = err instanceof Error ? err.message : 'Failed to delete client';
+			error = err instanceof Error ? err.message : $LL.admin_client_detail_error_delete();
 		} finally {
 			deleting = false;
 			showDeleteModal = false;
@@ -1122,7 +1233,7 @@
 			newSecret = result.client_secret;
 		} catch (err) {
 			console.error('Failed to regenerate secret:', err);
-			error = err instanceof Error ? err.message : 'Failed to regenerate secret';
+			error = err instanceof Error ? err.message : $LL.admin_client_detail_error_regenerate();
 			showRegenerateModal = false;
 		} finally {
 			regenerating = false;
@@ -1139,12 +1250,61 @@
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function formatNumber(num: number | null | undefined): string {
 		if (num == null) return '0';
 		return num.toLocaleString();
+	}
+
+	function tabLabel(tabId: TabId): string {
+		switch (tabId) {
+			case 'general':
+				return $LL.admin_client_detail_tab_general();
+			case 'tokens':
+				return $LL.admin_client_detail_tab_tokens();
+			case 'security':
+				return $LL.admin_client_detail_tab_security();
+			case 'scopes':
+				return $LL.admin_client_detail_tab_scopes();
+			case 'claims':
+				return $LL.admin_client_detail_tab_claims();
+			case 'session':
+				return $LL.admin_client_detail_tab_session();
+			case 'metadata':
+				return $LL.admin_client_detail_tab_metadata();
+			case 'advanced':
+				return $LL.admin_client_detail_tab_advanced();
+		}
+	}
+
+	function grantTypeLabel(grantType: string): string {
+		switch (grantType) {
+			case 'authorization_code':
+				return $LL.admin_clients_new_grant_type_authorization_code();
+			case 'refresh_token':
+				return $LL.admin_clients_new_grant_type_refresh_token();
+			case 'client_credentials':
+				return $LL.admin_clients_new_grant_type_client_credentials();
+			case 'urn:ietf:params:oauth:grant-type:device_code':
+				return $LL.admin_clients_new_grant_type_device_code();
+			case 'implicit':
+				return 'Implicit (Legacy)';
+			default:
+				return grantType;
+		}
+	}
+
+	function responseTypeLabel(responseType: string): string {
+		switch (responseType) {
+			case 'code':
+				return 'code';
+			case 'token':
+				return $LL.admin_clients_new_response_token_implicit();
+			default:
+				return responseType;
+		}
 	}
 
 	function toggleEditAscAllowedTransformedClaim(claimId: string) {
@@ -1158,16 +1318,16 @@
 </script>
 
 <svelte:head>
-	<title>{client?.client_name || 'Client'} - Admin Dashboard - Authrim</title>
+	<title>{client?.client_name || $LL.admin_client_detail_page_title_fallback()} - Authrim</title>
 </svelte:head>
 
 <div class="admin-page">
-	<a href="/admin/clients" class="back-link">← Back to Clients</a>
+	<a href="/admin/clients" class="back-link">← {$LL.admin_clients_new_back()}</a>
 
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading client...</p>
+			<p>{$LL.admin_client_detail_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
@@ -1178,7 +1338,7 @@
 				<div class="client-title-row">
 					<h1>{client.client_name}</h1>
 					{#if isSystemClient(client)}
-						<span class="system-client-badge">System</span>
+						<span class="system-client-badge">{$LL.admin_client_detail_system()}</span>
 					{/if}
 				</div>
 				<p class="mono">{client.client_id}</p>
@@ -1190,12 +1350,14 @@
 				<div class="admin-toggle-inline">
 					<ToggleSwitch
 						bind:checked={showAdminSettings}
-						label="Show Advanced Settings"
-						description="Display advanced configuration options for administrators"
+						label={$LL.admin_client_detail_show_advanced()}
+						description={$LL.admin_client_detail_show_advanced_desc()}
 					/>
 				</div>
 				{#if !isEditing}
-					<button class="btn btn-secondary" onclick={startEditing}>Edit</button>
+					<button class="btn btn-secondary" onclick={startEditing}>
+						{$LL.admin_client_detail_edit()}
+					</button>
 				{/if}
 			</div>
 		</div>
@@ -1211,7 +1373,7 @@
 					class="client-tab"
 					class:active={activeTab === tab.id}
 				>
-					{tab.label}
+					{tabLabel(tab.id)}
 				</button>
 			{/each}
 		</div>
@@ -1226,39 +1388,43 @@
 				<!-- Usage Statistics -->
 				{#if usage}
 					<section class="section-spacing">
-						<h2 class="section-title-border">Usage Statistics</h2>
+						<h2 class="section-title-border">{$LL.admin_client_detail_usage_statistics()}</h2>
 						<div class="stats-grid">
 							<div class="stat-card">
 								<div class="stat-value">{formatNumber(usage.tokens_issued_24h)}</div>
-								<div class="stat-label">Tokens (24h)</div>
+								<div class="stat-label">{$LL.admin_client_detail_tokens_24h()}</div>
 							</div>
 							<div class="stat-card">
 								<div class="stat-value">{formatNumber(usage.tokens_issued_7d)}</div>
-								<div class="stat-label">Tokens (7d)</div>
+								<div class="stat-label">{$LL.admin_client_detail_tokens_7d()}</div>
 							</div>
 							<div class="stat-card">
 								<div class="stat-value">{formatNumber(usage.tokens_issued_30d)}</div>
-								<div class="stat-label">Tokens (30d)</div>
+								<div class="stat-label">{$LL.admin_client_detail_tokens_30d()}</div>
 							</div>
 							<div class="stat-card">
 								<div class="stat-value">{formatNumber(usage.active_sessions)}</div>
-								<div class="stat-label">Active Sessions</div>
+								<div class="stat-label">{$LL.admin_client_detail_active_sessions()}</div>
 							</div>
 						</div>
 						{#if usage.last_token_issued_at}
-							<p class="stat-note">Last token issued: {formatDate(usage.last_token_issued_at)}</p>
+							<p class="stat-note">
+								{$LL.admin_client_detail_last_token_issued({
+									date: formatDate(usage.last_token_issued_at)
+								})}
+							</p>
 						{/if}
 					</section>
 				{/if}
 
 				<!-- Basic Info -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Basic Information</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_basicInfo()}</h2>
 
 					<!-- Client ID -->
 					<div class="form-group">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="form-label">Client ID</label>
+						<label class="form-label">{$LL.admin_clients_clientId()}</label>
 						<div class="input-copy-group">
 							<input type="text" value={client.client_id} readonly class="input-readonly" />
 							<button
@@ -1266,7 +1432,9 @@
 								class:copied={copiedField === 'client_id'}
 								onclick={() => copyToClipboard(client!.client_id, 'client_id')}
 							>
-								{copiedField === 'client_id' ? '✓ Copied' : 'Copy'}
+								{copiedField === 'client_id'
+									? `✓ ${$LL.admin_client_detail_copied()}`
+									: $LL.admin_client_detail_copy()}
 							</button>
 						</div>
 					</div>
@@ -1274,7 +1442,7 @@
 					<!-- Client Name -->
 					<div class="form-group">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="form-label">Client Name</label>
+						<label class="form-label">{$LL.admin_clients_clientName()}</label>
 						{#if isEditing}
 							<input
 								id="client-name-input"
@@ -1290,28 +1458,30 @@
 					<!-- Description -->
 					<div class="form-group">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="form-label">Description</label>
+						<label class="form-label">{$LL.admin_clients_new_description()}</label>
 						{#if isEditing}
 							<textarea
 								id="client-description-input"
 								class="form-input textarea-input"
 								value={editForm.description ?? ''}
-								placeholder="Internal memo for admins"
+								placeholder={$LL.admin_clients_new_description_placeholder()}
 								oninput={(event) => {
 									const value = event.currentTarget.value.trim();
 									editForm.description = value.length > 0 ? value : null;
 								}}
 							></textarea>
-							<p class="form-hint">Optional admin memo. This is not exposed as OIDC metadata.</p>
+							<p class="form-hint">{$LL.admin_clients_new_description_hint()}</p>
 						{:else}
-							<p class="display-text">{client.description || 'No description'}</p>
+							<p class="display-text">
+								{client.description || $LL.admin_client_detail_no_description()}
+							</p>
 						{/if}
 					</div>
 
 					<!-- Client Secret -->
 					<div class="form-group">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="form-label">Client Secret</label>
+						<label class="form-label">{$LL.admin_clients_new_client_secret()}</label>
 						<div class="input-copy-group">
 							<input
 								type="text"
@@ -1322,25 +1492,25 @@
 								class="input-readonly"
 							/>
 							<button class="btn btn-warning btn-sm" onclick={() => (showRegenerateModal = true)}>
-								Regenerate
+								{$LL.admin_client_detail_regenerateSecret()}
 							</button>
 						</div>
-						<p class="form-hint">Secret is only fully visible when created or regenerated</p>
+						<p class="form-hint">{$LL.admin_client_detail_client_secret_hint()}</p>
 					</div>
 				</section>
 
 				<!-- OAuth Settings -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">OAuth Settings</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_oauth_settings()}</h2>
 
 					<div class="form-grid">
 						<!-- Grant Types -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Grant Types</label>
+							<label class="form-label">{$LL.admin_client_detail_grantTypes()}</label>
 							{#if isEditing}
 								<div class="checkbox-list">
-									{#each [{ value: 'authorization_code', label: 'Authorization Code' }, { value: 'refresh_token', label: 'Refresh Token' }, { value: 'client_credentials', label: 'Client Credentials' }, { value: 'implicit', label: 'Implicit (Legacy)' }, { value: 'urn:ietf:params:oauth:grant-type:device_code', label: 'Device Code' }] as grantType (grantType.value)}
+									{#each [{ value: 'authorization_code' }, { value: 'refresh_token' }, { value: 'client_credentials' }, { value: 'implicit' }, { value: 'urn:ietf:params:oauth:grant-type:device_code' }] as grantType (grantType.value)}
 										<label class="checkbox-list-item">
 											<input
 												type="checkbox"
@@ -1359,7 +1529,7 @@
 													}
 												}}
 											/>
-											{grantType.label}
+											{grantTypeLabel(grantType.value)}
 										</label>
 									{/each}
 								</div>
@@ -1371,10 +1541,10 @@
 						<!-- Response Types -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Response Types</label>
+							<label class="form-label">{$LL.admin_clients_new_response_types()}</label>
 							{#if isEditing}
 								<div class="checkbox-list">
-									{#each [{ value: 'code', label: 'code' }, { value: 'token', label: 'token (Implicit)' }, { value: 'id_token', label: 'id_token' }, { value: 'id_token token', label: 'id_token token' }, { value: 'code id_token', label: 'code id_token' }] as responseType (responseType.value)}
+									{#each [{ value: 'code' }, { value: 'token' }, { value: 'id_token' }, { value: 'id_token token' }, { value: 'code id_token' }] as responseType (responseType.value)}
 										<label class="checkbox-list-item">
 											<input
 												type="checkbox"
@@ -1393,7 +1563,7 @@
 													}
 												}}
 											/>
-											{responseType.label}
+											{responseTypeLabel(responseType.value)}
 										</label>
 									{/each}
 								</div>
@@ -1405,10 +1575,12 @@
 						<!-- Token Endpoint Auth Method -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Token Endpoint Auth Method</label>
+							<label class="form-label"
+								>{$LL.admin_client_detail_token_endpoint_auth_method()}</label
+							>
 							{#if isEditing}
 								<select class="form-select" bind:value={editForm.token_endpoint_auth_method}>
-									<option value="none">none (Public Client)</option>
+									<option value="none">none ({$LL.admin_client_detail_public_client()})</option>
 									<option value="client_secret_basic">client_secret_basic</option>
 									<option value="client_secret_post">client_secret_post</option>
 									<option value="private_key_jwt">private_key_jwt</option>
@@ -1421,7 +1593,7 @@
 						<!-- Browser Public Client Mode -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Browser Public Client Mode</label>
+							<label class="form-label">{$LL.admin_clients_new_browser_public_mode()}</label>
 							{#if isEditing}
 								<select
 									class="form-select"
@@ -1431,33 +1603,40 @@
 										editForm.browser_public_client_mode = value || null;
 									}}
 								>
-									<option value="">Server default</option>
-									<option value="strict">Strict DPoP token profile</option>
-									<option value="cookie_fallback">Hosted cookie finalize only</option>
+									<option value="">{$LL.admin_clients_new_server_default()}</option>
+									<option value="strict">{$LL.admin_clients_new_strict_dpop()}</option>
+									<option value="cookie_fallback">
+										{$LL.admin_clients_new_cookie_fallback()}
+									</option>
 								</select>
 							{:else}
-								<p class="display-text">{client.browser_public_client_mode || 'server default'}</p>
+								<p class="display-text">
+									{client.browser_public_client_mode || $LL.admin_clients_new_server_default()}
+								</p>
 							{/if}
 							<p class="form-hint">
-								Public browser token clients require DPoP. Cookie fallback uses the hosted
-								cookie-session finalize path instead of browser token exchange.
+								{$LL.admin_client_detail_browser_public_hint()}
 							</p>
 						</div>
 
 						<!-- Browser Refresh Token Policy -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Browser Refresh Token Policy</label>
+							<label class="form-label">{$LL.admin_clients_new_browser_refresh_policy()}</label>
 							{#if isEditing}
 								<select class="form-select" bind:value={editForm.browser_refresh_token_policy}>
-									<option value="disabled">Disabled</option>
-									<option value="dpop_bound">DPoP-bound refresh tokens</option>
+									<option value="disabled">{$LL.admin_clients_new_disabled()}</option>
+									<option value="dpop_bound">
+										{$LL.admin_clients_new_dpop_refresh_tokens()}
+									</option>
 								</select>
 							{:else}
-								<p class="display-text">{client.browser_refresh_token_policy || 'disabled'}</p>
+								<p class="display-text">
+									{client.browser_refresh_token_policy || $LL.admin_clients_new_disabled()}
+								</p>
 							{/if}
 							<p class="form-hint">
-								Public browser clients only receive refresh tokens when this is DPoP-bound.
+								{$LL.admin_client_detail_browser_refresh_hint()}
 							</p>
 						</div>
 
@@ -1466,14 +1645,14 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.pkce_required}
-									label="PKCE Required"
-									description="Require PKCE for authorization requests"
+									label={$LL.admin_client_detail_pkce_required()}
+									description={$LL.admin_client_detail_pkce_required_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">PKCE Required</label>
+								<label class="form-label">{$LL.admin_client_detail_pkce_required()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.pkce_required'] ? 'Yes' : 'No'}
+									{formatEnabled(clientSettings?.values['client.pkce_required'] as boolean)}
 								</p>
 							{/if}
 						</div>
@@ -1483,14 +1662,14 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.par_required}
-									label="PAR Required"
-									description="Require Pushed Authorization Requests"
+									label={$LL.admin_client_detail_par_required()}
+									description={$LL.admin_client_detail_par_required_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">PAR Required</label>
+								<label class="form-label">{$LL.admin_client_detail_par_required()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.par_required'] ? 'Yes' : 'No'}
+									{formatEnabled(clientSettings?.values['client.par_required'] as boolean)}
 								</p>
 							{/if}
 						</div>
@@ -1500,14 +1679,14 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.dpop_required}
-									label="DPoP Required"
-									description="Require DPoP for this client"
+									label={$LL.admin_client_detail_dpop_required()}
+									description={$LL.admin_client_detail_dpop_required_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">DPoP Required</label>
+								<label class="form-label">{$LL.admin_client_detail_dpop_required()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.dpop_required'] ? 'Yes' : 'No'}
+									{formatEnabled(clientSettings?.values['client.dpop_required'] as boolean)}
 								</p>
 							{/if}
 						</div>
@@ -1515,12 +1694,14 @@
 						<!-- DPoP Mode -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">DPoP Mode</label>
+							<label class="form-label">{$LL.admin_client_detail_dpop_mode()}</label>
 							{#if isEditing}
 								<select class="form-select" bind:value={settingsEditForm.dpop_mode}>
-									<option value="disabled">Disabled</option>
-									<option value="critical_only">Critical Only (Token/Revoke/Introspect)</option>
-									<option value="all">All Endpoints</option>
+									<option value="disabled">{$LL.admin_clients_new_disabled()}</option>
+									<option value="critical_only">
+										{$LL.admin_client_detail_dpop_critical_only()}
+									</option>
+									<option value="all">{$LL.admin_client_detail_dpop_all_endpoints()}</option>
 								</select>
 							{:else}
 								<p class="display-text">
@@ -1533,13 +1714,13 @@
 
 				<!-- Scopes Section -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Scopes</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_scopes_section()}</h2>
 
 					<div class="form-grid">
 						<!-- Allowed Scopes -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Allowed Scopes</label>
+							<label class="form-label">{$LL.admin_clients_new_allowed_scopes()}</label>
 							{#if isEditing}
 								<input
 									type="text"
@@ -1548,11 +1729,11 @@
 									placeholder="openid profile email (space-separated)"
 								/>
 								<p class="form-hint">
-									Scopes allowed for token exchange and protected resource access (empty = all)
+									{$LL.admin_client_detail_allowed_scopes_hint()}
 								</p>
 							{:else}
 								<p class="display-text">
-									{client?.allowed_scopes?.join(' ') || 'All scopes allowed'}
+									{client?.allowed_scopes?.join(' ') || $LL.admin_clients_new_allowed_scopes_hint()}
 								</p>
 							{/if}
 						</div>
@@ -1560,7 +1741,7 @@
 						<!-- Default Scope -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Default Scope</label>
+							<label class="form-label">{$LL.admin_clients_new_default_scope()}</label>
 							{#if isEditing}
 								<input
 									type="text"
@@ -1568,10 +1749,10 @@
 									bind:value={downstreamGrantEditForm.default_scope}
 									placeholder="openid profile"
 								/>
-								<p class="form-hint">Default scopes if none requested</p>
+								<p class="form-hint">{$LL.admin_client_detail_default_scope_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{client?.default_scope || 'None'}
+									{client?.default_scope || $LL.admin_clients_new_delegation_none()}
 								</p>
 							{/if}
 						</div>
@@ -1580,7 +1761,7 @@
 
 				<!-- Redirect URIs -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Redirect URIs</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_redirectUris()}</h2>
 					{#if isEditing}
 						<div style="display: flex; flex-direction: column; gap: 8px;">
 							{#each editForm.redirect_uris || [] as uri, index (index)}
@@ -1606,7 +1787,7 @@
 											);
 										}}
 									>
-										Remove
+										{$LL.admin_saml_detail_delete()}
 									</button>
 								</div>
 							{/each}
@@ -1617,7 +1798,7 @@
 									editForm.redirect_uris = [...(editForm.redirect_uris || []), ''];
 								}}
 							>
-								+ Add Redirect URI
+								+ {$LL.admin_clients_new_add_redirect_uri()}
 							</button>
 						</div>
 					{:else if client.redirect_uris.length > 0}
@@ -1627,14 +1808,16 @@
 									<span class="uri-text">{uri}</span>
 									{#if tenantSettings}
 										{#if isOriginInCors(uri)}
-											<span class="badge badge-success">Origin OK</span>
+											<span class="badge badge-success">{$LL.admin_clients_new_origin_ok()}</span>
 										{:else}
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={() => addToCors(uri)}
 												disabled={addingToCors === uri}
 											>
-												{addingToCors === uri ? 'Adding...' : 'Add Origin'}
+												{addingToCors === uri
+													? $LL.admin_clients_new_adding()
+													: $LL.admin_clients_new_add_origin()}
 											</button>
 										{/if}
 									{/if}
@@ -1643,25 +1826,24 @@
 						</ul>
 						{#if tenantSettings && client.redirect_uris.some((uri) => !isOriginInCors(uri))}
 							<p class="form-hint cors-hint">
-								Some redirect URI origins are not in this client's web origin registry. Direct Auth
-								and browser handoff calls from these origins may fail.
+								{$LL.admin_clients_new_cors_hint()}
 							</p>
 						{/if}
 					{:else}
-						<p class="display-text muted">No redirect URIs configured</p>
+						<p class="display-text muted">{$LL.admin_client_detail_no_redirect_uris()}</p>
 					{/if}
 				</section>
 
 				<!-- Timestamps -->
 				<section>
-					<h2 class="section-title-border">Timestamps</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_timestamps()}</h2>
 					<div class="info-grid">
 						<div class="info-item">
-							<dt>Created</dt>
+							<dt>{$LL.admin_client_detail_created()}</dt>
 							<dd class="info-value">{formatDate(client.created_at)}</dd>
 						</div>
 						<div class="info-item">
-							<dt>Updated</dt>
+							<dt>{$LL.admin_client_detail_updated()}</dt>
 							<dd class="info-value">{formatDate(client.updated_at)}</dd>
 						</div>
 					</div>
@@ -1670,43 +1852,44 @@
 				<!-- Edit Actions -->
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
 
 				<!-- Delete Client Section -->
 				<section class="section-spacing danger-section">
-					<h2 class="section-title-border danger-title">Danger Zone</h2>
+					<h2 class="section-title-border danger-title">{$LL.admin_client_detail_danger_zone()}</h2>
 					<div class="danger-zone">
 						<div class="danger-zone-content">
-							<h3 class="danger-zone-title">Delete this client</h3>
+							<h3 class="danger-zone-title">{$LL.admin_client_detail_delete_this_client()}</h3>
 							<p class="danger-zone-description">
-								Permanently delete this client. This action cannot be undone. All tokens issued to
-								this client will be invalidated immediately.
+								{$LL.admin_client_detail_delete_desc()}
 							</p>
 						</div>
 						<button class="btn btn-danger" onclick={() => (showDeleteModal = true)}>
-							Delete Client
+							{$LL.admin_client_detail_deleteClient()}
 						</button>
 					</div>
 				</section>
 			{:else if activeTab === 'tokens'}
 				<!-- Tokens Tab -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Token Lifetimes</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_token_lifetimes()}</h2>
 
 					<div class="form-grid">
 						<!-- Access Token TTL -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Access Token TTL (seconds)</label>
+							<label class="form-label">{$LL.admin_client_detail_access_token_ttl()}</label>
 							{#if isEditing}
 								<input
 									type="number"
@@ -1715,19 +1898,21 @@
 									min="60"
 									step="60"
 								/>
-								<p class="form-hint">Client-specific access token lifetime</p>
+								<p class="form-hint">{$LL.admin_client_detail_access_token_ttl_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.access_token_ttl'] || 3600} seconds
+									{$LL.admin_client_detail_seconds({
+										seconds: Number(clientSettings?.values['client.access_token_ttl'] || 3600)
+									})}
 								</p>
-								<p class="form-hint">Client-specific access token lifetime</p>
+								<p class="form-hint">{$LL.admin_client_detail_access_token_ttl_hint()}</p>
 							{/if}
 						</div>
 
 						<!-- Refresh Token TTL -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Refresh Token TTL (seconds)</label>
+							<label class="form-label">{$LL.admin_client_detail_refresh_token_ttl()}</label>
 							{#if isEditing}
 								<input
 									type="number"
@@ -1736,19 +1921,21 @@
 									min="3600"
 									step="3600"
 								/>
-								<p class="form-hint">Client-specific refresh token lifetime (default: 90 days)</p>
+								<p class="form-hint">{$LL.admin_client_detail_refresh_token_ttl_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.refresh_token_ttl'] || 7776000} seconds
+									{$LL.admin_client_detail_seconds({
+										seconds: Number(clientSettings?.values['client.refresh_token_ttl'] || 7776000)
+									})}
 								</p>
-								<p class="form-hint">Client-specific refresh token lifetime (default: 90 days)</p>
+								<p class="form-hint">{$LL.admin_client_detail_refresh_token_ttl_hint()}</p>
 							{/if}
 						</div>
 
 						<!-- ID Token TTL -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">ID Token TTL (seconds)</label>
+							<label class="form-label">{$LL.admin_client_detail_id_token_ttl()}</label>
 							{#if isEditing}
 								<input
 									type="number"
@@ -1757,19 +1944,21 @@
 									min="60"
 									step="60"
 								/>
-								<p class="form-hint">Client-specific ID token lifetime</p>
+								<p class="form-hint">{$LL.admin_client_detail_id_token_ttl_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.id_token_ttl'] || 3600} seconds
+									{$LL.admin_client_detail_seconds({
+										seconds: Number(clientSettings?.values['client.id_token_ttl'] || 3600)
+									})}
 								</p>
-								<p class="form-hint">Client-specific ID token lifetime</p>
+								<p class="form-hint">{$LL.admin_client_detail_id_token_ttl_hint()}</p>
 							{/if}
 						</div>
 					</div>
 				</section>
 
 				<section class="section-spacing">
-					<h2 class="section-title-border">Token Behavior</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_token_behavior()}</h2>
 
 					<div class="form-grid">
 						<!-- Refresh Token Rotation -->
@@ -1777,16 +1966,18 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.refresh_token_rotation}
-									label="Refresh Token Rotation"
-									description="Issue new refresh token on use (security best practice)"
+									label={$LL.admin_client_detail_refresh_token_rotation()}
+									description={$LL.admin_client_detail_refresh_token_rotation_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Refresh Token Rotation</label>
+								<label class="form-label">{$LL.admin_client_detail_refresh_token_rotation()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.refresh_token_rotation'] ? 'Enabled' : 'Disabled'}
+									{formatEnabled(
+										clientSettings?.values['client.refresh_token_rotation'] as boolean
+									)}
 								</p>
-								<p class="form-hint">Issue new refresh token on use (security best practice)</p>
+								<p class="form-hint">{$LL.admin_client_detail_refresh_token_rotation_desc()}</p>
 							{/if}
 						</div>
 
@@ -1796,16 +1987,16 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.reuse_refresh_token}
-										label="Reuse Refresh Token"
-										description="Allow refresh token reuse within grace period"
+										label={$LL.admin_client_detail_reuse_refresh_token()}
+										description={$LL.admin_client_detail_reuse_refresh_token_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Reuse Refresh Token</label>
+									<label class="form-label">{$LL.admin_client_detail_reuse_refresh_token()}</label>
 									<p class="display-text">
-										{clientSettings?.values['client.reuse_refresh_token'] ? 'Enabled' : 'Disabled'}
+										{formatEnabled(clientSettings?.values['client.reuse_refresh_token'] as boolean)}
 									</p>
-									<p class="form-hint">Allow refresh token reuse within grace period</p>
+									<p class="form-hint">{$LL.admin_client_detail_reuse_refresh_token_desc()}</p>
 								{/if}
 							</div>
 						{/if}
@@ -1815,18 +2006,20 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.dpop_bound_access_tokens}
-									label="DPoP Bound Access Tokens"
-									description="Bind access tokens to DPoP proof"
+									label={$LL.admin_client_detail_dpop_bound_access_tokens()}
+									description={$LL.admin_client_detail_dpop_bound_access_tokens_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">DPoP Bound Access Tokens</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_dpop_bound_access_tokens()}</label
+								>
 								<p class="display-text">
-									{clientSettings?.values['client.dpop_bound_access_tokens']
-										? 'Enabled'
-										: 'Disabled'}
+									{formatEnabled(
+										clientSettings?.values['client.dpop_bound_access_tokens'] as boolean
+									)}
 								</p>
-								<p class="form-hint">Bind access tokens to DPoP proof</p>
+								<p class="form-hint">{$LL.admin_client_detail_dpop_bound_access_tokens_desc()}</p>
 							{/if}
 						</div>
 
@@ -1835,35 +2028,39 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={downstreamGrantEditForm.token_exchange_allowed}
-									label="Token Exchange Allowed"
-									description="Allow token exchange (RFC 8693) for this client"
+									label={$LL.admin_client_detail_token_exchange_allowed()}
+									description={$LL.admin_client_detail_token_exchange_allowed_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Token Exchange Allowed</label>
+								<label class="form-label">{$LL.admin_client_detail_token_exchange_allowed()}</label>
 								<p class="display-text">
-									{client?.token_exchange_allowed ? 'Yes' : 'No'}
+									{formatEnabled(client?.token_exchange_allowed)}
 								</p>
-								<p class="form-hint">Allow token exchange (RFC 8693) for this client</p>
+								<p class="form-hint">{$LL.admin_client_detail_token_exchange_allowed_desc()}</p>
 							{/if}
 						</div>
 
 						<!-- Delegation Mode -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Delegation Mode</label>
+							<label class="form-label">{$LL.admin_clients_new_delegation_mode()}</label>
 							{#if isEditing}
 								<select class="form-select" bind:value={downstreamGrantEditForm.delegation_mode}>
-									<option value="none">None</option>
-									<option value="delegation">Delegation</option>
-									<option value="impersonation">Impersonation</option>
+									<option value="none">{$LL.admin_clients_new_delegation_none()}</option>
+									<option value="delegation">{$LL.admin_clients_new_delegation()}</option>
+									<option value="impersonation">{$LL.admin_clients_new_impersonation()}</option>
 								</select>
-								<p class="form-hint">Token exchange delegation mode</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_token_exchange_delegation_mode()}
+								</p>
 							{:else}
 								<p class="display-text">
 									{client?.delegation_mode || 'delegation'}
 								</p>
-								<p class="form-hint">Token exchange delegation mode</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_token_exchange_delegation_mode()}
+								</p>
 							{/if}
 						</div>
 					</div>
@@ -1872,20 +2069,22 @@
 				<!-- Edit Actions for Tokens Tab -->
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
 			{:else if activeTab === 'security'}
 				<!-- Security Tab -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Security Settings</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_security_settings()}</h2>
 
 					<div class="form-grid">
 						<!-- Consent Required -->
@@ -1893,16 +2092,16 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.consent_required}
-									label="Consent Required"
-									description="Require user consent for this client"
+									label={$LL.admin_client_detail_consent_required()}
+									description={$LL.admin_client_detail_consent_required_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Consent Required</label>
+								<label class="form-label">{$LL.admin_client_detail_consent_required()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.consent_required'] ? 'Yes' : 'No'}
+									{formatEnabled(clientSettings?.values['client.consent_required'] as boolean)}
 								</p>
-								<p class="form-hint">Require user consent for this client</p>
+								<p class="form-hint">{$LL.admin_client_detail_consent_required_desc()}</p>
 							{/if}
 						</div>
 
@@ -1911,16 +2110,16 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.sso_enabled}
-									label="SSO Enabled"
-									description="Enable Single Sign-On (session sharing). When disabled, users must re-authenticate for this client even with an existing session."
+									label={$LL.admin_client_detail_sso_enabled()}
+									description={$LL.admin_client_detail_sso_enabled_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">SSO Enabled</label>
+								<label class="form-label">{$LL.admin_client_detail_sso_enabled()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.sso_enabled'] ? 'Yes' : 'No'}
+									{formatEnabled(clientSettings?.values['client.sso_enabled'] as boolean)}
 								</p>
-								<p class="form-hint">Enable Single Sign-On (session sharing)</p>
+								<p class="form-hint">{$LL.admin_client_detail_sso_enabled_hint()}</p>
 							{/if}
 						</div>
 
@@ -1930,16 +2129,16 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.first_party}
-										label="First Party App"
-										description="Mark this client as a first-party application"
+										label={$LL.admin_client_detail_first_party_app()}
+										description={$LL.admin_client_detail_first_party_app_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">First Party App</label>
+									<label class="form-label">{$LL.admin_client_detail_first_party_app()}</label>
 									<p class="display-text">
-										{clientSettings?.values['client.first_party'] ? 'Yes' : 'No'}
+										{formatEnabled(clientSettings?.values['client.first_party'] as boolean)}
 									</p>
-									<p class="form-hint">Mark this client as a first-party application</p>
+									<p class="form-hint">{$LL.admin_client_detail_first_party_app_desc()}</p>
 								{/if}
 							</div>
 
@@ -1948,18 +2147,22 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.strict_redirect_matching}
-										label="Strict Redirect Matching"
-										description="Require exact redirect URI matching"
+										label={$LL.admin_client_detail_strict_redirect_matching()}
+										description={$LL.admin_client_detail_strict_redirect_matching_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Strict Redirect Matching</label>
+									<label class="form-label"
+										>{$LL.admin_client_detail_strict_redirect_matching()}</label
+									>
 									<p class="display-text">
-										{clientSettings?.values['client.strict_redirect_matching']
-											? 'Enabled'
-											: 'Disabled'}
+										{formatEnabled(
+											clientSettings?.values['client.strict_redirect_matching'] as boolean
+										)}
 									</p>
-									<p class="form-hint">Require exact redirect URI matching</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_strict_redirect_matching_desc()}
+									</p>
 								{/if}
 							</div>
 
@@ -1968,23 +2171,29 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.allow_localhost_redirect}
-										label="Allow Localhost Redirect"
-										description="Allow localhost redirect URIs (development)"
+										label={$LL.admin_client_detail_allow_localhost_redirect()}
+										description={$LL.admin_client_detail_allow_localhost_redirect_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Allow Localhost Redirect</label>
+									<label class="form-label"
+										>{$LL.admin_client_detail_allow_localhost_redirect()}</label
+									>
 									<p class="display-text">
-										{clientSettings?.values['client.allow_localhost_redirect'] ? 'Yes' : 'No'}
+										{formatEnabled(
+											clientSettings?.values['client.allow_localhost_redirect'] as boolean
+										)}
 									</p>
-									<p class="form-hint">Allow localhost redirect URIs (development)</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_allow_localhost_redirect_desc()}
+									</p>
 								{/if}
 							</div>
 
 							<!-- Default Max Age -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Default Max Age (seconds)</label>
+								<label class="form-label">{$LL.admin_client_detail_default_max_age()}</label>
 								{#if isEditing}
 									<input
 										type="number"
@@ -1993,19 +2202,21 @@
 										min="0"
 										step="60"
 									/>
-									<p class="form-hint">Default max authentication age (0 = no limit)</p>
+									<p class="form-hint">{$LL.admin_client_detail_default_max_age_hint()}</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.default_max_age'] || 0} seconds
+										{$LL.admin_client_detail_seconds({
+											seconds: Number(clientSettings?.values['client.default_max_age'] || 0)
+										})}
 									</p>
-									<p class="form-hint">Default max authentication age (0 = no limit)</p>
+									<p class="form-hint">{$LL.admin_client_detail_default_max_age_hint()}</p>
 								{/if}
 							</div>
 
 							<!-- Default ACR Values -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Default ACR Values</label>
+								<label class="form-label">{$LL.admin_client_detail_default_acr_values()}</label>
 								{#if isEditing}
 									<input
 										type="text"
@@ -2013,12 +2224,17 @@
 										bind:value={settingsEditForm.default_acr_values}
 										placeholder="acr1 acr2"
 									/>
-									<p class="form-hint">Default authentication context class reference values</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_default_acr_values_hint()}
+									</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.default_acr_values'] || 'None'}
+										{clientSettings?.values['client.default_acr_values'] ||
+											$LL.admin_clients_new_delegation_none()}
 									</p>
-									<p class="form-hint">Default authentication context class reference values</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_default_acr_values_hint()}
+									</p>
 								{/if}
 							</div>
 
@@ -2027,34 +2243,36 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.require_auth_time}
-										label="Require Auth Time"
-										description="Require auth_time claim in ID token"
+										label={$LL.admin_client_detail_require_auth_time()}
+										description={$LL.admin_client_detail_require_auth_time_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Require Auth Time</label>
+									<label class="form-label">{$LL.admin_client_detail_require_auth_time()}</label>
 									<p class="display-text">
-										{clientSettings?.values['client.require_auth_time'] ? 'Yes' : 'No'}
+										{formatEnabled(clientSettings?.values['client.require_auth_time'] as boolean)}
 									</p>
-									<p class="form-hint">Require auth_time claim in ID token</p>
+									<p class="form-hint">{$LL.admin_client_detail_require_auth_time_desc()}</p>
 								{/if}
 							</div>
 
 							<!-- Subject Type -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Subject Type</label>
+								<label class="form-label">{$LL.admin_client_detail_subject_type()}</label>
 								{#if isEditing}
 									<select class="form-select" bind:value={settingsEditForm.subject_type}>
-										<option value="public">Public</option>
-										<option value="pairwise">Pairwise</option>
+										<option value="public">{$LL.admin_client_detail_subject_public()}</option>
+										<option value="pairwise">{$LL.admin_client_detail_subject_pairwise()}</option>
 									</select>
-									<p class="form-hint">Subject identifier type for this client</p>
+									<p class="form-hint">{$LL.admin_client_detail_subject_type_hint()}</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.subject_type'] || 'public'}
+										{subjectTypeLabel(
+											String(clientSettings?.values['client.subject_type'] || 'public')
+										)}
 									</p>
-									<p class="form-hint">Subject identifier type for this client</p>
+									<p class="form-hint">{$LL.admin_client_detail_subject_type_hint()}</p>
 								{/if}
 							</div>
 						{/if}
@@ -2064,26 +2282,28 @@
 				<!-- Edit Actions for Security Tab -->
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
 			{:else if activeTab === 'scopes'}
 				<!-- Scopes & Permissions Tab -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Scope Settings</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_scope_settings()}</h2>
 
 					<div class="form-grid">
 						<!-- Default Audience -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Default Audience</label>
+							<label class="form-label">{$LL.admin_clients_new_default_audience()}</label>
 							{#if isEditing}
 								<input
 									type="text"
@@ -2091,12 +2311,12 @@
 									bind:value={downstreamGrantEditForm.default_audience}
 									placeholder="https://api.example.com"
 								/>
-								<p class="form-hint">Default audience for exchanged downstream access tokens</p>
+								<p class="form-hint">{$LL.admin_client_detail_default_audience_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{client?.default_audience || 'None'}
+									{client?.default_audience || $LL.admin_clients_new_delegation_none()}
 								</p>
-								<p class="form-hint">Default audience for exchanged downstream access tokens</p>
+								<p class="form-hint">{$LL.admin_client_detail_default_audience_hint()}</p>
 							{/if}
 						</div>
 
@@ -2106,18 +2326,22 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.allowed_scopes_restriction_enabled}
-										label="Scope Restriction Enabled"
-										description="Enable allowed_scopes restriction"
+										label={$LL.admin_client_detail_scope_restriction_enabled()}
+										description={$LL.admin_client_detail_scope_restriction_enabled_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Scope Restriction Enabled</label>
+									<label class="form-label"
+										>{$LL.admin_client_detail_scope_restriction_enabled()}</label
+									>
 									<p class="display-text">
-										{clientSettings?.values['client.allowed_scopes_restriction_enabled']
-											? 'Enabled'
-											: 'Disabled'}
+										{formatEnabled(
+											clientSettings?.values['client.allowed_scopes_restriction_enabled'] as boolean
+										)}
 									</p>
-									<p class="form-hint">Enable allowed_scopes restriction</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_scope_restriction_enabled_desc()}
+									</p>
 								{/if}
 							</div>
 						{/if}
@@ -2127,28 +2351,34 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={downstreamGrantEditForm.client_credentials_allowed}
-									label="Client Credentials Allowed"
-									description="Allow client credentials grant for machine-to-machine"
+									label={$LL.admin_client_detail_client_credentials_allowed()}
+									description={$LL.admin_client_detail_client_credentials_allowed_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Client Credentials Allowed</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_client_credentials_allowed()}</label
+								>
 								<p class="display-text">
-									{client?.client_credentials_allowed ? 'Yes' : 'No'}
+									{formatEnabled(client?.client_credentials_allowed)}
 								</p>
-								<p class="form-hint">Allow client credentials grant for machine-to-machine</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_client_credentials_allowed_desc()}
+								</p>
 							{/if}
 						</div>
 					</div>
 				</section>
 
 				<section class="section-spacing">
-					<h2 class="section-title-border">Downstream Grant Restrictions</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_downstream_restrictions()}</h2>
 
 					<div class="form-grid">
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Allowed Subject Token Clients</label>
+							<label class="form-label"
+								>{$LL.admin_clients_new_allowed_subject_token_clients()}</label
+							>
 							{#if isEditing}
 								<textarea
 									class="form-input textarea-input"
@@ -2157,22 +2387,24 @@
 									placeholder="svc-client-a&#10;svc-client-b"
 								></textarea>
 								<p class="form-hint">
-									One client ID per line. Leave blank to allow any subject-token client.
+									{$LL.admin_client_detail_subject_token_clients_hint()}
 								</p>
 							{:else}
 								<p class="display-text preformatted-text">
 									{formatClientListForTextarea(client?.allowed_subject_token_clients) ||
-										'Any subject-token client'}
+										$LL.admin_client_detail_any_subject_token_client()}
 								</p>
 								<p class="form-hint">
-									Restricts which service clients may present downstream subject tokens.
+									{$LL.admin_client_detail_subject_token_clients_display_hint()}
 								</p>
 							{/if}
 						</div>
 
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Allowed Token Exchange Resources</label>
+							<label class="form-label"
+								>{$LL.admin_clients_new_allowed_token_exchange_resources()}</label
+							>
 							{#if isEditing}
 								<textarea
 									class="form-input textarea-input"
@@ -2181,15 +2413,15 @@
 									placeholder="svc://op-userinfo/customer-profile&#10;svc://op-userinfo/customer-export"
 								></textarea>
 								<p class="form-hint">
-									One audience/resource per line. Leave blank to allow any downstream resource.
+									{$LL.admin_client_detail_token_exchange_resources_hint()}
 								</p>
 							{:else}
 								<p class="display-text preformatted-text">
 									{formatClientListForTextarea(client?.allowed_token_exchange_resources) ||
-										'Any downstream resource'}
+										$LL.admin_client_detail_any_downstream_resource()}
 								</p>
 								<p class="form-hint">
-									Restricts which protected resources this client can exchange into.
+									{$LL.admin_client_detail_token_exchange_resources_display_hint()}
 								</p>
 							{/if}
 						</div>
@@ -2197,7 +2429,7 @@
 				</section>
 
 				<section class="section-spacing">
-					<h2 class="section-title-border">Grant Types</h2>
+					<h2 class="section-title-border">{$LL.admin_clients_new_grant_types_label()}</h2>
 
 					<div class="form-grid">
 						<!-- Allow Authorization Code -->
@@ -2205,18 +2437,22 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.allow_authorization_code}
-									label="Allow Authorization Code"
-									description="Enable authorization code grant"
+									label={$LL.admin_client_detail_allow_authorization_code()}
+									description={$LL.admin_client_detail_allow_authorization_code_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Allow Authorization Code</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_allow_authorization_code()}</label
+								>
 								<p class="display-text">
-									{clientSettings?.values['client.allow_authorization_code']
-										? 'Enabled'
-										: 'Disabled'}
+									{formatEnabled(
+										clientSettings?.values['client.allow_authorization_code'] as boolean
+									)}
 								</p>
-								<p class="form-hint">Enable authorization code grant</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_allow_authorization_code_desc()}
+								</p>
 							{/if}
 						</div>
 
@@ -2225,18 +2461,22 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.allow_client_credentials}
-									label="Allow Client Credentials"
-									description="Enable client credentials grant"
+									label={$LL.admin_client_detail_allow_client_credentials()}
+									description={$LL.admin_client_detail_allow_client_credentials_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Allow Client Credentials</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_allow_client_credentials()}</label
+								>
 								<p class="display-text">
-									{clientSettings?.values['client.allow_client_credentials']
-										? 'Enabled'
-										: 'Disabled'}
+									{formatEnabled(
+										clientSettings?.values['client.allow_client_credentials'] as boolean
+									)}
 								</p>
-								<p class="form-hint">Enable client credentials grant</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_allow_client_credentials_desc()}
+								</p>
 							{/if}
 						</div>
 
@@ -2245,16 +2485,16 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.allow_refresh_token}
-									label="Allow Refresh Token"
-									description="Enable refresh token grant"
+									label={$LL.admin_client_detail_allow_refresh_token()}
+									description={$LL.admin_client_detail_allow_refresh_token_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Allow Refresh Token</label>
+								<label class="form-label">{$LL.admin_client_detail_allow_refresh_token()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.allow_refresh_token'] ? 'Enabled' : 'Disabled'}
+									{formatEnabled(clientSettings?.values['client.allow_refresh_token'] as boolean)}
 								</p>
-								<p class="form-hint">Enable refresh token grant</p>
+								<p class="form-hint">{$LL.admin_client_detail_allow_refresh_token_desc()}</p>
 							{/if}
 						</div>
 
@@ -2263,16 +2503,16 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.allow_device_code}
-									label="Allow Device Code"
-									description="Enable device authorization grant"
+									label={$LL.admin_client_detail_allow_device_code()}
+									description={$LL.admin_client_detail_allow_device_code_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Allow Device Code</label>
+								<label class="form-label">{$LL.admin_client_detail_allow_device_code()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.allow_device_code'] ? 'Enabled' : 'Disabled'}
+									{formatEnabled(clientSettings?.values['client.allow_device_code'] as boolean)}
 								</p>
-								<p class="form-hint">Enable device authorization grant</p>
+								<p class="form-hint">{$LL.admin_client_detail_allow_device_code_desc()}</p>
 							{/if}
 						</div>
 
@@ -2281,16 +2521,16 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={settingsEditForm.allow_ciba}
-									label="Allow CIBA"
-									description="Enable CIBA (backchannel authentication)"
+									label={$LL.admin_client_detail_allow_ciba()}
+									description={$LL.admin_client_detail_allow_ciba_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Allow CIBA</label>
+								<label class="form-label">{$LL.admin_client_detail_allow_ciba()}</label>
 								<p class="display-text">
-									{clientSettings?.values['client.allow_ciba'] ? 'Enabled' : 'Disabled'}
+									{formatEnabled(clientSettings?.values['client.allow_ciba'] as boolean)}
 								</p>
-								<p class="form-hint">Enable CIBA (backchannel authentication)</p>
+								<p class="form-hint">{$LL.admin_client_detail_allow_ciba_desc()}</p>
 							{/if}
 						</div>
 
@@ -2300,16 +2540,16 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.allow_code_response}
-										label="Allow Code Response"
-										description="Enable code response type"
+										label={$LL.admin_client_detail_allow_code_response()}
+										description={$LL.admin_client_detail_allow_code_response_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Allow Code Response</label>
+									<label class="form-label">{$LL.admin_client_detail_allow_code_response()}</label>
 									<p class="display-text">
-										{clientSettings?.values['client.allow_code_response'] ? 'Enabled' : 'Disabled'}
+										{formatEnabled(clientSettings?.values['client.allow_code_response'] as boolean)}
 									</p>
-									<p class="form-hint">Enable code response type</p>
+									<p class="form-hint">{$LL.admin_client_detail_allow_code_response_desc()}</p>
 								{/if}
 							</div>
 
@@ -2318,16 +2558,18 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.allow_token_response}
-										label="Allow Token Response"
-										description="Enable token response type (implicit flow)"
+										label={$LL.admin_client_detail_allow_token_response()}
+										description={$LL.admin_client_detail_allow_token_response_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Allow Token Response</label>
+									<label class="form-label">{$LL.admin_client_detail_allow_token_response()}</label>
 									<p class="display-text">
-										{clientSettings?.values['client.allow_token_response'] ? 'Enabled' : 'Disabled'}
+										{formatEnabled(
+											clientSettings?.values['client.allow_token_response'] as boolean
+										)}
 									</p>
-									<p class="form-hint">Enable token response type (implicit flow)</p>
+									<p class="form-hint">{$LL.admin_client_detail_allow_token_response_desc()}</p>
 								{/if}
 							</div>
 
@@ -2336,18 +2578,22 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.allow_id_token_response}
-										label="Allow ID Token Response"
-										description="Enable id_token response type (implicit flow)"
+										label={$LL.admin_client_detail_allow_id_token_response()}
+										description={$LL.admin_client_detail_allow_id_token_response_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Allow ID Token Response</label>
+									<label class="form-label"
+										>{$LL.admin_client_detail_allow_id_token_response()}</label
+									>
 									<p class="display-text">
-										{clientSettings?.values['client.allow_id_token_response']
-											? 'Enabled'
-											: 'Disabled'}
+										{formatEnabled(
+											clientSettings?.values['client.allow_id_token_response'] as boolean
+										)}
 									</p>
-									<p class="form-hint">Enable id_token response type (implicit flow)</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_allow_id_token_response_desc()}
+									</p>
 								{/if}
 							</div>
 						{/if}
@@ -2357,40 +2603,119 @@
 				<!-- Edit Actions for Scopes Tab -->
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
 			{:else if activeTab === 'claims'}
 				<section class="section-spacing">
-					<h2 class="section-title-border">Claims Parameter</h2>
+					<h2 class="section-title-border">
+						{$LL.admin_client_detail_identity_mapping_section()}
+					</h2>
 
 					<div class="form-grid">
 						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">{$LL.admin_client_detail_identity_mapping_policy()}</label>
 							{#if isEditing}
-								<ToggleSwitch
-									bind:checked={editForm.allow_claims_without_scope}
-									label="Allow Claims Without Scope"
-									description="Allow approved claims requests even when the matching scope is absent"
-								/>
+								<select
+									class="form-select"
+									value={editForm.identity_mapping?.fieldMappingSetId ?? ''}
+									onchange={(event) => setIdentityMappingFieldMappingSet(event.currentTarget.value)}
+								>
+									<option value=""
+										>{$LL.admin_client_detail_identity_mapping_policy_default()}</option
+									>
+									{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+										<option value={fieldMappingSet.id}>
+											{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
+										</option>
+									{/each}
+								</select>
+								<p class="form-hint">
+									{$LL.admin_client_detail_identity_mapping_policy_hint()}
+								</p>
 							{:else}
-								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Allow Claims Without Scope</label>
 								<p class="display-text">
-									{client.allow_claims_without_scope ? 'Yes' : 'No'}
+									{identityMappingFieldMappingLabel(client.identity_mapping?.fieldMappingSetId)}
+								</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_identity_mapping_policy_display_hint()}
 								</p>
 							{/if}
 						</div>
 
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Claims Parameter Policy</label>
+							<label class="form-label">{$LL.admin_client_detail_attribute_release_consent()}</label
+							>
+							{#if isEditing}
+								<select
+									class="form-select"
+									value={attributeReleaseConsentValue(editForm.attribute_release_consent)}
+									onchange={(event) => setAttributeReleaseConsent(event.currentTarget.value)}
+								>
+									<option value="disabled"
+										>{$LL.admin_client_detail_attribute_release_consent_disabled()}</option
+									>
+									<option value="once"
+										>{$LL.admin_client_detail_attribute_release_consent_once()}</option
+									>
+									<option value="every_time"
+										>{$LL.admin_client_detail_attribute_release_consent_every_time()}</option
+									>
+									<option value="until_attributes_change"
+										>{$LL.admin_client_detail_attribute_release_consent_until_attributes_change()}</option
+									>
+								</select>
+								<p class="form-hint">
+									{$LL.admin_client_detail_attribute_release_consent_hint()}
+								</p>
+							{:else}
+								<p class="display-text">
+									{attributeReleaseConsentLabel(client.attribute_release_consent)}
+								</p>
+								<p class="form-hint">
+									{$LL.admin_client_detail_attribute_release_consent_display_hint()}
+								</p>
+							{/if}
+						</div>
+					</div>
+				</section>
+
+				<section class="section-spacing">
+					<h2 class="section-title-border">{$LL.admin_client_detail_claims_parameter()}</h2>
+
+					<div class="form-grid">
+						<div class="form-group">
+							{#if isEditing}
+								<ToggleSwitch
+									bind:checked={editForm.allow_claims_without_scope}
+									label={$LL.admin_clients_new_allow_claims_without_scope()}
+									description={$LL.admin_clients_new_allow_claims_without_scope_desc()}
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label class="form-label"
+									>{$LL.admin_clients_new_allow_claims_without_scope()}</label
+								>
+								<p class="display-text">
+									{formatEnabled(client.allow_claims_without_scope)}
+								</p>
+							{/if}
+						</div>
+
+						<div class="form-group">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label class="form-label">{$LL.admin_clients_new_claims_policy()}</label>
 							{#if isEditing}
 								<textarea
 									class="form-input textarea-input"
@@ -2399,11 +2724,12 @@
 									placeholder="email: claims_allowed&#10;birthdate: claims_allowed"
 								></textarea>
 								<p class="form-hint">
-									One claim per line. Policies: scope_required, claims_allowed, forbidden.
+									{$LL.admin_clients_new_claims_policy_hint()}
 								</p>
 							{:else}
 								<p class="display-text preformatted-text">
-									{formatClaimsParameterPolicy(client.claims_parameter_policy) || 'Scope required'}
+									{formatClaimsParameterPolicy(client.claims_parameter_policy) ||
+										$LL.admin_client_detail_scope_required()}
 								</p>
 							{/if}
 						</div>
@@ -2411,19 +2737,19 @@
 				</section>
 
 				<section class="section-spacing">
-					<h2 class="section-title-border">Advanced Syntax for Claims</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_advanced_syntax_claims()}</h2>
 
 					<div class="form-grid">
 						<div class="form-group">
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={editForm.asc_enabled}
-									label="Enable Advanced Syntax for Claims"
-									description="Accept _asc in the claims parameter"
+									label={$LL.admin_clients_new_enable_asc()}
+									description={$LL.admin_clients_new_enable_asc_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">ASC</label>
+								<label class="form-label">{$LL.admin_client_detail_asc()}</label>
 								<p class="display-text">{formatEnabled(client.asc_enabled)}</p>
 							{/if}
 						</div>
@@ -2432,12 +2758,14 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={editForm.asc_protected_request_required}
-									label="Require Protected ASC Requests"
-									description="Require PAR or JAR for ASC request processing"
+									label={$LL.admin_clients_new_require_protected_asc()}
+									description={$LL.admin_clients_new_require_protected_asc_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Protected Request Required</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_protected_request_required()}</label
+								>
 								<p class="display-text">{formatEnabled(client.asc_protected_request_required)}</p>
 							{/if}
 						</div>
@@ -2446,12 +2774,12 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={editForm.asc_sao_enabled}
-									label="Enable Selective Abort/Omit"
-									description="Allow SAO rules under _asc"
+									label={$LL.admin_clients_new_enable_sao()}
+									description={$LL.admin_clients_new_enable_sao_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Selective Abort/Omit</label>
+								<label class="form-label">{$LL.admin_client_detail_selective_abort_omit()}</label>
 								<p class="display-text">{formatEnabled(client.asc_sao_enabled)}</p>
 							{/if}
 						</div>
@@ -2460,12 +2788,12 @@
 							{#if isEditing}
 								<ToggleSwitch
 									bind:checked={editForm.asc_transformed_claims_enabled}
-									label="Enable Transformed Claims"
-									description="Allow predefined transformed claims"
+									label={$LL.admin_clients_new_enable_transformed_claims()}
+									description={$LL.admin_clients_new_enable_transformed_claims_desc()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Transformed Claims</label>
+								<label class="form-label">{$LL.admin_client_detail_transformed_claims()}</label>
 								<p class="display-text">{formatEnabled(client.asc_transformed_claims_enabled)}</p>
 							{/if}
 						</div>
@@ -2473,7 +2801,7 @@
 
 					<div class="form-group">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="form-label">Allowed Transformed Claims</label>
+						<label class="form-label">{$LL.admin_clients_new_allowed_transformed_claims()}</label>
 						{#if isEditing}
 							<div class="checkbox-list">
 								{#each ASC_TRANSFORMED_CLAIMS as transformedClaim (transformedClaim.id)}
@@ -2485,13 +2813,15 @@
 											)}
 											onchange={() => toggleEditAscAllowedTransformedClaim(transformedClaim.id)}
 										/>
-										{transformedClaim.label}
+										{transformedClaimLabel(transformedClaim.id)}
 									</label>
 								{/each}
 							</div>
 						{:else}
 							<p class="display-text">
-								{getEffectiveAscAllowedTransformedClaims(client).join(', ')}
+								{getEffectiveAscAllowedTransformedClaims(client)
+									.map(transformedClaimLabel)
+									.join(', ')}
 							</p>
 						{/if}
 					</div>
@@ -2499,26 +2829,30 @@
 
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
 			{:else if activeTab === 'session'}
 				<!-- Session & Logout Tab -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Frontchannel Logout</h2>
+					<h2 class="section-title-border">
+						{$LL.admin_client_detail_session_frontchannel_logout()}
+					</h2>
 
 					<div class="form-grid">
 						<!-- Frontchannel Logout URI -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Frontchannel Logout URI</label>
+							<label class="form-label">{$LL.admin_client_detail_frontchannel_logout_uri()}</label>
 							{#if isEditing}
 								<input
 									type="url"
@@ -2526,12 +2860,13 @@
 									bind:value={settingsEditForm.frontchannel_logout_uri}
 									placeholder="https://example.com/frontchannel_logout"
 								/>
-								<p class="form-hint">URI for frontchannel logout notifications</p>
+								<p class="form-hint">{$LL.admin_client_detail_frontchannel_logout_uri_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.frontchannel_logout_uri'] || 'Not configured'}
+									{clientSettings?.values['client.frontchannel_logout_uri'] ||
+										$LL.admin_client_detail_not_configured()}
 								</p>
-								<p class="form-hint">URI for frontchannel logout notifications</p>
+								<p class="form-hint">{$LL.admin_client_detail_frontchannel_logout_uri_hint()}</p>
 							{/if}
 						</div>
 
@@ -2541,18 +2876,24 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.frontchannel_logout_session_required}
-										label="Frontchannel Logout Session Required"
-										description="Require session ID in frontchannel logout"
+										label={$LL.admin_client_detail_frontchannel_logout_session_required()}
+										description={$LL.admin_client_detail_frontchannel_logout_session_required_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Frontchannel Logout Session Required</label>
+									<label class="form-label"
+										>{$LL.admin_client_detail_frontchannel_logout_session_required()}</label
+									>
 									<p class="display-text">
-										{clientSettings?.values['client.frontchannel_logout_session_required']
-											? 'Yes'
-											: 'No'}
+										{formatEnabled(
+											clientSettings?.values[
+												'client.frontchannel_logout_session_required'
+											] as boolean
+										)}
 									</p>
-									<p class="form-hint">Require session ID in frontchannel logout</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_frontchannel_logout_session_required_desc()}
+									</p>
 								{/if}
 							</div>
 						{/if}
@@ -2560,13 +2901,15 @@
 				</section>
 
 				<section class="section-spacing">
-					<h2 class="section-title-border">Backchannel Logout</h2>
+					<h2 class="section-title-border">
+						{$LL.admin_client_detail_session_backchannel_logout()}
+					</h2>
 
 					<div class="form-grid">
 						<!-- Backchannel Logout URI -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Backchannel Logout URI</label>
+							<label class="form-label">{$LL.admin_client_detail_backchannel_logout_uri()}</label>
 							{#if isEditing}
 								<input
 									type="url"
@@ -2574,12 +2917,13 @@
 									bind:value={settingsEditForm.backchannel_logout_uri}
 									placeholder="https://example.com/backchannel_logout"
 								/>
-								<p class="form-hint">URI for backchannel logout notifications</p>
+								<p class="form-hint">{$LL.admin_client_detail_backchannel_logout_uri_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.backchannel_logout_uri'] || 'Not configured'}
+									{clientSettings?.values['client.backchannel_logout_uri'] ||
+										$LL.admin_client_detail_not_configured()}
 								</p>
-								<p class="form-hint">URI for backchannel logout notifications</p>
+								<p class="form-hint">{$LL.admin_client_detail_backchannel_logout_uri_hint()}</p>
 							{/if}
 						</div>
 
@@ -2589,18 +2933,24 @@
 								{#if isEditing}
 									<ToggleSwitch
 										bind:checked={settingsEditForm.backchannel_logout_session_required}
-										label="Backchannel Logout Session Required"
-										description="Require session ID in backchannel logout token"
+										label={$LL.admin_client_detail_backchannel_logout_session_required()}
+										description={$LL.admin_client_detail_backchannel_logout_session_required_desc()}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Backchannel Logout Session Required</label>
+									<label class="form-label"
+										>{$LL.admin_client_detail_backchannel_logout_session_required()}</label
+									>
 									<p class="display-text">
-										{clientSettings?.values['client.backchannel_logout_session_required']
-											? 'Yes'
-											: 'No'}
+										{formatEnabled(
+											clientSettings?.values[
+												'client.backchannel_logout_session_required'
+											] as boolean
+										)}
 									</p>
-									<p class="form-hint">Require session ID in backchannel logout token</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_backchannel_logout_session_required_desc()}
+									</p>
 								{/if}
 							</div>
 						{/if}
@@ -2610,26 +2960,28 @@
 				<!-- Edit Actions for Session Tab -->
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
 			{:else if activeTab === 'metadata'}
 				<!-- Client Metadata Tab -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">Client Metadata</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_client_metadata()}</h2>
 
 					<div class="form-grid">
 						<!-- Logo URI -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Logo URI</label>
+							<label class="form-label">{$LL.admin_client_detail_logo_uri()}</label>
 							{#if isEditing}
 								<input
 									type="url"
@@ -2637,19 +2989,20 @@
 									bind:value={settingsEditForm.logo_uri}
 									placeholder="https://example.com/logo.png"
 								/>
-								<p class="form-hint">URI for client logo image</p>
+								<p class="form-hint">{$LL.admin_client_detail_logo_uri_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.logo_uri'] || 'Not configured'}
+									{clientSettings?.values['client.logo_uri'] ||
+										$LL.admin_client_detail_not_configured()}
 								</p>
-								<p class="form-hint">URI for client logo image</p>
+								<p class="form-hint">{$LL.admin_client_detail_logo_uri_hint()}</p>
 							{/if}
 						</div>
 
 						<!-- Contacts -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Contacts</label>
+							<label class="form-label">{$LL.admin_client_detail_contacts()}</label>
 							{#if isEditing}
 								<input
 									type="text"
@@ -2657,19 +3010,20 @@
 									bind:value={settingsEditForm.contacts}
 									placeholder="admin@example.com, support@example.com"
 								/>
-								<p class="form-hint">Contact email addresses (comma-separated)</p>
+								<p class="form-hint">{$LL.admin_client_detail_contacts_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.contacts'] || 'None'}
+									{clientSettings?.values['client.contacts'] ||
+										$LL.admin_clients_new_delegation_none()}
 								</p>
-								<p class="form-hint">Contact email addresses (comma-separated)</p>
+								<p class="form-hint">{$LL.admin_client_detail_contacts_hint()}</p>
 							{/if}
 						</div>
 
 						<!-- Terms of Service URI -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Terms of Service URI</label>
+							<label class="form-label">{$LL.admin_client_detail_tos_uri()}</label>
 							{#if isEditing}
 								<input
 									type="url"
@@ -2677,19 +3031,20 @@
 									bind:value={settingsEditForm.tos_uri}
 									placeholder="https://example.com/tos"
 								/>
-								<p class="form-hint">URI for terms of service</p>
+								<p class="form-hint">{$LL.admin_client_detail_tos_uri_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.tos_uri'] || 'Not configured'}
+									{clientSettings?.values['client.tos_uri'] ||
+										$LL.admin_client_detail_not_configured()}
 								</p>
-								<p class="form-hint">URI for terms of service</p>
+								<p class="form-hint">{$LL.admin_client_detail_tos_uri_hint()}</p>
 							{/if}
 						</div>
 
 						<!-- Privacy Policy URI -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Privacy Policy URI</label>
+							<label class="form-label">{$LL.admin_client_detail_privacy_policy_uri()}</label>
 							{#if isEditing}
 								<input
 									type="url"
@@ -2697,19 +3052,20 @@
 									bind:value={settingsEditForm.policy_uri}
 									placeholder="https://example.com/privacy"
 								/>
-								<p class="form-hint">URI for privacy policy</p>
+								<p class="form-hint">{$LL.admin_client_detail_privacy_policy_uri_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.policy_uri'] || 'Not configured'}
+									{clientSettings?.values['client.policy_uri'] ||
+										$LL.admin_client_detail_not_configured()}
 								</p>
-								<p class="form-hint">URI for privacy policy</p>
+								<p class="form-hint">{$LL.admin_client_detail_privacy_policy_uri_hint()}</p>
 							{/if}
 						</div>
 
 						<!-- Client URI -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Client URI</label>
+							<label class="form-label">{$LL.admin_client_detail_client_uri()}</label>
 							{#if isEditing}
 								<input
 									type="url"
@@ -2717,12 +3073,13 @@
 									bind:value={settingsEditForm.client_uri}
 									placeholder="https://example.com"
 								/>
-								<p class="form-hint">URI for client homepage</p>
+								<p class="form-hint">{$LL.admin_client_detail_client_uri_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.client_uri'] || 'Not configured'}
+									{clientSettings?.values['client.client_uri'] ||
+										$LL.admin_client_detail_not_configured()}
 								</p>
-								<p class="form-hint">URI for client homepage</p>
+								<p class="form-hint">{$LL.admin_client_detail_client_uri_hint()}</p>
 							{/if}
 						</div>
 
@@ -2730,7 +3087,7 @@
 							<!-- Initiate Login URI -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Initiate Login URI</label>
+								<label class="form-label">{$LL.admin_client_detail_initiate_login_uri()}</label>
 								{#if isEditing}
 									<input
 										type="url"
@@ -2738,12 +3095,13 @@
 										bind:value={settingsEditForm.initiate_login_uri}
 										placeholder="https://example.com/initiate_login"
 									/>
-									<p class="form-hint">URI to initiate login from RP</p>
+									<p class="form-hint">{$LL.admin_client_detail_initiate_login_uri_hint()}</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.initiate_login_uri'] || 'Not configured'}
+										{clientSettings?.values['client.initiate_login_uri'] ||
+											$LL.admin_client_detail_not_configured()}
 									</p>
-									<p class="form-hint">URI to initiate login from RP</p>
+									<p class="form-hint">{$LL.admin_client_detail_initiate_login_uri_hint()}</p>
 								{/if}
 							</div>
 						{/if}
@@ -2751,7 +3109,7 @@
 						<!-- Login UI URL -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Login UI URL</label>
+							<label class="form-label">{$LL.admin_client_detail_login_ui_url()}</label>
 							{#if isEditing}
 								<input
 									type="url"
@@ -2760,33 +3118,34 @@
 									placeholder="https://login.your-domain.com"
 								/>
 								<p class="form-hint">
-									Client-specific login UI base URL (overrides global UI_URL). Must use HTTPS except
-									localhost.
+									{$LL.admin_client_detail_login_ui_url_edit_hint()}
 								</p>
 							{:else}
 								<p class="display-text">
-									{client?.login_ui_url || 'Not configured'}
+									{client?.login_ui_url || $LL.admin_client_detail_not_configured()}
 								</p>
-								<p class="form-hint">Client-specific login UI base URL (overrides global UI_URL)</p>
+								<p class="form-hint">{$LL.admin_client_detail_login_ui_url_hint()}</p>
 							{/if}
 						</div>
 
 						<!-- Application Type -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">Application Type</label>
+							<label class="form-label">{$LL.admin_client_detail_application_type()}</label>
 							{#if isEditing}
 								<select class="form-select" bind:value={settingsEditForm.application_type}>
-									<option value="web">Web</option>
-									<option value="native">Native</option>
-									<option value="spa">SPA</option>
+									<option value="web">{$LL.admin_client_detail_application_web()}</option>
+									<option value="native">{$LL.admin_client_detail_application_native()}</option>
+									<option value="spa">{$LL.admin_client_detail_application_spa()}</option>
 								</select>
-								<p class="form-hint">Type of client application (web, native, spa)</p>
+								<p class="form-hint">{$LL.admin_client_detail_application_type_hint()}</p>
 							{:else}
 								<p class="display-text">
-									{clientSettings?.values['client.application_type'] || 'web'}
+									{applicationTypeLabel(
+										String(clientSettings?.values['client.application_type'] || 'web')
+									)}
 								</p>
-								<p class="form-hint">Type of client application (web, native, spa)</p>
+								<p class="form-hint">{$LL.admin_client_detail_application_type_hint()}</p>
 							{/if}
 						</div>
 
@@ -2794,7 +3153,7 @@
 							<!-- Sector Identifier URI -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Sector Identifier URI</label>
+								<label class="form-label">{$LL.admin_client_detail_sector_identifier_uri()}</label>
 								{#if isEditing}
 									<input
 										type="url"
@@ -2802,12 +3161,17 @@
 										bind:value={settingsEditForm.sector_identifier_uri}
 										placeholder="https://example.com/sector_identifier"
 									/>
-									<p class="form-hint">URI for pairwise subject identifier calculation</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_sector_identifier_uri_hint()}
+									</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.sector_identifier_uri'] || 'Not configured'}
+										{clientSettings?.values['client.sector_identifier_uri'] ||
+											$LL.admin_client_detail_not_configured()}
 									</p>
-									<p class="form-hint">URI for pairwise subject identifier calculation</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_sector_identifier_uri_hint()}
+									</p>
 								{/if}
 							</div>
 						{/if}
@@ -2817,26 +3181,28 @@
 				<!-- Edit Actions for Metadata Tab -->
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
 			{:else if activeTab === 'advanced'}
 				<!-- Advanced Tab -->
 				<section class="section-spacing">
-					<h2 class="section-title-border">ID Token Algorithms</h2>
+					<h2 class="section-title-border">{$LL.admin_client_detail_id_token_algorithms()}</h2>
 
 					<div class="form-grid">
 						<!-- ID Token Signing Algorithm -->
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">ID Token Signing Algorithm</label>
+							<label class="form-label">{$LL.admin_client_detail_id_token_signing_alg()}</label>
 							{#if isEditing}
 								<select class="form-select" bind:value={settingsEditForm.id_token_signing_alg}>
 									<option value="RS256">RS256</option>
@@ -2849,12 +3215,12 @@
 									<option value="PS384">PS384</option>
 									<option value="PS512">PS512</option>
 								</select>
-								<p class="form-hint">Algorithm for signing ID tokens</p>
+								<p class="form-hint">{$LL.admin_client_detail_id_token_signing_alg_hint()}</p>
 							{:else}
 								<p class="display-text">
 									{clientSettings?.values['client.id_token_signing_alg'] || 'RS256'}
 								</p>
-								<p class="form-hint">Algorithm for signing ID tokens</p>
+								<p class="form-hint">{$LL.admin_client_detail_id_token_signing_alg_hint()}</p>
 							{/if}
 						</div>
 
@@ -2862,7 +3228,8 @@
 							<!-- ID Token Encryption Algorithm -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">ID Token Encryption Algorithm</label>
+								<label class="form-label">{$LL.admin_client_detail_id_token_encryption_alg()}</label
+								>
 								{#if isEditing}
 									<input
 										type="text"
@@ -2871,14 +3238,15 @@
 										placeholder="RSA-OAEP, RSA-OAEP-256, etc. (empty = no encryption)"
 									/>
 									<p class="form-hint">
-										Key encryption algorithm for encrypted ID tokens (empty = no encryption)
+										{$LL.admin_client_detail_id_token_encryption_alg_hint()}
 									</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.id_token_encrypted_response_alg'] || 'None'}
+										{clientSettings?.values['client.id_token_encrypted_response_alg'] ||
+											$LL.admin_clients_new_delegation_none()}
 									</p>
 									<p class="form-hint">
-										Key encryption algorithm for encrypted ID tokens (empty = no encryption)
+										{$LL.admin_client_detail_id_token_encryption_alg_hint()}
 									</p>
 								{/if}
 							</div>
@@ -2886,7 +3254,8 @@
 							<!-- ID Token Encryption Encoding -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">ID Token Encryption Encoding</label>
+								<label class="form-label">{$LL.admin_client_detail_id_token_encryption_enc()}</label
+								>
 								{#if isEditing}
 									<select
 										class="form-select"
@@ -2899,12 +3268,16 @@
 										<option value="A192CBC-HS384">A192CBC-HS384</option>
 										<option value="A256CBC-HS512">A256CBC-HS512</option>
 									</select>
-									<p class="form-hint">Content encryption algorithm for encrypted ID tokens</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_id_token_encryption_enc_hint()}
+									</p>
 								{:else}
 									<p class="display-text">
 										{clientSettings?.values['client.id_token_encrypted_response_enc'] || 'A256GCM'}
 									</p>
-									<p class="form-hint">Content encryption algorithm for encrypted ID tokens</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_id_token_encryption_enc_hint()}
+									</p>
 								{/if}
 							</div>
 						{/if}
@@ -2913,19 +3286,19 @@
 
 				{#if showAdminSettings}
 					<section class="section-spacing">
-						<h2 class="section-title-border">UserInfo Algorithms</h2>
+						<h2 class="section-title-border">{$LL.admin_client_detail_userinfo_algorithms()}</h2>
 
 						<div class="form-grid">
 							<!-- UserInfo Signed Response Algorithm -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">UserInfo Signed Response Algorithm</label>
+								<label class="form-label">{$LL.admin_client_detail_userinfo_signed_alg()}</label>
 								{#if isEditing}
 									<select
 										class="form-select"
 										bind:value={settingsEditForm.userinfo_signed_response_alg}
 									>
-										<option value="none">None</option>
+										<option value="none">{$LL.admin_clients_new_delegation_none()}</option>
 										<option value="RS256">RS256</option>
 										<option value="RS384">RS384</option>
 										<option value="RS512">RS512</option>
@@ -2936,19 +3309,20 @@
 										<option value="PS384">PS384</option>
 										<option value="PS512">PS512</option>
 									</select>
-									<p class="form-hint">Algorithm for signed UserInfo responses</p>
+									<p class="form-hint">{$LL.admin_client_detail_userinfo_signed_alg_hint()}</p>
 								{:else}
 									<p class="display-text">
 										{clientSettings?.values['client.userinfo_signed_response_alg'] || 'none'}
 									</p>
-									<p class="form-hint">Algorithm for signed UserInfo responses</p>
+									<p class="form-hint">{$LL.admin_client_detail_userinfo_signed_alg_hint()}</p>
 								{/if}
 							</div>
 
 							<!-- UserInfo Encryption Algorithm -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">UserInfo Encryption Algorithm</label>
+								<label class="form-label">{$LL.admin_client_detail_userinfo_encryption_alg()}</label
+								>
 								{#if isEditing}
 									<input
 										type="text"
@@ -2957,14 +3331,15 @@
 										placeholder="RSA-OAEP, RSA-OAEP-256, etc. (empty = no encryption)"
 									/>
 									<p class="form-hint">
-										Key encryption algorithm for encrypted UserInfo (empty = no encryption)
+										{$LL.admin_client_detail_userinfo_encryption_alg_hint()}
 									</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.userinfo_encrypted_response_alg'] || 'None'}
+										{clientSettings?.values['client.userinfo_encrypted_response_alg'] ||
+											$LL.admin_clients_new_delegation_none()}
 									</p>
 									<p class="form-hint">
-										Key encryption algorithm for encrypted UserInfo (empty = no encryption)
+										{$LL.admin_client_detail_userinfo_encryption_alg_hint()}
 									</p>
 								{/if}
 							</div>
@@ -2972,7 +3347,8 @@
 							<!-- UserInfo Encryption Encoding -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">UserInfo Encryption Encoding</label>
+								<label class="form-label">{$LL.admin_client_detail_userinfo_encryption_enc()}</label
+								>
 								{#if isEditing}
 									<select
 										class="form-select"
@@ -2985,25 +3361,33 @@
 										<option value="A192CBC-HS384">A192CBC-HS384</option>
 										<option value="A256CBC-HS512">A256CBC-HS512</option>
 									</select>
-									<p class="form-hint">Content encryption algorithm for encrypted UserInfo</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_userinfo_encryption_enc_hint()}
+									</p>
 								{:else}
 									<p class="display-text">
 										{clientSettings?.values['client.userinfo_encrypted_response_enc'] || 'A256GCM'}
 									</p>
-									<p class="form-hint">Content encryption algorithm for encrypted UserInfo</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_userinfo_encryption_enc_hint()}
+									</p>
 								{/if}
 							</div>
 						</div>
 					</section>
 
 					<section class="section-spacing">
-						<h2 class="section-title-border">Request Object Algorithms</h2>
+						<h2 class="section-title-border">
+							{$LL.admin_client_detail_request_object_algorithms()}
+						</h2>
 
 						<div class="form-grid">
 							<!-- Request Object Signing Algorithm -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Request Object Signing Algorithm</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_request_object_signing_alg()}</label
+								>
 								{#if isEditing}
 									<input
 										type="text"
@@ -3011,19 +3395,26 @@
 										bind:value={settingsEditForm.request_object_signing_alg}
 										placeholder="RS256, ES256, etc. (empty = not required)"
 									/>
-									<p class="form-hint">Required signing algorithm for request objects (JAR)</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_request_object_signing_alg_hint()}
+									</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.request_object_signing_alg'] || 'None'}
+										{clientSettings?.values['client.request_object_signing_alg'] ||
+											$LL.admin_clients_new_delegation_none()}
 									</p>
-									<p class="form-hint">Required signing algorithm for request objects (JAR)</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_request_object_signing_alg_hint()}
+									</p>
 								{/if}
 							</div>
 
 							<!-- Request Object Encryption Algorithm -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Request Object Encryption Algorithm</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_request_object_encryption_alg()}</label
+								>
 								{#if isEditing}
 									<input
 										type="text"
@@ -3031,19 +3422,26 @@
 										bind:value={settingsEditForm.request_object_encryption_alg}
 										placeholder="RSA-OAEP, RSA-OAEP-256, etc. (empty = no encryption)"
 									/>
-									<p class="form-hint">Key encryption algorithm for encrypted request objects</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_request_object_encryption_alg_hint()}
+									</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.request_object_encryption_alg'] || 'None'}
+										{clientSettings?.values['client.request_object_encryption_alg'] ||
+											$LL.admin_clients_new_delegation_none()}
 									</p>
-									<p class="form-hint">Key encryption algorithm for encrypted request objects</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_request_object_encryption_alg_hint()}
+									</p>
 								{/if}
 							</div>
 
 							<!-- Request Object Encryption Encoding -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Request Object Encryption Encoding</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_request_object_encryption_enc()}</label
+								>
 								{#if isEditing}
 									<select
 										class="form-select"
@@ -3057,14 +3455,14 @@
 										<option value="A256CBC-HS512">A256CBC-HS512</option>
 									</select>
 									<p class="form-hint">
-										Content encryption algorithm for encrypted request objects
+										{$LL.admin_client_detail_request_object_encryption_enc_hint()}
 									</p>
 								{:else}
 									<p class="display-text">
 										{clientSettings?.values['client.request_object_encryption_enc'] || 'A256GCM'}
 									</p>
 									<p class="form-hint">
-										Content encryption algorithm for encrypted request objects
+										{$LL.admin_client_detail_request_object_encryption_enc_hint()}
 									</p>
 								{/if}
 							</div>
@@ -3072,7 +3470,7 @@
 							<!-- Request URIs -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Request URIs</label>
+								<label class="form-label">{$LL.admin_client_detail_request_uris()}</label>
 								{#if isEditing}
 									<input
 										type="text"
@@ -3080,25 +3478,26 @@
 										bind:value={settingsEditForm.request_uris}
 										placeholder="https://example.com/request1, https://example.com/request2"
 									/>
-									<p class="form-hint">Allowed request_uri values (comma-separated)</p>
+									<p class="form-hint">{$LL.admin_client_detail_request_uris_hint()}</p>
 								{:else}
 									<p class="display-text">
-										{clientSettings?.values['client.request_uris'] || 'None'}
+										{clientSettings?.values['client.request_uris'] ||
+											$LL.admin_clients_new_delegation_none()}
 									</p>
-									<p class="form-hint">Allowed request_uri values (comma-separated)</p>
+									<p class="form-hint">{$LL.admin_client_detail_request_uris_hint()}</p>
 								{/if}
 							</div>
 						</div>
 					</section>
 
 					<section class="section-spacing">
-						<h2 class="section-title-border">JWT & Authentication Algorithms</h2>
+						<h2 class="section-title-border">{$LL.admin_client_detail_jwt_auth_algorithms()}</h2>
 
 						<div class="form-grid">
 							<!-- JWT Bearer Signing Algorithm -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">JWT Bearer Signing Algorithm</label>
+								<label class="form-label">{$LL.admin_client_detail_jwt_bearer_signing_alg()}</label>
 								{#if isEditing}
 									<select class="form-select" bind:value={settingsEditForm.jwt_bearer_signing_alg}>
 										<option value="RS256">RS256</option>
@@ -3111,19 +3510,25 @@
 										<option value="PS384">PS384</option>
 										<option value="PS512">PS512</option>
 									</select>
-									<p class="form-hint">Signing algorithm for JWT Bearer assertions</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_jwt_bearer_signing_alg_hint()}
+									</p>
 								{:else}
 									<p class="display-text">
 										{clientSettings?.values['client.jwt_bearer_signing_alg'] || 'RS256'}
 									</p>
-									<p class="form-hint">Signing algorithm for JWT Bearer assertions</p>
+									<p class="form-hint">
+										{$LL.admin_client_detail_jwt_bearer_signing_alg_hint()}
+									</p>
 								{/if}
 							</div>
 
 							<!-- Token Endpoint Auth Signing Algorithm -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Token Endpoint Auth Signing Algorithm</label>
+								<label class="form-label"
+									>{$LL.admin_client_detail_token_endpoint_auth_signing_alg()}</label
+								>
 								{#if isEditing}
 									<select
 										class="form-select"
@@ -3140,14 +3545,14 @@
 										<option value="PS512">PS512</option>
 									</select>
 									<p class="form-hint">
-										Signing algorithm for private_key_jwt/client_secret_jwt authentication
+										{$LL.admin_client_detail_token_endpoint_auth_signing_alg_hint()}
 									</p>
 								{:else}
 									<p class="display-text">
 										{clientSettings?.values['client.token_endpoint_auth_signing_alg'] || 'RS256'}
 									</p>
 									<p class="form-hint">
-										Signing algorithm for private_key_jwt/client_secret_jwt authentication
+										{$LL.admin_client_detail_token_endpoint_auth_signing_alg_hint()}
 									</p>
 								{/if}
 							</div>
@@ -3158,13 +3563,15 @@
 				<!-- Edit Actions for Advanced Tab -->
 				{#if isEditing}
 					<div class="edit-actions">
-						<button class="btn btn-secondary" onclick={cancelEditing}>Cancel</button>
+						<button class="btn btn-secondary" onclick={cancelEditing}>
+							{$LL.admin_client_detail_cancel()}
+						</button>
 						<button
 							class="btn btn-primary"
 							onclick={saveChanges}
 							disabled={saving || !hasUnsavedChanges}
 						>
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? $LL.admin_client_detail_saving() : $LL.admin_client_detail_save_changes()}
 						</button>
 					</div>
 				{/if}
@@ -3180,28 +3587,30 @@
 		showDeleteModal = false;
 		deleteConfirmName = '';
 	}}
-	title="Delete Client"
+	title={$LL.admin_client_detail_delete_modal_title()}
 	size="md"
 >
 	{#snippet header()}
-		<h3 class="modal-title" style="color: var(--danger);">Delete Client</h3>
+		<h3 class="modal-title" style="color: var(--danger);">
+			{$LL.admin_client_detail_delete_modal_title()}
+		</h3>
 	{/snippet}
 	<div class="danger-box">
-		<p class="danger-box-title">This action CANNOT be undone.</p>
+		<p class="danger-box-title">{$LL.admin_client_detail_delete_modal_cannot_undo()}</p>
 		<ul>
-			<li>All tokens issued to this client will be invalidated immediately</li>
-			<li>Historical audit data for this client will become orphaned</li>
+			<li>{$LL.admin_client_detail_delete_modal_tokens()}</li>
+			<li>{$LL.admin_client_detail_delete_modal_audit()}</li>
 		</ul>
 	</div>
 
 	<p class="modal-description">
-		Type <strong>{client?.client_name ?? ''}</strong> to confirm:
+		{$LL.admin_client_detail_delete_modal_confirm({ name: client?.client_name ?? '' })}
 	</p>
 	<input
 		type="text"
 		class="confirm-input"
 		bind:value={deleteConfirmName}
-		placeholder="Enter client name"
+		placeholder={$LL.admin_client_detail_delete_modal_placeholder()}
 	/>
 	{#snippet footer()}
 		<button
@@ -3211,14 +3620,14 @@
 				deleteConfirmName = '';
 			}}
 		>
-			Cancel
+			{$LL.admin_client_detail_cancel()}
 		</button>
 		<button
 			class="btn btn-danger"
 			onclick={handleDelete}
 			disabled={deleting || deleteConfirmName !== client?.client_name}
 		>
-			{deleting ? 'Deleting...' : 'Delete Client'}
+			{deleting ? $LL.admin_client_detail_deleting() : $LL.admin_client_detail_delete_modal_title()}
 		</button>
 	{/snippet}
 </Modal>
@@ -3230,25 +3639,34 @@
 		showRegenerateModal = false;
 		newSecret = null;
 	}}
-	title={newSecret ? 'Secret Regenerated' : 'Regenerate Client Secret'}
+	title={newSecret
+		? $LL.admin_client_detail_secret_regenerated()
+		: $LL.admin_client_detail_regenerate_secret_title()}
 	size="md"
 >
 	{#snippet header()}
 		{#if newSecret}
-			<h3 class="modal-title" style="color: var(--success);">Secret Regenerated</h3>
+			<h3 class="modal-title" style="color: var(--success);">
+				{$LL.admin_client_detail_secret_regenerated()}
+			</h3>
 		{:else}
-			<h3 class="modal-title" style="color: var(--warning);">Regenerate Client Secret</h3>
+			<h3 class="modal-title" style="color: var(--warning);">
+				{$LL.admin_client_detail_regenerate_secret_title()}
+			</h3>
 		{/if}
 	{/snippet}
 	{#if newSecret}
 		<!-- Success: Show new secret -->
 		<div class="warning-box">
-			<p><strong>Save this secret now!</strong> It will not be shown again.</p>
+			<p>
+				<strong>{$LL.admin_clients_new_secret_warning()}</strong>
+				{$LL.admin_clients_new_secret_warning_desc()}
+			</p>
 		</div>
 
 		<div class="form-group">
 			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label class="form-label">New Client Secret</label>
+			<label class="form-label">{$LL.admin_client_detail_new_client_secret()}</label>
 			<div class="input-copy-group">
 				<input type="text" value={newSecret} readonly class="input-readonly" />
 				<button
@@ -3256,22 +3674,20 @@
 					class:copied={copiedField === 'new_secret'}
 					onclick={() => copyToClipboard(newSecret!, 'new_secret')}
 				>
-					{copiedField === 'new_secret' ? '✓ Copied' : 'Copy'}
+					{copiedField === 'new_secret'
+						? $LL.admin_client_detail_copied()
+						: $LL.admin_client_detail_copy()}
 				</button>
 			</div>
 		</div>
 	{:else}
 		<!-- Confirmation -->
 		<div class="warning-box">
-			<p>
-				This will <strong>invalidate</strong> the current client secret. All applications using the old
-				secret will stop working immediately.
-			</p>
+			<p>{$LL.admin_client_detail_secret_regenerate_warning()}</p>
 		</div>
 
 		<p class="modal-description">
-			The new secret will only be shown once. Make sure to update your applications after
-			regenerating.
+			{$LL.admin_client_detail_secret_regenerate_desc()}
 		</p>
 	{/if}
 	{#snippet footer()}
@@ -3283,14 +3699,16 @@
 					newSecret = null;
 				}}
 			>
-				Done
+				{$LL.admin_client_detail_done()}
 			</button>
 		{:else}
 			<button class="btn btn-secondary" onclick={() => (showRegenerateModal = false)}>
-				Cancel
+				{$LL.admin_client_detail_cancel()}
 			</button>
 			<button class="btn btn-warning" onclick={handleRegenerateSecret} disabled={regenerating}>
-				{regenerating ? 'Regenerating...' : 'Regenerate Secret'}
+				{regenerating
+					? $LL.admin_client_detail_regenerating()
+					: $LL.admin_client_detail_regenerate_secret_title()}
 			</button>
 		{/if}
 	{/snippet}

@@ -91,7 +91,7 @@ type RootTranslation = {
 	 */
 	dialog_close: string
 	/**
-	 * S​v​e​l​t​e​K​i​t​ ​v​5​ ​+​ ​U​n​o​C​S​S​ ​+​ ​M​e​l​t​ ​U​I​ ​+​ ​C​l​o​u​d​f​l​a​r​e​ ​P​a​g​e​s
+	 * P​o​w​e​r​e​d​ ​b​y​ ​A​u​t​h​r​i​m
 	 */
 	footer_stack: string
 	/**
@@ -163,6 +163,23 @@ type RootTranslation = {
 	 */
 	login_sendCode: string
 	/**
+	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​{​l​a​b​e​l​}
+	 * @param {string} label
+	 */
+	login_signInWithDirectory: RequiredParams<'label'>
+	/**
+	 * u​s​e​r​n​a​m​e
+	 */
+	login_directoryUsernamePlaceholder: string
+	/**
+	 * P​a​s​s​w​o​r​d
+	 */
+	login_directoryPasswordLabel: string
+	/**
+	 * P​a​s​s​w​o​r​d
+	 */
+	login_directoryPasswordPlaceholder: string
+	/**
 	 * D​o​n​'​t​ ​h​a​v​e​ ​a​n​ ​a​c​c​o​u​n​t​?​ ​C​r​e​a​t​e​ ​o​n​e
 	 */
 	login_createAccount: string
@@ -174,6 +191,30 @@ type RootTranslation = {
 	 * P​l​e​a​s​e​ ​e​n​t​e​r​ ​a​ ​v​a​l​i​d​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s
 	 */
 	login_errorEmailInvalid: string
+	/**
+	 * U​s​e​r​n​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	login_errorDirectoryUsernameRequired: string
+	/**
+	 * P​a​s​s​w​o​r​d​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	login_errorDirectoryPasswordRequired: string
+	/**
+	 * T​h​e​ ​u​s​e​r​n​a​m​e​ ​o​r​ ​p​a​s​s​w​o​r​d​ ​i​s​ ​i​n​c​o​r​r​e​c​t
+	 */
+	login_errorDirectoryInvalidCredentials: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​s​i​g​n​-​i​n​ ​i​s​ ​t​e​m​p​o​r​a​r​i​l​y​ ​u​n​a​v​a​i​l​a​b​l​e
+	 */
+	login_errorDirectoryUnavailable: string
+	/**
+	 * T​h​i​s​ ​d​i​r​e​c​t​o​r​y​ ​a​c​c​o​u​n​t​ ​i​s​ ​n​o​t​ ​m​a​p​p​e​d​ ​t​o​ ​a​n​ ​A​u​t​h​r​i​m​ ​u​s​e​r
+	 */
+	login_errorDirectoryUnmapped: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​s​i​g​n​-​i​n​ ​f​a​i​l​e​d
+	 */
+	login_errorDirectoryFailed: string
 	/**
 	 * O​r​ ​c​o​n​t​i​n​u​e​ ​w​i​t​h
 	 */
@@ -1317,7 +1358,7 @@ export type TranslationFunctions = {
 	 */
 	dialog_close: () => LocalizedString
 	/**
-	 * SvelteKit v5 + UnoCSS + Melt UI + Cloudflare Pages
+	 * Powered by Authrim
 	 */
 	footer_stack: () => LocalizedString
 	/**
@@ -1389,6 +1430,22 @@ export type TranslationFunctions = {
 	 */
 	login_sendCode: () => LocalizedString
 	/**
+	 * Sign in with {label}
+	 */
+	login_signInWithDirectory: (arg: { label: string }) => LocalizedString
+	/**
+	 * username
+	 */
+	login_directoryUsernamePlaceholder: () => LocalizedString
+	/**
+	 * Password
+	 */
+	login_directoryPasswordLabel: () => LocalizedString
+	/**
+	 * Password
+	 */
+	login_directoryPasswordPlaceholder: () => LocalizedString
+	/**
 	 * Don't have an account? Create one
 	 */
 	login_createAccount: () => LocalizedString
@@ -1400,6 +1457,30 @@ export type TranslationFunctions = {
 	 * Please enter a valid email address
 	 */
 	login_errorEmailInvalid: () => LocalizedString
+	/**
+	 * Username is required
+	 */
+	login_errorDirectoryUsernameRequired: () => LocalizedString
+	/**
+	 * Password is required
+	 */
+	login_errorDirectoryPasswordRequired: () => LocalizedString
+	/**
+	 * The username or password is incorrect
+	 */
+	login_errorDirectoryInvalidCredentials: () => LocalizedString
+	/**
+	 * Directory sign-in is temporarily unavailable
+	 */
+	login_errorDirectoryUnavailable: () => LocalizedString
+	/**
+	 * This directory account is not mapped to an Authrim user
+	 */
+	login_errorDirectoryUnmapped: () => LocalizedString
+	/**
+	 * Directory sign-in failed
+	 */
+	login_errorDirectoryFailed: () => LocalizedString
 	/**
 	 * Or continue with
 	 */

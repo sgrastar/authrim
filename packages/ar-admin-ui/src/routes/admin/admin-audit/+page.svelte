@@ -10,6 +10,7 @@
 		formatAction
 	} from '$lib/api/admin-admin-audit';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let entries: AdminAuditLogEntry[] = $state([]);
 	let total = $state(0);
@@ -88,7 +89,7 @@
 			totalPages = response.totalPages;
 		} catch (err) {
 			console.error('Failed to load admin audit logs:', err);
-			error = 'Failed to load admin audit logs';
+			error = $LL.admin_admin_audit_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -177,10 +178,10 @@
 				entry.machine_client_id ||
 				entry.actor_display_name ||
 				entry.machine_principal_id ||
-				'Machine'
+				$LL.admin_admin_audit_machine()
 			);
 		}
-		if (actorType === 'system') return 'System';
+		if (actorType === 'system') return $LL.admin_admin_audit_system();
 		return (
 			entry.admin_email ||
 			entry.admin_user_name ||
@@ -199,7 +200,7 @@
 			selectedEntry = await adminAdminAuditAPI.get(entry.id);
 		} catch (err) {
 			console.error('Failed to load admin audit log detail:', err);
-			detailError = err instanceof Error ? err.message : 'Failed to load audit log detail';
+			detailError = err instanceof Error ? err.message : $LL.admin_admin_audit_detail_load_failed();
 		} finally {
 			detailLoading = false;
 		}
@@ -216,27 +217,46 @@
 		if (!data) return '-';
 		return JSON.stringify(data, null, 2);
 	}
+
+	function formatResult(result: AdminAuditLogEntry['result']) {
+		return result === 'success' ? $LL.admin_admin_audit_success() : $LL.admin_admin_audit_failure();
+	}
+
+	function formatSeverity(severity: AdminAuditLogEntry['severity']) {
+		switch (severity) {
+			case 'debug':
+				return $LL.admin_admin_audit_severity_debug();
+			case 'info':
+				return $LL.admin_admin_audit_severity_info();
+			case 'warn':
+				return $LL.admin_admin_audit_severity_warn();
+			case 'error':
+				return $LL.admin_admin_audit_severity_error();
+			case 'critical':
+				return $LL.admin_admin_audit_severity_critical();
+		}
+	}
 </script>
 
 <svelte:head>
-	<title>Admin Audit Logs - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_admin_audit_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Admin Audit Logs</h1>
-			<p class="page-description">View administrator activity and security events</p>
+			<h1 class="page-title">{$LL.admin_admin_audit_title()}</h1>
+			<p class="page-description">{$LL.admin_admin_audit_description()}</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={() => (showStats = !showStats)}>
 				<i class={showStats ? 'i-ph-chart-bar-horizontal' : 'i-ph-chart-bar'}></i>
-				{showStats ? 'Hide Stats' : 'Show Stats'}
+				{showStats ? $LL.admin_admin_audit_hide_stats() : $LL.admin_admin_audit_show_stats()}
 			</button>
 			<button class="btn btn-secondary" onclick={() => (showFilters = !showFilters)}>
 				<i class={showFilters ? 'i-ph-funnel-simple-x' : 'i-ph-funnel-simple'}></i>
-				{showFilters ? 'Hide Filters' : 'Show Filters'}
+				{showFilters ? $LL.admin_admin_audit_hide_filters() : $LL.admin_admin_audit_show_filters()}
 			</button>
 		</div>
 	</div>
@@ -253,30 +273,32 @@
 			{:else if stats}
 				<div class="stat-card">
 					<div class="stat-value">{stats.total_entries.toLocaleString()}</div>
-					<div class="stat-label">Total Entries</div>
+					<div class="stat-label">{$LL.admin_admin_audit_total_entries()}</div>
 				</div>
 				<div class="stat-card">
 					<div class="stat-value">{stats.recent_entries.toLocaleString()}</div>
-					<div class="stat-label">Last {stats.time_range_days} Days</div>
+					<div class="stat-label">
+						{$LL.admin_admin_audit_last_days({ days: stats.time_range_days })}
+					</div>
 				</div>
 				<div class="stat-card">
 					<div class="stat-value stat-success">
 						{stats.result_breakdown.success || 0}
 					</div>
-					<div class="stat-label">Success</div>
+					<div class="stat-label">{$LL.admin_admin_audit_success()}</div>
 				</div>
 				<div class="stat-card">
 					<div class="stat-value stat-danger">
 						{stats.result_breakdown.failure || 0}
 					</div>
-					<div class="stat-label">Failures</div>
+					<div class="stat-label">{$LL.admin_admin_audit_failures()}</div>
 				</div>
 			{/if}
 		</div>
 
 		{#if stats && stats.top_actions.length > 0}
 			<div class="panel">
-				<h3 class="panel-title">Top Actions (Last 7 Days)</h3>
+				<h3 class="panel-title">{$LL.admin_admin_audit_top_actions()}</h3>
 				<div class="top-actions-list">
 					{#each stats.top_actions.slice(0, 5) as actionStat (actionStat.action)}
 						<div class="top-action-item">
@@ -294,26 +316,28 @@
 		<div class="panel">
 			<div class="filter-row">
 				<div class="form-group">
-					<label for="admin_user_id" class="form-label">Actor / Admin User ID</label>
+					<label for="admin_user_id" class="form-label">
+						{$LL.admin_admin_audit_actor_filter()}
+					</label>
 					<input
 						id="admin_user_id"
 						type="text"
 						class="form-input"
-						placeholder="Filter by admin user ID..."
+						placeholder={$LL.admin_admin_audit_actor_filter_placeholder()}
 						bind:value={adminUserIdFilter}
 						oninput={handleSearchInput}
 					/>
 				</div>
 
 				<div class="form-group">
-					<label for="action" class="form-label">Action</label>
+					<label for="action" class="form-label">{$LL.admin_admin_audit_action()}</label>
 					<select
 						id="action"
 						class="form-select"
 						bind:value={actionFilter}
 						onchange={handleFilterChange}
 					>
-						<option value="">All Actions</option>
+						<option value="">{$LL.admin_admin_audit_all_actions()}</option>
 						{#each availableActions as action (action)}
 							<option value={action}>{formatAction(action)}</option>
 						{/each}
@@ -321,14 +345,16 @@
 				</div>
 
 				<div class="form-group">
-					<label for="resource_type" class="form-label">Resource Type</label>
+					<label for="resource_type" class="form-label">
+						{$LL.admin_admin_audit_resource_type()}
+					</label>
 					<select
 						id="resource_type"
 						class="form-select"
 						bind:value={resourceTypeFilter}
 						onchange={handleFilterChange}
 					>
-						<option value="">All Types</option>
+						<option value="">{$LL.admin_admin_audit_all_types()}</option>
 						{#each availableResourceTypes as resourceType (resourceType)}
 							<option value={resourceType}>{resourceType}</option>
 						{/each}
@@ -338,38 +364,38 @@
 
 			<div class="filter-row">
 				<div class="form-group">
-					<label for="result" class="form-label">Result</label>
+					<label for="result" class="form-label">{$LL.admin_admin_audit_result()}</label>
 					<select
 						id="result"
 						class="form-select"
 						bind:value={resultFilter}
 						onchange={handleFilterChange}
 					>
-						<option value="">All Results</option>
-						<option value="success">Success</option>
-						<option value="failure">Failure</option>
+						<option value="">{$LL.admin_admin_audit_all_results()}</option>
+						<option value="success">{$LL.admin_admin_audit_success()}</option>
+						<option value="failure">{$LL.admin_admin_audit_failure()}</option>
 					</select>
 				</div>
 
 				<div class="form-group">
-					<label for="severity" class="form-label">Severity</label>
+					<label for="severity" class="form-label">{$LL.admin_admin_audit_severity()}</label>
 					<select
 						id="severity"
 						class="form-select"
 						bind:value={severityFilter}
 						onchange={handleFilterChange}
 					>
-						<option value="">All Severities</option>
-						<option value="debug">Debug</option>
-						<option value="info">Info</option>
-						<option value="warn">Warning</option>
-						<option value="error">Error</option>
-						<option value="critical">Critical</option>
+						<option value="">{$LL.admin_admin_audit_all_severities()}</option>
+						<option value="debug">{$LL.admin_admin_audit_severity_debug()}</option>
+						<option value="info">{$LL.admin_admin_audit_severity_info()}</option>
+						<option value="warn">{$LL.admin_admin_audit_severity_warn()}</option>
+						<option value="error">{$LL.admin_admin_audit_severity_error()}</option>
+						<option value="critical">{$LL.admin_admin_audit_severity_critical()}</option>
 					</select>
 				</div>
 
 				<div class="form-group">
-					<label for="start_date" class="form-label">Start Date</label>
+					<label for="start_date" class="form-label">{$LL.admin_admin_audit_start_date()}</label>
 					<input
 						id="start_date"
 						type="date"
@@ -380,7 +406,7 @@
 				</div>
 
 				<div class="form-group">
-					<label for="end_date" class="form-label">End Date</label>
+					<label for="end_date" class="form-label">{$LL.admin_admin_audit_end_date()}</label>
 					<input
 						id="end_date"
 						type="date"
@@ -394,12 +420,12 @@
 			<div class="filter-actions">
 				<button class="btn btn-secondary" onclick={clearFilters}>
 					<i class="i-ph-x"></i>
-					Clear Filters
+					{$LL.admin_admin_audit_clear_filters()}
 				</button>
 			</div>
 
 			<p class="filter-hint">
-				Tip: Use date and severity filters to narrow down large result sets for better performance.
+				{$LL.admin_admin_audit_filter_hint()}
 			</p>
 		</div>
 	{/if}
@@ -407,7 +433,7 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading admin audit logs...</p>
+			<p>{$LL.admin_admin_audit_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
@@ -415,9 +441,11 @@
 		<div class="panel">
 			<div class="empty-state">
 				<i class="i-ph-clipboard-text empty-state-icon"></i>
-				<p class="empty-state-description">No admin audit log entries found</p>
+				<p class="empty-state-description">{$LL.admin_admin_audit_empty()}</p>
 				{#if adminUserIdFilter || actionFilter || resourceTypeFilter || resultFilter || severityFilter || startDate || endDate}
-					<button class="btn btn-secondary" onclick={clearFilters}>Clear Filters</button>
+					<button class="btn btn-secondary" onclick={clearFilters}>
+						{$LL.admin_admin_audit_clear_filters()}
+					</button>
 				{/if}
 			</div>
 		</div>
@@ -427,13 +455,13 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Date/Time</th>
-						<th>Action</th>
-						<th>Actor</th>
-						<th>Resource</th>
-						<th>Result</th>
-						<th>Severity</th>
-						<th>IP Address</th>
+						<th>{$LL.admin_admin_audit_date_time()}</th>
+						<th>{$LL.admin_admin_audit_action()}</th>
+						<th>{$LL.admin_admin_audit_actor()}</th>
+						<th>{$LL.admin_admin_audit_resource()}</th>
+						<th>{$LL.admin_admin_audit_result()}</th>
+						<th>{$LL.admin_admin_audit_severity()}</th>
+						<th>{$LL.admin_admin_audit_ip_address()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -457,7 +485,7 @@
 								{:else if getActorType(entry) === 'admin_user'}
 									<span class="cell-primary">{getActorLabel(entry)}</span>
 								{:else}
-									<span class="muted">System</span>
+									<span class="muted">{$LL.admin_admin_audit_system()}</span>
 								{/if}
 							</td>
 							<td class="muted">
@@ -471,10 +499,12 @@
 								{/if}
 							</td>
 							<td>
-								<span class={getResultBadgeClass(entry.result)}>{entry.result}</span>
+								<span class={getResultBadgeClass(entry.result)}>{formatResult(entry.result)}</span>
 							</td>
 							<td>
-								<span class={getSeverityBadgeClass(entry.severity)}>{entry.severity}</span>
+								<span class={getSeverityBadgeClass(entry.severity)}>
+									{formatSeverity(entry.severity)}
+								</span>
 							</td>
 							<td class="muted">{entry.ip_address || '-'}</td>
 						</tr>
@@ -487,8 +517,11 @@
 		{#if totalPages > 1}
 			<div class="pagination">
 				<p class="pagination-info">
-					Showing {(currentPage - 1) * limit + 1} to {Math.min(currentPage * limit, total)} of {total}
-					entries
+					{$LL.admin_admin_audit_pagination({
+						start: (currentPage - 1) * limit + 1,
+						end: Math.min(currentPage * limit, total),
+						total
+					})}
 				</p>
 				<div class="pagination-buttons">
 					<button
@@ -496,14 +529,14 @@
 						onclick={() => goToPage(currentPage - 1)}
 						disabled={currentPage <= 1}
 					>
-						Previous
+						{$LL.admin_admin_audit_previous()}
 					</button>
 					<button
 						class="btn btn-secondary btn-sm"
 						onclick={() => goToPage(currentPage + 1)}
 						disabled={currentPage >= totalPages}
 					>
-						Next
+						{$LL.admin_admin_audit_next()}
 					</button>
 				</div>
 			</div>
@@ -515,47 +548,50 @@
 <Modal
 	open={showDetailModal && !!selectedEntry}
 	onClose={closeDetailModal}
-	title="Audit Log Entry Details"
+	title={$LL.admin_admin_audit_detail_title()}
 	size="lg"
 >
 	{#if detailLoading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading audit log detail...</p>
+			<p>{$LL.admin_admin_audit_loading_detail()}</p>
 		</div>
 	{:else if detailError}
 		<div class="alert alert-error">{detailError}</div>
 	{:else if selectedEntry}
 		<div class="detail-grid">
 			<div class="detail-item">
-				<span class="detail-label">ID</span>
+				<span class="detail-label">{$LL.admin_admin_audit_id()}</span>
 				<span class="detail-value mono">{selectedEntry.id}</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Date/Time</span>
+				<span class="detail-label">{$LL.admin_admin_audit_date_time()}</span>
 				<span class="detail-value">{formatDateTime(selectedEntry.created_at)}</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Action</span>
+				<span class="detail-label">{$LL.admin_admin_audit_action()}</span>
 				<span class="detail-value">
 					<span class="badge badge-info">{formatAction(selectedEntry.action)}</span>
 				</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Result</span>
+				<span class="detail-label">{$LL.admin_admin_audit_result()}</span>
 				<span class="detail-value">
-					<span class={getResultBadgeClass(selectedEntry.result)}>{selectedEntry.result}</span>
+					<span class={getResultBadgeClass(selectedEntry.result)}>
+						{formatResult(selectedEntry.result)}
+					</span>
 				</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Severity</span>
+				<span class="detail-label">{$LL.admin_admin_audit_severity()}</span>
 				<span class="detail-value">
-					<span class={getSeverityBadgeClass(selectedEntry.severity)}>{selectedEntry.severity}</span
+					<span class={getSeverityBadgeClass(selectedEntry.severity)}
+						>{formatSeverity(selectedEntry.severity)}</span
 					>
 				</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Actor</span>
+				<span class="detail-label">{$LL.admin_admin_audit_actor()}</span>
 				<span class="detail-value">
 					{#if getActorType(selectedEntry) === 'machine'}
 						{getActorLabel(selectedEntry)}
@@ -563,69 +599,69 @@
 					{:else if getActorType(selectedEntry) === 'admin_user'}
 						{getActorLabel(selectedEntry)}
 					{:else}
-						<span class="muted">System</span>
+						<span class="muted">{$LL.admin_admin_audit_system()}</span>
 					{/if}
 				</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Admin User ID</span>
+				<span class="detail-label">{$LL.admin_admin_audit_admin_user_id()}</span>
 				<span class="detail-value mono">{selectedEntry.admin_user_id || '-'}</span>
 			</div>
 			{#if getActorType(selectedEntry) === 'machine'}
 				<div class="detail-item">
-					<span class="detail-label">Machine Principal ID</span>
+					<span class="detail-label">{$LL.admin_admin_audit_machine_principal_id()}</span>
 					<span class="detail-value mono"
 						>{selectedEntry.machine_principal_id || selectedEntry.actor_id || '-'}</span
 					>
 				</div>
 				<div class="detail-item">
-					<span class="detail-label">Machine Credential ID</span>
+					<span class="detail-label">{$LL.admin_admin_audit_machine_credential_id()}</span>
 					<span class="detail-value mono">{selectedEntry.machine_credential_id || '-'}</span>
 				</div>
 				<div class="detail-item">
-					<span class="detail-label">Machine Client ID</span>
+					<span class="detail-label">{$LL.admin_admin_audit_machine_client_id()}</span>
 					<span class="detail-value mono">{selectedEntry.machine_client_id || '-'}</span>
 				</div>
 				<div class="detail-item">
-					<span class="detail-label">Machine Client Auth</span>
+					<span class="detail-label">{$LL.admin_admin_audit_machine_client_auth()}</span>
 					<span class="detail-value">{selectedEntry.machine_client_auth_method || '-'}</span>
 				</div>
 			{/if}
 			<div class="detail-item">
-				<span class="detail-label">Resource Type</span>
+				<span class="detail-label">{$LL.admin_admin_audit_resource_type()}</span>
 				<span class="detail-value">{selectedEntry.resource_type || '-'}</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Resource ID</span>
+				<span class="detail-label">{$LL.admin_admin_audit_resource_id()}</span>
 				<span class="detail-value mono">{selectedEntry.resource_id || '-'}</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">IP Address</span>
+				<span class="detail-label">{$LL.admin_admin_audit_ip_address()}</span>
 				<span class="detail-value">{selectedEntry.ip_address || '-'}</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">User Agent</span>
+				<span class="detail-label">{$LL.admin_admin_audit_user_agent()}</span>
 				<span class="detail-value text-small">{selectedEntry.user_agent || '-'}</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Request ID</span>
+				<span class="detail-label">{$LL.admin_admin_audit_request_id()}</span>
 				<span class="detail-value mono">{selectedEntry.request_id || '-'}</span>
 			</div>
 		</div>
 
 		{#if selectedEntry.before || selectedEntry.after}
 			<div class="detail-section">
-				<h3 class="detail-section-title">Change Details</h3>
+				<h3 class="detail-section-title">{$LL.admin_admin_audit_change_details()}</h3>
 				<div class="change-details">
 					{#if selectedEntry.before}
 						<div class="change-block">
-							<h4 class="change-block-title">Before</h4>
+							<h4 class="change-block-title">{$LL.admin_admin_audit_before()}</h4>
 							<pre class="code-block">{formatJsonForDisplay(selectedEntry.before)}</pre>
 						</div>
 					{/if}
 					{#if selectedEntry.after}
 						<div class="change-block">
-							<h4 class="change-block-title">After</h4>
+							<h4 class="change-block-title">{$LL.admin_admin_audit_after()}</h4>
 							<pre class="code-block">{formatJsonForDisplay(selectedEntry.after)}</pre>
 						</div>
 					{/if}
@@ -635,13 +671,15 @@
 
 		{#if selectedEntry.metadata}
 			<div class="detail-section">
-				<h3 class="detail-section-title">Additional Metadata</h3>
+				<h3 class="detail-section-title">{$LL.admin_admin_audit_additional_metadata()}</h3>
 				<pre class="code-block">{formatJsonForDisplay(selectedEntry.metadata)}</pre>
 			</div>
 		{/if}
 	{/if}
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeDetailModal}>Close</button>
+		<button class="btn btn-secondary" onclick={closeDetailModal}>
+			{$LL.admin_admin_audit_close()}
+		</button>
 	{/snippet}
 </Modal>
 

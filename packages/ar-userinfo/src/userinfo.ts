@@ -25,6 +25,11 @@ import {
   canonicalProjectionToOIDCClaimsUser,
   canServeUserInfoWithPIIStatus,
   resolveOIDCPIIRequirement,
+  applyOIDCIdentityMapping,
+  createAuthContextFromHono,
+  OIDCIdentityMappingRuntimeError,
+  enforceOIDCAttributeReleaseConsent,
+  OIDCAttributeReleaseConsentRequiredError,
 } from '@authrim/ar-lib-core';
 import { SignJWT } from 'jose';
 
@@ -257,6 +262,86 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     log.error('Failed to resolve custom claims for userinfo', {}, ccError as Error);
   }
 
+  if (client_id && clientMetadata) {
+    try {
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      const mapped = await applyOIDCIdentityMapping({
+        adapter: authCtx.coreAdapter,
+        tenantId,
+        clientId: client_id,
+        selector: clientMetadata.identity_mapping,
+        claims: userClaims,
+      });
+      if (mapped.claims !== userClaims) {
+        Object.keys(userClaims).forEach((key) => {
+          delete userClaims[key];
+        });
+        Object.assign(userClaims, mapped.claims);
+      }
+    } catch (mappingError) {
+      log.error(
+        'Failed to apply OIDC identity mapping for userinfo',
+        { client_id },
+        mappingError as Error
+      );
+      if (mappingError instanceof OIDCIdentityMappingRuntimeError) {
+        return c.json(
+          {
+            error: 'invalid_client_metadata',
+            error_description: 'Client identity mapping configuration is invalid',
+          },
+          400
+        );
+      }
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to apply identity mapping',
+        },
+        500
+      );
+    }
+  }
+
+  if (client_id && clientMetadata) {
+    try {
+      await enforceOIDCAttributeReleaseConsent({
+        env: c.env,
+        tenantId,
+        subjectId: sub,
+        clientMetadata,
+        claims: userClaims,
+        target: 'userinfo',
+      });
+    } catch (consentError) {
+      log.warn('OIDC UserInfo claim release consent required', {
+        client_id,
+        reasonCodes:
+          consentError instanceof OIDCAttributeReleaseConsentRequiredError
+            ? consentError.reasonCodes
+            : [],
+      });
+      if (consentError instanceof OIDCAttributeReleaseConsentRequiredError) {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json(
+          {
+            error: 'consent_required',
+            error_description: describeOIDCUserInfoClaimReleaseConsentRequired(consentError),
+          },
+          403
+        );
+      }
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to evaluate claim release consent',
+        },
+        500
+      );
+    }
+  }
+
   // JWE: Check if client requires UserInfo encryption (RFC 7516)
   if (!client_id || !clientMetadata) {
     // If no client_id in token or metadata not found, return unencrypted response
@@ -391,4 +476,16 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   return c.json(userClaims);
+}
+
+function describeOIDCUserInfoClaimReleaseConsentRequired(
+  error: OIDCAttributeReleaseConsentRequiredError
+): string {
+  if (error.reasonCodes.includes('release.attribute_consent.attribute_set_changed')) {
+    return 'User consent is required because the UserInfo claim set has changed';
+  }
+  if (error.reasonCodes.includes('release.attribute_consent.every_time')) {
+    return 'User consent is required for this UserInfo claim release';
+  }
+  return 'User consent is required before releasing UserInfo claims';
 }

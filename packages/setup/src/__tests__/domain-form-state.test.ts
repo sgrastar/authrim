@@ -65,7 +65,7 @@ describe('computeApiDomainUiState', () => {
     ]);
   });
 
-  it('shows naked-domain examples with a distinct primary tenant when configured', () => {
+  it('keeps the primary tenant field hidden in naked-domain mode', () => {
     const state = computeApiDomainUiState({
       baseDomain: 'test.authrim.com',
       multiTenantChecked: true,
@@ -75,7 +75,7 @@ describe('computeApiDomainUiState', () => {
     });
 
     expect(state.showTenantFields).toBe(false);
-    expect(state.showPrimaryTenantRow).toBe(true);
+    expect(state.showPrimaryTenantRow).toBe(false);
     expect(state.nakedDomainHintMode).toBe('omit-tenant');
     expect(state.exampleRows).toEqual([
       {
@@ -104,7 +104,7 @@ describe('computeApiDomainUiState', () => {
     });
 
     expect(state.showTenantFields).toBe(false);
-    expect(state.showPrimaryTenantRow).toBe(true);
+    expect(state.showPrimaryTenantRow).toBe(false);
     expect(state.exampleRows).toEqual([
       {
         kind: 'initial-tenant',

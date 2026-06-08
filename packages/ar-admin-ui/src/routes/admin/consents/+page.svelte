@@ -16,6 +16,7 @@
 	import { InheritanceIndicator } from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// State management
 	let meta = $state<CategoryMetaFull | null>(null);
@@ -123,7 +124,7 @@
 			const clientsResult = await adminClientsAPI.list({ limit: 1000 });
 			clients = clientsResult.clients;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load consent settings';
+			error = err instanceof Error ? err.message : $LL.admin_consents_error_load();
 		} finally {
 			loading = false;
 		}
@@ -132,9 +133,7 @@
 	// Load client settings when client is selected
 	async function loadClientSettings(clientId: string) {
 		if (hasClientChanges) {
-			const confirmed = confirm(
-				'You have unsaved changes for the current client. Switching clients will discard these changes. Continue?'
-			);
+			const confirmed = confirm($LL.admin_consents_unsaved_client_confirm());
 			if (!confirmed) {
 				// Revert selection
 				selectedClientId = selectedClientId;
@@ -157,7 +156,7 @@
 			clientSettings = result;
 			clientPatches = [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load client settings';
+			error = err instanceof Error ? err.message : $LL.admin_consents_error_load_client();
 			clientSettings = null;
 		}
 	}
@@ -234,7 +233,7 @@
 		if (!tenantSettings || tenantPatches.length === 0) return;
 
 		if (!canEdit) {
-			error = 'You do not have permission to edit settings at this scope level';
+			error = $LL.admin_consents_error_no_permission_scope();
 			return;
 		}
 
@@ -257,7 +256,9 @@
 			tenantPatches = [];
 
 			const appliedCount = result.applied.length + result.cleared.length + result.disabled.length;
-			tenantSuccessMessage = `Successfully updated ${appliedCount} setting${appliedCount !== 1 ? 's' : ''}`;
+			tenantSuccessMessage = $LL.admin_consents_updated_settings({
+				count: appliedCount
+			});
 
 			await loadData();
 
@@ -266,9 +267,9 @@
 			}, 3000);
 		} catch (err) {
 			if (err instanceof SettingsConflictError) {
-				error = `Settings were modified by another user. Please reload and try again.`;
+				error = $LL.admin_consents_conflict();
 			} else {
-				error = err instanceof Error ? err.message : 'Failed to save tenant settings';
+				error = err instanceof Error ? err.message : $LL.admin_consents_error_save_tenant();
 			}
 		} finally {
 			tenantSaving = false;
@@ -280,7 +281,7 @@
 		if (!selectedClientId || !clientSettings || clientPatches.length === 0) return;
 
 		if (!canEdit) {
-			error = 'You do not have permission to edit client settings';
+			error = $LL.admin_consents_error_no_permission_client();
 			return;
 		}
 
@@ -299,7 +300,9 @@
 			clientPatches = [];
 
 			const appliedCount = result.applied.length + result.cleared.length + result.disabled.length;
-			clientSuccessMessage = `Successfully updated ${appliedCount} setting${appliedCount !== 1 ? 's' : ''}`;
+			clientSuccessMessage = $LL.admin_consents_updated_settings({
+				count: appliedCount
+			});
 
 			await loadClientSettings(selectedClientId);
 
@@ -308,9 +311,9 @@
 			}, 3000);
 		} catch (err) {
 			if (err instanceof SettingsConflictError) {
-				error = `Settings were modified by another user. Please reload and try again.`;
+				error = $LL.admin_consents_conflict();
 			} else {
-				error = err instanceof Error ? err.message : 'Failed to save client settings';
+				error = err instanceof Error ? err.message : $LL.admin_consents_error_save_client();
 			}
 		} finally {
 			clientSaving = false;
@@ -345,15 +348,15 @@
 </script>
 
 <svelte:head>
-	<title>Consents - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_consents_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Consents</h1>
-			<p class="page-description">Manage user consent settings at tenant and client levels</p>
+			<h1 class="page-title">{$LL.admin_consents_title()}</h1>
+			<p class="page-description">{$LL.admin_consents_description()}</p>
 		</div>
 	</div>
 
@@ -361,9 +364,9 @@
 	{#if error}
 		<div class="alert alert-error">
 			{error}
-			{#if error.includes('another user')}
+			{#if error === $LL.admin_consents_conflict()}
 				<button onclick={loadData} class="btn btn-sm btn-danger" style="margin-left: 12px;">
-					Reload
+					{$LL.admin_consents_reload()}
 				</button>
 			{/if}
 		</div>
@@ -371,18 +374,18 @@
 
 	{#if loading}
 		<div class="loading-state">
-			<p class="text-secondary">Loading consent settings...</p>
+			<p class="text-secondary">{$LL.admin_consents_loading()}</p>
 		</div>
 	{:else if meta && tenantSettings}
 		<!-- Section 1: Tenant-Level Consent Settings -->
 		<section class="consent-section tenant-section">
 			<div class="section-header">
 				<div class="section-header-left">
-					<span class="section-badge tenant">🏢 Tenant</span>
-					<h2 class="section-title">Tenant-Level Consent Settings</h2>
+					<span class="section-badge tenant">🏢 {$LL.admin_consents_tenant_badge()}</span>
+					<h2 class="section-title">{$LL.admin_consents_tenant_title()}</h2>
 				</div>
 				{#if !canEdit}
-					<span class="readonly-badge">🔒 Read-only</span>
+					<span class="readonly-badge">🔒 {$LL.admin_consents_readonly()}</span>
 				{/if}
 			</div>
 
@@ -393,7 +396,7 @@
 			<div class="settings-groups">
 				<!-- Display Settings -->
 				<div class="settings-group">
-					<h3 class="group-title">Display Settings</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_display()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.display as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -412,7 +415,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">
@@ -470,7 +473,7 @@
 
 				<!-- Requirements -->
 				<div class="settings-group">
-					<h3 class="group-title">Requirements</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_requirements()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.requirements as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -489,7 +492,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">{settingMeta.description}</p>
@@ -510,7 +513,7 @@
 
 				<!-- Caching -->
 				<div class="settings-group">
-					<h3 class="group-title">Caching</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_caching()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.caching as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -529,7 +532,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">
@@ -574,7 +577,7 @@
 
 				<!-- Policy Versioning -->
 				<div class="settings-group">
-					<h3 class="group-title">Policy Versioning</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_versioning()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.versioning as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -593,7 +596,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">{settingMeta.description}</p>
@@ -614,7 +617,7 @@
 
 				<!-- Expiration -->
 				<div class="settings-group">
-					<h3 class="group-title">Expiration</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_expiration()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.expiration as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -633,7 +636,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">{settingMeta.description}</p>
@@ -673,7 +676,7 @@
 
 				<!-- GDPR Data Export -->
 				<div class="settings-group">
-					<h3 class="group-title">GDPR Data Export</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_gdpr()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.gdpr as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -692,7 +695,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">{settingMeta.description}</p>
@@ -732,7 +735,7 @@
 
 				<!-- Other Settings -->
 				<div class="settings-group">
-					<h3 class="group-title">Other Settings</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_other()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.other as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -751,7 +754,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">
@@ -787,7 +790,7 @@
 
 				<!-- RBAC Features -->
 				<div class="settings-group">
-					<h3 class="group-title">RBAC Consent Features</h3>
+					<h3 class="group-title">{$LL.admin_consents_group_rbac()}</h3>
 					<div class="settings-form-card">
 						{#each CONSENT_SETTING_GROUPS.rbac as key (key)}
 							{@const settingMeta = meta.settings[key]}
@@ -806,7 +809,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">{settingMeta.description}</p>
@@ -833,7 +836,7 @@
 					disabled={!hasTenantChanges || tenantSaving}
 					class="btn btn-secondary"
 				>
-					Discard Changes
+					{$LL.admin_consents_discard()}
 				</button>
 				<button
 					onclick={saveTenantSettings}
@@ -841,8 +844,8 @@
 					class="btn btn-primary"
 				>
 					{tenantSaving
-						? 'Saving...'
-						: `Save Tenant Settings${hasTenantChanges ? ` (${tenantPatches.length})` : ''}`}
+						? $LL.admin_consents_saving()
+						: `${$LL.admin_consents_save_tenant_settings()}${hasTenantChanges ? ` (${tenantPatches.length})` : ''}`}
 				</button>
 			</div>
 		</section>
@@ -851,14 +854,14 @@
 		<section class="client-selector-section">
 			<div class="section-header">
 				<div class="section-header-left">
-					<span class="section-badge client">📦 Client</span>
-					<h2 class="section-title">Client-Specific Consent Overrides</h2>
+					<span class="section-badge client">📦 {$LL.admin_consents_client_badge()}</span>
+					<h2 class="section-title">{$LL.admin_consents_client_overrides_title()}</h2>
 				</div>
 			</div>
 
 			<div class="client-selector-wrapper">
 				<label for="client-select" class="client-selector-label"
-					>Select a client to configure consent overrides:</label
+					>{$LL.admin_consents_select_client_label()}</label
 				>
 				<select
 					id="client-select"
@@ -866,7 +869,7 @@
 					onchange={() => loadClientSettings(selectedClientId || '')}
 					class="client-selector"
 				>
-					<option value="">-- Select a client --</option>
+					<option value="">{$LL.admin_consents_select_client_placeholder()}</option>
 					{#each clients as client (client.client_id)}
 						<option value={client.client_id}>{client.client_name}</option>
 					{/each}
@@ -879,11 +882,15 @@
 			<section class="consent-section client-section">
 				<div class="section-header">
 					<div class="section-header-left">
-						<span class="section-badge client">📦 Client</span>
-						<h2 class="section-title">Client Settings: {selectedClientName}</h2>
+						<span class="section-badge client">📦 {$LL.admin_consents_client_badge()}</span>
+						<h2 class="section-title">
+							{$LL.admin_consents_client_settings_title({
+								name: selectedClientName || selectedClientId
+							})}
+						</h2>
 					</div>
 					{#if !canEdit}
-						<span class="readonly-badge">🔒 Read-only</span>
+						<span class="readonly-badge">🔒 {$LL.admin_consents_readonly()}</span>
 					{/if}
 				</div>
 
@@ -910,7 +917,7 @@
 												compact={true}
 											/>
 											{#if hasPendingChange}
-												<span class="setting-modified">● Modified</span>
+												<span class="setting-modified">● {$LL.admin_consents_modified()}</span>
 											{/if}
 										</div>
 										<p class="setting-description">{settingMeta.description}</p>
@@ -936,7 +943,7 @@
 						disabled={!hasClientChanges || clientSaving}
 						class="btn btn-secondary"
 					>
-						Discard Changes
+						{$LL.admin_consents_discard()}
 					</button>
 					<button
 						onclick={saveClientSettings}
@@ -944,8 +951,8 @@
 						class="btn btn-primary"
 					>
 						{clientSaving
-							? 'Saving...'
-							: `Save Client Settings${hasClientChanges ? ` (${clientPatches.length})` : ''}`}
+							? $LL.admin_consents_saving()
+							: `${$LL.admin_consents_save_client_settings()}${hasClientChanges ? ` (${clientPatches.length})` : ''}`}
 					</button>
 				</div>
 			</section>

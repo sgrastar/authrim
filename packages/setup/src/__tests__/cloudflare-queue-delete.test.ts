@@ -41,14 +41,14 @@ describe('Cloudflare Queue deletion helpers', () => {
     vi.unstubAllGlobals();
   });
 
-  it('targets the management Worker for queue consumer detachment', () => {
+  it('targets every environment Worker for queue consumer detachment', () => {
     expect(
       getQueueConsumerWorkerNamesForDeletion('test', [
         { name: 'test-ar-auth' },
         { name: 'test-ar-management' },
         { name: 'test-ar-token' },
       ])
-    ).toEqual(['test-ar-management']);
+    ).toEqual(['test-ar-auth', 'test-ar-management', 'test-ar-token']);
   });
 
   it('does not detach consumers from unrelated environment Workers', () => {
@@ -57,7 +57,7 @@ describe('Cloudflare Queue deletion helpers', () => {
         { name: 'prod-ar-management' },
         { name: 'test-ar-auth' },
       ])
-    ).toEqual([]);
+    ).toEqual(['test-ar-auth']);
   });
 
   it('filters lock-recorded queues to the requested environment', () => {
@@ -166,16 +166,65 @@ describe('Cloudflare Queue deletion helpers', () => {
       'test-audit-queue',
     ]);
   });
+
+  it('detaches Queues before Worker deletion and deletes Queues last', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [{ id: 'test-ar-auth' }, { id: 'test-ar-management' }]
+    );
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      queueConsumerDetachPropagationDelayMs: 0,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: () => {},
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.deleted.workers).toEqual(['test-ar-auth', 'test-ar-management']);
+    expect(result.deleted.queues).toEqual(['test-audit-queue']);
+
+    const wranglerCalls = execaMock.mock.calls
+      .map(([, args]) => args as string[])
+      .filter((args) => args[0] === 'wrangler');
+    const detachAuthIndex = wranglerCalls.findIndex((args) =>
+      args.join(' ').includes('queues consumer remove test-audit-queue test-ar-auth')
+    );
+    const detachManagementIndex = wranglerCalls.findIndex((args) =>
+      args.join(' ').includes('queues consumer remove test-audit-queue test-ar-management')
+    );
+    const deleteAuthIndex = wranglerCalls.findIndex((args) =>
+      args.join(' ').includes('delete --name test-ar-auth --force')
+    );
+    const deleteQueueIndex = wranglerCalls.findIndex((args) =>
+      args.join(' ').includes('queues delete test-audit-queue')
+    );
+
+    expect(detachAuthIndex).toBeGreaterThanOrEqual(0);
+    expect(detachManagementIndex).toBeGreaterThanOrEqual(0);
+    expect(deleteAuthIndex).toBeGreaterThan(detachAuthIndex);
+    expect(deleteAuthIndex).toBeGreaterThan(detachManagementIndex);
+    expect(deleteQueueIndex).toBeGreaterThan(deleteAuthIndex);
+  });
 });
 
-function mockCloudflareInventory(queues: Array<{ queue_name: string; queue_id: string }>): void {
+function mockCloudflareInventory(
+  queues: Array<{ queue_name: string; queue_id: string }>,
+  workers: Array<{ id: string }> = []
+): void {
   process.env.CLOUDFLARE_API_TOKEN = 'test-token';
   process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
 
   fetchMock.mockResolvedValue({
     ok: true,
     status: 200,
-    json: async () => ({ success: true, result: [] }),
+    json: async () => ({ success: true, result: workers }),
   });
 
   execaMock.mockImplementation(async (_command: string, args: string[]) => {
@@ -194,6 +243,12 @@ function mockCloudflareInventory(queues: Array<{ queue_name: string; queue_id: s
     }
     if (key === 'queues list') {
       return { exitCode: 0, stdout: JSON.stringify(queues), stderr: '' };
+    }
+    if (key.startsWith('queues consumer remove ')) {
+      return { exitCode: 0, stdout: '', stderr: '' };
+    }
+    if (key.startsWith('delete --name ')) {
+      return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (key === 'r2 bucket list' || key === 'pages project list') {
       return { exitCode: 0, stdout: '', stderr: '' };

@@ -57,8 +57,13 @@ if [ -z "$ENV" ]; then
     exit 1
 fi
 
+if [[ "$ENV" =~ \.\. ]] || [[ "$ENV" =~ / ]] || [[ "$ENV" =~ \\ ]] || [[ ! "$ENV" =~ ^[a-z][a-z0-9-]*$ ]]; then
+    echo -e "${RED}❌ Error: Invalid environment name '${ENV}'${NC}"
+    exit 1
+fi
+
 # Database name based on environment
-DB_NAME="${ENV}-authrim-users-db"
+DB_NAME="${ENV}-authrim-core-db"
 MIGRATION_DIR="migrations"
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

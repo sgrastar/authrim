@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminClientsAPI,
 		type ClaimReleasePolicy,
@@ -7,11 +8,16 @@
 		type CreateClientInput
 	} from '$lib/api/admin-clients';
 	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingFieldMappingSetSummary
+	} from '$lib/api/admin-identity-mapping';
+	import {
 		createPresetClientDownstreamGrantForm,
 		toClientDownstreamGrantCreateInput
 	} from '$lib/admin/client-downstream-grant';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
+	import { onMount } from 'svelte';
 
 	// Preset configuration
 	interface PresetConfig {
@@ -165,6 +171,8 @@
 		ASC_TRANSFORMED_CLAIMS.map((claim) => claim.id)
 	);
 	let downstreamGrantForm = $state(createPresetClientDownstreamGrantForm('custom'));
+	let identityMappingFieldMappingSetId = $state('');
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 
 	// CORS settings
 	let tenantSettings = $state<CategorySettings | null>(null);
@@ -203,6 +211,17 @@
 			}))
 		};
 	}
+
+	onMount(() => {
+		adminIdentityMappingAPI
+			.listFieldMappingSets()
+			.then((result) => {
+				fieldMappingSets = result.fieldMappingSets;
+			})
+			.catch((err) => {
+				console.warn('Failed to load field mapping sets:', err);
+			});
+	});
 
 	/**
 	 * Check if an origin is in the CORS allowlist (with wildcard support)
@@ -289,7 +308,7 @@
 			}
 		} catch (err) {
 			console.error('Failed to add to CORS:', err);
-			error = err instanceof Error ? err.message : 'Failed to add to CORS';
+			error = err instanceof Error ? err.message : $LL.admin_clients_new_add_cors_failed();
 		} finally {
 			addingToCors = null;
 		}
@@ -369,21 +388,93 @@
 			if (!line) continue;
 			const separatorIndex = line.indexOf(':');
 			if (separatorIndex <= 0) {
-				throw new Error(`Claims policy line ${index + 1} must use "claim: policy"`);
+				throw new Error($LL.admin_clients_new_claim_policy_line_format({ line: index + 1 }));
 			}
 			const claim = line.slice(0, separatorIndex).trim();
 			const policyValue = line.slice(separatorIndex + 1).trim() as ClaimReleasePolicy;
 			if (!claim) {
-				throw new Error(`Claims policy line ${index + 1} has an empty claim name`);
+				throw new Error($LL.admin_clients_new_claim_policy_empty_claim({ line: index + 1 }));
 			}
 			if (!CLAIM_RELEASE_POLICIES.has(policyValue)) {
-				throw new Error(
-					`Claims policy line ${index + 1} must use scope_required, claims_allowed, or forbidden`
-				);
+				throw new Error($LL.admin_clients_new_claim_policy_invalid({ line: index + 1 }));
 			}
 			policy[claim] = policyValue;
 		}
 		return Object.keys(policy).length > 0 ? policy : null;
+	}
+
+	function presetDescription(presetId: string): string {
+		switch (presetId) {
+			case 'authrim-websdk':
+				return $LL.admin_clients_new_preset_websdk_desc();
+			case 'spa-public':
+				return $LL.admin_clients_new_preset_spa_desc();
+			case 'mobile-native':
+				return $LL.admin_clients_new_preset_mobile_desc();
+			case 'server-confidential':
+				return $LL.admin_clients_new_preset_server_desc();
+			case 'first-party-web':
+				return $LL.admin_clients_new_preset_first_party_desc();
+			case 'm2m-service':
+				return $LL.admin_clients_new_preset_m2m_desc();
+			case 'iot-device':
+				return $LL.admin_clients_new_preset_iot_desc();
+			default:
+				return $LL.admin_clients_new_preset_custom_desc();
+		}
+	}
+
+	function grantTypeLabel(grantType: string): string {
+		switch (grantType) {
+			case 'authorization_code':
+				return $LL.admin_clients_new_grant_type_authorization_code();
+			case 'refresh_token':
+				return $LL.admin_clients_new_grant_type_refresh_token();
+			case 'client_credentials':
+				return $LL.admin_clients_new_grant_type_client_credentials();
+			case 'urn:ietf:params:oauth:grant-type:device_code':
+				return $LL.admin_clients_new_grant_type_device_code();
+			default:
+				return grantType;
+		}
+	}
+
+	function responseTypeLabel(responseType: string): string {
+		switch (responseType) {
+			case 'code':
+				return $LL.admin_clients_new_response_code_recommended();
+			case 'token':
+				return $LL.admin_clients_new_response_token_implicit();
+			case 'id_token':
+				return $LL.admin_clients_new_response_id_token_implicit();
+			default:
+				return responseType;
+		}
+	}
+
+	function transformedClaimLabel(claimId: string): string {
+		switch (claimId) {
+			case 'age_over_13':
+				return $LL.admin_clients_new_claim_age_over_13();
+			case 'age_over_18':
+				return $LL.admin_clients_new_claim_age_over_18();
+			case 'age_over_20':
+				return $LL.admin_clients_new_claim_age_over_20();
+			case 'email_domain':
+				return $LL.admin_clients_new_claim_email_domain();
+			case 'phone_country_code':
+				return $LL.admin_clients_new_claim_phone_country_code();
+			case 'address_country':
+				return $LL.admin_clients_new_claim_address_country();
+			default:
+				return claimId;
+		}
+	}
+
+	function clientTypeLabel(clientType: PresetConfig['clientType'] | undefined): string {
+		return clientType === 'confidential'
+			? $LL.admin_clients_new_client_type_confidential()
+			: $LL.admin_clients_new_client_type_public();
 	}
 
 	function toggleAscAllowedTransformedClaim(claimId: string) {
@@ -398,13 +489,13 @@
 
 	async function handleSubmit() {
 		if (!clientName.trim()) {
-			error = 'Client name is required';
+			error = $LL.admin_clients_new_client_name_error();
 			return;
 		}
 
 		const validRedirectUris = redirectUris.filter((uri) => uri.trim());
 		if (selectedPreset?.requiresRedirectUri && validRedirectUris.length === 0) {
-			error = 'At least one redirect URI is required';
+			error = $LL.admin_clients_new_redirect_required_error();
 			return;
 		}
 
@@ -427,6 +518,12 @@
 				require_pkce: requirePkce,
 				allow_claims_without_scope: allowClaimsWithoutScope,
 				claims_parameter_policy: claimsParameterPolicy,
+				identity_mapping: identityMappingFieldMappingSetId
+					? {
+							fieldMappingSetId: identityMappingFieldMappingSetId,
+							destinationNamespace: 'oidc.claim'
+						}
+					: null,
 				asc_enabled: ascEnabled,
 				asc_protected_request_required: ascProtectedRequestRequired,
 				asc_sao_enabled: ascSaoEnabled,
@@ -442,7 +539,7 @@
 			loadTenantSettings();
 		} catch (err) {
 			console.error('Failed to create client:', err);
-			error = err instanceof Error ? err.message : 'Failed to create client';
+			error = err instanceof Error ? err.message : $LL.admin_clients_new_create_failed();
 		} finally {
 			loading = false;
 		}
@@ -454,20 +551,20 @@
 </script>
 
 <svelte:head>
-	<title>Create OAuth Client - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_clients_new_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
-	<a href="/admin/clients" class="back-link">← Back to Clients</a>
+	<a href="/admin/clients" class="back-link">← {$LL.admin_clients_new_back()}</a>
 
-	<h1 class="page-title">Create OAuth Client</h1>
+	<h1 class="page-title">{$LL.admin_clients_new_title()}</h1>
 
 	{#if step === 1}
 		<!-- Step 1: Preset Selection -->
 		<div class="panel">
-			<h2 class="panel-title">Step 1: Select Application Type</h2>
+			<h2 class="panel-title">{$LL.admin_clients_new_step1_title()}</h2>
 			<p class="modal-description">
-				Choose the type that best matches your application. This will configure optimal defaults.
+				{$LL.admin_clients_new_step1_desc()}
 			</p>
 
 			<div class="preset-grid">
@@ -477,16 +574,16 @@
 						<div class="preset-name">
 							{preset.name}
 							{#if preset.badge}
-								<span class="preset-badge">{preset.badge}</span>
+								<span class="preset-badge">{$LL.admin_clients_new_badge_recommended()}</span>
 							{/if}
 						</div>
-						<div class="preset-description">{preset.description}</div>
+						<div class="preset-description">{presetDescription(preset.id)}</div>
 						<span
 							class="preset-type-badge {preset.clientType === 'confidential'
 								? 'preset-type-confidential'
 								: 'preset-type-public'}"
 						>
-							{preset.clientType}
+							{clientTypeLabel(preset.clientType)}
 						</span>
 					</button>
 				{/each}
@@ -497,8 +594,12 @@
 		<div class="panel">
 			<div class="panel-header">
 				<div>
-					<h2 class="panel-title">Step 2: Configure {selectedPreset?.name} Client</h2>
-					<p class="modal-description">{selectedPreset?.description}</p>
+					<h2 class="panel-title">
+						{$LL.admin_clients_new_step2_title({ name: selectedPreset?.name ?? '' })}
+					</h2>
+					<p class="modal-description">
+						{selectedPreset ? presetDescription(selectedPreset.id) : ''}
+					</p>
 				</div>
 				<button
 					class="btn btn-secondary btn-sm"
@@ -507,7 +608,7 @@
 						selectedPreset = null;
 					}}
 				>
-					Change Type
+					{$LL.admin_clients_new_change_type()}
 				</button>
 			</div>
 
@@ -524,27 +625,29 @@
 				<!-- Client Name -->
 				<div class="form-group">
 					<label for="clientName" class="form-label">
-						Client Name <span style="color: var(--danger);">*</span>
+						{$LL.admin_clients_new_client_name_required()}
 					</label>
 					<input
 						id="clientName"
 						type="text"
 						class="form-input"
 						bind:value={clientName}
-						placeholder="My Application"
+						placeholder={$LL.admin_clients_new_client_name_placeholder()}
 						required
 					/>
 				</div>
 
 				<div class="form-group">
-					<label for="clientDescription" class="form-label">Description</label>
+					<label for="clientDescription" class="form-label">
+						{$LL.admin_clients_new_description()}
+					</label>
 					<textarea
 						id="clientDescription"
 						class="form-input textarea-input"
 						bind:value={clientDescription}
-						placeholder="Internal memo for admins"
+						placeholder={$LL.admin_clients_new_description_placeholder()}
 					></textarea>
-					<p class="form-hint">Optional admin memo. This is not exposed as OIDC metadata.</p>
+					<p class="form-hint">{$LL.admin_clients_new_description_hint()}</p>
 				</div>
 
 				<!-- Redirect URIs -->
@@ -552,10 +655,10 @@
 					<div class="form-group">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
 						<label class="form-label">
-							Redirect URIs <span style="color: var(--danger);">*</span>
+							{$LL.admin_clients_new_redirect_uris_required()}
 						</label>
 						<p class="form-hint" style="margin-bottom: 8px;">
-							The URLs where users will be redirected after authentication
+							{$LL.admin_clients_new_redirect_hint()}
 						</p>
 						{#each redirectUris as uri, index (index)}
 							<div class="input-copy-group" style="margin-bottom: 8px;">
@@ -578,21 +681,26 @@
 							</div>
 						{/each}
 						<button type="button" class="btn-add" onclick={addRedirectUri}>
-							+ Add Redirect URI
+							+ {$LL.admin_clients_new_add_redirect_uri()}
 						</button>
 					</div>
 				{:else}
 					<div class="info-box">
-						<p>ℹ️ {selectedPreset?.name} clients don't require redirect URIs</p>
+						<p>
+							{$LL.admin_clients_new_no_redirect_required({
+								name: selectedPreset?.name ?? ''
+							})}
+						</p>
 					</div>
 				{/if}
 
 				<!-- Applied Settings Summary -->
 				<div class="settings-summary">
-					<h3 class="settings-summary-title">Applied Settings</h3>
+					<h3 class="settings-summary-title">{$LL.admin_clients_new_applied_settings()}</h3>
 					<div class="settings-summary-grid">
 						<div class="settings-summary-item">
-							<span class="settings-summary-label">Grant Types:</span>
+							<span class="settings-summary-label">{$LL.admin_clients_new_grant_types_label()}</span
+							>
 							<span class="settings-summary-value">
 								{grantTypes
 									.map((gt) => gt.replace('urn:ietf:params:oauth:grant-type:', ''))
@@ -600,26 +708,36 @@
 							</span>
 						</div>
 						<div class="settings-summary-item">
-							<span class="settings-summary-label">Client Type:</span>
-							<span class="settings-summary-value">{selectedPreset?.clientType}</span>
+							<span class="settings-summary-label">{$LL.admin_clients_new_client_type_label()}</span
+							>
+							<span class="settings-summary-value"
+								>{clientTypeLabel(selectedPreset?.clientType)}</span
+							>
 						</div>
 						<div class="settings-summary-item">
-							<span class="settings-summary-label">PKCE:</span>
-							<span class="settings-summary-value">{requirePkce ? 'Required' : 'Optional'}</span>
+							<span class="settings-summary-label">{$LL.admin_clients_new_pkce_label()}</span>
+							<span class="settings-summary-value">
+								{requirePkce ? $LL.admin_clients_new_required() : $LL.admin_clients_new_optional()}
+							</span>
 						</div>
 						<div class="settings-summary-item">
-							<span class="settings-summary-label">Auth Method:</span>
+							<span class="settings-summary-label">{$LL.admin_clients_new_auth_method_label()}</span
+							>
 							<span class="settings-summary-value">{tokenEndpointAuthMethod}</span>
 						</div>
 						{#if tokenEndpointAuthMethod === 'none'}
 							<div class="settings-summary-item">
-								<span class="settings-summary-label">Browser Mode:</span>
+								<span class="settings-summary-label"
+									>{$LL.admin_clients_new_browser_mode_label()}</span
+								>
 								<span class="settings-summary-value"
-									>{browserPublicClientMode || 'server default'}</span
+									>{browserPublicClientMode || $LL.admin_clients_new_server_default()}</span
 								>
 							</div>
 							<div class="settings-summary-item">
-								<span class="settings-summary-label">Browser Refresh:</span>
+								<span class="settings-summary-label">
+									{$LL.admin_clients_new_browser_refresh_label()}
+								</span>
 								<span class="settings-summary-value">{browserRefreshTokenPolicy}</span>
 							</div>
 						{/if}
@@ -634,7 +752,7 @@
 						onclick={() => (showAdvanced = !showAdvanced)}
 					>
 						<span class="advanced-toggle-arrow" class:open={showAdvanced}>▶</span>
-						Advanced Settings
+						{$LL.admin_clients_new_advanced_settings()}
 					</button>
 
 					{#if showAdvanced}
@@ -642,16 +760,16 @@
 							<!-- Grant Types -->
 							<div class="form-group">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">Grant Types</label>
+								<label class="form-label">{$LL.admin_client_detail_grantTypes()}</label>
 								<div class="checkbox-list">
-									{#each [{ id: 'authorization_code', label: 'Authorization Code' }, { id: 'refresh_token', label: 'Refresh Token' }, { id: 'client_credentials', label: 'Client Credentials' }, { id: 'urn:ietf:params:oauth:grant-type:device_code', label: 'Device Code' }] as grant (grant.id)}
+									{#each [{ id: 'authorization_code' }, { id: 'refresh_token' }, { id: 'client_credentials' }, { id: 'urn:ietf:params:oauth:grant-type:device_code' }] as grant (grant.id)}
 										<label class="checkbox-list-item">
 											<input
 												type="checkbox"
 												checked={grantTypes.includes(grant.id)}
 												onchange={() => toggleGrantType(grant.id)}
 											/>
-											{grant.label}
+											{grantTypeLabel(grant.id)}
 										</label>
 									{/each}
 								</div>
@@ -661,16 +779,14 @@
 							{#if selectedPreset?.id === 'custom'}
 								<div class="form-group">
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">Response Types</label>
+									<label class="form-label">{$LL.admin_clients_new_response_types()}</label>
 									<div class="warning-box">
 										<p>
-											⚠️ <code>token</code> and <code>id_token</code> response types use implicit
-											flow. For security reasons, we recommend using <code>code</code> only unless you
-											have specific requirements.
+											{$LL.admin_clients_new_response_implicit_warning()}
 										</p>
 									</div>
 									<div class="checkbox-list">
-										{#each [{ id: 'code', label: 'code (recommended)' }, { id: 'token', label: 'token (implicit)' }, { id: 'id_token', label: 'id_token (implicit)' }] as response (response.id)}
+										{#each [{ id: 'code' }, { id: 'token' }, { id: 'id_token' }] as response (response.id)}
 											<label class="checkbox-list-item">
 												<input
 													type="checkbox"
@@ -683,7 +799,7 @@
 														}
 													}}
 												/>
-												{response.label}
+												{responseTypeLabel(response.id)}
 											</label>
 										{/each}
 									</div>
@@ -695,8 +811,8 @@
 								<div class="form-group">
 									<ToggleSwitch
 										bind:checked={requirePkce}
-										label="Require PKCE"
-										description="Proof Key for Code Exchange - recommended for all clients"
+										label={$LL.admin_clients_new_require_pkce()}
+										description={$LL.admin_clients_new_require_pkce_desc()}
 									/>
 								</div>
 							{/if}
@@ -705,36 +821,39 @@
 								<div class="form-grid">
 									<div class="form-group">
 										<label for="browserPublicClientMode" class="form-label">
-											Browser Public Client Mode
+											{$LL.admin_clients_new_browser_public_mode()}
 										</label>
 										<select
 											id="browserPublicClientMode"
 											class="form-select"
 											bind:value={browserPublicClientMode}
 										>
-											<option value="">Server default</option>
-											<option value="strict">Strict DPoP token profile</option>
-											<option value="cookie_fallback">Hosted cookie finalize only</option>
+											<option value="">{$LL.admin_clients_new_server_default()}</option>
+											<option value="strict">{$LL.admin_clients_new_strict_dpop()}</option>
+											<option value="cookie_fallback">
+												{$LL.admin_clients_new_cookie_fallback()}
+											</option>
 										</select>
 										<p class="form-hint">
-											WebSDK and SPA token clients should use strict DPoP. Cookie fallback does not
-											exchange OAuth codes in browser JavaScript.
+											{$LL.admin_clients_new_browser_public_mode_hint()}
 										</p>
 									</div>
 									<div class="form-group">
 										<label for="browserRefreshTokenPolicy" class="form-label">
-											Browser Refresh Token Policy
+											{$LL.admin_clients_new_browser_refresh_policy()}
 										</label>
 										<select
 											id="browserRefreshTokenPolicy"
 											class="form-select"
 											bind:value={browserRefreshTokenPolicy}
 										>
-											<option value="disabled">Disabled</option>
-											<option value="dpop_bound">DPoP-bound refresh tokens</option>
+											<option value="disabled">{$LL.admin_clients_new_disabled()}</option>
+											<option value="dpop_bound">
+												{$LL.admin_clients_new_dpop_refresh_tokens()}
+											</option>
 										</select>
 										<p class="form-hint">
-											Public browser clients only receive refresh tokens when this is DPoP-bound.
+											{$LL.admin_clients_new_browser_refresh_hint()}
 										</p>
 									</div>
 								</div>
@@ -742,7 +861,8 @@
 
 							<!-- Scope -->
 							<div class="form-group">
-								<label for="scope" class="form-label">Default Scope</label>
+								<label for="scope" class="form-label">{$LL.admin_clients_new_default_scope()}</label
+								>
 								<input
 									id="scope"
 									type="text"
@@ -753,19 +873,41 @@
 							</div>
 
 							<div class="settings-summary settings-summary-subsection">
-								<h3 class="settings-summary-title">OIDC Claims & ASC</h3>
+								<h3 class="settings-summary-title">{$LL.admin_clients_new_oidc_claims_asc()}</h3>
 								<div class="advanced-panel" style="padding: 0; border: none;">
+									<div class="form-group">
+										<label for="identityMappingFieldMapping" class="form-label">
+											OIDC claims field mapping set
+										</label>
+										<select
+											id="identityMappingFieldMapping"
+											class="form-select"
+											bind:value={identityMappingFieldMappingSetId}
+										>
+											<option value="">Tenant default / no client override</option>
+											{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+												<option value={fieldMappingSet.id}>
+													{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
+												</option>
+											{/each}
+										</select>
+										<p class="form-hint">
+											Selects the active Field Mapping Set used for OIDC UserInfo and token claims
+											for this client.
+										</p>
+									</div>
+
 									<div class="form-group">
 										<ToggleSwitch
 											bind:checked={allowClaimsWithoutScope}
-											label="Allow Claims Without Scope"
-											description="Allow approved claims requests even when the matching scope is absent"
+											label={$LL.admin_clients_new_allow_claims_without_scope()}
+											description={$LL.admin_clients_new_allow_claims_without_scope_desc()}
 										/>
 									</div>
 
 									<div class="form-group">
 										<label class="form-label" for="claimsParameterPolicy">
-											Claims Parameter Policy
+											{$LL.admin_clients_new_claims_policy()}
 										</label>
 										<textarea
 											id="claimsParameterPolicy"
@@ -775,7 +917,7 @@
 											placeholder="email: claims_allowed&#10;birthdate: claims_allowed"
 										></textarea>
 										<p class="form-hint">
-											One claim per line. Policies: scope_required, claims_allowed, forbidden.
+											{$LL.admin_clients_new_claims_policy_hint()}
 										</p>
 									</div>
 
@@ -783,39 +925,41 @@
 										<div class="form-group">
 											<ToggleSwitch
 												bind:checked={ascEnabled}
-												label="Enable Advanced Syntax for Claims"
-												description="Accept _asc in the claims parameter"
+												label={$LL.admin_clients_new_enable_asc()}
+												description={$LL.admin_clients_new_enable_asc_desc()}
 											/>
 										</div>
 
 										<div class="form-group">
 											<ToggleSwitch
 												bind:checked={ascProtectedRequestRequired}
-												label="Require Protected ASC Requests"
-												description="Require PAR or JAR for ASC request processing"
+												label={$LL.admin_clients_new_require_protected_asc()}
+												description={$LL.admin_clients_new_require_protected_asc_desc()}
 											/>
 										</div>
 
 										<div class="form-group">
 											<ToggleSwitch
 												bind:checked={ascSaoEnabled}
-												label="Enable Selective Abort/Omit"
-												description="Allow SAO rules under _asc"
+												label={$LL.admin_clients_new_enable_sao()}
+												description={$LL.admin_clients_new_enable_sao_desc()}
 											/>
 										</div>
 
 										<div class="form-group">
 											<ToggleSwitch
 												bind:checked={ascTransformedClaimsEnabled}
-												label="Enable Transformed Claims"
-												description="Allow predefined transformed claims"
+												label={$LL.admin_clients_new_enable_transformed_claims()}
+												description={$LL.admin_clients_new_enable_transformed_claims_desc()}
 											/>
 										</div>
 									</div>
 
 									<div class="form-group">
 										<!-- svelte-ignore a11y_label_has_associated_control -->
-										<label class="form-label">Allowed Transformed Claims</label>
+										<label class="form-label">
+											{$LL.admin_clients_new_allowed_transformed_claims()}
+										</label>
 										<div class="checkbox-list">
 											{#each ASC_TRANSFORMED_CLAIMS as transformedClaim (transformedClaim.id)}
 												<label class="checkbox-list-item">
@@ -824,7 +968,7 @@
 														checked={ascAllowedTransformedClaims.includes(transformedClaim.id)}
 														onchange={() => toggleAscAllowedTransformedClaim(transformedClaim.id)}
 													/>
-													{transformedClaim.label}
+													{transformedClaimLabel(transformedClaim.id)}
 												</label>
 											{/each}
 										</div>
@@ -833,47 +977,51 @@
 							</div>
 
 							<div class="settings-summary settings-summary-subsection">
-								<h3 class="settings-summary-title">Service & Downstream Grant</h3>
+								<h3 class="settings-summary-title">
+									{$LL.admin_clients_new_service_downstream_grant()}
+								</h3>
 								<p class="form-hint" style="margin-bottom: 12px;">
-									Use these fields when this client will exchange downstream subject tokens or
-									access protected product resources such as
-									<code>svc://op-userinfo/customer-profile</code>.
+									{$LL.admin_clients_new_service_downstream_hint({
+										resource: 'svc://op-userinfo/customer-profile'
+									})}
 								</p>
 								<div class="advanced-panel" style="padding: 0; border: none;">
 									<div class="form-group">
 										<ToggleSwitch
 											bind:checked={downstreamGrantForm.token_exchange_allowed}
-											label="Enable Token Exchange"
-											description="Allow RFC 8693 token exchange for this client"
+											label={$LL.admin_clients_new_enable_token_exchange()}
+											description={$LL.admin_clients_new_enable_token_exchange_desc()}
 										/>
 									</div>
 
 									<div class="form-group">
 										<ToggleSwitch
 											bind:checked={downstreamGrantForm.client_credentials_allowed}
-											label="Allow Client Credentials"
-											description="Allow this client to authenticate as a service"
+											label={$LL.admin_clients_new_allow_client_credentials()}
+											description={$LL.admin_clients_new_allow_client_credentials_desc()}
 										/>
 									</div>
 
 									<div class="form-group">
-										<label class="form-label" for="delegationMode">Delegation Mode</label>
+										<label class="form-label" for="delegationMode">
+											{$LL.admin_clients_new_delegation_mode()}
+										</label>
 										<select
 											id="delegationMode"
 											class="form-select"
 											bind:value={downstreamGrantForm.delegation_mode}
 										>
-											<option value="none">None</option>
-											<option value="delegation">Delegation</option>
-											<option value="impersonation">Impersonation</option>
+											<option value="none">{$LL.admin_clients_new_delegation_none()}</option>
+											<option value="delegation">{$LL.admin_clients_new_delegation()}</option>
+											<option value="impersonation">{$LL.admin_clients_new_impersonation()}</option>
 										</select>
-										<p class="form-hint">How downstream grants should represent the actor.</p>
+										<p class="form-hint">{$LL.admin_clients_new_delegation_hint()}</p>
 									</div>
 
 									<div class="form-grid">
 										<div class="form-group">
 											<label class="form-label" for="downstreamDefaultAudience">
-												Default Audience
+												{$LL.admin_clients_new_default_audience()}
 											</label>
 											<input
 												id="downstreamDefaultAudience"
@@ -882,11 +1030,15 @@
 												bind:value={downstreamGrantForm.default_audience}
 												placeholder="svc://op-userinfo/customer-profile"
 											/>
-											<p class="form-hint">Audience used for exchanged downstream access tokens.</p>
+											<p class="form-hint">
+												{$LL.admin_clients_new_default_audience_hint()}
+											</p>
 										</div>
 
 										<div class="form-group">
-											<label class="form-label" for="downstreamDefaultScope">Default Scope</label>
+											<label class="form-label" for="downstreamDefaultScope">
+												{$LL.admin_clients_new_default_scope()}
+											</label>
 											<input
 												id="downstreamDefaultScope"
 												type="text"
@@ -895,13 +1047,15 @@
 												placeholder="openid profile"
 											/>
 											<p class="form-hint">
-												Applied when a downstream grant does not request scope.
+												{$LL.admin_clients_new_default_scope_hint()}
 											</p>
 										</div>
 									</div>
 
 									<div class="form-group">
-										<label class="form-label" for="allowedScopes">Allowed Scopes</label>
+										<label class="form-label" for="allowedScopes">
+											{$LL.admin_clients_new_allowed_scopes()}
+										</label>
 										<input
 											id="allowedScopes"
 											type="text"
@@ -910,14 +1064,14 @@
 											placeholder="openid profile profile_export"
 										/>
 										<p class="form-hint">
-											Space or comma separated. Leave blank to allow any scope.
+											{$LL.admin_clients_new_allowed_scopes_hint()}
 										</p>
 									</div>
 
 									<div class="form-grid">
 										<div class="form-group">
 											<label class="form-label" for="allowedSubjectTokenClients">
-												Allowed Subject Token Clients
+												{$LL.admin_clients_new_allowed_subject_token_clients()}
 											</label>
 											<textarea
 												id="allowedSubjectTokenClients"
@@ -927,13 +1081,13 @@
 												placeholder="svc-client-a&#10;svc-client-b"
 											></textarea>
 											<p class="form-hint">
-												One client ID per line. Restricts who can present subject tokens.
+												{$LL.admin_clients_new_allowed_subject_token_clients_hint()}
 											</p>
 										</div>
 
 										<div class="form-group">
 											<label class="form-label" for="allowedTokenExchangeResources">
-												Allowed Token Exchange Resources
+												{$LL.admin_clients_new_allowed_token_exchange_resources()}
 											</label>
 											<textarea
 												id="allowedTokenExchangeResources"
@@ -943,7 +1097,7 @@
 												placeholder="svc://op-userinfo/customer-profile&#10;svc://op-userinfo/customer-export"
 											></textarea>
 											<p class="form-hint">
-												One audience/resource per line. Restricts downstream resource exchange.
+												{$LL.admin_clients_new_allowed_token_exchange_resources_hint()}
 											</p>
 										</div>
 									</div>
@@ -955,9 +1109,9 @@
 
 				<!-- Submit -->
 				<div class="form-actions">
-					<a href="/admin/clients" class="btn btn-secondary">Cancel</a>
+					<a href="/admin/clients" class="btn btn-secondary">{$LL.admin_clients_new_cancel()}</a>
 					<button type="submit" class="btn btn-primary" disabled={loading}>
-						{loading ? 'Creating...' : 'Create Client'}
+						{loading ? $LL.admin_clients_new_creating() : $LL.admin_clients_new_create_client()}
 					</button>
 				</div>
 			</form>
@@ -967,23 +1121,23 @@
 		<div class="panel">
 			<div class="success-center">
 				<div class="success-icon">✅</div>
-				<h2 class="success-title">Client Created Successfully</h2>
+				<h2 class="success-title">{$LL.admin_clients_new_success_title()}</h2>
 				<p class="success-description">
-					Save these credentials - the client secret will only be shown once!
+					{$LL.admin_clients_new_success_desc()}
 				</p>
 			</div>
 
 			<!-- Client ID -->
 			<div class="form-group">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
-				<label class="form-label">Client ID</label>
+				<label class="form-label">{$LL.admin_clients_clientId()}</label>
 				<div class="input-copy-group">
 					<input type="text" value={createdClient.client_id} readonly class="input-readonly" />
 					<button
 						class="btn btn-secondary btn-sm"
 						onclick={() => copyToClipboard(createdClient!.client_id)}
 					>
-						Copy
+						{$LL.admin_clients_new_copy()}
 					</button>
 				</div>
 			</div>
@@ -992,9 +1146,12 @@
 			{#if createdClient.client_secret}
 				<div class="form-group">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
-					<label class="form-label">Client Secret</label>
+					<label class="form-label">{$LL.admin_clients_new_client_secret()}</label>
 					<div class="warning-box">
-						<p>⚠️ <strong>Save this secret now!</strong> It will not be shown again.</p>
+						<p>
+							<strong>{$LL.admin_clients_new_secret_warning()}</strong>
+							{$LL.admin_clients_new_secret_warning_desc()}
+						</p>
 					</div>
 					<div class="input-copy-group">
 						<input
@@ -1007,7 +1164,7 @@
 							class="btn btn-secondary btn-sm"
 							onclick={() => copyToClipboard(createdClient!.client_secret!)}
 						>
-							Copy
+							{$LL.admin_clients_new_copy()}
 						</button>
 					</div>
 				</div>
@@ -1017,46 +1174,46 @@
 			{#if createdClient.redirect_uris.length > 0}
 				<div class="form-group">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
-					<label class="form-label">Redirect URIs - Browser Origin Status</label>
+					<label class="form-label">{$LL.admin_clients_new_redirect_origin_status()}</label>
 					<ul class="uri-list">
 						{#each createdClient.redirect_uris as uri (uri)}
 							<li class="uri-item uri-item-with-cors">
 								<span class="uri-text">{uri}</span>
 								{#if tenantSettings}
 									{#if isOriginInCors(uri)}
-										<span class="badge badge-success">Origin OK</span>
+										<span class="badge badge-success">{$LL.admin_clients_new_origin_ok()}</span>
 									{:else}
 										<button
 											class="btn btn-secondary btn-sm"
 											onclick={() => addToCors(uri)}
 											disabled={addingToCors === uri}
 										>
-											{addingToCors === uri ? 'Adding...' : 'Add Origin'}
+											{addingToCors === uri
+												? $LL.admin_clients_new_adding()
+												: $LL.admin_clients_new_add_origin()}
 										</button>
 									{/if}
 								{:else}
-									<span class="badge badge-neutral">Loading...</span>
+									<span class="badge badge-neutral">{$LL.common_loading()}</span>
 								{/if}
 							</li>
 						{/each}
 					</ul>
 					{#if tenantSettings && createdClient.redirect_uris.some((uri) => !isOriginInCors(uri))}
 						<p class="form-hint cors-hint">
-							Some redirect URI origins are not in this client's web origin registry. Direct Auth
-							and browser handoff calls from these origins may fail. Click "Add to CORS" to allow
-							them.
+							{$LL.admin_clients_new_cors_hint()}
 						</p>
 					{/if}
 				</div>
 			{/if}
 
 			<div class="center-actions">
-				<a href="/admin/clients" class="btn btn-secondary">Back to Clients</a>
+				<a href="/admin/clients" class="btn btn-secondary">{$LL.admin_clients_new_back()}</a>
 				<a
 					href="/admin/clients/{encodeURIComponent(createdClient.client_id)}"
 					class="btn btn-primary"
 				>
-					View Client Details
+					{$LL.admin_clients_new_view_details()}
 				</a>
 			</div>
 		</div>

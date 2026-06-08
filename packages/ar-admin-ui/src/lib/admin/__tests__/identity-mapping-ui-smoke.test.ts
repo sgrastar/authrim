@@ -17,25 +17,25 @@ function readComponent(relativePath: string): string {
 	return readFileSync(path, 'utf8');
 }
 
-describe('identity mapping Admin UI smoke checks', () => {
-	it('keeps the identity mapping routes in the left navigation instead of bottom cards', () => {
+describe('field mapping Admin UI smoke checks', () => {
+	it('keeps the field mapping routes in the left navigation instead of bottom cards', () => {
 		const layout = readRoute('admin/+layout.svelte');
-		const page = readRoute('admin/identity-mapping/+page.svelte');
+		const page = readRoute('admin/field-mapping/+page.svelte');
 
-		expect(layout).toContain('/admin/identity-mapping');
-		expect(layout).toContain('Source & Destination');
-		expect(layout).toContain('Mapping Policies');
-		expect(layout).toContain('Resolution Center');
-		expect(layout).toContain('/admin/identity-mapping/profiles');
-		expect(layout).toContain('/admin/identity-mapping/mapping-policies');
-		expect(layout).toContain('/admin/identity-mapping/resolution-center');
+		expect(layout).toContain('/admin/field-mapping');
+		expect(layout).toContain('admin_nav_source_destination');
+		expect(layout).toContain('admin_nav_mapping_policies');
+		expect(layout).toContain('admin_nav_resolution_center');
+		expect(layout).toContain('/admin/field-mapping/profiles');
+		expect(layout).toContain('/admin/field-mapping/field-mapping-sets');
+		expect(layout).toContain('/admin/field-mapping/resolution-center');
 		expect(layout).not.toContain('Mapping Rules');
-		expect(layout).not.toContain('/admin/identity-mapping/edit');
-		expect(layout).not.toContain('/admin/identity-mapping/operations');
-		expect(layout).not.toContain('/admin/identity-mapping/overview');
-		expect(layout).not.toContain('/admin/identity-mapping/federation-trust');
-		expect(layout).not.toContain('/admin/identity-mapping/schema-readiness');
-		expect(layout).not.toContain('/admin/identity-mapping/profiles#destination-consent');
+		expect(layout).not.toContain('/admin/field-mapping/edit');
+		expect(layout).not.toContain('/admin/field-mapping/operations');
+		expect(layout).not.toContain('/admin/field-mapping/overview');
+		expect(layout).not.toContain('/admin/field-mapping/federation-trust');
+		expect(layout).not.toContain('/admin/field-mapping/schema-readiness');
+		expect(layout).not.toContain('/admin/field-mapping/profiles#destination-consent');
 		expect(page).toContain("editorAllowedViewModes={['overview']}");
 		expect(page).toContain('editorEditable={false}');
 		expect(page).toContain('showEditorInspector={false}');
@@ -46,10 +46,11 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 	it('keeps the flow editor graph interaction affordances present', () => {
 		const flowEditor = readComponent('identity-mapping/IdentityMappingFlowEditor.svelte');
+		const flowData = readComponent('identity-mapping/flow-data.ts');
 		const pageShell = readComponent('identity-mapping/IdentityMappingPageShell.svelte');
-		const page = readRoute('admin/identity-mapping/+page.svelte');
-		const editPage = readRoute('admin/identity-mapping/edit/+page.svelte');
-		const overviewPage = readRoute('admin/identity-mapping/overview/+page.svelte');
+		const page = readRoute('admin/field-mapping/+page.svelte');
+		const editPage = readRoute('admin/field-mapping/edit/+page.svelte');
+		const overviewPage = readRoute('admin/field-mapping/overview/+page.svelte');
 
 		expect(flowEditor).toContain('startConnectionDrag');
 		expect(flowEditor).toContain('startEasyConnectionDrag');
@@ -78,12 +79,12 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('shouldGroupPolicyTransformInputs');
 		expect(flowEditor).toContain('policyTransformNode');
 		expect(flowEditor).toContain('policy-transform');
-		expect(flowEditor).toContain('transformLane');
+		expect(flowEditor).toContain('transformSide');
 		expect(flowEditor).toContain('submitDraftForCompile');
 		expect(flowEditor).toContain('onCompileDraft');
 		expect(flowEditor).toContain('transform_input');
-		expect(flowEditor).toContain('Transform step');
-		expect(flowEditor).toContain('Operation');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_transform_step');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_operation');
 		expect(flowEditor).toContain('copy');
 		expect(flowEditor).toContain('concat');
 		expect(flowEditor).toContain('fallback');
@@ -118,6 +119,17 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('normalizeNodeType');
 		expect(flowEditor).toContain('drag-reject-marker');
 		expect(flowEditor).toContain('drag-edge-invalid');
+		expect(flowEditor).toContain('function nodeFieldRef(');
+		expect(flowEditor).toContain("side: 'source' | 'destination'");
+		expect(flowEditor).toContain('namespace: fieldRef.namespace');
+		expect(flowEditor).toContain('path: fieldRef.path');
+		expect(flowEditor).toContain('catalogEntryId: fieldRef.catalogEntryId');
+		expect(flowEditor).toContain("sourceRef: nodeFieldRef(fromNode, 'source')");
+		expect(flowEditor).toContain("targetRef: nodeFieldRef(toNode, 'destination')");
+		expect(flowData).toContain("namespace: 'authrim.profile'");
+		expect(flowData).toContain('namespaceForProfile(profile.adapter)');
+		expect(flowData).toContain("return 'oidc.claim'");
+		expect(flowData).toContain("return 'saml.attribute'");
 		expect(flowEditor).toContain('connection-rejected');
 		expect(flowEditor).toContain('selectEdge');
 		expect(flowEditor).toContain('clearSelection');
@@ -135,7 +147,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('nodeVisualOffset');
 		expect(flowEditor).toContain('animateNextSampleSourceNodes = true');
 		expect(flowEditor).toContain('animateVisibleNodeSwap');
-		expect(flowEditor).toContain('if (option.id === selectedInboundPolicyId) continue');
+		expect(flowEditor).toContain('if (option.id === selectedSourcePolicyId) continue');
 		expect(flowEditor).toContain('swappingNodeIds');
 		expect(flowEditor).toContain('node-swap-enter');
 		expect(flowEditor).toContain('node-handle output');
@@ -147,15 +159,15 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('toggleTargetGroup');
 		expect(flowEditor).toContain('targetGroupPosition');
 		expect(flowEditor).toContain('transform-node');
-		expect(flowEditor).toContain('Consent status');
-		expect(flowEditor).toContain('Challenge mode');
-		expect(flowEditor).toContain('Release policy');
-		expect(flowEditor).toContain('Privacy Policy');
-		expect(flowEditor).toContain('Identity schema');
-		expect(flowEditor).toContain('Schema field');
-		expect(flowEditor).toContain('Overview');
-		expect(flowEditor).toContain('Inbound mapping');
-		expect(flowEditor).toContain('Outbound release');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_consent_status');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_challenge_mode');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_release_policy');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_privacy_policy');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_identity_schema');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_schema_field');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_overview');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_source_mapping');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_destination_release');
 		expect(flowEditor).toContain('allowedViewModes');
 		expect(flowEditor).toContain('initialViewMode');
 		expect(flowEditor).toContain('editable');
@@ -164,25 +176,25 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain("showInspector ? '' : 'no-inspector'");
 		expect(flowEditor).toContain('showToolbarSourceProfile');
 		expect(flowEditor).toContain('selectedProfileId');
-		expect(flowEditor).toContain('Inbound profile');
-		expect(flowEditor).toContain('Outbound profile');
-		expect(flowEditor).toContain('view-inbound');
-		expect(flowEditor).toContain('view-outbound');
+		expect(flowEditor).toContain('admin_identity_mapping_source_profile');
+		expect(flowEditor).toContain('admin_identity_mapping_destination_profile');
+		expect(flowEditor).toContain('view-source');
+		expect(flowEditor).toContain('view-destination');
 		expect(flowEditor).toContain("role === 'source' && toNode.role === 'target'");
 		expect(flowEditor).toContain("role === 'target' && toNode.role === 'destination'");
 		expect(flowEditor).toContain('$props');
 		expect(flowEditor).not.toContain('mappingSamples');
 		expect(flowEditor).not.toContain('SAML Salesforce columns');
-		expect(flowEditor).not.toContain('Identity Mapping Control Plane');
+		expect(flowEditor).not.toContain('Field Mapping Control Plane');
 		expect(flowEditor).not.toContain('Authrim Admin');
 		expect(flowEditor).not.toContain('Theme');
 		expect(page).toContain('IdentityMappingPageShell');
 		expect(pageShell).toContain('buildIdentityMappingFlowSamples');
 		expect(pageShell).toContain('compileEditorDraft');
-		expect(pageShell).toContain('createPolicyVersion');
-		expect(pageShell).toContain('compilePolicyVersion');
+		expect(pageShell).toContain('createFieldMappingVersion');
+		expect(pageShell).toContain('compileFieldMappingVersion');
 		expect(pageShell).toContain('policyOptionAdapter');
-		expect(pageShell).toContain('`[${adapter}] ${policy.displayName || policy.policyKey}`');
+		expect(pageShell).toContain('`[${adapter}] ${policy.displayName || policy.fieldMappingKey}`');
 		expect(pageShell).toContain('getSchemaReadiness');
 		expect(pageShell).toContain('showControlPlaneStatus && !showProfileModeControl');
 		expect(pageShell).toContain('showInspector={showEditorInspector}');
@@ -191,23 +203,23 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(pageShell).toContain('profile-mode-control');
 		expect(pageShell).toContain('selectedEditorProfileId');
 		expect(pageShell).toContain('routePolicyOptionId');
-		expect(pageShell).toContain('initialPolicyOptionId={selectedPolicyOptionId}');
-		expect(pageShell).toContain('Policy version');
+		expect(pageShell).toContain('initialPolicyOptionId={selectedFieldMappingOptionId}');
+		expect(pageShell).toContain('admin_identity_mapping_editor_policy_version');
 		expect(pageShell).toContain('toggleSelectedPolicyActivation');
-		expect(pageShell).toContain('publishSelectedPolicyVersion');
+		expect(pageShell).toContain('publishSelectedFieldMappingVersion');
 		expect(pageShell).toContain('rollbackSelectedPolicy');
-		expect(pageShell).toContain('deactivatePolicyVersion');
+		expect(pageShell).toContain('deactivateFieldMappingVersion');
 		expect(flowEditor).toContain('initialPolicyOptionId');
-		expect(flowEditor).toContain('applyInboundPolicySelection');
-		expect(flowEditor).toContain('applyOutboundPolicySelection');
-		expect(editPage).toContain('pageTitle="Mapping Policy Editor"');
-		expect(editPage).toContain('backHref="/admin/identity-mapping/mapping-policies"');
-		expect(editPage).toContain('backLabel="Back to Mapping Policies"');
-		expect(editPage).toContain("editorAllowedViewModes={['inbound', 'outbound']}");
-		expect(editPage).toContain('editorInitialViewMode="inbound"');
+		expect(flowEditor).toContain('applySourcePolicySelection');
+		expect(flowEditor).toContain('applyDestinationPolicySelection');
+		expect(editPage).toContain('pageTitle={$LL.admin_identity_mapping_editor_title()}');
+		expect(editPage).toContain('backHref="/admin/field-mapping/field-mapping-sets"');
+		expect(editPage).toContain('backLabel={$LL.admin_identity_mapping_back_to_policies()}');
+		expect(editPage).toContain("editorAllowedViewModes={['source', 'destination']}");
+		expect(editPage).toContain('editorInitialViewMode="source"');
 		expect(editPage).toContain('showProfileModeControl');
 		expect(editPage).toContain('showEditorMetrics={false}');
-		expect(overviewPage).toContain('pageTitle="Overview"');
+		expect(overviewPage).toContain('pageTitle={$LL.admin_identity_mapping_overview_title()}');
 		expect(overviewPage).toContain("editorAllowedViewModes={['overview']}");
 		expect(overviewPage).toContain('editorEditable={false}');
 		expect(overviewPage).toContain('showEditorMetrics={false}');
@@ -216,39 +228,39 @@ describe('identity mapping Admin UI smoke checks', () => {
 
 	it('wires operation, profile, resolution, and federation pages to their APIs', () => {
 		const api = readApi('admin-identity-mapping.ts');
-		const operations = readRoute('admin/identity-mapping/mapping-policies/+page.svelte');
-		const profiles = readRoute('admin/identity-mapping/profiles/+page.svelte');
-		const profileEditor = readRoute('admin/identity-mapping/profiles/edit/+page.svelte');
-		const resolution = readRoute('admin/identity-mapping/resolution-center/+page.svelte');
-		const federation = readRoute('admin/identity-mapping/federation-trust/+page.svelte');
+		const operations = readRoute('admin/field-mapping/field-mapping-sets/+page.svelte');
+		const profiles = readRoute('admin/field-mapping/profiles/+page.svelte');
+		const profileEditor = readRoute('admin/field-mapping/profiles/edit/+page.svelte');
+		const resolution = readRoute('admin/field-mapping/resolution-center/+page.svelte');
+		const federation = readRoute('admin/field-mapping/federation-trust/+page.svelte');
 
-		expect(api).toContain('/api/admin/identity-mapping/review-tasks');
-		expect(api).toContain('/api/admin/identity-mapping/federation-trust-sources');
+		expect(api).toContain('/api/admin/field-mapping/review-tasks');
+		expect(api).toContain('/api/admin/field-mapping/federation-trust-sources');
 		expect(api).toContain('/metadata-documents');
-		expect(api).toContain('/api/admin/identity-mapping/protocol-schemas');
-		expect(api).toContain('/api/admin/identity-mapping/external-schemas');
-		expect(api).toContain('/api/admin/identity-mapping/source-profiles');
-		expect(api).toContain('/api/admin/identity-mapping/source-profiles/csv/parse');
-		expect(api).toContain('/api/admin/identity-mapping/destination-profiles');
+		expect(api).toContain('/api/admin/field-mapping/protocol-schemas');
+		expect(api).toContain('/api/admin/field-mapping/external-schemas');
+		expect(api).toContain('/api/admin/field-mapping/source-profiles');
+		expect(api).toContain('/api/admin/field-mapping/source-profiles/csv/parse');
+		expect(api).toContain('/api/admin/field-mapping/destination-profiles');
 		expect(api).toContain('deleteSourceProfile');
 		expect(api).toContain('deleteDestinationProfile');
-		expect(api).toContain('/api/admin/identity-mapping/attribute-groups');
-		expect(api).toContain('/api/admin/identity-mapping/attribute-fields');
-		expect(api).toContain('/api/admin/identity-mapping/templates');
-		expect(api).toContain('/api/admin/identity-mapping/schema-readiness');
+		expect(api).toContain('/api/admin/field-mapping/attribute-groups');
+		expect(api).toContain('/api/admin/field-mapping/attribute-fields');
+		expect(api).toContain('/api/admin/field-mapping/templates');
+		expect(api).toContain('/api/admin/field-mapping/schema-readiness');
 		expect(api).toContain('/rollback');
 		expect(api).toContain('/publish');
 		expect(api).toContain('/compile');
 		expect(api).toContain('/activate');
 		expect(api).toContain('/deactivate');
 		expect(api).toContain('/transition');
-		expect(operations).toContain('Mapping Policies');
-		expect(operations).toContain('Source policies');
-		expect(operations).toContain('Destination policies');
+		expect(operations).toContain('admin_identity_mapping_policies_title');
+		expect(operations).toContain('admin_identity_mapping_policies_source_title');
+		expect(operations).toContain('admin_identity_mapping_policies_destination_title');
 		expect(operations).toContain('editPolicyHref');
 		expect(operations).toContain('newPolicyHref');
-		expect(operations).toContain('Create new source policy');
-		expect(operations).toContain('Create new destination policy');
+		expect(operations).toContain('admin_identity_mapping_policies_create_source');
+		expect(operations).toContain('admin_identity_mapping_policies_create_destination');
 		expect(operations).toContain('direction');
 		expect(operations).not.toContain('Confirm rollback');
 		expect(operations).not.toContain('rollbackPolicy');
@@ -257,16 +269,16 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(operations).not.toContain('Action Panel');
 		expect(operations).not.toContain('activePolicyCount');
 		expect(operations).not.toContain('draftPolicyCount');
-		expect(operations).not.toContain('item.policy.policyKey');
+		expect(operations).not.toContain('item.policy.fieldMappingKey');
 		expect(profiles).toContain('listSourceProfiles');
 		expect(profiles).toContain('listDestinationProfiles');
-		expect(profiles).toContain('Source and destination profile lists');
+		expect(profiles).toContain('admin_identity_mapping_profiles_lists_title');
 		expect(profiles).toContain('sourceProfileListItems');
 		expect(profiles).toContain('destinationProfileListItems');
-		expect(profiles).toContain('Create source profile');
-		expect(profiles).toContain('Create destination profile');
-		expect(profiles).toContain('/admin/identity-mapping/profiles/edit?kind=source');
-		expect(profiles).toContain('/admin/identity-mapping/profiles/edit?kind=destination');
+		expect(profiles).toContain('admin_identity_mapping_profiles_create_source');
+		expect(profiles).toContain('admin_identity_mapping_profiles_create_destination');
+		expect(profiles).toContain('/admin/field-mapping/profiles/edit?kind=source');
+		expect(profiles).toContain('/admin/field-mapping/profiles/edit?kind=destination');
 		expect(profiles).toContain('onclick={() => editSourceProfile(profile)}');
 		expect(profiles).toContain('onclick={() => editDestinationProfile(profile)}');
 		expect(profiles).not.toContain('listProtocolSchemas');
@@ -274,30 +286,36 @@ describe('identity mapping Admin UI smoke checks', () => {
 		expect(profiles).not.toContain('listAttributeGroups');
 		expect(profiles).not.toContain('listAttributeFields');
 		expect(profiles).not.toContain('listTemplates');
-		expect(profileEditor).toContain('Create Source Profile');
-		expect(profileEditor).toContain('Create Destination Profile');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_create_source');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_create_destination');
 		expect(profileEditor).toContain('listAttributeGroups');
 		expect(profileEditor).toContain('listAttributeFields');
 		expect(profileEditor).toContain('destinationTemplates');
-		expect(profileEditor).toContain('Create from existing');
-		expect(profileEditor).toContain('Create from template');
-		expect(profileEditor).toContain('Destination Consent Settings');
-		expect(profileEditor).toContain('Configure Release Consent');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_create_from_existing');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_create_from_template');
+		expect(profileEditor).toContain(
+			'admin_identity_mapping_profile_edit_destination_consent_settings'
+		);
+		expect(profileEditor).toContain(
+			'admin_identity_mapping_profile_edit_configure_release_consent'
+		);
 		expect(profileEditor).toContain('deleteCurrentProfile');
-		expect(profileEditor).toContain('Delete');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_delete');
 		expect(profileEditor).toContain('parseCsvSourceProfile');
-		expect(profileEditor).toContain('Save draft profile');
-		expect(profileEditor).toContain('Save destination draft');
-		expect(profileEditor).toContain('Manual');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_save_draft_profile');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_save_destination_draft');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_manual');
 		expect(profileEditor).toContain('Shift_JIS');
-		expect(profileEditor).toContain('Add SAML attribute');
-		expect(profileEditor).toContain('Save attribute group');
-		expect(profileEditor).toContain('Save attribute field');
-		expect(profileEditor).toContain('Tenant default');
-		expect(profileEditor).toContain('Destination override');
-		expect(profiles).not.toContain('Save draft profile');
-		expect(profiles).not.toContain('Save destination draft');
-		expect(profiles).not.toContain('Destination Consent Settings');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_add_saml_attribute');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_save_attribute_group');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_save_attribute_field');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_tenant_default');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_destination_override');
+		expect(profiles).not.toContain('admin_identity_mapping_profile_edit_save_draft_profile');
+		expect(profiles).not.toContain('admin_identity_mapping_profile_edit_save_destination_draft');
+		expect(profiles).not.toContain(
+			'admin_identity_mapping_profile_edit_destination_consent_settings'
+		);
 		expect(resolution).toContain('listReviewTasks');
 		expect(resolution).toContain("status: 'in_review'");
 		expect(resolution).toContain('transitionResolutionItem');
@@ -307,7 +325,7 @@ describe('identity mapping Admin UI smoke checks', () => {
 	});
 
 	it('loads schema readiness from the control-plane API instead of hardcoded rows', () => {
-		const readiness = readRoute('admin/identity-mapping/schema-readiness/+page.svelte');
+		const readiness = readRoute('admin/field-mapping/schema-readiness/+page.svelte');
 
 		expect(readiness).toContain('getSchemaReadiness');
 		expect(readiness).toContain('schemaPresent');
@@ -316,9 +334,9 @@ describe('identity mapping Admin UI smoke checks', () => {
 	});
 
 	it('keeps operator naming separate from internal review task storage names', () => {
-		const resolution = readRoute('admin/identity-mapping/resolution-center/+page.svelte');
+		const resolution = readRoute('admin/field-mapping/resolution-center/+page.svelte');
 
-		expect(resolution).toContain('Mapping Resolution Center');
+		expect(resolution).toContain('admin_identity_mapping_resolution_title');
 		expect(resolution).not.toContain('review_tasks');
 		expect(resolution).not.toContain('Review Queue');
 	});

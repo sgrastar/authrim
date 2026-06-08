@@ -2,6 +2,7 @@
 	import { adminAuthAPI } from '$lib/api/admin-auth';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	interface Breadcrumb {
 		label: string;
@@ -48,7 +49,7 @@
 	}
 
 	function formatLastLogin(timestamp: number | null | undefined): string {
-		if (!timestamp) return 'Never';
+		if (!timestamp) return $LL.common_never();
 		const date = new Date(timestamp);
 		const now = new Date();
 		const diffMs = now.getTime() - date.getTime();
@@ -56,11 +57,11 @@
 		const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
 		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-		if (diffMins < 1) return 'Just now';
-		if (diffMins < 60) return `${diffMins}m ago`;
-		if (diffHours < 24) return `${diffHours}h ago`;
-		if (diffDays < 7) return `${diffDays}d ago`;
-		return date.toLocaleDateString();
+		if (diffMins < 1) return $LL.common_just_now();
+		if (diffMins < 60) return $LL.common_minutes_ago({ count: diffMins });
+		if (diffHours < 24) return $LL.common_hours_ago({ count: diffHours });
+		if (diffDays < 7) return $LL.common_days_ago({ count: diffDays });
+		return date.toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	async function handleLogout() {
@@ -75,12 +76,20 @@
 
 <header class="header">
 	<div class="header-left">
-		<button class="mobile-menu-btn" onclick={onMobileMenuClick} aria-label="Toggle menu">
+		<button
+			class="mobile-menu-btn"
+			onclick={onMobileMenuClick}
+			aria-label={$LL.admin_header_toggle_menu()}
+		>
 			<i class="i-ph-list"></i>
 		</button>
 
 		{#if breadcrumbs.length > 0}
-			<div class="hierarchy-breadcrumb" role="navigation" aria-label="Breadcrumb">
+			<div
+				class="hierarchy-breadcrumb"
+				role="navigation"
+				aria-label={$LL.admin_header_breadcrumb()}
+			>
 				{#each breadcrumbs as crumb, i (crumb.label)}
 					{#if i > 0}
 						<span class="hierarchy-sep" aria-hidden="true">/</span>
@@ -108,7 +117,7 @@
 	<div class="header-right">
 		{#if tenants.length > 1 && !hideTenantSelector}
 			<div class="header-tenant-selector">
-				<span class="tenant-selector-label">Tenant:</span>
+				<span class="tenant-selector-label">{$LL.admin_header_tenant()}</span>
 				<select
 					class="tenant-selector-dropdown"
 					value={selectedTenantId}
@@ -126,9 +135,11 @@
 			<button class="user-button" onclick={toggleUserMenu} aria-expanded={showUserMenu}>
 				<Avatar email={userEmail} name={userName} picture={userPicture} size="sm" />
 				<div class="user-info">
-					<span class="user-email">{userEmail || 'Admin'}</span>
+					<span class="user-email">{userEmail || $LL.admin_header_admin_fallback()}</span>
 					{#if lastLoginAt}
-						<span class="user-last-login">Last login: {formatLastLogin(lastLoginAt)}</span>
+						<span class="user-last-login">
+							{$LL.admin_header_last_login({ time: formatLastLogin(lastLoginAt) })}
+						</span>
 					{/if}
 				</div>
 				<i class="i-ph-caret-down user-caret" class:open={showUserMenu}></i>
@@ -139,10 +150,14 @@
 					<div class="user-menu-header">
 						<Avatar email={userEmail} name={userName} picture={userPicture} size="lg" />
 						<div class="user-menu-info">
-							<span class="user-menu-email">{userEmail || 'Admin'}</span>
+							<span class="user-menu-email">{userEmail || $LL.admin_header_admin_fallback()}</span>
 							{#if lastLoginAt}
 								<span class="user-menu-last-login">
-									Last login: {new Date(lastLoginAt).toLocaleString()}
+									{$LL.admin_header_last_login({
+										time: new Date(lastLoginAt).toLocaleString(
+											getLocale() === 'ja' ? 'ja-JP' : 'en-US'
+										)
+									})}
 								</span>
 							{/if}
 						</div>
@@ -152,14 +167,14 @@
 					<div class="theme-toggle-row">
 						<span class="theme-toggle-label">
 							<i class={themeStore.isLight ? 'i-ph-sun' : 'i-ph-moon'}></i>
-							Theme
+							{$LL.admin_header_theme()}
 						</span>
 						<div class="theme-toggle-buttons">
 							<button
 								class="theme-btn"
 								class:active={themeStore.isLight}
 								onclick={() => themeStore.setMode('light')}
-								title="Light mode"
+								title={$LL.admin_header_light_mode()}
 							>
 								<i class="i-ph-sun"></i>
 							</button>
@@ -167,7 +182,7 @@
 								class="theme-btn"
 								class:active={themeStore.isDark}
 								onclick={() => themeStore.setMode('dark')}
-								title="Dark mode"
+								title={$LL.admin_header_dark_mode()}
 							>
 								<i class="i-ph-moon"></i>
 							</button>
@@ -176,14 +191,18 @@
 					<div class="user-menu-divider"></div>
 					<a href="/admin/account-settings" class="user-menu-item" onclick={closeUserMenu}>
 						<i class="i-ph-user-circle"></i>
-						Account Settings
+						{$LL.admin_header_account_settings()}
 					</a>
 					<button class="user-menu-item danger" onclick={handleLogout}>
 						<i class="i-ph-sign-out"></i>
-						Logout
+						{$LL.admin_header_logout()}
 					</button>
 				</div>
-				<button class="user-menu-overlay" onclick={closeUserMenu} aria-label="Close menu"></button>
+				<button
+					class="user-menu-overlay"
+					onclick={closeUserMenu}
+					aria-label={$LL.admin_header_close_menu()}
+				></button>
 			{/if}
 		</div>
 	</div>

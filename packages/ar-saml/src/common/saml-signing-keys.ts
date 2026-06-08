@@ -97,9 +97,11 @@ export async function getSAMLMetadataSigningCertificates(
     context.policy?.metadataCertificatePublication ?? DEFAULT_METADATA_CERTIFICATE_PUBLICATION;
 
   if (publication === 'active_next' || publication === 'active_next_backup') {
-    const next = await resolvePublishedCertificate(env, context, context.policy?.next);
-    if (next) {
-      certificates.push(next);
+    for (const nextReference of getNextSigningCertificateReferences(context.policy)) {
+      const next = await resolvePublishedCertificate(env, context, nextReference);
+      if (next) {
+        certificates.push(next);
+      }
     }
   }
 
@@ -155,6 +157,22 @@ async function resolvePublishedCertificate(
     kid: reference.kid,
     certificate,
   };
+}
+
+function getNextSigningCertificateReferences(
+  policy: SAMLSigningKeyPolicy | undefined
+): SAMLSigningKeyReference[] {
+  const references = [policy?.next, ...(policy?.nextCandidates ?? [])].filter(
+    (reference): reference is SAMLSigningKeyReference => !!reference
+  );
+  const seen = new Set<string>();
+  return references.filter((reference) => {
+    const key = reference.kid ?? reference.keyRef ?? reference.certificate;
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function assertSAMLKeyRefTenantBound(keyRef: string, tenantId: string): void {

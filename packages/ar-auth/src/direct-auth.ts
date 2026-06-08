@@ -121,7 +121,7 @@ type DirectAuthChannel = 'browser' | 'native' | 'server';
 
 type AuthorizationChallengeType = 'login' | 'reauth';
 
-interface AuthorizationChallengeContinuation {
+export interface AuthorizationChallengeContinuation {
   redirectUrl: string;
   type: AuthorizationChallengeType;
 }
@@ -395,7 +395,7 @@ function buildAuthorizeContinuationUrl(
   return authorizeUrl.toString();
 }
 
-async function consumeAuthorizationChallengeContinuation(
+export async function consumeAuthorizationChallengeContinuation(
   env: Env,
   tenantId: string,
   challengeId: string,
@@ -1081,7 +1081,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     if (!user) {
       // Create new user
-      const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
+      const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const defaultName = display_name || null;
       const preferredUsername = email.split('@')[0];
 
@@ -1574,7 +1574,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     }
 
     if (!user) {
-      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId);
+      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const preferredUsername = email.split('@')[0];
 
       try {

@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-management",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "private": true,
   "scripts": {
@@ -15,7 +15,7 @@
   "dependencies": {
     "@authrim/ar-auth": "workspace:^",
     "@authrim/ar-lib-core": "workspace:*",
-    "@authrim/ar-lib-identity-mapping": "workspace:*",
+    "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-logging": "workspace:*",
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",

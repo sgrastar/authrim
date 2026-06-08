@@ -20,6 +20,7 @@ describe('SAML local signing secret DR bundle', () => {
 
     expect(encryptedBundle.kind).toBe('authrim.saml_local_signing_secret_dr_bundle.encrypted.v1');
     expect(encryptedBundle.encrypted).toBe(true);
+    expect(encryptedBundle.kdf.iterations).toBe(100_000);
     expect(encryptedJson).not.toContain('BEGIN PRIVATE KEY');
     expect(encryptedJson).not.toContain('private-');
 
@@ -59,6 +60,30 @@ describe('SAML local signing secret DR bundle', () => {
         'wrong horse battery staple'
       )
     ).rejects.toThrow('Failed to decrypt SAML DR bundle');
+  });
+
+  it('rejects encrypted bundles with unsupported PBKDF2 iteration counts', async () => {
+    const sourceEnv = createEnv();
+    const encryptedBundle = await buildEncryptedSAMLLocalSigningSecretDRBundle(
+      sourceEnv,
+      'test',
+      'correct horse battery staple'
+    );
+
+    await expect(
+      restoreEncryptedSAMLLocalSigningSecretDRBundle(
+        createEnv(),
+        'test',
+        {
+          ...encryptedBundle,
+          kdf: {
+            ...encryptedBundle.kdf,
+            iterations: 210_000,
+          },
+        },
+        'correct horse battery staple'
+      )
+    ).rejects.toThrow('Unsupported encrypted SAML DR bundle parameters');
   });
 
   it('rejects signing key policy references that are not present in the bundle', async () => {

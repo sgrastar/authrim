@@ -13,6 +13,20 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 export type ClaimReleasePolicy = 'scope_required' | 'claims_allowed' | 'forbidden';
 export type ClaimsParameterPolicy = Record<string, ClaimReleasePolicy>;
+export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
+
+export interface AttributeReleaseConsentPolicy {
+	enabled: boolean;
+	mode: AttributeReleaseConsentMode;
+}
+
+export interface ClientIdentityMappingFieldMappingSetSelector {
+	fieldMappingSetId?: string;
+	fieldMappingVersionId?: string;
+	destinationNamespace?: string;
+	sourceProfileId?: string;
+	destinationProfileId?: string;
+}
 
 export interface Client {
 	client_id: string;
@@ -35,6 +49,8 @@ export interface Client {
 	skip_consent?: boolean;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
+	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
 	asc_sao_enabled?: boolean;
@@ -107,6 +123,8 @@ export interface CreateClientInput {
 	require_pkce?: boolean;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
+	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
 	asc_sao_enabled?: boolean;
@@ -139,6 +157,8 @@ export interface UpdateClientInput {
 	require_pkce?: boolean;
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
+	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
+	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
 	asc_sao_enabled?: boolean;

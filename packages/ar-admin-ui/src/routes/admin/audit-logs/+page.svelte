@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminAuditLogsAPI,
@@ -68,8 +69,7 @@
 			entries = response.entries;
 			pagination = response.pagination;
 		} catch (err) {
-			console.error('Failed to load audit logs:', err);
-			error = 'Failed to load audit logs';
+			error = err instanceof Error ? err.message : $LL.admin_audit_logs_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -121,6 +121,84 @@
 	}
 
 	function formatAction(action: string): string {
+		switch (action) {
+			case 'user.login':
+				return $LL.admin_audit_logs_action_user_login();
+			case 'user.logout':
+				return $LL.admin_audit_logs_action_user_logout();
+			case 'user.created':
+				return $LL.admin_audit_logs_action_user_created();
+			case 'user.updated':
+				return $LL.admin_audit_logs_action_user_updated();
+			case 'user.deleted':
+				return $LL.admin_audit_logs_action_user_deleted();
+			case 'user.suspend':
+				return $LL.admin_audit_logs_action_user_suspend();
+			case 'user.lock':
+				return $LL.admin_audit_logs_action_user_lock();
+			case 'user.activate':
+				return $LL.admin_audit_logs_action_user_activate();
+			case 'user.anonymized':
+				return $LL.admin_audit_logs_action_user_anonymized();
+			case 'client.created':
+				return $LL.admin_audit_logs_action_client_created();
+			case 'client.updated':
+				return $LL.admin_audit_logs_action_client_updated();
+			case 'client.deleted':
+				return $LL.admin_audit_logs_action_client_deleted();
+			case 'client.config.updated':
+				return $LL.admin_audit_logs_action_client_config_updated();
+			case 'client.config.deleted':
+				return $LL.admin_audit_logs_action_client_config_deleted();
+			case 'client.secret_regenerate':
+				return $LL.admin_audit_logs_action_client_secret_regenerate();
+			case 'session.created':
+				return $LL.admin_audit_logs_action_session_created();
+			case 'session.revoked':
+				return $LL.admin_audit_logs_action_session_revoked();
+			case 'scim.token.create':
+				return $LL.admin_audit_logs_action_scim_token_create();
+			case 'scim.token.revoke':
+				return $LL.admin_audit_logs_action_scim_token_revoke();
+			case 'ai_grant.create':
+				return $LL.admin_audit_logs_action_ai_grant_create();
+			case 'ai_grant.update':
+				return $LL.admin_audit_logs_action_ai_grant_update();
+			case 'ai_grant.revoke':
+				return $LL.admin_audit_logs_action_ai_grant_revoke();
+			case 'webhook.created':
+				return $LL.admin_audit_logs_action_webhook_created();
+			case 'webhook.updated':
+				return $LL.admin_audit_logs_action_webhook_updated();
+			case 'webhook.test':
+				return $LL.admin_audit_logs_action_webhook_test();
+			case 'webhook.test_failed':
+				return $LL.admin_audit_logs_action_webhook_test_failed();
+			case 'webhook.replay':
+				return $LL.admin_audit_logs_action_webhook_replay();
+			case 'webhook.replay_failed':
+				return $LL.admin_audit_logs_action_webhook_replay_failed();
+			case 'role.created':
+				return $LL.admin_audit_logs_action_role_created();
+			case 'access_review.created':
+				return $LL.admin_audit_logs_action_access_review_created();
+			case 'signing_keys.status.read':
+				return $LL.admin_audit_logs_action_signing_keys_status_read();
+			case 'signing_keys.rotate.normal':
+				return $LL.admin_audit_logs_action_signing_keys_rotate_normal();
+			case 'signing_keys.rotate.emergency':
+				return $LL.admin_audit_logs_action_signing_keys_rotate_emergency();
+			case 'security_alert.acknowledge':
+				return $LL.admin_audit_logs_action_security_alert_acknowledge();
+			case 'security.ip_reputation_check':
+				return $LL.admin_audit_logs_action_security_ip_reputation_check();
+			case 'tenant.cloned':
+				return $LL.admin_audit_logs_action_tenant_cloned();
+			case 'job.created':
+				return $LL.admin_audit_logs_action_job_created();
+			case 'email.queued':
+				return $LL.admin_audit_logs_action_email_queued();
+		}
 		// Convert action.name format to readable format
 		return action
 			.split('.')
@@ -182,20 +260,20 @@
 </script>
 
 <svelte:head>
-	<title>Audit Logs - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_audit_logs_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Audit Logs</h1>
-			<p class="page-description">View system activity and security events</p>
+			<h1 class="page-title">{$LL.admin_audit_logs_title()}</h1>
+			<p class="page-description">{$LL.admin_audit_logs_description()}</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={() => (showFilters = !showFilters)}>
 				<i class={showFilters ? 'i-ph-funnel-simple-x' : 'i-ph-funnel-simple'}></i>
-				{showFilters ? 'Hide Filters' : 'Show Filters'}
+				{showFilters ? $LL.admin_audit_logs_hide_filters() : $LL.admin_audit_logs_show_filters()}
 			</button>
 		</div>
 	</div>
@@ -205,28 +283,28 @@
 		<div class="panel">
 			<div class="filter-row">
 				<div class="form-group">
-					<label for="user_id" class="form-label">Actor User ID</label>
+					<label for="user_id" class="form-label">{$LL.admin_audit_logs_actor_user_id()}</label>
 					<input
 						id="user_id"
 						type="text"
 						class="form-input"
-						placeholder="Filter by user ID..."
+						placeholder={$LL.admin_audit_logs_user_id_placeholder()}
 						bind:value={userIdFilter}
 						oninput={handleUserIdSearch}
 					/>
 				</div>
 
 				<div class="form-group">
-					<label for="action" class="form-label">Action</label>
+					<label for="action" class="form-label">{$LL.admin_audit_logs_action()}</label>
 					<select
 						id="action"
 						class="form-select"
 						bind:value={actionFilter}
 						onchange={handleFilterChange}
 					>
-						<option value="">All Actions</option>
+						<option value="">{$LL.admin_audit_logs_all_actions()}</option>
 						{#each AUDIT_ACTION_TYPES as actionType (actionType.value)}
-							<option value={actionType.value}>{actionType.label}</option>
+							<option value={actionType.value}>{formatAction(actionType.value)}</option>
 						{/each}
 					</select>
 				</div>
@@ -234,7 +312,7 @@
 
 			<div class="filter-row">
 				<div class="form-group">
-					<label for="start_date" class="form-label">Start Date</label>
+					<label for="start_date" class="form-label">{$LL.admin_audit_logs_start_date()}</label>
 					<input
 						id="start_date"
 						type="date"
@@ -245,7 +323,7 @@
 				</div>
 
 				<div class="form-group">
-					<label for="end_date" class="form-label">End Date</label>
+					<label for="end_date" class="form-label">{$LL.admin_audit_logs_end_date()}</label>
 					<input
 						id="end_date"
 						type="date"
@@ -258,31 +336,33 @@
 				<div class="form-group form-group-action">
 					<button class="btn btn-secondary" onclick={clearFilters}>
 						<i class="i-ph-x"></i>
-						Clear Filters
+						{$LL.admin_audit_logs_clear_filters()}
 					</button>
 				</div>
 			</div>
 
 			<div class="filter-row">
 				<div class="form-group">
-					<label for="resource_type" class="form-label">Resource Type</label>
+					<label for="resource_type" class="form-label"
+						>{$LL.admin_audit_logs_resource_type()}</label
+					>
 					<input
 						id="resource_type"
 						type="text"
 						class="form-input"
-						placeholder="user, client, session..."
+						placeholder={$LL.admin_audit_logs_resource_type_placeholder()}
 						bind:value={resourceTypeFilter}
 						oninput={handleUserIdSearch}
 					/>
 				</div>
 
 				<div class="form-group">
-					<label for="resource_id" class="form-label">Resource ID</label>
+					<label for="resource_id" class="form-label">{$LL.admin_audit_logs_resource_id()}</label>
 					<input
 						id="resource_id"
 						type="text"
 						class="form-input"
-						placeholder="Filter by resource ID..."
+						placeholder={$LL.admin_audit_logs_resource_id_placeholder()}
 						bind:value={resourceIdFilter}
 						oninput={handleUserIdSearch}
 					/>
@@ -290,8 +370,7 @@
 			</div>
 
 			<p class="filter-hint">
-				Tip: Archive-only search supports user, action, resource, and date filters. Use date ranges
-				to narrow large result sets.
+				{$LL.admin_audit_logs_filter_hint()}
 			</p>
 		</div>
 	{/if}
@@ -299,14 +378,14 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading audit logs...</p>
+			<p>{$LL.admin_audit_logs_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if entries.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No audit log entries found</p>
+				<p class="empty-state-description">{$LL.admin_audit_logs_empty()}</p>
 			</div>
 		</div>
 	{:else}
@@ -315,11 +394,11 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Date/Time</th>
-						<th>Action</th>
-						<th>Actor</th>
-						<th>Resource</th>
-						<th>IP Address</th>
+						<th>{$LL.admin_audit_logs_date_time()}</th>
+						<th>{$LL.admin_audit_logs_action()}</th>
+						<th>{$LL.admin_audit_logs_actor()}</th>
+						<th>{$LL.admin_audit_logs_resource()}</th>
+						<th>{$LL.admin_audit_logs_ip_address()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -358,10 +437,11 @@
 		{#if pagination && pagination.totalPages > 1}
 			<div class="pagination">
 				<p class="pagination-info">
-					Showing {(pagination.page - 1) * pagination.limit + 1} to {Math.min(
-						pagination.page * pagination.limit,
-						pagination.total
-					)} of {pagination.total} entries
+					{$LL.admin_audit_logs_pagination({
+						from: (pagination.page - 1) * pagination.limit + 1,
+						to: Math.min(pagination.page * pagination.limit, pagination.total),
+						total: pagination.total
+					})}
 				</p>
 				<div class="pagination-buttons">
 					<button
@@ -369,14 +449,14 @@
 						onclick={() => goToPage(currentPage - 1)}
 						disabled={currentPage <= 1}
 					>
-						Previous
+						{$LL.admin_audit_logs_previous()}
 					</button>
 					<button
 						class="btn btn-secondary btn-sm"
 						onclick={() => goToPage(currentPage + 1)}
 						disabled={currentPage >= pagination.totalPages}
 					>
-						Next
+						{$LL.admin_audit_logs_next()}
 					</button>
 				</div>
 			</div>

@@ -43,7 +43,6 @@ export class AuthError extends Error {
  */
 export interface SessionStatus {
 	active: boolean;
-	session_id: string;
 	user_id: string;
 	tenant_id: string;
 	email?: string;

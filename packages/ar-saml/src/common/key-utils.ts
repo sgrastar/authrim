@@ -52,6 +52,13 @@ export interface SAMLSigningCertificateSubject {
   commonName?: string;
 }
 
+export interface SAMLSigningCertificateCreationOptions {
+  validFrom?: number;
+  validTo?: number;
+  publicKeyAlgorithm?: 'RSA';
+  publicKeySizeBits?: 2048 | 3072 | 4096;
+}
+
 export const DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT: Required<SAMLSigningCertificateSubject> = {
   countryName: '',
   stateOrProvinceName: '',
@@ -252,6 +259,7 @@ async function getOrPersistSigningCertificate(
   options: {
     keyData: KeyManagerSigningKey;
     certificateSubject?: SAMLSigningCertificateSubject;
+    certificateOptions?: SAMLSigningCertificateCreationOptions;
   }
 ): Promise<string> {
   const { keyData } = options;
@@ -266,7 +274,8 @@ async function getOrPersistSigningCertificate(
   const certificatePEM = await generateSelfSignedCertificate(
     keyData.publicJWK,
     keyData.privatePEM,
-    options.certificateSubject
+    options.certificateSubject,
+    options.certificateOptions
   );
   const response = await keyManager.fetch(
     new Request('https://key-manager/internal/certificate', {
@@ -302,6 +311,7 @@ export async function rotateSigningKeyWithCertificate(
   options: {
     keyRef: string;
     certificateSubject?: SAMLSigningCertificateSubject;
+    certificateOptions?: SAMLSigningCertificateCreationOptions;
   }
 ): Promise<{ keyRef: string; kid: string; certificate: string }> {
   const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
@@ -313,7 +323,11 @@ export async function rotateSigningKeyWithCertificate(
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        modulusLength: options.certificateOptions?.publicKeySizeBits,
+      }),
     })
   );
 
@@ -325,6 +339,7 @@ export async function rotateSigningKeyWithCertificate(
   const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
     keyData: rotateData.key,
     certificateSubject: options.certificateSubject,
+    certificateOptions: options.certificateOptions,
   });
 
   signingKeyCache.delete(buildSigningKeyCacheKey(resolvedTenantId, options.keyRef));
@@ -504,7 +519,8 @@ async function jwkToPublicKeyPem(jwk: JWK): Promise<string> {
 export async function generateSelfSignedCertificate(
   jwk: JWK,
   privateKeyPem: string,
-  subject?: SAMLSigningCertificateSubject
+  subject?: SAMLSigningCertificateSubject,
+  options: SAMLSigningCertificateCreationOptions = {}
 ): Promise<string> {
   // Import JWK to CryptoKey (cast JWK to JsonWebKey for Web Crypto API compatibility)
   const publicKey = await crypto.subtle.importKey(
@@ -519,7 +535,8 @@ export async function generateSelfSignedCertificate(
   const spki = await crypto.subtle.exportKey('spki', publicKey);
   const tbsCertificate = buildSelfSignedCertificateTbs(
     new Uint8Array(spki as ArrayBuffer),
-    normalizeCertificateSubject(subject)
+    normalizeCertificateSubject(subject),
+    options
   );
   const privateKey = await importPrivateKey(privateKeyPem);
   const signature = await crypto.subtle.sign(
@@ -539,12 +556,17 @@ export async function generateSelfSignedCertificate(
 
 function buildSelfSignedCertificateTbs(
   subjectPublicKeyInfo: Uint8Array,
-  subject: Required<SAMLSigningCertificateSubject>
+  subject: Required<SAMLSigningCertificateSubject>,
+  options: SAMLSigningCertificateCreationOptions = {}
 ): Uint8Array {
   const now = new Date();
-  const notBefore = new Date(now.getTime() - 5 * 60 * 1000);
-  const notAfter = new Date(now);
-  notAfter.setUTCFullYear(notAfter.getUTCFullYear() + 10);
+  const notBefore = normalizeCertificateTime(options.validFrom, now.getTime() - 5 * 60 * 1000);
+  const defaultNotAfter = new Date(now);
+  defaultNotAfter.setUTCFullYear(defaultNotAfter.getUTCFullYear() + 10);
+  const notAfter = normalizeCertificateTime(options.validTo, defaultNotAfter.getTime());
+  if (notAfter.getTime() <= notBefore.getTime()) {
+    throw new Error('SAML signing certificate validTo must be later than validFrom');
+  }
 
   return derSequence(
     derExplicit(0, derInteger(2)), // X.509 v3
@@ -556,6 +578,11 @@ function buildSelfSignedCertificateTbs(
     subjectPublicKeyInfo,
     derExplicit(3, buildCertificateExtensions())
   );
+}
+
+function normalizeCertificateTime(value: number | undefined, fallback: number): Date {
+  const timestamp = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return new Date(timestamp);
 }
 
 function normalizeCertificateSubject(

@@ -582,7 +582,11 @@ async function createImportedUser(
     };
   }
 
-  const userId = await generateUserIdFromSettings(runtime.env.AUTHRIM_CONFIG, runtime.tenantId);
+  const userId = await generateUserIdFromSettings(
+    runtime.env.AUTHRIM_CONFIG,
+    runtime.tenantId,
+    runtime.env
+  );
 
   await runtime.runtimeUsers.syncUser({
     userId,

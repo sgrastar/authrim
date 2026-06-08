@@ -118,6 +118,11 @@ export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';
 export * from './utils/device-fingerprint';
 export * from './utils/ssrf-protection';
+
+// Runtime services
+export * from './services/identity-mapping-runtime-resolver';
+export * from './services/oidc-identity-mapping';
+export * from './services/oidc-attribute-release-consent';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
 export * from './utils/custom-redirect';

@@ -2,15 +2,15 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   previewCsvDryRun,
-  previewOutboundRelease,
-} from '@authrim/ar-lib-identity-mapping/experimental';
+  previewDestinationRelease,
+} from '@authrim/ar-lib-field-mapping/experimental';
 import type {
   CsvDryRunPreviewInput,
   CsvDryRunPreviewResult,
-  OutboundPreviewProtocol,
-  OutboundReleasePreviewInput,
-  OutboundReleasePreviewResult,
-} from '@authrim/ar-lib-identity-mapping/experimental';
+  DestinationPreviewProtocol,
+  DestinationReleasePreviewInput,
+  DestinationReleasePreviewResult,
+} from '@authrim/ar-lib-field-mapping/experimental';
 
 type AdminContext = Context<{ Bindings: Env }>;
 
@@ -20,8 +20,8 @@ const MAX_CSV_PREVIEW_EDGES = 500;
 const MAX_CSV_PREVIEW_TRANSFORMS = 500;
 const MAX_CSV_PREVIEW_VALIDATION_RULES = 250;
 const MAX_CSV_PREVIEW_REQUIRED_COLUMNS = 250;
-const MAX_OUTBOUND_PREVIEW_VALUES = 250;
-const MAX_OUTBOUND_REQUESTED_ATTRIBUTES = 250;
+const MAX_DESTINATION_PREVIEW_VALUES = 250;
+const MAX_DESTINATION_REQUESTED_ATTRIBUTES = 250;
 const MAX_PREVIEW_JSON_BYTES = 128 * 1024;
 const MAX_PREVIEW_JSON_DEPTH = 12;
 const MAX_PREVIEW_JSON_NODES = 4000;
@@ -37,9 +37,9 @@ export interface AdminCsvDryRunPreviewResponse extends CsvDryRunPreviewResult {
   };
 }
 
-export interface AdminOutboundReleasePreviewResponse extends OutboundReleasePreviewResult {
+export interface AdminDestinationReleasePreviewResponse extends DestinationReleasePreviewResult {
   preview: {
-    protocol: OutboundPreviewProtocol;
+    protocol: DestinationPreviewProtocol;
     persisted: false;
   };
 }
@@ -80,16 +80,16 @@ export async function adminCsvDryRunPreviewHandler(c: AdminContext): Promise<Res
 }
 
 export async function adminSamlReleasePreviewHandler(c: AdminContext): Promise<Response | void> {
-  return adminOutboundReleasePreviewHandler(c, 'saml');
+  return adminDestinationReleasePreviewHandler(c, 'saml');
 }
 
 export async function adminOidcReleasePreviewHandler(c: AdminContext): Promise<Response | void> {
-  return adminOutboundReleasePreviewHandler(c, 'oidc');
+  return adminDestinationReleasePreviewHandler(c, 'oidc');
 }
 
-async function adminOutboundReleasePreviewHandler(
+async function adminDestinationReleasePreviewHandler(
   c: AdminContext,
-  protocol: OutboundPreviewProtocol
+  protocol: DestinationPreviewProtocol
 ): Promise<Response | void> {
   let body: unknown;
   try {
@@ -98,13 +98,13 @@ async function adminOutboundReleasePreviewHandler(
     return invalidRequest(c, 'Request body must be valid JSON');
   }
 
-  const validationError = validateOutboundReleasePreviewRequest(body, protocol);
+  const validationError = validateDestinationReleasePreviewRequest(body, protocol);
   if (validationError) {
     return invalidRequest(c, validationError);
   }
 
-  const request = body as OutboundReleasePreviewInput;
-  const result = previewOutboundRelease({
+  const request = body as DestinationReleasePreviewInput;
+  const result = previewDestinationRelease({
     ...request,
     destination: {
       ...request.destination,
@@ -112,7 +112,7 @@ async function adminOutboundReleasePreviewHandler(
     },
   });
 
-  return c.json<AdminOutboundReleasePreviewResponse>({
+  return c.json<AdminDestinationReleasePreviewResponse>({
     preview: {
       protocol,
       persisted: false,
@@ -183,9 +183,9 @@ function validateCsvDryRunPreviewRequest(body: unknown): string | null {
   return null;
 }
 
-function validateOutboundReleasePreviewRequest(
+function validateDestinationReleasePreviewRequest(
   body: unknown,
-  protocol: OutboundPreviewProtocol
+  protocol: DestinationPreviewProtocol
 ): string | null {
   if (!isRecord(body)) {
     return 'Request body must be an object';
@@ -205,8 +205,8 @@ function validateOutboundReleasePreviewRequest(
   if (!Array.isArray(body.values)) {
     return 'values must be an array';
   }
-  if (body.values.length > MAX_OUTBOUND_PREVIEW_VALUES) {
-    return `values must contain at most ${MAX_OUTBOUND_PREVIEW_VALUES} items`;
+  if (body.values.length > MAX_DESTINATION_PREVIEW_VALUES) {
+    return `values must contain at most ${MAX_DESTINATION_PREVIEW_VALUES} items`;
   }
   if (!body.values.every(isRecord)) {
     return 'each value must be an object';
@@ -225,9 +225,9 @@ function validateOutboundReleasePreviewRequest(
   }
   if (
     Array.isArray(body.samlRequestedAttributes) &&
-    body.samlRequestedAttributes.length > MAX_OUTBOUND_REQUESTED_ATTRIBUTES
+    body.samlRequestedAttributes.length > MAX_DESTINATION_REQUESTED_ATTRIBUTES
   ) {
-    return `samlRequestedAttributes must contain at most ${MAX_OUTBOUND_REQUESTED_ATTRIBUTES} items`;
+    return `samlRequestedAttributes must contain at most ${MAX_DESTINATION_REQUESTED_ATTRIBUTES} items`;
   }
   const budgetError = validateJsonBudget(body, 'request');
   if (budgetError) {

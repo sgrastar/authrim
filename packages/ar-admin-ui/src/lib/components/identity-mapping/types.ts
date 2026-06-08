@@ -18,6 +18,11 @@ export interface MappingNode {
 	id: string;
 	ruleId: string;
 	role: NodeRole;
+	fieldRef?: {
+		namespace: string;
+		path: string;
+		catalogEntryId?: string;
+	};
 	adapter?: MappingAdapter;
 	profileId?: string;
 	profileTitle?: string;
@@ -50,7 +55,7 @@ export interface MappingEdge {
 	id: string;
 	from: string;
 	to: string;
-	outbound?: boolean;
+	destinationSide?: boolean;
 	custom?: boolean;
 }
 
@@ -69,9 +74,9 @@ export interface RuleDetail {
 	purpose: string;
 	attributeSetHash: string;
 	consentMode: 'once' | 'every_time' | 'until_attributes_change' | 'not_applicable';
-	releasePolicyVersion: string;
+	releaseFieldMappingVersion: string;
 	termsVersion: string;
-	privacyPolicyVersion: string;
+	privacyFieldMappingVersion: string;
 	denyReason: string;
 	runtime: string;
 	conflict: string;
@@ -94,8 +99,8 @@ export interface MappingSample {
 	snapshot: string;
 	status: string;
 	reviewGates: string;
-	inboundAdapter: MappingAdapter;
-	outboundAdapter: MappingAdapter;
+	sourceAdapter: MappingAdapter;
+	destinationAdapter: MappingAdapter;
 	activeRuleId: string;
 	metrics: [string, string, string, string];
 	nodes: MappingNode[];
@@ -133,7 +138,7 @@ export interface MappingDraftPayload {
 	metadata: {
 		sampleId: string;
 		sampleTitle: string;
-		viewMode: 'overview' | 'inbound' | 'outbound';
+		viewMode: 'overview' | 'source' | 'destination';
 		edgeCount: number;
 		transformCount: number;
 	};

@@ -96,6 +96,14 @@ interface KVNamespace {
   get(key: string): Promise<string | null>;
 }
 
+interface UserIdFormatEnv {
+  USER_ID_FORMAT?: string;
+}
+
+function parseUserIdFormat(value: unknown): UserIdFormat | null {
+  return value === 'uuid' || value === 'nanoid' ? value : null;
+}
+
 function requireTenantId(tenantId: string, context: string): string {
   const normalized = tenantId.trim();
   if (!normalized) {
@@ -113,9 +121,15 @@ function requireTenantId(tenantId: string, context: string): string {
  */
 export async function getUserIdFormatFromSettings(
   kv: KVNamespace | undefined,
-  tenantId: string
+  tenantId: string,
+  env?: UserIdFormatEnv
 ): Promise<UserIdFormat> {
   const normalizedTenantId = requireTenantId(tenantId, 'getUserIdFormatFromSettings');
+  const envFormat = parseUserIdFormat(env?.USER_ID_FORMAT);
+  if (envFormat) {
+    return envFormat;
+  }
+
   if (!kv) {
     return DEFAULT_USER_ID_FORMAT;
   }
@@ -124,8 +138,8 @@ export async function getUserIdFormatFromSettings(
     const kvData = await kv.get(`settings:tenant:${normalizedTenantId}:tenant`);
     if (kvData) {
       const settings = JSON.parse(kvData) as Record<string, unknown>;
-      const format = settings['tenant.user_id_format'];
-      if (format === 'uuid' || format === 'nanoid') {
+      const format = parseUserIdFormat(settings['tenant.user_id_format']);
+      if (format) {
         return format;
       }
     }
@@ -146,8 +160,9 @@ export async function getUserIdFormatFromSettings(
  */
 export async function generateUserIdFromSettings(
   kv: KVNamespace | undefined,
-  tenantId: string
+  tenantId: string,
+  env?: UserIdFormatEnv
 ): Promise<string> {
-  const format = await getUserIdFormatFromSettings(kv, tenantId);
+  const format = await getUserIdFormatFromSettings(kv, tenantId, env);
   return generateUserId(format);
 }

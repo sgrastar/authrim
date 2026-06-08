@@ -5,13 +5,19 @@
 	import { onMount } from 'svelte';
 	import {
 		adminSAMLAPI,
+		type AttributeReleaseConsentMode,
 		type SAMLAttributePreset,
 		type SAMLJitEmailLinkingPolicy,
 		type SAMLProvider,
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingFieldMappingSetSummary
+	} from '$lib/api/admin-identity-mapping';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	const providerId = $derived($page.params.id);
 	const nameIdFormats = [
@@ -39,6 +45,7 @@
 
 	let provider = $state<SAMLProvider | null>(null);
 	let presets = $state<SAMLAttributePreset[]>([]);
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let loading = $state(true);
 	let saving = $state(false);
 	let busyAction = $state('');
@@ -77,6 +84,8 @@
 	);
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
 	let attributePresetId = $state('');
+	let attributeReleaseConsentSetting = $state<'disabled' | AttributeReleaseConsentMode>('disabled');
+	let identityMappingFieldMappingSetId = $state('');
 	let attributeMappingJson = $state('{}');
 	let certificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
 	let certificatePreviewError = $state('');
@@ -91,15 +100,17 @@
 		loading = true;
 		error = '';
 		try {
-			const [loadedProvider, presetResult] = await Promise.all([
+			const [loadedProvider, presetResult, fieldMappingResult] = await Promise.all([
 				adminSAMLAPI.getProvider(providerId),
-				adminSAMLAPI.listAttributePresets()
+				adminSAMLAPI.listAttributePresets(),
+				adminIdentityMappingAPI.listFieldMappingSets()
 			]);
 			provider = loadedProvider;
 			presets = presetResult.presets;
+			fieldMappingSets = fieldMappingResult.fieldMappingSets;
 			populateForm(loadedProvider);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load SAML provider';
+			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_load();
 		} finally {
 			loading = false;
 		}
@@ -142,46 +153,51 @@
 		passkeyAuthnContextClassRef =
 			data.config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
 		attributePresetId = data.config.attributePresetId || '';
+		attributeReleaseConsentSetting = data.config.attributeReleaseConsent?.enabled
+			? data.config.attributeReleaseConsent.mode
+			: 'disabled';
+		identityMappingFieldMappingSetId = data.config.identityMapping?.fieldMappingSetId || '';
 		attributeMappingJson = JSON.stringify(data.config.attributeMapping || {}, null, 2);
 		certificatePreview = null;
 		certificatePreviewError = '';
 	}
 
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
-		return type === 'saml_sp' ? 'Service Provider' : 'Identity Provider';
+		return type === 'saml_sp'
+			? $LL.admin_saml_detail_service_provider()
+			: $LL.admin_saml_detail_identity_provider();
 	}
 
 	function selectedNameIdFormatInfo() {
 		switch (nameIdFormat) {
 			case 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress':
 				return {
-					description: 'Uses the user email address as the NameID value.',
+					description: $LL.admin_saml_detail_nameid_email(),
 					sample: 'alice@example.edu'
 				};
 			case 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent':
 				return {
-					description: 'Uses a stable opaque identifier for the subject and SP relationship.',
+					description: $LL.admin_saml_detail_nameid_persistent(),
 					sample: 'a7f62c2b-2f5f-4df8-9d1d-8c7e7b1c6c2a'
 				};
 			case 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient':
 				return {
-					description: 'Uses a short-lived opaque identifier for this SAML transaction/session.',
+					description: $LL.admin_saml_detail_nameid_transient(),
 					sample: '_9f23b7f2d3d0476a8b98'
 				};
 			case 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified':
 				return {
-					description: 'Leaves the semantic meaning to the bilateral SP/IdP agreement.',
+					description: $LL.admin_saml_detail_nameid_unspecified(),
 					sample: 'alice'
 				};
 			case 'urn:mace:shibboleth:1.0:nameIdentifier':
 				return {
-					description:
-						'Legacy Shibboleth 1.x NameIdentifier format, kept only for older Shibboleth-era systems.',
+					description: $LL.admin_saml_detail_nameid_shibboleth(),
 					sample: 'alice@example.edu'
 				};
 			default:
 				return {
-					description: 'Custom or externally supplied NameID format.',
+					description: $LL.admin_saml_detail_nameid_custom(),
 					sample: nameIdFormat || '-'
 				};
 		}
@@ -190,20 +206,20 @@
 	function formatCertificateDate(value: string) {
 		const date = new Date(value);
 		if (Number.isNaN(date.getTime())) return value || '-';
-		return date.toLocaleString();
+		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function providerCertificateMessage() {
 		const validation = provider?.config.certificateValidation;
 		if (!validation) return '';
 		if (validation.allExpired) {
-			return 'All configured signing certificates are expired. This provider is disabled until a valid certificate is configured.';
+			return $LL.admin_saml_detail_all_expired();
 		}
 		if (validation.hasExpired) {
-			return 'One or more configured signing certificates are expired. Check rollover state and remove retired certificates when safe.';
+			return $LL.admin_saml_detail_some_expired();
 		}
 		if (validation.hasWeakSignature) {
-			return 'One or more configured signing certificates use a weak signature algorithm. Keep SHA-1 only for an explicit legacy compatibility exception.';
+			return $LL.admin_saml_detail_weak_signature();
 		}
 		return '';
 	}
@@ -219,7 +235,7 @@
 		if (!attributeMappingJson.trim()) return {};
 		const parsed = JSON.parse(attributeMappingJson) as unknown;
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error('Attribute mapping must be a JSON object');
+			throw new Error($LL.admin_saml_detail_mapping_object_error());
 		}
 		return parsed as Record<string, string>;
 	}
@@ -284,20 +300,38 @@
 			authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
+			attributeReleaseConsent:
+				attributeReleaseConsentSetting === 'disabled'
+					? {
+							enabled: false,
+							mode: 'once'
+						}
+					: {
+							enabled: true,
+							mode: attributeReleaseConsentSetting
+						},
+			identityMapping: identityMappingFieldMappingSetId
+				? {
+						...(provider?.config.identityMapping ?? {}),
+						fieldMappingSetId: identityMappingFieldMappingSetId,
+						destinationNamespace:
+							provider?.config.identityMapping?.destinationNamespace ?? 'saml.attribute'
+					}
+				: undefined,
 			...selectedPresetConfig()
 		};
 	}
 
 	function validate() {
-		if (!name.trim()) return 'Name is required';
-		if (!isValidLoginLogoUrl(logoUrl)) return 'Login UI logo URL must be a valid HTTPS URL';
-		if (!entityId.trim()) return 'Entity ID is required';
-		if (!allowPost && !allowRedirect) return 'At least one binding is required';
+		if (!name.trim()) return $LL.admin_saml_detail_name_required_error();
+		if (!isValidLoginLogoUrl(logoUrl)) return $LL.admin_saml_detail_logo_invalid();
+		if (!entityId.trim()) return $LL.admin_saml_detail_entity_required();
+		if (!allowPost && !allowRedirect) return $LL.admin_saml_detail_at_least_one_binding();
 		if (provider?.providerType === 'saml_idp' && (!ssoUrl.trim() || !certificate.trim())) {
-			return 'SSO URL and certificate are required for a SAML IdP';
+			return $LL.admin_saml_detail_idp_required();
 		}
 		if (provider?.providerType === 'saml_sp' && !acsUrl.trim()) {
-			return 'ACS URL is required for a SAML SP';
+			return $LL.admin_saml_detail_sp_required();
 		}
 		parseMapping();
 		return '';
@@ -331,9 +365,9 @@
 			});
 			provider = updated;
 			populateForm(updated);
-			message = 'Provider updated';
+			message = $LL.admin_saml_detail_provider_updated();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update provider';
+			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_update();
 		} finally {
 			saving = false;
 		}
@@ -341,7 +375,7 @@
 
 	async function previewCertificate() {
 		if (!certificate.trim()) {
-			certificatePreviewError = 'Certificate is required';
+			certificatePreviewError = $LL.admin_saml_detail_certificate_required();
 			return;
 		}
 		loadingCertificatePreview = true;
@@ -354,7 +388,7 @@
 			certificate = certificatePreview.certificate;
 		} catch (err) {
 			certificatePreviewError =
-				err instanceof Error ? err.message : 'Failed to validate certificate';
+				err instanceof Error ? err.message : $LL.admin_saml_detail_error_validate_certificate();
 		} finally {
 			loadingCertificatePreview = false;
 		}
@@ -369,9 +403,9 @@
 			const result = await adminSAMLAPI.promoteSigningNext(providerId);
 			provider = { ...provider, config: result.config };
 			populateForm(provider);
-			message = 'Next certificate promoted';
+			message = $LL.admin_saml_detail_next_promoted();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to promote next certificate';
+			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_promote_next();
 		} finally {
 			busyAction = '';
 		}
@@ -386,9 +420,9 @@
 			const result = await adminSAMLAPI.retireSigningBackup(providerId);
 			provider = { ...provider, config: result.config };
 			populateForm(provider);
-			message = 'Backup certificate retired';
+			message = $LL.admin_saml_detail_backup_retired();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to retire backup certificate';
+			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_retire_backup();
 		} finally {
 			busyAction = '';
 		}
@@ -396,14 +430,14 @@
 
 	async function deleteProvider() {
 		if (!providerId || !provider) return;
-		if (!window.confirm(`Delete ${provider.name}?`)) return;
+		if (!window.confirm($LL.admin_saml_detail_delete_confirm({ name: provider.name }))) return;
 		busyAction = 'delete';
 		error = '';
 		try {
 			await adminSAMLAPI.deleteProvider(providerId);
 			await goto('/admin/saml');
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete provider';
+			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_delete();
 		} finally {
 			busyAction = '';
 		}
@@ -411,29 +445,31 @@
 </script>
 
 <svelte:head>
-	<title>{provider ? provider.name : 'SAML Provider'} - Admin Dashboard - Authrim</title>
+	<title
+		>{provider ? provider.name : $LL.admin_saml_detail_page_title_fallback()} - Admin Dashboard - Authrim</title
+	>
 </svelte:head>
 
 {#snippet certificatePreviewCard(preview: SAMLTrustCertificatePreview)}
 	<div class="certificate-preview">
 		<div class="certificate-preview-header">
-			<strong>Valid X.509 certificate</strong>
+			<strong>{$LL.admin_saml_detail_certificate_valid()}</strong>
 			<span class="badge badge-info">{preview.publicKeyAlgorithm}</span>
 		</div>
 		<div class="certificate-preview-grid">
-			<span>Subject</span>
+			<span>{$LL.admin_saml_local_subject()}</span>
 			<code>{preview.subject}</code>
-			<span>Issuer</span>
+			<span>{$LL.admin_saml_local_issuer()}</span>
 			<code>{preview.issuer}</code>
-			<span>Valid From</span>
+			<span>{$LL.admin_saml_local_valid_from()}</span>
 			<code>{formatCertificateDate(preview.validFrom)}</code>
-			<span>Valid To</span>
+			<span>{$LL.admin_saml_local_valid_to()}</span>
 			<code>{formatCertificateDate(preview.validTo)}</code>
-			<span>Signature</span>
+			<span>{$LL.admin_saml_local_signature()}</span>
 			<code>{preview.signatureAlgorithm}</code>
 			{#if preview.publicKeySizeBits}
-				<span>Key Size</span>
-				<code>{preview.publicKeySizeBits} bits</code>
+				<span>{$LL.admin_saml_detail_key_size()}</span>
+				<code>{$LL.admin_saml_detail_bits({ bits: preview.publicKeySizeBits })}</code>
 			{/if}
 			<span>SHA-1</span>
 			<code>{preview.fingerprintSha1}</code>
@@ -451,10 +487,10 @@
 {/snippet}
 
 <div class="admin-page">
-	<a href="/admin/saml" class="back-link">← Back to SAML</a>
+	<a href="/admin/saml" class="back-link">← {$LL.admin_saml_detail_back()}</a>
 
 	{#if loading}
-		<div class="loading-state">Loading SAML provider...</div>
+		<div class="loading-state">{$LL.admin_saml_detail_loading()}</div>
 	{:else if provider}
 		<div class="page-header">
 			<div>
@@ -463,7 +499,7 @@
 			</div>
 			<div class="page-actions">
 				<button class="btn btn-danger" onclick={deleteProvider} disabled={busyAction === 'delete'}>
-					Delete
+					{$LL.admin_saml_detail_delete()}
 				</button>
 			</div>
 		</div>
@@ -489,22 +525,24 @@
 			<div class="panel">
 				<ToggleSwitch
 					bind:checked={enabled}
-					label="Provider Status"
-					description="Enable or disable this SAML provider."
+					label={$LL.admin_saml_detail_provider_status()}
+					description={$LL.admin_saml_detail_provider_status_desc()}
 				/>
 			</div>
 
 			<div class="panel">
-				<h2 class="panel-title">Basic Information</h2>
+				<h2 class="panel-title">{$LL.admin_saml_detail_basic_information()}</h2>
 
 				<div class="form-grid">
 					<div class="form-group">
-						<label for="name" class="form-label">Name *</label>
+						<label for="name" class="form-label">{$LL.admin_saml_detail_name_required()}</label>
 						<input id="name" type="text" bind:value={name} class="form-input" required />
 					</div>
 
 					<div class="form-group">
-						<label for="nameIdFormat" class="form-label">NameID Format</label>
+						<label for="nameIdFormat" class="form-label"
+							>{$LL.admin_saml_detail_nameid_format()}</label
+						>
 						<select id="nameIdFormat" bind:value={nameIdFormat} class="form-select">
 							{#each nameIdFormats as format (format.value)}
 								<option value={format.value}>{format.label}</option>
@@ -512,12 +550,17 @@
 						</select>
 						<div class="inline-help">
 							<p>{selectedNameIdFormatInfo().description}</p>
-							<code>Example: {selectedNameIdFormatInfo().sample}</code>
+							<code
+								>{$LL.admin_saml_detail_example({
+									sample: selectedNameIdFormatInfo().sample
+								})}</code
+							>
 						</div>
 					</div>
 
 					<div class="form-group form-group-full">
-						<label for="description" class="form-label">Description</label>
+						<label for="description" class="form-label">{$LL.admin_saml_detail_description()}</label
+						>
 						<textarea
 							id="description"
 							bind:value={description}
@@ -527,7 +570,7 @@
 					</div>
 
 					<div class="form-group form-group-full">
-						<label for="logoUrl" class="form-label">Login UI Logo URL</label>
+						<label for="logoUrl" class="form-label">{$LL.admin_saml_detail_logo_url()}</label>
 						<div class="logo-url-field">
 							<input
 								id="logoUrl"
@@ -537,14 +580,13 @@
 								placeholder="https://example.com/logo.png"
 							/>
 							{#if logoUrl}
-								<div class="logo-url-preview" aria-label="Logo preview">
+								<div class="logo-url-preview" aria-label={$LL.admin_saml_detail_logo_preview()}>
 									<img src={logoUrl} alt="" loading="lazy" />
 								</div>
 							{/if}
 						</div>
 						<p class="form-hint">
-							Optional. Used as the provider logo on Login UI buttons. HTTPS only; the image is
-							fitted into a square.
+							{$LL.admin_saml_detail_logo_hint()}
 						</p>
 					</div>
 
@@ -552,51 +594,53 @@
 						<LoginProviderIconPicker
 							bind:value={iconName}
 							defaultIcon="buildings"
-							defaultLabel="Default SAML icon"
-							description="Used when Login UI Logo URL is empty."
+							defaultLabel={$LL.admin_saml_detail_default_icon()}
+							description={$LL.admin_saml_detail_default_icon_desc()}
 						/>
 					</div>
 				</div>
 			</div>
 
 			<div class="panel">
-				<h2 class="panel-title">SAML Configuration</h2>
+				<h2 class="panel-title">{$LL.admin_saml_detail_saml_configuration()}</h2>
 
 				<div class="form-grid">
 					<div class="form-group form-group-full">
-						<label for="entityId" class="form-label">Entity ID *</label>
+						<label for="entityId" class="form-label">{$LL.admin_saml_entity_id()} *</label>
 						<input id="entityId" type="text" bind:value={entityId} class="form-input" />
 					</div>
 
 					{#if provider.providerType === 'saml_idp'}
 						<div class="form-group">
-							<label for="ssoUrl" class="form-label">SSO URL *</label>
+							<label for="ssoUrl" class="form-label">{$LL.admin_saml_sso_url_required()}</label>
 							<input id="ssoUrl" type="url" bind:value={ssoUrl} class="form-input" />
 						</div>
 					{:else}
 						<div class="form-group">
-							<label for="acsUrl" class="form-label">ACS URL *</label>
+							<label for="acsUrl" class="form-label">{$LL.admin_saml_acs_url_required()}</label>
 							<input id="acsUrl" type="url" bind:value={acsUrl} class="form-input" />
 						</div>
 					{/if}
 
 					<div class="form-group">
-						<label for="sloUrl" class="form-label">SLO URL</label>
+						<label for="sloUrl" class="form-label">{$LL.admin_saml_slo_url()}</label>
 						<input id="sloUrl" type="url" bind:value={sloUrl} class="form-input" />
 					</div>
 
 					<div class="form-group form-group-full">
-						<label for="metadataUrl" class="form-label">Metadata URL</label>
+						<label for="metadataUrl" class="form-label">{$LL.admin_saml_local_metadata_url()}</label
+						>
 						<input id="metadataUrl" type="url" bind:value={metadataUrl} class="form-input" />
 						<p class="form-hint">
-							Stored metadata source URL. Aggregate or multi-entity metadata should be handled from
-							Add Provider/Federation.
+							{$LL.admin_saml_detail_metadata_source_hint()}
 						</p>
 					</div>
 
 					<div class="form-group form-group-full">
 						<label for="certificate" class="form-label">
-							{provider.providerType === 'saml_idp' ? 'Signing Certificate *' : 'SP Certificate'}
+							{provider.providerType === 'saml_idp'
+								? $LL.admin_saml_detail_signing_certificate_required()
+								: $LL.admin_saml_detail_sp_certificate()}
 						</label>
 						<textarea
 							id="certificate"
@@ -609,8 +653,7 @@
 							rows="8"
 						></textarea>
 						<p class="form-hint">
-							Accepts X.509 certificates in PEM or base64 DER form. Metadata import usually fills
-							this automatically.
+							{$LL.admin_saml_detail_certificate_hint()}
 						</p>
 						<div class="certificate-actions">
 							<button
@@ -619,7 +662,9 @@
 								onclick={previewCertificate}
 								disabled={loadingCertificatePreview || !certificate.trim()}
 							>
-								{loadingCertificatePreview ? 'Checking...' : 'Validate Certificate'}
+								{loadingCertificatePreview
+									? $LL.admin_saml_detail_checking()
+									: $LL.admin_saml_detail_validate_certificate()}
 							</button>
 						</div>
 						{#if certificatePreviewError}
@@ -631,7 +676,9 @@
 					</div>
 
 					<div class="form-group form-group-full">
-						<label for="attributeMapping" class="form-label">Attribute Mapping JSON</label>
+						<label for="attributeMapping" class="form-label"
+							>{$LL.admin_saml_detail_attribute_mapping_json()}</label
+						>
 						<textarea
 							id="attributeMapping"
 							bind:value={attributeMappingJson}
@@ -642,9 +689,9 @@
 				</div>
 
 				<div class="binding-section">
-					<h3 class="section-subtitle">Allowed SAML Bindings</h3>
+					<h3 class="section-subtitle">{$LL.admin_saml_detail_allowed_bindings()}</h3>
 					<p class="form-hint">
-						Controls which SAML protocol bindings this provider may use for SSO/SLO messages.
+						{$LL.admin_saml_detail_allowed_bindings_hint()}
 					</p>
 				</div>
 				<div class="form-checkbox-group compact-checkboxes">
@@ -661,27 +708,33 @@
 
 			{#if provider.providerType === 'saml_idp'}
 				<div class="panel">
-					<h2 class="panel-title">SP Login Policy</h2>
+					<h2 class="panel-title">{$LL.admin_saml_detail_sp_login_policy()}</h2>
 
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="providerName" class="form-label">SP Display Name</label>
+							<label for="providerName" class="form-label"
+								>{$LL.admin_saml_detail_sp_display_name()}</label
+							>
 							<input id="providerName" type="text" bind:value={providerName} class="form-input" />
 						</div>
 
 						<div class="form-group">
-							<label for="jitEmailLinkingPolicy" class="form-label">JIT Linking Policy</label>
+							<label for="jitEmailLinkingPolicy" class="form-label"
+								>{$LL.admin_saml_detail_jit_linking_policy()}</label
+							>
 							<select
 								id="jitEmailLinkingPolicy"
 								bind:value={jitEmailLinkingPolicy}
 								class="form-select"
 							>
-								<option value="email_linking">Existing verified email or JIT create</option>
-								<option value="jit_create_only">JIT create only</option>
-								<option value="disabled">Existing links only</option>
+								<option value="email_linking"
+									>{$LL.admin_saml_detail_jit_existing_or_create()}</option
+								>
+								<option value="jit_create_only">{$LL.admin_saml_detail_jit_create_only()}</option>
+								<option value="disabled">{$LL.admin_saml_detail_jit_existing_only()}</option>
 							</select>
 							<p class="field-hint">
-								Controls whether first login can link by verified local email or create a user.
+								{$LL.admin_saml_detail_jit_hint()}
 							</p>
 						</div>
 
@@ -692,47 +745,48 @@
 									bind:checked={allowSyntheticEmailFallback}
 									class="checkbox"
 								/>
-								Allow synthetic email fallback
+								{$LL.admin_saml_detail_synthetic_email()}
 							</label>
 							<p class="field-hint">
-								Use only for legacy IdPs that cannot release an email attribute.
+								{$LL.admin_saml_detail_synthetic_email_hint()}
 							</p>
 						</div>
 
 						<div class="form-group">
 							<label for="logoutRequestSignaturePolicy" class="form-label">
-								IdP LogoutRequest Signature
+								{$LL.admin_saml_detail_idp_logout_signature()}
 							</label>
 							<select
 								id="logoutRequestSignaturePolicy"
 								bind:value={logoutRequestSignaturePolicy}
 								class="form-select"
 							>
-								<option value="required">Required</option>
-								<option value="optional">Optional</option>
-								<option value="disabled">Disabled</option>
+								<option value="required">{$LL.admin_saml_detail_required()}</option>
+								<option value="optional">{$LL.admin_saml_detail_optional()}</option>
+								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
 							<p class="field-hint">
-								Required by default. Use Optional or Disabled only for explicit legacy IdP
-								compatibility.
+								{$LL.admin_saml_detail_signature_required_hint()}
 							</p>
 						</div>
 
 						<div class="form-group">
-							<label for="authnContextPolicyMode" class="form-label">AuthnContext Policy</label>
+							<label for="authnContextPolicyMode" class="form-label"
+								>{$LL.admin_saml_detail_authn_context_policy()}</label
+							>
 							<select
 								id="authnContextPolicyMode"
 								bind:value={authnContextPolicyMode}
 								class="form-select"
 							>
-								<option value="observe">Observe</option>
-								<option value="require_any">Require allowed value</option>
+								<option value="observe">{$LL.admin_saml_detail_observe()}</option>
+								<option value="require_any">{$LL.admin_saml_detail_require_allowed()}</option>
 							</select>
 						</div>
 
 						<div class="form-group form-group-full">
 							<label for="allowedAuthnContextClassRefs" class="form-label">
-								Allowed AuthnContextClassRef
+								{$LL.admin_saml_detail_allowed_authn_context()}
 							</label>
 							<textarea
 								id="allowedAuthnContextClassRefs"
@@ -747,11 +801,11 @@
 
 			{#if provider.providerType === 'saml_sp'}
 				<div class="panel">
-					<h2 class="panel-title">SP Policy</h2>
+					<h2 class="panel-title">{$LL.admin_saml_detail_sp_policy()}</h2>
 
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="samlProfile" class="form-label">Profile</label>
+							<label for="samlProfile" class="form-label">{$LL.admin_saml_detail_profile()}</label>
 							<select id="samlProfile" bind:value={samlProfile} class="form-select">
 								<option value="baseline">Baseline</option>
 								<option value="strict">Strict</option>
@@ -761,9 +815,11 @@
 						</div>
 
 						<div class="form-group">
-							<label for="attributePreset" class="form-label">Attribute Preset</label>
+							<label for="attributePreset" class="form-label"
+								>{$LL.admin_saml_detail_attribute_preset()}</label
+							>
 							<select id="attributePreset" bind:value={attributePresetId} class="form-select">
-								<option value="">None</option>
+								<option value="">{$LL.admin_saml_detail_none()}</option>
 								{#each presets as preset (preset.id)}
 									<option value={preset.id}>{preset.label}</option>
 								{/each}
@@ -771,53 +827,103 @@
 						</div>
 
 						<div class="form-group">
+							<label for="identityMappingFieldMapping" class="form-label"
+								>{$LL.admin_saml_detail_identity_mapping_policy()}</label
+							>
+							<select
+								id="identityMappingFieldMapping"
+								bind:value={identityMappingFieldMappingSetId}
+								class="form-select"
+							>
+								<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
+								{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+									<option value={fieldMappingSet.id}>
+										{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
+									</option>
+								{/each}
+							</select>
+							<p class="field-hint">
+								{$LL.admin_saml_detail_identity_mapping_policy_hint()}
+							</p>
+						</div>
+
+						<div class="form-group">
+							<label for="attributeReleaseConsent" class="form-label"
+								>{$LL.admin_saml_detail_attribute_release_consent()}</label
+							>
+							<select
+								id="attributeReleaseConsent"
+								bind:value={attributeReleaseConsentSetting}
+								class="form-select"
+							>
+								<option value="disabled"
+									>{$LL.admin_saml_detail_attribute_release_consent_disabled()}</option
+								>
+								<option value="once"
+									>{$LL.admin_saml_detail_attribute_release_consent_once()}</option
+								>
+								<option value="every_time"
+									>{$LL.admin_saml_detail_attribute_release_consent_every_time()}</option
+								>
+								<option value="until_attributes_change"
+									>{$LL.admin_saml_detail_attribute_release_consent_until_attributes_change()}</option
+								>
+							</select>
+							<p class="field-hint">
+								{$LL.admin_saml_detail_attribute_release_consent_hint()}
+							</p>
+						</div>
+
+						<div class="form-group">
 							<label for="authnRequestSignaturePolicy" class="form-label">
-								AuthnRequest Signature
+								{$LL.admin_saml_detail_authn_request_signature()}
 							</label>
 							<select
 								id="authnRequestSignaturePolicy"
 								bind:value={authnRequestSignaturePolicy}
 								class="form-select"
 							>
-								<option value="optional">Optional</option>
-								<option value="required">Required</option>
-								<option value="disabled">Disabled</option>
+								<option value="optional">{$LL.admin_saml_detail_optional()}</option>
+								<option value="required">{$LL.admin_saml_detail_required()}</option>
+								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
 						</div>
 
 						<div class="form-group">
 							<label for="spLogoutRequestSignaturePolicy" class="form-label">
-								LogoutRequest Signature
+								{$LL.admin_saml_detail_logout_request_signature()}
 							</label>
 							<select
 								id="spLogoutRequestSignaturePolicy"
 								bind:value={logoutRequestSignaturePolicy}
 								class="form-select"
 							>
-								<option value="required">Required</option>
-								<option value="optional">Optional</option>
-								<option value="disabled">Disabled</option>
+								<option value="required">{$LL.admin_saml_detail_required()}</option>
+								<option value="optional">{$LL.admin_saml_detail_optional()}</option>
+								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
 							<p class="field-hint">
-								Required by default. Relax only for an explicit legacy SP exception.
+								{$LL.admin_saml_detail_sp_signature_hint()}
 							</p>
 						</div>
 
 						<div class="form-group">
-							<label for="authnContextClassRefMode" class="form-label">AuthnContext Mode</label>
+							<label for="authnContextClassRefMode" class="form-label"
+								>{$LL.admin_saml_detail_authn_context_mode()}</label
+							>
 							<select
 								id="authnContextClassRefMode"
 								bind:value={authnContextClassRefMode}
 								class="form-select"
 							>
-								<option value="session">Session aware</option>
-								<option value="legacy_static">Legacy static</option>
+								<option value="session">{$LL.admin_saml_detail_session_aware()}</option>
+								<option value="legacy_static">{$LL.admin_saml_detail_legacy_static()}</option>
 							</select>
 						</div>
 
 						<div class="form-group">
 							<label for="defaultAuthnContextClassRef" class="form-label">
-								Default AuthnContext
+								{$LL.admin_saml_detail_default_authn_context()}
 							</label>
 							<input
 								id="defaultAuthnContextClassRef"
@@ -829,7 +935,7 @@
 
 						<div class="form-group">
 							<label for="passkeyAuthnContextClassRef" class="form-label">
-								Passkey AuthnContext
+								{$LL.admin_saml_detail_passkey_authn_context()}
 							</label>
 							<input
 								id="passkeyAuthnContextClassRef"
@@ -843,13 +949,13 @@
 					<div class="behavior-settings-list">
 						<ToggleSwitch
 							bind:checked={signAssertions}
-							label="Sign Assertions"
-							description="Sign SAML Assertions sent to this service provider."
+							label={$LL.admin_saml_detail_sign_assertions()}
+							description={$LL.admin_saml_detail_sign_assertions_desc()}
 						/>
 						<ToggleSwitch
 							bind:checked={signResponses}
-							label="Sign Responses"
-							description="Sign SAML Responses sent to this service provider."
+							label={$LL.admin_saml_detail_sign_responses()}
+							description={$LL.admin_saml_detail_sign_responses_desc()}
 						/>
 					</div>
 				</div>
@@ -859,10 +965,9 @@
 		<div class="panel">
 			<div class="panel-header">
 				<div>
-					<h2 class="panel-title">Signing Rollover</h2>
+					<h2 class="panel-title">{$LL.admin_saml_local_signing_rollover()}</h2>
 					<p class="form-hint">
-						Manage staged signing certificates. Publish next/backup certificates in metadata, then
-						promote next after counterparties have refreshed trust.
+						{$LL.admin_saml_detail_rollover_desc()}
 					</p>
 				</div>
 				<div class="key-state">
@@ -878,25 +983,29 @@
 					onclick={promoteNext}
 					disabled={!provider.config.signingKeyPolicy?.next || busyAction === 'promote'}
 				>
-					{busyAction === 'promote' ? 'Promoting...' : 'Promote Next'}
+					{busyAction === 'promote'
+						? $LL.admin_saml_detail_promoting()
+						: $LL.admin_saml_detail_promote_next()}
 				</button>
 				<button
 					class="btn btn-secondary"
 					onclick={retireBackup}
 					disabled={!provider.config.signingKeyPolicy?.backup || busyAction === 'retire'}
 				>
-					{busyAction === 'retire' ? 'Retiring...' : 'Retire Backup'}
+					{busyAction === 'retire'
+						? $LL.admin_saml_detail_retiring()
+						: $LL.admin_saml_detail_retire_backup()}
 				</button>
 			</div>
 		</div>
 
 		<div class="form-actions page-bottom-actions">
 			<button class="btn btn-primary" type="button" onclick={handleSave} disabled={saving}>
-				{saving ? 'Saving...' : 'Save Changes'}
+				{saving ? $LL.admin_saml_local_saving() : $LL.admin_saml_detail_save_changes()}
 			</button>
 		</div>
 	{:else}
-		<div class="alert alert-error">{error || 'SAML provider not found'}</div>
+		<div class="alert alert-error">{error || $LL.admin_saml_detail_not_found()}</div>
 	{/if}
 </div>
 

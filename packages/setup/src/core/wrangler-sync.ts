@@ -139,6 +139,37 @@ export function removeEnvironmentSectionFromToml(
   };
 }
 
+export function extractEnvironmentSectionFromToml(content: string, env: string): string {
+  const lines = content.split('\n');
+  const section: string[] = [];
+  let collecting = false;
+
+  for (const line of lines) {
+    if (!collecting && isTargetEnvLine(line, env)) {
+      collecting = true;
+    }
+
+    if (collecting) {
+      if (section.length > 0 && isOtherEnvBoundary(line, env)) {
+        break;
+      }
+      section.push(line);
+    }
+  }
+
+  return section.join('\n').trimEnd();
+}
+
+export function mergeEnvironmentSectionIntoToml(
+  deployContent: string,
+  masterContent: string,
+  env: string
+): string {
+  const withoutTargetEnv = removeEnvironmentSectionFromToml(deployContent, env).content.trimEnd();
+  const targetSection = masterContent.trim();
+  return [withoutTargetEnv, targetSection].filter(Boolean).join('\n\n') + '\n';
+}
+
 /**
  * Get the master wrangler.toml path for a component
  */
@@ -319,10 +350,14 @@ export async function syncWranglerConfigs(
       const masterContent = await readFile(masterPath, 'utf-8');
 
       // Check if deploy file exists and is different
+      let nextDeployContent = masterContent;
       if (existsSync(deployPath)) {
         const deployContent = await readFile(deployPath, 'utf-8');
         const masterNormalized = normalizeToml(masterContent);
-        const deployNormalized = normalizeToml(deployContent);
+        const deployNormalized = normalizeToml(
+          extractEnvironmentSectionFromToml(deployContent, env)
+        );
+        nextDeployContent = mergeEnvironmentSectionIntoToml(deployContent, masterContent, env);
 
         if (masterNormalized === deployNormalized) {
           // Already in sync
@@ -359,7 +394,7 @@ export async function syncWranglerConfigs(
 
       // Write master content to deploy location
       if (!dryRun) {
-        await writeFile(deployPath, masterContent, 'utf-8');
+        await writeFile(deployPath, nextDeployContent, 'utf-8');
         onProgress?.(`  ${component}: Synced to wrangler.toml`);
       } else {
         onProgress?.(`  ${component}: Would sync to wrangler.toml`);

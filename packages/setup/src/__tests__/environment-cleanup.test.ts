@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
-import { removeEnvironmentSectionFromToml } from '../core/wrangler-sync.js';
+import {
+  mergeEnvironmentSectionIntoToml,
+  removeEnvironmentSectionFromToml,
+} from '../core/wrangler-sync.js';
 
 const tempDirs: string[] = [];
 
@@ -33,6 +36,30 @@ FOO = "baz"
     expect(result.removed).toBe(true);
     expect(result.content).not.toContain('[env.test]');
     expect(result.content).toContain('[env.single]');
+  });
+
+  it('merges a generated env section without overwriting other environments', () => {
+    const deployContent = `main = "src/index.ts"
+
+# Environment: prod
+[env.prod]
+name = "prod-old"
+
+# Environment: staging
+[env.staging]
+name = "staging-current"
+`;
+    const masterContent = `# Environment: prod
+[env.prod]
+name = "prod-new"
+`;
+
+    const merged = mergeEnvironmentSectionIntoToml(deployContent, masterContent, 'prod');
+
+    expect(merged).toContain('name = "prod-new"');
+    expect(merged).not.toContain('name = "prod-old"');
+    expect(merged).toContain('[env.staging]');
+    expect(merged).toContain('name = "staging-current"');
   });
 });
 

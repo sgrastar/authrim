@@ -221,7 +221,7 @@ const DOMAIN_FORM_BROWSER_SCRIPT = String.raw`
         showWorkersDevNote: !hasBaseDomain,
         showNakedDomainControls: multiTenantEnabled,
         showTenantFields: !hasBaseDomain || (multiTenantEnabled && !nakedDomainEnabled),
-        showPrimaryTenantRow: nakedDomainEnabled,
+        showPrimaryTenantRow: false,
         showExamples: multiTenantEnabled,
         baseDomainPlaceholder: nakedDomainEnabled
           ? 'example.com'
@@ -5803,6 +5803,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         components,
         profiles,
         features,
+        zoneId: loadedConfig.urls?.api?.zoneId || null,
+        customDomainBinding: loadedConfig.urls?.api?.customDomainBinding === true,
       };
 
       // Set form values
@@ -5936,6 +5938,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         body += alphabet[bytes[i] % alphabet.length];
       }
       return body;
+    }
+
+    function isValidTenantId(value) {
+      return /^[a-z][a-z0-9-]{0,62}$/.test(String(value || '').trim());
+    }
+
+    function showTenantIdValidationError(inputId, label) {
+      alert(label + ' must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens.');
+      document.getElementById(inputId)?.focus();
     }
 
     function refreshApiDomainUi() {
@@ -6715,13 +6726,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Initial Tenant';
       const userIdFormat = document.getElementById('user-id-format').value || 'nanoid';
       const primaryTenant = multiTenantEnabled && nakedDomain
-        ? (document.getElementById('primary-tenant').value.trim() || undefined)
+        ? tenantName
         : undefined;
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
       const loginUiEnabled = document.getElementById('comp-login-ui')?.checked !== false;
       const adminUiEnabled = document.getElementById('comp-admin-ui')?.checked !== false;
 
+      if (!isValidTenantId(tenantName)) {
+        showTenantIdValidationError('tenant-name', 'Initial Tenant ID');
+        return;
+      }
       const loginZoneOk =
         !loginUiEnabled || (await checkUiCustomDomainZone('login', { blockOnFailure: true }));
       const adminZoneOk =
@@ -6761,6 +6776,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           email: { provider: 'none' },
         },
         profiles: buildProfilesConfig('builtin:storage:shared-d1'),
+        zoneId: domainZoneId || null,
+        customDomainBinding: baseDomain
+          ? (document.getElementById('custom-domain-binding')?.checked ?? false)
+          : false,
       };
 
       // Create default config with component settings
@@ -7731,6 +7750,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const adminUiWorkerDomain = workersSubdomain
         ? env + '-ar-admin-ui.' + workersSubdomain + '.workers.dev'
         : env + '-ar-admin-ui.workers.dev';
+      const apiCustomUrl = config.apiDomain || null;
+      const loginUiCustomUrl = config.loginUiDomain || null;
+      const adminUiCustomUrl = config.adminUiDomain || null;
 
       // Build config in AuthrimConfigSchema format
       const configToSave = {
@@ -7742,18 +7764,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         },
         urls: {
           api: {
-            custom: config.apiDomain || null,
+            custom: apiCustomUrl,
             // api.auto must always be the workers.dev URL (used for proxy backend and CORS).
             // The custom domain (issuer URL) belongs in api.custom, not api.auto.
             auto: 'https://' + workersDomain,
+            zoneId: config.zoneId || null,
+            customDomainBinding: config.customDomainBinding === true,
           },
           loginUi: {
-            custom: config.loginUiDomain || null,
+            custom: loginUiCustomUrl,
             auto: 'https://' + loginUiWorkerDomain,
+            sameAsApi: Boolean(apiCustomUrl && loginUiCustomUrl === apiCustomUrl),
           },
           adminUi: {
-            custom: config.adminUiDomain || null,
+            custom: adminUiCustomUrl,
             auto: 'https://' + adminUiWorkerDomain,
+            sameAsApi: Boolean(apiCustomUrl && adminUiCustomUrl === apiCustomUrl),
           },
         },
         tenant: {

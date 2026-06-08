@@ -46,11 +46,11 @@ describe('logging/storage admin UI smoke checks', () => {
 
 		expect(storageDestinations).toContain('getDestination');
 		expect(storageDestinations).toContain('retention_days');
-		expect(storageDestinations).toContain('Allowed log types');
-		expect(storageDestinations).toContain('Allowed planes');
-		expect(storageDestinations).toContain('Capabilities');
+		expect(storageDestinations).toContain('admin_storage_destinations_allowed_log_types');
+		expect(storageDestinations).toContain('admin_storage_destinations_allowed_planes');
+		expect(storageDestinations).toContain('admin_storage_destinations_capabilities');
 		expect(storageDestinations).toContain('detail-drawer');
-		expect(storageDestinations).toContain('Create Platform Destination');
+		expect(storageDestinations).toContain('admin_storage_destinations_create_platform');
 		expect(storageDestinations).toContain("scope_type: 'platform'");
 		expect(storageDestinations).toContain('previewDestinationDiff');
 	});
@@ -99,7 +99,7 @@ describe('logging/storage admin UI smoke checks', () => {
 		const notificationCenter = readRoute('admin/notifications/+page.svelte');
 		const loggingControlApi = readApi('admin-logging-control.ts');
 
-		expect(notificationCenter).toContain('Notification Center');
+		expect(notificationCenter).toContain('admin_notifications_title');
 		expect(notificationCenter).toContain('listNotificationCenter');
 		expect(notificationCenter).toContain('resolveNotificationCenterEvent');
 		expect(notificationCenter).toContain('runNotificationDelivery');

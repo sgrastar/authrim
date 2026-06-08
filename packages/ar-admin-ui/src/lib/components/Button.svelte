@@ -26,12 +26,13 @@
 <button
 	{type}
 	disabled={disabled || loading}
+	aria-busy={loading ? 'true' : undefined}
 	class="btn btn-{variant} btn-{size} {className}"
 	class:btn-icon={icon}
 	{...restProps}
 >
 	{#if loading}
-		<i class="spinner i-ph-circle-notch"></i>
+		<i class="spinner i-ph-circle-notch" aria-hidden="true"></i>
 	{/if}
 	{@render children()}
 </button>

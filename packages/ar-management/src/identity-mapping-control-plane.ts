@@ -12,11 +12,11 @@ import {
   decideLifecycleSignalRevocation,
   evaluateProvisioningAssignmentRule,
 } from './identity-provisioning-assignment';
-import { parseCsvSourceProfile, validateCatalogBundle } from '@authrim/ar-lib-identity-mapping';
+import { parseCsvSourceProfile, validateCatalogBundle } from '@authrim/ar-lib-field-mapping';
 import type {
   CsvSourceProfileParserOptions,
   FieldCatalogEntry,
-} from '@authrim/ar-lib-identity-mapping';
+} from '@authrim/ar-lib-field-mapping';
 
 type AdminContext = Context<{ Bindings: Env }>;
 
@@ -59,32 +59,32 @@ const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
 const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   {
     id: 'UIM-SCH-016',
-    objectName: 'mapping_policy_sets',
-    area: 'Mapping policy root',
+    objectName: 'field_mapping_sets',
+    area: 'Field mapping set root',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
-    runtimePath: 'policy authoring',
+    expectedConnectionPr: 'field mapping foundation',
+    runtimePath: 'field mapping authoring',
     status: 'api_connected',
     gate: 'repo/API/tests; UI in PR12',
-    schemaObject: 'mapping_policy_sets',
+    schemaObject: 'field_mapping_sets',
   },
   {
     id: 'UIM-SCH-017',
-    objectName: 'mapping_policy_versions',
+    objectName: 'field_mapping_versions',
     area: 'Draft/published/active versions',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
+    expectedConnectionPr: 'field mapping foundation',
     runtimePath: 'activation / compile',
     status: 'api_connected',
     gate: 'repo/API/tests; hot-path use in later runtime slices',
-    schemaObject: 'mapping_policy_versions',
+    schemaObject: 'field_mapping_versions',
   },
   {
     id: 'UIM-SCH-019',
     objectName: 'mapping_rule_edges',
     area: 'Graph field-to-field edges',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation / PR12 UI',
+    expectedConnectionPr: 'field mapping foundation / PR12 UI',
     runtimePath: 'Svelte Flow graph',
     status: 'api_connected',
     gate: 'API/tests; UI in PR12',
@@ -92,21 +92,21 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   },
   {
     id: 'UIM-SCH-024',
-    objectName: 'mapping_policy_activations',
+    objectName: 'field_mapping_activations',
     area: 'Activation / schedule state',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
+    expectedConnectionPr: 'field mapping foundation',
     runtimePath: 'active snapshot selection',
     status: 'api_connected',
     gate: 'activation API/tests; runtime pointer use in later slices',
-    schemaObject: 'mapping_policy_activations',
+    schemaObject: 'field_mapping_activations',
   },
   {
     id: 'UIM-SCH-025',
     objectName: 'compiled_mapping_snapshots',
-    area: 'Hot-path compiled policy',
+    area: 'Hot-path compiled field mapping',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
+    expectedConnectionPr: 'field mapping foundation',
     runtimePath: 'hot path',
     status: 'api_connected',
     gate: 'compile/activate API/tests; runtime hot-path use in later slices',
@@ -117,7 +117,7 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     objectName: 'protocol_schema_catalogs',
     area: 'Protocol schema catalog',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
+    expectedConnectionPr: 'field mapping foundation',
     runtimePath: 'adapter validation',
     status: 'api_connected',
     gate: 'API/tests',
@@ -128,7 +128,7 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     objectName: 'external_schema_catalogs',
     area: 'Imported external metadata',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
+    expectedConnectionPr: 'field mapping foundation',
     runtimePath: 'draft suggestions',
     status: 'api_connected',
     gate: 'API/tests; import workflow later',
@@ -139,8 +139,8 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     objectName: 'mapping_templates',
     area: 'Built-in/custom templates',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
-    runtimePath: 'policy creation',
+    expectedConnectionPr: 'field mapping foundation',
+    runtimePath: 'field mapping creation',
     status: 'api_connected',
     gate: 'API/tests; UI in PR12',
     schemaObject: 'mapping_templates',
@@ -172,7 +172,7 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     objectName: 'mapping_activation_leases',
     area: 'Activation concurrency lock',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
+    expectedConnectionPr: 'field mapping foundation',
     runtimePath: 'publish/activate/schedule',
     status: 'api_connected',
     gate: 'API/tests',
@@ -183,7 +183,7 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     objectName: 'idempotency_records',
     area: 'Mutation retry safety',
     introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR7 policy foundation',
+    expectedConnectionPr: 'field mapping foundation',
     runtimePath: 'Admin API mutation',
     status: 'api_connected',
     gate: 'API/tests',
@@ -390,10 +390,10 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   },
 ];
 
-interface MappingPolicySetRow {
+interface FieldMappingSetRow {
   id: string;
   tenant_id: string;
-  policy_key: string;
+  field_mapping_key: string;
   display_name: string;
   description: string | null;
   owner_scope_type: string;
@@ -403,13 +403,13 @@ interface MappingPolicySetRow {
   updated_at: number;
 }
 
-interface MappingPolicyVersionRow {
+interface FieldMappingVersionRow {
   id: string;
   tenant_id: string;
-  policy_set_id: string;
+  field_mapping_set_id: string;
   version_label: string;
   lifecycle_state: LifecycleState;
-  policy_hash: string;
+  field_mapping_hash: string;
   compatibility_range: string | null;
   author_id: string | null;
   published_at: number | null;
@@ -417,15 +417,15 @@ interface MappingPolicyVersionRow {
   updated_at: number;
 }
 
-interface MappingPolicyVersionListRow extends MappingPolicyVersionRow {
+interface FieldMappingVersionListRow extends FieldMappingVersionRow {
   snapshot_id: string | null;
   snapshot_catalog_version_id: string | null;
   snapshot_lifecycle_state: LifecycleState | null;
   snapshot_compiled_at: number | null;
 }
 
-interface MappingPolicyRuleSummaryRow {
-  policy_version_id: string;
+interface FieldMappingRuleSummaryRow {
+  field_mapping_version_id: string;
   rule_id: string;
   rule_key: string;
   rule_kind: string;
@@ -439,8 +439,8 @@ interface MappingPolicyRuleSummaryRow {
   display_order: number | null;
 }
 
-interface MappingPolicyTransformSummaryRow {
-  policy_version_id: string;
+interface FieldMappingTransformSummaryRow {
+  field_mapping_version_id: string;
   rule_id: string;
   transform_id: string;
   edge_id: string | null;
@@ -615,7 +615,7 @@ interface AttributeFieldRegistryRow {
 interface CompiledMappingSnapshotRow {
   id: string;
   tenant_id: string;
-  policy_version_id: string;
+  field_mapping_version_id: string;
   catalog_version_id: string | null;
   snapshot_hash: string;
   lifecycle_state: LifecycleState;
@@ -663,8 +663,8 @@ interface CreateCatalogRequest {
   }>;
 }
 
-interface CreatePolicySetRequest {
-  policyKey: string;
+interface CreateFieldMappingSetRequest {
+  fieldMappingKey: string;
   displayName: string;
   description?: string;
   ownerScopeType?: string;
@@ -771,7 +771,7 @@ interface CreateAttributeFieldRequest {
   surfaces?: string[];
 }
 
-interface PolicyVersionRuleInput {
+interface FieldMappingVersionRuleInput {
   ruleKey: string;
   ruleKind: string;
   action: string;
@@ -813,21 +813,21 @@ interface PolicyVersionRuleInput {
   }>;
 }
 
-interface CreatePolicyVersionRequest {
+interface CreateFieldMappingVersionRequest {
   versionLabel: string;
   compatibilityRange?: string;
   authorId?: string;
-  rules: PolicyVersionRuleInput[];
+  rules: FieldMappingVersionRuleInput[];
 }
 
-interface CompilePolicyRequest {
+interface CompileFieldMappingRequest {
   catalogVersionId: string;
   compatibilityRange?: string;
   artifactRef?: string;
   metadata?: Record<string, unknown>;
 }
 
-interface ActivatePolicyRequest {
+interface ActivateFieldMappingRequest {
   snapshotId: string;
   activationScope: Record<string, unknown>;
   holderId?: string;
@@ -851,7 +851,7 @@ interface EvaluateSourceAuthorityContractRequest {
 
 interface RecordMappingEventRequest {
   eventType: string;
-  policyVersionId?: string;
+  fieldMappingVersionId?: string;
   subjectId?: string;
   sourceId?: string;
   outcome: string;
@@ -2724,20 +2724,20 @@ export class IdentityMappingControlPlaneRepository {
     }));
   }
 
-  async createPolicySet(tenantId: string, input: CreatePolicySetRequest) {
-    validateRequiredString(input.policyKey, 'policyKey');
+  async createFieldMappingSet(tenantId: string, input: CreateFieldMappingSetRequest) {
+    validateRequiredString(input.fieldMappingKey, 'fieldMappingKey');
     validateRequiredString(input.displayName, 'displayName');
     const now = this.now();
-    const id = createId('mapping_policy');
+    const id = createId('field_mapping');
     await this.adapter.execute(
-      `INSERT INTO mapping_policy_sets (
-        id, tenant_id, policy_key, display_name, description, owner_scope_type, owner_scope_id,
+      `INSERT INTO field_mapping_sets (
+        id, tenant_id, field_mapping_key, display_name, description, owner_scope_type, owner_scope_id,
         lifecycle_state, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         tenantId,
-        input.policyKey,
+        input.fieldMappingKey,
         input.displayName,
         input.description ?? null,
         input.ownerScopeType ?? 'tenant',
@@ -2750,44 +2750,44 @@ export class IdentityMappingControlPlaneRepository {
     return {
       id,
       tenantId,
-      policyKey: input.policyKey,
+      fieldMappingKey: input.fieldMappingKey,
       displayName: input.displayName,
       description: input.description ?? null,
       lifecycleState: 'draft',
     };
   }
 
-  async listPolicySets(tenantId: string) {
-    const rows = await this.adapter.query<MappingPolicySetRow>(
-      `SELECT * FROM mapping_policy_sets WHERE tenant_id = ? ORDER BY updated_at DESC`,
+  async listFieldMappingSets(tenantId: string) {
+    const rows = await this.adapter.query<FieldMappingSetRow>(
+      `SELECT * FROM field_mapping_sets WHERE tenant_id = ? ORDER BY updated_at DESC`,
       [tenantId]
     );
     return rows.map((row) => ({
       id: row.id,
       tenantId: row.tenant_id,
-      policyKey: row.policy_key,
+      fieldMappingKey: row.field_mapping_key,
       displayName: row.display_name,
       description: row.description,
       lifecycleState: row.lifecycle_state,
     }));
   }
 
-  async deletePolicySet(tenantId: string, policySetId: string) {
-    const policySet = await this.getPolicySet(tenantId, policySetId);
-    if (!policySet) {
-      throw notFound('policy set not found');
+  async deleteFieldMappingSet(tenantId: string, fieldMappingSetId: string) {
+    const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
+    if (!fieldMappingSet) {
+      throw notFound('field mapping set not found');
     }
     const activeActivation = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
-         FROM mapping_policy_activations
+         FROM field_mapping_activations
         WHERE tenant_id = ?
-          AND policy_set_id = ?
+          AND field_mapping_set_id = ?
           AND lifecycle_state = ?
         LIMIT 1`,
-      [tenantId, policySetId, 'active']
+      [tenantId, fieldMappingSetId, 'active']
     );
     if (activeActivation) {
-      throw conflict('active policy must be deactivated before deletion');
+      throw conflict('active field mapping set must be deactivated before deletion');
     }
 
     await this.adapter.transaction(async (tx) => {
@@ -2797,13 +2797,13 @@ export class IdentityMappingControlPlaneRepository {
             AND rule_id IN (
               SELECT r.id
                 FROM mapping_rules r
-                JOIN mapping_policy_versions v
+                JOIN field_mapping_versions v
                   ON v.tenant_id = r.tenant_id
-                 AND v.id = r.policy_version_id
+                 AND v.id = r.field_mapping_version_id
                WHERE v.tenant_id = ?
-                 AND v.policy_set_id = ?
+                 AND v.field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `DELETE FROM mapping_rule_edges
@@ -2811,13 +2811,13 @@ export class IdentityMappingControlPlaneRepository {
             AND rule_id IN (
               SELECT r.id
                 FROM mapping_rules r
-                JOIN mapping_policy_versions v
+                JOIN field_mapping_versions v
                   ON v.tenant_id = r.tenant_id
-                 AND v.id = r.policy_version_id
+                 AND v.id = r.field_mapping_version_id
                WHERE v.tenant_id = ?
-                 AND v.policy_set_id = ?
+                 AND v.field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `DELETE FROM mapping_validation_rules
@@ -2825,113 +2825,113 @@ export class IdentityMappingControlPlaneRepository {
             AND rule_id IN (
               SELECT r.id
                 FROM mapping_rules r
-                JOIN mapping_policy_versions v
+                JOIN field_mapping_versions v
                   ON v.tenant_id = r.tenant_id
-                 AND v.id = r.policy_version_id
+                 AND v.id = r.field_mapping_version_id
                WHERE v.tenant_id = ?
-                 AND v.policy_set_id = ?
+                 AND v.field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `DELETE FROM mapping_release_rules
           WHERE tenant_id = ?
-            AND policy_version_id IN (
+            AND field_mapping_version_id IN (
               SELECT id
-                FROM mapping_policy_versions
+                FROM field_mapping_versions
                WHERE tenant_id = ?
-                 AND policy_set_id = ?
+                 AND field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `DELETE FROM mapping_conflict_rules
           WHERE tenant_id = ?
-            AND policy_version_id IN (
+            AND field_mapping_version_id IN (
               SELECT id
-                FROM mapping_policy_versions
+                FROM field_mapping_versions
                WHERE tenant_id = ?
-                 AND policy_set_id = ?
+                 AND field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `DELETE FROM dependency_graph_snapshots
           WHERE tenant_id = ?
-            AND policy_version_id IN (
+            AND field_mapping_version_id IN (
               SELECT id
-                FROM mapping_policy_versions
+                FROM field_mapping_versions
                WHERE tenant_id = ?
-                 AND policy_set_id = ?
+                 AND field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `DELETE FROM compiled_mapping_snapshots
           WHERE tenant_id = ?
-            AND policy_version_id IN (
+            AND field_mapping_version_id IN (
               SELECT id
-                FROM mapping_policy_versions
+                FROM field_mapping_versions
                WHERE tenant_id = ?
-                 AND policy_set_id = ?
+                 AND field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `DELETE FROM mapping_rules
           WHERE tenant_id = ?
-            AND policy_version_id IN (
+            AND field_mapping_version_id IN (
               SELECT id
-                FROM mapping_policy_versions
+                FROM field_mapping_versions
                WHERE tenant_id = ?
-                 AND policy_set_id = ?
+                 AND field_mapping_set_id = ?
             )`,
-        [tenantId, tenantId, policySetId]
+        [tenantId, tenantId, fieldMappingSetId]
       );
       await tx.execute(
-        `DELETE FROM mapping_policy_activations WHERE tenant_id = ? AND policy_set_id = ?`,
-        [tenantId, policySetId]
+        `DELETE FROM field_mapping_activations WHERE tenant_id = ? AND field_mapping_set_id = ?`,
+        [tenantId, fieldMappingSetId]
       );
       await tx.execute(
-        `DELETE FROM mapping_policy_versions WHERE tenant_id = ? AND policy_set_id = ?`,
-        [tenantId, policySetId]
+        `DELETE FROM field_mapping_versions WHERE tenant_id = ? AND field_mapping_set_id = ?`,
+        [tenantId, fieldMappingSetId]
       );
-      await tx.execute(`DELETE FROM mapping_policy_sets WHERE tenant_id = ? AND id = ?`, [
+      await tx.execute(`DELETE FROM field_mapping_sets WHERE tenant_id = ? AND id = ?`, [
         tenantId,
-        policySetId,
+        fieldMappingSetId,
       ]);
     });
 
     return {
-      id: policySetId,
+      id: fieldMappingSetId,
       tenantId,
       deleted: true,
     };
   }
 
-  async listPolicyVersions(tenantId: string, policySetId: string) {
-    const rows = await this.adapter.query<MappingPolicyVersionListRow>(
+  async listFieldMappingVersions(tenantId: string, fieldMappingSetId: string) {
+    const rows = await this.adapter.query<FieldMappingVersionListRow>(
       `SELECT v.*,
               s.id AS snapshot_id,
               s.catalog_version_id AS snapshot_catalog_version_id,
               s.lifecycle_state AS snapshot_lifecycle_state,
               s.compiled_at AS snapshot_compiled_at
-         FROM mapping_policy_versions v
+         FROM field_mapping_versions v
          LEFT JOIN compiled_mapping_snapshots s
            ON s.tenant_id = v.tenant_id
-          AND s.policy_version_id = v.id
+          AND s.field_mapping_version_id = v.id
           AND s.compiled_at = (
                 SELECT MAX(latest.compiled_at)
                   FROM compiled_mapping_snapshots latest
                  WHERE latest.tenant_id = v.tenant_id
-                   AND latest.policy_version_id = v.id
+                   AND latest.field_mapping_version_id = v.id
               )
-        WHERE v.tenant_id = ? AND v.policy_set_id = ?
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
         ORDER BY v.updated_at DESC, v.created_at DESC`,
-      [tenantId, policySetId]
+      [tenantId, fieldMappingSetId]
     );
-    const ruleRows = await this.adapter.query<MappingPolicyRuleSummaryRow>(
-      `SELECT v.id AS policy_version_id,
+    const ruleRows = await this.adapter.query<FieldMappingRuleSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
               r.id AS rule_id,
               r.rule_key,
               r.rule_kind,
@@ -2943,41 +2943,41 @@ export class IdentityMappingControlPlaneRepository {
               e.target_ref_json,
               e.edge_kind,
               e.display_order
-         FROM mapping_policy_versions v
+         FROM field_mapping_versions v
          JOIN mapping_rules r
            ON r.tenant_id = v.tenant_id
-          AND r.policy_version_id = v.id
+          AND r.field_mapping_version_id = v.id
          LEFT JOIN mapping_rule_edges e
           ON e.tenant_id = r.tenant_id
           AND e.rule_id = r.id
-        WHERE v.tenant_id = ? AND v.policy_set_id = ?
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
         ORDER BY v.id, r.priority ASC, r.created_at ASC, e.display_order ASC`,
-      [tenantId, policySetId]
+      [tenantId, fieldMappingSetId]
     );
-    const transformRows = await this.adapter.query<MappingPolicyTransformSummaryRow>(
-      `SELECT v.id AS policy_version_id,
+    const transformRows = await this.adapter.query<FieldMappingTransformSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
               r.id AS rule_id,
               t.id AS transform_id,
               t.edge_id,
               t.step_order,
               t.operation,
               t.parameters_json
-         FROM mapping_policy_versions v
+         FROM field_mapping_versions v
          JOIN mapping_rules r
            ON r.tenant_id = v.tenant_id
-          AND r.policy_version_id = v.id
+          AND r.field_mapping_version_id = v.id
          JOIN mapping_transform_steps t
            ON t.tenant_id = r.tenant_id
           AND t.rule_id = r.id
-        WHERE v.tenant_id = ? AND v.policy_set_id = ?
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
         ORDER BY v.id, r.priority ASC, t.step_order ASC`,
-      [tenantId, policySetId]
+      [tenantId, fieldMappingSetId]
     );
     const summariesByVersion = new Map<
       string,
       {
-        inbound: boolean;
-        outbound: boolean;
+        source: boolean;
+        destination: boolean;
         sourceProfileIds: Set<string>;
         destinationProfileIds: Set<string>;
         rules: Map<
@@ -3009,18 +3009,21 @@ export class IdentityMappingControlPlaneRepository {
     >();
     for (const row of ruleRows) {
       if (typeof row.rule_kind !== 'string') continue;
-      const summary = summariesByVersion.get(row.policy_version_id) ?? {
-        inbound: false,
-        outbound: false,
+      const summary = summariesByVersion.get(row.field_mapping_version_id) ?? {
+        source: false,
+        destination: false,
         sourceProfileIds: new Set<string>(),
         destinationProfileIds: new Set<string>(),
         rules: new Map(),
       };
-      if (row.rule_kind.includes('inbound')) summary.inbound = true;
-      if (row.rule_kind.includes('outbound') || row.rule_kind.includes('release')) {
-        summary.outbound = true;
+      if (row.rule_kind.includes('source')) summary.source = true;
+      if (row.rule_kind.includes('destination') || row.rule_kind.includes('release')) {
+        summary.destination = true;
       }
-      for (const profileId of profileIdsFromPolicyRefs(row.source_ref_json, row.target_ref_json)) {
+      for (const profileId of profileIdsFromFieldMappingRefs(
+        row.source_ref_json,
+        row.target_ref_json
+      )) {
         if (profileId.startsWith('source-profile-') || profileId.startsWith('external-source-')) {
           summary.sourceProfileIds.add(profileId);
         }
@@ -3051,10 +3054,10 @@ export class IdentityMappingControlPlaneRepository {
         });
       }
       summary.rules.set(row.rule_id, rule);
-      summariesByVersion.set(row.policy_version_id, summary);
+      summariesByVersion.set(row.field_mapping_version_id, summary);
     }
     for (const row of transformRows) {
-      const summary = summariesByVersion.get(row.policy_version_id);
+      const summary = summariesByVersion.get(row.field_mapping_version_id);
       const rule = summary?.rules.get(row.rule_id);
       if (!summary || !rule) continue;
       rule.transforms.push({
@@ -3068,18 +3071,18 @@ export class IdentityMappingControlPlaneRepository {
     return rows.map((row) => ({
       id: row.id,
       tenantId: row.tenant_id,
-      policySetId: row.policy_set_id,
+      fieldMappingSetId: row.field_mapping_set_id,
       versionLabel: row.version_label,
       lifecycleState: row.lifecycle_state,
-      policyHash: row.policy_hash,
+      fieldMappingHash: row.field_mapping_hash,
       compatibilityRange: row.compatibility_range,
       authorId: row.author_id,
       publishedAt: row.published_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       directions: {
-        inbound: summariesByVersion.get(row.id)?.inbound ?? false,
-        outbound: summariesByVersion.get(row.id)?.outbound ?? false,
+        source: summariesByVersion.get(row.id)?.source ?? false,
+        destination: summariesByVersion.get(row.id)?.destination ?? false,
       },
       sourceProfileIds: [...(summariesByVersion.get(row.id)?.sourceProfileIds ?? [])],
       destinationProfileIds: [...(summariesByVersion.get(row.id)?.destinationProfileIds ?? [])],
@@ -3095,43 +3098,43 @@ export class IdentityMappingControlPlaneRepository {
     }));
   }
 
-  async createPolicyVersion(
+  async createFieldMappingVersion(
     tenantId: string,
-    policySetId: string,
-    input: CreatePolicyVersionRequest
+    fieldMappingSetId: string,
+    input: CreateFieldMappingVersionRequest
   ) {
-    validateRequiredString(policySetId, 'policySetId');
+    validateRequiredString(fieldMappingSetId, 'fieldMappingSetId');
     validateRequiredString(input.versionLabel, 'versionLabel');
     if (!Array.isArray(input.rules)) {
       throw badRequest('rules must be an array');
     }
-    assertPolicyVersionRequestSafe(input);
+    assertFieldMappingVersionRequestSafe(input);
 
-    const policySet = await this.getPolicySet(tenantId, policySetId);
-    if (!policySet) {
-      throw notFound('policy set not found');
+    const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
+    if (!fieldMappingSet) {
+      throw notFound('field mapping set not found');
     }
 
     const now = this.now();
-    const versionId = createId('mapping_policy_version');
-    const policyHash = await hashStableJson({
-      policySetId,
+    const versionId = createId('field_mapping_version');
+    const fieldMappingHash = await hashStableJson({
+      fieldMappingSetId,
       versionLabel: input.versionLabel,
       rules: input.rules,
     });
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
-        `INSERT INTO mapping_policy_versions (
-          id, tenant_id, policy_set_id, version_label, lifecycle_state, policy_hash,
+        `INSERT INTO field_mapping_versions (
+          id, tenant_id, field_mapping_set_id, version_label, lifecycle_state, field_mapping_hash,
           compatibility_range, author_id, published_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           versionId,
           tenantId,
-          policySetId,
+          fieldMappingSetId,
           input.versionLabel,
           'draft',
-          policyHash,
+          fieldMappingHash,
           input.compatibilityRange ?? null,
           input.authorId ?? null,
           null,
@@ -3141,52 +3144,64 @@ export class IdentityMappingControlPlaneRepository {
       );
 
       for (const rule of input.rules) {
-        await this.insertPolicyRule(tx, tenantId, versionId, rule, now);
+        await this.insertFieldMappingRule(tx, tenantId, versionId, rule, now);
       }
     });
 
     return {
       id: versionId,
       tenantId,
-      policySetId,
+      fieldMappingSetId,
       versionLabel: input.versionLabel,
       lifecycleState: 'draft',
-      policyHash,
+      fieldMappingHash,
       compatibilityRange: input.compatibilityRange ?? null,
     };
   }
 
-  async publishPolicyVersion(tenantId: string, policySetId: string, policyVersionId: string) {
-    const version = await this.getPolicyVersion(tenantId, policySetId, policyVersionId);
+  async publishFieldMappingVersion(
+    tenantId: string,
+    fieldMappingSetId: string,
+    fieldMappingVersionId: string
+  ) {
+    const version = await this.getFieldMappingVersion(
+      tenantId,
+      fieldMappingSetId,
+      fieldMappingVersionId
+    );
     if (!version) {
-      throw notFound('policy version not found');
+      throw notFound('field mapping version not found');
     }
     const now = this.now();
     await this.adapter.execute(
-      `UPDATE mapping_policy_versions
+      `UPDATE field_mapping_versions
           SET lifecycle_state = ?, published_at = ?, updated_at = ?
-        WHERE tenant_id = ? AND policy_set_id = ? AND id = ?`,
-      ['published', now, now, tenantId, policySetId, policyVersionId]
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+      ['published', now, now, tenantId, fieldMappingSetId, fieldMappingVersionId]
     );
     return {
-      id: policyVersionId,
+      id: fieldMappingVersionId,
       tenantId,
-      policySetId,
+      fieldMappingSetId,
       lifecycleState: 'published',
       publishedAt: now,
     };
   }
 
-  async compilePolicyVersion(
+  async compileFieldMappingVersion(
     tenantId: string,
-    policySetId: string,
-    policyVersionId: string,
-    input: CompilePolicyRequest
+    fieldMappingSetId: string,
+    fieldMappingVersionId: string,
+    input: CompileFieldMappingRequest
   ) {
     validateRequiredString(input.catalogVersionId, 'catalogVersionId');
-    const version = await this.getPolicyVersion(tenantId, policySetId, policyVersionId);
+    const version = await this.getFieldMappingVersion(
+      tenantId,
+      fieldMappingSetId,
+      fieldMappingVersionId
+    );
     if (!version) {
-      throw notFound('policy version not found');
+      throw notFound('field mapping version not found');
     }
     const catalogVersion = await this.getCatalogVersion(tenantId, input.catalogVersionId);
     if (!catalogVersion) {
@@ -3196,8 +3211,8 @@ export class IdentityMappingControlPlaneRepository {
 
     const now = this.now();
     const dependencyGraph = {
-      policyVersionId,
-      policyHash: version.policy_hash,
+      fieldMappingVersionId,
+      fieldMappingHash: version.field_mapping_hash,
       catalogVersionId: catalogVersion.id,
       catalogHash: catalogVersion.bundle_hash,
       trustContextSnapshotId: null,
@@ -3216,19 +3231,19 @@ export class IdentityMappingControlPlaneRepository {
 
     await this.adapter.execute(
       `INSERT INTO dependency_graph_snapshots (
-        id, tenant_id, policy_version_id, snapshot_hash, graph_json, created_at
+        id, tenant_id, field_mapping_version_id, snapshot_hash, graph_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?)`,
-      [graphId, tenantId, policyVersionId, graphHash, stableJson(dependencyGraph), now]
+      [graphId, tenantId, fieldMappingVersionId, graphHash, stableJson(dependencyGraph), now]
     );
     await this.adapter.execute(
       `INSERT INTO compiled_mapping_snapshots (
-        id, tenant_id, policy_version_id, catalog_version_id, snapshot_hash, compatibility_range,
+        id, tenant_id, field_mapping_version_id, catalog_version_id, snapshot_hash, compatibility_range,
         artifact_ref, lifecycle_state, compiled_at, activated_at, expires_at, metadata_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         snapshotId,
         tenantId,
-        policyVersionId,
+        fieldMappingVersionId,
         catalogVersion.id,
         snapshotHash,
         input.compatibilityRange ??
@@ -3250,7 +3265,7 @@ export class IdentityMappingControlPlaneRepository {
     return {
       id: snapshotId,
       tenantId,
-      policyVersionId,
+      fieldMappingVersionId,
       catalogVersionId: catalogVersion.id,
       snapshotHash,
       dependencyGraphId: graphId,
@@ -3258,18 +3273,22 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
-  async activatePolicyVersion(
+  async activateFieldMappingVersion(
     tenantId: string,
-    policySetId: string,
-    policyVersionId: string,
-    input: ActivatePolicyRequest
+    fieldMappingSetId: string,
+    fieldMappingVersionId: string,
+    input: ActivateFieldMappingRequest
   ) {
     validateRequiredString(input.snapshotId, 'snapshotId');
-    const version = await this.getPolicyVersion(tenantId, policySetId, policyVersionId);
+    const version = await this.getFieldMappingVersion(
+      tenantId,
+      fieldMappingSetId,
+      fieldMappingVersionId
+    );
     if (!version) {
-      throw notFound('policy version not found');
+      throw notFound('field mapping version not found');
     }
-    const snapshot = await this.getSnapshot(tenantId, policyVersionId, input.snapshotId);
+    const snapshot = await this.getSnapshot(tenantId, fieldMappingVersionId, input.snapshotId);
     if (!snapshot) {
       throw notFound('compiled snapshot not found');
     }
@@ -3277,8 +3296,8 @@ export class IdentityMappingControlPlaneRepository {
       return {
         id: input.snapshotId,
         tenantId,
-        policySetId,
-        policyVersionId,
+        fieldMappingSetId,
+        fieldMappingVersionId,
         lifecycleState: 'active',
         alreadyActive: true,
       };
@@ -3286,33 +3305,33 @@ export class IdentityMappingControlPlaneRepository {
 
     const now = this.now();
     const holderId = input.holderId ?? createId('activation_holder');
-    const leaseKey = `policy:${policySetId}:activate`;
+    const leaseKey = `field_mapping:${fieldMappingSetId}:activate`;
     await this.acquireActivationLease(tenantId, leaseKey, holderId, now);
 
     const activationId = createId('mapping_activation');
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
-        `UPDATE mapping_policy_activations
+        `UPDATE field_mapping_activations
             SET lifecycle_state = ?, active_until = ?, updated_at = ?
-          WHERE tenant_id = ? AND policy_set_id = ? AND lifecycle_state = ?`,
-        ['retired', now, now, tenantId, policySetId, 'active']
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = ?`,
+        ['retired', now, now, tenantId, fieldMappingSetId, 'active']
       );
       await tx.execute(
         `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
-          WHERE tenant_id = ? AND policy_version_id = ? AND lifecycle_state = ?`,
-        ['retired', now, tenantId, policyVersionId, 'active']
+          WHERE tenant_id = ? AND field_mapping_version_id = ? AND lifecycle_state = ?`,
+        ['retired', now, tenantId, fieldMappingVersionId, 'active']
       );
       await tx.execute(
-        `INSERT INTO mapping_policy_activations (
-          id, tenant_id, policy_set_id, policy_version_id, activation_scope_json,
+        `INSERT INTO field_mapping_activations (
+          id, tenant_id, field_mapping_set_id, field_mapping_version_id, activation_scope_json,
           lifecycle_state, active_from, active_until, activated_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           activationId,
           tenantId,
-          policySetId,
-          policyVersionId,
+          fieldMappingSetId,
+          fieldMappingVersionId,
           stableJson(input.activationScope),
           'active',
           now,
@@ -3323,30 +3342,30 @@ export class IdentityMappingControlPlaneRepository {
         ]
       );
       await tx.execute(
-        `UPDATE mapping_policy_versions
+        `UPDATE field_mapping_versions
             SET lifecycle_state = ?, updated_at = ?
-          WHERE tenant_id = ? AND policy_set_id = ? AND id = ?`,
-        ['active', now, tenantId, policySetId, policyVersionId]
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+        ['active', now, tenantId, fieldMappingSetId, fieldMappingVersionId]
       );
       await tx.execute(
-        `UPDATE mapping_policy_sets
+        `UPDATE field_mapping_sets
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
-        ['active', now, tenantId, policySetId]
+        ['active', now, tenantId, fieldMappingSetId]
       );
       await tx.execute(
         `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
-          WHERE tenant_id = ? AND policy_version_id = ? AND id = ?`,
-        ['active', now, tenantId, policyVersionId, input.snapshotId]
+          WHERE tenant_id = ? AND field_mapping_version_id = ? AND id = ?`,
+        ['active', now, tenantId, fieldMappingVersionId, input.snapshotId]
       );
     });
 
     return {
       id: activationId,
       tenantId,
-      policySetId,
-      policyVersionId,
+      fieldMappingSetId,
+      fieldMappingVersionId,
       snapshotId: input.snapshotId,
       lifecycleState: 'active',
       activatedAt: now,
@@ -3354,49 +3373,53 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
-  async deactivatePolicyVersion(tenantId: string, policySetId: string, policyVersionId: string) {
+  async deactivateFieldMappingVersion(
+    tenantId: string,
+    fieldMappingSetId: string,
+    fieldMappingVersionId: string
+  ) {
     const now = this.now();
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
-        `UPDATE mapping_policy_activations
+        `UPDATE field_mapping_activations
             SET lifecycle_state = ?, active_until = ?, updated_at = ?
-          WHERE tenant_id = ? AND policy_set_id = ? AND policy_version_id = ? AND lifecycle_state = ?`,
-        ['retired', now, now, tenantId, policySetId, policyVersionId, 'active']
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND field_mapping_version_id = ? AND lifecycle_state = ?`,
+        ['retired', now, now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
       );
       await tx.execute(
         `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
-          WHERE tenant_id = ? AND policy_version_id = ? AND lifecycle_state = ?`,
-        ['retired', now, tenantId, policyVersionId, 'active']
+          WHERE tenant_id = ? AND field_mapping_version_id = ? AND lifecycle_state = ?`,
+        ['retired', now, tenantId, fieldMappingVersionId, 'active']
       );
       await tx.execute(
-        `UPDATE mapping_policy_versions
+        `UPDATE field_mapping_versions
             SET lifecycle_state = ?, updated_at = ?
-          WHERE tenant_id = ? AND policy_set_id = ? AND id = ? AND lifecycle_state = ?`,
-        ['published', now, tenantId, policySetId, policyVersionId, 'active']
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ? AND lifecycle_state = ?`,
+        ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
       );
     });
     return {
-      id: policyVersionId,
+      id: fieldMappingVersionId,
       tenantId,
-      policySetId,
+      fieldMappingSetId,
       lifecycleState: 'published',
       deactivatedAt: now,
     };
   }
 
-  async rollbackPolicySet(tenantId: string, policySetId: string) {
+  async rollbackFieldMappingSet(tenantId: string, fieldMappingSetId: string) {
     const previous = await this.adapter.queryOne<{
       id: string;
-      policy_version_id: string;
+      field_mapping_version_id: string;
       active_from: number | null;
     }>(
-      `SELECT id, policy_version_id, active_from
-         FROM mapping_policy_activations
-        WHERE tenant_id = ? AND policy_set_id = ? AND lifecycle_state = ?
+      `SELECT id, field_mapping_version_id, active_from
+         FROM field_mapping_activations
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = ?
         ORDER BY active_from DESC, activated_at DESC
         LIMIT 1`,
-      [tenantId, policySetId, 'retired']
+      [tenantId, fieldMappingSetId, 'retired']
     );
     if (!previous) {
       throw conflict('no retired activation is available for rollback');
@@ -3404,29 +3427,29 @@ export class IdentityMappingControlPlaneRepository {
     const now = this.now();
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
-        `UPDATE mapping_policy_activations
+        `UPDATE field_mapping_activations
             SET lifecycle_state = ?, active_until = ?, updated_at = ?
-          WHERE tenant_id = ? AND policy_set_id = ? AND lifecycle_state = ?`,
-        ['retired', now, now, tenantId, policySetId, 'active']
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = ?`,
+        ['retired', now, now, tenantId, fieldMappingSetId, 'active']
       );
       await tx.execute(
-        `UPDATE mapping_policy_activations
+        `UPDATE field_mapping_activations
             SET lifecycle_state = ?, active_until = ?, activated_at = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
         ['active', null, now, now, tenantId, previous.id]
       );
       await tx.execute(
-        `UPDATE mapping_policy_versions
+        `UPDATE field_mapping_versions
             SET lifecycle_state = ?, updated_at = ?
-          WHERE tenant_id = ? AND policy_set_id = ? AND id = ?`,
-        ['active', now, tenantId, policySetId, previous.policy_version_id]
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+        ['active', now, tenantId, fieldMappingSetId, previous.field_mapping_version_id]
       );
     });
     return {
       id: previous.id,
       tenantId,
-      policySetId,
-      policyVersionId: previous.policy_version_id,
+      fieldMappingSetId,
+      fieldMappingVersionId: previous.field_mapping_version_id,
       lifecycleState: 'active',
       rolledBackAt: now,
     };
@@ -3573,14 +3596,14 @@ export class IdentityMappingControlPlaneRepository {
     const id = createId('mapping_event');
     await this.adapter.execute(
       `INSERT INTO mapping_events (
-        id, tenant_id, event_type, policy_version_id, subject_id, source_id,
+        id, tenant_id, event_type, field_mapping_version_id, subject_id, source_id,
         outcome, reason_codes_json, trace_ref, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         tenantId,
         input.eventType,
-        input.policyVersionId ?? null,
+        input.fieldMappingVersionId ?? null,
         input.subjectId ?? null,
         input.sourceId ?? null,
         input.outcome,
@@ -5673,18 +5696,22 @@ export class IdentityMappingControlPlaneRepository {
     }
   }
 
-  private async getPolicySet(tenantId: string, policySetId: string) {
-    return this.adapter.queryOne<MappingPolicySetRow>(
-      `SELECT * FROM mapping_policy_sets WHERE tenant_id = ? AND id = ?`,
-      [tenantId, policySetId]
+  private async getFieldMappingSet(tenantId: string, fieldMappingSetId: string) {
+    return this.adapter.queryOne<FieldMappingSetRow>(
+      `SELECT * FROM field_mapping_sets WHERE tenant_id = ? AND id = ?`,
+      [tenantId, fieldMappingSetId]
     );
   }
 
-  private async getPolicyVersion(tenantId: string, policySetId: string, policyVersionId: string) {
-    return this.adapter.queryOne<MappingPolicyVersionRow>(
-      `SELECT * FROM mapping_policy_versions
-        WHERE tenant_id = ? AND policy_set_id = ? AND id = ?`,
-      [tenantId, policySetId, policyVersionId]
+  private async getFieldMappingVersion(
+    tenantId: string,
+    fieldMappingSetId: string,
+    fieldMappingVersionId: string
+  ) {
+    return this.adapter.queryOne<FieldMappingVersionRow>(
+      `SELECT * FROM field_mapping_versions
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+      [tenantId, fieldMappingSetId, fieldMappingVersionId]
     );
   }
 
@@ -5695,20 +5722,20 @@ export class IdentityMappingControlPlaneRepository {
     );
   }
 
-  private async getSnapshot(tenantId: string, policyVersionId: string, snapshotId: string) {
+  private async getSnapshot(tenantId: string, fieldMappingVersionId: string, snapshotId: string) {
     return this.adapter.queryOne<CompiledMappingSnapshotRow>(
-      `SELECT id, tenant_id, policy_version_id, catalog_version_id, snapshot_hash, lifecycle_state
+      `SELECT id, tenant_id, field_mapping_version_id, catalog_version_id, snapshot_hash, lifecycle_state
          FROM compiled_mapping_snapshots
-        WHERE tenant_id = ? AND policy_version_id = ? AND id = ?`,
-      [tenantId, policyVersionId, snapshotId]
+        WHERE tenant_id = ? AND field_mapping_version_id = ? AND id = ?`,
+      [tenantId, fieldMappingVersionId, snapshotId]
     );
   }
 
-  private async insertPolicyRule(
+  private async insertFieldMappingRule(
     executor: SqlExecutor,
     tenantId: string,
-    policyVersionId: string,
-    rule: PolicyVersionRuleInput,
+    fieldMappingVersionId: string,
+    rule: FieldMappingVersionRuleInput,
     now: number
   ) {
     validateRequiredString(rule.ruleKey, 'ruleKey');
@@ -5717,13 +5744,13 @@ export class IdentityMappingControlPlaneRepository {
     const ruleId = createId('mapping_rule');
     await executor.execute(
       `INSERT INTO mapping_rules (
-        id, tenant_id, policy_version_id, rule_key, rule_kind, action, priority, scope_json,
+        id, tenant_id, field_mapping_version_id, rule_key, rule_kind, action, priority, scope_json,
         condition_json, metadata_json, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ruleId,
         tenantId,
-        policyVersionId,
+        fieldMappingVersionId,
         rule.ruleKey,
         rule.ruleKind,
         rule.action,
@@ -5801,13 +5828,13 @@ export class IdentityMappingControlPlaneRepository {
     for (const releaseRule of rule.releaseRules ?? []) {
       await executor.execute(
         `INSERT INTO mapping_release_rules (
-          id, tenant_id, policy_version_id, destination_type, destination_id, source_ref_json,
+          id, tenant_id, field_mapping_version_id, destination_type, destination_id, source_ref_json,
           release_action, legal_basis, purpose, condition_json, priority, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           createId('mapping_release'),
           tenantId,
-          policyVersionId,
+          fieldMappingVersionId,
           releaseRule.destinationType,
           releaseRule.destinationId ?? null,
           stableJson(releaseRule.sourceRef),
@@ -5825,13 +5852,13 @@ export class IdentityMappingControlPlaneRepository {
     for (const conflictRule of rule.conflictRules ?? []) {
       await executor.execute(
         `INSERT INTO mapping_conflict_rules (
-          id, tenant_id, policy_version_id, target_ref_json, conflict_strategy,
+          id, tenant_id, field_mapping_version_id, target_ref_json, conflict_strategy,
           source_priority_json, condition_json, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           createId('mapping_conflict'),
           tenantId,
-          policyVersionId,
+          fieldMappingVersionId,
           stableJson(conflictRule.targetRef),
           conflictRule.conflictStrategy,
           stableJson(conflictRule.sourcePriority ?? []),
@@ -5872,7 +5899,7 @@ export class IdentityMappingControlPlaneRepository {
       [tenantId, leaseKey]
     );
     if (lease && lease.expires_at > now && lease.holder_id !== holderId) {
-      throw conflict('mapping policy activation is already locked by another holder');
+      throw conflict('field mapping set activation is already locked by another holder');
     }
     await this.adapter.execute(
       `INSERT INTO mapping_activation_leases (
@@ -6099,85 +6126,88 @@ export async function adminIdentityMappingTemplateCreateHandler(c: AdminContext)
   );
 }
 
-export async function adminIdentityMappingPoliciesListHandler(c: AdminContext) {
+export async function adminIdentityFieldMappingSetsListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
-    policies: await repository.listPolicySets(tenantId),
+    fieldMappingSets: await repository.listFieldMappingSets(tenantId),
   }));
 }
 
-export async function adminIdentityMappingPolicyVersionsListHandler(c: AdminContext) {
+export async function adminIdentityFieldMappingVersionsListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
-    policyVersions: await repository.listPolicyVersions(tenantId, requiredParam(c, 'policySetId')),
+    fieldMappingVersions: await repository.listFieldMappingVersions(
+      tenantId,
+      requiredParam(c, 'fieldMappingSetId')
+    ),
   }));
 }
 
-export async function adminIdentityMappingPolicyCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.create', async (repository, tenantId, body) =>
-    repository.createPolicySet(tenantId, body as CreatePolicySetRequest)
+export async function adminIdentityFieldMappingSetCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.create', async (repository, tenantId, body) =>
+    repository.createFieldMappingSet(tenantId, body as CreateFieldMappingSetRequest)
   );
 }
 
-export async function adminIdentityMappingPolicyDeleteHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.delete', async (repository, tenantId) =>
-    repository.deletePolicySet(tenantId, requiredParam(c, 'policySetId'))
+export async function adminIdentityFieldMappingSetDeleteHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.delete', async (repository, tenantId) =>
+    repository.deleteFieldMappingSet(tenantId, requiredParam(c, 'fieldMappingSetId'))
   );
 }
 
-export async function adminIdentityMappingPolicyVersionCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.version.create', async (repository, tenantId, body) =>
-    repository.createPolicyVersion(
+export async function adminIdentityFieldMappingVersionCreateHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.version.create', async (repository, tenantId, body) =>
+    repository.createFieldMappingVersion(
       tenantId,
-      requiredParam(c, 'policySetId'),
-      body as CreatePolicyVersionRequest
+      requiredParam(c, 'fieldMappingSetId'),
+      body as CreateFieldMappingVersionRequest
     )
   );
 }
 
-export async function adminIdentityMappingPolicyVersionPublishHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.version.publish', async (repository, tenantId) =>
-    repository.publishPolicyVersion(
+export async function adminIdentityFieldMappingVersionPublishHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.version.publish', async (repository, tenantId) =>
+    repository.publishFieldMappingVersion(
       tenantId,
-      requiredParam(c, 'policySetId'),
-      requiredParam(c, 'policyVersionId')
+      requiredParam(c, 'fieldMappingSetId'),
+      requiredParam(c, 'fieldMappingVersionId')
     )
   );
 }
 
-export async function adminIdentityMappingPolicyVersionCompileHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.version.compile', async (repository, tenantId, body) =>
-    repository.compilePolicyVersion(
+export async function adminIdentityFieldMappingVersionCompileHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.version.compile', async (repository, tenantId, body) =>
+    repository.compileFieldMappingVersion(
       tenantId,
-      requiredParam(c, 'policySetId'),
-      requiredParam(c, 'policyVersionId'),
-      body as CompilePolicyRequest
+      requiredParam(c, 'fieldMappingSetId'),
+      requiredParam(c, 'fieldMappingVersionId'),
+      body as CompileFieldMappingRequest
     )
   );
 }
 
-export async function adminIdentityMappingPolicyVersionActivateHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.version.activate', async (repository, tenantId, body) =>
-    repository.activatePolicyVersion(
+export async function adminIdentityFieldMappingVersionActivateHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.version.activate', async (repository, tenantId, body) =>
+    repository.activateFieldMappingVersion(
       tenantId,
-      requiredParam(c, 'policySetId'),
-      requiredParam(c, 'policyVersionId'),
-      body as ActivatePolicyRequest
+      requiredParam(c, 'fieldMappingSetId'),
+      requiredParam(c, 'fieldMappingVersionId'),
+      body as ActivateFieldMappingRequest
     )
   );
 }
 
-export async function adminIdentityMappingPolicyVersionDeactivateHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.version.deactivate', async (repository, tenantId) =>
-    repository.deactivatePolicyVersion(
+export async function adminIdentityFieldMappingVersionDeactivateHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.version.deactivate', async (repository, tenantId) =>
+    repository.deactivateFieldMappingVersion(
       tenantId,
-      requiredParam(c, 'policySetId'),
-      requiredParam(c, 'policyVersionId')
+      requiredParam(c, 'fieldMappingSetId'),
+      requiredParam(c, 'fieldMappingVersionId')
     )
   );
 }
 
-export async function adminIdentityMappingPolicyRollbackHandler(c: AdminContext) {
-  return handleMutation(c, 'policy.rollback', async (repository, tenantId) =>
-    repository.rollbackPolicySet(tenantId, requiredParam(c, 'policySetId'))
+export async function adminIdentityFieldMappingSetRollbackHandler(c: AdminContext) {
+  return handleMutation(c, 'field_mapping.rollback', async (repository, tenantId) =>
+    repository.rollbackFieldMappingSet(tenantId, requiredParam(c, 'fieldMappingSetId'))
   );
 }
 
@@ -7139,16 +7169,16 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
   }
 }
 
-function assertPolicyVersionRequestSafe(input: CreatePolicyVersionRequest): void {
-  assertProfileSchemaBudget(input, 'policyVersion');
-  assertNoSensitiveMetadata(input, 'policyVersion');
+function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRequest): void {
+  assertProfileSchemaBudget(input, 'fieldMappingVersion');
+  assertNoSensitiveMetadata(input, 'fieldMappingVersion');
   if (input.rules.length > POLICY_VERSION_MAX_RULES) {
     throw badRequest(`rules must contain at most ${POLICY_VERSION_MAX_RULES} items`);
   }
-  input.rules.forEach((rule, index) => assertPolicyRuleSafe(rule, `rules[${index}]`));
+  input.rules.forEach((rule, index) => assertFieldMappingRuleSafe(rule, `rules[${index}]`));
 }
 
-function assertPolicyRuleSafe(rule: PolicyVersionRuleInput, path: string): void {
+function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: string): void {
   validatePolicySymbol(rule.ruleKey, `${path}.ruleKey`);
   validatePolicySymbol(rule.ruleKind, `${path}.ruleKind`);
   validatePolicySymbol(rule.action, `${path}.action`);
@@ -7432,7 +7462,7 @@ function parseCatalogAliases(value: string | null): Array<{ namespace: string; p
   }
 }
 
-function profileIdsFromPolicyRefs(...values: Array<string | null>): string[] {
+function profileIdsFromFieldMappingRefs(...values: Array<string | null>): string[] {
   const ids: string[] = [];
   for (const value of values) {
     if (!value) continue;

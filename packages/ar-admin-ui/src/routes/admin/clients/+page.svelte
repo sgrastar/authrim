@@ -4,6 +4,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { adminClientsAPI, type Client, type ClientListParams } from '$lib/api/admin-clients';
 	import { Modal } from '$lib/components';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	interface Pagination {
 		page: number;
@@ -63,7 +64,7 @@
 			selectedIds.clear();
 		} catch (err) {
 			console.error('Failed to load clients:', err);
-			error = 'Failed to load clients';
+			error = $LL.admin_clients_error_load();
 		} finally {
 			loading = false;
 		}
@@ -105,15 +106,15 @@
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleDateString();
+		return new Date(timestamp).toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function formatGrantTypes(grantTypes: string[]): string {
 		const shortNames: Record<string, string> = {
-			authorization_code: 'Auth Code',
-			refresh_token: 'Refresh',
-			client_credentials: 'Client Creds',
-			'urn:ietf:params:oauth:grant-type:device_code': 'Device'
+			authorization_code: $LL.admin_clients_grant_auth_code(),
+			refresh_token: $LL.admin_clients_grant_refresh(),
+			client_credentials: $LL.admin_clients_grant_client_credentials(),
+			'urn:ietf:params:oauth:grant-type:device_code': $LL.admin_clients_grant_device()
 		};
 		return grantTypes.map((gt) => shortNames[gt] || gt).join(', ');
 	}
@@ -130,9 +131,12 @@
 
 	function getIntegrationBadges(client: Client): string[] {
 		const badges: string[] = [];
-		if (client.token_exchange_allowed) badges.push('Token Exchange');
-		if (client.client_credentials_allowed) badges.push('Client Credentials');
-		if (client.default_audience) badges.push(`Audience: ${client.default_audience}`);
+		if (client.token_exchange_allowed) badges.push($LL.admin_clients_badge_token_exchange());
+		if (client.client_credentials_allowed)
+			badges.push($LL.admin_clients_badge_client_credentials());
+		if (client.default_audience) {
+			badges.push($LL.admin_clients_badge_audience({ audience: client.default_audience }));
+		}
 		return badges;
 	}
 
@@ -200,7 +204,10 @@
 		bulkDeleting = false;
 
 		if (failedIds.length > 0) {
-			bulkDeleteError = `Failed to delete ${failedIds.length} client(s): ${failedIds.join(', ')}`;
+			bulkDeleteError = $LL.admin_clients_error_delete({
+				count: failedIds.length,
+				clients: failedIds.join(', ')
+			});
 		} else {
 			showBulkDeleteDialog = false;
 			loadClients();
@@ -213,26 +220,26 @@
 </script>
 
 <svelte:head>
-	<title>OAuth Clients - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_clients_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">OAuth Clients</h1>
-			<p class="page-description">Manage OAuth 2.0 client applications</p>
+			<h1 class="page-title">{$LL.admin_clients_heading()}</h1>
+			<p class="page-description">{$LL.admin_clients_description()}</p>
 		</div>
 		<div class="page-actions">
 			{#if hasSelection}
 				<button class="btn btn-danger" onclick={openBulkDeleteDialog}>
 					<i class="i-ph-trash"></i>
-					Delete Selected ({selectedIds.size})
+					{$LL.admin_clients_delete_selected({ count: selectedIds.size })}
 				</button>
 			{/if}
 			<a href="/admin/clients/new" class="btn btn-primary">
 				<i class="i-ph-plus"></i>
-				Create Client
+				{$LL.admin_clients_create()}
 			</a>
 		</div>
 	</div>
@@ -241,21 +248,21 @@
 	<div class="panel">
 		<div class="filter-row">
 			<div class="form-group">
-				<label for="search" class="form-label">Search</label>
+				<label for="search" class="form-label">{$LL.admin_clients_search_label()}</label>
 				<input
 					id="search"
 					type="text"
 					class="form-input"
-					placeholder="Search by client ID or name..."
+					placeholder={$LL.admin_clients_search_placeholder()}
 					bind:value={searchQuery}
 					oninput={handleSearch}
 				/>
 			</div>
 			<div class="form-group" style="min-width: 120px; flex: 0;">
-				<label for="pageSize" class="form-label">Show</label>
+				<label for="pageSize" class="form-label">{$LL.admin_clients_page_size_label()}</label>
 				<select id="pageSize" class="form-select" value={limit} onchange={handlePageSizeChange}>
 					{#each PAGE_SIZE_OPTIONS as size (size)}
-						<option value={size}>{size} per page</option>
+						<option value={size}>{$LL.admin_clients_per_page({ count: size })}</option>
 					{/each}
 				</select>
 			</div>
@@ -265,15 +272,15 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading clients...</p>
+			<p>{$LL.admin_clients_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if clients.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No OAuth clients found</p>
-				<a href="/admin/clients/new" class="btn btn-primary">Create your first client</a>
+				<p class="empty-state-description">{$LL.admin_clients_empty()}</p>
+				<a href="/admin/clients/new" class="btn btn-primary">{$LL.admin_clients_create_first()}</a>
 			</div>
 		</div>
 	{:else}
@@ -288,14 +295,14 @@
 								class="checkbox"
 								checked={isAllSelected}
 								onchange={toggleSelectAll}
-								aria-label="Select all clients"
+								aria-label={$LL.admin_clients_select_all()}
 							/>
 						</th>
-						<th>Client ID</th>
-						<th>Name</th>
-						<th>Grant Types</th>
-						<th>Auth Method</th>
-						<th>Created</th>
+						<th>{$LL.admin_clients_clientId()}</th>
+						<th>{$LL.admin_clients_clientName()}</th>
+						<th>{$LL.admin_clients_grantTypes()}</th>
+						<th>{$LL.admin_clients_auth_method()}</th>
+						<th>{$LL.admin_clients_created()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -314,7 +321,9 @@
 									class="checkbox"
 									checked={selectedIds.has(client.client_id)}
 									onchange={(e) => toggleSelect(client.client_id, e)}
-									aria-label="Select {client.client_name || client.client_id}"
+									aria-label={$LL.admin_clients_select_client({
+										client: client.client_name || client.client_id
+									})}
 								/>
 							</td>
 							<td class="mono">
@@ -326,7 +335,7 @@
 								<div class="client-name-cell">
 									<span>{client.client_name || '-'}</span>
 									{#if isSystemClient(client)}
-										<span class="system-client-badge">System</span>
+										<span class="system-client-badge">{$LL.admin_clients_system()}</span>
 									{/if}
 								</div>
 								{#if client.description}
@@ -357,10 +366,11 @@
 		{#if pagination && pagination.totalPages > 1}
 			<div class="pagination">
 				<p class="pagination-info">
-					Showing {(pagination.page - 1) * pagination.limit + 1} to {Math.min(
-						pagination.page * pagination.limit,
-						pagination.total
-					)} of {pagination.total} clients
+					{$LL.admin_clients_pagination({
+						start: (pagination.page - 1) * pagination.limit + 1,
+						end: Math.min(pagination.page * pagination.limit, pagination.total),
+						total: pagination.total
+					})}
 				</p>
 				<div class="pagination-buttons">
 					<button
@@ -368,14 +378,14 @@
 						onclick={() => goToPage(currentPage - 1)}
 						disabled={!pagination.hasPrev}
 					>
-						Previous
+						{$LL.common_previous()}
 					</button>
 					<button
 						class="btn btn-secondary btn-sm"
 						onclick={() => goToPage(currentPage + 1)}
 						disabled={!pagination.hasNext}
 					>
-						Next
+						{$LL.common_next()}
 					</button>
 				</div>
 			</div>
@@ -387,13 +397,15 @@
 <Modal
 	open={showBulkDeleteDialog}
 	onClose={closeBulkDeleteDialog}
-	title="Delete {selectedIds.size} Client(s)"
+	title={$LL.admin_clients_delete_title({ count: selectedIds.size })}
 	size="lg"
 >
 	{#if bulkDeleting}
 		<!-- Progress View -->
 		<div>
-			<p style="color: var(--text-secondary); margin-bottom: 16px;">Deleting clients...</p>
+			<p style="color: var(--text-secondary); margin-bottom: 16px;">
+				{$LL.admin_clients_deleting()}
+			</p>
 			<div class="progress-bar" style="margin-bottom: 8px;">
 				<div
 					class="progress-bar-fill"
@@ -404,16 +416,18 @@
 			<p style="color: var(--text-secondary); font-size: 0.875rem; margin: 0;">
 				{bulkDeleteProgress.current} / {bulkDeleteProgress.total}
 				{#if bulkDeleteProgress.failed > 0}
-					<span style="color: var(--danger);">({bulkDeleteProgress.failed} failed)</span>
+					<span style="color: var(--danger);">
+						{$LL.admin_clients_delete_failed_count({ count: bulkDeleteProgress.failed })}
+					</span>
 				{/if}
 			</p>
 		</div>
 	{:else}
 		<!-- Confirmation View -->
 		<p style="color: var(--text-secondary); margin-bottom: 16px;">
-			Are you sure you want to delete the following OAuth clients? This action cannot be undone.
+			{$LL.admin_clients_delete_confirm()}
 			<strong style="color: var(--danger);">
-				All tokens issued by these clients will become invalid.
+				{$LL.admin_clients_delete_token_warning()}
 			</strong>
 		</p>
 
@@ -443,11 +457,11 @@
 	{/if}
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeBulkDeleteDialog} disabled={bulkDeleting}>
-			Cancel
+			{$LL.common_cancel()}
 		</button>
 		{#if !bulkDeleting}
 			<button class="btn btn-danger" onclick={executeBulkDelete}>
-				Delete {selectedIds.size} Client(s)
+				{$LL.admin_clients_delete_action({ count: selectedIds.size })}
 			</button>
 		{/if}
 	{/snippet}

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// ==========================================================================
 	// Types
@@ -72,7 +73,7 @@
 			const data = await response.json().catch(() => ({}));
 			throw new Error(
 				(data as { error?: string; message?: string }).message ||
-					`Request failed: ${response.status}`
+					$LL.admin_tenants_request_failed({ status: response.status })
 			);
 		}
 		return response.json();
@@ -87,7 +88,7 @@
 			);
 			invitations = data.items ?? [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load invitations';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_load_invitations_failed();
 		} finally {
 			loading = false;
 		}
@@ -116,7 +117,8 @@
 			resetCreateForm();
 			await loadInvitations();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create invitation';
+			createError =
+				err instanceof Error ? err.message : $LL.admin_tenants_create_invitation_failed();
 		} finally {
 			creating = false;
 		}
@@ -124,17 +126,17 @@
 
 	async function handleCancel(inv: TenantInvitation) {
 		if (cancellingId) return;
-		if (!confirm('Cancel this invitation? This cannot be undone.')) return;
+		if (!confirm($LL.admin_tenants_cancel_invitation_confirm())) return;
 		cancellingId = inv.id;
 		try {
 			await apiFetch(`/api/admin/tenants/${tenantId}/invitations/${inv.id}`, {
 				method: 'DELETE'
 			});
-			successMessage = 'Invitation cancelled.';
+			successMessage = $LL.admin_tenants_invitation_cancelled();
 			invitations = invitations.filter((i) => i.id !== inv.id);
 			setTimeout(() => (successMessage = ''), 4000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to cancel invitation';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_cancel_invitation_failed();
 		} finally {
 			cancellingId = '';
 		}
@@ -195,12 +197,12 @@
 <div class="page-container">
 	<div class="page-header">
 		<div>
-			<a href="/admin/tenants" class="back-link">← Tenants</a>
-			<h1 class="page-title">Invitations</h1>
-			<p class="page-subtitle">Manage invitation links for this tenant.</p>
+			<a href="/admin/tenants" class="back-link">← {$LL.admin_tenants_title()}</a>
+			<h1 class="page-title">{$LL.admin_tenants_invitations_title()}</h1>
+			<p class="page-subtitle">{$LL.admin_tenants_invitations_description()}</p>
 		</div>
 		<button class="btn btn-primary" onclick={() => (showCreateDialog = true)}>
-			+ Create Invitation
+			+ {$LL.admin_tenants_create_invitation()}
 		</button>
 	</div>
 
@@ -214,22 +216,22 @@
 	<!-- Invitations Table -->
 	<div class="card">
 		{#if loading}
-			<div class="loading-state">Loading invitations...</div>
+			<div class="loading-state">{$LL.admin_tenants_loading_invitations()}</div>
 		{:else if invitations.length === 0}
 			<div class="empty-state">
-				<p>No active invitations. Create one to invite users to this tenant.</p>
+				<p>{$LL.admin_tenants_no_active_invitations()}</p>
 			</div>
 		{:else}
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Email</th>
-						<th>Role</th>
-						<th>Org</th>
-						<th>Uses</th>
-						<th>Expires</th>
-						<th>Status</th>
-						<th>Actions</th>
+						<th>{$LL.admin_tenants_email()}</th>
+						<th>{$LL.admin_tenants_role()}</th>
+						<th>{$LL.admin_tenants_org()}</th>
+						<th>{$LL.admin_tenants_uses()}</th>
+						<th>{$LL.admin_tenants_expires()}</th>
+						<th>{$LL.admin_tenants_status()}</th>
+						<th>{$LL.admin_tenants_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -239,7 +241,7 @@
 								{#if inv.invited_email}
 									{inv.invited_email}
 								{:else}
-									<span class="text-muted">Anyone</span>
+									<span class="text-muted">{$LL.admin_tenants_anyone()}</span>
 								{/if}
 							</td>
 							<td>{inv.role_id ?? '—'}</td>
@@ -248,11 +250,11 @@
 							<td>{formatDate(inv.expires_at)}</td>
 							<td>
 								{#if isExpired(inv)}
-									<span class="badge badge-expired">Expired</span>
+									<span class="badge badge-expired">{$LL.admin_tenants_expired()}</span>
 								{:else if isExhausted(inv)}
-									<span class="badge badge-exhausted">Exhausted</span>
+									<span class="badge badge-exhausted">{$LL.admin_tenants_exhausted()}</span>
 								{:else}
-									<span class="badge badge-active">Active</span>
+									<span class="badge badge-active">{$LL.admin_tenants_active()}</span>
 								{/if}
 							</td>
 							<td>
@@ -260,7 +262,7 @@
 									class="btn-icon btn-icon-danger"
 									disabled={cancellingId === inv.id}
 									onclick={() => handleCancel(inv)}
-									title="Cancel invitation"
+									title={$LL.admin_tenants_cancel_invitation_title()}
 								>
 									✕
 								</button>
@@ -275,10 +277,15 @@
 
 <!-- Create Invitation Dialog -->
 {#if showCreateDialog}
-	<div class="dialog-overlay" role="dialog" aria-modal="true" aria-label="Create Invitation">
+	<div
+		class="dialog-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-label={$LL.admin_tenants_create_invitation_aria()}
+	>
 		<div class="dialog">
 			<div class="dialog-header">
-				<h2>Create Invitation</h2>
+				<h2>{$LL.admin_tenants_create_invitation()}</h2>
 				<button
 					class="dialog-close"
 					onclick={() => {
@@ -293,19 +300,19 @@
 				{/if}
 
 				<div class="form-field">
-					<label for="invited-email">Invited Email (optional)</label>
+					<label for="invited-email">{$LL.admin_tenants_invited_email()}</label>
 					<input
 						id="invited-email"
 						type="email"
 						bind:value={newInvitedEmail}
-						placeholder="user@example.com — leave blank for open invitation"
+						placeholder={$LL.admin_tenants_invited_email_placeholder()}
 						class="form-input"
 					/>
-					<p class="form-hint">If set, only this email address can use the invitation.</p>
+					<p class="form-hint">{$LL.admin_tenants_invited_email_hint()}</p>
 				</div>
 
 				<div class="form-field">
-					<label for="role-id">Auto-assign Role ID (optional)</label>
+					<label for="role-id">{$LL.admin_tenants_auto_role()}</label>
 					<input
 						id="role-id"
 						type="text"
@@ -316,7 +323,7 @@
 				</div>
 
 				<div class="form-field">
-					<label for="org-id">Auto-assign Org ID (optional)</label>
+					<label for="org-id">{$LL.admin_tenants_auto_org()}</label>
 					<input
 						id="org-id"
 						type="text"
@@ -328,7 +335,7 @@
 
 				<div class="form-row">
 					<div class="form-field">
-						<label for="max-uses">Max Uses</label>
+						<label for="max-uses">{$LL.admin_tenants_max_uses()}</label>
 						<input
 							id="max-uses"
 							type="number"
@@ -337,10 +344,10 @@
 							max="1000"
 							class="form-input"
 						/>
-						<p class="form-hint">Use -1 for unlimited.</p>
+						<p class="form-hint">{$LL.admin_tenants_max_uses_hint()}</p>
 					</div>
 					<div class="form-field">
-						<label for="expires-hours">Expires In (hours)</label>
+						<label for="expires-hours">{$LL.admin_tenants_expires_in_hours()}</label>
 						<input
 							id="expires-hours"
 							type="number"
@@ -358,10 +365,10 @@
 					onclick={() => {
 						showCreateDialog = false;
 						resetCreateForm();
-					}}>Cancel</button
+					}}>{$LL.admin_tenants_cancel()}</button
 				>
 				<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
-					{creating ? 'Creating...' : 'Create Invitation'}
+					{creating ? $LL.admin_tenants_creating() : $LL.admin_tenants_create_invitation()}
 				</button>
 			</div>
 		</div>
@@ -370,23 +377,28 @@
 
 <!-- Result Dialog (show invite URL) -->
 {#if showResultDialog && createResult}
-	<div class="dialog-overlay" role="dialog" aria-modal="true" aria-label="Invitation Created">
+	<div
+		class="dialog-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-label={$LL.admin_tenants_invitation_created()}
+	>
 		<div class="dialog">
 			<div class="dialog-header">
-				<h2>Invitation Created</h2>
+				<h2>{$LL.admin_tenants_invitation_created()}</h2>
 				<button class="dialog-close" onclick={() => (showResultDialog = false)}>✕</button>
 			</div>
 			<div class="dialog-body">
 				{#if !createResult.email_sent}
 					<div class="alert alert-warning">
-						Email could not be sent (email plugin not configured). Share the URL below manually.
+						{$LL.admin_tenants_email_not_sent()}
 					</div>
 				{:else}
-					<div class="alert alert-success">Invitation email sent successfully.</div>
+					<div class="alert alert-success">{$LL.admin_tenants_email_sent()}</div>
 				{/if}
 
 				<div class="form-field">
-					<label for="invite-url-field">Invitation URL</label>
+					<label for="invite-url-field">{$LL.admin_tenants_invitation_url()}</label>
 					<div class="url-copy-row">
 						<input
 							id="invite-url-field"
@@ -399,17 +411,19 @@
 							class="btn btn-secondary"
 							onclick={() => copyToClipboard(createResult!.invite_url)}
 						>
-							{copySuccess ? 'Copied!' : 'Copy'}
+							{copySuccess ? $LL.admin_tenants_copied() : $LL.admin_tenants_copy()}
 						</button>
 					</div>
 				</div>
 
 				<p class="expires-note">
-					Expires: {formatDate(createResult.expires_at)}
+					{$LL.admin_tenants_expires_at({ date: formatDate(createResult.expires_at) })}
 				</p>
 			</div>
 			<div class="dialog-footer">
-				<button class="btn btn-primary" onclick={() => (showResultDialog = false)}>Done</button>
+				<button class="btn btn-primary" onclick={() => (showResultDialog = false)}
+					>{$LL.admin_tenants_done()}</button
+				>
 			</div>
 		</div>
 	</div>

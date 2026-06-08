@@ -3,6 +3,7 @@
 	import { adminReBACAPI, type RelationshipTuple, formatTupleString } from '$lib/api/admin-rebac';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	// State
 	let tuples: RelationshipTuple[] = $state([]);
@@ -60,8 +61,7 @@
 			tuples = response.tuples;
 			pagination = response.pagination;
 		} catch (err) {
-			console.error('Failed to load relationship tuples:', err);
-			error = err instanceof Error ? err.message : 'Failed to load relationship tuples';
+			error = err instanceof Error ? err.message : $LL.admin_rebac_tuples_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -109,7 +109,7 @@
 			!createForm.to_type ||
 			!createForm.to_id
 		) {
-			createError = 'All required fields must be filled';
+			createError = $LL.admin_rebac_tuples_required_fields();
 			return;
 		}
 
@@ -133,8 +133,7 @@
 			showCreateDialog = false;
 			loadTuples();
 		} catch (err) {
-			console.error('Failed to create relationship tuple:', err);
-			createError = err instanceof Error ? err.message : 'Failed to create relationship tuple';
+			createError = err instanceof Error ? err.message : $LL.admin_rebac_tuples_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -159,15 +158,14 @@
 			tupleToDelete = null;
 			loadTuples();
 		} catch (err) {
-			console.error('Failed to delete relationship tuple:', err);
-			deleteError = err instanceof Error ? err.message : 'Failed to delete relationship tuple';
+			deleteError = err instanceof Error ? err.message : $LL.admin_rebac_tuples_delete_failed();
 		} finally {
 			deleting = false;
 		}
 	}
 
 	function formatDate(timestamp: number): string {
-		return new Date(timestamp).toLocaleDateString('en-US', {
+		return new Date(timestamp).toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US', {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric',
@@ -196,26 +194,34 @@
 	});
 </script>
 
+<svelte:head>
+	<title>{$LL.admin_rebac_tuples_head_title()}</title>
+</svelte:head>
+
 <div class="admin-page">
 	<div class="page-header">
 		<div class="page-header-info">
 			<nav class="breadcrumb">
 				<a href="/admin/rebac">ReBAC</a>
 				<span>/</span>
-				<span>Relationship Tuples</span>
+				<span>{$LL.admin_rebac_relationship_tuples()}</span>
 			</nav>
-			<h1 class="page-title">Relationship Tuples</h1>
+			<h1 class="page-title">{$LL.admin_rebac_relationship_tuples()}</h1>
 			<p class="modal-description">
-				Manage user-relation-object assignments (Zanzibar notation: object#relation@user).
+				{$LL.admin_rebac_tuples_description()}
 			</p>
 		</div>
-		<button class="btn btn-primary" onclick={openCreateDialog}>+ Create Tuple</button>
+		<button class="btn btn-primary" onclick={openCreateDialog}
+			>+ {$LL.admin_rebac_tuples_create_tuple()}</button
+		>
 	</div>
 
 	{#if error}
 		<div class="alert alert-error">
 			<span>{error}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadTuples}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={loadTuples}
+				>{$LL.admin_rebac_retry()}</button
+			>
 		</div>
 	{/if}
 
@@ -223,52 +229,54 @@
 	<div class="filter-bar">
 		<input
 			type="text"
-			placeholder="From ID (user)"
+			placeholder={$LL.admin_rebac_tuples_from_id_placeholder()}
 			bind:value={filterFromId}
 			onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 		/>
 		<input
 			type="text"
-			placeholder="To Type (object type)"
+			placeholder={$LL.admin_rebac_tuples_to_type_placeholder()}
 			bind:value={filterToType}
 			onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 		/>
 		<input
 			type="text"
-			placeholder="To ID (object ID)"
+			placeholder={$LL.admin_rebac_tuples_to_id_placeholder()}
 			bind:value={filterToId}
 			onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 		/>
 		<input
 			type="text"
-			placeholder="Relation Type"
+			placeholder={$LL.admin_rebac_tuples_relation_type_placeholder()}
 			bind:value={filterRelationType}
 			onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 		/>
-		<button class="btn-filter" onclick={applyFilters}>Apply</button>
-		<button class="btn-clear" onclick={clearFilters}>Clear</button>
+		<button class="btn-filter" onclick={applyFilters}>{$LL.admin_rebac_tuples_apply()}</button>
+		<button class="btn-clear" onclick={clearFilters}>{$LL.admin_rebac_tuples_clear()}</button>
 	</div>
 
 	<!-- Tuples Table -->
 	{#if loading}
-		<div class="loading-state">Loading...</div>
+		<div class="loading-state">{$LL.admin_rebac_loading()}</div>
 	{:else if tuples.length === 0}
 		<div class="empty-state">
-			<p>No relationship tuples found.</p>
-			<button class="btn btn-primary" onclick={openCreateDialog}>Create Tuple</button>
+			<p>{$LL.admin_rebac_tuples_empty()}</p>
+			<button class="btn btn-primary" onclick={openCreateDialog}
+				>{$LL.admin_rebac_tuples_create_tuple()}</button
+			>
 		</div>
 	{:else}
 		<div class="table-container">
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Subject</th>
-						<th>Relation</th>
-						<th>Object</th>
-						<th>Permission</th>
-						<th>Expires</th>
-						<th>Created</th>
-						<th>Actions</th>
+						<th>{$LL.admin_rebac_tuples_subject()}</th>
+						<th>{$LL.admin_rebac_relation()}</th>
+						<th>{$LL.admin_rebac_object()}</th>
+						<th>{$LL.admin_rebac_tuples_permission()}</th>
+						<th>{$LL.admin_rebac_tuples_expires()}</th>
+						<th>{$LL.admin_rebac_tuples_created()}</th>
+						<th>{$LL.admin_rebac_tuples_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -298,7 +306,7 @@
 										{formatDate(tuple.expires_at)}
 									</span>
 								{:else}
-									<span class="no-expiry">Never</span>
+									<span class="no-expiry">{$LL.admin_rebac_tuples_never()}</span>
 								{/if}
 							</td>
 							<td>{formatDate(tuple.created_at)}</td>
@@ -308,7 +316,7 @@
 										class="btn btn-ghost btn-sm text-danger"
 										onclick={(e) => openDeleteDialog(tuple, e)}
 									>
-										Delete
+										{$LL.admin_rebac_tuples_delete()}
 									</button>
 								</div>
 							</td>
@@ -326,18 +334,23 @@
 					disabled={pagination.page === 1}
 					onclick={() => goToPage(pagination.page - 1)}
 				>
-					Previous
+					{$LL.admin_rebac_tuples_previous()}
 				</button>
 				<span class="pagination-info">
-					Page {pagination.page} of {pagination.total_pages}
-					<span class="text-muted">({pagination.total} total)</span>
+					{$LL.admin_rebac_tuples_page_of({
+						page: pagination.page,
+						totalPages: pagination.total_pages
+					})}
+					<span class="text-muted"
+						>{$LL.admin_rebac_tuples_total_count({ count: pagination.total })}</span
+					>
 				</span>
 				<button
 					class="btn btn-secondary btn-sm"
 					disabled={pagination.page === pagination.total_pages}
 					onclick={() => goToPage(pagination.page + 1)}
 				>
-					Next
+					{$LL.admin_rebac_tuples_next()}
 				</button>
 			</div>
 		{/if}
@@ -348,7 +361,7 @@
 <Modal
 	open={showCreateDialog}
 	onClose={() => (showCreateDialog = false)}
-	title="Create Relationship Tuple"
+	title={$LL.admin_rebac_tuples_create_title()}
 	size="lg"
 >
 	{#if createError}
@@ -356,10 +369,10 @@
 	{/if}
 
 	<div class="form-section">
-		<h3>Subject (From)</h3>
+		<h3>{$LL.admin_rebac_tuples_subject_from()}</h3>
 		<div class="form-row">
 			<div class="form-group">
-				<label for="from-type" class="form-label">Type</label>
+				<label for="from-type" class="form-label">{$LL.admin_rebac_tuples_type()}</label>
 				<select id="from-type" class="form-select" bind:value={createForm.from_type}>
 					<option value="subject">subject</option>
 					<option value="group">group</option>
@@ -367,7 +380,7 @@
 				</select>
 			</div>
 			<div class="form-group flex-1">
-				<label for="from-id" class="form-label">ID</label>
+				<label for="from-id" class="form-label">{$LL.admin_rebac_tuples_id()}</label>
 				<input
 					id="from-id"
 					type="text"
@@ -380,9 +393,11 @@
 	</div>
 
 	<div class="form-section">
-		<h3>Relation</h3>
+		<h3>{$LL.admin_rebac_relation()}</h3>
 		<div class="form-group">
-			<label for="relation-type" class="form-label">Relationship Type</label>
+			<label for="relation-type" class="form-label"
+				>{$LL.admin_rebac_tuples_relationship_type()}</label
+			>
 			<input
 				id="relation-type"
 				type="text"
@@ -394,10 +409,10 @@
 	</div>
 
 	<div class="form-section">
-		<h3>Object (To)</h3>
+		<h3>{$LL.admin_rebac_tuples_object_to()}</h3>
 		<div class="form-row">
 			<div class="form-group">
-				<label for="to-type" class="form-label">Type</label>
+				<label for="to-type" class="form-label">{$LL.admin_rebac_tuples_type()}</label>
 				<input
 					id="to-type"
 					type="text"
@@ -407,7 +422,7 @@
 				/>
 			</div>
 			<div class="form-group flex-1">
-				<label for="to-id" class="form-label">ID</label>
+				<label for="to-id" class="form-label">{$LL.admin_rebac_tuples_id()}</label>
 				<input
 					id="to-id"
 					type="text"
@@ -420,27 +435,29 @@
 	</div>
 
 	<div class="form-section">
-		<h3>Options</h3>
+		<h3>{$LL.admin_rebac_tuples_options()}</h3>
 		<div class="form-group">
-			<label for="permission-level" class="form-label">Permission Level</label>
+			<label for="permission-level" class="form-label"
+				>{$LL.admin_rebac_tuples_permission_level()}</label
+			>
 			<select id="permission-level" class="form-select" bind:value={createForm.permission_level}>
-				<option value="full">Full</option>
-				<option value="limited">Limited</option>
-				<option value="read_only">Read Only</option>
+				<option value="full">{$LL.admin_rebac_tuples_permission_full()}</option>
+				<option value="limited">{$LL.admin_rebac_tuples_permission_limited()}</option>
+				<option value="read_only">{$LL.admin_rebac_tuples_permission_read_only()}</option>
 			</select>
 		</div>
 
 		<div class="form-group">
 			<ToggleSwitch
 				bind:checked={createForm.has_expiry}
-				label="Set expiration"
-				description="Set an expiration date for this relationship"
+				label={$LL.admin_rebac_tuples_set_expiration()}
+				description={$LL.admin_rebac_tuples_set_expiration_description()}
 			/>
 		</div>
 
 		{#if createForm.has_expiry}
 			<div class="form-group">
-				<label for="expires-at" class="form-label">Expires At</label>
+				<label for="expires-at" class="form-label">{$LL.admin_rebac_tuples_expires_at()}</label>
 				<input
 					id="expires-at"
 					type="datetime-local"
@@ -452,9 +469,11 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}>Cancel</button>
+		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}
+			>{$LL.admin_rebac_tuples_cancel()}</button
+		>
 		<button class="btn btn-primary" onclick={submitCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create'}
+			{creating ? $LL.admin_rebac_tuples_creating() : $LL.admin_rebac_tuples_create()}
 		</button>
 	{/snippet}
 </Modal>
@@ -463,25 +482,27 @@
 <Modal
 	open={showDeleteDialog && !!tupleToDelete}
 	onClose={() => (showDeleteDialog = false)}
-	title="Delete Relationship Tuple"
+	title={$LL.admin_rebac_tuples_delete_title()}
 	size="sm"
 >
 	{#if deleteError}
 		<div class="alert alert-error">{deleteError}</div>
 	{/if}
 
-	<p>Are you sure you want to delete this relationship tuple?</p>
+	<p>{$LL.admin_rebac_tuples_delete_confirm()}</p>
 	{#if tupleToDelete}
 		<div class="tuple-preview">
 			{formatTupleString(tupleToDelete)}
 		</div>
 	{/if}
-	<p class="text-danger">This action cannot be undone.</p>
+	<p class="text-danger">{$LL.admin_rebac_tuples_cannot_be_undone()}</p>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}>Cancel</button>
+		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}
+			>{$LL.admin_rebac_tuples_cancel()}</button
+		>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete'}
+			{deleting ? $LL.admin_rebac_tuples_deleting() : $LL.admin_rebac_tuples_delete()}
 		</button>
 	{/snippet}
 </Modal>

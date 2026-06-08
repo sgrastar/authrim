@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { adminAdminsAPI, type AdminUser, type AdminUserListParams } from '$lib/api/admin-admins';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let admins: AdminUser[] = $state([]);
 	let total = $state(0);
@@ -52,8 +53,7 @@
 			total = response.total;
 			totalPages = response.totalPages;
 		} catch (err) {
-			console.error('Failed to load admin users:', err);
-			error = err instanceof Error ? err.message : 'Failed to load admin users';
+			error = err instanceof Error ? err.message : $LL.admin_admins_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -94,7 +94,7 @@
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleDateString();
+		return new Date(timestamp).toLocaleDateString(undefined);
 	}
 
 	function getStatusBadgeClass(status: string): string {
@@ -107,6 +107,19 @@
 				return 'badge badge-danger';
 			default:
 				return 'badge badge-neutral';
+		}
+	}
+
+	function statusLabel(status: string): string {
+		switch (status) {
+			case 'active':
+				return $LL.admin_admins_active();
+			case 'suspended':
+				return $LL.admin_admins_suspended();
+			case 'locked':
+				return $LL.admin_admins_locked();
+			default:
+				return status;
 		}
 	}
 
@@ -123,7 +136,7 @@
 
 	async function handleCreate() {
 		if (!newAdminEmail.trim()) {
-			createError = 'Email is required';
+			createError = $LL.admin_admins_email_required();
 			return;
 		}
 
@@ -138,20 +151,20 @@
 			closeCreateDialog();
 			loadAdmins();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create admin user';
+			createError = err instanceof Error ? err.message : $LL.admin_admins_create_failed();
 		} finally {
 			creating = false;
 		}
 	}
 
 	async function handleSuspend(admin: AdminUser) {
-		if (!confirm(`Are you sure you want to suspend ${admin.email}?`)) return;
+		if (!confirm($LL.admin_admins_suspend_confirm({ email: admin.email }))) return;
 
 		try {
 			await adminAdminsAPI.suspend(admin.id);
 			loadAdmins();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to suspend admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_suspend_failed());
 		}
 	}
 
@@ -160,7 +173,7 @@
 			await adminAdminsAPI.activate(admin.id);
 			loadAdmins();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to activate admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_activate_failed());
 		}
 	}
 
@@ -169,26 +182,26 @@
 			await adminAdminsAPI.unlock(admin.id);
 			loadAdmins();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to unlock admin user');
+			alert(err instanceof Error ? err.message : $LL.admin_admins_unlock_failed());
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>Admin Users - Authrim</title>
+	<title>{$LL.admin_admins_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Admin Users</h1>
-			<p class="page-description">Manage administrator accounts for the Admin panel</p>
+			<h1 class="page-title">{$LL.admin_admins_title()}</h1>
+			<p class="page-description">{$LL.admin_admins_description()}</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Add Admin
+				{$LL.admin_admins_add()}
 			</button>
 		</div>
 	</div>
@@ -199,24 +212,24 @@
 			<input
 				type="text"
 				class="input"
-				placeholder="Search by email..."
+				placeholder={$LL.admin_admins_search_placeholder()}
 				bind:value={searchQuery}
 				oninput={handleSearch}
 			/>
 		</div>
 		<div class="filter-group">
 			<select class="select" bind:value={statusFilter} onchange={handleStatusChange}>
-				<option value="">All Statuses</option>
-				<option value="active">Active</option>
-				<option value="suspended">Suspended</option>
-				<option value="locked">Locked</option>
+				<option value="">{$LL.admin_admins_all_statuses()}</option>
+				<option value="active">{$LL.admin_admins_active()}</option>
+				<option value="suspended">{$LL.admin_admins_suspended()}</option>
+				<option value="locked">{$LL.admin_admins_locked()}</option>
 			</select>
 		</div>
 		<div class="filter-group">
 			<select class="select" onchange={handleMfaChange}>
-				<option value="">All MFA</option>
-				<option value="true">MFA Enabled</option>
-				<option value="false">MFA Disabled</option>
+				<option value="">{$LL.admin_admins_all_mfa()}</option>
+				<option value="true">{$LL.admin_admins_mfa_enabled()}</option>
+				<option value="false">{$LL.admin_admins_mfa_disabled()}</option>
 			</select>
 		</div>
 	</div>
@@ -225,16 +238,16 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-spinner loading-spinner"></i>
-			<p>Loading admin users...</p>
+			<p>{$LL.admin_admins_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="error-state">
 			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadAdmins}>Retry</button>
+			<button class="btn btn-secondary" onclick={loadAdmins}>{$LL.admin_admins_retry()}</button>
 		</div>
 	{:else if admins.length === 0}
 		<div class="empty-state">
-			<p>No admin users found</p>
+			<p>{$LL.admin_admins_empty()}</p>
 			{#if searchQuery || statusFilter || mfaFilter !== null}
 				<button
 					class="btn btn-secondary"
@@ -245,7 +258,7 @@
 						loadAdmins();
 					}}
 				>
-					Clear Filters
+					{$LL.admin_admins_clear_filters()}
 				</button>
 			{/if}
 		</div>
@@ -254,13 +267,13 @@
 			<table class="table">
 				<thead>
 					<tr>
-						<th>Email</th>
-						<th>Name</th>
-						<th>Status</th>
-						<th>MFA</th>
-						<th>Last Login</th>
-						<th>Created</th>
-						<th>Actions</th>
+						<th>{$LL.admin_admins_email()}</th>
+						<th>{$LL.admin_admins_name()}</th>
+						<th>{$LL.admin_admins_status()}</th>
+						<th>{$LL.admin_admins_mfa()}</th>
+						<th>{$LL.admin_admins_last_login()}</th>
+						<th>{$LL.admin_admins_created()}</th>
+						<th>{$LL.admin_admins_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -270,14 +283,14 @@
 							<td>{admin.name || '-'}</td>
 							<td>
 								<span class={getStatusBadgeClass(admin.status)}>
-									{admin.status}
+									{statusLabel(admin.status)}
 								</span>
 							</td>
 							<td>
 								{#if admin.mfa_enabled}
-									<span class="badge badge-success">Enabled</span>
+									<span class="badge badge-success">{$LL.admin_admins_enabled()}</span>
 								{:else}
-									<span class="badge badge-neutral">Disabled</span>
+									<span class="badge badge-neutral">{$LL.admin_admins_disabled()}</span>
 								{/if}
 							</td>
 							<td>{formatDate(admin.last_login_at)}</td>
@@ -294,25 +307,25 @@
 										<button
 											class="btn btn-sm btn-warning"
 											onclick={() => handleSuspend(admin)}
-											title="Suspend"
+											title={$LL.admin_admins_suspend()}
 										>
-											Suspend
+											{$LL.admin_admins_suspend()}
 										</button>
 									{:else if admin.status === 'suspended'}
 										<button
 											class="btn btn-sm btn-success"
 											onclick={() => handleActivate(admin)}
-											title="Activate"
+											title={$LL.admin_admins_activate()}
 										>
-											Activate
+											{$LL.admin_admins_activate()}
 										</button>
 									{:else if admin.status === 'locked'}
 										<button
 											class="btn btn-sm btn-primary"
 											onclick={() => handleUnlock(admin)}
-											title="Unlock"
+											title={$LL.admin_admins_unlock()}
 										>
-											Unlock
+											{$LL.admin_admins_unlock()}
 										</button>
 									{/if}
 								</div>
@@ -327,7 +340,11 @@
 		{#if totalPages > 1}
 			<div class="pagination">
 				<span class="pagination-info">
-					Showing {(currentPage - 1) * limit + 1} - {Math.min(currentPage * limit, total)} of {total}
+					{$LL.admin_admins_pagination({
+						from: (currentPage - 1) * limit + 1,
+						to: Math.min(currentPage * limit, total),
+						total
+					})}
 				</span>
 				<div class="pagination-buttons">
 					<button
@@ -335,14 +352,14 @@
 						disabled={currentPage <= 1}
 						onclick={() => goToPage(currentPage - 1)}
 					>
-						Previous
+						{$LL.admin_admins_previous()}
 					</button>
 					<button
 						class="btn btn-sm btn-secondary"
 						disabled={currentPage >= totalPages}
 						onclick={() => goToPage(currentPage + 1)}
 					>
-						Next
+						{$LL.admin_admins_next()}
 					</button>
 				</div>
 			</div>
@@ -351,12 +368,17 @@
 </div>
 
 <!-- Create Admin Dialog -->
-<Modal open={showCreateDialog} onClose={closeCreateDialog} title="Create Admin User" size="md">
+<Modal
+	open={showCreateDialog}
+	onClose={closeCreateDialog}
+	title={$LL.admin_admins_create_title()}
+	size="md"
+>
 	{#if createError}
 		<div class="alert alert-danger">{createError}</div>
 	{/if}
 	<div class="form-group">
-		<label for="email">Email *</label>
+		<label for="email">{$LL.admin_admins_email()} *</label>
 		<input
 			type="email"
 			id="email"
@@ -366,16 +388,16 @@
 		/>
 	</div>
 	<div class="form-group">
-		<label for="name">Name</label>
+		<label for="name">{$LL.admin_admins_name()}</label>
 		<input type="text" id="name" class="input" bind:value={newAdminName} placeholder="John Doe" />
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_admins_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create'}
+			{creating ? $LL.admin_admins_creating() : $LL.admin_admins_create()}
 		</button>
 	{/snippet}
 </Modal>

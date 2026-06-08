@@ -8,6 +8,7 @@
 		COMMON_EVENT_PATTERNS
 	} from '$lib/api/admin-webhooks';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let webhooks: Webhook[] = $state([]);
 	let loading = $state(true);
@@ -45,9 +46,8 @@
 			const response = await adminWebhooksAPI.list({ limit: 50 });
 			webhooks = response.webhooks;
 			total = response.total;
-		} catch (err) {
-			console.error('Failed to load webhooks:', err);
-			error = 'Failed to load webhooks';
+		} catch {
+			error = $LL.admin_webhooks_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -89,7 +89,7 @@
 
 	async function confirmCreate() {
 		if (!newName.trim() || !newUrl.trim() || selectedEvents.length === 0) {
-			createError = 'Name, URL, and at least one event are required';
+			createError = $LL.admin_webhooks_create_required();
 			return;
 		}
 
@@ -106,7 +106,7 @@
 			showCreateDialog = false;
 			await loadWebhooks();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create webhook';
+			createError = err instanceof Error ? err.message : $LL.admin_webhooks_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -137,7 +137,7 @@
 			webhookToDelete = null;
 			await loadWebhooks();
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete webhook';
+			deleteError = err instanceof Error ? err.message : $LL.admin_webhooks_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -169,7 +169,7 @@
 			const result = await adminWebhooksAPI.test(webhookToTest.id);
 			testResult = result;
 		} catch (err) {
-			testError = err instanceof Error ? err.message : 'Failed to test webhook';
+			testError = err instanceof Error ? err.message : $LL.admin_webhooks_test_failed();
 		} finally {
 			testing = false;
 		}
@@ -183,7 +183,7 @@
 			});
 			await loadWebhooks();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update webhook';
+			error = err instanceof Error ? err.message : $LL.admin_webhooks_update_failed();
 		}
 	}
 
@@ -200,26 +200,58 @@
 		event.stopPropagation();
 		goto(`/admin/webhooks/${webhook.id}/deliveries`);
 	}
+
+	function eventPatternDescription(pattern: string, fallback: string): string {
+		switch (pattern) {
+			case 'user.*':
+				return $LL.admin_webhooks_event_all_user();
+			case 'user.created':
+				return $LL.admin_webhooks_event_user_created();
+			case 'user.updated':
+				return $LL.admin_webhooks_event_user_updated();
+			case 'user.deleted':
+				return $LL.admin_webhooks_event_user_deleted();
+			case 'session.*':
+				return $LL.admin_webhooks_event_all_session();
+			case 'session.created':
+				return $LL.admin_webhooks_event_session_created();
+			case 'session.revoked':
+				return $LL.admin_webhooks_event_session_revoked();
+			case 'token.*':
+				return $LL.admin_webhooks_event_all_token();
+			case 'token.issued':
+				return $LL.admin_webhooks_event_token_issued();
+			case 'token.revoked':
+				return $LL.admin_webhooks_event_token_revoked();
+			case 'client.*':
+				return $LL.admin_webhooks_event_all_client();
+			case 'consent.*':
+				return $LL.admin_webhooks_event_all_consent();
+			case 'webhook.test':
+				return $LL.admin_webhooks_event_test();
+			default:
+				return fallback;
+		}
+	}
 </script>
 
 <svelte:head>
-	<title>Webhooks - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_webhooks_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Webhooks</h1>
+			<h1 class="page-title">{$LL.admin_webhooks_title()}</h1>
 			<p class="page-description">
-				Configure webhooks to receive real-time notifications when events occur in your
-				authentication system.
+				{$LL.admin_webhooks_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Add Webhook
+				{$LL.admin_webhooks_add()}
 			</button>
 		</div>
 	</div>
@@ -231,29 +263,33 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_webhooks_loading()}</p>
 		</div>
 	{:else if webhooks.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No webhooks configured.</p>
-				<p class="empty-state-hint">Add a webhook to receive real-time event notifications.</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Add Your First Webhook</button>
+				<p class="empty-state-description">{$LL.admin_webhooks_empty()}</p>
+				<p class="empty-state-hint">{$LL.admin_webhooks_empty_hint()}</p>
+				<button class="btn btn-primary" onclick={openCreateDialog}
+					>{$LL.admin_webhooks_add_first()}</button
+				>
 			</div>
 		</div>
 	{:else}
-		<p class="result-count">Showing {webhooks.length} of {total} webhooks</p>
+		<p class="result-count">
+			{$LL.admin_webhooks_result_count({ shown: webhooks.length, total })}
+		</p>
 
 		<div class="data-table-container">
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Name</th>
-						<th>URL</th>
-						<th>Events</th>
-						<th>Scope</th>
-						<th>Status</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_webhooks_name()}</th>
+						<th>{$LL.admin_webhooks_url()}</th>
+						<th>{$LL.admin_webhooks_events()}</th>
+						<th>{$LL.admin_webhooks_scope()}</th>
+						<th>{$LL.admin_webhooks_status()}</th>
+						<th class="text-right">{$LL.admin_webhooks_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -262,7 +298,7 @@
 							<td>
 								<div class="cell-primary">{webhook.name}</div>
 								{#if webhook.has_secret}
-									<div class="cell-secondary success">🔒 Signed</div>
+									<div class="cell-secondary success">🔒 {$LL.admin_webhooks_signed()}</div>
 								{/if}
 							</td>
 							<td>
@@ -274,7 +310,11 @@
 										<span class="tag">{event}</span>
 									{/each}
 									{#if webhook.events.length > 3}
-										<span class="muted">+{webhook.events.length - 3} more</span>
+										<span class="muted"
+											>{$LL.admin_webhooks_more_events({
+												count: webhook.events.length - 3
+											})}</span
+										>
 									{/if}
 								</div>
 							</td>
@@ -287,7 +327,7 @@
 							</td>
 							<td>
 								<span class={webhook.active ? 'badge badge-success' : 'badge badge-neutral'}>
-									{webhook.active ? 'Active' : 'Inactive'}
+									{webhook.active ? $LL.admin_webhooks_active() : $LL.admin_webhooks_inactive()}
 								</span>
 							</td>
 							<td class="text-right">
@@ -296,22 +336,22 @@
 										class="btn btn-warning btn-sm"
 										onclick={(e) => navigateToDeliveries(webhook, e)}
 									>
-										History
+										{$LL.admin_webhooks_history()}
 									</button>
 									<button class="btn btn-info btn-sm" onclick={(e) => openTestDialog(webhook, e)}>
-										Test
+										{$LL.admin_webhooks_test()}
 									</button>
 									<button
 										class="btn btn-secondary btn-sm"
 										onclick={(e) => toggleActive(webhook, e)}
 									>
-										{webhook.active ? 'Disable' : 'Enable'}
+										{webhook.active ? $LL.admin_webhooks_disable() : $LL.admin_webhooks_enable()}
 									</button>
 									<button
 										class="btn btn-danger btn-sm"
 										onclick={(e) => openDeleteDialog(webhook, e)}
 									>
-										Delete
+										{$LL.admin_webhooks_delete()}
 									</button>
 								</div>
 							</td>
@@ -324,50 +364,55 @@
 </div>
 
 <!-- Create Dialog -->
-<Modal open={showCreateDialog} onClose={closeCreateDialog} title="Add Webhook" size="lg">
+<Modal
+	open={showCreateDialog}
+	onClose={closeCreateDialog}
+	title={$LL.admin_webhooks_create_title()}
+	size="lg"
+>
 	{#if createError}
 		<div class="alert alert-error">{createError}</div>
 	{/if}
 
 	<div class="form-group">
-		<label for="webhook-name" class="form-label">Webhook Name</label>
+		<label for="webhook-name" class="form-label">{$LL.admin_webhooks_name_label()}</label>
 		<input
 			id="webhook-name"
 			type="text"
 			class="form-input"
 			bind:value={newName}
-			placeholder="e.g., Slack Notifications"
+			placeholder={$LL.admin_webhooks_name_placeholder()}
 		/>
 	</div>
 
 	<div class="form-group">
-		<label for="webhook-url" class="form-label">Endpoint URL</label>
+		<label for="webhook-url" class="form-label">{$LL.admin_webhooks_endpoint_url()}</label>
 		<input
 			id="webhook-url"
 			type="url"
 			class="form-input"
 			bind:value={newUrl}
-			placeholder="https://example.com/webhooks/authrim"
+			placeholder={$LL.admin_webhooks_endpoint_placeholder()}
 		/>
 	</div>
 
 	<div class="form-group">
-		<label for="webhook-secret" class="form-label">Secret (optional, for HMAC signature)</label>
+		<label for="webhook-secret" class="form-label">{$LL.admin_webhooks_secret_label()}</label>
 		<input
 			id="webhook-secret"
 			type="password"
 			class="form-input"
 			bind:value={newSecret}
-			placeholder="Enter a secret for webhook signing"
+			placeholder={$LL.admin_webhooks_secret_placeholder()}
 		/>
 		<p class="form-hint">
-			If set, webhooks will include an HMAC-SHA256 signature in the X-Webhook-Signature header.
+			{$LL.admin_webhooks_secret_hint()}
 		</p>
 	</div>
 
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Events to Subscribe</label>
+		<label class="form-label">{$LL.admin_webhooks_events_to_subscribe()}</label>
 		<div class="event-selector">
 			{#each COMMON_EVENT_PATTERNS as eventPattern (eventPattern.pattern)}
 				<button
@@ -375,7 +420,7 @@
 					class="event-btn"
 					class:selected={selectedEvents.includes(eventPattern.pattern)}
 					onclick={() => toggleEvent(eventPattern.pattern)}
-					title={eventPattern.description}
+					title={eventPatternDescription(eventPattern.pattern, eventPattern.description)}
 				>
 					{eventPattern.pattern}
 				</button>
@@ -387,15 +432,19 @@
 				type="text"
 				class="form-input"
 				bind:value={customEvent}
-				placeholder="Custom event pattern"
+				placeholder={$LL.admin_webhooks_custom_event_placeholder()}
 				onkeydown={(e) => e.key === 'Enter' && addCustomEvent()}
 			/>
-			<button type="button" class="btn btn-secondary" onclick={addCustomEvent}>Add</button>
+			<button type="button" class="btn btn-secondary" onclick={addCustomEvent}
+				>{$LL.admin_webhooks_add_event()}</button
+			>
 		</div>
 
 		{#if selectedEvents.length > 0}
 			<div class="selected-events">
-				<div class="selected-events-label">Selected Events ({selectedEvents.length}):</div>
+				<div class="selected-events-label">
+					{$LL.admin_webhooks_selected_events({ count: selectedEvents.length })}
+				</div>
 				<div class="tag-list">
 					{#each selectedEvents as event (event)}
 						<span class="tag removable">
@@ -409,10 +458,11 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>Cancel</button
+		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}
+			>{$LL.admin_webhooks_cancel()}</button
 		>
 		<button class="btn btn-primary" onclick={confirmCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create Webhook'}
+			{creating ? $LL.admin_webhooks_creating() : $LL.admin_webhooks_create_button()}
 		</button>
 	{/snippet}
 </Modal>
@@ -421,7 +471,7 @@
 <Modal
 	open={showTestDialog && !!webhookToTest}
 	onClose={closeTestDialog}
-	title="Test Webhook: {webhookToTest?.name ?? ''}"
+	title={$LL.admin_webhooks_test_title({ name: webhookToTest?.name ?? '' })}
 	size="md"
 >
 	{#if testError}
@@ -429,16 +479,16 @@
 	{/if}
 
 	<p class="modal-description">
-		Send a test webhook event to verify the endpoint is reachable and responding correctly.
+		{$LL.admin_webhooks_test_description()}
 	</p>
 
 	<div class="info-box">
 		<div class="info-row">
-			<span class="info-label">URL:</span>
+			<span class="info-label">{$LL.admin_webhooks_url()}:</span>
 			<code class="info-value">{webhookToTest?.url}</code>
 		</div>
 		<div class="info-row">
-			<span class="info-label">Event:</span>
+			<span class="info-label">{$LL.admin_webhooks_event()}:</span>
 			<span class="info-value">webhook.test</span>
 		</div>
 	</div>
@@ -446,27 +496,36 @@
 	{#if testResult}
 		<div class={testResult.success ? 'alert alert-success' : 'alert alert-error'}>
 			<div class="alert-title">
-				{testResult.success ? '✓ Test Successful' : '✗ Test Failed'}
+				{testResult.success
+					? '✓ ' + $LL.admin_webhooks_test_success()
+					: '✗ ' + $LL.admin_webhooks_test_failed_result()}
 			</div>
 			{#if testResult.status_code}
-				<p class="alert-detail"><strong>Status:</strong> {testResult.status_code}</p>
+				<p class="alert-detail">
+					<strong>{$LL.admin_webhooks_response_status()}</strong>
+					{testResult.status_code}
+				</p>
 			{/if}
 			{#if testResult.response_time_ms}
 				<p class="alert-detail">
-					<strong>Response Time:</strong>
+					<strong>{$LL.admin_webhooks_response_time()}</strong>
 					{testResult.response_time_ms}ms
 				</p>
 			{/if}
 			{#if testResult.error}
-				<p class="alert-detail"><strong>Error:</strong> {testResult.error}</p>
+				<p class="alert-detail">
+					<strong>{$LL.admin_webhooks_error_label()}</strong>
+					{testResult.error}
+				</p>
 			{/if}
 		</div>
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeTestDialog}>Close</button>
+		<button class="btn btn-secondary" onclick={closeTestDialog}>{$LL.admin_webhooks_close()}</button
+		>
 		<button class="btn btn-primary" onclick={runTest} disabled={testing}>
-			{testing ? 'Sending...' : 'Send Test'}
+			{testing ? $LL.admin_webhooks_sending() : $LL.admin_webhooks_send_test()}
 		</button>
 	{/snippet}
 </Modal>
@@ -475,7 +534,7 @@
 <Modal
 	open={showDeleteDialog && !!webhookToDelete}
 	onClose={closeDeleteDialog}
-	title="Delete Webhook"
+	title={$LL.admin_webhooks_delete_title()}
 	size="md"
 >
 	{#if deleteError}
@@ -483,30 +542,34 @@
 	{/if}
 
 	<p class="modal-description">
-		Are you sure you want to delete this webhook? Event notifications will no longer be sent to this
-		endpoint.
+		{$LL.admin_webhooks_delete_confirm()}
 	</p>
 
 	<div class="info-box">
 		<div class="info-row">
-			<span class="info-label">Name:</span>
+			<span class="info-label">{$LL.admin_webhooks_name()}:</span>
 			<span class="info-value">{webhookToDelete?.name}</span>
 		</div>
 		<div class="info-row">
-			<span class="info-label">URL:</span>
+			<span class="info-label">{$LL.admin_webhooks_url()}:</span>
 			<code class="info-value">{formatUrl(webhookToDelete?.url ?? '')}</code>
 		</div>
 		<div class="info-row">
-			<span class="info-label">Events:</span>
-			<span class="info-value">{webhookToDelete?.events.length} subscribed</span>
+			<span class="info-label">{$LL.admin_webhooks_events()}:</span>
+			<span class="info-value"
+				>{$LL.admin_webhooks_events_subscribed({
+					count: webhookToDelete?.events.length ?? 0
+				})}</span
+			>
 		</div>
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}>Cancel</button
+		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}
+			>{$LL.admin_webhooks_cancel()}</button
 		>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete Webhook'}
+			{deleting ? $LL.admin_webhooks_deleting() : $LL.admin_webhooks_delete_button()}
 		</button>
 	{/snippet}
 </Modal>

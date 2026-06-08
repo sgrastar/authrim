@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
 	import { createSwitch, melt } from '@melt-ui/svelte';
 
 	interface Props {
@@ -53,6 +54,10 @@
 		md: 'toggle-switch-md',
 		lg: 'toggle-switch-lg'
 	};
+
+	const ariaLabel = $derived(
+		label ?? ($switchChecked ? $LL.common_toggle_on() : $LL.common_toggle_off())
+	);
 </script>
 
 <div class="toggle-switch-wrapper" class:toggle-switch-disabled={disabled}>
@@ -73,6 +78,7 @@
 		class:toggle-switch-checked={$switchChecked}
 		{disabled}
 		type="button"
+		aria-label={ariaLabel}
 	>
 		<span class="toggle-switch-thumb"></span>
 	</button>

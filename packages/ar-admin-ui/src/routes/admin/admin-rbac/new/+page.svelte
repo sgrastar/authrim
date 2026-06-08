@@ -7,6 +7,11 @@
 		ADMIN_PERMISSION_DEFINITIONS,
 		type CreateAdminRoleInput
 	} from '$lib/api/admin-admin-roles';
+	import { LL } from '$i18n/i18n-svelte';
+	import {
+		formatAdminPermissionCategory,
+		formatAdminPermissionCategoryDescription
+	} from '$lib/admin/admin-admin-rbac-i18n';
 
 	// Form state
 	let name = $state('');
@@ -26,7 +31,7 @@
 	// Validation
 	let nameError = $derived(
 		name.length > 0 && !/^[a-z][a-z0-9_-]*$/.test(name)
-			? 'Name must start with lowercase letter and contain only lowercase letters, numbers, underscores, and hyphens'
+			? $LL.admin_admin_rbac_name_validation()
 			: ''
 	);
 
@@ -44,7 +49,7 @@
 				(r) => r.role_type === 'system' || r.role_type === 'builtin'
 			);
 		} catch (err) {
-			console.error('Failed to load roles:', err);
+			error = err instanceof Error ? err.message : $LL.admin_admin_rbac_load_failed();
 		} finally {
 			loadingRoles = false;
 		}
@@ -105,7 +110,7 @@
 			const newRole = await adminAdminRolesAPI.create(data);
 			goto(`/admin/admin-rbac/${newRole.id}`);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create role';
+			error = err instanceof Error ? err.message : $LL.admin_admin_rbac_create_failed();
 		} finally {
 			submitting = false;
 		}
@@ -117,15 +122,15 @@
 </script>
 
 <svelte:head>
-	<title>Create Admin Role - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_admin_rbac_create_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
-	<a href="/admin/admin-rbac" class="back-link">← Back to Admin Roles</a>
+	<a href="/admin/admin-rbac" class="back-link">← {$LL.admin_admin_rbac_back_to_roles()}</a>
 
-	<h1 class="page-title">Create Custom Admin Role</h1>
+	<h1 class="page-title">{$LL.admin_admin_rbac_create_title()}</h1>
 	<p class="modal-description">
-		Create a new custom role with specific permissions for Admin Operators.
+		{$LL.admin_admin_rbac_create_description()}
 	</p>
 
 	{#if error}
@@ -140,17 +145,18 @@
 	>
 		<!-- Basic Info Section -->
 		<div class="panel">
-			<h2 class="panel-title">Basic Information</h2>
+			<h2 class="panel-title">{$LL.admin_admin_rbac_basic_information()}</h2>
 
 			<div class="form-group">
 				<label for="name" class="form-label">
-					Role Name <span class="text-danger">*</span>
+					{$LL.admin_admin_rbac_role_name()}
+					<span class="text-danger">{$LL.admin_admin_rbac_required()}</span>
 				</label>
 				<input
 					type="text"
 					id="name"
 					bind:value={name}
-					placeholder="e.g., security_admin"
+					placeholder={$LL.admin_admin_rbac_name_placeholder()}
 					class="form-input"
 					class:form-input-error={nameError}
 				/>
@@ -158,58 +164,66 @@
 					<span class="form-error">{nameError}</span>
 				{/if}
 				<span class="form-hint">
-					Lowercase letters, numbers, underscores, and hyphens only. Must start with a letter.
+					{$LL.admin_admin_rbac_name_hint()}
 				</span>
 			</div>
 
 			<div class="form-group">
-				<label for="displayName" class="form-label">Display Name</label>
+				<label for="displayName" class="form-label">
+					{$LL.admin_admin_rbac_display_name()}
+				</label>
 				<input
 					type="text"
 					id="displayName"
 					bind:value={displayName}
-					placeholder="e.g., Security Administrator"
+					placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
 					class="form-input"
 				/>
-				<span class="form-hint">Human-readable name shown in UI</span>
+				<span class="form-hint">{$LL.admin_admin_rbac_display_name_hint()}</span>
 			</div>
 
 			<div class="form-group">
-				<label for="description" class="form-label">Description</label>
+				<label for="description" class="form-label">
+					{$LL.admin_admin_rbac_description_label()}
+				</label>
 				<textarea
 					id="description"
 					bind:value={description}
-					placeholder="Describe what this role is for..."
+					placeholder={$LL.admin_admin_rbac_create_description_placeholder()}
 					rows="3"
 					class="form-input"
 				></textarea>
 			</div>
 
 			<div class="form-group">
-				<label for="inherits-from" class="form-label">Inherit From (Optional)</label>
+				<label for="inherits-from" class="form-label">
+					{$LL.admin_admin_rbac_inherit_from()}
+				</label>
 				<select
 					id="inherits-from"
 					bind:value={inheritsFrom}
 					disabled={loadingRoles}
 					class="form-select"
 				>
-					<option value="">None - Start with no permissions</option>
+					<option value="">{$LL.admin_admin_rbac_inherit_none()}</option>
 					{#each availableRoles as role (role.id)}
 						<option value={role.id}>{role.display_name || role.name}</option>
 					{/each}
 				</select>
 				<span class="form-hint">
-					Inherited permissions will be automatically included. Changes to the base role will be
-					reflected in this role.
+					{$LL.admin_admin_rbac_inherit_hint()}
 				</span>
 			</div>
 		</div>
 
 		<!-- Permissions Section -->
 		<div class="panel">
-			<h2 class="panel-title">Permissions <span class="text-danger">*</span></h2>
+			<h2 class="panel-title">
+				{$LL.admin_admin_rbac_permissions()}
+				<span class="text-danger">{$LL.admin_admin_rbac_required()}</span>
+			</h2>
 			<p class="form-hint" style="margin-bottom: 16px;">
-				Select the permissions this role should have. At least one permission is required.
+				{$LL.admin_admin_rbac_permissions_hint()}
 			</p>
 
 			<div class="permission-editor-grid">
@@ -223,7 +237,12 @@
 									indeterminate={isCategoryPartiallySelected(category.permissions)}
 									onchange={() => toggleCategory(category.permissions)}
 								/>
-								<span class="permission-category-name">{category.category}</span>
+								<span class="permission-category-name">
+									{formatAdminPermissionCategory(category.category, $LL)}
+								</span>
+								<span class="permission-category-description">
+									{formatAdminPermissionCategoryDescription(category.category, $LL)}
+								</span>
 							</label>
 						</div>
 						<div class="permission-category-body">
@@ -247,7 +266,7 @@
 
 			{#if selectedPermissions.size > 0}
 				<div class="permission-selected-count">
-					{selectedPermissions.size} permission(s) selected
+					{$LL.admin_admin_rbac_selected_count({ count: selectedPermissions.size })}
 				</div>
 			{/if}
 		</div>
@@ -255,10 +274,10 @@
 		<!-- Actions -->
 		<div class="form-actions">
 			<button type="button" class="btn btn-secondary" onclick={navigateBack} disabled={submitting}>
-				Cancel
+				{$LL.admin_admin_rbac_cancel()}
 			</button>
 			<button type="submit" class="btn btn-primary" disabled={!isValid || submitting}>
-				{submitting ? 'Creating...' : 'Create Role'}
+				{submitting ? $LL.admin_admin_rbac_creating() : $LL.admin_admin_rbac_create_button()}
 			</button>
 		</div>
 	</form>

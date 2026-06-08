@@ -3,6 +3,7 @@
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { adminAuthAPI, getAuthErrorMessage } from '$lib/api/admin-auth';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let error = $state('');
 	let loading = $state(false);
@@ -40,7 +41,7 @@
 </script>
 
 <svelte:head>
-	<title>Admin Login - Authrim</title>
+	<title>{$LL.admin_login_page_title()}</title>
 </svelte:head>
 
 <div class="login-page">
@@ -51,7 +52,7 @@
 		<div class="login-card">
 			<div class="login-header">
 				<h1 class="login-title">Authrim</h1>
-				<p class="login-subtitle">Admin Panel</p>
+				<p class="login-subtitle">{$LL.admin_login_panel()}</p>
 			</div>
 
 			{#if error}
@@ -64,14 +65,14 @@
 			<button class="passkey-btn" onclick={handlePasskeyLogin} disabled={loading}>
 				{#if loading}
 					<i class="i-ph-circle-notch animate-spin w-5 h-5"></i>
-					<span>Authenticating...</span>
+					<span>{$LL.admin_login_authenticating()}</span>
 				{:else}
 					<i class="i-ph-fingerprint w-5 h-5"></i>
-					<span>Login with Passkey</span>
+					<span>{$LL.admin_login_with_passkey()}</span>
 				{/if}
 			</button>
 
-			<p class="login-hint">Only administrators with registered Passkeys can access this area.</p>
+			<p class="login-hint">{$LL.admin_login_hint()}</p>
 		</div>
 	</div>
 </div>

@@ -62,6 +62,7 @@ import {
   applySAMLAttributePresetToSPConfig,
   normalizeSAMLSPAttributePresetConfig,
 } from '../idp/attribute-presets';
+import { normalizeAttributeReleaseConsentPolicy } from '../idp/attribute-release-consent';
 import { SAMLMetadataValidationError } from './errors';
 import { applySAMLSPProfileDefaults } from './profile-defaults';
 import {
@@ -81,13 +82,17 @@ import {
   verifyAggregateMetadataSignature,
 } from './aggregate-metadata';
 import {
+  getSAMLNextSigningCertificates,
   promoteSAMLNextSigningCertificate,
   publishSAMLNextSigningCertificate,
   retireSAMLBackupSigningCertificate,
+  deleteSAMLNextSigningCertificate,
 } from './signing-rollover';
 import {
   buildEncryptedSAMLLocalSigningSecretDRBundle,
   restoreEncryptedSAMLLocalSigningSecretDRBundle,
+  SAMLDRBundleOperationError,
+  type SAMLDRBundleFailureStage,
 } from './local-signing-dr-bundle';
 import { previewTrustCertificate } from './certificate-preview';
 import {
@@ -168,6 +173,22 @@ function readSubjectString(value: unknown, maxLength: number): string {
     : '';
 }
 
+function normalizeOptionalTimestamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function normalizeSAMLPublicKeySizeBits(value: unknown): 2048 | 3072 | 4096 | undefined {
+  const normalized = typeof value === 'string' ? Number(value) : value;
+  return normalized === 2048 || normalized === 3072 || normalized === 4096 ? normalized : undefined;
+}
+
 interface SAMLMetadataConfigFields {
   metadataXml?: string;
   metadataUrl?: string;
@@ -195,6 +216,25 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
     ...config,
     jitEmailLinkingPolicy: policy,
     allowSyntheticEmailFallback: config.allowSyntheticEmailFallback === true,
+  };
+}
+
+function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseValidationError {
+  const presetConfig = normalizeSAMLSPAttributePresetConfig(config);
+  if (presetConfig.attributeReleaseConsent === undefined) {
+    return presetConfig;
+  }
+
+  const attributeReleaseConsent = normalizeAttributeReleaseConsentPolicy(
+    presetConfig.attributeReleaseConsent
+  );
+  if (!attributeReleaseConsent) {
+    return { field: 'attributeReleaseConsent.mode' };
+  }
+
+  return {
+    ...presetConfig,
+    attributeReleaseConsent,
   };
 }
 
@@ -579,13 +619,20 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       action?: unknown;
       certificateSubject?: unknown;
       keepPreviousAsBackup?: unknown;
+      targetKid?: unknown;
+      targetKeyRef?: unknown;
+      validFrom?: unknown;
+      validTo?: unknown;
+      publicKeyAlgorithm?: unknown;
+      publicKeySizeBits?: unknown;
     };
     const role: 'idp' | 'sp' | null = body.role === 'idp' || body.role === 'sp' ? body.role : null;
     const action =
       body.action === 'recreate_active' ||
       body.action === 'publish_next' ||
       body.action === 'promote_next' ||
-      body.action === 'retire_backup'
+      body.action === 'retire_backup' ||
+      body.action === 'delete_next'
         ? body.action
         : null;
     if (!role) {
@@ -605,6 +652,17 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       body.certificateSubject === undefined
         ? settings.certificateSubject
         : normalizeSAMLSigningCertificateSubject(body.certificateSubject);
+    const targetKid = typeof body.targetKid === 'string' ? body.targetKid : undefined;
+    const targetKeyRef = typeof body.targetKeyRef === 'string' ? body.targetKeyRef : undefined;
+    const validFrom = normalizeOptionalTimestamp(body.validFrom);
+    const validTo = normalizeOptionalTimestamp(body.validTo);
+    const publicKeyAlgorithm = body.publicKeyAlgorithm === 'RSA' ? 'RSA' : undefined;
+    const publicKeySizeBits = normalizeSAMLPublicKeySizeBits(body.publicKeySizeBits);
+    if (validFrom !== undefined && validTo !== undefined && validTo <= validFrom) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'validTo' },
+      });
+    }
     const signingKeyPolicies = { ...settings.signingKeyPolicies };
     const currentPolicy = signingKeyPolicies[role] ?? {};
     const baseContext = { tenantId, role };
@@ -622,6 +680,12 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       generated = await rotateSigningKeyWithCertificate(c.env, tenantId, {
         keyRef,
         certificateSubject,
+        certificateOptions: {
+          validFrom,
+          validTo,
+          publicKeyAlgorithm,
+          publicKeySizeBits,
+        },
       });
       nextPolicy = {
         ...currentPolicy,
@@ -632,8 +696,16 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
           certificate: generated.certificate,
           state: 'active',
           plannedActivationAt: Date.now(),
+          validFrom,
+          validTo,
+          publicKeyAlgorithm,
+          publicKeySizeBits,
         },
-        metadataCertificatePublication: currentPolicy.next ? 'active_next' : 'active_only',
+        metadataCertificatePublication: getSAMLNextSigningCertificates(currentPolicy).length
+          ? currentPolicy.backup
+            ? 'active_next_backup'
+            : 'active_next'
+          : 'active_only',
       };
     } else if (action === 'publish_next') {
       const keyRef = `${buildSAMLSigningKeyRef({
@@ -644,6 +716,12 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       generated = await rotateSigningKeyWithCertificate(c.env, tenantId, {
         keyRef,
         certificateSubject,
+        certificateOptions: {
+          validFrom,
+          validTo,
+          publicKeyAlgorithm,
+          publicKeySizeBits,
+        },
       });
       nextPolicy = publishSAMLNextSigningCertificate(currentPolicy, {
         ...baseContext,
@@ -651,15 +729,23 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
         kid: generated.kid,
         certificate: generated.certificate!,
         metadataPublishFrom: Date.now(),
+        validFrom,
+        validTo,
+        publicKeyAlgorithm,
+        publicKeySizeBits,
         metadataCertificatePublication: currentPolicy.backup ? 'active_next_backup' : 'active_next',
       });
     } else if (action === 'promote_next') {
       nextPolicy = promoteSAMLNextSigningCertificate(currentPolicy, {
         ...baseContext,
         keepPreviousAsBackup: body.keepPreviousAsBackup !== false,
+        targetKid,
+        targetKeyRef,
       });
-    } else {
+    } else if (action === 'retire_backup') {
       nextPolicy = retireSAMLBackupSigningCertificate(currentPolicy);
+    } else {
+      nextPolicy = deleteSAMLNextSigningCertificate(currentPolicy, { targetKid, targetKeyRef });
     }
 
     signingKeyPolicies[role] = nextPolicy;
@@ -676,6 +762,8 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       severity: action === 'recreate_active' || action === 'promote_next' ? 'warning' : 'info',
       metadata: {
         role,
+        target_kid: targetKid,
+        target_key_ref: targetKeyRef,
         key_ref: generated.keyRef,
         kid: generated.kid,
       },
@@ -707,6 +795,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
 
 export async function handleExportSAMLLocalSigningDRBundle(c: AdminSAMLContext): Promise<Response> {
   const log = getLogger(c).module('SAML');
+  let failureStage: SAMLDRBundleFailureStage | 'authorize' | 'audit' = 'authorize';
 
   try {
     const forbidden = await requireSAMLAdminPermission(
@@ -719,12 +808,14 @@ export async function handleExportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
 
     const body = (await c.req.json()) as { passphrase?: unknown };
     const tenantId = resolveSAMLTenantIdFromContext(c);
+    failureStage = 'export_signing_keys';
     const bundle = await buildEncryptedSAMLLocalSigningSecretDRBundle(
       c.env,
       tenantId,
       body.passphrase
     );
 
+    failureStage = 'audit';
     await createSAMLAdminAudit(c, {
       tenantId,
       action: 'saml.local_signing.dr_bundle.exported',
@@ -738,20 +829,32 @@ export async function handleExportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       },
     });
 
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(bundle);
   } catch (error) {
     if (isSAMLDRBundleValidationError(error)) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'passphrase' },
+      return createSAMLDRBundleAdminErrorResponse(c, {
+        operation: 'export',
+        stage: getSAMLDRBundleFailureStage(error, failureStage),
+        error,
+        status: 400,
       });
     }
     log.error('Export SAML local signing DR bundle error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    return createSAMLDRBundleAdminErrorResponse(c, {
+      operation: 'export',
+      stage: getSAMLDRBundleFailureStage(error, failureStage),
+      error,
+      status: 500,
+    });
   }
 }
 
 export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext): Promise<Response> {
   const log = getLogger(c).module('SAML');
+  let failureStage: SAMLDRBundleFailureStage | 'authorize' | 'audit' | 'reload_settings' =
+    'authorize';
 
   try {
     const forbidden = await requireSAMLAdminPermission(
@@ -764,6 +867,7 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
 
     const body = (await c.req.json()) as { bundle?: unknown; passphrase?: unknown };
     const tenantId = resolveSAMLTenantIdFromContext(c);
+    failureStage = 'decrypt_bundle';
     const result = await restoreEncryptedSAMLLocalSigningSecretDRBundle(
       c.env,
       tenantId,
@@ -771,6 +875,7 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       body.passphrase
     );
 
+    failureStage = 'audit';
     await createSAMLAdminAudit(c, {
       tenantId,
       action: 'saml.local_signing.dr_bundle.imported',
@@ -783,8 +888,11 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       },
     });
 
+    failureStage = 'reload_settings';
     const settings = await getSAMLPublicSettings(c.env, tenantId);
     const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json({
       tenantId,
       ...settings,
@@ -805,12 +913,20 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
     });
   } catch (error) {
     if (isSAMLDRBundleValidationError(error)) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'bundle' },
+      return createSAMLDRBundleAdminErrorResponse(c, {
+        operation: 'import',
+        stage: getSAMLDRBundleFailureStage(error, failureStage),
+        error,
+        status: 400,
       });
     }
     log.error('Import SAML local signing DR bundle error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    return createSAMLDRBundleAdminErrorResponse(c, {
+      operation: 'import',
+      stage: getSAMLDRBundleFailureStage(error, failureStage),
+      error,
+      status: 500,
+    });
   }
 }
 
@@ -824,6 +940,63 @@ function isSAMLDRBundleValidationError(error: unknown): boolean {
     error.message.includes('decrypt SAML DR bundle') ||
     error.message.includes('passphrase')
   );
+}
+
+function getSAMLDRBundleFailureStage(
+  error: unknown,
+  fallback: SAMLDRBundleFailureStage | 'authorize' | 'audit' | 'reload_settings'
+): SAMLDRBundleFailureStage | 'authorize' | 'audit' | 'reload_settings' {
+  return error instanceof SAMLDRBundleOperationError ? error.stage : fallback;
+}
+
+function createSAMLDRBundleAdminErrorResponse(
+  c: AdminSAMLContext,
+  input: {
+    operation: 'export' | 'import';
+    stage: SAMLDRBundleFailureStage | 'authorize' | 'audit' | 'reload_settings';
+    error: unknown;
+    status: 400 | 500;
+  }
+): Response {
+  const code =
+    input.status === 400 ? AR_ERROR_CODES.VALIDATION_INVALID_VALUE : AR_ERROR_CODES.INTERNAL_ERROR;
+  const error = input.status === 400 ? 'invalid_request' : 'server_error';
+  const description = [
+    `SAML signing DR bundle ${input.operation} failed`,
+    `stage=${formatSAMLDRBundleStage(input.stage)}`,
+    `detail=${sanitizeSAMLDRBundleAdminErrorMessage(input.error)}`,
+  ].join('; ');
+
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  return c.json(
+    {
+      error,
+      error_description: description,
+      error_code: code,
+    },
+    input.status
+  );
+}
+
+function formatSAMLDRBundleStage(
+  stage: SAMLDRBundleFailureStage | 'authorize' | 'audit' | 'reload_settings'
+): string {
+  return stage.replace(/_/g, ' ');
+}
+
+function sanitizeSAMLDRBundleAdminErrorMessage(error: unknown): string {
+  const raw = error instanceof Error && error.message ? error.message : 'Unknown error';
+  const redacted = raw
+    .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g, '[redacted PEM]')
+    .replace(
+      /\b(privateKeyPem|privatePEM|passphrase|payload|bundle)\b\s*[:=]\s*\S+/gi,
+      '$1=[redacted]'
+    )
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return redacted.slice(0, 280) || 'Unknown error';
 }
 
 interface SAMLMetadataPreviewRequest extends MetadataImportRequest {
@@ -1203,7 +1376,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
 
     const normalizedConfig =
       body.providerType === 'saml_sp'
-        ? normalizeSAMLSPAttributePresetConfig(config as SAMLSPConfig)
+        ? normalizeSAMLSPConfig(config as SAMLSPConfig)
         : normalizeSAMLIdPJitLinkingPolicyConfig(config as SAMLIdPConfig);
     if (isResponseValidationError(normalizedConfig)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -1377,7 +1550,7 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     const mergedConfig = body.config ? { ...existingConfig, ...body.config } : existingConfig;
     const newConfig =
       existing.provider_type === 'saml_sp'
-        ? normalizeSAMLSPAttributePresetConfig(mergedConfig as SAMLSPConfig)
+        ? normalizeSAMLSPConfig(mergedConfig as SAMLSPConfig)
         : normalizeSAMLIdPJitLinkingPolicyConfig(mergedConfig as SAMLIdPConfig);
     if (isResponseValidationError(newConfig)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {

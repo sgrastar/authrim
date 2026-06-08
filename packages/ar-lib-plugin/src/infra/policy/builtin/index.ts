@@ -525,11 +525,15 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
         return false;
       case 'matches':
         if (typeof actualValue === 'string' && typeof value === 'string') {
+          if (
+            value.length > MAX_REGEX_PATTERN_LENGTH ||
+            actualValue.length > MAX_REGEX_INPUT_LENGTH
+          ) {
+            return false;
+          }
+
           try {
-            // ReDoS protection: limit pattern and input length
-            const pattern = value.slice(0, MAX_REGEX_PATTERN_LENGTH);
-            const input = actualValue.slice(0, MAX_REGEX_INPUT_LENGTH);
-            return new RegExp(pattern).test(input);
+            return new RegExp(value).test(actualValue);
           } catch {
             return false;
           }

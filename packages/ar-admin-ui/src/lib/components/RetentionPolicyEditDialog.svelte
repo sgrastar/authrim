@@ -1,11 +1,7 @@
 <script lang="ts">
 	import Modal from './Modal.svelte';
-	import {
-		adminDataRetentionAPI,
-		getCategoryDisplayName,
-		getCategoryDescription,
-		type CleanupEstimate
-	} from '$lib/api/admin-data-retention';
+	import { adminDataRetentionAPI, type CleanupEstimate } from '$lib/api/admin-data-retention';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {
 		open: boolean;
@@ -50,7 +46,7 @@
 
 	async function handleSave() {
 		if (!category || retentionDays < 1 || retentionDays > 3650) {
-			error = 'Retention days must be between 1 and 3650 (10 years)';
+			error = $LL.admin_compliance_retention_days_invalid();
 			return;
 		}
 
@@ -61,7 +57,7 @@
 			await onSave(category, retentionDays);
 			onClose();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save retention policy';
+			error = err instanceof Error ? err.message : $LL.admin_compliance_save_failed();
 		} finally {
 			loading = false;
 		}
@@ -69,17 +65,60 @@
 
 	// Preset values
 	const presets = [
-		{ label: '7 days', value: 7 },
-		{ label: '30 days', value: 30 },
-		{ label: '90 days', value: 90 },
-		{ label: '1 year', value: 365 },
-		{ label: '2 years', value: 730 },
-		{ label: '5 years', value: 1825 }
+		{ getLabel: () => $LL.admin_compliance_preset_7_days(), value: 7 },
+		{ getLabel: () => $LL.admin_compliance_preset_30_days(), value: 30 },
+		{ getLabel: () => $LL.admin_compliance_preset_90_days(), value: 90 },
+		{ getLabel: () => $LL.admin_compliance_preset_1_year(), value: 365 },
+		{ getLabel: () => $LL.admin_compliance_preset_2_years(), value: 730 },
+		{ getLabel: () => $LL.admin_compliance_preset_5_years(), value: 1825 }
 	];
+
+	function getCategoryDisplayName(category: string): string {
+		switch (category) {
+			case 'audit_logs':
+				return $LL.admin_compliance_category_audit_logs();
+			case 'session_data':
+				return $LL.admin_compliance_category_session_data();
+			case 'tombstones':
+				return $LL.admin_compliance_category_tombstones();
+			case 'auth_codes':
+				return $LL.admin_compliance_category_auth_codes();
+			case 'refresh_tokens':
+				return $LL.admin_compliance_category_refresh_tokens();
+			case 'access_tokens':
+				return $LL.admin_compliance_category_access_tokens();
+			default:
+				return category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+		}
+	}
+
+	function getCategoryDescription(category: string): string {
+		switch (category) {
+			case 'audit_logs':
+				return $LL.admin_compliance_category_audit_logs_desc();
+			case 'session_data':
+				return $LL.admin_compliance_category_session_data_desc();
+			case 'tombstones':
+				return $LL.admin_compliance_category_tombstones_desc();
+			case 'auth_codes':
+				return $LL.admin_compliance_category_auth_codes_desc();
+			case 'refresh_tokens':
+				return $LL.admin_compliance_category_refresh_tokens_desc();
+			case 'access_tokens':
+				return $LL.admin_compliance_category_access_tokens_desc();
+			default:
+				return $LL.admin_compliance_category_unknown_desc();
+		}
+	}
 </script>
 
 {#if category}
-	<Modal open={open && !!category} {onClose} title="Edit Retention Policy" size="md">
+	<Modal
+		open={open && !!category}
+		{onClose}
+		title={$LL.admin_compliance_edit_retention_title()}
+		size="md"
+	>
 		<!-- Category Info -->
 		<div class="category-info">
 			<h3>{getCategoryDisplayName(category)}</h3>
@@ -94,7 +133,7 @@
 
 		<!-- Retention Days Input -->
 		<div class="form-group">
-			<label for="retention-days">Retention Period (days)</label>
+			<label for="retention-days">{$LL.admin_compliance_retention_period_days()}</label>
 			<div class="input-row">
 				<input
 					id="retention-days"
@@ -106,13 +145,13 @@
 				/>
 			</div>
 			<p class="help-text">
-				Records older than this will be eligible for deletion. Range: 1-3650 days (10 years)
+				{$LL.admin_compliance_retention_help()}
 			</p>
 		</div>
 
 		<!-- Presets -->
 		<div class="presets">
-			<span class="presets-label">Quick select:</span>
+			<span class="presets-label">{$LL.admin_compliance_quick_select()}</span>
 			<div class="presets-buttons">
 				{#each presets as preset (preset.value)}
 					<button
@@ -121,7 +160,7 @@
 						onclick={() => (retentionDays = preset.value)}
 						disabled={loading}
 					>
-						{preset.label}
+						{preset.getLabel()}
 					</button>
 				{/each}
 			</div>
@@ -129,18 +168,18 @@
 
 		<!-- Estimate -->
 		<div class="estimate-section">
-			<h4>Impact Estimate</h4>
+			<h4>{$LL.admin_compliance_impact_estimate()}</h4>
 			{#if estimateLoading}
-				<p class="loading-text">Loading estimate...</p>
+				<p class="loading-text">{$LL.admin_compliance_loading_estimate()}</p>
 			{:else if estimate}
 				<div class="estimate-grid">
 					<div class="estimate-item">
-						<span class="label">Records to delete:</span>
+						<span class="label">{$LL.admin_compliance_records_to_delete()}</span>
 						<span class="value">{estimate.records_to_delete.toLocaleString()}</span>
 					</div>
 					{#if estimate.oldest_record_date}
 						<div class="estimate-item">
-							<span class="label">Oldest record:</span>
+							<span class="label">{$LL.admin_compliance_oldest_record_label()}</span>
 							<span class="value">
 								{new Date(estimate.oldest_record_date).toLocaleDateString()}
 							</span>
@@ -148,26 +187,28 @@
 					{/if}
 				</div>
 			{:else}
-				<p class="no-estimate">No estimate available</p>
+				<p class="no-estimate">{$LL.admin_compliance_no_estimate()}</p>
 			{/if}
 		</div>
 
 		<!-- Warning for short retention -->
 		{#if retentionDays < 30}
 			<div class="warning-message">
-				<strong>Warning:</strong> Short retention periods may impact compliance requirements. Ensure this
-				meets your organization's data retention policies.
+				<strong>{$LL.admin_compliance_short_retention_warning_title()}</strong>
+				{$LL.admin_compliance_short_retention_warning()}
 			</div>
 		{/if}
 
 		{#snippet footer()}
-			<button class="btn btn-secondary" onclick={onClose} disabled={loading}> Cancel </button>
+			<button class="btn btn-secondary" onclick={onClose} disabled={loading}>
+				{$LL.admin_compliance_cancel()}
+			</button>
 			<button
 				class="btn btn-primary"
 				onclick={handleSave}
 				disabled={loading || retentionDays < 1 || retentionDays > 3650}
 			>
-				{loading ? 'Saving...' : 'Save Changes'}
+				{loading ? $LL.admin_compliance_saving() : $LL.admin_compliance_save_changes()}
 			</button>
 		{/snippet}
 	</Modal>

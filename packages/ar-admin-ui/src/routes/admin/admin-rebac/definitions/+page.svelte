@@ -6,6 +6,7 @@
 		AdminRebacDefinitionCreateInput,
 		AdminRebacDefinitionUpdateInput
 	} from '$lib/api/admin-admin-rebac';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let definitions: AdminRebacDefinition[] = [];
 	let loading = true;
@@ -43,7 +44,7 @@
 			const response = await adminAdminRebacAPI.listDefinitions({ include_system: true });
 			definitions = response.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load definitions';
+			error = err instanceof Error ? err.message : $LL.admin_admin_rebac_load_definitions_failed();
 		} finally {
 			loading = false;
 		}
@@ -68,7 +69,8 @@
 			showCreateDialog = false;
 			await loadDefinitions();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create definition';
+			createError =
+				err instanceof Error ? err.message : $LL.admin_admin_rebac_create_definition_failed();
 		} finally {
 			createLoading = false;
 		}
@@ -95,7 +97,8 @@
 			showEditDialog = false;
 			await loadDefinitions();
 		} catch (err) {
-			editError = err instanceof Error ? err.message : 'Failed to update definition';
+			editError =
+				err instanceof Error ? err.message : $LL.admin_admin_rebac_update_definition_failed();
 		} finally {
 			editLoading = false;
 		}
@@ -117,7 +120,8 @@
 			showDeleteDialog = false;
 			await loadDefinitions();
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete definition';
+			deleteError =
+				err instanceof Error ? err.message : $LL.admin_admin_rebac_delete_definition_failed();
 		} finally {
 			deleteLoading = false;
 		}
@@ -142,26 +146,32 @@
 	);
 </script>
 
+<svelte:head>
+	<title>{$LL.admin_admin_rebac_definitions_head_title()}</title>
+</svelte:head>
+
 <div class="container mx-auto px-4 py-8">
 	<!-- Breadcrumb -->
 	<nav class="mb-4 text-sm">
-		<a href="/admin/admin-rebac" class="text-blue-600 hover:text-blue-700">Admin ReBAC</a>
+		<a href="/admin/admin-rebac" class="text-blue-600 hover:text-blue-700">
+			{$LL.admin_admin_rebac_title()}
+		</a>
 		<span class="mx-2 text-gray-400">/</span>
-		<span class="text-gray-600">Definitions</span>
+		<span class="text-gray-600">{$LL.admin_admin_rebac_definitions_breadcrumb()}</span>
 	</nav>
 
 	<!-- Header -->
 	<div class="flex items-center justify-between mb-6">
 		<div>
-			<h1 class="text-3xl font-bold mb-2">Relationship Definitions</h1>
-			<p class="text-gray-600">Define relationship types for Admin ReBAC</p>
+			<h1 class="text-3xl font-bold mb-2">{$LL.admin_admin_rebac_definitions_title()}</h1>
+			<p class="text-gray-600">{$LL.admin_admin_rebac_definitions_description()}</p>
 		</div>
 		<button
 			on:click={openCreateDialog}
 			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center"
 		>
 			<span class="i-ph-plus mr-2"></span>
-			Create Definition
+			{$LL.admin_admin_rebac_create_definition()}
 		</button>
 	</div>
 
@@ -179,7 +189,7 @@
 			<input
 				type="text"
 				bind:value={searchQuery}
-				placeholder="Search definitions by name or description..."
+				placeholder={$LL.admin_admin_rebac_search_definitions_placeholder()}
 				class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 			/>
 		</div>
@@ -188,21 +198,25 @@
 	<!-- Loading State -->
 	{#if loading}
 		<div class="flex justify-center py-12">
-			<div class="text-gray-500">Loading definitions...</div>
+			<div class="text-gray-500">{$LL.admin_admin_rebac_loading_definitions()}</div>
 		</div>
 	{:else if filteredDefinitions.length === 0}
 		<div class="bg-white border border-gray-200 rounded-lg p-12 text-center">
 			<div class="text-gray-400 text-5xl mb-4 i-ph-arrows-split"></div>
-			<h3 class="text-xl font-semibold mb-2">No definitions found</h3>
+			<h3 class="text-xl font-semibold mb-2">
+				{$LL.admin_admin_rebac_no_definitions_found()}
+			</h3>
 			<p class="text-gray-600 mb-4">
-				{searchQuery ? 'Try adjusting your search' : 'Get started by creating a definition'}
+				{searchQuery
+					? $LL.admin_admin_rebac_try_adjusting_search()
+					: $LL.admin_admin_rebac_create_definition_empty()}
 			</p>
 			{#if !searchQuery}
 				<button
 					on:click={openCreateDialog}
 					class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
 				>
-					Create Definition
+					{$LL.admin_admin_rebac_create_definition()}
 				</button>
 			{/if}
 		</div>
@@ -221,7 +235,7 @@
 									<span
 										class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded-full font-medium"
 									>
-										System
+										{$LL.admin_admin_rebac_system()}
 									</span>
 								{/if}
 							</div>
@@ -232,8 +246,8 @@
 								<p class="text-gray-600 text-sm mb-3">{definition.description}</p>
 							{/if}
 							<div class="flex items-center space-x-4 text-sm text-gray-500">
-								<span>Priority: {definition.priority}</span>
-								<span>Tenant: {definition.tenant_id}</span>
+								<span>{$LL.admin_admin_rebac_priority({ priority: definition.priority })}</span>
+								<span>{$LL.admin_admin_rebac_tenant({ tenant: definition.tenant_id })}</span>
 							</div>
 						</div>
 						<div class="flex items-center space-x-2 ml-4">
@@ -241,19 +255,21 @@
 								<button
 									on:click={() => openEditDialog(definition)}
 									class="p-2 text-gray-600 hover:bg-gray-100 rounded transition-colors"
-									title="Edit"
+									title={$LL.admin_admin_rebac_edit()}
 								>
 									<span class="i-ph-pencil text-lg"></span>
 								</button>
 								<button
 									on:click={() => openDeleteDialog(definition)}
 									class="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
-									title="Delete"
+									title={$LL.admin_admin_rebac_delete()}
 								>
 									<span class="i-ph-trash text-lg"></span>
 								</button>
 							{:else}
-								<span class="text-xs text-gray-500 italic">System-protected</span>
+								<span class="text-xs text-gray-500 italic">
+									{$LL.admin_admin_rebac_system_protected()}
+								</span>
 							{/if}
 						</div>
 					</div>
@@ -269,12 +285,14 @@
 		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
 		role="button"
 		tabindex="0"
-		aria-label="Close create relationship definition dialog"
+		aria-label={$LL.admin_admin_rebac_close_create_definition_dialog()}
 		on:click|self={() => (showCreateDialog = false)}
 		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
 	>
 		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
-			<h2 class="text-xl font-semibold mb-4">Create Relationship Definition</h2>
+			<h2 class="text-xl font-semibold mb-4">
+				{$LL.admin_admin_rebac_create_relationship_definition()}
+			</h2>
 
 			{#if createError}
 				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
@@ -286,7 +304,7 @@
 				<div class="space-y-4">
 					<div>
 						<label for="relation_name" class="block text-sm font-medium text-gray-700 mb-1">
-							Relation Name <span class="text-red-500">*</span>
+							{$LL.admin_admin_rebac_relation_name()} <span class="text-red-500">*</span>
 						</label>
 						<input
 							id="relation_name"
@@ -296,30 +314,32 @@
 							placeholder="admin_supervises"
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
 						/>
-						<p class="text-xs text-gray-500 mt-1">Snake_case format recommended</p>
+						<p class="text-xs text-gray-500 mt-1">
+							{$LL.admin_admin_rebac_relation_name_help()}
+						</p>
 					</div>
 
 					<div>
 						<label for="display_name" class="block text-sm font-medium text-gray-700 mb-1">
-							Display Name
+							{$LL.admin_admin_rebac_display_name()}
 						</label>
 						<input
 							id="display_name"
 							type="text"
 							bind:value={createForm.display_name}
-							placeholder="Supervises"
+							placeholder={$LL.admin_admin_rebac_display_name_placeholder()}
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 						/>
 					</div>
 
 					<div>
 						<label for="description" class="block text-sm font-medium text-gray-700 mb-1">
-							Description
+							{$LL.admin_admin_rebac_description_label()}
 						</label>
 						<textarea
 							id="description"
 							bind:value={createForm.description}
-							placeholder="Describe what this relationship means..."
+							placeholder={$LL.admin_admin_rebac_description_placeholder()}
 							rows="3"
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 						></textarea>
@@ -327,7 +347,7 @@
 
 					<div>
 						<label for="priority" class="block text-sm font-medium text-gray-700 mb-1">
-							Priority
+							{$LL.admin_admin_rebac_priority_label()}
 						</label>
 						<input
 							id="priority"
@@ -336,7 +356,9 @@
 							placeholder="0"
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 						/>
-						<p class="text-xs text-gray-500 mt-1">Higher values = evaluated first</p>
+						<p class="text-xs text-gray-500 mt-1">
+							{$LL.admin_admin_rebac_priority_help()}
+						</p>
 					</div>
 				</div>
 
@@ -347,14 +369,14 @@
 						disabled={createLoading}
 						class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
 					>
-						Cancel
+						{$LL.admin_admin_rebac_cancel()}
 					</button>
 					<button
 						type="submit"
 						disabled={createLoading || !createForm.relation_name}
 						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
 					>
-						{createLoading ? 'Creating...' : 'Create'}
+						{createLoading ? $LL.admin_admin_rebac_creating() : $LL.admin_admin_rebac_create()}
 					</button>
 				</div>
 			</form>
@@ -368,12 +390,14 @@
 		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
 		role="button"
 		tabindex="0"
-		aria-label="Close edit relationship definition dialog"
+		aria-label={$LL.admin_admin_rebac_close_edit_definition_dialog()}
 		on:click|self={() => (showEditDialog = false)}
 		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showEditDialog = false))}
 	>
 		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
-			<h2 class="text-xl font-semibold mb-4">Edit Relationship Definition</h2>
+			<h2 class="text-xl font-semibold mb-4">
+				{$LL.admin_admin_rebac_edit_relationship_definition()}
+			</h2>
 
 			{#if editError}
 				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
@@ -384,34 +408,38 @@
 			<form on:submit|preventDefault={handleEdit}>
 				<div class="space-y-4">
 					<div>
-						<p class="block text-sm font-medium text-gray-700 mb-1">Relation Name</p>
+						<p class="block text-sm font-medium text-gray-700 mb-1">
+							{$LL.admin_admin_rebac_relation_name()}
+						</p>
 						<div class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-mono text-sm">
 							{editingDefinition.relation_name}
 						</div>
-						<p class="text-xs text-gray-500 mt-1">Relation name cannot be changed</p>
+						<p class="text-xs text-gray-500 mt-1">
+							{$LL.admin_admin_rebac_relation_name_readonly_help()}
+						</p>
 					</div>
 
 					<div>
 						<label for="edit_display_name" class="block text-sm font-medium text-gray-700 mb-1">
-							Display Name
+							{$LL.admin_admin_rebac_display_name()}
 						</label>
 						<input
 							id="edit_display_name"
 							type="text"
 							bind:value={editForm.display_name}
-							placeholder="Supervises"
+							placeholder={$LL.admin_admin_rebac_display_name_placeholder()}
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 						/>
 					</div>
 
 					<div>
 						<label for="edit_description" class="block text-sm font-medium text-gray-700 mb-1">
-							Description
+							{$LL.admin_admin_rebac_description_label()}
 						</label>
 						<textarea
 							id="edit_description"
 							bind:value={editForm.description}
-							placeholder="Describe what this relationship means..."
+							placeholder={$LL.admin_admin_rebac_description_placeholder()}
 							rows="3"
 							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
 						></textarea>
@@ -419,7 +447,7 @@
 
 					<div>
 						<label for="edit_priority" class="block text-sm font-medium text-gray-700 mb-1">
-							Priority
+							{$LL.admin_admin_rebac_priority_label()}
 						</label>
 						<input
 							id="edit_priority"
@@ -438,14 +466,14 @@
 						disabled={editLoading}
 						class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
 					>
-						Cancel
+						{$LL.admin_admin_rebac_cancel()}
 					</button>
 					<button
 						type="submit"
 						disabled={editLoading}
 						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
 					>
-						{editLoading ? 'Saving...' : 'Save'}
+						{editLoading ? $LL.admin_admin_rebac_saving() : $LL.admin_admin_rebac_save()}
 					</button>
 				</div>
 			</form>
@@ -459,12 +487,14 @@
 		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
 		role="button"
 		tabindex="0"
-		aria-label="Close delete relationship definition dialog"
+		aria-label={$LL.admin_admin_rebac_close_delete_definition_dialog()}
 		on:click|self={() => (showDeleteDialog = false)}
 		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
 	>
 		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
-			<h2 class="text-xl font-semibold mb-4">Delete Relationship Definition</h2>
+			<h2 class="text-xl font-semibold mb-4">
+				{$LL.admin_admin_rebac_delete_relationship_definition()}
+			</h2>
 
 			{#if deleteError}
 				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
@@ -473,12 +503,12 @@
 			{/if}
 
 			<p class="text-gray-700 mb-4">
-				Are you sure you want to delete the relationship definition
-				<strong class="font-mono">{deletingDefinition.relation_name}</strong>?
+				{$LL.admin_admin_rebac_delete_definition_confirm({
+					name: deletingDefinition.relation_name
+				})}
 			</p>
 			<p class="text-sm text-red-600 mb-4">
-				Warning: This will remove the definition but existing relationship instances using this type
-				will remain.
+				{$LL.admin_admin_rebac_delete_definition_warning()}
 			</p>
 
 			<div class="flex justify-end space-x-3">
@@ -487,14 +517,14 @@
 					disabled={deleteLoading}
 					class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
 				>
-					Cancel
+					{$LL.admin_admin_rebac_cancel()}
 				</button>
 				<button
 					on:click={handleDelete}
 					disabled={deleteLoading}
 					class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
 				>
-					{deleteLoading ? 'Deleting...' : 'Delete'}
+					{deleteLoading ? $LL.admin_admin_rebac_deleting() : $LL.admin_admin_rebac_delete()}
 				</button>
 			</div>
 		</div>

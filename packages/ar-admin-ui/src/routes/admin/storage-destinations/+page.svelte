@@ -15,6 +15,7 @@
 		type AdminDestinationScope
 	} from '$lib/api/admin-logging-control';
 	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type DangerConfirmationRequest = {
 		title: string;
@@ -119,7 +120,7 @@
 					controlPlaneItems.find((item) => item.id === selectedControlPlane?.id) ?? null;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load storage destinations';
+			error = err instanceof Error ? err.message : $LL.admin_storage_destinations_load_failed();
 			items = [];
 		} finally {
 			loading = false;
@@ -133,7 +134,7 @@
 		if (!trimmed) return {};
 		const parsed = JSON.parse(trimmed);
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error('JSON must be an object');
+			throw new Error($LL.admin_storage_destinations_json_object_error());
 		}
 		return parsed as Record<string, unknown>;
 	}
@@ -146,7 +147,7 @@
 	function requiredString(value: string, label: string): string {
 		const trimmed = value.trim();
 		if (!trimmed) {
-			throw new Error(`${label} is required.`);
+			throw new Error($LL.admin_storage_destinations_required({ label }));
 		}
 		return trimmed;
 	}
@@ -154,7 +155,10 @@
 	function buildCreateConfig(): Record<string, unknown> {
 		if (newProvider === 'r2') {
 			return {
-				bindingRef: requiredString(newR2BindingRef, 'R2 binding reference'),
+				bindingRef: requiredString(
+					newR2BindingRef,
+					$LL.admin_storage_destinations_r2_binding_ref_required()
+				),
 				...(optionalString(newR2Prefix) ? { prefix: optionalString(newR2Prefix) } : {}),
 				...(optionalString(newR2Region) ? { region: optionalString(newR2Region) } : {}),
 				...(optionalString(newR2StorageClass)
@@ -164,8 +168,8 @@
 		}
 		if (newProvider === 'aws_s3') {
 			return {
-				bucket: requiredString(newAwsBucket, 'S3 bucket'),
-				region: requiredString(newAwsRegion, 'S3 region'),
+				bucket: requiredString(newAwsBucket, $LL.admin_storage_destinations_s3_bucket_required()),
+				region: requiredString(newAwsRegion, $LL.admin_storage_destinations_s3_region_required()),
 				...(optionalString(newAwsPrefix) ? { prefix: optionalString(newAwsPrefix) } : {}),
 				...(optionalString(newAwsEndpoint) ? { endpoint: optionalString(newAwsEndpoint) } : {}),
 				...(newAwsForcePathStyle ? { forcePathStyle: true } : {})
@@ -173,7 +177,7 @@
 		}
 		const customConfig = parseJsonField(newCustomConfig);
 		return {
-			type: requiredString(newCustomType, 'Custom destination type'),
+			type: requiredString(newCustomType, $LL.admin_storage_destinations_custom_type_required()),
 			...(Object.keys(customConfig).length > 0 ? { config: customConfig } : {})
 		};
 	}
@@ -238,10 +242,10 @@
 				credential
 			});
 			resetCreateForm();
-			success = 'Storage destination created.';
+			success = $LL.admin_storage_destinations_created();
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create storage destination';
+			error = err instanceof Error ? err.message : $LL.admin_storage_destinations_create_failed();
 		} finally {
 			saving = false;
 		}
@@ -261,10 +265,13 @@
 			);
 			credentialPayload = '';
 			elevationGrantId = '';
-			success = 'Storage credential updated.';
+			success = $LL.admin_storage_destinations_credential_updated_success();
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update storage credential';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_storage_destinations_credential_update_failed();
 		} finally {
 			saving = false;
 		}
@@ -273,10 +280,10 @@
 	async function deleteSelected() {
 		if (!selected) return;
 		const confirmation = await requestDangerConfirmation({
-			title: 'Delete Storage Destination',
+			title: $LL.admin_storage_destinations_delete_title(),
 			resourceName: selected.display_name,
 			phrase: `DELETE STORAGE ${selected.name}`,
-			confirmLabel: 'Delete'
+			confirmLabel: $LL.admin_storage_destinations_delete_confirm()
 		});
 		if (!confirmation) return;
 		saving = true;
@@ -286,10 +293,10 @@
 			await adminStorageDestinationsAPI.delete(selected.id, elevationGrantId.trim() || undefined);
 			selected = null;
 			elevationGrantId = '';
-			success = 'Storage destination deleted.';
+			success = $LL.admin_storage_destinations_deleted();
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete storage destination';
+			error = err instanceof Error ? err.message : $LL.admin_storage_destinations_delete_failed();
 		} finally {
 			saving = false;
 		}
@@ -315,9 +322,12 @@
 						}
 					: item
 			);
-			success = `Health check completed: ${response.item.next_health_status}`;
+			success = $LL.admin_storage_destinations_health_check_completed({
+				status: response.item.next_health_status
+			});
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to run destination health check';
+			error =
+				err instanceof Error ? err.message : $LL.admin_storage_destinations_health_check_failed();
 		} finally {
 			healthActionId = null;
 		}
@@ -330,7 +340,8 @@
 			selectedControlPlane = response.item;
 			destinationDiffPreview = null;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load destination detail';
+			error =
+				err instanceof Error ? err.message : $LL.admin_storage_destinations_detail_load_failed();
 		}
 	}
 
@@ -354,10 +365,10 @@
 		if (lifecycleActionId) return;
 		const expected = `FORCE DISABLE ${destination.name}`;
 		const confirmation = await requestDangerConfirmation({
-			title: 'Disable Logging Destination',
+			title: $LL.admin_storage_destinations_disable_title(),
 			resourceName: destination.display_name,
 			phrase: expected,
-			confirmLabel: 'Disable'
+			confirmLabel: $LL.admin_storage_destinations_disable_confirm()
 		});
 		if (!confirmation) return;
 		lifecycleActionId = destination.id;
@@ -369,9 +380,9 @@
 				confirmation
 			);
 			patchControlPlaneLifecycleState(destination.id, response.item);
-			success = 'Destination disabled.';
+			success = $LL.admin_storage_destinations_disabled();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to disable destination';
+			error = err instanceof Error ? err.message : $LL.admin_storage_destinations_disable_failed();
 		} finally {
 			lifecycleActionId = null;
 		}
@@ -385,9 +396,9 @@
 		try {
 			const response = await adminLoggingControlAPI.enableDestination(destination.id);
 			patchControlPlaneLifecycleState(destination.id, response.item);
-			success = 'Destination enabled.';
+			success = $LL.admin_storage_destinations_enabled();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to enable destination';
+			error = err instanceof Error ? err.message : $LL.admin_storage_destinations_enable_failed();
 		} finally {
 			lifecycleActionId = null;
 		}
@@ -414,7 +425,9 @@
 
 	async function prepareControlPlaneCredential(destination: AdminDestination) {
 		if (credentialActionId) return;
-		const secret = window.prompt(`Enter new credential secret for ${destination.name}`)?.trim();
+		const secret = window
+			.prompt($LL.admin_storage_destinations_prompt_new_secret({ name: destination.name }))
+			?.trim();
 		if (!secret) return;
 		credentialActionId = destination.id;
 		error = '';
@@ -424,9 +437,12 @@
 				secret_value: secret
 			});
 			patchControlPlaneCredentialState(destination.id, response.item);
-			success = 'Credential rotation prepared.';
+			success = $LL.admin_storage_destinations_rotation_prepared();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to prepare credential rotation';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_storage_destinations_rotation_prepare_failed();
 		} finally {
 			credentialActionId = null;
 		}
@@ -440,9 +456,10 @@
 		try {
 			const response = await adminLoggingControlAPI.markDestinationCredentialReady(destination.id);
 			patchControlPlaneCredentialState(destination.id, response.item);
-			success = 'Credential rotation marked ready.';
+			success = $LL.admin_storage_destinations_rotation_ready();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to mark credential ready';
+			error =
+				err instanceof Error ? err.message : $LL.admin_storage_destinations_rotation_ready_failed();
 		} finally {
 			credentialActionId = null;
 		}
@@ -452,10 +469,10 @@
 		if (credentialActionId) return;
 		const expected = `ACTIVATE CREDENTIAL ${destination.name}`;
 		const confirmation = await requestDangerConfirmation({
-			title: 'Activate Credential',
+			title: $LL.admin_storage_destinations_activate_credential_title(),
 			resourceName: destination.display_name,
 			phrase: expected,
-			confirmLabel: 'Activate'
+			confirmLabel: $LL.admin_storage_destinations_activate_confirm()
 		});
 		if (!confirmation) return;
 		credentialActionId = destination.id;
@@ -467,9 +484,12 @@
 				confirmation
 			);
 			patchControlPlaneCredentialState(destination.id, response.item);
-			success = 'Credential rotation activated.';
+			success = $LL.admin_storage_destinations_rotation_activated();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to activate credential rotation';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_storage_destinations_rotation_activate_failed();
 		} finally {
 			credentialActionId = null;
 		}
@@ -483,10 +503,10 @@
 		const expected = `RETIRE CREDENTIAL ${destination.name}`;
 		const confirmation = needsConfirmation
 			? await requestDangerConfirmation({
-					title: 'Retire Previous Credential',
+					title: $LL.admin_storage_destinations_retire_credential_title(),
 					resourceName: destination.display_name,
 					phrase: expected,
-					confirmLabel: 'Retire'
+					confirmLabel: $LL.admin_storage_destinations_retire_confirm()
 				})
 			: undefined;
 		if (needsConfirmation && !confirmation) return;
@@ -499,9 +519,12 @@
 				confirmation ?? undefined
 			);
 			patchControlPlaneCredentialState(destination.id, response.item);
-			success = 'Previous credential retired.';
+			success = $LL.admin_storage_destinations_previous_retired();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to retire previous credential';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_storage_destinations_previous_retire_failed();
 		} finally {
 			credentialActionId = null;
 		}
@@ -556,7 +579,7 @@
 
 	function listText(value: string | null | undefined): string {
 		const items = parseJsonArrayText(value);
-		return items.length > 0 ? items.join(', ') : 'All';
+		return items.length > 0 ? items.join(', ') : $LL.admin_storage_destinations_all();
 	}
 
 	async function previewSelectedControlPlaneDiff() {
@@ -594,7 +617,8 @@
 			);
 			destinationDiffPreview = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to preview destination diff';
+			error =
+				err instanceof Error ? err.message : $LL.admin_storage_destinations_diff_preview_failed();
 		} finally {
 			diffPreviewActionId = null;
 		}
@@ -607,36 +631,38 @@
 </script>
 
 <svelte:head>
-	<title>Storage Destinations - Authrim</title>
+	<title>{$LL.admin_storage_destinations_page_title()}</title>
 </svelte:head>
 
 <div class="page-shell">
 	<header class="page-header">
 		<div class="page-title-group">
-			<h1 class="page-title">Storage Destinations</h1>
-			<p class="page-description">Manage approved R2, S3, and custom storage endpoints</p>
+			<h1 class="page-title">{$LL.admin_storage_destinations_title()}</h1>
+			<p class="page-description">{$LL.admin_storage_destinations_description()}</p>
 		</div>
 		<div class="page-actions">
 			<label class="scope-label">
-				<span>Registry</span>
+				<span>{$LL.admin_storage_destinations_registry()}</span>
 				<select bind:value={scopeType} onchange={load}>
-					<option value="tenant">Tenant usable</option>
+					<option value="tenant">{$LL.admin_storage_destinations_registry_tenant_usable()}</option>
 					{#if canManagePlatformStorage}
-						<option value="platform">Platform</option>
+						<option value="platform">{$LL.admin_storage_destinations_registry_platform()}</option>
 					{/if}
 				</select>
 			</label>
 			<label class="scope-label">
-				<span>Control plane</span>
+				<span>{$LL.admin_storage_destinations_control_plane()}</span>
 				<select bind:value={controlPlaneScope} onchange={load}>
 					{#if isPlatformAdmin}
-						<option value="platform">Platform</option>
+						<option value="platform">{$LL.admin_storage_destinations_registry_platform()}</option>
 					{/if}
-					<option value="tenant">Tenant</option>
-					<option value="shared">Shared</option>
+					<option value="tenant">{$LL.admin_storage_destinations_scope_tenant()}</option>
+					<option value="shared">{$LL.admin_storage_destinations_scope_shared()}</option>
 				</select>
 			</label>
-			<button class="btn btn-secondary" onclick={load} disabled={loading}>Refresh</button>
+			<button class="btn btn-secondary" onclick={load} disabled={loading}>
+				{$LL.admin_storage_destinations_refresh()}
+			</button>
 		</div>
 	</header>
 
@@ -646,13 +672,13 @@
 	<div class="split-panel">
 		<div class="panel">
 			<div class="panel-header">
-				<h2 class="panel-title">Destinations</h2>
+				<h2 class="panel-title">{$LL.admin_storage_destinations_destinations()}</h2>
 				<span class="badge badge-neutral">{items.length}</span>
 			</div>
 			{#if loading}
-				<p class="text-muted">Loading...</p>
+				<p class="text-muted">{$LL.admin_storage_destinations_loading()}</p>
 			{:else if items.length === 0}
-				<p class="text-muted">No storage destinations.</p>
+				<p class="text-muted">{$LL.admin_storage_destinations_empty()}</p>
 			{:else}
 				<div class="item-list">
 					{#each items as item (item.id)}
@@ -670,10 +696,12 @@
 								>{item.status}</span
 							>
 							{#if item.read_only}
-								<span class="badge badge-muted">setup</span>
+								<span class="badge badge-muted">{$LL.admin_storage_destinations_setup()}</span>
 							{:else}
 								<span class="text-muted text-sm"
-									>{item.has_credential ? 'credential set' : 'no credential'}</span
+									>{item.has_credential
+										? $LL.admin_storage_destinations_credential_set()
+										: $LL.admin_storage_destinations_no_credential()}</span
 								>
 							{/if}
 						</button>
@@ -686,108 +714,107 @@
 			<div class="panel create-panel">
 				<div class="panel-header">
 					<div>
-						<h2 class="panel-title">Create Platform Destination</h2>
+						<h2 class="panel-title">{$LL.admin_storage_destinations_create_platform()}</h2>
 						<p class="panel-description">
-							Register a storage target that other logging and job features can select.
+							{$LL.admin_storage_destinations_create_description()}
 						</p>
 					</div>
 				</div>
 				<div class="form-grid">
 					<label class="form-label-group">
-						<span>Name</span>
+						<span>{$LL.admin_storage_destinations_name()}</span>
 						<input bind:value={newName} />
-						<small>Stable identifier used by API and audit records.</small>
+						<small>{$LL.admin_storage_destinations_name_help()}</small>
 					</label>
 					<label class="form-label-group">
-						<span>Display name</span>
+						<span>{$LL.admin_storage_destinations_display_name()}</span>
 						<input bind:value={newDisplayName} />
-						<small>Human-readable name shown in Admin UI pickers.</small>
+						<small>{$LL.admin_storage_destinations_display_name_help()}</small>
 					</label>
 					<label class="form-label-group">
-						<span>Provider</span>
+						<span>{$LL.admin_storage_destinations_provider()}</span>
 						<select bind:value={newProvider}>
 							<option value="r2">R2</option>
 							<option value="aws_s3">AWS S3</option>
-							<option value="custom">Custom</option>
+							<option value="custom">{$LL.admin_storage_destinations_custom_type()}</option>
 						</select>
 					</label>
 					<label class="form-label-group">
-						<span>Description</span>
+						<span>{$LL.admin_storage_destinations_description_label()}</span>
 						<input bind:value={newDescription} />
-						<small>Optional operational note for where this destination is used.</small>
+						<small>{$LL.admin_storage_destinations_description_help()}</small>
 					</label>
 
 					<div class="form-section wide">
 						<div>
-							<h3 class="form-section-title">Provider settings</h3>
+							<h3 class="form-section-title">
+								{$LL.admin_storage_destinations_provider_settings()}
+							</h3>
 							<p class="form-section-description">
-								These fields become the destination config stored by the API.
+								{$LL.admin_storage_destinations_provider_settings_help()}
 							</p>
 						</div>
 						{#if newProvider === 'r2'}
 							<div class="form-grid nested">
 								<label class="form-label-group">
-									<span>R2 binding reference</span>
+									<span>{$LL.admin_storage_destinations_r2_binding_ref()}</span>
 									<input bind:value={newR2BindingRef} />
-									<small
-										>Worker binding name, for example the R2 bucket binding configured by setup.</small
-									>
+									<small>{$LL.admin_storage_destinations_r2_binding_ref_help()}</small>
 								</label>
 								<label class="form-label-group">
-									<span>Object prefix</span>
+									<span>{$LL.admin_storage_destinations_object_prefix()}</span>
 									<input bind:value={newR2Prefix} />
-									<small>Optional key prefix for logs or artifacts in the bucket.</small>
+									<small>{$LL.admin_storage_destinations_object_prefix_help()}</small>
 								</label>
 								<label class="form-label-group">
-									<span>Region</span>
+									<span>{$LL.admin_storage_destinations_region()}</span>
 									<input bind:value={newR2Region} />
-									<small>Optional locality label for routing and operations.</small>
+									<small>{$LL.admin_storage_destinations_region_help()}</small>
 								</label>
 								<label class="form-label-group">
-									<span>Storage class</span>
+									<span>{$LL.admin_storage_destinations_storage_class()}</span>
 									<input bind:value={newR2StorageClass} />
-									<small>Optional storage class metadata if the provider uses one.</small>
+									<small>{$LL.admin_storage_destinations_storage_class_help()}</small>
 								</label>
 							</div>
 						{:else if newProvider === 'aws_s3'}
 							<div class="form-grid nested">
 								<label class="form-label-group">
-									<span>S3 bucket</span>
+									<span>{$LL.admin_storage_destinations_s3_bucket()}</span>
 									<input bind:value={newAwsBucket} />
-									<small>Bucket name used for archive objects and exported artifacts.</small>
+									<small>{$LL.admin_storage_destinations_s3_bucket_help()}</small>
 								</label>
 								<label class="form-label-group">
-									<span>Region</span>
+									<span>{$LL.admin_storage_destinations_region()}</span>
 									<input bind:value={newAwsRegion} />
-									<small>AWS region for the bucket.</small>
+									<small>{$LL.admin_storage_destinations_s3_region_help()}</small>
 								</label>
 								<label class="form-label-group">
-									<span>Object prefix</span>
+									<span>{$LL.admin_storage_destinations_object_prefix()}</span>
 									<input bind:value={newAwsPrefix} />
-									<small>Optional key prefix inside the bucket.</small>
+									<small>{$LL.admin_storage_destinations_s3_prefix_help()}</small>
 								</label>
 								<label class="form-label-group">
-									<span>Endpoint URL</span>
+									<span>{$LL.admin_storage_destinations_endpoint_url()}</span>
 									<input bind:value={newAwsEndpoint} />
-									<small>Optional S3-compatible endpoint URL.</small>
+									<small>{$LL.admin_storage_destinations_endpoint_url_help()}</small>
 								</label>
 								<label class="checkbox-row wide">
 									<input type="checkbox" bind:checked={newAwsForcePathStyle} />
-									<span>Use path-style bucket addressing</span>
+									<span>{$LL.admin_storage_destinations_path_style()}</span>
 								</label>
 							</div>
 						{:else}
 							<div class="form-grid nested">
 								<label class="form-label-group">
-									<span>Custom type</span>
+									<span>{$LL.admin_storage_destinations_custom_type()}</span>
 									<input bind:value={newCustomType} />
-									<small>Provider-specific destination type.</small>
+									<small>{$LL.admin_storage_destinations_custom_type_help()}</small>
 								</label>
 								<label class="form-label-group wide">
-									<span>Advanced fields</span>
+									<span>{$LL.admin_storage_destinations_advanced_fields()}</span>
 									<textarea rows="5" bind:value={newCustomConfig}></textarea>
-									<small>Optional object for fields that do not have a dedicated control yet.</small
-									>
+									<small>{$LL.admin_storage_destinations_advanced_fields_help()}</small>
 								</label>
 							</div>
 						{/if}
@@ -796,19 +823,19 @@
 					{#if newProvider !== 'r2'}
 						<div class="form-section wide">
 							<div>
-								<h3 class="form-section-title">Credentials</h3>
+								<h3 class="form-section-title">{$LL.admin_storage_destinations_credentials()}</h3>
 								<p class="form-section-description">
-									Secrets are encrypted by the management API and are not stored in config.
+									{$LL.admin_storage_destinations_credentials_help()}
 								</p>
 							</div>
 							{#if newProvider === 'aws_s3'}
 								<div class="form-grid nested">
 									<label class="form-label-group">
-										<span>Access key ID</span>
+										<span>{$LL.admin_storage_destinations_access_key_id()}</span>
 										<input bind:value={newAwsAccessKeyId} autocomplete="off" />
 									</label>
 									<label class="form-label-group">
-										<span>Secret access key</span>
+										<span>{$LL.admin_storage_destinations_secret_access_key()}</span>
 										<input
 											type="password"
 											bind:value={newAwsSecretAccessKey}
@@ -816,17 +843,17 @@
 										/>
 									</label>
 									<label class="form-label-group wide">
-										<span>Session token</span>
+										<span>{$LL.admin_storage_destinations_session_token()}</span>
 										<textarea rows="3" bind:value={newAwsSessionToken} autocomplete="off"
 										></textarea>
-										<small>Optional temporary credential token.</small>
+										<small>{$LL.admin_storage_destinations_session_token_help()}</small>
 									</label>
 								</div>
 							{:else}
 								<label class="form-label-group">
-									<span>Credential object</span>
+									<span>{$LL.admin_storage_destinations_credential_object()}</span>
 									<textarea rows="5" bind:value={newCustomCredential} autocomplete="off"></textarea>
-									<small>Optional encrypted credential object for custom providers.</small>
+									<small>{$LL.admin_storage_destinations_credential_object_help()}</small>
 								</label>
 							{/if}
 						</div>
@@ -837,7 +864,7 @@
 							onclick={createDestination}
 							disabled={saving || !newName}
 						>
-							Create Destination
+							{$LL.admin_storage_destinations_create_destination()}
 						</button>
 					</div>
 				</div>
@@ -854,18 +881,28 @@
 				</div>
 				{#if canManagePlatformStorage && !selected.read_only}
 					<button class="btn btn-danger btn-sm" onclick={deleteSelected} disabled={saving}
-						>Delete</button
+						>{$LL.admin_storage_destinations_delete()}</button
 					>
 				{/if}
 			</div>
 			<div class="stat-grid">
-				<div class="stat-card"><span>Provider</span><strong>{selected.provider}</strong></div>
-				<div class="stat-card"><span>Status</span><strong>{selected.status}</strong></div>
 				<div class="stat-card">
-					<span>Credential</span><strong>{selected.has_credential ? 'Set' : 'Not set'}</strong>
+					<span>{$LL.admin_storage_destinations_provider()}</span><strong
+						>{selected.provider}</strong
+					>
 				</div>
 				<div class="stat-card">
-					<span>Credential Updated</span><strong
+					<span>{$LL.admin_storage_destinations_status()}</span><strong>{selected.status}</strong>
+				</div>
+				<div class="stat-card">
+					<span>{$LL.admin_storage_destinations_credential()}</span><strong
+						>{selected.has_credential
+							? $LL.admin_storage_destinations_set()
+							: $LL.admin_storage_destinations_not_set()}</strong
+					>
+				</div>
+				<div class="stat-card">
+					<span>{$LL.admin_storage_destinations_credential_updated()}</span><strong
 						>{formatDate(selected.credential_updated_at)}</strong
 					>
 				</div>
@@ -873,15 +910,15 @@
 			<pre class="code-block">{jsonDisplayText(selected.config)}</pre>
 			{#if canManagePlatformStorage && !selected.read_only}
 				<div class="credential-section">
-					<h3 class="subsection-title">Update Credential</h3>
+					<h3 class="subsection-title">{$LL.admin_storage_destinations_update_credential()}</h3>
 					<div class="form-grid">
 						<label class="form-label-group wide">
-							<span>Elevation grant ID</span>
+							<span>{$LL.admin_storage_destinations_elevation_grant_id()}</span>
 							<input bind:value={elevationGrantId} />
-							<small>Required unless the caller already has wildcard credential access.</small>
+							<small>{$LL.admin_storage_destinations_elevation_grant_help()}</small>
 						</label>
 						<label class="form-label-group wide">
-							<span>New credential object</span>
+							<span>{$LL.admin_storage_destinations_new_credential_object()}</span>
 							<textarea rows="4" bind:value={credentialPayload}></textarea>
 						</label>
 					</div>
@@ -891,7 +928,7 @@
 							onclick={rotateCredential}
 							disabled={saving || !credentialPayload}
 						>
-							Update Credential
+							{$LL.admin_storage_destinations_update_credential()}
 						</button>
 					</div>
 				</div>
@@ -901,27 +938,27 @@
 
 	<div class="panel">
 		<div class="panel-header">
-			<h2 class="panel-title">Control Plane Destinations</h2>
+			<h2 class="panel-title">{$LL.admin_storage_destinations_control_plane_destinations()}</h2>
 			<span class="badge badge-neutral">{controlPlaneItems.length}</span>
 		</div>
 		{#if loading}
-			<p class="text-muted">Loading...</p>
+			<p class="text-muted">{$LL.admin_storage_destinations_loading()}</p>
 		{:else if controlPlaneItems.length === 0}
-			<p class="text-muted">No control plane destinations.</p>
+			<p class="text-muted">{$LL.admin_storage_destinations_control_plane_empty()}</p>
 		{:else}
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Name</th>
-							<th>Provider</th>
-							<th>Runtime</th>
-							<th>Lifecycle</th>
-							<th>Health</th>
-							<th>Credential</th>
-							<th>Retention</th>
-							<th>Last Check</th>
-							<th>Actions</th>
+							<th>{$LL.admin_storage_destinations_name()}</th>
+							<th>{$LL.admin_storage_destinations_provider()}</th>
+							<th>{$LL.admin_storage_destinations_runtime()}</th>
+							<th>{$LL.admin_storage_destinations_lifecycle()}</th>
+							<th>{$LL.admin_storage_destinations_health()}</th>
+							<th>{$LL.admin_storage_destinations_credential()}</th>
+							<th>{$LL.admin_storage_destinations_retention()}</th>
+							<th>{$LL.admin_storage_destinations_last_check()}</th>
+							<th>{$LL.admin_storage_destinations_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -936,7 +973,8 @@
 									<span
 										class="badge {item.runtime_status === 'supported'
 											? 'badge-success'
-											: 'badge-neutral'}">{item.runtime_status ?? 'unknown'}</span
+											: 'badge-neutral'}"
+										>{item.runtime_status ?? $LL.admin_storage_destinations_unknown()}</span
 									>
 									{#if item.runtime_unsupported_reason}
 										<div class="cell-sub">{item.runtime_unsupported_reason}</div>
@@ -964,65 +1002,77 @@
 									<div class="cell-name">v{item.credential_version}</div>
 									<div class="cell-sub">{item.rotation_status}</div>
 								</td>
-								<td>{item.retention_days ? `${item.retention_days}d` : 'Default'}</td>
+								<td
+									>{item.retention_days
+										? $LL.admin_storage_destinations_days_short({
+												count: item.retention_days
+											})
+										: $LL.admin_storage_destinations_default()}</td
+								>
 								<td class="text-sm">{formatDate(item.last_health_check_at)}</td>
 								<td>
 									<div class="row-actions">
 										<button
 											class="btn btn-secondary btn-sm"
-											onclick={() => loadControlPlaneDestinationDetail(item)}>Details</button
+											onclick={() => loadControlPlaneDestinationDetail(item)}
+											>{$LL.admin_storage_destinations_details()}</button
 										>
 										<button
 											class="btn btn-secondary btn-sm"
 											onclick={() => runHealthCheck(item, 'quick')}
-											disabled={Boolean(healthActionId)}>Quick</button
+											disabled={Boolean(healthActionId)}
+											>{$LL.admin_storage_destinations_quick()}</button
 										>
 										<button
 											class="btn btn-secondary btn-sm"
 											onclick={() => runHealthCheck(item, 'deep')}
-											disabled={Boolean(healthActionId)}>Deep</button
+											disabled={Boolean(healthActionId)}
+											>{$LL.admin_storage_destinations_deep()}</button
 										>
 										{#if canManageControlPlaneDestination}
 											{#if item.lifecycle_status === 'disabled'}
 												<button
 													class="btn btn-secondary btn-sm"
 													onclick={() => enableControlPlaneDestination(item)}
-													disabled={Boolean(lifecycleActionId)}>Enable</button
+													disabled={Boolean(lifecycleActionId)}
+													>{$LL.admin_storage_destinations_enable()}</button
 												>
 											{:else}
 												<button
 													class="btn btn-secondary btn-sm"
 													onclick={() => disableControlPlaneDestination(item)}
-													disabled={Boolean(lifecycleActionId)}>Disable</button
+													disabled={Boolean(lifecycleActionId)}
+													>{$LL.admin_storage_destinations_disable()}</button
 												>
 											{/if}
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={() => prepareControlPlaneCredential(item)}
-												disabled={Boolean(credentialActionId)}>Prepare</button
+												disabled={Boolean(credentialActionId)}
+												>{$LL.admin_storage_destinations_prepare()}</button
 											>
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={() => markControlPlaneCredentialReady(item)}
 												disabled={Boolean(credentialActionId) || !item.next_credential_ref}
-												>Ready</button
+												>{$LL.admin_storage_destinations_ready()}</button
 											>
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={() => activateControlPlaneCredential(item)}
 												disabled={Boolean(credentialActionId) || !item.next_credential_ref}
-												>Activate</button
+												>{$LL.admin_storage_destinations_activate()}</button
 											>
 											<button
 												class="btn btn-secondary btn-sm"
 												onclick={() => retirePreviousControlPlaneCredential(item)}
 												disabled={Boolean(credentialActionId) || !item.previous_credential_ref}
-												>Retire</button
+												>{$LL.admin_storage_destinations_retire()}</button
 											>
 										{/if}
 									</div>
 									<details class="config-details">
-										<summary>Config</summary>
+										<summary>{$LL.admin_storage_destinations_config()}</summary>
 										<pre class="code-block">{providerConfigText(item)}</pre>
 									</details>
 								</td>
@@ -1035,7 +1085,7 @@
 	</div>
 
 	{#if selectedControlPlane}
-		<aside class="detail-drawer" aria-label="Storage destination details">
+		<aside class="detail-drawer" aria-label={$LL.admin_storage_destinations_details_aria()}>
 			<div class="drawer-header">
 				<div>
 					<h2 class="drawer-title">{selectedControlPlane.display_name}</h2>
@@ -1046,7 +1096,8 @@
 				<button
 					class="btn btn-secondary btn-sm"
 					type="button"
-					onclick={closeControlPlaneDestinationDetail}>Close</button
+					onclick={closeControlPlaneDestinationDetail}
+					>{$LL.admin_storage_destinations_close()}</button
 				>
 			</div>
 			<div class="drawer-actions">
@@ -1056,48 +1107,69 @@
 					onclick={previewSelectedControlPlaneDiff}
 					disabled={diffPreviewActionId === selectedControlPlane.id}
 				>
-					{diffPreviewActionId === selectedControlPlane.id ? 'Previewing...' : 'Preview diff'}
+					{diffPreviewActionId === selectedControlPlane.id
+						? $LL.admin_storage_destinations_previewing()
+						: $LL.admin_storage_destinations_preview_diff()}
 				</button>
 			</div>
 			<div class="stat-grid compact">
 				<div class="stat-card">
-					<span>Provider</span><strong>{selectedControlPlane.provider}</strong>
+					<span>{$LL.admin_storage_destinations_provider()}</span><strong
+						>{selectedControlPlane.provider}</strong
+					>
 				</div>
 				<div class="stat-card">
-					<span>Runtime</span><strong>{selectedControlPlane.runtime_status ?? 'unknown'}</strong>
+					<span>{$LL.admin_storage_destinations_runtime()}</span><strong
+						>{selectedControlPlane.runtime_status ??
+							$LL.admin_storage_destinations_unknown()}</strong
+					>
 				</div>
 				<div class="stat-card">
-					<span>Lifecycle</span><strong>{selectedControlPlane.lifecycle_status}</strong>
+					<span>{$LL.admin_storage_destinations_lifecycle()}</span><strong
+						>{selectedControlPlane.lifecycle_status}</strong
+					>
 				</div>
 				<div class="stat-card">
-					<span>Health</span><strong>{selectedControlPlane.health_status}</strong>
+					<span>{$LL.admin_storage_destinations_health()}</span><strong
+						>{selectedControlPlane.health_status}</strong
+					>
 				</div>
 				<div class="stat-card">
-					<span>Retention</span><strong
+					<span>{$LL.admin_storage_destinations_retention()}</span><strong
 						>{selectedControlPlane.retention_days
-							? `${selectedControlPlane.retention_days}d`
-							: 'Default'}</strong
+							? $LL.admin_storage_destinations_days_short({
+									count: selectedControlPlane.retention_days
+								})
+							: $LL.admin_storage_destinations_default()}</strong
 					>
 				</div>
 				<div class="stat-card">
-					<span>Region</span><strong>{selectedControlPlane.region ?? 'Any'}</strong>
-				</div>
-				<div class="stat-card">
-					<span>Critical</span><strong
-						>{selectedControlPlane.critical_allowed ? 'Allowed' : 'Not allowed'}</strong
+					<span>{$LL.admin_storage_destinations_region()}</span><strong
+						>{selectedControlPlane.region ?? $LL.admin_storage_destinations_any()}</strong
 					>
 				</div>
 				<div class="stat-card">
-					<span>Fallback</span><strong
-						>{selectedControlPlane.default_fallback_eligible ? 'Eligible' : 'Not eligible'}</strong
+					<span>{$LL.admin_storage_destinations_critical()}</span><strong
+						>{selectedControlPlane.critical_allowed
+							? $LL.admin_storage_destinations_allowed()
+							: $LL.admin_storage_destinations_not_allowed()}</strong
 					>
 				</div>
 				<div class="stat-card">
-					<span>Encryption</span><strong>{selectedControlPlane.encryption_mode}</strong>
+					<span>{$LL.admin_storage_destinations_fallback()}</span><strong
+						>{selectedControlPlane.default_fallback_eligible
+							? $LL.admin_storage_destinations_eligible()
+							: $LL.admin_storage_destinations_not_eligible()}</strong
+					>
+				</div>
+				<div class="stat-card">
+					<span>{$LL.admin_storage_destinations_encryption()}</span><strong
+						>{selectedControlPlane.encryption_mode}</strong
+					>
 				</div>
 				{#if selectedControlPlane.runtime_unsupported_reason}
 					<div class="stat-card wide">
-						<span>Runtime reason</span><strong
+						<span>{$LL.admin_storage_destinations_runtime_reason()}</span><strong
 							>{selectedControlPlane.runtime_unsupported_reason}</strong
 						>
 					</div>
@@ -1105,25 +1177,26 @@
 			</div>
 			<div class="usage-grid">
 				<div class="stat-card">
-					<span>Allowed tenants</span><strong
+					<span>{$LL.admin_storage_destinations_allowed_tenants()}</span><strong
 						>{listText(selectedControlPlane.allowed_tenant_ids)}</strong
 					>
 				</div>
 				<div class="stat-card">
-					<span>Allowed log types</span><strong
+					<span>{$LL.admin_storage_destinations_allowed_log_types()}</span><strong
 						>{listText(selectedControlPlane.allowed_log_types)}</strong
 					>
 				</div>
 				<div class="stat-card">
-					<span>Allowed planes</span><strong>{listText(selectedControlPlane.allowed_planes)}</strong
+					<span>{$LL.admin_storage_destinations_allowed_planes()}</span><strong
+						>{listText(selectedControlPlane.allowed_planes)}</strong
 					>
 				</div>
 				<div class="stat-card">
-					<span>Capabilities</span><strong
+					<span>{$LL.admin_storage_destinations_capabilities()}</span><strong
 						>{selectedControlPlane.capabilities
 							?.filter((c) => c.enabled)
 							.map((c) => c.capability)
-							.join(', ') || 'None'}</strong
+							.join(', ') || $LL.admin_storage_destinations_none()}</strong
 					>
 				</div>
 			</div>
@@ -1131,14 +1204,19 @@
 			{#if destinationDiffPreview}
 				<div class="usage-grid">
 					<div class="stat-card">
-						<span>Diff state</span><strong>{destinationDiffPreview.dangerous_classification}</strong
+						<span>{$LL.admin_storage_destinations_diff_state()}</span><strong
+							>{destinationDiffPreview.dangerous_classification}</strong
 						>
 					</div>
 					<div class="stat-card">
-						<span>Changed fields</span><strong>{destinationDiffPreview.diff.length}</strong>
+						<span>{$LL.admin_storage_destinations_changed_fields()}</span><strong
+							>{destinationDiffPreview.diff.length}</strong
+						>
 					</div>
 					<div class="stat-card">
-						<span>Confirmation</span><strong>{destinationDiffPreview.confirmation ?? '-'}</strong>
+						<span>{$LL.admin_storage_destinations_confirmation()}</span><strong
+							>{destinationDiffPreview.confirmation ?? '-'}</strong
+						>
 					</div>
 				</div>
 				<pre class="code-block">{jsonDisplayText({
@@ -1156,7 +1234,7 @@
 	title={dangerConfirmation?.title ?? ''}
 	resourceName={dangerConfirmation?.resourceName ?? ''}
 	phrase={dangerConfirmation?.phrase ?? ''}
-	confirmLabel={dangerConfirmation?.confirmLabel ?? 'Confirm'}
+	confirmLabel={dangerConfirmation?.confirmLabel ?? $LL.admin_storage_destinations_confirm()}
 	onConfirm={confirmDangerConfirmation}
 	onCancel={cancelDangerConfirmation}
 />

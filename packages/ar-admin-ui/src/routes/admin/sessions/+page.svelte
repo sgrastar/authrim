@@ -8,6 +8,7 @@
 		type SessionListParams
 	} from '$lib/api/admin-sessions';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let sessions: Session[] = $state([]);
 	let pagination: Pagination | null = $state(null);
@@ -51,8 +52,7 @@
 			sessions = response.sessions;
 			pagination = response.pagination;
 		} catch (err) {
-			console.error('Failed to load sessions:', err);
-			error = 'Failed to load sessions';
+			error = err instanceof Error ? err.message : $LL.admin_sessions_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -100,10 +100,12 @@
 		const diffHours = Math.floor(diffMs / 3600000);
 		const diffDays = Math.floor(diffMs / 86400000);
 
-		if (diffMins < 1) return 'Just now';
-		if (diffMins < 60) return `${diffMins} min${diffMins === 1 ? '' : 's'} ago`;
-		if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
-		return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+		if (diffMins < 1) return $LL.admin_sessions_just_now();
+		if (diffMins < 60) return $LL.admin_sessions_minutes_ago({ count: diffMins });
+		if (diffHours < 24) return $LL.admin_sessions_hours_ago({ count: diffHours });
+		return $LL.admin_sessions_days_ago({
+			count: diffDays
+		});
 	}
 
 	function getTimeUntil(isoString: string): string {
@@ -111,22 +113,24 @@
 		const now = new Date();
 		const diffMs = date.getTime() - now.getTime();
 
-		if (diffMs <= 0) return 'Expired';
+		if (diffMs <= 0) return $LL.admin_sessions_expired();
 
 		const diffMins = Math.floor(diffMs / 60000);
 		const diffHours = Math.floor(diffMs / 3600000);
 		const diffDays = Math.floor(diffMs / 86400000);
 
-		if (diffMins < 60) return `${diffMins} min${diffMins === 1 ? '' : 's'}`;
-		if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'}`;
-		return `${diffDays} day${diffDays === 1 ? '' : 's'}`;
+		if (diffMins < 60) return $LL.admin_sessions_minutes({ count: diffMins });
+		if (diffHours < 24) return $LL.admin_sessions_hours({ count: diffHours });
+		return $LL.admin_sessions_days({
+			count: diffDays
+		});
 	}
 
 	function parseUserAgent(userAgent: string | null): string {
 		if (!userAgent) return '-';
 
-		let browser = 'Unknown';
-		let os = 'Unknown';
+		let browser: string = $LL.admin_sessions_unknown();
+		let os: string = $LL.admin_sessions_unknown();
 
 		if (userAgent.includes('Chrome')) browser = 'Chrome';
 		else if (userAgent.includes('Firefox')) browser = 'Firefox';
@@ -166,8 +170,7 @@
 			// Reload sessions after successful revoke
 			await loadSessions();
 		} catch (err) {
-			console.error('Failed to revoke session:', err);
-			revokeError = err instanceof Error ? err.message : 'Failed to revoke session';
+			revokeError = err instanceof Error ? err.message : $LL.admin_sessions_revoke_failed();
 		} finally {
 			revoking = false;
 		}
@@ -175,15 +178,15 @@
 </script>
 
 <svelte:head>
-	<title>Sessions - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_sessions_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Sessions</h1>
-			<p class="page-description">Monitor and manage active user sessions</p>
+			<h1 class="page-title">{$LL.admin_sessions_title()}</h1>
+			<p class="page-description">{$LL.admin_sessions_description()}</p>
 		</div>
 	</div>
 
@@ -191,28 +194,28 @@
 	<div class="panel">
 		<div class="filter-row">
 			<div class="form-group">
-				<label for="user_id" class="form-label">User ID</label>
+				<label for="user_id" class="form-label">{$LL.admin_sessions_user_id()}</label>
 				<input
 					id="user_id"
 					type="text"
 					class="form-input"
-					placeholder="Filter by user ID..."
+					placeholder={$LL.admin_sessions_user_id_placeholder()}
 					bind:value={userIdFilter}
 					oninput={handleUserIdSearch}
 				/>
 			</div>
 
 			<div class="form-group">
-				<label for="status" class="form-label">Status</label>
+				<label for="status" class="form-label">{$LL.admin_sessions_status()}</label>
 				<select
 					id="status"
 					class="form-select"
 					bind:value={statusFilter}
 					onchange={handleStatusChange}
 				>
-					<option value="">All</option>
-					<option value="active">Active Only</option>
-					<option value="expired">Expired Only</option>
+					<option value="">{$LL.admin_sessions_status_all()}</option>
+					<option value="active">{$LL.admin_sessions_status_active_only()}</option>
+					<option value="expired">{$LL.admin_sessions_status_expired_only()}</option>
 				</select>
 			</div>
 		</div>
@@ -221,14 +224,14 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading sessions...</p>
+			<p>{$LL.admin_sessions_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if sessions.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No sessions found</p>
+				<p class="empty-state-description">{$LL.admin_sessions_empty()}</p>
 			</div>
 		</div>
 	{:else}
@@ -237,13 +240,13 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>User</th>
-						<th>Device</th>
-						<th>IP Address</th>
-						<th>Last Access</th>
-						<th>Expires</th>
-						<th>Status</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_sessions_user()}</th>
+						<th>{$LL.admin_sessions_device()}</th>
+						<th>{$LL.admin_sessions_ip_address()}</th>
+						<th>{$LL.admin_sessions_last_access()}</th>
+						<th>{$LL.admin_sessions_expires()}</th>
+						<th>{$LL.admin_sessions_status()}</th>
+						<th class="text-right">{$LL.admin_sessions_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -269,13 +272,13 @@
 							</td>
 							<td>
 								<span class={session.is_active ? 'badge badge-success' : 'badge badge-neutral'}>
-									{session.is_active ? 'Active' : 'Expired'}
+									{session.is_active ? $LL.admin_sessions_active() : $LL.admin_sessions_expired()}
 								</span>
 							</td>
 							<td class="text-right">
 								{#if session.is_active}
 									<button class="btn btn-danger btn-sm" onclick={() => openRevokeDialog(session)}>
-										Revoke
+										{$LL.admin_sessions_revoke()}
 									</button>
 								{:else}
 									<span class="muted">-</span>
@@ -291,10 +294,11 @@
 		{#if pagination && pagination.totalPages > 1}
 			<div class="pagination">
 				<p class="pagination-info">
-					Showing {(pagination.page - 1) * pagination.limit + 1} to {Math.min(
-						pagination.page * pagination.limit,
-						pagination.total
-					)} of {pagination.total} sessions
+					{$LL.admin_sessions_pagination({
+						from: (pagination.page - 1) * pagination.limit + 1,
+						to: Math.min(pagination.page * pagination.limit, pagination.total),
+						total: pagination.total
+					})}
 				</p>
 				<div class="pagination-buttons">
 					<button
@@ -302,14 +306,14 @@
 						onclick={() => goToPage(currentPage - 1)}
 						disabled={!pagination.hasPrev}
 					>
-						Previous
+						{$LL.admin_sessions_previous()}
 					</button>
 					<button
 						class="btn btn-secondary btn-sm"
 						onclick={() => goToPage(currentPage + 1)}
 						disabled={!pagination.hasNext}
 					>
-						Next
+						{$LL.admin_sessions_next()}
 					</button>
 				</div>
 			</div>
@@ -321,27 +325,27 @@
 <Modal
 	open={showRevokeDialog && !!sessionToRevoke}
 	onClose={closeRevokeDialog}
-	title="Revoke Session"
+	title={$LL.admin_sessions_revoke_title()}
 	size="md"
 >
 	{#if sessionToRevoke}
 		<p class="modal-description">
-			This will immediately log out the user from this session. Are you sure?
+			{$LL.admin_sessions_revoke_description()}
 		</p>
 
 		<div class="info-box">
 			<div class="info-row">
-				<span class="info-label">User:</span>
+				<span class="info-label">{$LL.admin_sessions_user()}:</span>
 				<span class="info-value">
 					{sessionToRevoke.user_email || sessionToRevoke.user_id}
 				</span>
 			</div>
 			<div class="info-row">
-				<span class="info-label">IP:</span>
+				<span class="info-label">{$LL.admin_sessions_ip()}</span>
 				<span class="info-value">{sessionToRevoke.ip_address || '-'}</span>
 			</div>
 			<div class="info-row">
-				<span class="info-label">Last Access:</span>
+				<span class="info-label">{$LL.admin_sessions_last_access()}:</span>
 				<span class="info-value">{getRelativeTime(sessionToRevoke.last_accessed_at)}</span>
 			</div>
 		</div>
@@ -353,10 +357,10 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeRevokeDialog} disabled={revoking}>
-			Cancel
+			{$LL.admin_sessions_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmRevoke} disabled={revoking}>
-			{revoking ? 'Revoking...' : 'Revoke'}
+			{revoking ? $LL.admin_sessions_revoking() : $LL.admin_sessions_revoke()}
 		</button>
 	{/snippet}
 </Modal>

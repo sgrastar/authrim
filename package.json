@@ -1,6 +1,6 @@
 {
   "name": "authrim",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A scalable Edge Identity Provider built on Cloudflare Workers - OIDC, OAuth 2.0, SAML",
   "private": true,
   "type": "module",
@@ -57,6 +57,7 @@
     "setup:smoke-generated-auth-flow": "tsx test/environment-validation/smoke-generated-auth-flow.ts",
     "setup:smoke-generated-approvals": "tsx test/environment-validation/smoke-generated-approvals.ts",
     "setup:smoke-generated-server-surfaces": "tsx test/environment-validation/smoke-generated-server-surfaces.ts",
+    "admin-ui:issue-session": "tsx tools/admin-ui-session/issue-session.ts",
     "test:remote:logging": "tsx test/remote-logging/smoke-remote-logging-output.ts",
     "setup:load-generated-live-safe": "tsx test/environment-validation/load-generated-live-safe.ts",
     "setup:local-capacity": "tsx test/environment-validation/local-capacity.ts",

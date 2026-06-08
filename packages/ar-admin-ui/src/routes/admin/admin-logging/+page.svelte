@@ -17,6 +17,7 @@
 		type LogCatalogRepairFinding
 	} from '$lib/api/admin-logging-control';
 	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type DangerConfirmationRequest = {
 		title: string;
@@ -198,7 +199,7 @@
 			);
 			messageJobs = messageJobsResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load admin logging overview';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_load_failed();
 			overview = null;
 			coverageItems = [];
 			repairFindings = [];
@@ -226,7 +227,7 @@
 			const coverageResponse = await adminLoggingControlAPI.listAdminAuditCoverage();
 			coverageItems = coverageResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to check admin audit coverage';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_check_coverage_failed();
 		} finally {
 			checkingCoverage = false;
 		}
@@ -247,7 +248,8 @@
 			repairFindings = repairResponse.items;
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to apply safe catalog repairs';
+			error =
+				err instanceof Error ? err.message : $LL.admin_admin_logging_apply_safe_repairs_failed();
 		} finally {
 			applyingRepairs = false;
 		}
@@ -267,7 +269,7 @@
 			const jobs = await adminLoggingControlAPI.listCatalogRepairJobs({ ...filters, limit: 10 });
 			catalogRepairJobs = jobs.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to scan catalog repair job';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_scan_repair_job_failed();
 		} finally {
 			catalogRepairJobAction = false;
 		}
@@ -289,7 +291,8 @@
 			const repairResponse = await adminLoggingControlAPI.listCatalogRepairFindings(filters);
 			repairFindings = repairResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to apply catalog repair job';
+			error =
+				err instanceof Error ? err.message : $LL.admin_admin_logging_apply_repair_job_failed();
 		} finally {
 			catalogRepairJobAction = false;
 		}
@@ -306,10 +309,10 @@
 			});
 			dangerousRepairPlan = preview.item;
 			const confirmation = await requestDangerConfirmation({
-				title: 'Delete Catalog Object',
+				title: $LL.admin_admin_logging_delete_catalog_object(),
 				resourceName: preview.item.impact.objectKey ?? item.objectCatalogId,
 				phrase: preview.item.confirmation,
-				confirmLabel: 'Delete object'
+				confirmLabel: $LL.admin_admin_logging_delete_object()
 			});
 			if (!confirmation) return;
 
@@ -327,7 +330,8 @@
 			repairFindings = repairResponse.items;
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to apply dangerous catalog repair';
+			error =
+				err instanceof Error ? err.message : $LL.admin_admin_logging_dangerous_repair_failed();
 		} finally {
 			dangerousRepairId = null;
 		}
@@ -347,7 +351,7 @@
 			});
 			sensitiveProbe = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to probe sensitive detail';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_probe_failed();
 		} finally {
 			sensitiveProbeLoading = false;
 		}
@@ -361,7 +365,7 @@
 			const response = await adminLoggingControlAPI.getAdminLoggingKeyImpact(item.id);
 			keyImpact = response.item;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load key impact';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_key_impact_failed();
 		} finally {
 			keyActionId = null;
 		}
@@ -384,7 +388,7 @@
 			keyImpact = impactResponse.item;
 			rewrapJobs = jobsResponse.items;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create rewrap jobs';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_create_rewrap_failed();
 		} finally {
 			keyActionId = null;
 		}
@@ -408,10 +412,13 @@
 		rewrapJobActionId = job.id;
 		error = '';
 		try {
-			await adminLoggingControlAPI.retryAdminLoggingRewrapJob(job.id, 'manual retry from AdminUI');
+			await adminLoggingControlAPI.retryAdminLoggingRewrapJob(
+				job.id,
+				$LL.admin_admin_logging_manual_retry_reason()
+			);
 			await refreshRewrapJobs();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to retry rewrap job';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_retry_rewrap_failed();
 		} finally {
 			rewrapJobActionId = null;
 		}
@@ -420,10 +427,10 @@
 	async function cancelRewrapJob(job: AdminLoggingRewrapJob) {
 		if (rewrapJobActionId || !canRunCatalogRepair) return;
 		const confirmation = await requestDangerConfirmation({
-			title: 'Cancel Rewrap Job',
+			title: $LL.admin_admin_logging_cancel_rewrap_job(),
 			resourceName: job.id,
 			phrase: `CANCEL REWRAP ${job.id}`,
-			confirmLabel: 'Cancel job'
+			confirmLabel: $LL.admin_admin_logging_cancel_job()
 		});
 		if (!confirmation) return;
 		rewrapJobActionId = job.id;
@@ -431,11 +438,11 @@
 		try {
 			await adminLoggingControlAPI.cancelAdminLoggingRewrapJob(
 				job.id,
-				'manual cancellation from AdminUI'
+				$LL.admin_admin_logging_manual_cancel_reason()
 			);
 			await refreshRewrapJobs();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to cancel rewrap job';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_cancel_rewrap_failed();
 		} finally {
 			rewrapJobActionId = null;
 		}
@@ -452,7 +459,7 @@
 			);
 			await refreshRewrapJobs();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update rewrap job priority';
+			error = err instanceof Error ? err.message : $LL.admin_admin_logging_update_priority_failed();
 		} finally {
 			rewrapJobActionId = null;
 		}
@@ -466,94 +473,98 @@
 </script>
 
 <svelte:head>
-	<title>Admin Logging - Authrim</title>
+	<title>{$LL.admin_admin_logging_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Admin Logging</h1>
+			<h1 class="page-title">{$LL.admin_admin_logging_title()}</h1>
 			<p class="page-description">
-				Monitor admin audit volume, chunk archives, and delivery health.
+				{$LL.admin_admin_logging_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<select bind:value={windowHours} onchange={load}>
-				<option value={1}>1 hour</option>
-				<option value={6}>6 hours</option>
-				<option value={24}>24 hours</option>
-				<option value={72}>72 hours</option>
+				<option value={1}>{$LL.admin_admin_logging_window_1h()}</option>
+				<option value={6}>{$LL.admin_admin_logging_window_6h()}</option>
+				<option value={24}>{$LL.admin_admin_logging_window_24h()}</option>
+				<option value={72}>{$LL.admin_admin_logging_window_72h()}</option>
 			</select>
-			<button class="btn btn-secondary" onclick={load} disabled={loading}>Refresh</button>
+			<button class="btn btn-secondary" onclick={load} disabled={loading}>
+				{$LL.admin_admin_logging_refresh()}
+			</button>
 		</div>
 	</div>
 
 	{#if error}<div class="alert error">{error}</div>{/if}
 
 	{#if loading}
-		<p class="muted">Loading...</p>
+		<p class="muted">{$LL.admin_admin_logging_loading()}</p>
 	{:else if !overview}
-		<p class="muted">No admin logging data found.</p>
+		<p class="muted">{$LL.admin_admin_logging_empty()}</p>
 	{:else}
 		<div class="stats">
 			<div class="stat">
-				<span>Audit events</span>
+				<span>{$LL.admin_admin_logging_audit_events()}</span>
 				<strong>{overview.audit.total ?? 0}</strong>
 			</div>
 			<div class="stat">
-				<span>Failures</span>
+				<span>{$LL.admin_admin_logging_failures()}</span>
 				<strong>{overview.audit.failures ?? 0}</strong>
 			</div>
 			<div class="stat">
-				<span>Critical</span>
+				<span>{$LL.admin_admin_logging_critical()}</span>
 				<strong>{overview.audit.critical ?? 0}</strong>
 			</div>
 			<div class="stat">
-				<span>Window start</span>
+				<span>{$LL.admin_admin_logging_window_start()}</span>
 				<strong>{formatDate(overview.window_start_at)}</strong>
 			</div>
 			<div class="stat">
-				<span>Audit coverage</span>
+				<span>{$LL.admin_admin_logging_audit_coverage()}</span>
 				<strong>{overview.coverage.covered}</strong>
 			</div>
 			<div class="stat">
-				<span>Coverage gaps</span>
+				<span>{$LL.admin_admin_logging_coverage_gaps()}</span>
 				<strong>{overview.coverage.gap_detected}</strong>
 			</div>
 			<div class="stat">
-				<span>Critical destinations</span>
+				<span>{$LL.admin_admin_logging_critical_destinations()}</span>
 				<strong>{overview.critical_protection.critical_destination_count}</strong>
 			</div>
 			<div class="stat">
-				<span>Sensitive classes</span>
+				<span>{$LL.admin_admin_logging_sensitive_classes()}</span>
 				<strong>{overview.sensitive_detail.indexed_object_class_count}</strong>
 			</div>
 		</div>
 
 		<section class="panel">
 			<div class="section-header">
-				<h2>Audit Coverage</h2>
+				<h2>{$LL.admin_admin_logging_audit_coverage_section()}</h2>
 				{#if canCheckCoverage}
 					<button class="btn btn-secondary" onclick={checkCoverage} disabled={checkingCoverage}>
-						{checkingCoverage ? 'Checking...' : 'Check'}
+						{checkingCoverage
+							? $LL.admin_admin_logging_checking()
+							: $LL.admin_admin_logging_check()}
 					</button>
 				{/if}
 			</div>
 			{#if coverageItems.length === 0}
 				<p class="muted">
 					{canViewCoverage
-						? 'No coverage records found.'
-						: 'Coverage details require platform admin permission.'}
+						? $LL.admin_admin_logging_no_coverage()
+						: $LL.admin_admin_logging_coverage_permission()}
 				</p>
 			{:else}
 				<div class="table-wrap">
 					<table>
 						<thead>
 							<tr>
-								<th>Operation</th>
-								<th>Surface</th>
-								<th>Criticality</th>
-								<th>Status</th>
+								<th>{$LL.admin_admin_logging_operation()}</th>
+								<th>{$LL.admin_admin_logging_surface()}</th>
+								<th>{$LL.admin_admin_logging_criticality()}</th>
+								<th>{$LL.admin_admin_logging_status()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -574,7 +585,7 @@
 		{#if canReadCatalogRepair}
 			<section class="panel">
 				<div class="section-header">
-					<h2>Catalog Repairs</h2>
+					<h2>{$LL.admin_admin_logging_catalog_repairs()}</h2>
 					<div class="inline-actions">
 						<span>{repairFindings.length}</span>
 						<button
@@ -582,28 +593,33 @@
 							onclick={applySafeRepairs}
 							disabled={applyingRepairs || repairFindings.length === 0 || !canRunCatalogRepair}
 						>
-							{applyingRepairs ? 'Applying...' : 'Apply safe'}
+							{applyingRepairs
+								? $LL.admin_admin_logging_applying()
+								: $LL.admin_admin_logging_apply_safe()}
 						</button>
 						<button
 							class="btn btn-secondary"
 							onclick={scanCatalogRepairJob}
 							disabled={catalogRepairJobAction}
 						>
-							Job scan
+							{$LL.admin_admin_logging_job_scan()}
 						</button>
 						<button
 							class="btn btn-secondary"
 							onclick={applySafeRepairJob}
 							disabled={catalogRepairJobAction || !canRunCatalogRepair}
 						>
-							Job apply
+							{$LL.admin_admin_logging_job_apply()}
 						</button>
 					</div>
 				</div>
 				<div class="repair-controls">
-					<input bind:value={catalogRepairTenantKey} placeholder="tenant key" />
+					<input
+						bind:value={catalogRepairTenantKey}
+						placeholder={$LL.admin_admin_logging_tenant_key_placeholder()}
+					/>
 					<select bind:value={catalogRepairLogType}>
-						<option value="">Any log type</option>
+						<option value="">{$LL.admin_admin_logging_any_log_type()}</option>
 						<option value="audit">audit</option>
 						<option value="admin_audit">admin_audit</option>
 						<option value="security">security</option>
@@ -612,7 +628,7 @@
 						<option value="job">job</option>
 					</select>
 					<select bind:value={catalogRepairPlane}>
-						<option value="">Any plane</option>
+						<option value="">{$LL.admin_admin_logging_any_plane()}</option>
 						<option value="primary">primary</option>
 						<option value="archive">archive</option>
 						<option value="external_sink">external_sink</option>
@@ -620,21 +636,23 @@
 						<option value="diagnostic_detail">diagnostic_detail</option>
 						<option value="delivery_event">delivery_event</option>
 					</select>
-					<button class="btn btn-secondary" onclick={load} disabled={loading}>Scan</button>
+					<button class="btn btn-secondary" onclick={load} disabled={loading}>
+						{$LL.admin_admin_logging_scan()}
+					</button>
 				</div>
 				{#if repairFindings.length === 0}
-					<p class="muted">No catalog repair findings found.</p>
+					<p class="muted">{$LL.admin_admin_logging_no_catalog_findings()}</p>
 				{:else}
 					<div class="table-wrap">
 						<table>
 							<thead>
 								<tr>
-									<th>Action</th>
-									<th>Log type</th>
-									<th>Plane</th>
-									<th>Object</th>
-									<th>Reason</th>
-									<th>Actions</th>
+									<th>{$LL.admin_admin_logging_action()}</th>
+									<th>{$LL.admin_admin_logging_log_type()}</th>
+									<th>{$LL.admin_admin_logging_plane()}</th>
+									<th>{$LL.admin_admin_logging_object()}</th>
+									<th>{$LL.admin_admin_logging_reason()}</th>
+									<th>{$LL.admin_admin_logging_actions()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -652,7 +670,7 @@
 													onclick={() => applyDangerousDeleteObject(item)}
 													disabled={Boolean(dangerousRepairId) || !canRunCatalogRepair}
 												>
-													Delete object
+													{$LL.admin_admin_logging_delete_object()}
 												</button>
 											{:else}
 												-
@@ -666,7 +684,11 @@
 					{#if dangerousRepairPlan}
 						<div class="danger-preview">
 							<strong>{dangerousRepairPlan.action}</strong>
-							<span>{dangerousRepairPlan.impact.affectedRecordCount} records</span>
+							<span>
+								{$LL.admin_admin_logging_records({
+									count: dangerousRepairPlan.impact.affectedRecordCount
+								})}
+							</span>
 						</div>
 					{/if}
 				{/if}
@@ -675,10 +697,10 @@
 						<table>
 							<thead>
 								<tr>
-									<th>Job</th>
-									<th>Status</th>
-									<th>Progress</th>
-									<th>Artifact</th>
+									<th>{$LL.admin_admin_logging_job()}</th>
+									<th>{$LL.admin_admin_logging_status()}</th>
+									<th>{$LL.admin_admin_logging_progress()}</th>
+									<th>{$LL.admin_admin_logging_artifact()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -700,20 +722,20 @@
 		{#if canViewCriticalPolicy}
 			<section class="panel">
 				<div class="section-header">
-					<h2>Critical Protection</h2>
+					<h2>{$LL.admin_admin_logging_critical_protection()}</h2>
 					<span>{criticalPolicy?.summary.critical_assignment_count ?? 0}</span>
 				</div>
 				{#if !criticalPolicy || criticalPolicy.destinations.length === 0}
-					<p class="muted">No critical destinations found.</p>
+					<p class="muted">{$LL.admin_admin_logging_no_critical_destinations()}</p>
 				{:else}
 					<div class="table-wrap">
 						<table>
 							<thead>
 								<tr>
-									<th>Destination</th>
-									<th>Provider</th>
-									<th>Health</th>
-									<th>Fallback</th>
+									<th>{$LL.admin_admin_logging_destination()}</th>
+									<th>{$LL.admin_admin_logging_provider()}</th>
+									<th>{$LL.admin_admin_logging_health()}</th>
+									<th>{$LL.admin_admin_logging_fallback()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -722,7 +744,11 @@
 										<td>{item.display_name || item.name}</td>
 										<td>{item.provider}</td>
 										<td>{item.health_status}</td>
-										<td>{item.default_fallback_eligible ? 'yes' : 'no'}</td>
+										<td>
+											{item.default_fallback_eligible
+												? $LL.admin_admin_logging_yes()
+												: $LL.admin_admin_logging_no()}
+										</td>
 									</tr>
 								{/each}
 							</tbody>
@@ -735,36 +761,44 @@
 		{#if canViewSensitiveDetailPolicy}
 			<section class="panel">
 				<div class="section-header">
-					<h2>Sensitive Detail</h2>
+					<h2>{$LL.admin_admin_logging_sensitive_detail()}</h2>
 					<span>{sensitiveDetailPolicy?.summary.assignment_count ?? 0}</span>
 				</div>
 				{#if !sensitiveDetailPolicy}
-					<p class="muted">No sensitive detail policy found.</p>
+					<p class="muted">{$LL.admin_admin_logging_no_sensitive_policy()}</p>
 				{:else}
 					<div class="stats compact">
 						<div class="stat">
-							<span>Chunked</span>
-							<strong>{sensitiveDetailPolicy.summary.chunked ? 'yes' : 'no'}</strong>
+							<span>{$LL.admin_admin_logging_chunked()}</span>
+							<strong>
+								{sensitiveDetailPolicy.summary.chunked
+									? $LL.admin_admin_logging_yes()
+									: $LL.admin_admin_logging_no()}
+							</strong>
 						</div>
 						<div class="stat">
-							<span>Encrypted</span>
-							<strong>{sensitiveDetailPolicy.summary.encrypted ? 'yes' : 'no'}</strong>
+							<span>{$LL.admin_admin_logging_encrypted()}</span>
+							<strong>
+								{sensitiveDetailPolicy.summary.encrypted
+									? $LL.admin_admin_logging_yes()
+									: $LL.admin_admin_logging_no()}
+							</strong>
 						</div>
 						<div class="stat">
-							<span>Stale keys</span>
+							<span>{$LL.admin_admin_logging_stale_keys()}</span>
 							<strong>{sensitiveDetailPolicy.summary.stale_key_count}</strong>
 						</div>
 					</div>
 					{#if sensitiveDetailPolicy.index_summary.length === 0}
-						<p class="muted">No sensitive detail chunk index records found.</p>
+						<p class="muted">{$LL.admin_admin_logging_no_sensitive_index()}</p>
 					{:else}
 						<div class="table-wrap">
 							<table>
 								<thead>
 									<tr>
-										<th>Class</th>
-										<th>Records</th>
-										<th>Last record</th>
+										<th>{$LL.admin_admin_logging_class()}</th>
+										<th>{$LL.admin_admin_logging_records_label()}</th>
+										<th>{$LL.admin_admin_logging_last_record()}</th>
 									</tr>
 								</thead>
 								<tbody>
@@ -781,9 +815,18 @@
 					{/if}
 					<div class="probe-box">
 						<div class="repair-controls">
-							<input bind:value={sensitiveProbeCatalogId} placeholder="catalog id" />
-							<input bind:value={sensitiveProbeTenantId} placeholder="tenant id" />
-							<input bind:value={sensitiveProbeObjectClass} placeholder="object class" />
+							<input
+								bind:value={sensitiveProbeCatalogId}
+								placeholder={$LL.admin_admin_logging_catalog_id_placeholder()}
+							/>
+							<input
+								bind:value={sensitiveProbeTenantId}
+								placeholder={$LL.admin_admin_logging_tenant_id_placeholder()}
+							/>
+							<input
+								bind:value={sensitiveProbeObjectClass}
+								placeholder={$LL.admin_admin_logging_object_class_placeholder()}
+							/>
 							<button
 								class="btn btn-secondary"
 								onclick={runSensitiveProbe}
@@ -791,17 +834,27 @@
 									!sensitiveProbeCatalogId.trim() ||
 									!canProbeSensitiveDetail}
 							>
-								{sensitiveProbeLoading ? 'Probing...' : 'Probe'}
+								{sensitiveProbeLoading
+									? $LL.admin_admin_logging_probing()
+									: $LL.admin_admin_logging_probe()}
 							</button>
 						</div>
 						{#if sensitiveProbe}
 							<div class="detail-grid">
-								<span>status: {sensitiveProbe.read_status}</span>
-								<span>class: {sensitiveProbe.object_class}</span>
-								<span>key version: {sensitiveProbe.key_version}</span>
-								<span>adapter: {sensitiveProbe.adapter_binding}</span>
-								<span>line: {sensitiveProbe.line_number}</span>
-								<span>bytes: {sensitiveProbe.byte_length ?? '-'}</span>
+								<span>{$LL.admin_admin_logging_probe_status()} {sensitiveProbe.read_status}</span>
+								<span>{$LL.admin_admin_logging_probe_class()} {sensitiveProbe.object_class}</span>
+								<span>
+									{$LL.admin_admin_logging_probe_key_version()}
+									{sensitiveProbe.key_version}
+								</span>
+								<span>
+									{$LL.admin_admin_logging_probe_adapter()}
+									{sensitiveProbe.adapter_binding}
+								</span>
+								<span>{$LL.admin_admin_logging_probe_line()} {sensitiveProbe.line_number}</span>
+								<span
+									>{$LL.admin_admin_logging_probe_bytes()} {sensitiveProbe.byte_length ?? '-'}</span
+								>
 							</div>
 						{/if}
 					</div>
@@ -812,26 +865,26 @@
 		{#if canViewSensitiveDetailPolicy}
 			<section class="panel">
 				<div class="section-header">
-					<h2>Key Registry</h2>
+					<h2>{$LL.admin_admin_logging_key_registry()}</h2>
 					<div class="inline-actions">
 						<input type="number" min="1" max="100" bind:value={rewrapCreateLimit} />
 						<span>{keyRegistryItems.length}</span>
 					</div>
 				</div>
 				{#if keyRegistryItems.length === 0}
-					<p class="muted">No logging key registry rows found.</p>
+					<p class="muted">{$LL.admin_admin_logging_no_key_registry()}</p>
 				{:else}
 					<div class="table-wrap">
 						<table>
 							<thead>
 								<tr>
-									<th>Scope</th>
-									<th>Active</th>
-									<th>Version</th>
-									<th>Status</th>
-									<th>Usage</th>
-									<th>Stale</th>
-									<th>Actions</th>
+									<th>{$LL.admin_admin_logging_scope()}</th>
+									<th>{$LL.admin_admin_logging_active()}</th>
+									<th>{$LL.admin_admin_logging_version()}</th>
+									<th>{$LL.admin_admin_logging_status()}</th>
+									<th>{$LL.admin_admin_logging_usage()}</th>
+									<th>{$LL.admin_admin_logging_stale()}</th>
+									<th>{$LL.admin_admin_logging_actions()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -850,7 +903,7 @@
 													onclick={() => loadKeyImpact(item)}
 													disabled={keyActionId === item.id}
 												>
-													Impact
+													{$LL.admin_admin_logging_impact()}
 												</button>
 												<button
 													class="btn btn-secondary"
@@ -859,7 +912,7 @@
 														item.version === null ||
 														!canRunCatalogRepair}
 												>
-													Queue rewrap
+													{$LL.admin_admin_logging_queue_rewrap()}
 												</button>
 											</div>
 										</td>
@@ -886,22 +939,22 @@
 		{#if canReadMessageJobs}
 			<section class="panel">
 				<div class="section-header">
-					<h2>Message Jobs</h2>
+					<h2>{$LL.admin_admin_logging_message_jobs()}</h2>
 					<span>{messageJobs.length}</span>
 				</div>
 				{#if messageJobs.length === 0}
-					<p class="muted">No message jobs found.</p>
+					<p class="muted">{$LL.admin_admin_logging_no_message_jobs()}</p>
 				{:else}
 					<div class="table-wrap">
 						<table>
 							<thead>
 								<tr>
-									<th>Created</th>
-									<th>Kind</th>
-									<th>Status</th>
-									<th>Lane</th>
-									<th>Source</th>
-									<th>Error</th>
+									<th>{$LL.admin_admin_logging_created()}</th>
+									<th>{$LL.admin_admin_logging_kind()}</th>
+									<th>{$LL.admin_admin_logging_status()}</th>
+									<th>{$LL.admin_admin_logging_lane()}</th>
+									<th>{$LL.admin_admin_logging_source()}</th>
+									<th>{$LL.admin_admin_logging_error()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -925,23 +978,23 @@
 		{#if canReadCatalogRepair}
 			<section class="panel">
 				<div class="section-header">
-					<h2>Rewrap Jobs</h2>
+					<h2>{$LL.admin_admin_logging_rewrap_jobs()}</h2>
 					<span>{rewrapJobs.length}</span>
 				</div>
 				{#if rewrapJobs.length === 0}
-					<p class="muted">No rewrap jobs found.</p>
+					<p class="muted">{$LL.admin_admin_logging_no_rewrap_jobs()}</p>
 				{:else}
 					<div class="table-wrap">
 						<table>
 							<thead>
 								<tr>
-									<th>Status</th>
-									<th>Scope</th>
-									<th>Version</th>
-									<th>Priority</th>
-									<th>Object</th>
-									<th>Created</th>
-									<th>Actions</th>
+									<th>{$LL.admin_admin_logging_status()}</th>
+									<th>{$LL.admin_admin_logging_scope()}</th>
+									<th>{$LL.admin_admin_logging_version()}</th>
+									<th>{$LL.admin_admin_logging_priority()}</th>
+									<th>{$LL.admin_admin_logging_object()}</th>
+									<th>{$LL.admin_admin_logging_created()}</th>
+									<th>{$LL.admin_admin_logging_actions()}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -972,7 +1025,7 @@
 														rewrapPriorityFor(job) === job.priority ||
 														!canRunCatalogRepair}
 												>
-													Set
+													{$LL.admin_admin_logging_set()}
 												</button>
 											</div>
 										</td>
@@ -987,7 +1040,7 @@
 														rewrapJobActionId === job.id ||
 														!canRunCatalogRepair}
 												>
-													Retry
+													{$LL.admin_admin_logging_retry()}
 												</button>
 												<button
 													class="btn btn-danger btn-small"
@@ -996,7 +1049,7 @@
 														rewrapJobActionId === job.id ||
 														!canRunCatalogRepair}
 												>
-													Cancel
+													{$LL.admin_admin_logging_cancel()}
 												</button>
 											</div>
 										</td>
@@ -1011,21 +1064,21 @@
 
 		<section class="panel">
 			<div class="section-header">
-				<h2>Recent Critical Changes</h2>
+				<h2>{$LL.admin_admin_logging_recent_critical_changes()}</h2>
 				<span>{overview.recent_changes.length}</span>
 			</div>
 			{#if overview.recent_changes.length === 0}
-				<p class="muted">No recent critical changes found.</p>
+				<p class="muted">{$LL.admin_admin_logging_no_recent_critical_changes()}</p>
 			{:else}
 				<div class="table-wrap">
 					<table>
 						<thead>
 							<tr>
-								<th>Action</th>
-								<th>Resource</th>
-								<th>Severity</th>
-								<th>Actor</th>
-								<th>Time</th>
+								<th>{$LL.admin_admin_logging_action()}</th>
+								<th>{$LL.admin_admin_logging_resource()}</th>
+								<th>{$LL.admin_admin_logging_severity()}</th>
+								<th>{$LL.admin_admin_logging_actor()}</th>
+								<th>{$LL.admin_admin_logging_time()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -1046,21 +1099,21 @@
 
 		<section class="panel">
 			<div class="section-header">
-				<h2>Archive Chunks</h2>
+				<h2>{$LL.admin_admin_logging_archive_chunks()}</h2>
 				<span>{overview.archive.length}</span>
 			</div>
 			{#if overview.archive.length === 0}
-				<p class="muted">No archive chunks found.</p>
+				<p class="muted">{$LL.admin_admin_logging_no_archive_chunks()}</p>
 			{:else}
 				<div class="table-wrap">
 					<table>
 						<thead>
 							<tr>
-								<th>Log type</th>
-								<th>Plane</th>
-								<th>Status</th>
-								<th>Chunks</th>
-								<th>Records</th>
+								<th>{$LL.admin_admin_logging_log_type()}</th>
+								<th>{$LL.admin_admin_logging_plane()}</th>
+								<th>{$LL.admin_admin_logging_status()}</th>
+								<th>{$LL.admin_admin_logging_chunks()}</th>
+								<th>{$LL.admin_admin_logging_records_label()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -1081,19 +1134,19 @@
 
 		<section class="panel">
 			<div class="section-header">
-				<h2>Delivery Health</h2>
+				<h2>{$LL.admin_admin_logging_delivery_health()}</h2>
 				<span>{overview.delivery.length}</span>
 			</div>
 			{#if overview.delivery.length === 0}
-				<p class="muted">No delivery events found.</p>
+				<p class="muted">{$LL.admin_admin_logging_no_delivery_events()}</p>
 			{:else}
 				<div class="table-wrap">
 					<table>
 						<thead>
 							<tr>
-								<th>Lane</th>
-								<th>Status</th>
-								<th>Total</th>
+								<th>{$LL.admin_admin_logging_lane()}</th>
+								<th>{$LL.admin_admin_logging_status()}</th>
+								<th>{$LL.admin_admin_logging_total()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -1117,7 +1170,7 @@
 	title={dangerConfirmation?.title ?? ''}
 	resourceName={dangerConfirmation?.resourceName ?? ''}
 	phrase={dangerConfirmation?.phrase ?? ''}
-	confirmLabel={dangerConfirmation?.confirmLabel ?? 'Confirm'}
+	confirmLabel={dangerConfirmation?.confirmLabel ?? $LL.admin_admin_logging_confirm()}
 	onConfirm={confirmDangerConfirmation}
 	onCancel={cancelDangerConfirmation}
 />

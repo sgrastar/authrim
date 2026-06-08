@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminRolesAPI,
 		type RoleDetail,
@@ -14,6 +15,12 @@
 	} from '$lib/api/admin-roles';
 	import { Modal } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import {
+		formatPermissionCategory,
+		formatPermissionLabel,
+		formatRoleType,
+		formatScope
+	} from '$lib/admin/roles-i18n';
 
 	let role: RoleDetail | null = $state(null);
 	let loading = $state(true);
@@ -70,7 +77,7 @@
 	async function loadRole() {
 		const roleId = $page.params.id;
 		if (!roleId) {
-			error = 'Role ID is required';
+			error = $LL.admin_roles_role_id_required();
 			loading = false;
 			return;
 		}
@@ -82,8 +89,7 @@
 			const response = await adminRolesAPI.get(roleId);
 			role = response.role;
 		} catch (err) {
-			console.error('Failed to load role:', err);
-			error = err instanceof Error ? err.message : 'Failed to load role';
+			error = err instanceof Error ? err.message : $LL.admin_roles_detail_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -105,8 +111,8 @@
 			assignedUsers = response.assignments;
 			assignedUsersPagination = response.pagination;
 		} catch (err) {
-			console.error('Failed to load assigned users:', err);
-			assignedUsersError = err instanceof Error ? err.message : 'Failed to load assigned users';
+			assignedUsersError =
+				err instanceof Error ? err.message : $LL.admin_roles_assigned_users_load_failed();
 		} finally {
 			assignedUsersLoading = false;
 		}
@@ -162,9 +168,9 @@
 
 		try {
 			// Note: Delete API not implemented yet
-			deleteError = 'Role deletion is not yet implemented';
+			deleteError = $LL.admin_roles_delete_unavailable();
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete role';
+			deleteError = err instanceof Error ? err.message : $LL.admin_roles_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -209,19 +215,21 @@
 
 <svelte:head>
 	<title
-		>{role ? `${role.display_name || role.name} - Roles` : 'Role Details'} - Admin Dashboard - Authrim</title
+		>{role
+			? $LL.admin_roles_detail_head_title({ role: role.display_name || role.name })
+			: $LL.admin_roles_detail_fallback_head_title()}</title
 	>
 </svelte:head>
 
 <div class="admin-page">
-	<a href="/admin/roles" class="back-link">← Back to Roles</a>
+	<a href="/admin/roles" class="back-link">← {$LL.admin_roles_back_to_roles()}</a>
 
 	{#if loading}
-		<div class="loading-state">Loading role details...</div>
+		<div class="loading-state">{$LL.admin_roles_detail_loading()}</div>
 	{:else if error}
 		<div class="alert alert-error">
 			<span>{error}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadRole}>Retry</button>
+			<button class="btn btn-secondary btn-sm" onclick={loadRole}>{$LL.admin_roles_retry()}</button>
 		</div>
 	{:else if role}
 		<!-- Role Header -->
@@ -234,15 +242,19 @@
 					{/if}
 				</h1>
 				{#if roleType}
-					<span class={getRoleTypeBadgeClass(roleType)}>{roleType}</span>
+					<span class={getRoleTypeBadgeClass(roleType)}>{formatRoleType(roleType, $LL)}</span>
 				{/if}
 			</div>
 			<div class="action-buttons">
 				{#if canEdit}
-					<button class="btn btn-secondary" onclick={navigateToEdit}>Edit</button>
+					<button class="btn btn-secondary" onclick={navigateToEdit}
+						>{$LL.admin_roles_edit()}</button
+					>
 				{/if}
 				{#if canDelete}
-					<button class="btn btn-danger" onclick={openDeleteDialog}>Delete</button>
+					<button class="btn btn-danger" onclick={openDeleteDialog}
+						>{$LL.admin_roles_delete()}</button
+					>
 				{/if}
 			</div>
 		</div>
@@ -256,36 +268,34 @@
 			<div class="info-box">
 				<span>ℹ️</span>
 				<div>
-					<strong>This role inherits from: {role.inherits_from}</strong>
-					<p>
-						When the base role is updated, changes will be automatically reflected in this role.
-					</p>
+					<strong>{$LL.admin_roles_inherits_from({ role: role.inherits_from })}</strong>
+					<p>{$LL.admin_roles_inherits_note()}</p>
 				</div>
 			</div>
 		{/if}
 
 		<!-- Role Info Panel -->
 		<div class="panel">
-			<h2 class="panel-title">Role Information</h2>
+			<h2 class="panel-title">{$LL.admin_roles_role_information()}</h2>
 			<div class="info-grid">
 				<div class="info-item">
-					<dt class="info-label">ID</dt>
+					<dt class="info-label">{$LL.admin_roles_id()}</dt>
 					<dd class="info-value mono">{role.id}</dd>
 				</div>
 				<div class="info-item">
-					<dt class="info-label">Type</dt>
-					<dd class="info-value">{roleType}</dd>
+					<dt class="info-label">{$LL.admin_roles_type()}</dt>
+					<dd class="info-value">{formatRoleType(roleType, $LL)}</dd>
 				</div>
 				<div class="info-item">
-					<dt class="info-label">Assigned Users</dt>
+					<dt class="info-label">{$LL.admin_roles_assigned_users()}</dt>
 					<dd class="info-value">{role.assignment_count}</dd>
 				</div>
 				<div class="info-item">
-					<dt class="info-label">Created</dt>
+					<dt class="info-label">{$LL.admin_roles_created()}</dt>
 					<dd class="info-value">{formatDate(role.created_at)}</dd>
 				</div>
 				<div class="info-item">
-					<dt class="info-label">Updated</dt>
+					<dt class="info-label">{$LL.admin_roles_updated()}</dt>
 					<dd class="info-value">{formatDate(role.updated_at)}</dd>
 				</div>
 			</div>
@@ -293,22 +303,26 @@
 
 		<!-- Permissions Panel -->
 		<div class="panel">
-			<h2 class="panel-title">Permissions ({role.effectivePermissions?.length || 0})</h2>
+			<h2 class="panel-title">
+				{$LL.admin_roles_permissions_with_count({ count: role.effectivePermissions?.length || 0 })}
+			</h2>
 
 			{#if permissionsByCategory.length === 0}
-				<p class="empty-text">This role has no permissions assigned.</p>
+				<p class="empty-text">{$LL.admin_roles_no_permissions()}</p>
 			{:else}
 				<div class="permission-grid">
 					{#each permissionsByCategory as category (category.category)}
 						<div class="permission-category-card">
-							<h3 class="permission-category-title">{category.categoryLabel}</h3>
+							<h3 class="permission-category-title">
+								{formatPermissionCategory(category.category, $LL)}
+							</h3>
 							<div class="permission-list">
 								{#each category.permissions as perm (perm.id)}
 									{#if perm.hasPermission}
 										<div class="permission-item" class:inherited={perm.isInherited}>
-											<span class="permission-name">{perm.label}</span>
+											<span class="permission-name">{formatPermissionLabel(perm.id, $LL)}</span>
 											{#if perm.isInherited}
-												<span class="badge badge-neutral">Inherited</span>
+												<span class="badge badge-neutral">{$LL.admin_roles_inherited()}</span>
 											{/if}
 											<span class="permission-id">{perm.id}</span>
 										</div>
@@ -323,32 +337,33 @@
 
 		<!-- Assigned Users Panel -->
 		<div class="panel">
-			<h2 class="panel-title">Assigned Users ({role.assignment_count})</h2>
-			<p class="form-hint">
-				Users with this role. To assign or remove this role, go to the user's detail page.
-			</p>
+			<h2 class="panel-title">
+				{$LL.admin_roles_assigned_users()} ({role.assignment_count})
+			</h2>
+			<p class="form-hint">{$LL.admin_roles_assigned_users_hint()}</p>
 
 			{#if assignedUsersLoading}
-				<div class="loading-state">Loading users...</div>
+				<div class="loading-state">{$LL.admin_roles_loading_users()}</div>
 			{:else if assignedUsersError}
 				<div class="alert alert-error">
 					<span>{assignedUsersError}</span>
 					<button
 						class="btn btn-secondary btn-sm"
-						onclick={() => loadAssignedUsers(assignedUsersPagination.page)}>Retry</button
+						onclick={() => loadAssignedUsers(assignedUsersPagination.page)}
+						>{$LL.admin_roles_retry()}</button
 					>
 				</div>
 			{:else if assignedUsers.length === 0}
-				<div class="empty-state">No users are assigned to this role.</div>
+				<div class="empty-state">{$LL.admin_roles_no_assigned_users()}</div>
 			{:else}
 				<div class="table-container">
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>User</th>
-								<th>Scope</th>
-								<th>Assigned</th>
-								<th>Actions</th>
+								<th>{$LL.admin_roles_user()}</th>
+								<th>{$LL.admin_roles_scope()}</th>
+								<th>{$LL.admin_roles_assigned()}</th>
+								<th>{$LL.admin_roles_actions()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -356,12 +371,16 @@
 								<tr>
 									<td>
 										<div class="user-cell">
-											<span class="user-cell-name">{user.user_name || 'Unknown'}</span>
+											<span class="user-cell-name"
+												>{user.user_name || $LL.admin_roles_unknown()}</span
+											>
 											<span class="user-cell-email">{user.user_email || user.user_id}</span>
 										</div>
 									</td>
 									<td>
-										<span class={getScopeBadgeClass(user.scope)}>{user.scope}</span>
+										<span class={getScopeBadgeClass(user.scope)}
+											>{formatScope(user.scope, $LL)}</span
+										>
 										{#if user.scope_target}
 											<span class="scope-target">{user.scope_target}</span>
 										{/if}
@@ -369,7 +388,7 @@
 									<td class="nowrap text-secondary">{formatDate(user.assigned_at)}</td>
 									<td>
 										<button class="btn-link" onclick={() => navigateToUser(user.user_id)}>
-											View User →
+											{$LL.admin_roles_view_user()} →
 										</button>
 									</td>
 								</tr>
@@ -386,17 +405,20 @@
 							disabled={!assignedUsersPagination.hasPrev}
 							onclick={() => loadAssignedUsers(assignedUsersPagination.page - 1)}
 						>
-							← Previous
+							← {$LL.admin_roles_previous()}
 						</button>
 						<span class="pagination-info">
-							Page {assignedUsersPagination.page} of {assignedUsersPagination.totalPages}
+							{$LL.admin_roles_page_of({
+								page: assignedUsersPagination.page,
+								totalPages: assignedUsersPagination.totalPages
+							})}
 						</span>
 						<button
 							class="btn btn-secondary btn-sm"
 							disabled={!assignedUsersPagination.hasNext}
 							onclick={() => loadAssignedUsers(assignedUsersPagination.page + 1)}
 						>
-							Next →
+							{$LL.admin_roles_next()} →
 						</button>
 					</div>
 				{/if}
@@ -407,7 +429,7 @@
 		{#if roleType === 'custom' && role.assignment_count > 0}
 			<div class="warning-box">
 				<p>
-					⚠️ This role is assigned to {role.assignment_count} user(s). Remove all assignments before deleting.
+					⚠️ {$LL.admin_roles_delete_assigned_warning({ count: role.assignment_count })}
 				</p>
 			</div>
 		{/if}
@@ -415,11 +437,16 @@
 </div>
 
 <!-- Delete Confirmation Dialog -->
-<Modal open={showDeleteDialog && !!role} onClose={closeDeleteDialog} title="Delete Role" size="sm">
+<Modal
+	open={showDeleteDialog && !!role}
+	onClose={closeDeleteDialog}
+	title={$LL.admin_roles_delete_title()}
+	size="sm"
+>
 	<p>
-		Are you sure you want to delete the role <strong>{role?.name ?? ''}</strong>?
+		{$LL.admin_roles_delete_description({ role: role?.name ?? '' })}
 	</p>
-	<p class="text-danger">This action cannot be undone.</p>
+	<p class="text-danger">{$LL.admin_roles_delete_danger()}</p>
 
 	{#if deleteError}
 		<div class="alert alert-error">{deleteError}</div>
@@ -427,10 +454,10 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}>
-			Cancel
+			{$LL.admin_roles_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete'}
+			{deleting ? $LL.admin_roles_deleting() : $LL.admin_roles_delete()}
 		</button>
 	{/snippet}
 </Modal>

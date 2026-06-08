@@ -9,6 +9,7 @@
 		type DeliveryStatus
 	} from '$lib/api/admin-webhooks';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let webhook: Webhook | null = $state(null);
 	let deliveries: WebhookDelivery[] = $state([]);
@@ -39,22 +40,21 @@
 	async function loadWebhook() {
 		const webhookId = $page.params.id;
 		if (!webhookId) {
-			error = 'Webhook ID is required';
+			error = $LL.admin_webhooks_deliveries_webhook_id_required();
 			return;
 		}
 
 		try {
 			webhook = await adminWebhooksAPI.get(webhookId);
-		} catch (err) {
-			console.error('Failed to load webhook:', err);
-			error = 'Failed to load webhook details';
+		} catch {
+			error = $LL.admin_webhooks_deliveries_load_webhook_failed();
 		}
 	}
 
 	async function loadDeliveries(append = false) {
 		const webhookId = $page.params.id;
 		if (!webhookId) {
-			error = 'Webhook ID is required';
+			error = $LL.admin_webhooks_deliveries_webhook_id_required();
 			return;
 		}
 
@@ -84,8 +84,7 @@
 			cursor = response.cursor;
 			hasMore = !!response.cursor;
 		} catch (err) {
-			console.error('Failed to load deliveries:', err);
-			error = err instanceof Error ? err.message : 'Failed to load deliveries';
+			error = err instanceof Error ? err.message : $LL.admin_webhooks_deliveries_load_failed();
 		} finally {
 			loading = false;
 			loadingMore = false;
@@ -117,14 +116,15 @@
 		const webhookId = $page.params.id;
 		if (!webhookId) {
 			detailLoading = false;
-			detailError = 'Webhook ID is required';
+			detailError = $LL.admin_webhooks_deliveries_webhook_id_required();
 			return;
 		}
 
 		try {
 			selectedDelivery = await adminWebhooksAPI.getDelivery(webhookId, delivery.id);
 		} catch (err) {
-			detailError = err instanceof Error ? err.message : 'Failed to load delivery details';
+			detailError =
+				err instanceof Error ? err.message : $LL.admin_webhooks_deliveries_detail_load_failed();
 		} finally {
 			detailLoading = false;
 		}
@@ -140,7 +140,7 @@
 	async function handleReplay(delivery: WebhookDelivery) {
 		const webhookId = $page.params.id;
 		if (!webhookId) {
-			replayError = 'Webhook ID is required';
+			replayError = $LL.admin_webhooks_deliveries_webhook_id_required();
 			return;
 		}
 
@@ -154,7 +154,8 @@
 			// Reload deliveries to show updated status
 			await loadDeliveries(false);
 		} catch (err) {
-			replayError = err instanceof Error ? err.message : 'Failed to replay delivery';
+			replayError =
+				err instanceof Error ? err.message : $LL.admin_webhooks_deliveries_replay_failed();
 		} finally {
 			replayingId = null;
 		}
@@ -180,7 +181,7 @@
 	}
 
 	function formatDate(timestamp: number): string {
-		return new Date(timestamp).toLocaleString('en-US', {
+		return new Date(timestamp).toLocaleString(undefined, {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric',
@@ -249,7 +250,7 @@
 	function truncateContent(content: string | undefined, maxLength = 10000): string {
 		if (!content) return '';
 		if (content.length <= maxLength) return content;
-		return content.slice(0, maxLength) + '\n\n... (truncated, click to expand)';
+		return content.slice(0, maxLength) + '\n\n' + $LL.admin_webhooks_truncated();
 	}
 
 	function canReplay(delivery: WebhookDelivery): boolean {
@@ -260,17 +261,34 @@
 		// Copy masked version only
 		navigator.clipboard.writeText(maskSensitiveData(text));
 	}
+
+	function deliveryStatusLabel(status: DeliveryStatus): string {
+		switch (status) {
+			case 'success':
+				return $LL.admin_webhooks_status_success();
+			case 'failed':
+				return $LL.admin_webhooks_status_failed();
+			case 'retrying':
+				return $LL.admin_webhooks_status_retrying();
+			case 'pending':
+				return $LL.admin_webhooks_status_pending();
+			default:
+				return status;
+		}
+	}
 </script>
 
 <div class="deliveries-page admin-page">
 	<div class="page-header">
 		<div>
-			<a href="/admin/webhooks" class="back-link">← Back to Webhooks</a>
+			<a href="/admin/webhooks" class="back-link">← {$LL.admin_webhooks_deliveries_back()}</a>
 			{#if webhook}
-				<h1 class="page-title">Delivery History: {webhook.name}</h1>
-				<p class="page-description">View and manage webhook delivery attempts.</p>
+				<h1 class="page-title">
+					{$LL.admin_webhooks_deliveries_title_with_name({ name: webhook.name })}
+				</h1>
+				<p class="page-description">{$LL.admin_webhooks_deliveries_description()}</p>
 			{:else}
-				<h1 class="page-title">Delivery History</h1>
+				<h1 class="page-title">{$LL.admin_webhooks_deliveries_title()}</h1>
 			{/if}
 		</div>
 	</div>
@@ -278,14 +296,14 @@
 	{#if error}
 		<div class="error-banner">
 			<span>{error}</span>
-			<button onclick={() => loadDeliveries()}>Retry</button>
+			<button onclick={() => loadDeliveries()}>{$LL.admin_webhooks_retry()}</button>
 		</div>
 	{/if}
 
 	{#if replayError}
 		<div class="error-banner">
 			<span>{replayError}</span>
-			<button onclick={() => (replayError = '')}>Dismiss</button>
+			<button onclick={() => (replayError = '')}>{$LL.admin_webhooks_dismiss()}</button>
 		</div>
 	{/if}
 
@@ -293,24 +311,26 @@
 	<div class="filter-section">
 		<div class="filter-row">
 			<div class="filter-group">
-				<label for="status-filter">Status</label>
+				<label for="status-filter">{$LL.admin_webhooks_status()}</label>
 				<select id="status-filter" bind:value={statusFilter}>
-					<option value="all">All</option>
-					<option value="success">Success</option>
-					<option value="failed">Failed</option>
-					<option value="retrying">Retrying</option>
-					<option value="pending">Pending</option>
+					<option value="all">{$LL.admin_webhooks_all()}</option>
+					<option value="success">{$LL.admin_webhooks_status_success()}</option>
+					<option value="failed">{$LL.admin_webhooks_status_failed()}</option>
+					<option value="retrying">{$LL.admin_webhooks_status_retrying()}</option>
+					<option value="pending">{$LL.admin_webhooks_status_pending()}</option>
 				</select>
 			</div>
 			<div class="filter-group">
-				<label for="date-from">From</label>
+				<label for="date-from">{$LL.admin_webhooks_from()}</label>
 				<input type="date" id="date-from" bind:value={dateFrom} />
 			</div>
 			<div class="filter-group">
-				<label for="date-to">To</label>
+				<label for="date-to">{$LL.admin_webhooks_to()}</label>
 				<input type="date" id="date-to" bind:value={dateTo} />
 			</div>
-			<button class="btn btn-secondary" onclick={applyFilters}>Apply Filters</button>
+			<button class="btn btn-secondary" onclick={applyFilters}
+				>{$LL.admin_webhooks_apply_filters()}</button
+			>
 		</div>
 	</div>
 
@@ -318,12 +338,12 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading deliveries...</p>
+			<p>{$LL.admin_webhooks_deliveries_loading()}</p>
 		</div>
 	{:else if deliveries.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No deliveries found.</p>
+				<p class="empty-state-description">{$LL.admin_webhooks_deliveries_empty()}</p>
 			</div>
 		</div>
 	{:else}
@@ -331,13 +351,13 @@
 			<table class="deliveries-table">
 				<thead>
 					<tr>
-						<th>Event</th>
-						<th>Status</th>
-						<th>Response</th>
-						<th>Duration</th>
-						<th>Attempts</th>
-						<th>Date</th>
-						<th>Actions</th>
+						<th>{$LL.admin_webhooks_event()}</th>
+						<th>{$LL.admin_webhooks_status()}</th>
+						<th>{$LL.admin_webhooks_response()}</th>
+						<th>{$LL.admin_webhooks_duration()}</th>
+						<th>{$LL.admin_webhooks_attempts()}</th>
+						<th>{$LL.admin_webhooks_date()}</th>
+						<th>{$LL.admin_webhooks_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -349,7 +369,7 @@
 							</td>
 							<td>
 								<span class={getStatusBadgeClass(delivery.status)}>
-									{delivery.status}
+									{deliveryStatusLabel(delivery.status)}
 								</span>
 							</td>
 							<td class="response-cell">
@@ -363,7 +383,9 @@
 										{delivery.response_status}
 									</span>
 								{:else if delivery.error_message}
-									<span class="error-text" title={delivery.error_message}>Error</span>
+									<span class="error-text" title={delivery.error_message}
+										>{$LL.admin_webhooks_error()}</span
+									>
 								{:else}
 									-
 								{/if}
@@ -379,7 +401,7 @@
 										openDetailDialog(delivery);
 									}}
 								>
-									View
+									{$LL.admin_webhooks_view()}
 								</button>
 								{#if canReplay(delivery)}
 									<button
@@ -390,7 +412,9 @@
 										}}
 										disabled={replayingId === delivery.id}
 									>
-										{replayingId === delivery.id ? 'Replaying...' : 'Replay'}
+										{replayingId === delivery.id
+											? $LL.admin_webhooks_replaying()
+											: $LL.admin_webhooks_replay()}
 									</button>
 								{/if}
 							</td>
@@ -403,7 +427,7 @@
 		{#if hasMore}
 			<div class="load-more">
 				<button class="btn btn-secondary" onclick={loadMoreDeliveries} disabled={loadingMore}>
-					{loadingMore ? 'Loading...' : 'Load More'}
+					{loadingMore ? $LL.admin_webhooks_loading() : $LL.admin_webhooks_load_more()}
 				</button>
 			</div>
 		{/if}
@@ -414,49 +438,49 @@
 <Modal
 	open={showDetailDialog && !!selectedDelivery}
 	onClose={closeDetailDialog}
-	title="Delivery Details"
+	title={$LL.admin_webhooks_delivery_details()}
 	size="lg"
 >
 	{#if selectedDelivery}
 		<div class="detail-content">
 			<div class="detail-info">
 				<div class="info-row">
-					<span class="info-label">Event Type</span>
+					<span class="info-label">{$LL.admin_webhooks_event_type()}</span>
 					<span class="info-value">{selectedDelivery.event_type}</span>
 				</div>
 				<div class="info-row">
-					<span class="info-label">Event ID</span>
+					<span class="info-label">{$LL.admin_webhooks_event_id()}</span>
 					<span class="info-value mono">{selectedDelivery.event_id}</span>
 				</div>
 				<div class="info-row">
-					<span class="info-label">Status</span>
+					<span class="info-label">{$LL.admin_webhooks_status()}</span>
 					<span class={getStatusBadgeClass(selectedDelivery.status)}>
-						{selectedDelivery.status}
+						{deliveryStatusLabel(selectedDelivery.status)}
 					</span>
 				</div>
 				<div class="info-row">
-					<span class="info-label">Attempts</span>
+					<span class="info-label">{$LL.admin_webhooks_attempts()}</span>
 					<span class="info-value">{selectedDelivery.attempt_count}</span>
 				</div>
 				<div class="info-row">
-					<span class="info-label">Created</span>
+					<span class="info-label">{$LL.admin_webhooks_created()}</span>
 					<span class="info-value">{formatDate(selectedDelivery.created_at)}</span>
 				</div>
 				{#if selectedDelivery.completed_at}
 					<div class="info-row">
-						<span class="info-label">Completed</span>
+						<span class="info-label">{$LL.admin_webhooks_completed()}</span>
 						<span class="info-value">{formatDate(selectedDelivery.completed_at)}</span>
 					</div>
 				{/if}
 				{#if selectedDelivery.next_retry_at}
 					<div class="info-row">
-						<span class="info-label">Next Retry</span>
+						<span class="info-label">{$LL.admin_webhooks_next_retry()}</span>
 						<span class="info-value">{formatDate(selectedDelivery.next_retry_at)}</span>
 					</div>
 				{/if}
 				{#if selectedDelivery.error_message}
 					<div class="info-row">
-						<span class="info-label">Error</span>
+						<span class="info-label">{$LL.admin_webhooks_error()}</span>
 						<span class="info-value text-danger">{selectedDelivery.error_message}</span>
 					</div>
 				{/if}
@@ -468,21 +492,21 @@
 					class:active={detailViewMode === 'pretty'}
 					onclick={() => (detailViewMode = 'pretty')}
 				>
-					Pretty
+					{$LL.admin_webhooks_pretty()}
 				</button>
 				<button
 					class="tab-btn"
 					class:active={detailViewMode === 'raw'}
 					onclick={() => (detailViewMode = 'raw')}
 				>
-					Raw
+					{$LL.admin_webhooks_raw()}
 				</button>
 			</div>
 
 			{#if detailLoading}
 				<div class="loading-state">
 					<i class="i-ph-circle-notch loading-spinner"></i>
-					<p>Loading delivery details...</p>
+					<p>{$LL.admin_webhooks_detail_loading()}</p>
 				</div>
 			{:else if detailError}
 				<div class="error-banner">
@@ -493,14 +517,14 @@
 			{#if selectedDelivery.request_headers && !detailLoading}
 				<div class="payload-section">
 					<div class="payload-header">
-						<h3>Request Headers</h3>
+						<h3>{$LL.admin_webhooks_request_headers()}</h3>
 						<button
 							class="copy-btn"
 							onclick={() =>
 								copyToClipboard(JSON.stringify(selectedDelivery?.request_headers || {}, null, 2))}
-							title="Copy masked content"
+							title={$LL.admin_webhooks_copy_masked_title()}
 						>
-							Copy
+							{$LL.admin_webhooks_copy()}
 						</button>
 					</div>
 					<pre class="payload-content">{detailViewMode === 'pretty'
@@ -514,13 +538,13 @@
 			{#if selectedDelivery.request_body && !detailLoading}
 				<div class="payload-section">
 					<div class="payload-header">
-						<h3>Request Body</h3>
+						<h3>{$LL.admin_webhooks_request_body()}</h3>
 						<button
 							class="copy-btn"
 							onclick={() => copyToClipboard(selectedDelivery?.request_body || '')}
-							title="Copy masked content"
+							title={$LL.admin_webhooks_copy_masked_title()}
 						>
-							Copy
+							{$LL.admin_webhooks_copy()}
 						</button>
 					</div>
 					<pre class="payload-content">{detailViewMode === 'pretty'
@@ -532,13 +556,13 @@
 			{#if selectedDelivery.response_body && !detailLoading}
 				<div class="payload-section">
 					<div class="payload-header">
-						<h3>Response Body</h3>
+						<h3>{$LL.admin_webhooks_response_body()}</h3>
 						<button
 							class="copy-btn"
 							onclick={() => copyToClipboard(selectedDelivery?.response_body || '')}
-							title="Copy masked content"
+							title={$LL.admin_webhooks_copy_masked_title()}
 						>
-							Copy
+							{$LL.admin_webhooks_copy()}
 						</button>
 					</div>
 					<pre class="payload-content">{detailViewMode === 'pretty'
@@ -556,9 +580,13 @@
 				onclick={() => selectedDelivery && handleReplay(selectedDelivery)}
 				disabled={replayingId === selectedDelivery.id}
 			>
-				{replayingId === selectedDelivery.id ? 'Replaying...' : 'Replay Delivery'}
+				{replayingId === selectedDelivery.id
+					? $LL.admin_webhooks_replaying()
+					: $LL.admin_webhooks_replay_delivery()}
 			</button>
 		{/if}
-		<button class="btn btn-secondary" onclick={closeDetailDialog}>Close</button>
+		<button class="btn btn-secondary" onclick={closeDetailDialog}
+			>{$LL.admin_webhooks_close()}</button
+		>
 	{/snippet}
 </Modal>

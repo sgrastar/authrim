@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { edge, fieldRef, TEST_CATALOG } from '@authrim/ar-lib-identity-mapping/test-support';
-import type { FieldRef } from '@authrim/ar-lib-identity-mapping';
+import { edge, fieldRef, TEST_CATALOG } from '@authrim/ar-lib-field-mapping/test-support';
+import type { FieldRef } from '@authrim/ar-lib-field-mapping';
 import {
   adminCsvDryRunPreviewHandler,
   adminOidcReleasePreviewHandler,
@@ -15,7 +15,7 @@ interface PreviewResponseBody {
   rowResults: Array<{ canonicalTargetPreview: unknown[] }>;
 }
 
-interface OutboundPreviewResponseBody {
+interface DestinationPreviewResponseBody {
   preview: unknown;
   status: string;
   summary: {
@@ -174,7 +174,7 @@ describe('adminCsvDryRunPreviewHandler', () => {
   });
 });
 
-describe('admin outbound release preview handlers', () => {
+describe('admin destination release preview handlers', () => {
   it('returns OIDC release preview with ASC constraints and no raw requested value leakage', async () => {
     const app = buildApp();
     const response = await app.request('/preview/oidc', {
@@ -208,7 +208,7 @@ describe('admin outbound release preview handlers', () => {
     });
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as OutboundPreviewResponseBody;
+    const body = (await response.json()) as DestinationPreviewResponseBody;
     expect(body.preview).toEqual({
       protocol: 'oidc',
       persisted: false,
@@ -261,7 +261,7 @@ describe('admin outbound release preview handlers', () => {
     });
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as OutboundPreviewResponseBody;
+    const body = (await response.json()) as DestinationPreviewResponseBody;
     expect(body.status).toBe('partial');
     expect(body.summary.omitCount).toBe(1);
     expect(body.items[0]).toMatchObject({
@@ -306,7 +306,7 @@ describe('admin outbound release preview handlers', () => {
     });
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as OutboundPreviewResponseBody;
+    const body = (await response.json()) as DestinationPreviewResponseBody;
     expect(body.status).toBe('failed');
     expect(body.summary.regulatedDenyCount).toBe(1);
     expect(body.items[0]?.reasons).toContainEqual({
@@ -339,7 +339,7 @@ describe('admin outbound release preview handlers', () => {
     });
   });
 
-  it('rejects outbound previews above the value cap', async () => {
+  it('rejects destination previews above the value cap', async () => {
     const app = buildApp();
     const values = Array.from({ length: 251 }, (_, index) => ({
       fieldRef: {

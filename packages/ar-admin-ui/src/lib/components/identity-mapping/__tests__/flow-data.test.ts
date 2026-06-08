@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { buildIdentityMappingFlowSamples } from '../flow-data';
 
-describe('identity mapping flow data adapter', () => {
+describe('field mapping flow data adapter', () => {
 	it('builds graph nodes from control-plane schemas instead of preview fixtures', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [
 				{
 					id: 'policy_1',
 					tenantId: 'tenant_a',
-					policyKey: 'default',
+					fieldMappingKey: 'default',
 					displayName: 'Default policy',
 					lifecycleState: 'draft'
 				}
@@ -336,7 +336,7 @@ describe('identity mapping flow data adapter', () => {
 
 		expect(samples[0]).toMatchObject({
 			title: 'Workday CSV',
-			inboundAdapter: 'CSV'
+			sourceAdapter: 'CSV'
 		});
 		expect(samples[0].nodes).toEqual(
 			expect.arrayContaining([

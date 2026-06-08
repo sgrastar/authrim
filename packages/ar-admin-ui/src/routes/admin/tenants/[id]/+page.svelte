@@ -20,6 +20,7 @@
 	} from '$lib/api/admin-settings';
 	import { getTenantProvisioningDraftUiState } from '$lib/admin/tenant-d1-ui-state';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// ==========================================================================
 	// State
@@ -92,10 +93,9 @@
 	const TENANT_ID_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 	function validateTenantCode(value: string): string {
-		if (!value) return 'Tenant code is required';
-		if (value.length > 63) return 'Must be 63 characters or fewer';
-		if (!TENANT_ID_REGEX.test(value))
-			return 'Lowercase letters, numbers, hyphens only. Must start and end with alphanumeric.';
+		if (!value) return $LL.admin_tenants_validation_code_required();
+		if (value.length > 63) return $LL.admin_tenants_validation_code_too_long();
+		if (!TENANT_ID_REGEX.test(value)) return $LL.admin_tenants_validation_code_format();
 		return '';
 	}
 
@@ -109,7 +109,7 @@
 		try {
 			tenant = await adminTenantsAPI.get(tenantId);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load tenant';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_load_tenant_failed();
 		} finally {
 			loading = false;
 		}
@@ -130,7 +130,7 @@
 			settingsMeta = meta;
 			settings = vals;
 		} catch (err) {
-			settingsError = err instanceof Error ? err.message : 'Failed to load settings';
+			settingsError = err instanceof Error ? err.message : $LL.admin_tenants_load_settings_failed();
 		} finally {
 			settingsLoading = false;
 		}
@@ -144,7 +144,7 @@
 			vanityDomains = response.domains;
 			vanityCloudflareConfigured = response.cloudflare_configured;
 		} catch (err) {
-			vanityError = err instanceof Error ? err.message : 'Failed to load vanity domains';
+			vanityError = err instanceof Error ? err.message : $LL.admin_tenants_load_vanity_failed();
 		} finally {
 			vanityLoading = false;
 		}
@@ -189,11 +189,11 @@
 			return;
 		}
 		if (!editName.trim()) {
-			saveError = 'Name is required';
+			saveError = $LL.admin_tenants_name_required();
 			return;
 		}
 		if (singleTenantMode && lifecycleEditable && editLifecycleState !== tenant.lifecycle_state) {
-			saveError = 'The initial tenant must remain active in single-tenant mode.';
+			saveError = $LL.admin_tenants_initial_active_required();
 			return;
 		}
 
@@ -213,7 +213,7 @@
 			tenant = updated;
 			isEditing = false;
 		} catch (err) {
-			saveError = err instanceof Error ? err.message : 'Failed to save';
+			saveError = err instanceof Error ? err.message : $LL.admin_tenants_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -236,7 +236,7 @@
 	async function handleDelete() {
 		if (!tenant) return;
 		if (deleteConfirmInput !== tenant.id) {
-			deleteError = 'Tenant ID does not match';
+			deleteError = $LL.admin_tenants_delete_id_mismatch();
 			return;
 		}
 		deleting = true;
@@ -246,7 +246,7 @@
 			tenantStore.update({ ...tenant, lifecycle_state: 'deleting' });
 			goto('/admin/tenants');
 		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete tenant';
+			deleteError = err instanceof Error ? err.message : $LL.admin_tenants_delete_failed();
 		} finally {
 			deleting = false;
 		}
@@ -264,7 +264,7 @@
 			tenantStore.setDefault(tenant.id);
 			tenant = { ...tenant, is_default: true };
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to set default';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_save_failed();
 		} finally {
 			settingDefault = false;
 		}
@@ -280,7 +280,7 @@
 			goto('/admin/tenants');
 		} catch (err) {
 			cleanupProvisioningError =
-				err instanceof Error ? err.message : 'Failed to cleanup tenant provisioning draft';
+				err instanceof Error ? err.message : $LL.admin_tenants_cleanup_failed();
 		} finally {
 			cleanupProvisioning = false;
 		}
@@ -297,7 +297,7 @@
 			await Promise.all([loadSettings(), loadVanityDomains()]);
 		} catch (err) {
 			retryProvisioningError =
-				err instanceof Error ? err.message : 'Failed to retry tenant provisioning';
+				err instanceof Error ? err.message : $LL.admin_tenants_retry_failed();
 		} finally {
 			retryProvisioning = false;
 		}
@@ -312,14 +312,14 @@
 	}
 
 	function formatValidationRecords(records: unknown): string {
-		if (!records) return 'No validation records returned yet.';
+		if (!records) return $LL.admin_tenants_no_validation_records();
 		return JSON.stringify(records, null, 2);
 	}
 
 	async function handleCreateVanityDomain() {
 		const hostname = newVanityHostname.trim();
 		if (!hostname) {
-			vanityError = 'Hostname is required';
+			vanityError = $LL.admin_tenants_hostname_required();
 			return;
 		}
 		vanityCreating = true;
@@ -329,13 +329,15 @@
 			const response = await tenantVanityDomainsAPI.create(tenantId, hostname);
 			newVanityHostname = '';
 			vanitySuccess = response.manual_setup_required
-				? 'Vanity domain saved. Add it manually in Cloudflare Custom Hostnames and create the DNS records shown below.'
+				? $LL.admin_tenants_vanity_saved_manual()
 				: response.cloudflare_error
-					? `Vanity domain saved, but Cloudflare returned an error: ${response.cloudflare_error}`
-					: 'Vanity domain created. Refresh status after DNS validation is complete.';
+					? $LL.admin_tenants_vanity_saved_cloudflare_error({
+							error: response.cloudflare_error
+						})
+					: $LL.admin_tenants_vanity_created();
 			await loadVanityDomains();
 		} catch (err) {
-			vanityError = err instanceof Error ? err.message : 'Failed to create vanity domain';
+			vanityError = err instanceof Error ? err.message : $LL.admin_tenants_vanity_create_failed();
 		} finally {
 			vanityCreating = false;
 		}
@@ -347,10 +349,10 @@
 		vanitySuccess = '';
 		try {
 			await tenantVanityDomainsAPI.sync(tenantId, id);
-			vanitySuccess = 'Cloudflare status refreshed.';
+			vanitySuccess = $LL.admin_tenants_vanity_refreshed();
 			await loadVanityDomains();
 		} catch (err) {
-			vanityError = err instanceof Error ? err.message : 'Failed to refresh vanity domain';
+			vanityError = err instanceof Error ? err.message : $LL.admin_tenants_vanity_refresh_failed();
 		} finally {
 			vanitySyncingId = null;
 		}
@@ -362,10 +364,10 @@
 		vanitySuccess = '';
 		try {
 			await tenantVanityDomainsAPI.verify(tenantId, id);
-			vanitySuccess = 'Vanity domain marked as verified.';
+			vanitySuccess = $LL.admin_tenants_vanity_verified();
 			await loadVanityDomains();
 		} catch (err) {
-			vanityError = err instanceof Error ? err.message : 'Failed to verify vanity domain';
+			vanityError = err instanceof Error ? err.message : $LL.admin_tenants_vanity_verify_failed();
 		} finally {
 			vanityVerifyingId = null;
 		}
@@ -377,10 +379,10 @@
 		vanitySuccess = '';
 		try {
 			await tenantVanityDomainsAPI.setPrimary(tenantId, id);
-			vanitySuccess = 'Primary vanity domain updated.';
+			vanitySuccess = $LL.admin_tenants_vanity_primary_updated();
 			await loadVanityDomains();
 		} catch (err) {
-			vanityError = err instanceof Error ? err.message : 'Failed to set primary vanity domain';
+			vanityError = err instanceof Error ? err.message : $LL.admin_tenants_vanity_primary_failed();
 		} finally {
 			vanityPrimaryId = null;
 		}
@@ -392,18 +394,43 @@
 		vanitySuccess = '';
 		try {
 			await tenantVanityDomainsAPI.delete(tenantId, id);
-			vanitySuccess = 'Vanity domain deleted.';
+			vanitySuccess = $LL.admin_tenants_vanity_deleted();
 			await loadVanityDomains();
 		} catch (err) {
-			vanityError = err instanceof Error ? err.message : 'Failed to delete vanity domain';
+			vanityError = err instanceof Error ? err.message : $LL.admin_tenants_vanity_delete_failed();
 		} finally {
 			vanityDeletingId = null;
+		}
+	}
+
+	function lifecycleLabel(state: string): string {
+		switch (state) {
+			case 'active':
+				return $LL.admin_tenants_active();
+			case 'suspended':
+				return $LL.admin_tenants_suspended();
+			case 'frozen':
+				return $LL.admin_tenants_frozen();
+			case 'migration_read_only':
+				return $LL.admin_tenants_migration_read_only();
+			case 'provisioning':
+				return $LL.admin_tenants_provisioning();
+			case 'deleting':
+				return $LL.admin_tenants_deleting();
+			case 'deleted':
+				return $LL.admin_tenants_deleted();
+			case 'restore_pending':
+				return $LL.admin_tenants_restore_pending();
+			case 'restore_validating':
+				return $LL.admin_tenants_restore_validating();
+			default:
+				return state;
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>{tenant?.name ?? tenantId} — Tenants — Admin Dashboard</title>
+	<title>{$LL.admin_tenants_detail_head_title({ name: tenant?.name ?? tenantId })}</title>
 </svelte:head>
 
 <div class="page">
@@ -411,14 +438,14 @@
 	<div class="page-nav">
 		<a href="/admin/tenants" class="back-link">
 			<i class="i-ph-arrow-left"></i>
-			Back to Tenants
+			{$LL.admin_tenants_back_to_tenants()}
 		</a>
 	</div>
 
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch animate-spin"></i>
-			Loading tenant...
+			{$LL.admin_tenants_loading_tenant()}
 		</div>
 	{:else if error && !tenant}
 		<div class="alert alert-error">
@@ -437,27 +464,27 @@
 					{#if tenant.is_default}
 						<span class="default-badge">
 							<i class="i-ph-star-fill"></i>
-							Default Tenant
+							{$LL.admin_tenants_default_tenant()}
 						</span>
 					{:else if tenantOperational}
 						<button
 							class="btn btn-secondary"
 							onclick={handleSetDefault}
 							disabled={!!settingDefault}
-							title="Set as default tenant"
+							title={$LL.admin_tenants_set_default_title()}
 						>
 							{#if settingDefault}
 								<i class="i-ph-circle-notch animate-spin"></i>
 							{:else}
 								<i class="i-ph-star"></i>
 							{/if}
-							Set as Default
+							{$LL.admin_tenants_set_default()}
 						</button>
 					{/if}
 					{#if !isEditing && tenantOperational}
 						<button class="btn btn-primary" onclick={startEdit}>
 							<i class="i-ph-pencil"></i>
-							Edit
+							{$LL.admin_tenants_edit()}
 						</button>
 					{/if}
 				</div>
@@ -466,11 +493,11 @@
 			<!-- Status badge -->
 			<div class="status-row">
 				{#if provisioningFailed}
-					<span class="badge badge-error">Provisioning Failed</span>
+					<span class="badge badge-error">{$LL.admin_tenants_provisioning_failed()}</span>
 				{:else if tenant.lifecycle_state === 'active'}
-					<span class="badge badge-active">Active</span>
+					<span class="badge badge-active">{$LL.admin_tenants_active()}</span>
 				{:else}
-					<span class="badge badge-inactive">{tenant.lifecycle_state}</span>
+					<span class="badge badge-inactive">{lifecycleLabel(tenant.lifecycle_state)}</span>
 				{/if}
 				{#if tenant.description}
 					<p class="description">{tenant.description}</p>
@@ -491,26 +518,30 @@
 					<i class={provisioningFailed ? 'i-ph-warning-circle' : 'i-ph-pause-circle'}></i>
 					<div>
 						<h2 class="card-title">
-							{provisioningDraftState.title}
+							{provisioningFailed
+								? $LL.admin_tenants_provisioning_failed()
+								: $LL.admin_tenants_provisioning_inactive_title()}
 						</h2>
 						<p class="card-description">
-							{provisioningDraftState.description}
+							{provisioningFailed
+								? $LL.admin_tenants_provisioning_failed_description()
+								: $LL.admin_tenants_provisioning_inactive_description()}
 						</p>
 					</div>
 				</div>
 				{#if provisioningDraftState.showActions}
 					<dl class="detail-grid compact-details">
 						<div class="detail-row">
-							<dt>Slot</dt>
+							<dt>{$LL.admin_tenants_slot()}</dt>
 							<dd class="mono">{provisioningDraftState.slot}</dd>
 						</div>
 						<div class="detail-row">
-							<dt>Last Error</dt>
-							<dd>{provisioningDraftState.error}</dd>
+							<dt>{$LL.admin_tenants_last_error()}</dt>
+							<dd>{tenant.provisioning_error ?? $LL.admin_tenants_no_error_detail()}</dd>
 						</div>
 						{#if tenant.provisioning_updated_at}
 							<div class="detail-row">
-								<dt>Updated</dt>
+								<dt>{$LL.admin_tenants_updated()}</dt>
 								<dd>{new Date(tenant.provisioning_updated_at * 1000).toLocaleString()}</dd>
 							</div>
 						{/if}
@@ -529,10 +560,10 @@
 						>
 							{#if retryProvisioning}
 								<i class="i-ph-circle-notch animate-spin"></i>
-								Retrying
+								{$LL.admin_tenants_retrying()}
 							{:else}
 								<i class="i-ph-arrows-clockwise"></i>
-								Retry
+								{$LL.admin_tenants_retry()}
 							{/if}
 						</button>
 						<button
@@ -542,10 +573,10 @@
 						>
 							{#if cleanupProvisioning}
 								<i class="i-ph-circle-notch animate-spin"></i>
-								Cleaning
+								{$LL.admin_tenants_cleaning()}
 							{:else}
 								<i class="i-ph-trash"></i>
-								Cleanup Draft
+								{$LL.admin_tenants_cleanup_draft()}
 							{/if}
 						</button>
 					</div>
@@ -556,13 +587,15 @@
 		<!-- Info Card (view mode) or Edit Form -->
 		{#if isEditing}
 			<section class="card">
-				<h2 class="card-title">Edit Tenant</h2>
+				<h2 class="card-title">{$LL.admin_tenants_edit_title()}</h2>
 				{#if saveError}
 					<div class="alert alert-error">{saveError}</div>
 				{/if}
 				<div class="form-grid">
 					<div class="form-group">
-						<label for="edit-name" class="form-label">Name <span class="required">*</span></label>
+						<label for="edit-name" class="form-label"
+							>{$LL.admin_tenants_name()} <span class="required">*</span></label
+						>
 						<input
 							id="edit-name"
 							type="text"
@@ -573,20 +606,22 @@
 					</div>
 					<div class="form-group">
 						<label for="edit-code" class="form-label"
-							>Tenant Code <span class="required">*</span></label
+							>{$LL.admin_tenants_tenant_code()} <span class="required">*</span></label
 						>
 						<input
 							id="edit-code"
 							type="text"
 							class="form-input"
 							bind:value={editTenantCode}
-							placeholder="Discovery code"
+							placeholder={$LL.admin_tenants_discovery_code_placeholder()}
 							maxlength="63"
 						/>
-						<p class="field-hint">Used for discovery. Lowercase letters, numbers, hyphens.</p>
+						<p class="field-hint">{$LL.admin_tenants_code_edit_hint()}</p>
 					</div>
 					<div class="form-group form-group-full">
-						<label for="edit-description" class="form-label">Description</label>
+						<label for="edit-description" class="form-label"
+							>{$LL.admin_tenants_description_label()}</label
+						>
 						<textarea
 							id="edit-description"
 							class="form-input"
@@ -596,80 +631,87 @@
 						></textarea>
 					</div>
 					<div class="form-group">
-						<label for="edit-lifecycle-state" class="form-label">Lifecycle State</label>
+						<label for="edit-lifecycle-state" class="form-label"
+							>{$LL.admin_tenants_lifecycle_state()}</label
+						>
 						<select
 							id="edit-lifecycle-state"
 							class="form-input"
 							bind:value={editLifecycleState}
 							disabled={singleTenantMode || tenant.is_default || !lifecycleEditable}
 						>
-							<option value="active">Active</option>
-							<option value="suspended">Suspended</option>
-							<option value="frozen">Frozen</option>
-							<option value="migration_read_only">Migration read-only</option>
+							<option value="active">{$LL.admin_tenants_active()}</option>
+							<option value="suspended">{$LL.admin_tenants_suspended()}</option>
+							<option value="frozen">{$LL.admin_tenants_frozen()}</option>
+							<option value="migration_read_only">{$LL.admin_tenants_migration_read_only()}</option>
 						</select>
 						{#if singleTenantMode}
-							<p class="field-hint">Cannot be changed in single-tenant mode.</p>
+							<p class="field-hint">{$LL.admin_tenants_lifecycle_single_tenant_hint()}</p>
 						{:else if tenant.is_default}
-							<p class="field-hint">The default tenant must remain active.</p>
+							<p class="field-hint">{$LL.admin_tenants_lifecycle_default_hint()}</p>
 						{:else if !lifecycleEditable}
-							<p class="field-hint">This lifecycle state requires a dedicated operation.</p>
+							<p class="field-hint">{$LL.admin_tenants_lifecycle_dedicated_operation_hint()}</p>
 						{/if}
 					</div>
 				</div>
 				<div class="form-actions">
-					<button class="btn btn-secondary" onclick={cancelEdit} disabled={saving}>Cancel</button>
+					<button class="btn btn-secondary" onclick={cancelEdit} disabled={saving}
+						>{$LL.admin_tenants_cancel()}</button
+					>
 					<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-						{#if saving}<i class="i-ph-circle-notch animate-spin"></i> Saving...{:else}Save Changes{/if}
+						{#if saving}<i class="i-ph-circle-notch animate-spin"></i>
+							{$LL.admin_tenants_saving()}{:else}{$LL.admin_tenants_save_changes()}{/if}
 					</button>
 				</div>
 			</section>
 		{:else}
 			<section class="card">
-				<h2 class="card-title">Tenant Details</h2>
+				<h2 class="card-title">{$LL.admin_tenants_details_title()}</h2>
 				<dl class="detail-grid">
 					<div class="detail-row">
-						<dt>Tenant ID</dt>
+						<dt>{$LL.admin_tenants_tenant_id()}</dt>
 						<dd class="mono">{tenant.id}</dd>
 					</div>
 					<div class="detail-row">
-						<dt>Tenant Code</dt>
+						<dt>{$LL.admin_tenants_tenant_code()}</dt>
 						<dd class="mono">{tenant.tenant_code}</dd>
 					</div>
 					<div class="detail-row">
-						<dt>Name</dt>
+						<dt>{$LL.admin_tenants_name()}</dt>
 						<dd>{tenant.name}</dd>
 					</div>
 					<div class="detail-row">
-						<dt>Description</dt>
+						<dt>{$LL.admin_tenants_description_label()}</dt>
 						<dd>{tenant.description ?? '—'}</dd>
 					</div>
 					<div class="detail-row">
-						<dt>Status</dt>
+						<dt>{$LL.admin_tenants_status()}</dt>
 						<dd>
 							{#if tenant.lifecycle_state === 'active'}
-								<span class="badge badge-active">Active</span>
+								<span class="badge badge-active">{$LL.admin_tenants_active()}</span>
 							{:else}
-								<span class="badge badge-inactive">{tenant.lifecycle_state}</span>
+								<span class="badge badge-inactive">{lifecycleLabel(tenant.lifecycle_state)}</span>
 							{/if}
 						</dd>
 					</div>
 					<div class="detail-row">
-						<dt>Default</dt>
+						<dt>{$LL.admin_tenants_default()}</dt>
 						<dd>
 							{#if tenant.is_default}
-								<span class="badge badge-default"><i class="i-ph-star-fill"></i>Yes</span>
+								<span class="badge badge-default"
+									><i class="i-ph-star-fill"></i>{$LL.admin_tenants_yes()}</span
+								>
 							{:else}
-								<span class="text-muted">No</span>
+								<span class="text-muted">{$LL.admin_tenants_no()}</span>
 							{/if}
 						</dd>
 					</div>
 					<div class="detail-row">
-						<dt>Created</dt>
+						<dt>{$LL.admin_tenants_created()}</dt>
 						<dd>{new Date(tenant.created_at * 1000).toLocaleString()}</dd>
 					</div>
 					<div class="detail-row">
-						<dt>Updated</dt>
+						<dt>{$LL.admin_tenants_updated()}</dt>
 						<dd>{new Date(tenant.updated_at * 1000).toLocaleString()}</dd>
 					</div>
 				</dl>
@@ -681,18 +723,18 @@
 			<section class="card">
 				<div class="card-header-row">
 					<div>
-						<h2 class="card-title">Vanity Domains</h2>
+						<h2 class="card-title">{$LL.admin_tenants_vanity_title()}</h2>
 						<p class="card-description">
-							Primary active vanity domains become the tenant canonical issuer.
+							{$LL.admin_tenants_vanity_description()}
 						</p>
 					</div>
 					<button class="btn btn-secondary" onclick={loadVanityDomains} disabled={vanityLoading}>
 						{#if vanityLoading}
 							<i class="i-ph-circle-notch animate-spin"></i>
-							Refreshing
+							{$LL.admin_tenants_refreshing()}
 						{:else}
 							<i class="i-ph-arrows-clockwise"></i>
-							Refresh
+							{$LL.admin_tenants_refresh()}
 						{/if}
 					</button>
 				</div>
@@ -706,14 +748,13 @@
 				{#if !vanityCloudflareConfigured}
 					<div class="alert alert-warning">
 						<i class="i-ph-warning"></i>
-						Cloudflare automation is not configured. Create a Cloudflare Custom Hostname manually and
-						add the required CNAME and HTTP ownership validation records.
+						{$LL.admin_tenants_cloudflare_warning()}
 					</div>
 				{/if}
 
 				<div class="vanity-create-row">
 					<div class="form-group vanity-host-input">
-						<label for="vanity-hostname" class="form-label">Hostname</label>
+						<label for="vanity-hostname" class="form-label">{$LL.admin_tenants_hostname()}</label>
 						<input
 							id="vanity-hostname"
 							type="text"
@@ -730,19 +771,20 @@
 					>
 						{#if vanityCreating}
 							<i class="i-ph-circle-notch animate-spin"></i>
-							Adding
+							{$LL.admin_tenants_adding()}
 						{:else}
-							Add Domain
+							{$LL.admin_tenants_add_domain()}
 						{/if}
 					</button>
 				</div>
 
 				{#if vanityLoading}
 					<div class="loading-inline">
-						<i class="i-ph-circle-notch animate-spin"></i> Loading...
+						<i class="i-ph-circle-notch animate-spin"></i>
+						{$LL.admin_tenants_loading_short()}
 					</div>
 				{:else if vanityDomains.length === 0}
-					<p class="empty-text">No vanity domains configured.</p>
+					<p class="empty-text">{$LL.admin_tenants_no_vanity_domains()}</p>
 				{:else}
 					<div class="vanity-domain-list">
 						{#each vanityDomains as domain (domain.id)}
@@ -751,21 +793,27 @@
 									<div class="vanity-host-line">
 										<span class="mono">{domain.hostname}</span>
 										{#if domain.is_primary}
-											<span class="badge badge-default">Primary</span>
+											<span class="badge badge-default">{$LL.admin_tenants_primary()}</span>
 										{/if}
 										<span class:badge-active={domain.status === 'active'} class="badge">
 											{domain.status}
 										</span>
 									</div>
 									<div class="vanity-meta">
-										<span>SSL: {domain.ssl_status ?? 'pending'}</span>
-										<span>Ownership: {domain.ownership_status ?? 'pending'}</span>
+										<span>{$LL.admin_tenants_ssl()}: {domain.ssl_status ?? 'pending'}</span>
+										<span
+											>{$LL.admin_tenants_ownership()}: {domain.ownership_status ?? 'pending'}</span
+										>
 										{#if domain.last_sync_at}
-											<span>Synced: {new Date(domain.last_sync_at * 1000).toLocaleString()}</span>
+											<span
+												>{$LL.admin_tenants_synced()}: {new Date(
+													domain.last_sync_at * 1000
+												).toLocaleString()}</span
+											>
 										{/if}
 									</div>
 									<details class="validation-details">
-										<summary>Validation records</summary>
+										<summary>{$LL.admin_tenants_validation_records()}</summary>
 										<pre>{formatValidationRecords(domain.validation_records)}</pre>
 									</details>
 								</div>
@@ -778,7 +826,7 @@
 										{#if vanitySyncingId === domain.id}
 											<i class="i-ph-circle-notch animate-spin"></i>
 										{/if}
-										Sync
+										{$LL.admin_tenants_sync()}
 									</button>
 									<button
 										class="btn btn-secondary"
@@ -787,10 +835,10 @@
 											domain.status !== 'active' ||
 											vanityPrimaryId === domain.id}
 										title={domain.status !== 'active'
-											? 'Only active vanity domains can be primary'
-											: 'Set as primary canonical issuer'}
+											? $LL.admin_tenants_primary_title_inactive()
+											: $LL.admin_tenants_primary_title_active()}
 									>
-										Primary
+										{$LL.admin_tenants_primary()}
 									</button>
 									{#if domain.status !== 'active'}
 										<button
@@ -798,7 +846,7 @@
 											onclick={() => handleVerifyVanityDomain(domain.id)}
 											disabled={vanityVerifyingId === domain.id}
 										>
-											Verify
+											{$LL.admin_tenants_verify()}
 										</button>
 									{/if}
 									<button
@@ -809,7 +857,7 @@
 										{#if vanityDeletingId === domain.id}
 											<i class="i-ph-circle-notch animate-spin"></i>
 										{/if}
-										Delete
+										{$LL.admin_tenants_delete()}
 									</button>
 								</div>
 							</div>
@@ -824,33 +872,35 @@
 			<section class="card">
 				<div class="card-header-row">
 					<div>
-						<h2 class="card-title">Login Entry Settings</h2>
+						<h2 class="card-title">{$LL.admin_tenants_login_entry_title()}</h2>
 						<p class="card-description">
-							Discovery behavior and discovery screen customization are managed from the dedicated
-							Tenant Discovery page.
+							{$LL.admin_tenants_login_entry_description()}
 						</p>
 					</div>
-					<a class="btn btn-secondary" href="/admin/tenant-discovery">Open Tenant Discovery</a>
+					<a class="btn btn-secondary" href="/admin/tenant-discovery"
+						>{$LL.admin_tenants_open_tenant_discovery()}</a
+					>
 				</div>
 
 				{#if settingsLoading}
 					<div class="loading-inline">
-						<i class="i-ph-circle-notch animate-spin"></i> Loading...
+						<i class="i-ph-circle-notch animate-spin"></i>
+						{$LL.admin_tenants_loading_short()}
 					</div>
 				{:else if settingsError}
 					<div class="alert alert-error">{settingsError}</div>
 				{:else if settingsMeta && settings}
 					<div class="settings-summary">
 						<div class="setting-summary-item">
-							<span class="setting-label">Entry Mode</span>
+							<span class="setting-label">{$LL.admin_tenants_entry_mode()}</span>
 							<span>{String(getSettingValue('login-entry.mode'))}</span>
 						</div>
 						<div class="setting-summary-item">
-							<span class="setting-label">Selection Policy</span>
+							<span class="setting-label">{$LL.admin_tenants_selection_policy()}</span>
 							<span>{String(getSettingValue('login-entry.selection_policy'))}</span>
 						</div>
 						<div class="setting-summary-item">
-							<span class="setting-label">Discovery Methods</span>
+							<span class="setting-label">{$LL.admin_tenants_discovery_methods()}</span>
 							<span>{String(getSettingValue('login-entry.discovery_methods'))}</span>
 						</div>
 					</div>
@@ -861,19 +911,18 @@
 		<!-- Danger Zone -->
 		{#if tenantOperational && !tenant.is_default}
 			<section class="card card-danger">
-				<h2 class="card-title danger-title">Danger Zone</h2>
+				<h2 class="card-title danger-title">{$LL.admin_tenants_danger_zone()}</h2>
 				{#if !showDeleteConfirm}
 					<div class="danger-row">
 						<div>
-							<p class="danger-label">Delete Tenant</p>
+							<p class="danger-label">{$LL.admin_tenants_delete_tenant()}</p>
 							<p class="danger-desc">
-								Permanently delete this tenant and all associated data. This action cannot be
-								undone.
+								{$LL.admin_tenants_delete_description()}
 							</p>
 						</div>
 						<button class="btn btn-danger-outline" onclick={openDeleteConfirm}>
 							<i class="i-ph-trash"></i>
-							Delete Tenant
+							{$LL.admin_tenants_delete_tenant()}
 						</button>
 					</div>
 				{:else}
@@ -883,12 +932,11 @@
 						{/if}
 						<div class="alert alert-warning">
 							<i class="i-ph-warning"></i>
-							<strong>Warning:</strong> All data associated with tenant <strong>{tenant.id}</strong> will
-							be permanently deleted.
+							{$LL.admin_tenants_delete_warning({ id: tenant.id })}
 						</div>
 						<div class="form-group">
 							<label for="delete-confirm" class="form-label">
-								Type <strong>{tenant.id}</strong> to confirm:
+								{$LL.admin_tenants_delete_confirm_label({ id: tenant.id })}
 							</label>
 							<input
 								id="delete-confirm"
@@ -901,15 +949,15 @@
 						</div>
 						<div class="delete-actions">
 							<button class="btn btn-secondary" onclick={cancelDelete} disabled={deleting}
-								>Cancel</button
+								>{$LL.admin_tenants_cancel()}</button
 							>
 							<button
 								class="btn btn-danger"
 								onclick={handleDelete}
 								disabled={deleting || deleteConfirmInput !== tenant.id}
 							>
-								{#if deleting}<i class="i-ph-circle-notch animate-spin"></i> Deleting...{:else}Delete
-									Tenant{/if}
+								{#if deleting}<i class="i-ph-circle-notch animate-spin"></i>
+									{$LL.admin_tenants_deleting_progress()}{:else}{$LL.admin_tenants_delete_tenant()}{/if}
 							</button>
 						</div>
 					</div>

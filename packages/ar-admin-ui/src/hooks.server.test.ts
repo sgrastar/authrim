@@ -110,6 +110,86 @@ describe('securityHeaders', () => {
 });
 
 describe('apiProxy', () => {
+	it('serves the explicit Admin UI dev mock only on loopback origins', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('http://localhost:5173/api/admin/me/session'),
+			request: new Request('http://localhost:5173/api/admin/me/session', {
+				method: 'GET'
+			}),
+			platform: {
+				env: {
+					AUTHRIM_ADMIN_UI_DEV_MOCK: 'true'
+				}
+			},
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('X-Authrim-Dev-Mock')).toBe('admin-ui');
+		expect(await response.json()).toMatchObject({
+			active: true,
+			user_id: 'dev-admin',
+			tenant_id: 'dev-tenant',
+			is_platform_admin: true
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('does not serve the Admin UI dev mock on non-loopback origins', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('https://mt-ar-admin-ui.pages.dev/api/admin/me/session'),
+			request: new Request('https://mt-ar-admin-ui.pages.dev/api/admin/me/session', {
+				method: 'GET'
+			}),
+			platform: {
+				env: {
+					AUTHRIM_ADMIN_UI_DEV_MOCK: 'true'
+				}
+			},
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(500);
+		expect(await response.json()).toMatchObject({ error: 'proxy_not_configured' });
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('does not serve the Admin UI dev mock when NODE_ENV is production', async () => {
+		const previousNodeEnv = process.env.NODE_ENV;
+		process.env.NODE_ENV = 'production';
+		try {
+			vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const resolve = vi.fn(async () => new Response('resolved'));
+			const event = {
+				url: new URL('http://localhost:5173/api/admin/me/session'),
+				request: new Request('http://localhost:5173/api/admin/me/session', {
+					method: 'GET'
+				}),
+				platform: {
+					env: {
+						AUTHRIM_ADMIN_UI_DEV_MOCK: 'true'
+					}
+				},
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+			const response = await apiProxy({ event, resolve });
+
+			expect(response.status).toBe(500);
+			expect(await response.json()).toMatchObject({ error: 'proxy_not_configured' });
+			expect(resolve).not.toHaveBeenCalled();
+		} finally {
+			process.env.NODE_ENV = previousNodeEnv;
+		}
+	});
+
 	it('fails closed for Admin API proxy requests without Service Binding or local opt-in', async () => {
 		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const resolve = vi.fn(async () => new Response('resolved'));

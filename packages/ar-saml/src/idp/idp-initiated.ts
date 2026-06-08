@@ -19,6 +19,8 @@ import {
   createConfigurationError,
   usesNakedDomainIssuer,
   getLogger,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveRuntimeIdentityMappingBinding,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
@@ -28,7 +30,11 @@ import { getSPConfig, listSPConfigs } from '../admin/providers';
 import { getSamlUserInfoById } from '../common/user-store';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
-import { buildSAMLAttributesForSP } from './attributes';
+import {
+  buildSAMLAttributesForSP,
+  type SAMLIdentityMappingReleaseConfig,
+  SAMLIdentityMappingRuntimeError,
+} from './attributes';
 import { applySAMLResponseSigningPolicy } from './signing';
 import {
   createSAMLSessionIndex,
@@ -232,7 +238,17 @@ async function generateIdPInitiatedResponse(
   });
 
   // Build attributes from mapping
-  const attributes = buildSAMLAttributesForSP(userInfo, spConfig);
+  const identityMapping = await resolveSAMLRuntimeIdentityMapping(
+    env,
+    tenantId,
+    idpEntityId,
+    spConfig
+  );
+  const attributes = buildSAMLAttributesForSP(userInfo, {
+    ...spConfig,
+    localEntityId: idpEntityId,
+    identityMapping,
+  });
   const timing = buildSAMLAssertionTiming({
     assertionValiditySeconds:
       spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
@@ -280,6 +296,59 @@ async function generateIdPInitiatedResponse(
   }
 
   return responseXml;
+}
+
+async function resolveSAMLRuntimeIdentityMapping(
+  env: Env,
+  tenantId: string,
+  idpEntityId: string,
+  spConfig: SAMLSPConfig
+): Promise<SAMLIdentityMappingReleaseConfig | undefined> {
+  const configured = spConfig.identityMapping as SAMLIdentityMappingReleaseConfig | undefined;
+  if (configured?.catalog || configured?.defaultBinding || configured?.bindings?.length) {
+    return configured;
+  }
+
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-identity-mapping');
+  const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
+    tenantId,
+    protocol: 'saml',
+    role: 'idp',
+    fieldMappingSetId: configured?.fieldMappingSetId,
+    localEntityId: idpEntityId,
+    partnerEntityId: spConfig.entityId,
+  });
+  if (!binding) {
+    if (configured?.fieldMappingSetId) {
+      throw new SAMLIdentityMappingRuntimeError([
+        {
+          category: 'policy',
+          code: 'policy.missing_identity_mapping_binding',
+          severity: 'critical',
+        },
+      ]);
+    }
+    return configured;
+  }
+
+  return {
+    id: binding.id,
+    role: 'idp',
+    tenantId: binding.tenantId,
+    localEntityId: idpEntityId,
+    partnerEntityId: spConfig.entityId,
+    catalog: binding.catalog,
+    edges: binding.edges,
+    transforms: binding.transforms,
+    validationRules: binding.validationRules,
+    fieldMappingSet: binding.fieldMappingSet,
+    destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
+    attributeDescriptors: configured?.attributeDescriptors,
+    fieldMappingSetId: binding.fieldMappingSetId,
+    fieldMappingVersionId: binding.fieldMappingVersionId,
+    sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
+    destinationProfileId: configured?.destinationProfileId ?? binding.destinationProfileId,
+  };
 }
 
 /**

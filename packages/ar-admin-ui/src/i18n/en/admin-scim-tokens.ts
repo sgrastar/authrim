@@ -1,0 +1,45 @@
+const adminScimTokens = {
+	admin_scim_tokens_head_title: 'SCIM Tokens - Admin Dashboard - Authrim',
+	admin_scim_tokens_title: 'SCIM Tokens',
+	admin_scim_tokens_description:
+		'SCIM tokens are used for System for Cross-domain Identity Management (RFC 7643/7644) provisioning.',
+	admin_scim_tokens_create_token: 'Create Token',
+	admin_scim_tokens_load_failed: 'Failed to load SCIM tokens',
+	admin_scim_tokens_create_failed: 'Failed to create token',
+	admin_scim_tokens_revoke_failed: 'Failed to revoke token',
+	admin_scim_tokens_loading: 'Loading...',
+	admin_scim_tokens_empty: 'No SCIM tokens found.',
+	admin_scim_tokens_empty_hint:
+		'Create a token to enable SCIM provisioning for your identity provider.',
+	admin_scim_tokens_token_hash: 'Token Hash',
+	admin_scim_tokens_description_label: 'Description',
+	admin_scim_tokens_expires_in_days: 'Expires In (Days)',
+	admin_scim_tokens_status: 'Status',
+	admin_scim_tokens_actions: 'Actions',
+	admin_scim_tokens_enabled: 'Enabled',
+	admin_scim_tokens_disabled: 'Disabled',
+	admin_scim_tokens_revoke: 'Revoke',
+	admin_scim_tokens_create_title: 'Create SCIM Token',
+	admin_scim_tokens_description_optional: 'Description (optional)',
+	admin_scim_tokens_valid_range: 'Valid range: 1-3650 days (up to 10 years)',
+	admin_scim_tokens_cancel: 'Cancel',
+	admin_scim_tokens_creating: 'Creating...',
+	admin_scim_tokens_created_title: 'Token Created Successfully',
+	admin_scim_tokens_save_now_warning: 'Save this token now - it will not be shown again!',
+	admin_scim_tokens_scim_token: 'SCIM Token',
+	admin_scim_tokens_copied: 'Copied!',
+	admin_scim_tokens_copy: 'Copy',
+	admin_scim_tokens_description_colon: 'Description:',
+	admin_scim_tokens_none: 'None',
+	admin_scim_tokens_expires_in_colon: 'Expires In:',
+	admin_scim_tokens_days: '{count:number} days',
+	admin_scim_tokens_done: 'Done',
+	admin_scim_tokens_revoke_title: 'Revoke SCIM Token',
+	admin_scim_tokens_revoke_confirm:
+		'Are you sure you want to revoke this SCIM token? This action cannot be undone and will immediately disable any SCIM integrations using this token.',
+	admin_scim_tokens_token_hash_colon: 'Token Hash:',
+	admin_scim_tokens_revoking: 'Revoking...',
+	admin_scim_tokens_revoke_token: 'Revoke Token'
+} as const;
+
+export default adminScimTokens;

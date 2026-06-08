@@ -23,6 +23,7 @@
 		type ApprovalTransportMethod,
 		type ElevationGrantRecord
 	} from '$lib/api/admin-approvals';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -101,7 +102,7 @@
 			requests = response.items;
 			total = response.total;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load approvals';
+			error = err instanceof Error ? err.message : $LL.admin_approvals_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -207,7 +208,7 @@
 				await reloadDetailTracking(selectedRequest);
 			}
 		} catch (err) {
-			detailError = err instanceof Error ? err.message : 'Failed to load approval request';
+			detailError = err instanceof Error ? err.message : $LL.admin_approvals_detail_load_failed();
 		} finally {
 			detailLoading = false;
 		}
@@ -262,7 +263,7 @@
 			detailEvidenceError =
 				evidenceResult.reason instanceof Error
 					? evidenceResult.reason.message
-					: 'Failed to load transport evidence';
+					: $LL.admin_approvals_transport_evidence_load_failed();
 		}
 		detailEvidenceLoading = false;
 
@@ -272,7 +273,7 @@
 			detailReceiptsError =
 				receiptResult.reason instanceof Error
 					? receiptResult.reason.message
-					: 'Failed to load decision receipts';
+					: $LL.admin_approvals_decision_receipts_load_failed();
 		}
 		detailReceiptsLoading = false;
 	}
@@ -292,7 +293,8 @@
 				[approval.id]: guide
 			};
 		} catch (err) {
-			stepGuideError = err instanceof Error ? err.message : 'Failed to load approval step guide';
+			stepGuideError =
+				err instanceof Error ? err.message : $LL.admin_approvals_step_guide_load_failed();
 		} finally {
 			stepGuideLoadingId = null;
 		}
@@ -319,7 +321,7 @@
 			actionReasonNote = '';
 			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to approve step';
+			actionError = err instanceof Error ? err.message : $LL.admin_approvals_approve_failed();
 		} finally {
 			actionBusy = false;
 		}
@@ -346,7 +348,7 @@
 			actionReasonNote = '';
 			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to deny step';
+			actionError = err instanceof Error ? err.message : $LL.admin_approvals_deny_failed();
 		} finally {
 			actionBusy = false;
 		}
@@ -371,7 +373,7 @@
 			);
 			const failedNotification = updated.notification_results?.find((result) => !result.success);
 			if (failedNotification) {
-				actionError = failedNotification.error || 'Notification transport failed';
+				actionError = failedNotification.error || $LL.admin_approvals_notification_failed();
 			}
 			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
@@ -381,7 +383,7 @@
 			actionReasonNote = '';
 			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to remind approval step';
+			actionError = err instanceof Error ? err.message : $LL.admin_approvals_remind_failed();
 		} finally {
 			actionBusy = false;
 		}
@@ -406,7 +408,7 @@
 			);
 			const failedNotification = updated.notification_results?.find((result) => !result.success);
 			if (failedNotification) {
-				actionError = failedNotification.error || 'Notification transport failed';
+				actionError = failedNotification.error || $LL.admin_approvals_notification_failed();
 			}
 			await refreshSelectedRequest(selectedRequest.public_request_id);
 			if (selectedRequest?.has_detail) {
@@ -416,7 +418,7 @@
 			actionReasonNote = '';
 			resetActionTransportInputs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to resend approval step';
+			actionError = err instanceof Error ? err.message : $LL.admin_approvals_resend_failed();
 		} finally {
 			actionBusy = false;
 		}
@@ -439,7 +441,7 @@
 			await loadRequests();
 			actionReasonNote = '';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to cancel request';
+			actionError = err instanceof Error ? err.message : $LL.admin_approvals_cancel_failed();
 		} finally {
 			actionBusy = false;
 		}
@@ -469,7 +471,8 @@
 			}
 			await loadRequests();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to issue completion artifact';
+			actionError =
+				err instanceof Error ? err.message : $LL.admin_approvals_issue_artifact_failed();
 		} finally {
 			actionBusy = false;
 		}
@@ -504,13 +507,45 @@
 	function formatSide(side: ApprovalRequestApproval['side']): string {
 		switch (side) {
 			case 'admin_operator':
-				return 'Admin Operator';
+				return $LL.admin_approvals_side_admin_operator();
 			case 'customer_data_owner':
-				return 'Customer / Data Owner';
+				return $LL.admin_approvals_side_customer_data_owner();
 			case 'guardian_delegate':
-				return 'Guardian / Delegate';
+				return $LL.admin_approvals_side_guardian_delegate();
 			default:
 				return side;
+		}
+	}
+
+	function formatApprovalStatus(status: ApprovalRequestStatus | ApprovalRequestApproval['status']) {
+		switch (status) {
+			case 'pending':
+				return $LL.admin_approvals_status_pending();
+			case 'partially_approved':
+				return $LL.admin_approvals_status_partially_approved();
+			case 'approved':
+				return $LL.admin_approvals_status_approved();
+			case 'denied':
+				return $LL.admin_approvals_status_denied();
+			case 'expired':
+				return $LL.admin_approvals_status_expired();
+			case 'cancelled':
+				return $LL.admin_approvals_status_cancelled();
+			default:
+				return status;
+		}
+	}
+
+	function formatGrantStatus(status: ElevationGrantRecord['status']) {
+		switch (status) {
+			case 'active':
+				return $LL.admin_approvals_status_active();
+			case 'expired':
+				return $LL.admin_approvals_status_expired();
+			case 'revoked':
+				return $LL.admin_approvals_status_revoked();
+			default:
+				return status;
 		}
 	}
 
@@ -557,12 +592,12 @@
 			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
 				return parsed as Record<string, unknown>;
 			}
-			throw new Error(`${field} must be a JSON object`);
+			throw new Error($LL.admin_approvals_json_object_error({ field }));
 		} catch (error) {
 			if (error instanceof Error) {
-				throw new Error(`${field}: ${error.message}`);
+				throw new Error($LL.admin_approvals_json_field_error({ field, message: error.message }));
 			}
-			throw new Error(`${field}: invalid JSON`);
+			throw new Error($LL.admin_approvals_json_invalid_error({ field }));
 		}
 	}
 
@@ -582,9 +617,18 @@
 					}
 				: undefined;
 
-		const request = parseOptionalJson(actionTransportRequestJson, 'Transport request');
-		const response = parseOptionalJson(actionTransportResponseJson, 'Transport response');
-		const metadata = parseOptionalJson(actionTransportMetadataJson, 'Transport metadata');
+		const request = parseOptionalJson(
+			actionTransportRequestJson,
+			$LL.admin_approvals_transport_request_json()
+		);
+		const response = parseOptionalJson(
+			actionTransportResponseJson,
+			$LL.admin_approvals_transport_response_json()
+		);
+		const metadata = parseOptionalJson(
+			actionTransportMetadataJson,
+			$LL.admin_approvals_transport_metadata_json()
+		);
 		const detail = request || response || metadata ? { request, response, metadata } : undefined;
 
 		return {
@@ -613,7 +657,7 @@
 	async function issueGrantSubjectToken(grant: ElevationGrantRecord) {
 		if (!selectedRequest) return;
 		if (!subjectTokenClientId.trim()) {
-			subjectTokenError = 'Service client ID is required';
+			subjectTokenError = $LL.admin_approvals_subject_token_client_required();
 			return;
 		}
 
@@ -633,7 +677,7 @@
 			}
 		} catch (err) {
 			subjectTokenError =
-				err instanceof Error ? err.message : 'Failed to issue downstream subject token';
+				err instanceof Error ? err.message : $LL.admin_approvals_subject_token_failed();
 		} finally {
 			subjectTokenBusy = false;
 		}
@@ -665,7 +709,8 @@
 				issuedSubjectToken = null;
 			}
 		} catch (err) {
-			revokeGrantError = err instanceof Error ? err.message : 'Failed to revoke elevation grant';
+			revokeGrantError =
+				err instanceof Error ? err.message : $LL.admin_approvals_revoke_grant_failed();
 		} finally {
 			revokeGrantBusyId = null;
 		}
@@ -714,13 +759,13 @@
 
 	function validateCreateRequest(): string | null {
 		if (!createModel.target_subject_id.trim()) {
-			return 'Target subject ID is required';
+			return $LL.admin_approvals_target_subject_required();
 		}
 		if (!createModel.reason_code.trim()) {
-			return 'Reason code is required';
+			return $LL.admin_approvals_reason_code_required();
 		}
 		if (createModel.approvals.length === 0) {
-			return 'At least one approval step is required';
+			return $LL.admin_approvals_step_required();
 		}
 		return null;
 	}
@@ -816,7 +861,7 @@
 		} catch (err) {
 			createPreview = null;
 			createPreviewError =
-				err instanceof Error ? err.message : 'Failed to resolve approval request preview';
+				err instanceof Error ? err.message : $LL.admin_approvals_preview_failed();
 		} finally {
 			createPreviewBusy = false;
 		}
@@ -841,11 +886,10 @@
 			await openDetail(created);
 			if (failedInitialNotification) {
 				error =
-					failedInitialNotification.error ||
-					'Approval request was created, but one or more initial notifications failed.';
+					failedInitialNotification.error || $LL.admin_approvals_created_notification_failed();
 			}
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create approval request';
+			createError = err instanceof Error ? err.message : $LL.admin_approvals_create_failed();
 		} finally {
 			createBusy = false;
 		}
@@ -853,49 +897,57 @@
 </script>
 
 <svelte:head>
-	<title>Approvals - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_approvals_page_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">Approvals</h1>
+			<h1 class="page-title">{$LL.admin_approvals_title()}</h1>
 			<p class="page-description">
-				Review mixed approval requests, inspect scope, and approve or deny pending steps.
+				{$LL.admin_approvals_description()}
 			</p>
 		</div>
 		<div class="page-actions">
-			<button class="btn btn-primary" onclick={openCreateModal}>New Approval Request</button>
-			<button class="btn btn-secondary" onclick={loadRequests} disabled={loading}> Refresh </button>
+			<button class="btn btn-primary" onclick={openCreateModal}
+				>{$LL.admin_approvals_new_request()}</button
+			>
+			<button class="btn btn-secondary" onclick={loadRequests} disabled={loading}>
+				{$LL.admin_approvals_refresh()}
+			</button>
 		</div>
 	</div>
 
 	<div class="panel filters-panel">
 		<div class="filter-row">
 			<div class="form-group">
-				<label class="form-label" for="status-filter">Status</label>
+				<label class="form-label" for="status-filter">{$LL.admin_approvals_status()}</label>
 				<select
 					id="status-filter"
 					class="form-select"
 					bind:value={statusFilter}
 					onchange={loadRequests}
 				>
-					<option value="">All statuses</option>
-					<option value="pending">Pending</option>
-					<option value="partially_approved">Partially Approved</option>
-					<option value="approved">Approved</option>
-					<option value="denied">Denied</option>
-					<option value="expired">Expired</option>
-					<option value="cancelled">Cancelled</option>
+					<option value="">{$LL.admin_approvals_all_statuses()}</option>
+					<option value="pending">{$LL.admin_approvals_status_pending()}</option>
+					<option value="partially_approved"
+						>{$LL.admin_approvals_status_partially_approved()}</option
+					>
+					<option value="approved">{$LL.admin_approvals_status_approved()}</option>
+					<option value="denied">{$LL.admin_approvals_status_denied()}</option>
+					<option value="expired">{$LL.admin_approvals_status_expired()}</option>
+					<option value="cancelled">{$LL.admin_approvals_status_cancelled()}</option>
 				</select>
 			</div>
 			<div class="form-group filter-grow">
-				<label class="form-label" for="investigation-filter">Investigation ID</label>
+				<label class="form-label" for="investigation-filter"
+					>{$LL.admin_approvals_investigation_id()}</label
+				>
 				<input
 					id="investigation-filter"
 					class="form-input"
 					type="text"
-					placeholder="Filter by investigation ID..."
+					placeholder={$LL.admin_approvals_investigation_placeholder()}
 					bind:value={investigationIdFilter}
 					onchange={loadRequests}
 				/>
@@ -909,26 +961,26 @@
 
 	<div class="panel">
 		<div class="panel-header">
-			<h2 class="panel-title">Requests</h2>
-			<span class="panel-meta">{total} total</span>
+			<h2 class="panel-title">{$LL.admin_approvals_requests()}</h2>
+			<span class="panel-meta">{$LL.admin_approvals_total({ count: total })}</span>
 		</div>
 
 		{#if loading}
-			<div class="empty-state">Loading approval requests…</div>
+			<div class="empty-state">{$LL.admin_approvals_loading_requests()}</div>
 		{:else if requests.length === 0}
-			<div class="empty-state">No approval requests matched the current filters.</div>
+			<div class="empty-state">{$LL.admin_approvals_empty_requests()}</div>
 		{:else}
 			<div class="table-wrapper">
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th>Status</th>
-							<th>Reason</th>
-							<th>Scope</th>
-							<th>Target</th>
-							<th>Created</th>
-							<th>Approvals</th>
-							<th>Grants</th>
+							<th>{$LL.admin_approvals_status()}</th>
+							<th>{$LL.admin_approvals_reason()}</th>
+							<th>{$LL.admin_approvals_scope()}</th>
+							<th>{$LL.admin_approvals_target()}</th>
+							<th>{$LL.admin_approvals_created()}</th>
+							<th>{$LL.admin_approvals_approvals()}</th>
+							<th>{$LL.admin_approvals_grants()}</th>
 							<th></th>
 						</tr>
 					</thead>
@@ -936,7 +988,9 @@
 						{#each requests as request (request.public_request_id)}
 							<tr>
 								<td>
-									<span class={getStatusBadgeClass(request.status)}>{request.status}</span>
+									<span class={getStatusBadgeClass(request.status)}
+										>{formatApprovalStatus(request.status)}</span
+									>
 								</td>
 								<td>
 									<div class="cell-primary">{request.reason_code}</div>
@@ -952,7 +1006,7 @@
 								<td>{request.grants?.length ?? 0}</td>
 								<td class="row-actions">
 									<button class="btn btn-sm btn-secondary" onclick={() => openDetail(request)}>
-										View
+										{$LL.admin_approvals_view()}
 									</button>
 								</td>
 							</tr>
@@ -964,84 +1018,93 @@
 	</div>
 </div>
 
-<Modal open={showDetailModal} onClose={closeDetail} title="Approval Request Detail" size="lg">
+<Modal
+	open={showDetailModal}
+	onClose={closeDetail}
+	title={$LL.admin_approvals_detail_title()}
+	size="lg"
+>
 	{#if detailLoading}
-		<div class="empty-state">Loading approval request detail…</div>
+		<div class="empty-state">{$LL.admin_approvals_loading_detail()}</div>
 	{:else if detailError}
 		<div class="alert alert-error">{detailError}</div>
 	{:else if selectedRequest}
 		<div class="detail-grid">
 			<div class="detail-card">
-				<h3>Request</h3>
+				<h3>{$LL.admin_approvals_request()}</h3>
 				<dl class="detail-list">
 					<div>
-						<dt>Status</dt>
+						<dt>{$LL.admin_approvals_status()}</dt>
 						<dd>
 							<span class={getStatusBadgeClass(selectedRequest.status)}
-								>{selectedRequest.status}</span
+								>{formatApprovalStatus(selectedRequest.status)}</span
 							>
 						</dd>
 					</div>
 					<div>
-						<dt>Reason</dt>
+						<dt>{$LL.admin_approvals_reason()}</dt>
 						<dd>{selectedRequest.reason_code}</dd>
 					</div>
 					<div>
-						<dt>Requested Action</dt>
+						<dt>{$LL.admin_approvals_requested_action()}</dt>
 						<dd>{selectedRequest.requested_action}</dd>
 					</div>
 					<div>
-						<dt>Redaction</dt>
+						<dt>{$LL.admin_approvals_redaction()}</dt>
 						<dd>{selectedRequest.redaction_level}</dd>
 					</div>
 					<div>
-						<dt>Reuse Scope</dt>
+						<dt>{$LL.admin_approvals_reuse_scope()}</dt>
 						<dd>{selectedRequest.reuse_scope}</dd>
 					</div>
 					<div>
-						<dt>Reference</dt>
+						<dt>{$LL.admin_approvals_reference()}</dt>
 						<dd>{formatReference(selectedRequest.reference)}</dd>
 					</div>
 					<div>
-						<dt>Ticket</dt>
+						<dt>{$LL.admin_approvals_ticket()}</dt>
 						<dd>{formatReference(selectedRequest.ticket_reference)}</dd>
 					</div>
 					<div>
-						<dt>Expires</dt>
+						<dt>{$LL.admin_approvals_expires()}</dt>
 						<dd>{formatDateTime(selectedRequest.expires_at)}</dd>
 					</div>
 				</dl>
 			</div>
 
 			<div class="detail-card">
-				<h3>Resolved Policy</h3>
+				<h3>{$LL.admin_approvals_resolved_policy()}</h3>
 				<dl class="detail-list">
 					<div>
-						<dt>Preset</dt>
+						<dt>{$LL.admin_approvals_preset()}</dt>
 						<dd>{selectedRequest.resolved_policy?.preset ?? selectedRequest.policy_preset}</dd>
 					</div>
 					<div>
-						<dt>TTL (seconds)</dt>
+						<dt>{$LL.admin_approvals_ttl_seconds()}</dt>
 						<dd>{selectedRequest.resolved_policy?.request_ttl_seconds ?? '-'}</dd>
 					</div>
 					<div>
-						<dt>Remind Cooldown</dt>
+						<dt>{$LL.admin_approvals_remind_cooldown()}</dt>
 						<dd>
 							{selectedRequest.resolved_policy?.notification_cooldown_seconds?.remind ?? '-'}s
 						</dd>
 					</div>
 					<div>
-						<dt>Resend Cooldown</dt>
+						<dt>{$LL.admin_approvals_resend_cooldown()}</dt>
 						<dd>
 							{selectedRequest.resolved_policy?.notification_cooldown_seconds?.resend ?? '-'}s
 						</dd>
 					</div>
 					<div>
-						<dt>Partial Access</dt>
-						<dd>{selectedRequest.partial_access_allowed ? 'Allowed' : 'Blocked'}</dd>
+						<dt>{$LL.admin_approvals_partial_access()}</dt>
+						<dd>
+							{selectedRequest.partial_access_allowed
+								? $LL.admin_approvals_allowed()
+								: $LL.admin_approvals_blocked()}
+						</dd>
 					</div>
 					<div>
-						<dt>Target</dt>
+						<dt>{$LL.admin_approvals_target()}</dt>
 						<dd>{selectedRequest.target_subject_type}:{selectedRequest.target_subject_id}</dd>
 					</div>
 				</dl>
@@ -1049,7 +1112,7 @@
 		</div>
 
 		<div class="panel detail-panel">
-			<h3 class="panel-title">Approval Steps</h3>
+			<h3 class="panel-title">{$LL.admin_approvals_steps()}</h3>
 			<div class="steps-list">
 				{#each selectedRequest.approvals as approval (approval.id)}
 					<div class="step-card">
@@ -1063,16 +1126,38 @@
 									{/if}
 								</div>
 							</div>
-							<span class={getStepStatusBadgeClass(approval.status)}>{approval.status}</span>
+							<span class={getStepStatusBadgeClass(approval.status)}
+								>{formatApprovalStatus(approval.status)}</span
+							>
 						</div>
 
 						<div class="step-meta">
-							<div>Expires: {formatDateTime(approval.expires_at)}</div>
-							<div>Method: {approval.method ?? '-'}</div>
-							<div>Reason: {approval.reason_code ?? '-'}</div>
-							<div>Notifications: {approval.notification_count}</div>
-							<div>Last Notify: {formatDateTime(approval.last_notified_at)}</div>
-							<div>Last Action: {approval.last_notification_action ?? '-'}</div>
+							<div>
+								{$LL.admin_approvals_expires_label({
+									value: formatDateTime(approval.expires_at)
+								})}
+							</div>
+							<div>
+								{$LL.admin_approvals_method_label({ value: approval.method ?? '-' })}
+							</div>
+							<div>
+								{$LL.admin_approvals_reason_label({ value: approval.reason_code ?? '-' })}
+							</div>
+							<div>
+								{$LL.admin_approvals_notifications_label({
+									count: approval.notification_count
+								})}
+							</div>
+							<div>
+								{$LL.admin_approvals_last_notify_label({
+									value: formatDateTime(approval.last_notified_at)
+								})}
+							</div>
+							<div>
+								{$LL.admin_approvals_last_action_label({
+									value: approval.last_notification_action ?? '-'
+								})}
+							</div>
 						</div>
 
 						{#if approval.status === 'pending'}
@@ -1082,42 +1167,44 @@
 									onclick={() => approveStep(approval)}
 									disabled={actionBusy}
 								>
-									Approve
+									{$LL.admin_approvals_approve()}
 								</button>
 								<button
 									class="btn btn-sm btn-danger"
 									onclick={() => denyStep(approval)}
 									disabled={actionBusy}
 								>
-									Deny
+									{$LL.admin_approvals_deny()}
 								</button>
 								<button
 									class="btn btn-sm btn-secondary"
 									onclick={() => remindStep(approval)}
 									disabled={actionBusy}
 								>
-									Remind
+									{$LL.admin_approvals_remind()}
 								</button>
 								<button
 									class="btn btn-sm btn-secondary"
 									onclick={() => resendStep(approval)}
 									disabled={actionBusy}
 								>
-									Resend
+									{$LL.admin_approvals_resend()}
 								</button>
 								<button
 									class="btn btn-sm btn-secondary"
 									onclick={() => issueCompletionArtifact(approval)}
 									disabled={actionBusy}
 								>
-									Issue Artifact
+									{$LL.admin_approvals_issue_artifact()}
 								</button>
 								<button
 									class="btn btn-sm btn-secondary"
 									onclick={() => loadStepGuide(approval)}
 									disabled={stepGuideLoadingId === approval.id}
 								>
-									{stepGuideLoadingId === approval.id ? 'Resolving…' : 'Resolve Guide'}
+									{stepGuideLoadingId === approval.id
+										? $LL.admin_approvals_resolving()
+										: $LL.admin_approvals_resolve_guide()}
 								</button>
 							</div>
 							{#if stepGuideError && stepGuideLoadingId === null}
@@ -1139,21 +1226,21 @@
 									/>
 									<div class="detail-grid compact-grid">
 										<div>
-											<strong>Artifact ID</strong>
+											<strong>{$LL.admin_approvals_artifact_id()}</strong>
 											<div class="cell-secondary">
 												{issuedCompletionArtifact.artifact.artifact_id}
 											</div>
 										</div>
 										<div>
-											<strong>Method</strong>
+											<strong>{$LL.admin_approvals_method()}</strong>
 											<div class="cell-secondary">{issuedCompletionArtifact.artifact.method}</div>
 										</div>
 										<div>
-											<strong>Completion Path</strong>
+											<strong>{$LL.admin_approvals_completion_path()}</strong>
 											<div class="cell-secondary">{issuedCompletionArtifact.completion_path}</div>
 										</div>
 										<div>
-											<strong>Expires</strong>
+											<strong>{$LL.admin_approvals_expires()}</strong>
 											<div class="cell-secondary">
 												{formatDateTime(issuedCompletionArtifact.artifact.expires_at)}
 											</div>
@@ -1168,9 +1255,9 @@
 		</div>
 
 		<div class="panel detail-panel">
-			<h3 class="panel-title">Elevation Grants</h3>
+			<h3 class="panel-title">{$LL.admin_approvals_elevation_grants()}</h3>
 			{#if !selectedRequest.grants?.length}
-				<div class="empty-state compact-empty-state">No grants issued for this request.</div>
+				<div class="empty-state compact-empty-state">{$LL.admin_approvals_no_grants()}</div>
 			{:else}
 				<div class="steps-list">
 					{#each selectedRequest.grants as grant (grant.public_grant_id)}
@@ -1182,22 +1269,47 @@
 										{grant.resource_class} · {grant.target_audience}
 									</div>
 								</div>
-								<span class={formatGrantStatusClass(grant.status)}>{grant.status}</span>
+								<span class={formatGrantStatusClass(grant.status)}
+									>{formatGrantStatus(grant.status)}</span
+								>
 							</div>
 							<div class="step-meta">
-								<div>Actor: {grant.actor_subject_type} · {grant.actor_subject_id}</div>
-								<div>Redaction: {grant.redaction_level}</div>
-								<div>Issued: {formatDateTime(grant.issued_at)}</div>
-								<div>Expires: {formatDateTime(grant.expires_at)}</div>
+								<div>
+									{$LL.admin_approvals_actor_label({
+										type: grant.actor_subject_type,
+										id: grant.actor_subject_id
+									})}
+								</div>
+								<div>
+									{$LL.admin_approvals_redaction_label({ value: grant.redaction_level })}
+								</div>
+								<div>
+									{$LL.admin_approvals_issued_label({
+										value: formatDateTime(grant.issued_at)
+									})}
+								</div>
+								<div>
+									{$LL.admin_approvals_expires_label({
+										value: formatDateTime(grant.expires_at)
+									})}
+								</div>
 								{#if grant.revoked_at}
-									<div>Revoked: {formatDateTime(grant.revoked_at)}</div>
+									<div>
+										{$LL.admin_approvals_revoked_label({
+											value: formatDateTime(grant.revoked_at)
+										})}
+									</div>
 								{/if}
 								{#if grant.revoke_reason}
-									<div>Revoke Reason: {grant.revoke_reason}</div>
+									<div>
+										{$LL.admin_approvals_revoke_reason_label({
+											value: grant.revoke_reason
+										})}
+									</div>
 								{/if}
 							</div>
 							<details class="grant-details">
-								<summary>Scope</summary>
+								<summary>{$LL.admin_approvals_scope()}</summary>
 								<pre class="json-block">{formatJson(grant.scope_json)}</pre>
 							</details>
 							<ApprovalGrantGuideCard {grant} />
@@ -1208,19 +1320,21 @@
 										onclick={() => openGrantIssue(grant)}
 										disabled={subjectTokenBusy && issuingGrantId === grant.public_grant_id}
 									>
-										Issue Subject Token
+										{$LL.admin_approvals_issue_subject_token()}
 									</button>
 									<button
 										class="btn btn-sm btn-danger"
 										onclick={() => revokeGrant(grant)}
 										disabled={revokeGrantBusyId === grant.public_grant_id}
 									>
-										{revokeGrantBusyId === grant.public_grant_id ? 'Revoking…' : 'Revoke'}
+										{revokeGrantBusyId === grant.public_grant_id
+											? $LL.admin_approvals_revoking()
+											: $LL.admin_approvals_revoke()}
 									</button>
 								{/if}
 								{#if issuingGrantId === grant.public_grant_id}
 									<button class="btn btn-sm btn-secondary" onclick={closeGrantIssue}>
-										Close
+										{$LL.admin_approvals_close()}
 									</button>
 								{/if}
 							</div>
@@ -1232,7 +1346,7 @@
 									<div class="detail-grid compact-grid">
 										<div class="form-group">
 											<label class="form-label" for="subject-token-client-id"
-												>Service Client ID</label
+												>{$LL.admin_approvals_service_client_id()}</label
 											>
 											<input
 												id="subject-token-client-id"
@@ -1243,7 +1357,9 @@
 											/>
 										</div>
 										<div class="form-group">
-											<label class="form-label" for="subject-token-expiry">TTL (seconds)</label>
+											<label class="form-label" for="subject-token-expiry"
+												>{$LL.admin_approvals_subject_token_ttl()}</label
+											>
 											<input
 												id="subject-token-expiry"
 												class="form-input"
@@ -1260,7 +1376,9 @@
 											onclick={() => issueGrantSubjectToken(grant)}
 											disabled={subjectTokenBusy}
 										>
-											{subjectTokenBusy ? 'Issuing…' : 'Issue'}
+											{subjectTokenBusy
+												? $LL.admin_approvals_issuing()
+												: $LL.admin_approvals_issue()}
 										</button>
 									</div>
 									{#if subjectTokenError}
@@ -1269,30 +1387,30 @@
 									{#if issuedSubjectToken}
 										<div class="detail-grid compact-grid">
 											<div>
-												<strong>Expires In</strong>
+												<strong>{$LL.admin_approvals_expires_in()}</strong>
 												<div>{issuedSubjectToken.expires_in}s</div>
 											</div>
 											<div>
-												<strong>Subject Token Type</strong>
+												<strong>{$LL.admin_approvals_subject_token_type()}</strong>
 												<div>{issuedSubjectToken.subject_token_type}</div>
 											</div>
 											<div>
-												<strong>Grant Type</strong>
+												<strong>{$LL.admin_approvals_grant_type()}</strong>
 												<div>{issuedSubjectToken.token_exchange_hint.grant_type}</div>
 											</div>
 											<div>
-												<strong>Requested Token Type</strong>
+												<strong>{$LL.admin_approvals_requested_token_type()}</strong>
 												<div>{issuedSubjectToken.token_exchange_hint.requested_token_type}</div>
 											</div>
 										</div>
 										<details class="grant-details" open>
-											<summary>Subject Token</summary>
+											<summary>{$LL.admin_approvals_subject_token()}</summary>
 											<textarea class="form-textarea monospace-textarea" rows="8" readonly
 												>{issuedSubjectToken.subject_token}</textarea
 											>
 										</details>
 										<details class="grant-details">
-											<summary>Authorization Details</summary>
+											<summary>{$LL.admin_approvals_authorization_details()}</summary>
 											<pre class="json-block">{formatJson(
 													issuedSubjectToken.authorization_details
 												)}</pre>
@@ -1308,13 +1426,15 @@
 		</div>
 
 		<div class="panel detail-panel">
-			<h3 class="panel-title">Transport Evidence</h3>
+			<h3 class="panel-title">{$LL.admin_approvals_transport_evidence()}</h3>
 			{#if !selectedRequest.has_detail}
 				<div class="empty-state compact-empty-state">
-					No externalized transport evidence is stored for this request.
+					{$LL.admin_approvals_no_transport_evidence()}
 				</div>
 			{:else if detailEvidenceLoading}
-				<div class="empty-state compact-empty-state">Loading transport evidence…</div>
+				<div class="empty-state compact-empty-state">
+					{$LL.admin_approvals_loading_transport_evidence()}
+				</div>
 			{:else if detailEvidenceError}
 				<div class="alert alert-error">{detailEvidenceError}</div>
 			{:else if detailEvidence}
@@ -1323,13 +1443,15 @@
 		</div>
 
 		<div class="panel detail-panel">
-			<h3 class="panel-title">Decision Receipts</h3>
+			<h3 class="panel-title">{$LL.admin_approvals_decision_receipts()}</h3>
 			{#if !selectedRequest.has_detail}
 				<div class="empty-state compact-empty-state">
-					Decision receipts are not stored without externalized transport evidence.
+					{$LL.admin_approvals_no_decision_receipts()}
 				</div>
 			{:else if detailReceiptsLoading}
-				<div class="empty-state compact-empty-state">Loading decision receipts…</div>
+				<div class="empty-state compact-empty-state">
+					{$LL.admin_approvals_loading_decision_receipts()}
+				</div>
 			{:else if detailReceiptsError}
 				<div class="alert alert-error">{detailReceiptsError}</div>
 			{:else}
@@ -1338,39 +1460,47 @@
 		</div>
 
 		<div class="panel detail-panel">
-			<h3 class="panel-title">Operator Action</h3>
+			<h3 class="panel-title">{$LL.admin_approvals_operator_action()}</h3>
 			<div class="filter-row">
 				<div class="form-group">
-					<label class="form-label" for="approval-method">Decision Method</label>
+					<label class="form-label" for="approval-method"
+						>{$LL.admin_approvals_decision_method()}</label
+					>
 					<select id="approval-method" class="form-select" bind:value={actionMethod}>
-						<option value="portal_confirm">Portal Confirm</option>
-						<option value="reauth">Reauth</option>
-						<option value="passkey">Passkey</option>
-						<option value="ciba">CIBA</option>
-						<option value="email_otp">Email OTP</option>
-						<option value="sms_otp">SMS OTP</option>
+						<option value="portal_confirm">{$LL.admin_approvals_method_portal_confirm()}</option>
+						<option value="reauth">{$LL.admin_approvals_method_reauth()}</option>
+						<option value="passkey">{$LL.admin_approvals_method_passkey()}</option>
+						<option value="ciba">{$LL.admin_approvals_method_ciba()}</option>
+						<option value="email_otp">{$LL.admin_approvals_method_email_otp()}</option>
+						<option value="sms_otp">{$LL.admin_approvals_method_sms_otp()}</option>
 					</select>
 				</div>
 				<div class="form-group">
-					<label class="form-label" for="approval-reason-code">Reason Code</label>
+					<label class="form-label" for="approval-reason-code"
+						>{$LL.admin_approvals_reason_code()}</label
+					>
 					<input id="approval-reason-code" class="form-input" bind:value={actionReasonCode} />
 				</div>
 			</div>
 			<div class="form-group">
-				<label class="form-label" for="approval-reason-note">Reason Note</label>
+				<label class="form-label" for="approval-reason-note"
+					>{$LL.admin_approvals_reason_note()}</label
+				>
 				<textarea
 					id="approval-reason-note"
 					class="form-textarea"
 					rows="3"
 					bind:value={actionReasonNote}
-					placeholder="Optional operator note for approval, denial, or cancellation"
+					placeholder={$LL.admin_approvals_reason_note_placeholder()}
 				></textarea>
 			</div>
 			<details class="grant-details">
-				<summary>Transport Summary / Detail (Optional)</summary>
+				<summary>{$LL.admin_approvals_transport_detail_optional()}</summary>
 				<div class="filter-row">
 					<div class="form-group">
-						<label class="form-label" for="approval-transport-provider">Provider</label>
+						<label class="form-label" for="approval-transport-provider"
+							>{$LL.admin_approvals_provider()}</label
+						>
 						<input
 							id="approval-transport-provider"
 							class="form-input"
@@ -1379,7 +1509,9 @@
 						/>
 					</div>
 					<div class="form-group">
-						<label class="form-label" for="approval-transport-status">Delivery Status</label>
+						<label class="form-label" for="approval-transport-status"
+							>{$LL.admin_approvals_delivery_status()}</label
+						>
 						<input
 							id="approval-transport-status"
 							class="form-input"
@@ -1390,7 +1522,9 @@
 				</div>
 				<div class="filter-row">
 					<div class="form-group">
-						<label class="form-label" for="approval-transport-target">Target</label>
+						<label class="form-label" for="approval-transport-target"
+							>{$LL.admin_approvals_target()}</label
+						>
 						<input
 							id="approval-transport-target"
 							class="form-input"
@@ -1399,7 +1533,9 @@
 						/>
 					</div>
 					<div class="form-group">
-						<label class="form-label" for="approval-transport-correlation">Correlation ID</label>
+						<label class="form-label" for="approval-transport-correlation"
+							>{$LL.admin_approvals_correlation_id()}</label
+						>
 						<input
 							id="approval-transport-correlation"
 							class="form-input"
@@ -1409,7 +1545,7 @@
 					</div>
 					<div class="form-group">
 						<label class="form-label" for="approval-transport-request-id"
-							>Transport Request ID</label
+							>{$LL.admin_approvals_transport_request_id()}</label
 						>
 						<input
 							id="approval-transport-request-id"
@@ -1421,7 +1557,7 @@
 				</div>
 				<div class="form-group">
 					<label class="form-label" for="approval-transport-request-json"
-						>Transport Request JSON</label
+						>{$LL.admin_approvals_transport_request_json()}</label
 					>
 					<textarea
 						id="approval-transport-request-json"
@@ -1433,7 +1569,7 @@
 				</div>
 				<div class="form-group">
 					<label class="form-label" for="approval-transport-response-json"
-						>Transport Response JSON</label
+						>{$LL.admin_approvals_transport_response_json()}</label
 					>
 					<textarea
 						id="approval-transport-response-json"
@@ -1445,7 +1581,7 @@
 				</div>
 				<div class="form-group">
 					<label class="form-label" for="approval-transport-metadata-json"
-						>Transport Metadata JSON</label
+						>{$LL.admin_approvals_transport_metadata_json()}</label
 					>
 					<textarea
 						id="approval-transport-metadata-json"
@@ -1466,63 +1602,82 @@
 					disabled={actionBusy ||
 						!['pending', 'partially_approved'].includes(selectedRequest.status)}
 				>
-					Cancel Request
+					{$LL.admin_approvals_cancel_request()}
 				</button>
 				<div class="panel-meta">
-					{pendingApprovals(selectedRequest).length} pending step(s)
+					{$LL.admin_approvals_pending_steps({
+						count: pendingApprovals(selectedRequest).length
+					})}
 				</div>
 			</div>
 		</div>
 
 		<div class="panel detail-panel">
-			<h3 class="panel-title">Scope JSON</h3>
+			<h3 class="panel-title">{$LL.admin_approvals_scope_json()}</h3>
 			<pre class="json-block">{formatJson(selectedRequest.scope_json)}</pre>
 		</div>
 	{/if}
 </Modal>
 
-<Modal open={showCreateModal} onClose={closeCreateModal} title="Create Approval Request" size="lg">
+<Modal
+	open={showCreateModal}
+	onClose={closeCreateModal}
+	title={$LL.admin_approvals_create_title()}
+	size="lg"
+>
 	<div class="filter-row">
 		<div class="form-group">
-			<label class="form-label" for="create-target-type">Target Type</label>
+			<label class="form-label" for="create-target-type">{$LL.admin_approvals_target_type()}</label>
 			<select
 				id="create-target-type"
 				class="form-select"
 				bind:value={createModel.target_subject_type}
 			>
-				<option value="user">User</option>
-				<option value="artifact">Artifact</option>
-				<option value="service_resource">Service Resource</option>
-				<option value="tenant_resource">Tenant Resource</option>
+				<option value="user">{$LL.admin_approvals_target_user()}</option>
+				<option value="artifact">{$LL.admin_approvals_target_artifact()}</option>
+				<option value="service_resource">{$LL.admin_approvals_target_service_resource()}</option>
+				<option value="tenant_resource">{$LL.admin_approvals_target_tenant_resource()}</option>
 			</select>
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-target-id">Target ID</label>
+			<label class="form-label" for="create-target-id">{$LL.admin_approvals_target_id()}</label>
 			<input id="create-target-id" class="form-input" bind:value={createModel.target_subject_id} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-policy-preset">Policy Preset</label>
+			<label class="form-label" for="create-policy-preset"
+				>{$LL.admin_approvals_policy_preset()}</label
+			>
 			<select id="create-policy-preset" class="form-select" bind:value={createModel.policy_preset}>
-				<option value="support_case_default">Support Case</option>
-				<option value="technical_debug_default">Technical Debug</option>
-				<option value="security_investigation_default">Security Investigation</option>
-				<option value="guardian_support_default">Guardian Support</option>
-				<option value="compliance_review_default">Compliance Review</option>
+				<option value="support_case_default">{$LL.admin_approvals_policy_support_case()}</option>
+				<option value="technical_debug_default"
+					>{$LL.admin_approvals_policy_technical_debug()}</option
+				>
+				<option value="security_investigation_default"
+					>{$LL.admin_approvals_policy_security_investigation()}</option
+				>
+				<option value="guardian_support_default"
+					>{$LL.admin_approvals_policy_guardian_support()}</option
+				>
+				<option value="compliance_review_default"
+					>{$LL.admin_approvals_policy_compliance_review()}</option
+				>
 			</select>
 		</div>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label class="form-label" for="create-surface">Request Surface</label>
+			<label class="form-label" for="create-surface">{$LL.admin_approvals_request_surface()}</label>
 			<input id="create-surface" class="form-input" bind:value={createModel.request_surface} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-action">Requested Action</label>
+			<label class="form-label" for="create-action">{$LL.admin_approvals_requested_action()}</label>
 			<input id="create-action" class="form-input" bind:value={createModel.requested_action} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-resource-class">Resource Class</label>
+			<label class="form-label" for="create-resource-class"
+				>{$LL.admin_approvals_resource_class()}</label
+			>
 			<input
 				id="create-resource-class"
 				class="form-input"
@@ -1533,54 +1688,60 @@
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label class="form-label" for="create-resource-ids">Resource IDs</label>
+			<label class="form-label" for="create-resource-ids"
+				>{$LL.admin_approvals_resource_ids()}</label
+			>
 			<input
 				id="create-resource-ids"
 				class="form-input"
 				bind:value={createResourceIds}
-				placeholder="Comma separated"
+				placeholder={$LL.admin_approvals_comma_separated()}
 			/>
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-detail-classes">Detail Classes</label>
+			<label class="form-label" for="create-detail-classes"
+				>{$LL.admin_approvals_detail_classes()}</label
+			>
 			<input
 				id="create-detail-classes"
 				class="form-input"
 				bind:value={createDetailClasses}
-				placeholder="Comma separated"
+				placeholder={$LL.admin_approvals_comma_separated()}
 			/>
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-redaction-level">Redaction Level</label>
+			<label class="form-label" for="create-redaction-level"
+				>{$LL.admin_approvals_redaction_level()}</label
+			>
 			<select
 				id="create-redaction-level"
 				class="form-select"
 				bind:value={createModel.redaction_level}
 			>
-				<option value="summary_only">Summary Only</option>
-				<option value="masked">Masked</option>
-				<option value="raw">Raw</option>
+				<option value="summary_only">{$LL.admin_approvals_redaction_summary_only()}</option>
+				<option value="masked">{$LL.admin_approvals_redaction_masked()}</option>
+				<option value="raw">{$LL.admin_approvals_redaction_raw()}</option>
 			</select>
 		</div>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label class="form-label" for="create-reason-code">Reason Code</label>
+			<label class="form-label" for="create-reason-code">{$LL.admin_approvals_reason_code()}</label>
 			<input id="create-reason-code" class="form-input" bind:value={createModel.reason_code} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-dataset">Dataset</label>
+			<label class="form-label" for="create-dataset">{$LL.admin_approvals_dataset()}</label>
 			<input id="create-dataset" class="form-input" bind:value={createModel.dataset} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-audience">Audience</label>
+			<label class="form-label" for="create-audience">{$LL.admin_approvals_audience()}</label>
 			<input id="create-audience" class="form-input" bind:value={createModel.audience} />
 		</div>
 	</div>
 
 	<div class="form-group">
-		<label class="form-label" for="create-reason-note">Reason Note</label>
+		<label class="form-label" for="create-reason-note">{$LL.admin_approvals_reason_note()}</label>
 		<textarea
 			id="create-reason-note"
 			class="form-textarea"
@@ -1591,61 +1752,73 @@
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label class="form-label" for="create-reference-system">Reference System</label>
+			<label class="form-label" for="create-reference-system"
+				>{$LL.admin_approvals_reference_system()}</label
+			>
 			<input id="create-reference-system" class="form-input" bind:value={createReferenceSystem} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-reference-id">Reference ID</label>
+			<label class="form-label" for="create-reference-id"
+				>{$LL.admin_approvals_reference_id()}</label
+			>
 			<input id="create-reference-id" class="form-input" bind:value={createReferenceId} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-reference-url">Reference URL</label>
+			<label class="form-label" for="create-reference-url"
+				>{$LL.admin_approvals_reference_url()}</label
+			>
 			<input id="create-reference-url" class="form-input" bind:value={createReferenceUrl} />
 		</div>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label class="form-label" for="create-ticket-system">Ticket System</label>
+			<label class="form-label" for="create-ticket-system"
+				>{$LL.admin_approvals_ticket_system()}</label
+			>
 			<input id="create-ticket-system" class="form-input" bind:value={createTicketSystem} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-ticket-id">Ticket ID</label>
+			<label class="form-label" for="create-ticket-id">{$LL.admin_approvals_ticket_id()}</label>
 			<input id="create-ticket-id" class="form-input" bind:value={createTicketId} />
 		</div>
 		<div class="form-group">
-			<label class="form-label" for="create-ticket-url">Ticket URL</label>
+			<label class="form-label" for="create-ticket-url">{$LL.admin_approvals_ticket_url()}</label>
 			<input id="create-ticket-url" class="form-input" bind:value={createTicketUrl} />
 		</div>
 	</div>
 
 	<div class="filter-row">
 		<div class="form-group">
-			<label class="form-label" for="create-reuse-scope">Reuse Scope</label>
+			<label class="form-label" for="create-reuse-scope">{$LL.admin_approvals_reuse_scope()}</label>
 			<select id="create-reuse-scope" class="form-select" bind:value={createModel.reuse_scope}>
-				<option value="request">Request</option>
-				<option value="case">Case</option>
+				<option value="request">{$LL.admin_approvals_reuse_request()}</option>
+				<option value="case">{$LL.admin_approvals_reuse_case()}</option>
 			</select>
 		</div>
 		<div class="form-group checkbox-group">
 			<label class="checkbox-label">
 				<input type="checkbox" bind:checked={createModel.partial_access_allowed} />
-				<span>Allow partial access</span>
+				<span>{$LL.admin_approvals_allow_partial_access()}</span>
 			</label>
 		</div>
 	</div>
 
 	<div class="panel detail-panel">
 		<div class="panel-header">
-			<h3 class="panel-title">Approval Steps</h3>
-			<button class="btn btn-sm btn-secondary" onclick={addApprovalStep}>Add Step</button>
+			<h3 class="panel-title">{$LL.admin_approvals_steps()}</h3>
+			<button class="btn btn-sm btn-secondary" onclick={addApprovalStep}
+				>{$LL.admin_approvals_add_step()}</button
+			>
 		</div>
 		<div class="steps-list">
 			{#each createModel.approvals as step, index (`${step.step_key}-${index}`)}
 				<div class="step-card">
 					<div class="filter-row">
 						<div class="form-group">
-							<label class="form-label" for={`step-key-${index}`}>Step Key</label>
+							<label class="form-label" for={`step-key-${index}`}
+								>{$LL.admin_approvals_step_key()}</label
+							>
 							<input
 								id={`step-key-${index}`}
 								class="form-input"
@@ -1657,7 +1830,9 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label class="form-label" for={`step-side-${index}`}>Side</label>
+							<label class="form-label" for={`step-side-${index}`}
+								>{$LL.admin_approvals_side()}</label
+							>
 							<select
 								id={`step-side-${index}`}
 								class="form-select"
@@ -1667,13 +1842,19 @@
 										side: (event.currentTarget as HTMLSelectElement).value as typeof step.side
 									})}
 							>
-								<option value="admin_operator">Admin Operator</option>
-								<option value="customer_data_owner">Customer / Data Owner</option>
-								<option value="guardian_delegate">Guardian / Delegate</option>
+								<option value="admin_operator">{$LL.admin_approvals_side_admin_operator()}</option>
+								<option value="customer_data_owner"
+									>{$LL.admin_approvals_side_customer_data_owner()}</option
+								>
+								<option value="guardian_delegate"
+									>{$LL.admin_approvals_side_guardian_delegate()}</option
+								>
 							</select>
 						</div>
 						<div class="form-group">
-							<label class="form-label" for={`step-subject-type-${index}`}>Subject Type</label>
+							<label class="form-label" for={`step-subject-type-${index}`}
+								>{$LL.admin_approvals_subject_type()}</label
+							>
 							<select
 								id={`step-subject-type-${index}`}
 								class="form-select"
@@ -1684,16 +1865,22 @@
 											.value as typeof step.subject_type
 									})}
 							>
-								<option value="admin_user">Admin User</option>
-								<option value="end_user">End User</option>
-								<option value="customer_delegate">Customer Delegate</option>
-								<option value="service_principal">Service Principal</option>
+								<option value="admin_user">{$LL.admin_approvals_subject_admin_user()}</option>
+								<option value="end_user">{$LL.admin_approvals_subject_end_user()}</option>
+								<option value="customer_delegate"
+									>{$LL.admin_approvals_subject_customer_delegate()}</option
+								>
+								<option value="service_principal"
+									>{$LL.admin_approvals_subject_service_principal()}</option
+								>
 							</select>
 						</div>
 					</div>
 					<div class="filter-row">
 						<div class="form-group">
-							<label class="form-label" for={`step-subject-id-${index}`}>Subject ID</label>
+							<label class="form-label" for={`step-subject-id-${index}`}
+								>{$LL.admin_approvals_subject_id()}</label
+							>
 							<input
 								id={`step-subject-id-${index}`}
 								class="form-input"
@@ -1705,7 +1892,9 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label class="form-label" for={`step-relation-type-${index}`}>Relation Type</label>
+							<label class="form-label" for={`step-relation-type-${index}`}
+								>{$LL.admin_approvals_relation_type()}</label
+							>
 							<input
 								id={`step-relation-type-${index}`}
 								class="form-input"
@@ -1717,7 +1906,8 @@
 							/>
 						</div>
 						<div class="form-group">
-							<label class="form-label" for={`step-relation-source-${index}`}>Relation Source</label
+							<label class="form-label" for={`step-relation-source-${index}`}
+								>{$LL.admin_approvals_relation_source()}</label
 							>
 							<input
 								id={`step-relation-source-${index}`}
@@ -1732,7 +1922,9 @@
 					</div>
 					<div class="filter-row">
 						<div class="form-group">
-							<label class="form-label" for={`step-method-${index}`}>Initial Method</label>
+							<label class="form-label" for={`step-method-${index}`}
+								>{$LL.admin_approvals_initial_method()}</label
+							>
 							<select
 								id={`step-method-${index}`}
 								class="form-select"
@@ -1743,18 +1935,19 @@
 											undefined) as typeof step.method
 									})}
 							>
-								<option value="">No initial notification</option>
-								<option value="portal_confirm">Portal Confirm</option>
-								<option value="email_otp">Email OTP</option>
-								<option value="sms_otp">SMS OTP</option>
-								<option value="ciba">CIBA</option>
-								<option value="passkey">Passkey</option>
-								<option value="reauth">Reauth</option>
+								<option value="">{$LL.admin_approvals_no_initial_notification()}</option>
+								<option value="portal_confirm">{$LL.admin_approvals_method_portal_confirm()}</option
+								>
+								<option value="email_otp">{$LL.admin_approvals_method_email_otp()}</option>
+								<option value="sms_otp">{$LL.admin_approvals_method_sms_otp()}</option>
+								<option value="ciba">{$LL.admin_approvals_method_ciba()}</option>
+								<option value="passkey">{$LL.admin_approvals_method_passkey()}</option>
+								<option value="reauth">{$LL.admin_approvals_method_reauth()}</option>
 							</select>
 						</div>
 						<div class="form-group">
 							<label class="form-label" for={`step-transport-channel-${index}`}
-								>Transport Channel</label
+								>{$LL.admin_approvals_transport_channel()}</label
 							>
 							<input
 								id={`step-transport-channel-${index}`}
@@ -1764,7 +1957,7 @@
 									updateApprovalStep(index, {
 										transport_channel: (event.currentTarget as HTMLInputElement).value
 									})}
-								placeholder="Email, phone, or portal target"
+								placeholder={$LL.admin_approvals_transport_channel_placeholder()}
 							/>
 						</div>
 					</div>
@@ -1774,7 +1967,7 @@
 							onclick={() => removeApprovalStep(index)}
 							disabled={createModel.approvals.length === 1}
 						>
-							Remove
+							{$LL.admin_approvals_remove()}
 						</button>
 					</div>
 				</div>
@@ -1795,24 +1988,25 @@
 	{/if}
 	{#if createPreview && createPreviewHasResolutionErrors()}
 		<div class="alert alert-warning">
-			Preview found unresolved transport details. Fix the affected steps or adjust the target before
-			creating the request.
+			{$LL.admin_approvals_preview_warning()}
 		</div>
 	{/if}
 
 	<div class="detail-actions">
 		<button class="btn btn-secondary" onclick={closeCreateModal} disabled={createBusy}
-			>Cancel</button
+			>{$LL.admin_approvals_cancel()}</button
 		>
 		<button
 			class="btn btn-secondary"
 			onclick={previewCreateRequest}
 			disabled={createBusy || createPreviewBusy}
 		>
-			{createPreviewBusy ? 'Resolving…' : 'Preview Resolution'}
+			{createPreviewBusy
+				? $LL.admin_approvals_resolving()
+				: $LL.admin_approvals_preview_resolution()}
 		</button>
 		<button class="btn btn-primary" onclick={createRequest} disabled={createBusy}>
-			{createBusy ? 'Creating…' : 'Create Request'}
+			{createBusy ? $LL.admin_approvals_creating() : $LL.admin_approvals_create_request()}
 		</button>
 	</div>
 </Modal>

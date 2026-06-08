@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
-import { createApiRoutes, generateSessionToken } from '../web/api.js';
+import { createApiRoutes, generateSessionToken, parseEnvironmentConfigForEnv } from '../web/api.js';
 
 const originalCwd = process.cwd();
 let tempDir: string | null = null;
@@ -65,5 +65,36 @@ describe('setup web email API', () => {
     await expect(
       readFile(join(tempDir!, '.authrim-keys', env, 'email_from.txt'), 'utf-8')
     ).resolves.toBe('no-reply@example.com');
+  });
+
+  it('rejects path-like environment names before setup actions run', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({
+        env: '../prod',
+        dryRun: true,
+        skipBuild: true,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Invalid environment name',
+    });
+  });
+
+  it('rejects a config file from a different environment', () => {
+    const prodConfig = createDefaultConfig('prod');
+
+    expect(() => parseEnvironmentConfigForEnv(prodConfig, 'staging')).toThrow(
+      'Config environment mismatch'
+    );
   });
 });

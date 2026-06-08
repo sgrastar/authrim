@@ -136,7 +136,7 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
   {
     binding: 'DB_ADMIN',
     label: 'admin runtime schema',
-    tables: ['admin_users', 'admin_machine_principals', 'mapping_policy_sets'],
+    tables: ['admin_users', 'admin_machine_principals', 'field_mapping_sets'],
   },
 ];
 

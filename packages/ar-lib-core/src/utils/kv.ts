@@ -977,6 +977,8 @@ export async function getClient(
     skip_consent: number | null;
     allow_claims_without_scope: number | null;
     claims_parameter_policy: string | null;
+    identity_mapping: string | null;
+    attribute_release_consent: string | null;
     asc_enabled: number | null;
     asc_protected_request_required: number | null;
     asc_sao_enabled: number | null;
@@ -1103,6 +1105,10 @@ export async function getClient(
     allow_claims_without_scope: result.allow_claims_without_scope === 1,
     claims_parameter_policy: result.claims_parameter_policy
       ? JSON.parse(result.claims_parameter_policy)
+      : undefined,
+    identity_mapping: result.identity_mapping ? JSON.parse(result.identity_mapping) : undefined,
+    attribute_release_consent: result.attribute_release_consent
+      ? JSON.parse(result.attribute_release_consent)
       : undefined,
     asc_enabled:
       result.asc_enabled === null || result.asc_enabled === undefined

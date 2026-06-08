@@ -1,0 +1,52 @@
+const adminScale = {
+	admin_scale_head_title: 'Scale Configuration - Authrim Admin',
+	admin_scale_title: 'Scale Configuration',
+	admin_scale_description:
+		'Configure system capacity and geographic distribution. Changes affect new sessions only.',
+	admin_scale_loading: 'Loading...',
+	admin_scale_current: 'Current:',
+	admin_scale_shards_unit_title: '{count:number} Shards',
+	admin_scale_login_per_sec: '(~{count:number} Login/sec)',
+	admin_scale_load_configuration: 'Loading configuration...',
+	admin_scale_system_scale: 'System Scale',
+	admin_scale_system_scale_help:
+		"Set shards based on your service's maximum expected load. Too few may cause errors under high traffic; too many may increase response latency.",
+	admin_scale_shards_unit: 'shards',
+	admin_scale_region_distribution: 'Region Distribution',
+	admin_scale_region_distribution_help:
+		"Configure where authentication data (sessions, tokens) is stored. Set percentages based on your users' geographic distribution. Example: If 50% of users are in Asia, set APAC to ~50%.",
+	admin_scale_region_distribution_description: 'Select regions and configure {ratio:string}.',
+	admin_scale_request_routing_ratio: 'request routing ratio',
+	admin_scale_slider_note: 'Note: Adjusting one slider will auto-balance others.',
+	admin_scale_advanced_settings: 'Advanced Settings',
+	admin_scale_estimation_model: 'Estimation Model',
+	admin_scale_estimation_model_description:
+		'Based on load tests (Dec 2025).\nLogin/sec: shards × 4.7 (Full Login Flow)\nComponent RPS: shards × 28 (individual endpoints)\nReference: 32 shards ≈ 150 LPS, ~900 RPS per component\nActual results vary by authentication flow, token TTL, and usage patterns.',
+	admin_scale_client_based_coefficient: 'Client-based Coefficient',
+	admin_scale_client_based_applies_to: 'Applies to: PAR, DeviceCode, CIBA, DPoP',
+	admin_scale_coeff_low: '0.25 (Low traffic)',
+	admin_scale_coeff_default: '0.5 (Default)',
+	admin_scale_coeff_high: '1.0 (High traffic)',
+	admin_scale_coeff_current: 'Current: {shards:number} shards (~{rps:number} RPS)',
+	admin_scale_individual_shard_settings: 'Individual Shard Settings (Calculated)',
+	admin_scale_auth_refresh_sync_warning: 'AuthCode and RefreshToken MUST have identical values.',
+	admin_scale_synced_with_refresh_token: 'Synced with RefreshToken',
+	admin_scale_synced_with_auth_code: 'Synced with AuthCode',
+	admin_scale_saving: 'Saving...',
+	admin_scale_save_changes: 'Save Changes',
+	admin_scale_confirm_changes: 'Confirm Changes',
+	admin_scale_dialog_subtitle: 'You are about to change:',
+	admin_scale_changes_new_sessions_only: 'Changes affect new sessions only.',
+	admin_scale_cancel: 'Cancel',
+	admin_scale_diff_scale: 'Scale',
+	admin_scale_saved: 'Scale configuration saved. Changes affect new sessions only.',
+	admin_scale_load_failed: 'Failed to load configuration',
+	admin_scale_save_failed: 'Failed to save configuration',
+	admin_scale_map_unknown: 'Unknown',
+	admin_scale_map_no_do_support: 'No DO support',
+	admin_scale_map_active_region: 'Active Region',
+	admin_scale_map_inactive: 'Inactive',
+	admin_scale_map_traffic_flow: 'Traffic Flow'
+} as const;
+
+export default adminScale;

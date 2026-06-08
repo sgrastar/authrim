@@ -280,7 +280,7 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
       `SELECT
         SUM(CASE WHEN mfa_enabled = 1 THEN 1 ELSE 0 END) as users_with_mfa,
         SUM(CASE WHEN mfa_enabled = 0 OR mfa_enabled IS NULL THEN 1 ELSE 0 END) as users_without_mfa
-      FROM users
+      FROM admin_users
       WHERE tenant_id = ? AND is_active = 1`,
       [tenantId]
     );
@@ -730,8 +730,8 @@ export async function adminComplianceAccessReviewsCreateHandler(c: Context<{ Bin
           // Users not logged in for 90 days
           const inactiveThreshold = nowTs - 90 * 24 * 60 * 60;
           const result = await adapter.queryOne<{ count: number }>(
-            `SELECT COUNT(*) as count FROM users
-             WHERE tenant_id = ? AND is_active = 1
+            `SELECT COUNT(*) as count FROM users_core
+             WHERE tenant_id = ? AND is_active = 1 AND status = 'active'
              AND (last_login_at IS NULL OR last_login_at < ?)`,
             [tenantId, inactiveThreshold]
           );
@@ -1198,9 +1198,9 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
     // Pending erasure requests
     const erasureRequests = await adapter.queryOne<{ pending: number }>(
       `SELECT COUNT(*) as pending
-       FROM users
-       WHERE tenant_id = ? AND scheduled_deletion_at IS NOT NULL AND scheduled_deletion_at > ?`,
-      [tenantId, nowTs]
+       FROM identity_accounts
+       WHERE tenant_id = ? AND lifecycle_state = 'deleted'`,
+      [tenantId]
     );
 
     // Calculate totals

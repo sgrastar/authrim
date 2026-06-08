@@ -6,6 +6,7 @@
 		type CreateScimTokenResponse
 	} from '$lib/api/admin-scim-tokens';
 	import { Modal } from '$lib/components';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let tokens: ScimToken[] = $state([]);
 	let loading = $state(true);
@@ -36,9 +37,8 @@
 		try {
 			const response = await adminScimTokensAPI.list();
 			tokens = response.tokens;
-		} catch (err) {
-			console.error('Failed to load SCIM tokens:', err);
-			error = 'Failed to load SCIM tokens';
+		} catch {
+			error = $LL.admin_scim_tokens_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -77,7 +77,7 @@
 			showTokenCreatedDialog = true;
 			await loadTokens();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create token';
+			createError = err instanceof Error ? err.message : $LL.admin_scim_tokens_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -95,8 +95,8 @@
 		try {
 			await navigator.clipboard.writeText(createdToken.token);
 			tokenCopied = true;
-		} catch (err) {
-			console.error('Failed to copy token:', err);
+		} catch {
+			tokenCopied = false;
 		}
 	}
 
@@ -124,7 +124,7 @@
 			tokenToRevoke = null;
 			await loadTokens();
 		} catch (err) {
-			revokeError = err instanceof Error ? err.message : 'Failed to revoke token';
+			revokeError = err instanceof Error ? err.message : $LL.admin_scim_tokens_revoke_failed();
 		} finally {
 			revoking = false;
 		}
@@ -136,23 +136,22 @@
 </script>
 
 <svelte:head>
-	<title>SCIM Tokens - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_scim_tokens_head_title()}</title>
 </svelte:head>
 
 <div class="admin-page">
 	<!-- Page Header -->
 	<div class="page-header">
 		<div>
-			<h1 class="page-title">SCIM Tokens</h1>
+			<h1 class="page-title">{$LL.admin_scim_tokens_title()}</h1>
 			<p class="page-description">
-				SCIM tokens are used for System for Cross-domain Identity Management (RFC 7643/7644)
-				provisioning.
+				{$LL.admin_scim_tokens_description()}
 			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
-				Create Token
+				{$LL.admin_scim_tokens_create_token()}
 			</button>
 		</div>
 	</div>
@@ -164,16 +163,18 @@
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading...</p>
+			<p>{$LL.admin_scim_tokens_loading()}</p>
 		</div>
 	{:else if tokens.length === 0}
 		<div class="panel">
 			<div class="empty-state">
-				<p class="empty-state-description">No SCIM tokens found.</p>
+				<p class="empty-state-description">{$LL.admin_scim_tokens_empty()}</p>
 				<p class="empty-state-hint">
-					Create a token to enable SCIM provisioning for your identity provider.
+					{$LL.admin_scim_tokens_empty_hint()}
 				</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>Create Token</button>
+				<button class="btn btn-primary" onclick={openCreateDialog}
+					>{$LL.admin_scim_tokens_create_token()}</button
+				>
 			</div>
 		</div>
 	{:else}
@@ -181,11 +182,11 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Token Hash</th>
-						<th>Description</th>
-						<th>Expires In (Days)</th>
-						<th>Status</th>
-						<th class="text-right">Actions</th>
+						<th>{$LL.admin_scim_tokens_token_hash()}</th>
+						<th>{$LL.admin_scim_tokens_description_label()}</th>
+						<th>{$LL.admin_scim_tokens_expires_in_days()}</th>
+						<th>{$LL.admin_scim_tokens_status()}</th>
+						<th class="text-right">{$LL.admin_scim_tokens_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -196,12 +197,14 @@
 							<td>{token.expiresInDays}</td>
 							<td>
 								<span class={token.enabled ? 'badge badge-success' : 'badge badge-danger'}>
-									{token.enabled ? 'Enabled' : 'Disabled'}
+									{token.enabled
+										? $LL.admin_scim_tokens_enabled()
+										: $LL.admin_scim_tokens_disabled()}
 								</span>
 							</td>
 							<td class="text-right">
 								<button class="btn btn-danger btn-sm" onclick={() => openRevokeDialog(token)}>
-									Revoke
+									{$LL.admin_scim_tokens_revoke()}
 								</button>
 							</td>
 						</tr>
@@ -213,13 +216,20 @@
 </div>
 
 <!-- Create Token Dialog -->
-<Modal open={showCreateDialog} onClose={closeCreateDialog} title="Create SCIM Token" size="md">
+<Modal
+	open={showCreateDialog}
+	onClose={closeCreateDialog}
+	title={$LL.admin_scim_tokens_create_title()}
+	size="md"
+>
 	{#if createError}
 		<div class="alert alert-error">{createError}</div>
 	{/if}
 
 	<div class="form-group">
-		<label for="description" class="form-label">Description (optional)</label>
+		<label for="description" class="form-label"
+			>{$LL.admin_scim_tokens_description_optional()}</label
+		>
 		<input
 			id="description"
 			type="text"
@@ -230,7 +240,7 @@
 	</div>
 
 	<div class="form-group">
-		<label for="expiresInDays" class="form-label">Expires In (Days)</label>
+		<label for="expiresInDays" class="form-label">{$LL.admin_scim_tokens_expires_in_days()}</label>
 		<input
 			id="expiresInDays"
 			type="number"
@@ -239,15 +249,15 @@
 			class="form-input"
 			bind:value={newTokenExpiresInDays}
 		/>
-		<p class="form-hint">Valid range: 1-3650 days (up to 10 years)</p>
+		<p class="form-hint">{$LL.admin_scim_tokens_valid_range()}</p>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_scim_tokens_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={confirmCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create Token'}
+			{creating ? $LL.admin_scim_tokens_creating() : $LL.admin_scim_tokens_create_token()}
 		</button>
 	{/snippet}
 </Modal>
@@ -256,42 +266,46 @@
 <Modal
 	open={showTokenCreatedDialog && !!createdToken}
 	onClose={closeTokenCreatedDialog}
-	title="Token Created Successfully"
+	title={$LL.admin_scim_tokens_created_title()}
 	size="lg"
 	closeOnOutsideClick={false}
 >
 	<div class="alert alert-warning">
 		<i class="i-ph-warning"></i>
-		<span>Save this token now - it will not be shown again!</span>
+		<span>{$LL.admin_scim_tokens_save_now_warning()}</span>
 	</div>
 
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">SCIM Token</label>
+		<label class="form-label">{$LL.admin_scim_tokens_scim_token()}</label>
 		<div class="token-display">
 			<code class="token-value">{createdToken?.token}</code>
 			<button
 				class={tokenCopied ? 'btn btn-success btn-sm' : 'btn btn-primary btn-sm'}
 				onclick={copyTokenToClipboard}
 			>
-				{tokenCopied ? 'Copied!' : 'Copy'}
+				{tokenCopied ? $LL.admin_scim_tokens_copied() : $LL.admin_scim_tokens_copy()}
 			</button>
 		</div>
 	</div>
 
 	<div class="info-box">
 		<div class="info-row">
-			<span class="info-label">Description:</span>
-			<span class="info-value">{createdToken?.description || 'None'}</span>
+			<span class="info-label">{$LL.admin_scim_tokens_description_colon()}</span>
+			<span class="info-value">{createdToken?.description || $LL.admin_scim_tokens_none()}</span>
 		</div>
 		<div class="info-row">
-			<span class="info-label">Expires In:</span>
-			<span class="info-value">{createdToken?.expiresInDays} days</span>
+			<span class="info-label">{$LL.admin_scim_tokens_expires_in_colon()}</span>
+			<span class="info-value"
+				>{$LL.admin_scim_tokens_days({ count: createdToken?.expiresInDays ?? 0 })}</span
+			>
 		</div>
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-primary" onclick={closeTokenCreatedDialog}>Done</button>
+		<button class="btn btn-primary" onclick={closeTokenCreatedDialog}
+			>{$LL.admin_scim_tokens_done()}</button
+		>
 	{/snippet}
 </Modal>
 
@@ -299,7 +313,7 @@
 <Modal
 	open={showRevokeDialog && !!tokenToRevoke}
 	onClose={closeRevokeDialog}
-	title="Revoke SCIM Token"
+	title={$LL.admin_scim_tokens_revoke_title()}
 	size="md"
 >
 	{#if revokeError}
@@ -307,27 +321,26 @@
 	{/if}
 
 	<p class="modal-description">
-		Are you sure you want to revoke this SCIM token? This action cannot be undone and will
-		immediately disable any SCIM integrations using this token.
+		{$LL.admin_scim_tokens_revoke_confirm()}
 	</p>
 
 	<div class="info-box">
 		<div class="info-row">
-			<span class="info-label">Token Hash:</span>
+			<span class="info-label">{$LL.admin_scim_tokens_token_hash_colon()}</span>
 			<code class="info-value">{formatTokenHash(tokenToRevoke?.tokenHash ?? '')}</code>
 		</div>
 		<div class="info-row">
-			<span class="info-label">Description:</span>
-			<span class="info-value">{tokenToRevoke?.description || 'None'}</span>
+			<span class="info-label">{$LL.admin_scim_tokens_description_colon()}</span>
+			<span class="info-value">{tokenToRevoke?.description || $LL.admin_scim_tokens_none()}</span>
 		</div>
 	</div>
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeRevokeDialog} disabled={revoking}>
-			Cancel
+			{$LL.admin_scim_tokens_cancel()}
 		</button>
 		<button class="btn btn-danger" onclick={confirmRevoke} disabled={revoking}>
-			{revoking ? 'Revoking...' : 'Revoke Token'}
+			{revoking ? $LL.admin_scim_tokens_revoking() : $LL.admin_scim_tokens_revoke_token()}
 		</button>
 	{/snippet}
 </Modal>

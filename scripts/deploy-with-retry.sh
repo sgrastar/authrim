@@ -514,11 +514,6 @@ for pkg_dir in packages/*/; do
         package_name=$(basename "$pkg_dir")
         toml_file="${pkg_dir}wrangler.toml"
 
-        # Skip router if not needed
-        if [ "$package_name" = "ar-router" ]; then
-            continue
-        fi
-
         # Skip UI packages (deployed via Cloudflare Pages, not Workers)
         if [ "$package_name" = "ar-ui" ] || [ "$package_name" = "ar-admin-ui" ] || [ "$package_name" = "ar-login-ui" ]; then
             continue
@@ -667,12 +662,14 @@ FIRST_DEPLOY=true
 for pkg in "${PACKAGES[@]}"; do
     IFS=':' read -r name path <<< "$pkg"
 
-    # Skip router if wrangler.toml doesn't exist or doesn't have environment section
+    # Router is part of the API deployment. Do not silently skip it; missing config
+    # usually means setup did not generate a complete deploy surface.
     if [ "$name" = "ar-router" ]; then
         if [ ! -f "$path/wrangler.toml" ] || ! grep -q "\\[env\\.${DEPLOY_ENV}\\]" "$path/wrangler.toml" 2>/dev/null; then
-            echo "⊗ Skipping ar-router (no [env.${DEPLOY_ENV}] section - not needed when using custom domains)"
+            echo "❌ ar-router is missing wrangler.toml or [env.${DEPLOY_ENV}] section"
             echo ""
-            continue
+            FAILED_PACKAGES+=("$name")
+            break
         fi
     fi
 
