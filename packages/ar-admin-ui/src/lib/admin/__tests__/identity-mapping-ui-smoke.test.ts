@@ -203,7 +203,7 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(pageShell).toContain('profile-mode-control');
 		expect(pageShell).toContain('selectedEditorProfileId');
 		expect(pageShell).toContain('routePolicyOptionId');
-		expect(pageShell).toContain('initialPolicyOptionId={selectedPolicyOptionId}');
+		expect(pageShell).toContain('initialPolicyOptionId={selectedFieldMappingOptionId}');
 		expect(pageShell).toContain('admin_identity_mapping_editor_policy_version');
 		expect(pageShell).toContain('toggleSelectedPolicyActivation');
 		expect(pageShell).toContain('publishSelectedFieldMappingVersion');
