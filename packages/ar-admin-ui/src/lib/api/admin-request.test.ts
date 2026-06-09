@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildAdminHeaders } from './admin-request';
+import { adminFetch, buildAdminHeaders } from './admin-request';
 import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 describe('buildAdminHeaders', () => {
@@ -51,5 +51,43 @@ describe('buildAdminHeaders', () => {
 		const headers = buildAdminHeaders(undefined, { skipTenantHeader: true });
 
 		expect(headers.get('X-Tenant-Id')).toBeNull();
+	});
+
+	it('does not add Idempotency-Key to safe requests', () => {
+		const headers = buildAdminHeaders(undefined, { method: 'GET' });
+
+		expect(headers.get('Idempotency-Key')).toBeNull();
+	});
+
+	it('adds Idempotency-Key to mutation requests', () => {
+		const headers = buildAdminHeaders(undefined, { method: 'POST' });
+
+		expect(headers.get('Idempotency-Key')).toEqual(expect.any(String));
+	});
+
+	it('keeps an explicit Idempotency-Key for mutation requests', () => {
+		const headers = buildAdminHeaders({ 'Idempotency-Key': 'explicit-key' }, { method: 'POST' });
+
+		expect(headers.get('Idempotency-Key')).toBe('explicit-key');
+	});
+
+	it('passes Idempotency-Key through adminFetch for mutation requests', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await adminFetch('/api/admin/example', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ok: true })
+		});
+
+		const headers = fetchMock.mock.calls[0]?.[1]?.headers;
+		expect(headers).toBeInstanceOf(Headers);
+		expect((headers as Headers).get('Idempotency-Key')).toEqual(expect.any(String));
 	});
 });
