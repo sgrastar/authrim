@@ -95,6 +95,9 @@ describe('adminSAMLAPI', () => {
 
 		expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/admin/saml-providers');
 		expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
+		const headers = fetchMock.mock.calls[0]?.[1]?.headers;
+		expect(headers).toBeInstanceOf(Headers);
+		expect((headers as Headers).get('Idempotency-Key')).toEqual(expect.any(String));
 		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
 			name: 'MockSAML',
 			providerType: 'saml_idp',
