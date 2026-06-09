@@ -463,6 +463,25 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it.each([
+        '/idp/profile/SAML2/POST/SSO',
+        '/idp/profile/SAML2/Redirect/SSO',
+        '/idp/profile/SAML2/POST/SLO',
+        '/idp/profile/SAML2/Redirect/SLO',
+      ])('should route %s to OP_SAML', async (path) => {
+        const req = new Request(`https://example.com${path}`);
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should not route Shibboleth 1.0 SSO profile to OP_SAML', async () => {
+        const req = new Request('https://example.com/idp/profile/Shibboleth/SSO');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_SAML.fetch).not.toHaveBeenCalled();
+      });
+
       it('should route /api/admin/saml-providers to OP_SAML instead of OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/api/admin/saml-providers', {
           headers: { 'X-Tenant-Id': 'default' },

@@ -102,6 +102,7 @@ import { buildSAMLAssertionTiming } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
+import { isAllowedIdPSSODestination } from './shibboleth-compat';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -993,8 +994,7 @@ async function validateAuthnRequest(
 
   // Validate Destination if present
   if (authnRequest.destination) {
-    const expectedDestination = `${issuerUrl}/saml/idp/sso`;
-    if (authnRequest.destination !== expectedDestination) {
+    if (!isAllowedIdPSSODestination(authnRequest.destination, issuerUrl)) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Destination in SAML AuthnRequest');
     }

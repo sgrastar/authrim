@@ -77,6 +77,7 @@ import {
 } from './slo-state';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
+import { buildIdPSLODestinationUrls, isAllowedIdPSLODestination } from './shibboleth-compat';
 
 interface ParsedLogoutRequestInput {
   logoutRequest: ParsedLogoutRequest;
@@ -527,11 +528,10 @@ function validateLogoutResponseDestination(
     return;
   }
 
-  const expectedDestination = `${issuerUrl}/saml/idp/slo`;
-  if (logoutResponse.destination !== expectedDestination) {
+  if (!isAllowedIdPSLODestination(logoutResponse.destination, issuerUrl)) {
     throw new SAMLLogoutResponseCorrelationError('Invalid Destination in SAML LogoutResponse', {
       destination: logoutResponse.destination,
-      expected_destination: expectedDestination,
+      expected_destinations: buildIdPSLODestinationUrls(issuerUrl),
     });
   }
 }
@@ -564,8 +564,7 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: st
 
   // Validate Destination if present
   if (logoutRequest.destination) {
-    const expectedDestination = `${issuerUrl}/saml/idp/slo`;
-    if (logoutRequest.destination !== expectedDestination) {
+    if (!isAllowedIdPSLODestination(logoutRequest.destination, issuerUrl)) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Destination in SAML LogoutRequest');
     }

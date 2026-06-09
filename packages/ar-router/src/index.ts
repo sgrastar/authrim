@@ -113,6 +113,15 @@ function matchesPathGroup(path: string, basePath: string): boolean {
   return path === basePath || path.startsWith(`${basePath}/`);
 }
 
+function isGakuNinShibbolethSAML2IdPPath(path: string): boolean {
+  return (
+    path === '/idp/profile/SAML2/POST/SSO' ||
+    path === '/idp/profile/SAML2/Redirect/SSO' ||
+    path === '/idp/profile/SAML2/POST/SLO' ||
+    path === '/idp/profile/SAML2/Redirect/SLO'
+  );
+}
+
 function bearerTokenTransportError(): Response {
   return Response.json(
     {
@@ -261,6 +270,7 @@ app.use('*', async (c, next) => {
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||
     path.startsWith('/saml/') ||
+    isGakuNinShibbolethSAML2IdPPath(path) ||
     // UI proxy paths - UI Workers handle their own headers
     path.startsWith('/setup') ||
     path.startsWith('/admin') ||
@@ -906,8 +916,20 @@ app.all('/api/internal/*', async (c) => {
  * - /saml/idp/* - IdP endpoints (metadata, SSO, SLO, IdP-initiated)
  * - /saml/sp/* - SP endpoints (metadata, ACS, login, SLO)
  * - /saml/admin/* - Admin API for SAML provider management
+ * - /idp/profile/SAML2/* - GakuNin/Shibboleth SAML2 IdP compatibility aliases
  */
 app.all('/saml/*', async (c) => {
+  if (!c.env.OP_SAML) {
+    return notFoundResponse();
+  }
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_SAML.fetch(request);
+});
+
+app.all('/idp/profile/SAML2/*', async (c) => {
+  if (!isGakuNinShibbolethSAML2IdPPath(c.req.path)) {
+    return notFoundResponse();
+  }
   if (!c.env.OP_SAML) {
     return notFoundResponse();
   }

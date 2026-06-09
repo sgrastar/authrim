@@ -542,6 +542,22 @@ zone_name = \"$ZONE_NAME\""
             routes="
 [[routes]]
 pattern = \"$DOMAIN_ONLY/saml/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/idp/profile/SAML2/POST/SSO\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/idp/profile/SAML2/Redirect/SSO\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/idp/profile/SAML2/POST/SLO\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/idp/profile/SAML2/Redirect/SLO\"
 zone_name = \"$ZONE_NAME\""
             ;;
         ar-bridge)
