@@ -52,11 +52,16 @@ export interface SAMLSigningCertificateSubject {
   commonName?: string;
 }
 
+export interface SAMLSigningCertificateSubjectAlternativeNames {
+  dnsNames: string[];
+}
+
 export interface SAMLSigningCertificateCreationOptions {
   validFrom?: number;
   validTo?: number;
   publicKeyAlgorithm?: 'RSA';
   publicKeySizeBits?: 2048 | 3072 | 4096;
+  subjectAlternativeNames?: SAMLSigningCertificateSubjectAlternativeNames;
 }
 
 export const DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT: Required<SAMLSigningCertificateSubject> = {
@@ -75,6 +80,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 export interface SigningKeyLookupOptions {
   keyRef?: string;
   certificateSubject?: SAMLSigningCertificateSubject;
+  certificateOptions?: SAMLSigningCertificateCreationOptions;
 }
 
 export interface SecretLookupOptions {
@@ -155,6 +161,7 @@ export async function getSigningKey(
       const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
         keyData: rotateData.key,
         certificateSubject: options.certificateSubject,
+        certificateOptions: options.certificateOptions,
       });
 
       // Update cache
@@ -181,6 +188,7 @@ export async function getSigningKey(
   const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
     keyData,
     certificateSubject: options.certificateSubject,
+    certificateOptions: options.certificateOptions,
   });
 
   // Update cache
@@ -356,6 +364,7 @@ export async function exportSigningKeyWithPrivateMaterial(
   options: {
     keyRef: string;
     certificateSubject?: SAMLSigningCertificateSubject;
+    certificateOptions?: SAMLSigningCertificateCreationOptions;
   }
 ): Promise<SAMLExportedSigningKey> {
   const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
@@ -363,10 +372,12 @@ export async function exportSigningKeyWithPrivateMaterial(
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
   const keyData = await getOrCreateKeyManagerSigningKey(keyManager, env.KEY_MANAGER_SECRET, {
     certificateSubject: options.certificateSubject,
+    certificateOptions: options.certificateOptions,
   });
   const certificate = await getOrPersistSigningCertificate(keyManager, env.KEY_MANAGER_SECRET, {
     keyData,
     certificateSubject: options.certificateSubject,
+    certificateOptions: options.certificateOptions,
   });
 
   signingKeyCache.set(buildSigningKeyCacheKey(resolvedTenantId, options.keyRef), {
@@ -431,6 +442,7 @@ async function getOrCreateKeyManagerSigningKey(
   keyManagerSecret: string | undefined,
   options: {
     certificateSubject?: SAMLSigningCertificateSubject;
+    certificateOptions?: SAMLSigningCertificateCreationOptions;
   }
 ): Promise<KeyManagerSigningKey> {
   if (!keyManagerSecret) {
@@ -467,6 +479,7 @@ async function getOrCreateKeyManagerSigningKey(
   await getOrPersistSigningCertificate(keyManager, keyManagerSecret, {
     keyData: rotateData.key,
     certificateSubject: options.certificateSubject,
+    certificateOptions: options.certificateOptions,
   });
   return rotateData.key;
 }
@@ -576,7 +589,7 @@ function buildSelfSignedCertificateTbs(
     derSequence(derUtcTime(notBefore), derUtcTime(notAfter)),
     buildCertificateName(subject),
     subjectPublicKeyInfo,
-    derExplicit(3, buildCertificateExtensions())
+    derExplicit(3, buildCertificateExtensions(options))
   );
 }
 
@@ -646,7 +659,7 @@ function buildCertificateName(subject: Required<SAMLSigningCertificateSubject>):
   return derSequence(...attributes);
 }
 
-function buildCertificateExtensions(): Uint8Array {
+function buildCertificateExtensions(options: SAMLSigningCertificateCreationOptions): Uint8Array {
   const basicConstraints = derSequence(
     derObjectIdentifier('2.5.29.19'),
     derBoolean(true),
@@ -657,8 +670,64 @@ function buildCertificateExtensions(): Uint8Array {
     derBoolean(true),
     derOctetString(derBitString(new Uint8Array([0x80]), 7))
   );
+  const subjectAlternativeNames = normalizeCertificateSubjectAlternativeNames(
+    options.subjectAlternativeNames
+  );
 
-  return derSequence(basicConstraints, keyUsage);
+  return derSequence(
+    basicConstraints,
+    keyUsage,
+    ...(subjectAlternativeNames.dnsNames.length
+      ? [buildSubjectAlternativeNameExtension(subjectAlternativeNames)]
+      : [])
+  );
+}
+
+function normalizeCertificateSubjectAlternativeNames(
+  value: SAMLSigningCertificateSubjectAlternativeNames | undefined
+): { dnsNames: string[] } {
+  const seen = new Set<string>();
+  const dnsNames = Array.isArray(value?.dnsNames)
+    ? value.dnsNames
+        .map((name) => sanitizeDnsName(name))
+        .filter((name): name is string => {
+          if (!name || seen.has(name)) return false;
+          seen.add(name);
+          return true;
+        })
+    : [];
+  return { dnsNames };
+}
+
+function sanitizeDnsName(value: string | undefined): string {
+  const normalized = String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 253);
+  if (!normalized || normalized.includes(':') || normalized.includes('/')) {
+    return '';
+  }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(normalized) || normalized.includes('*')) {
+    return '';
+  }
+  const labels = normalized.split('.');
+  if (
+    labels.some(
+      (label) =>
+        label.length === 0 || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+    )
+  ) {
+    return '';
+  }
+  return normalized;
+}
+
+function buildSubjectAlternativeNameExtension(input: { dnsNames: string[] }): Uint8Array {
+  const generalNames = derSequence(
+    ...input.dnsNames.map((dnsName) => derTag(0x82, new TextEncoder().encode(dnsName)))
+  );
+  return derSequence(derObjectIdentifier('2.5.29.17'), derOctetString(generalNames));
 }
 
 function buildSha256WithRsaAlgorithmIdentifier(): Uint8Array {

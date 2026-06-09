@@ -169,6 +169,13 @@ const adminSaml = {
 	admin_saml_local_organization: 'O (Organization)',
 	admin_saml_local_org_unit: 'OU (Organizational Unit)',
 	admin_saml_local_common_name: 'CN (Common Name)',
+	admin_saml_local_dns_san_auto: 'Automatically add DNS SAN from entityID and endpoints',
+	admin_saml_local_dns_san_auto_desc:
+		'Adds the hostnames used by this role, such as metadata, SSO, SLO, or ACS URLs.',
+	admin_saml_local_dns_san_generated: 'Generated DNS SAN',
+	admin_saml_local_dns_san_additional: 'Additional DNS SAN',
+	admin_saml_local_dns_san_additional_desc:
+		'Add scope domains or other owned DNS names explicitly. Separate values with spaces or commas.',
 	admin_saml_local_subject_warning:
 		'The certificate created here is not used for signing immediately. Select it in the stored certificate list and start using it when ready.',
 	admin_saml_local_signing_rollover: 'Certificate Rollover',

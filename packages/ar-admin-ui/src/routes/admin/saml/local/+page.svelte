@@ -9,12 +9,14 @@
 		type SAMLEntityIdStyle,
 		type SAMLInteractiveLoginUrlPolicy,
 		type SAMLSigningCertificateSubject,
+		type SAMLSigningCertificateSubjectAlternativeNames,
 		type SAMLSigningKeyReference,
 		type SAMLSigningKeyPolicy,
 		type SAMLSettings,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
 	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
+	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
@@ -121,6 +123,12 @@
 		organizationalUnitName: '',
 		commonName: 'Authrim SAML Signing'
 	});
+	let draftCertificateSubjectAlternativeNames =
+		$state<SAMLSigningCertificateSubjectAlternativeNames>({
+			includeGeneratedDnsNames: true,
+			dnsNames: []
+		});
+	let draftCertificateAdditionalDnsNames = $state('');
 
 	const signingRoles: MetadataRole[] = ['idp', 'sp'];
 
@@ -170,6 +178,12 @@
 			draftCertificateSubject = normalizeSubjectForForm(
 				settingsResult.localSigning?.certificateSubject ?? settingsResult.certificateSubject
 			);
+			draftCertificateSubjectAlternativeNames = normalizeSubjectAlternativeNamesForForm(
+				settingsResult.localSigning?.certificateSubjectAlternativeNames ??
+					settingsResult.certificateSubjectAlternativeNames
+			);
+			draftCertificateAdditionalDnsNames =
+				draftCertificateSubjectAlternativeNames.dnsNames.join(', ');
 			metadataDocs = tenantInfoResult.components.saml
 				? await loadMetadataDocuments(tenantInfoResult)
 				: [];
@@ -363,6 +377,92 @@
 			organizationalUnitName: subject?.organizationalUnitName ?? '',
 			commonName: subject?.commonName || 'Authrim SAML Signing'
 		};
+	}
+
+	function normalizeSubjectAlternativeNamesForForm(
+		value: Partial<SAMLSigningCertificateSubjectAlternativeNames> | undefined
+	): SAMLSigningCertificateSubjectAlternativeNames {
+		return {
+			includeGeneratedDnsNames: value?.includeGeneratedDnsNames !== false,
+			dnsNames: normalizeDnsNames(value?.dnsNames ?? [])
+		};
+	}
+
+	function normalizeDnsNames(values: string[]): string[] {
+		const seen = new Set<string>();
+		const names: string[] = [];
+		for (const value of values) {
+			const name = normalizeDnsName(value);
+			if (!name || seen.has(name)) continue;
+			seen.add(name);
+			names.push(name);
+		}
+		return names;
+	}
+
+	function normalizeDnsName(value: string): string {
+		const name = value.trim().toLowerCase();
+		if (!name || name.includes(':') || name.includes('/') || name.includes('*')) return '';
+		if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return '';
+		const labels = name.split('.');
+		if (
+			labels.some(
+				(label) =>
+					label.length === 0 ||
+					label.length > 63 ||
+					!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+			)
+		) {
+			return '';
+		}
+		return name;
+	}
+
+	function parseAdditionalDnsNamesInput(value: string): string[] {
+		return normalizeDnsNames(value.split(/[\s,]+/).filter(Boolean));
+	}
+
+	function currentCertificateSubjectAlternativeNames(): SAMLSigningCertificateSubjectAlternativeNames {
+		return normalizeSubjectAlternativeNamesForForm(
+			samlSettings?.localSigning?.certificateSubjectAlternativeNames ??
+				samlSettings?.certificateSubjectAlternativeNames
+		);
+	}
+
+	function draftCertificateSubjectAlternativeNamesRequest(): SAMLSigningCertificateSubjectAlternativeNames {
+		return {
+			includeGeneratedDnsNames: draftCertificateSubjectAlternativeNames.includeGeneratedDnsNames,
+			dnsNames: parseAdditionalDnsNamesInput(draftCertificateAdditionalDnsNames)
+		};
+	}
+
+	function generatedDnsNamesPreview(role: MetadataRole): string[] {
+		if (!samlSettings || !draftCertificateSubjectAlternativeNames.includeGeneratedDnsNames)
+			return [];
+		const issuerUrl = samlSettings.generated.issuerUrl;
+		const urls =
+			role === 'idp'
+				? [
+						samlSettings.generated.idpEntityId,
+						samlSettings.generated.idpMetadataUrl,
+						`${issuerUrl}/saml/idp/sso`,
+						`${issuerUrl}/saml/idp/slo`
+					]
+				: [
+						samlSettings.generated.spEntityId,
+						samlSettings.generated.spMetadataUrl,
+						`${issuerUrl}/saml/sp/acs`,
+						`${issuerUrl}/saml/sp/slo`
+					];
+		return normalizeDnsNames(urls.map(extractHostname));
+	}
+
+	function extractHostname(value: string): string {
+		try {
+			return new URL(value).hostname;
+		} catch {
+			return value;
+		}
 	}
 
 	function localSigningPolicy(role: MetadataRole): SAMLSigningKeyPolicy {
@@ -904,6 +1004,7 @@
 				role,
 				action,
 				certificateSubject: draftCertificateSubject,
+				certificateSubjectAlternativeNames: draftCertificateSubjectAlternativeNamesRequest(),
 				keepPreviousAsBackup: true,
 				targetKid: row?.reference?.kid,
 				targetKeyRef: row?.reference?.keyRef,
@@ -913,6 +1014,9 @@
 				publicKeySizeBits: draftCertificatePublicKeySizeBits
 			});
 			draftCertificateSubject = currentCertificateSubject();
+			draftCertificateSubjectAlternativeNames = currentCertificateSubjectAlternativeNames();
+			draftCertificateAdditionalDnsNames =
+				draftCertificateSubjectAlternativeNames.dnsNames.join(', ');
 			actionMessage = $LL.admin_saml_local_certificate_settings_updated();
 			if (tenantInfo?.components.saml) {
 				metadataDocs = await loadMetadataDocuments(tenantInfo);
@@ -1823,6 +1927,41 @@
 					</label>
 				</div>
 
+				<div class="san-settings">
+					<div class="san-toggle-row">
+						<div class="san-toggle-copy">
+							<strong>{$LL.admin_saml_local_dns_san_auto()}</strong>
+							<small>{$LL.admin_saml_local_dns_san_auto_desc()}</small>
+						</div>
+						<ToggleSwitch
+							checked={draftCertificateSubjectAlternativeNames.includeGeneratedDnsNames}
+							disabled={savingSettings}
+							onchange={(checked) =>
+								(draftCertificateSubjectAlternativeNames.includeGeneratedDnsNames = checked)}
+						/>
+					</div>
+					{#if draftCertificateSubjectAlternativeNames.includeGeneratedDnsNames}
+						<div class="san-preview">
+							<span>{$LL.admin_saml_local_dns_san_generated()}</span>
+							<div>
+								{#each generatedDnsNamesPreview(draftCertificateRole) as dnsName (dnsName)}
+									<code>{dnsName}</code>
+								{/each}
+							</div>
+						</div>
+					{/if}
+					<label class="san-extra">
+						<span>{$LL.admin_saml_local_dns_san_additional()}</span>
+						<input
+							class="form-input"
+							bind:value={draftCertificateAdditionalDnsNames}
+							placeholder="authrim.com"
+							disabled={savingSettings}
+						/>
+						<small>{$LL.admin_saml_local_dns_san_additional_desc()}</small>
+					</label>
+				</div>
+
 				<div class="entity-warning">
 					<i class="i-ph-warning-circle"></i>
 					<span>{$LL.admin_saml_local_subject_warning()}</span>
@@ -2430,6 +2569,75 @@
 		color: var(--text-secondary);
 		font-size: 0.75rem;
 		font-weight: 700;
+	}
+
+	.san-settings {
+		display: grid;
+		gap: 10px;
+		margin: 12px 0;
+		padding: 12px;
+		border: 1px solid var(--border-color);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+	}
+
+	.san-toggle-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 12px;
+		align-items: center;
+	}
+
+	.san-toggle-copy {
+		display: grid;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.san-toggle-copy strong {
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+	}
+
+	.san-toggle-copy small,
+	.san-extra small {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		line-height: 1.4;
+	}
+
+	.san-preview {
+		display: grid;
+		gap: 6px;
+	}
+
+	.san-preview > span,
+	.san-extra > span {
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 700;
+	}
+
+	.san-preview div {
+		display: flex;
+		flex-wrap: nowrap;
+		gap: 6px;
+		overflow-x: auto;
+		white-space: nowrap;
+	}
+
+	.san-preview code {
+		flex: 0 0 auto;
+		padding: 3px 7px;
+		border-radius: 999px;
+		background: var(--bg-subtle);
+		color: var(--text-primary);
+		font-size: 0.75rem;
+	}
+
+	.san-extra {
+		display: grid;
+		gap: 5px;
 	}
 
 	.local-signing-grid {

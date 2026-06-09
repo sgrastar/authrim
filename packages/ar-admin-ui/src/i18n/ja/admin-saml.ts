@@ -170,6 +170,13 @@ const adminSaml = {
 	admin_saml_local_organization: 'O (Organization)',
 	admin_saml_local_org_unit: 'OU (Organizational Unit)',
 	admin_saml_local_common_name: 'CN (Common Name)',
+	admin_saml_local_dns_san_auto: 'entityID / endpoint のホストを DNS SAN に自動追加',
+	admin_saml_local_dns_san_auto_desc:
+		'このroleで使うmetadata、SSO、SLO、ACS URLなどのホスト名を追加します。',
+	admin_saml_local_dns_san_generated: '自動追加される DNS SAN',
+	admin_saml_local_dns_san_additional: '追加 DNS SAN',
+	admin_saml_local_dns_san_additional_desc:
+		'scope domainなど、所有しているDNS名を明示的に追加します。スペースまたはカンマで区切れます。',
 	admin_saml_local_subject_warning:
 		'ここで作成する証明書は、すぐには署名に使われません。保存済み証明書一覧で選択し、使用開始してください。',
 	admin_saml_local_signing_rollover: '証明書の切り替え',

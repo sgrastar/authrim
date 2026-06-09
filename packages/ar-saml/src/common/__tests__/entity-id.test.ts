@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSAMLEntityIdFromIssuerUrl,
+  buildSAMLSigningCertificateSubjectAlternativeNames,
   DEFAULT_SAML_ENTITY_ID_STYLE,
   DEFAULT_SAML_INTERACTIVE_LOGIN_URL_POLICY,
   getSAMLPublicSettings,
@@ -72,7 +73,31 @@ describe('SAML local entityID helpers', () => {
         organizationalUnitName: '',
         commonName: 'Authrim SAML Signing',
       },
+      certificateSubjectAlternativeNames: {
+        includeGeneratedDnsNames: true,
+        dnsNames: [],
+      },
       signingKeyPolicies: {},
     });
+  });
+
+  it('builds DNS SAN names from entity IDs, endpoints, and explicit DNS settings', () => {
+    const subjectAlternativeNames = buildSAMLSigningCertificateSubjectAlternativeNames(
+      {
+        issuerUrl: 'https://conformance.authrim.com',
+        entityIdStyle: 'metadata_url',
+        idpEntityId: 'https://conformance.authrim.com/saml/idp/metadata',
+        spEntityId: 'https://conformance.authrim.com/saml/sp/metadata',
+        idpMetadataUrl: 'https://conformance.authrim.com/saml/idp/metadata',
+        spMetadataUrl: 'https://conformance.authrim.com/saml/sp/metadata',
+      },
+      'idp',
+      {
+        includeGeneratedDnsNames: true,
+        dnsNames: ['authrim.com', 'CONFORMANCE.authrim.com', 'https://invalid.example'],
+      }
+    );
+
+    expect(subjectAlternativeNames.dnsNames).toEqual(['conformance.authrim.com', 'authrim.com']);
   });
 });

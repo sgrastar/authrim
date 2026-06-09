@@ -23,6 +23,9 @@ export interface PublishSAMLNextSigningCertificateInput extends SAMLSigningRollo
   validTo?: number;
   publicKeyAlgorithm?: 'RSA';
   publicKeySizeBits?: number;
+  subjectAlternativeNames?: {
+    dnsNames: string[];
+  };
   metadataCertificatePublication?: Extract<
     SAMLMetadataCertificatePublication,
     'active_next' | 'active_next_backup'
@@ -64,6 +67,7 @@ export function publishSAMLNextSigningCertificate(
     validTo: input.validTo,
     publicKeyAlgorithm: input.publicKeyAlgorithm,
     publicKeySizeBits: input.publicKeySizeBits,
+    subjectAlternativeNames: input.subjectAlternativeNames,
   };
 
   return {

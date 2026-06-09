@@ -376,6 +376,10 @@ export interface SAMLSigningKeyReference {
   publicKeyAlgorithm?: 'RSA';
   /** Public key size in bits */
   publicKeySizeBits?: number;
+  /** DNS subjectAltName values generated into this certificate */
+  subjectAlternativeNames?: {
+    dnsNames: string[];
+  };
 }
 
 export interface SAMLSigningKeyPolicy {

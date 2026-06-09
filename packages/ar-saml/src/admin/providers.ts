@@ -96,8 +96,10 @@ import {
 } from './local-signing-dr-bundle';
 import { previewTrustCertificate } from './certificate-preview';
 import {
+  buildSAMLSigningCertificateSubjectAlternativeNames,
   getSAMLLocalEntityIds,
   getSAMLPublicSettings,
+  normalizeCertificateSubjectAlternativeNames,
   normalizeSAMLInteractiveLoginUrlPolicy,
   normalizeSAMLEntityIdStyle,
   putSAMLLocalSigningSettings,
@@ -499,6 +501,7 @@ export async function handleGetSAMLSettings(c: AdminSAMLContext): Promise<Respon
       metadata: buildSAMLMetadataPublicationSettings(c.env),
       localSigning: {
         certificateSubject: settings.certificateSubject,
+        certificateSubjectAlternativeNames: settings.certificateSubjectAlternativeNames,
         idpSigningKeyPolicy: settings.signingKeyPolicies.idp ?? {},
         spSigningKeyPolicy: settings.signingKeyPolicies.sp ?? {},
       },
@@ -529,6 +532,7 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       entityIdStyle?: unknown;
       interactiveLoginUrlPolicy?: unknown;
       certificateSubject?: unknown;
+      certificateSubjectAlternativeNames?: unknown;
     };
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const before = await getSAMLPublicSettings(c.env, tenantId);
@@ -555,11 +559,16 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       body.certificateSubject === undefined
         ? before.certificateSubject
         : normalizeSAMLSigningCertificateSubject(body.certificateSubject);
+    const certificateSubjectAlternativeNames =
+      body.certificateSubjectAlternativeNames === undefined
+        ? before.certificateSubjectAlternativeNames
+        : normalizeCertificateSubjectAlternativeNames(body.certificateSubjectAlternativeNames);
 
     await putSAMLPublicSettings(c.env, tenantId, {
       entityIdStyle,
       interactiveLoginUrlPolicy,
       certificateSubject,
+      certificateSubjectAlternativeNames,
       signingKeyPolicies: before.signingKeyPolicies,
     });
 
@@ -575,6 +584,9 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
         interactive_login_url_policy: interactiveLoginUrlPolicy,
         certificate_subject_changed:
           JSON.stringify(before.certificateSubject) !== JSON.stringify(certificateSubject),
+        certificate_subject_alternative_names_changed:
+          JSON.stringify(before.certificateSubjectAlternativeNames) !==
+          JSON.stringify(certificateSubjectAlternativeNames),
       },
     });
 
@@ -584,10 +596,12 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       entityIdStyle,
       interactiveLoginUrlPolicy,
       certificateSubject,
+      certificateSubjectAlternativeNames,
       signingKeyPolicies: before.signingKeyPolicies,
       metadata: buildSAMLMetadataPublicationSettings(c.env),
       localSigning: {
         certificateSubject,
+        certificateSubjectAlternativeNames,
         idpSigningKeyPolicy: before.signingKeyPolicies.idp ?? {},
         spSigningKeyPolicy: before.signingKeyPolicies.sp ?? {},
       },
@@ -618,6 +632,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       role?: unknown;
       action?: unknown;
       certificateSubject?: unknown;
+      certificateSubjectAlternativeNames?: unknown;
       keepPreviousAsBackup?: unknown;
       targetKid?: unknown;
       targetKeyRef?: unknown;
@@ -652,6 +667,10 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       body.certificateSubject === undefined
         ? settings.certificateSubject
         : normalizeSAMLSigningCertificateSubject(body.certificateSubject);
+    const certificateSubjectAlternativeNames =
+      body.certificateSubjectAlternativeNames === undefined
+        ? settings.certificateSubjectAlternativeNames
+        : normalizeCertificateSubjectAlternativeNames(body.certificateSubjectAlternativeNames);
     const targetKid = typeof body.targetKid === 'string' ? body.targetKid : undefined;
     const targetKeyRef = typeof body.targetKeyRef === 'string' ? body.targetKeyRef : undefined;
     const validFrom = normalizeOptionalTimestamp(body.validFrom);
@@ -666,6 +685,12 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
     const signingKeyPolicies = { ...settings.signingKeyPolicies };
     const currentPolicy = signingKeyPolicies[role] ?? {};
     const baseContext = { tenantId, role };
+    const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
+    const subjectAlternativeNames = buildSAMLSigningCertificateSubjectAlternativeNames(
+      entityIds,
+      role,
+      certificateSubjectAlternativeNames
+    );
     let nextPolicy = currentPolicy;
     let generated: { keyRef?: string; kid?: string; certificate?: string } = {};
 
@@ -685,6 +710,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
           validTo,
           publicKeyAlgorithm,
           publicKeySizeBits,
+          subjectAlternativeNames,
         },
       });
       nextPolicy = {
@@ -700,6 +726,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
           validTo,
           publicKeyAlgorithm,
           publicKeySizeBits,
+          subjectAlternativeNames,
         },
         metadataCertificatePublication: getSAMLNextSigningCertificates(currentPolicy).length
           ? currentPolicy.backup
@@ -721,6 +748,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
           validTo,
           publicKeyAlgorithm,
           publicKeySizeBits,
+          subjectAlternativeNames,
         },
       });
       nextPolicy = publishSAMLNextSigningCertificate(currentPolicy, {
@@ -733,6 +761,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
         validTo,
         publicKeyAlgorithm,
         publicKeySizeBits,
+        subjectAlternativeNames,
         metadataCertificatePublication: currentPolicy.backup ? 'active_next_backup' : 'active_next',
       });
     } else if (action === 'promote_next') {
@@ -751,6 +780,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
     signingKeyPolicies[role] = nextPolicy;
     const nextSettings = await putSAMLLocalSigningSettings(c.env, tenantId, {
       certificateSubject,
+      certificateSubjectAlternativeNames,
       signingKeyPolicies,
     });
 
@@ -769,13 +799,13 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       },
     });
 
-    const entityIds = await getSAMLLocalEntityIds(c.env, tenantId);
     return c.json({
       tenantId,
       ...nextSettings,
       metadata: buildSAMLMetadataPublicationSettings(c.env),
       localSigning: {
         certificateSubject: nextSettings.certificateSubject,
+        certificateSubjectAlternativeNames: nextSettings.certificateSubjectAlternativeNames,
         idpSigningKeyPolicy: nextSettings.signingKeyPolicies.idp ?? {},
         spSigningKeyPolicy: nextSettings.signingKeyPolicies.sp ?? {},
       },
@@ -899,6 +929,7 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       metadata: buildSAMLMetadataPublicationSettings(c.env),
       localSigning: {
         certificateSubject: settings.certificateSubject,
+        certificateSubjectAlternativeNames: settings.certificateSubjectAlternativeNames,
         idpSigningKeyPolicy: settings.signingKeyPolicies.idp ?? {},
         spSigningKeyPolicy: settings.signingKeyPolicies.sp ?? {},
       },
