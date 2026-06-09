@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { SvelteURL } from 'svelte/reactivity';
+	import { SvelteSet, SvelteURL } from 'svelte/reactivity';
 	import { getTenantInfo, type TenantInfo } from '$lib/api/admin-info';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import {
@@ -389,7 +389,7 @@
 	}
 
 	function normalizeDnsNames(values: string[]): string[] {
-		const seen = new Set<string>();
+		const seen = new SvelteSet<string>();
 		const names: string[] = [];
 		for (const value of values) {
 			const name = normalizeDnsName(value);
