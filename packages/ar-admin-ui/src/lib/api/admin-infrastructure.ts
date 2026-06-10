@@ -40,14 +40,20 @@ export interface ShardUpdateResponse {
 /**
  * Region shard configuration
  */
+export interface RegionShardRange {
+	startShard: number;
+	endShard: number;
+	shardCount: number;
+}
+
 export interface RegionShardConfig {
 	currentGeneration: number;
 	currentTotalShards: number;
-	currentRegions: Record<string, { start: number; end: number; count: number }>;
+	currentRegions: Record<string, RegionShardRange>;
 	previousGenerations: Array<{
 		generation: number;
 		totalShards: number;
-		regions: Record<string, { start: number; end: number; count: number }>;
+		regions: Record<string, RegionShardRange>;
 		deprecatedAt: number;
 	}>;
 	maxPreviousGenerations: number;
