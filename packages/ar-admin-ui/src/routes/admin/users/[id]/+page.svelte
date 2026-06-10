@@ -19,6 +19,7 @@
 	import OrganizationSelectDialog from '$lib/components/OrganizationSelectDialog.svelte';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
+	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { sanitizeText, isValidUUID } from '$lib/utils';
 
@@ -86,6 +87,10 @@
 	let loadedTenantId = $state('');
 
 	const userId = $derived($page.params.id ?? '');
+	const canWriteUsers = $derived(adminAuth.hasPermission('admin:users:write'));
+	const canDeleteUsers = $derived(adminAuth.hasPermission('admin:users:delete'));
+	const canManageRoles = $derived(adminAuth.hasPermission('admin:roles:write'));
+	const canRevokeSessions = $derived(adminAuth.hasPermission('admin:sessions:revoke'));
 
 	async function loadUser() {
 		loading = true;
@@ -169,6 +174,7 @@
 	}
 
 	function openAssignRoleDialog() {
+		if (!canManageRoles) return;
 		selectedRoleId = '';
 		selectedScope = 'global';
 		selectedOrgId = null;
@@ -203,7 +209,7 @@
 	}
 
 	async function assignRole() {
-		if (!selectedRoleId) return;
+		if (!canManageRoles || !selectedRoleId) return;
 		if (selectedScope === 'org' && !selectedOrgId) {
 			rolesError = $LL.admin_user_detail_error_select_org();
 			return;
@@ -233,6 +239,7 @@
 	}
 
 	function confirmRemoveRole(role: RoleAssignment) {
+		if (!canManageRoles) return;
 		roleToRemove = role;
 		showRemoveRoleDialog = true;
 	}
@@ -243,7 +250,7 @@
 	}
 
 	async function removeRole() {
-		if (!roleToRemove) return;
+		if (!canManageRoles || !roleToRemove) return;
 
 		removeRoleLoading = true;
 		rolesError = '';
@@ -274,6 +281,7 @@
 	}
 
 	function startEditing() {
+		if (!canWriteUsers) return;
 		resetEditForm();
 		isEditing = true;
 		actionError = '';
@@ -286,7 +294,7 @@
 	}
 
 	async function saveChanges() {
-		if (!user) return;
+		if (!user || !canWriteUsers) return;
 
 		saving = true;
 		actionError = '';
@@ -305,6 +313,13 @@
 	function openConfirmDialog(
 		action: 'suspend' | 'lock' | 'delete' | 'activate' | 'revoke-sessions'
 	) {
+		if (
+			((action === 'suspend' || action === 'lock' || action === 'activate') && !canWriteUsers) ||
+			(action === 'delete' && !canDeleteUsers) ||
+			(action === 'revoke-sessions' && !canRevokeSessions)
+		) {
+			return;
+		}
 		confirmAction = action;
 		showConfirmDialog = true;
 		actionError = '';
@@ -417,7 +432,7 @@
 
 	// Withdraw consent
 	async function handleWithdrawConsent() {
-		if (!statementToWithdraw) return;
+		if (!canWriteUsers || !statementToWithdraw) return;
 
 		withdrawLoading = true;
 		consentError = '';
@@ -622,7 +637,7 @@
 			<div class="panel">
 				<div class="panel-header">
 					<h2 class="panel-title">{$LL.admin_user_detail_user_information()}</h2>
-					{#if !isEditing}
+					{#if !isEditing && canWriteUsers}
 						<button class="btn btn-primary btn-sm" onclick={startEditing}
 							>{$LL.admin_users_edit()}</button
 						>
@@ -859,9 +874,11 @@
 			<div class="panel">
 				<div class="panel-header">
 					<h2 class="panel-title">{$LL.admin_user_detail_role_assignments()}</h2>
-					<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}
-						>{$LL.admin_user_detail_assign_role()}</button
-					>
+					{#if canManageRoles}
+						<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}
+							>{$LL.admin_user_detail_assign_role()}</button
+						>
+					{/if}
 				</div>
 
 				{#if rolesError}
@@ -907,9 +924,14 @@
 												: $LL.admin_user_detail_never()}</td
 										>
 										<td class="text-right">
-											<button class="btn btn-danger btn-sm" onclick={() => confirmRemoveRole(role)}>
-												{$LL.admin_user_detail_remove()}
-											</button>
+											{#if canManageRoles}
+												<button
+													class="btn btn-danger btn-sm"
+													onclick={() => confirmRemoveRole(role)}
+												>
+													{$LL.admin_user_detail_remove()}
+												</button>
+											{/if}
 										</td>
 									</tr>
 								{/each}
@@ -975,7 +997,7 @@
 											>
 												{$LL.admin_user_detail_history()}
 											</button>
-											{#if record.status === 'granted'}
+											{#if canWriteUsers && record.status === 'granted'}
 												<button
 													class="btn btn-danger btn-sm"
 													onclick={() => {
@@ -1008,24 +1030,28 @@
 			<div class="panel">
 				<h2 class="panel-title">{$LL.admin_user_detail_tab_actions()}</h2>
 				<div class="action-buttons">
-					{#if user.status === 'active'}
+					{#if canWriteUsers && user.status === 'active'}
 						<button class="btn btn-warning" onclick={() => openConfirmDialog('suspend')}>
 							{$LL.admin_user_detail_suspend_user()}
 						</button>
 						<button class="btn btn-danger" onclick={() => openConfirmDialog('lock')}>
 							{$LL.admin_user_detail_lock_account()}
 						</button>
-					{:else if user.status === 'suspended' || user.status === 'locked'}
+					{:else if canWriteUsers && (user.status === 'suspended' || user.status === 'locked')}
 						<button class="btn btn-success" onclick={() => openConfirmDialog('activate')}>
 							{$LL.admin_user_detail_activate_user()}
 						</button>
 					{/if}
-					<button class="btn btn-purple" onclick={() => openConfirmDialog('revoke-sessions')}>
-						{$LL.admin_user_detail_revoke_all_sessions()}
-					</button>
-					<button class="btn btn-danger" onclick={() => openConfirmDialog('delete')}>
-						{$LL.admin_user_detail_deleteUser()}
-					</button>
+					{#if canRevokeSessions}
+						<button class="btn btn-purple" onclick={() => openConfirmDialog('revoke-sessions')}>
+							{$LL.admin_user_detail_revoke_all_sessions()}
+						</button>
+					{/if}
+					{#if canDeleteUsers}
+						<button class="btn btn-danger" onclick={() => openConfirmDialog('delete')}>
+							{$LL.admin_user_detail_deleteUser()}
+						</button>
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -1308,11 +1334,15 @@
 				showWithdrawModal = false;
 				statementToWithdraw = null;
 			}}
-			disabled={withdrawLoading}
+			disabled={withdrawLoading || !canWriteUsers}
 		>
 			{$LL.dialog_cancel()}
 		</button>
-		<button class="btn btn-danger" onclick={handleWithdrawConsent} disabled={withdrawLoading}>
+		<button
+			class="btn btn-danger"
+			onclick={handleWithdrawConsent}
+			disabled={withdrawLoading || !canWriteUsers}
+		>
 			{withdrawLoading
 				? $LL.admin_user_detail_withdrawing()
 				: $LL.admin_user_detail_withdraw_consent_title()}

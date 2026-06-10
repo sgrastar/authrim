@@ -34,14 +34,15 @@ Authrim is still under active development, and breaking changes, including datab
 ### Security Hardening Status
 
 Recent internal security review work has remediated several pre-1.0 findings across
-selected management API authorization paths, CIBA client authentication, admin setup-token recovery,
+management API authorization, CIBA client authentication, admin setup-token recovery,
 Admin WebAuthn origin/RP ID validation, OTP HMAC secret handling, VCI holder binding,
-device-flow token issuance, and SCIM filter handling. These fixes include negative
-regression coverage in the affected packages.
+device-flow token issuance, and SCIM filter handling. The Admin API now uses a
+declarative, fail-closed route access table with CI coverage that fails undeclared
+admin routes, plus UI-side permission awareness for core user-management actions.
+These fixes include negative regression coverage in the affected packages.
 
-Security validation remains active. The main remaining authorization hardening task is
-a declarative, fail-closed Admin API permission table with CI coverage for undeclared
-routes. Low/Info hardening items and an external audit/penetration test are still pending.
+Security validation remains active. Low/Info hardening items and an external
+audit/penetration test are still pending.
 
 ### For Organizations Considering Adoption
 
@@ -211,7 +212,7 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | JavaScript SDKs | Implemented |
 | Setup tooling | Implemented; production deployment docs in progress |
 | UI consolidation | Active; Admin/Login/setup flows are being polished against the current Workers deployment model |
-| Security, QA, and validation | Active; internal review remediation landed for selected management authorization, CIBA, setup-token, WebAuthn, OTP, VCI, device-flow, and SCIM findings |
+| Security, QA, and validation | Active; internal review remediation landed for management authorization, CIBA, setup-token, WebAuthn, OTP, VCI, device-flow, and SCIM findings; Admin API route access is now declarative fail-closed with CI coverage |
 | Storage portability | Implementation baseline complete; validation active |
 | Multi-tenant isolation | Implementation baseline complete; validation active |
 | Operational logging and evidence | Implementation baseline complete; validation active |
