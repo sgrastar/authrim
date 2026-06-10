@@ -33,11 +33,13 @@ vi.mock('@authrim/ar-lib-core', async () => {
 });
 
 import {
+  adminRoleCreateHandler,
   adminOrganizationHierarchyHandler,
   adminOrganizationMemberAddHandler,
   adminOrganizationMemberRemoveHandler,
   adminOrganizationMembersListHandler,
   adminUserEffectivePermissionsHandler,
+  adminUserRoleAssignHandler,
 } from '../admin-rbac';
 
 function createMockAdapter(
@@ -379,5 +381,112 @@ describe('admin-rbac schema alignment', () => {
       'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
       ['default', 'org-1', 'user-1']
     );
+  });
+
+  it('rejects assigning a role at the caller hierarchy level', async () => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('SELECT * FROM roles WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['role-peer', 'default']);
+          return {
+            id: 'role-peer',
+            name: 'peer',
+            hierarchy_level: 50,
+            is_assignable: 1,
+          };
+        }
+        return null;
+      },
+    });
+
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+
+    const c = createMockContext({
+      params: { id: 'user-1' },
+      body: { role_id: 'role-peer' },
+    });
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      permissions: ['admin:roles:write'],
+      hierarchyLevel: 50,
+    });
+
+    const res = await adminUserRoleAssignHandler(c);
+
+    expect(res.status).toBe(403);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('allows assigning a lower hierarchy role', async () => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('SELECT * FROM roles WHERE id = ? AND tenant_id = ?')) {
+          expect(params).toEqual(['role-lower', 'default']);
+          return {
+            id: 'role-lower',
+            name: 'lower',
+            hierarchy_level: 10,
+            is_assignable: 1,
+          };
+        }
+        if (sql.includes('SELECT id FROM role_assignments')) {
+          return null;
+        }
+        return null;
+      },
+    });
+
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+
+    const c = createMockContext({
+      params: { id: 'user-1' },
+      body: { role_id: 'role-lower' },
+    });
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      permissions: ['admin:roles:write'],
+      hierarchyLevel: 50,
+    });
+
+    const res = await adminUserRoleAssignHandler(c);
+
+    expect(res.status).toBe(201);
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO role_assignments'),
+      expect.arrayContaining(['default', 'user-1', 'role-lower'])
+    );
+  });
+
+  it('rejects creating a role at the caller hierarchy level', async () => {
+    const coreAdapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const c = createMockContext({
+      body: {
+        name: 'peer_role',
+        permissions: ['documents:read'],
+        hierarchy_level: 50,
+      },
+    });
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      permissions: ['admin:roles:write'],
+      hierarchyLevel: 50,
+    });
+
+    const res = await adminRoleCreateHandler(c);
+
+    expect(res.status).toBe(403);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
   });
 });

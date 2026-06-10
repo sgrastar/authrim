@@ -354,14 +354,26 @@ export function parseScimFilter(filter: string): ScimFilterNode {
  */
 export function filterToSql(
   node: ScimFilterNode,
-  attributeMap: Record<string, string> = {}
+  attributeMap?: Record<string, string>
 ): { sql: string; params: (ScimFilterValue | undefined)[] } {
   const params: (ScimFilterValue | undefined)[] = [];
+
+  function resolveColumn(attribute: string): string {
+    if (!attributeMap) {
+      return attribute;
+    }
+
+    const column = attributeMap[attribute];
+    if (!column) {
+      throw new Error(`Unsupported SCIM filter attribute: ${attribute}`);
+    }
+    return column;
+  }
 
   function nodeToSql(n: ScimFilterNode): string {
     switch (n.type) {
       case 'comparison': {
-        const column = attributeMap[n.attribute!] || n.attribute!;
+        const column = resolveColumn(n.attribute!);
         const paramIndex = params.length;
 
         switch (n.operator) {

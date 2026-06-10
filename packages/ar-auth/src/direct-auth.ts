@@ -1601,7 +1601,13 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const attemptId = crypto.randomUUID();
     const code = generateEmailCode();
     const issuedAt = Date.now();
-    const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+    const hmacSecret = c.env.OTP_HMAC_SECRET;
+    if (!hmacSecret) {
+      log.error('OTP_HMAC_SECRET must be configured for direct email-code auth', {
+        action: 'direct_email_code_send',
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+    }
 
     const [codeHash, emailHash, challengeStore] = await Promise.all([
       hashEmailCode(code, email.toLowerCase(), attemptId, issuedAt, hmacSecret),
@@ -1793,7 +1799,13 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Verify code hash
-    const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+    const hmacSecret = c.env.OTP_HMAC_SECRET;
+    if (!hmacSecret) {
+      log.error('OTP_HMAC_SECRET must be configured for direct email-code verification', {
+        action: 'direct_email_code_verify',
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+    }
     const isValidCode = await verifyEmailCodeHash(
       code,
       challengeData.email?.toLowerCase() || '',

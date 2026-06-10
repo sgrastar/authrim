@@ -23,6 +23,7 @@ import {
   createPublicClient,
   createPrivateKeyJwtClient,
   createM2MClient,
+  createCIBAClient,
   createAuthCodeData,
   createClientCredentialsGrantRequest,
   type TestClientMetadata,
@@ -249,6 +250,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     },
   };
 });
+
+const CIBA_CLIENT_SECRET = 'ciba-secret';
+const CIBA_CLIENT_SECRET_HASH = '3269ad7c6e3e2fe0a25f942328a6099e42978ee9c3d4f55bc222f7520a40d044';
 
 // Mock jose library for key operations
 vi.mock('jose', async (importOriginal) => {
@@ -688,6 +692,109 @@ describe('Client Authentication Tests', () => {
         error_description: 'client_id is required',
       });
       expect(mockEnv.CIBA_REQUEST_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects CIBA grant requests without client authentication before polling storage', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      mocks.mockGetClientCached.mockResolvedValue(client);
+
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:openid:params:grant-type:ciba',
+          auth_req_id: 'auth-req-123',
+          client_id: client.client_id,
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(401);
+      expect(body).toEqual({
+        error: 'invalid_client',
+        error_description: 'Client authentication failed',
+      });
+      expect(mockEnv.CIBA_REQUEST_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects CIBA grant requests with an invalid client secret before polling storage', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      mocks.mockGetClientCached.mockResolvedValue(client);
+
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:openid:params:grant-type:ciba',
+          auth_req_id: 'auth-req-123',
+          client_id: client.client_id,
+          client_secret: 'wrong-secret',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(401);
+      expect(body).toEqual({
+        error: 'invalid_client',
+        error_description: 'Client authentication failed',
+      });
+      expect(mockEnv.CIBA_REQUEST_STORE.get).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('authenticates CIBA grant requests before polling CIBA storage', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      mocks.mockGetClientCached.mockResolvedValue(client);
+
+      const cibaStoreFetch = vi.fn().mockImplementation(async (request: Request) => {
+        const pathname = new URL(request.url).pathname;
+        if (pathname === '/update-poll') {
+          return new Response(JSON.stringify({ success: true }), { status: 200 });
+        }
+        if (pathname === '/get-by-auth-req-id') {
+          return new Response(
+            JSON.stringify({
+              auth_req_id: 'auth-req-123',
+              client_id: client.client_id,
+              scope: 'openid profile',
+              status: 'pending',
+              delivery_mode: 'poll',
+              interval: 5,
+              created_at: Date.now() - 1000,
+              expires_at: Date.now() + 60000,
+              token_issued: false,
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+      });
+      mockEnv.CIBA_REQUEST_STORE.get = vi.fn().mockReturnValue({ fetch: cibaStoreFetch });
+
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'urn:openid:params:grant-type:ciba',
+          auth_req_id: 'auth-req-123',
+          client_id: client.client_id,
+          client_secret: CIBA_CLIENT_SECRET,
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'authorization_pending',
+        error_description: 'User has not yet authorized the authentication request',
+      });
+      expect(mockEnv.CIBA_REQUEST_STORE.get).toHaveBeenCalled();
+      expect(cibaStoreFetch).toHaveBeenCalled();
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
     });
   });

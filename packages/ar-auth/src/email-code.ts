@@ -244,8 +244,13 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       // Generate 6-digit OTP code
       const code = generateEmailCode();
 
-      // Get HMAC secret from environment (or generate one)
-      const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+      const hmacSecret = c.env.OTP_HMAC_SECRET;
+      if (!hmacSecret) {
+        log.error('OTP_HMAC_SECRET must be configured for email-code auth', {
+          action: 'email_code_send',
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+      }
 
       // Hash the code and get ChallengeStore in parallel (independent operations)
       const [codeHash, emailHash, challengeStore] = await Promise.all([
@@ -449,7 +454,13 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Parallel: Verify code hash AND fetch user details from both DBs (independent operations)
       const tenantId = getTenantIdFromContext(c);
-      const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+      const hmacSecret = c.env.OTP_HMAC_SECRET;
+      if (!hmacSecret) {
+        log.error('OTP_HMAC_SECRET must be configured for email-code verification', {
+          action: 'email_code_verify',
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+      }
       const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
 
       const [isValidCode, runtimeUser] = await Promise.all([

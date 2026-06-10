@@ -31,6 +31,18 @@ Production hardening is tracked against documented deployment, operations, recov
 
 Authrim is still under active development, and breaking changes, including database schema changes, are expected until at least 0.5.0 and possibly until 1.0.0.
 
+### Security Hardening Status
+
+Recent internal security review work has remediated several pre-1.0 findings across
+selected management API authorization paths, CIBA client authentication, admin setup-token recovery,
+Admin WebAuthn origin/RP ID validation, OTP HMAC secret handling, VCI holder binding,
+device-flow token issuance, and SCIM filter handling. These fixes include negative
+regression coverage in the affected packages.
+
+Security validation remains active. The main remaining authorization hardening task is
+a declarative, fail-closed Admin API permission table with CI coverage for undeclared
+routes. Low/Info hardening items and an external audit/penetration test are still pending.
+
 ### For Organizations Considering Adoption
 
 Authrim is open source, and we also accept consultations for adoption planning, evaluation, and PoC.
@@ -199,7 +211,7 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | JavaScript SDKs | Implemented |
 | Setup tooling | Implemented; production deployment docs in progress |
 | UI consolidation | Active; Admin/Login/setup flows are being polished against the current Workers deployment model |
-| Security, QA, and validation | Active |
+| Security, QA, and validation | Active; internal review remediation landed for selected management authorization, CIBA, setup-token, WebAuthn, OTP, VCI, device-flow, and SCIM findings |
 | Storage portability | Implementation baseline complete; validation active |
 | Multi-tenant isolation | Implementation baseline complete; validation active |
 | Operational logging and evidence | Implementation baseline complete; validation active |

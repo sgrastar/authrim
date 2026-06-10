@@ -14,4 +14,15 @@ describe('token tenant-d1 runtime boundary', () => {
     expect(source).not.toMatch(/new\s+User(Core|PII)Repository\s*\(\s*c\.env\.DB/u);
     expect(source).not.toMatch(/new\s+User(Core|PII)Repository\s*\(\s*c\.env\.DB_PII/u);
   });
+
+  it('atomically reserves approved device codes before token issuance', () => {
+    const source = readFileSync(resolve(testDir, '..', 'token.ts'), 'utf-8');
+    const approvedBranch = source.indexOf("// Status is 'approved' - issue tokens");
+    const consumeCall = source.indexOf('https://internal/mark-token-issued', approvedBranch);
+    const signingKeyLoad = source.indexOf('getSigningKeyFromKeyManager', approvedBranch);
+
+    expect(approvedBranch).toBeGreaterThan(-1);
+    expect(consumeCall).toBeGreaterThan(approvedBranch);
+    expect(consumeCall).toBeLessThan(signingKeyLoad);
+  });
 });

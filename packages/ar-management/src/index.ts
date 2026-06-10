@@ -181,6 +181,8 @@ import {
   adminRoleUpdateHandler,
   adminRoleDeleteHandler,
 } from './admin-rbac';
+import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
+import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
 import {
   adminRelationDefinitionsListHandler,
   adminRelationDefinitionGetHandler,
@@ -1136,6 +1138,8 @@ app.use('/api/admin/*', async (c, next) => {
 });
 
 // Admin API endpoints
+registerAdminResourcePermissionMiddleware(app);
+
 app.get('/api/admin/stats', adminStatsHandler);
 app.get('/api/admin/users', adminUsersListHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
@@ -1742,6 +1746,7 @@ app.get('/api/admin/external-token-refresh/runs', adminExternalTokenRefreshRunsL
 app.post('/api/admin/external-token-refresh/run', adminExternalTokenRefreshRunHandler);
 
 // Admin RBAC endpoints - Phase 1
+registerAdminRbacPermissionMiddleware(app);
 
 // Organization management
 app.get('/api/admin/organizations', adminOrganizationsListHandler);
@@ -1876,16 +1881,7 @@ app.get(
 // =============================================================================
 // Manages custom policy rules for fine-grained access control.
 // Supports RBAC, ABAC, time-based, geo, and rate conditions.
-// RBAC: Requires tenant_admin or higher role.
-
-app.use(
-  '/api/admin/policies',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/policies/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+// RBAC: Protected by registerAdminRbacPermissionMiddleware().
 
 // Policy rules CRUD
 app.get('/api/admin/policies', adminPoliciesListHandler);

@@ -36,6 +36,8 @@ describe('admin passkey login origin resolution', () => {
       },
       {
         AUTHRIM_CONFIG: config,
+        ISSUER_URL: 'https://test.authrim.com',
+        ADMIN_UI_URL: 'https://test-ar-admin-ui.sgrastar.workers.dev',
       }
     );
 
@@ -72,6 +74,8 @@ describe('admin passkey login origin resolution', () => {
       },
       {
         AUTHRIM_CONFIG: config,
+        ISSUER_URL: 'https://authrim.example',
+        ADMIN_UI_URL: 'https://admin.authrim.example',
       }
     );
 
@@ -81,5 +85,33 @@ describe('admin passkey login origin resolution', () => {
         rpID: 'admin.authrim.example',
       })
     );
+  });
+
+  it('rejects an unconfigured forwarded Admin UI browser origin', async () => {
+    const config = {
+      put: vi.fn(),
+    };
+
+    const response = await adminSetupApiApp.request(
+      '/api/admin/auth/passkey/options',
+      {
+        method: 'POST',
+        headers: {
+          Origin: 'https://test.authrim.com',
+          'X-Authrim-Admin-UI-Api-Mode': 'cross-site-proxy-bff',
+          'X-Authrim-Forwarded-Origin': 'https://evil.example.com',
+        },
+        body: '{}',
+      },
+      {
+        AUTHRIM_CONFIG: config,
+        ISSUER_URL: 'https://test.authrim.com',
+        ADMIN_UI_URL: 'https://admin.example.com',
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.generateAuthenticationOptions).not.toHaveBeenCalled();
+    expect(config.put).not.toHaveBeenCalled();
   });
 });
