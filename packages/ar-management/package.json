@@ -24,10 +24,10 @@
     "jose": "^6.1.2"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251121.0",
+    "@cloudflare/workers-types": "^4.20260610.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.99.0",
     "yaml": "2.8.3"
   }
 }

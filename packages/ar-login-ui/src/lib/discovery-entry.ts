@@ -72,8 +72,17 @@ export function getDiscoveryRequestHeaders(
 ): HeadersInit | undefined {
 	const originalHost = event.request.headers.get('x-authrim-original-host')?.trim();
 	const forwardedHost = originalHost || event.url.host;
+	const cookie = event.request.headers.get('cookie')?.trim();
+	const headers: Record<string, string> = {};
 
-	return forwardedHost ? { 'x-authrim-original-host': forwardedHost } : undefined;
+	if (forwardedHost) {
+		headers['x-authrim-original-host'] = forwardedHost;
+	}
+	if (cookie) {
+		headers.cookie = cookie;
+	}
+
+	return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 export async function fetchDiscoveryConfig(

@@ -23,7 +23,7 @@
     "@authrim/ar-lib-core": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251121.0",
+    "@cloudflare/workers-types": "^4.20260610.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
     "yaml": "2.8.3"

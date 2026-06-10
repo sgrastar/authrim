@@ -523,6 +523,49 @@ CREATE INDEX IF NOT EXISTS idx_custom_claim_schema_history_schema
 CREATE INDEX IF NOT EXISTS idx_custom_claim_schema_history_cleanup
   ON custom_claim_schema_history(tenant_id, created_at);
 
+CREATE TABLE IF NOT EXISTS field_usage_bindings (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  field_key TEXT NOT NULL,
+  binding_type TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  protection TEXT NOT NULL DEFAULT 'warn',
+  reason TEXT,
+  source TEXT NOT NULL DEFAULT 'admin',
+  metadata_json JSONB,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT field_usage_bindings_unique_binding
+    UNIQUE(tenant_id, field_key, binding_type, binding_id),
+  CONSTRAINT field_usage_bindings_binding_type_check CHECK (
+    binding_type IN (
+      'login_method',
+      'notification',
+      'discovery',
+      'consent',
+      'policy',
+      'protocol_output',
+      'display',
+      'ui',
+      'custom'
+    )
+  ),
+  CONSTRAINT field_usage_bindings_protection_check CHECK (
+    protection IN ('none', 'warn', 'delete_blocked')
+  ),
+  CONSTRAINT field_usage_bindings_source_check CHECK (
+    source IN ('system', 'admin', 'derived', 'migration')
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_usage_bindings_tenant_field
+  ON field_usage_bindings(tenant_id, field_key, is_active);
+CREATE INDEX IF NOT EXISTS idx_field_usage_bindings_binding
+  ON field_usage_bindings(tenant_id, binding_type, binding_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_field_usage_bindings_protection
+  ON field_usage_bindings(tenant_id, protection, is_active);
+
 CREATE TABLE IF NOT EXISTS verified_attributes (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',

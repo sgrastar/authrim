@@ -242,6 +242,19 @@
 		}
 	}
 
+	function usageBindingLabel(bindingId: string): string {
+		switch (bindingId) {
+			case 'passkey.signup':
+				return $LL.admin_custom_claims_usage_passkey_signup();
+			case 'email_otp.login':
+				return $LL.admin_custom_claims_usage_email_otp_login();
+			case 'email_otp.signup':
+				return $LL.admin_custom_claims_usage_email_otp_signup();
+			default:
+				return bindingId;
+		}
+	}
+
 	function formatAdminTimestamp(ts: number): string {
 		return new Date(ts * 1000).toLocaleString();
 	}
@@ -257,6 +270,9 @@
 	});
 
 	const isSystem = $derived(!!schema?.is_system);
+	const hasBlockingUsage = $derived(
+		schema?.usage_bindings?.some((binding) => binding.protection === 'delete_blocked') ?? false
+	);
 	const isEditable = $derived(schema?.operation_status === 'active');
 	const registrationConfigDisabled = $derived(!isEditable || !editForm.show_on_registration);
 </script>
@@ -306,6 +322,9 @@
 					{#if isSystem}
 						<span class="badge badge-neutral">{$LL.admin_custom_claims_system()}</span>
 					{/if}
+					{#if schema.is_system_used || hasBlockingUsage}
+						<span class="badge badge-warning">{$LL.admin_custom_claims_used_by_system()}</span>
+					{/if}
 					{#if schema.operation_status !== 'active'}
 						<span class="badge badge-warning">{operationStatusLabel(schema.operation_status)}</span>
 					{/if}
@@ -313,6 +332,19 @@
 				<p class="page-description">
 					{schema.description || $LL.admin_custom_claims_no_description()}
 				</p>
+				{#if schema.usage_bindings && schema.usage_bindings.length > 0}
+					<div class="usage-bindings mt-2">
+						{#each schema.usage_bindings as binding (binding.id)}
+							<span
+								class:usage-binding-blocked={binding.protection === 'delete_blocked'}
+								class="usage-binding"
+								title={binding.reason ?? binding.binding_id}
+							>
+								{usageBindingLabel(binding.binding_id)}
+							</span>
+						{/each}
+					</div>
+				{/if}
 			</div>
 			<div class="page-actions">
 				<a href="/admin/custom-claims" class="btn btn-secondary">
@@ -719,8 +751,13 @@
 									showDeleteDialog = true;
 								}}
 								disabled={isSystem ||
+									hasBlockingUsage ||
 									(schema.operation_status !== 'active' && schema.operation_status !== 'error')}
-								title={isSystem ? $LL.admin_custom_claims_system_delete_disabled() : undefined}
+								title={isSystem
+									? $LL.admin_custom_claims_system_delete_disabled()
+									: hasBlockingUsage
+										? $LL.admin_custom_claims_system_usage_delete_disabled()
+										: undefined}
 							>
 								<i class="i-ph-trash"></i>
 								{$LL.admin_custom_claims_delete()}
@@ -981,6 +1018,28 @@
 	.danger-zone-affected {
 		color: var(--danger, #dc2626);
 		font-weight: 500;
+	}
+
+	.usage-bindings {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+	}
+
+	.usage-binding {
+		display: inline-flex;
+		align-items: center;
+		border-radius: 999px;
+		padding: 0.0625rem 0.375rem;
+		background: color-mix(in srgb, var(--info, #3b82f6) 10%, transparent);
+		color: var(--text-secondary, #6b7280);
+		font-size: 0.6875rem;
+		font-weight: 600;
+	}
+
+	.usage-binding-blocked {
+		background: color-mix(in srgb, var(--warning, #f59e0b) 18%, transparent);
+		color: var(--warning, #b45309);
 	}
 
 	.form-grid {

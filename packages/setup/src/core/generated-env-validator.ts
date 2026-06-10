@@ -125,6 +125,7 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
       'profiles',
       'contact_points',
       'custom_claim_schemas',
+      'field_usage_bindings',
       'user_custom_fields',
     ],
   },

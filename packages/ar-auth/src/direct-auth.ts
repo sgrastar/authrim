@@ -1398,10 +1398,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       device_name: 'Direct Auth Passkey',
     });
 
-    // Update email_verified
     const now = Date.now();
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    await runtimeUsers.markEmailVerified(userId);
 
     // Check if this is a new user (created in this flow)
     const runtimeUser = await runtimeUsers.findById(userId, { includeInactive: true });

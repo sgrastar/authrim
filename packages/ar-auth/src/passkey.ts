@@ -533,9 +533,6 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       device_name: deviceName || 'Unknown Device',
     });
 
-    // Step 3: Update user's email_verified status in canonical contact points.
-    await runtimeUsers.markEmailVerified(userId);
-
     // Get updated user details via canonical projection.
     const updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });
 

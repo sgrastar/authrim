@@ -145,10 +145,14 @@ describe('Login Methods API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      // Default: passkeyEnabled !== false → true, magicLinkEnabled !== false → true
+      // Default: tenant login-methods settings enable passkey and email OTP.
       expect(body.methods.passkey.enabled).toBe(true);
+      expect(body.methods.passkey.loginEnabled).toBe(true);
+      expect(body.methods.passkey.signupEnabled).toBe(true);
       expect(body.methods.passkey.capabilities).toEqual(['conditional', 'discoverable']);
       expect(body.methods.emailCode.enabled).toBe(true);
+      expect(body.methods.emailCode.loginEnabled).toBe(true);
+      expect(body.methods.emailCode.signupEnabled).toBe(true);
       expect(body.methods.emailCode.steps).toEqual(['email', 'code']);
       expect(body.methods.directoryPassword.enabled).toBe(false);
       expect(body.methods.directoryPassword.label).toBe('Organization ID');
@@ -208,14 +212,15 @@ describe('Login Methods API', () => {
   });
 
   // ===========================================================================
-  // Method enable/disable via system settings
+  // Method enable/disable via tenant login-methods settings
   // ===========================================================================
 
   describe('method toggling via SETTINGS KV', () => {
-    it('should disable passkey when advanced.passkeyEnabled is false', async () => {
+    it('should disable passkey when login-methods.passkey.enabled is false', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: true },
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.passkey.enabled': false,
+          'login-methods.email_otp.enabled': true,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -228,10 +233,11 @@ describe('Login Methods API', () => {
       expect(body.methods.emailCode.enabled).toBe(true);
     });
 
-    it('should disable emailCode when advanced.magicLinkEnabled is false', async () => {
+    it('should disable emailCode when login-methods.email_otp.enabled is false', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: true, magicLinkEnabled: false },
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.passkey.enabled': true,
+          'login-methods.email_otp.enabled': false,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -244,12 +250,34 @@ describe('Login Methods API', () => {
       expect(body.methods.emailCode.steps).toEqual([]);
     });
 
+    it('should expose separate login and signup flags for built-in methods', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.passkey.login_enabled': true,
+          'login-methods.passkey.signup_enabled': false,
+          'login-methods.email_otp.login_enabled': false,
+          'login-methods.email_otp.signup_enabled': true,
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.passkey.enabled).toBe(true);
+      expect(body.methods.passkey.loginEnabled).toBe(true);
+      expect(body.methods.passkey.signupEnabled).toBe(false);
+      expect(body.methods.emailCode.enabled).toBe(true);
+      expect(body.methods.emailCode.loginEnabled).toBe(false);
+      expect(body.methods.emailCode.signupEnabled).toBe(true);
+    });
+
     it('should enable directory password from login-methods settings without exposing connector secrets', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
-        }),
         'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.passkey.enabled': false,
+          'login-methods.email_otp.enabled': false,
           'login-methods.directory_password.enabled': true,
           'login-methods.directory_password.label': 'Campus ID',
         }),
@@ -304,6 +332,9 @@ describe('Login Methods API', () => {
         name: 'Google',
         type: 'oidc',
         startMode: 'oauth_redirect',
+        enabled: true,
+        loginEnabled: true,
+        signupEnabled: true,
         startUrl: '/api/external/google/start',
         iconName: 'globe',
       });
@@ -339,6 +370,9 @@ describe('Login Methods API', () => {
           name: 'Campus SAML',
           type: 'saml',
           startMode: 'saml_sp',
+          enabled: true,
+          loginEnabled: true,
+          signupEnabled: true,
           iconUrl: 'https://campus.example/logo.png',
           iconName: 'graduation-cap',
           startUrl: '/saml/sp/login?idp=saml-idp-1',
@@ -358,6 +392,8 @@ describe('Login Methods API', () => {
               startUrl: '/vp/login',
               iconName: 'none',
               enabled: true,
+              loginEnabled: false,
+              signupEnabled: true,
             },
           ],
         }),
@@ -374,10 +410,41 @@ describe('Login Methods API', () => {
           name: 'Wallet Presentation',
           type: 'vc',
           startMode: 'direct',
+          enabled: true,
+          loginEnabled: false,
+          signupEnabled: true,
           startUrl: '/vp/login',
           iconName: 'none',
         })
       );
+    });
+
+    it('should exclude configured external providers disabled for both login and signup', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.passkey.enabled': false,
+          'login-methods.email_otp.enabled': false,
+          'login-methods.external_providers': [
+            {
+              id: 'disabled-op',
+              name: 'Disabled OP',
+              type: 'oidc',
+              startMode: 'oauth_redirect',
+              startUrl: '/oidc/login',
+              enabled: true,
+              loginEnabled: false,
+              signupEnabled: false,
+            },
+          ],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
+
+      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(503);
+      expect(body.error.code).toBe('NO_LOGIN_METHOD_AVAILABLE');
     });
 
     it('should filter out disabled providers', async () => {
@@ -442,8 +509,9 @@ describe('Login Methods API', () => {
   describe('no methods available', () => {
     it('should return 503 when all methods are disabled', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.passkey.enabled': false,
+          'login-methods.email_otp.enabled': false,
         }),
       });
       // No EXTERNAL_IDP → no external login
@@ -460,8 +528,9 @@ describe('Login Methods API', () => {
 
     it('should log a warning when no methods are available', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:login-methods': JSON.stringify({
+          'login-methods.passkey.enabled': false,
+          'login-methods.email_otp.enabled': false,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });

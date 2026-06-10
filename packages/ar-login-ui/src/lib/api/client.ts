@@ -126,6 +126,7 @@ interface ManagedDirectSessionResponse {
 		id: string;
 		email: string;
 		name?: string | null;
+		emailVerified?: boolean;
 	};
 	redirect_url?: string;
 	authorization?: {
@@ -390,7 +391,7 @@ function directSessionToLegacyAuthResponse(data: ManagedDirectSessionResponse): 
 		user: {
 			id: data.user.id,
 			email: data.user.email,
-			email_verified: true,
+			email_verified: data.user.emailVerified === true,
 			name: data.user.name,
 			created_at: data.session.createdAt,
 			updated_at: data.session.createdAt

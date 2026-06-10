@@ -58,6 +58,7 @@ const coreTables = [
   'user_custom_fields',
   'custom_claim_schemas',
   'custom_claim_schema_history',
+  'field_usage_bindings',
   'verified_attributes',
 ] as const;
 

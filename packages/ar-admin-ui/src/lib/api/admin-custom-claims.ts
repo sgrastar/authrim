@@ -25,6 +25,22 @@ export type OperationStatus = 'active' | 'renaming' | 'deleting' | 'error';
 /** Scope evaluation mode */
 export type ScopeMode = 'all' | 'any';
 
+export type FieldUsageProtection = 'none' | 'warn' | 'delete_blocked';
+
+export interface FieldUsageBinding {
+	id: string;
+	field_key: string;
+	binding_type: string;
+	binding_id: string;
+	protection: FieldUsageProtection;
+	reason: string | null;
+	source: string;
+	metadata: Record<string, unknown> | null;
+	is_active: number;
+	created_at: number;
+	updated_at: number;
+}
+
 /** String validation rules */
 export interface StringValidation {
 	min_length?: number;
@@ -90,6 +106,8 @@ export interface CustomClaimSchema {
 	ui_group_order?: number;
 	ui_field_order?: number;
 	examples_json?: string | null;
+	usage_bindings?: FieldUsageBinding[];
+	is_system_used?: boolean;
 }
 
 /** Pagination info */

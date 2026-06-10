@@ -58,6 +58,8 @@ const ja = {
 	login_errorDirectoryFailed: 'ディレクトリ認証に失敗しました',
 	login_orContinueWith: '他のアカウントでログイン',
 	login_continueWith: '{provider}でログイン',
+	login_noMethodsAvailable:
+		'このテナントで利用できるログイン方法がありません。管理者にお問い合わせください。',
 
 	discover_pageTitle: 'テナントの選択',
 	discover_kicker: 'テナントディスカバリー',
@@ -106,6 +108,8 @@ const ja = {
 	register_termsAgreement:
 		'アカウントを作成することで、利用規約とプライバシーポリシーに同意したことになります',
 	register_errorNameRequired: '氏名は必須です',
+	register_noMethodsAvailable:
+		'このテナントで利用できる新規登録方法がありません。管理者にお問い合わせください。',
 
 	emailCode_title: 'メールを確認してください',
 	emailCode_subtitle: '認証コードを送信しました',

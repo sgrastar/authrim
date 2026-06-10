@@ -554,7 +554,8 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const passkeys = await authCtx.repositories.passkey.findByUserId(userId);
+    const runtimeUserId = projection.id;
+    const passkeys = await authCtx.repositories.passkey.findByUserId(runtimeUserId);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const customFields = await ensureDatabaseAdapter(
       customClaimSources.nonPiiDb,
@@ -565,7 +566,7 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       field_type: string;
     }>(
       'SELECT field_name, field_value, field_type FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?',
-      [tenantId, userId]
+      [tenantId, runtimeUserId]
     );
 
     const requiredViolations = await getRequiredCustomClaimViolationStatuses({
@@ -575,7 +576,7 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       dbPii: customClaimSources.piiDb,
       cache: c.env.SETTINGS || null,
       tenantId,
-      userIds: [userId],
+      userIds: [runtimeUserId],
       syncLifecycleState: false,
     });
     const missingRequiredFields = requiredViolations.users[0]?.missingRequiredFields ?? [];

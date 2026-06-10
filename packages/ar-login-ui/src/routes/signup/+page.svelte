@@ -31,6 +31,7 @@
 	let customFieldValues = $state<Record<string, string>>({});
 	let customFieldErrors = $state<Record<string, string>>({});
 	let error = $state('');
+	let methodsError = $state('');
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
 	let emailError = $state('');
@@ -55,6 +56,10 @@
 	);
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+	const hasVisibleSignupMethod = $derived(
+		showPasskey || emailCodeEnabled || (externalEnabled && externalProviders.length > 0)
+	);
+	const FIXED_REGISTRATION_FIELD_KEYS = new Set(['name', 'email', 'email_verified']);
 
 	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
 		return messageForApiError(apiError, {
@@ -114,25 +119,38 @@
 
 	async function loadLoginMethods() {
 		methodsLoading = true;
+		methodsError = '';
 		try {
-			const { data } = await fetchLoginMethods();
+			const { data, error: apiError } = await fetchLoginMethods();
 			if (data) {
-				passkeyEnabled = data.methods.passkey.enabled;
-				emailCodeEnabled = data.methods.emailCode.enabled;
-				externalEnabled = data.methods.external.enabled;
-				externalProviders = data.methods.external.providers;
+				passkeyEnabled = data.methods.passkey.signupEnabled ?? data.methods.passkey.enabled;
+				emailCodeEnabled = data.methods.emailCode.signupEnabled ?? data.methods.emailCode.enabled;
+				externalProviders = data.methods.external.providers.filter(
+					(provider) => provider.signupEnabled ?? provider.enabled !== false
+				);
+				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
+			} else {
+				passkeyEnabled = false;
+				emailCodeEnabled = false;
+				externalEnabled = false;
+				externalProviders = [];
+				methodsError = apiError?.error.message || $LL.register_noMethodsAvailable();
 			}
 		} catch {
-			// Fallback: enable all methods
-			passkeyEnabled = true;
-			emailCodeEnabled = true;
+			passkeyEnabled = false;
+			emailCodeEnabled = false;
+			externalEnabled = false;
+			externalProviders = [];
+			methodsError = $LL.register_noMethodsAvailable();
 		} finally {
 			methodsLoading = false;
 		}
 	}
 
 	async function loadRegistrationFields() {
-		registrationFields = await fetchRegistrationFields();
+		registrationFields = (await fetchRegistrationFields()).filter(
+			(field) => !FIXED_REGISTRATION_FIELD_KEYS.has(field.field_key)
+		);
 		customFieldValues = {};
 		customFieldErrors = {};
 		for (const f of registrationFields) {
@@ -367,7 +385,7 @@
 	}
 
 	function handleKeyPress(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
+		if (event.key === 'Enter' && emailCodeEnabled) {
 			handleEmailCodeSignup();
 		}
 	}
@@ -437,6 +455,12 @@
 				{#if error}
 					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
 						{error}
+					</Alert>
+				{/if}
+
+				{#if !methodsLoading && (methodsError || !hasVisibleSignupMethod)}
+					<Alert variant="error" class="mb-4">
+						{methodsError || $LL.register_noMethodsAvailable()}
 					</Alert>
 				{/if}
 

@@ -147,7 +147,14 @@ export const adminUsersAPI = {
 		}
 
 		const data = await response.json();
-		return data.user;
+		return {
+			...data.user,
+			email_verified: data.user.email_verified === true || data.user.email_verified === 1,
+			phone_number_verified:
+				data.user.phone_number_verified === true || data.user.phone_number_verified === 1,
+			is_active: data.user.is_active === true || data.user.is_active === 1,
+			passkeys: Array.isArray(data.passkeys) ? data.passkeys : []
+		};
 	},
 
 	/**

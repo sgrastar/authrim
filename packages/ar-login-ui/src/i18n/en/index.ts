@@ -57,6 +57,8 @@ const en = {
 	login_errorDirectoryFailed: 'Directory sign-in failed',
 	login_orContinueWith: 'Or continue with',
 	login_continueWith: 'Continue with {provider:string}',
+	login_noMethodsAvailable:
+		'No login method is enabled for this tenant. Contact your administrator.',
 
 	discover_pageTitle: 'Tenant Discovery',
 	discover_kicker: 'Tenant discovery',
@@ -101,6 +103,8 @@ const en = {
 	register_termsAgreement:
 		'By creating an account, you agree to our Terms of Service and Privacy Policy',
 	register_errorNameRequired: 'Name is required',
+	register_noMethodsAvailable:
+		'No signup method is enabled for this tenant. Contact your administrator.',
 
 	emailCode_title: 'Check your email',
 	emailCode_subtitle: "We've sent a verification code to",

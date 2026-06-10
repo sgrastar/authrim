@@ -118,6 +118,12 @@
 
 	// Show passkey only if both server-enabled and browser-supported
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+	const hasVisibleLoginMethod = $derived(
+		showPasskey ||
+			emailCodeEnabled ||
+			directoryPasswordEnabled ||
+			(externalEnabled && externalProviders.length > 0)
+	);
 
 	// ---------------------------------------------------------------------------
 	// Lifecycle
@@ -196,12 +202,14 @@
 				return;
 			}
 			if (data) {
-				passkeyEnabled = data.methods.passkey.enabled;
-				emailCodeEnabled = data.methods.emailCode.enabled;
+				passkeyEnabled = data.methods.passkey.loginEnabled ?? data.methods.passkey.enabled;
+				emailCodeEnabled = data.methods.emailCode.loginEnabled ?? data.methods.emailCode.enabled;
 				directoryPasswordEnabled = data.methods.directoryPassword.enabled;
 				directoryPasswordLabel = data.methods.directoryPassword.label || 'Organization ID';
-				externalEnabled = data.methods.external.enabled;
-				externalProviders = data.methods.external.providers;
+				externalProviders = data.methods.external.providers.filter(
+					(provider) => provider.loginEnabled ?? provider.enabled !== false
+				);
+				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
 			}
 		} catch {
 			methodsError = 'Failed to load login methods';
@@ -593,6 +601,12 @@
 				{#if error}
 					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
 						{error}
+					</Alert>
+				{/if}
+
+				{#if !hasVisibleLoginMethod}
+					<Alert variant="error" class="mb-4">
+						{$LL.login_noMethodsAvailable()}
 					</Alert>
 				{/if}
 

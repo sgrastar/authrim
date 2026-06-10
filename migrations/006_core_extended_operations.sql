@@ -67,6 +67,49 @@ CREATE INDEX idx_ccsh_schema ON custom_claim_schema_history(tenant_id, schema_id
 CREATE INDEX idx_ccsh_cleanup ON custom_claim_schema_history(tenant_id, created_at);
 
 -- =============================================================================
+-- From 014: Field Usage Bindings
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS field_usage_bindings (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  field_key TEXT NOT NULL,
+  binding_type TEXT NOT NULL CHECK (
+    binding_type IN (
+      'login_method',
+      'notification',
+      'discovery',
+      'consent',
+      'policy',
+      'protocol_output',
+      'display',
+      'ui',
+      'custom'
+    )
+  ),
+  binding_id TEXT NOT NULL,
+  protection TEXT NOT NULL DEFAULT 'warn' CHECK (
+    protection IN ('none', 'warn', 'delete_blocked')
+  ),
+  reason TEXT,
+  source TEXT NOT NULL DEFAULT 'admin' CHECK (
+    source IN ('system', 'admin', 'derived', 'migration')
+  ),
+  metadata_json TEXT CHECK(metadata_json IS NULL OR json_valid(metadata_json)),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(tenant_id, field_key, binding_type, binding_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_usage_bindings_tenant_field
+  ON field_usage_bindings(tenant_id, field_key, is_active);
+CREATE INDEX IF NOT EXISTS idx_field_usage_bindings_binding
+  ON field_usage_bindings(tenant_id, binding_type, binding_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_field_usage_bindings_protection
+  ON field_usage_bindings(tenant_id, protection, is_active);
+
+-- =============================================================================
 -- From 059: Tenant Invitations
 -- =============================================================================
 

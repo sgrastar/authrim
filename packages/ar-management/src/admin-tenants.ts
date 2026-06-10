@@ -35,8 +35,10 @@ import {
   buildTenantRuntimeRegistrySnapshotKey,
   publishTenantRuntimeRegistrySnapshot,
   usesNakedDomainIssuer,
+  seedCustomClaimSchemas,
 } from '@authrim/ar-lib-core';
 import { createOpaqueTenantKey } from './logging-tenant-key';
+import { BUILTIN_CANONICAL_SCHEMA_FIELDS } from './custom-claim-presets';
 
 /**
  * Invalidate the tenant existence KV cache for a given tenant.
@@ -155,6 +157,7 @@ export const TENANT_TABLES_TO_DELETE = [
   // Settings
   'settings_history',
   // Custom claims
+  'field_usage_bindings',
   'custom_claim_schema_history',
   'custom_claim_schemas',
   // Token claim rules
@@ -565,9 +568,32 @@ async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId
       JSON.stringify({ 'login-ui.brand_name': tenantId })
     ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:tenant-discovery-ui`, JSON.stringify({})),
-    env.SETTINGS?.put(`settings:tenant:${tenantId}:login-methods`, JSON.stringify({})),
+    env.SETTINGS?.put(
+      `settings:tenant:${tenantId}:login-methods`,
+      JSON.stringify({
+        'login-methods.passkey.login_enabled': true,
+        'login-methods.passkey.signup_enabled': true,
+        'login-methods.email_otp.login_enabled': true,
+        'login-methods.email_otp.signup_enabled': true,
+      })
+    ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
   ]);
+}
+
+async function seedBuiltinCanonicalSchemaFields(
+  adapter: DatabaseAdapter,
+  tenantId: string
+): Promise<number> {
+  return seedCustomClaimSchemas({
+    db: adapter,
+    tenantId,
+    schemas: BUILTIN_CANONICAL_SCHEMA_FIELDS.map((field) => ({
+      ...field,
+      is_required: 0,
+      is_system: 0,
+    })),
+  });
 }
 
 /**
@@ -963,6 +989,7 @@ async function runTenantD1PoolProvisioning(
       lifecycleState: 'active',
       nowTs,
     });
+    await seedBuiltinCanonicalSchemaFields(tenantAdapter, input.id);
     tenantDbWritten = true;
 
     await recordTenantSlotAudit(adminAdapter, {
@@ -1304,6 +1331,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
       // 2. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui, login-methods, login-entry)
       await seedTenantDefaultSettings(c, id);
+      await seedBuiltinCanonicalSchemaFields(adapter, id);
       // 3. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
       await initTenantKeyManager(c.env.KEY_MANAGER, id);
       // 4. Invalidate tenant-exists cache so request-context middleware sees the new tenant
@@ -1315,6 +1343,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       await Promise.allSettled([
         adapter.execute('DELETE FROM tenants WHERE id = ?', [id]),
         adapter.execute('DELETE FROM custom_claim_schemas WHERE tenant_id = ?', [id]),
+        adapter.execute('DELETE FROM field_usage_bindings WHERE tenant_id = ?', [id]),
         c.env.AUTHRIM_CONFIG?.delete(contractKey),
         c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
         c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),

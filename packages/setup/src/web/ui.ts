@@ -8913,6 +8913,31 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    function startWorkerDeployStatusPolling(addLog) {
+      let lastProgressLength = 0;
+      const interval = setInterval(async () => {
+        try {
+          const statusResult = await api('/deploy/status');
+          const progress = statusResult.progress || [];
+          if (progress.length < lastProgressLength) {
+            lastProgressLength = 0;
+          }
+          if (progress.length > lastProgressLength) {
+            const newMessages = progress.slice(lastProgressLength);
+            newMessages.forEach((msg) => addLog(msg));
+            lastProgressLength = progress.length;
+          }
+        } catch (e) {
+          // Ignore transient polling errors while deployment is running.
+        }
+      }, 1000);
+
+      return {
+        stop: () => clearInterval(interval),
+        getLastProgressLength: () => lastProgressLength
+      };
+    }
+
     // Start worker update
     async function startWorkerUpdate() {
       const btn = document.getElementById('btn-update-workers');
@@ -8935,17 +8960,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       try {
         addLog('Starting worker update for ' + currentEnvForUpdate + '...');
+        const poller = startWorkerDeployStatusPolling(addLog);
 
-        const response = await api('/update/workers', {
-          method: 'POST',
-          body: JSON.stringify({
-            env: currentEnvForUpdate,
-            onlyChanged: onlyChanged
-          })
-        });
+        let response;
+        try {
+          response = await api('/update/workers', {
+            method: 'POST',
+            body: JSON.stringify({
+              env: currentEnvForUpdate,
+              onlyChanged: onlyChanged
+            })
+          });
+        } finally {
+          poller.stop();
+        }
 
         if (response.progress && Array.isArray(response.progress)) {
-          for (const msg of response.progress) {
+          for (const msg of response.progress.slice(poller.getLastProgressLength())) {
             addLog(msg);
           }
         }
@@ -9000,14 +9031,26 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       addLog('Updating ' + componentName + ' for ' + currentEnvForUpdate + '...');
 
       try {
-        const response = await api('/deploy/component/' + encodeURIComponent(componentName), {
-          method: 'POST',
-          body: JSON.stringify({
-            env: currentEnvForUpdate,
-            skipBuild: false,
-            dryRun: false
-          })
-        });
+        const poller = startWorkerDeployStatusPolling(addLog);
+        let response;
+        try {
+          response = await api('/deploy/component/' + encodeURIComponent(componentName), {
+            method: 'POST',
+            body: JSON.stringify({
+              env: currentEnvForUpdate,
+              skipBuild: true,
+              dryRun: false
+            })
+          });
+        } finally {
+          poller.stop();
+        }
+
+        if (response.progress && Array.isArray(response.progress)) {
+          for (const msg of response.progress.slice(poller.getLastProgressLength())) {
+            addLog(msg);
+          }
+        }
 
         if (response.success) {
           addLog('');
@@ -9058,14 +9101,26 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       addLog('This may take a few minutes (building and deploying to Workers)...');
 
       try {
-        const response = await api('/deploy/component/' + encodeURIComponent(componentName), {
-          method: 'POST',
-          body: JSON.stringify({
-            env: currentEnvForUpdate,
-            skipBuild: false,
-            dryRun: false
-          })
-        });
+        const poller = startWorkerDeployStatusPolling(addLog);
+        let response;
+        try {
+          response = await api('/deploy/component/' + encodeURIComponent(componentName), {
+            method: 'POST',
+            body: JSON.stringify({
+              env: currentEnvForUpdate,
+              skipBuild: false,
+              dryRun: false
+            })
+          });
+        } finally {
+          poller.stop();
+        }
+
+        if (response.progress && Array.isArray(response.progress)) {
+          for (const msg of response.progress.slice(poller.getLastProgressLength())) {
+            addLog(msg);
+          }
+        }
 
         if (response.success) {
           addLog('');

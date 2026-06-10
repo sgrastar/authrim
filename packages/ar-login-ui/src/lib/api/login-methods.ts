@@ -14,11 +14,19 @@ import { authrimFetch } from '$lib/authrim/fetch';
 
 export interface PasskeyMethod {
 	enabled: boolean;
+	loginEnabled?: boolean;
+	signupEnabled?: boolean;
+	reauthEnabled?: boolean;
+	accountLinkEnabled?: boolean;
 	capabilities: string[];
 }
 
 export interface EmailCodeMethod {
 	enabled: boolean;
+	loginEnabled?: boolean;
+	signupEnabled?: boolean;
+	reauthEnabled?: boolean;
+	accountLinkEnabled?: boolean;
 	steps: string[];
 }
 
@@ -36,6 +44,9 @@ export interface ExternalProvider {
 	name: string;
 	type: ExternalProviderType;
 	startMode: ExternalProviderStartMode;
+	enabled?: boolean;
+	loginEnabled?: boolean;
+	signupEnabled?: boolean;
 	slug?: string;
 	iconUrl?: string;
 	iconName?: string;

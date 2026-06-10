@@ -161,4 +161,42 @@ describe('schema-catalog', () => {
       expect.arrayContaining(['generated-id', 'tenant-1', 'department', 'Department'])
     );
   });
+
+  it('allows seed callers to create deletable built-in schemas', async () => {
+    const created = await seedCustomClaimSchemas({
+      db: mockAdapter as any,
+      tenantId: 'tenant-1',
+      schemas: [
+        {
+          field_key: 'email',
+          display_label: 'Email',
+          field_type: 'string',
+          is_pii: 1,
+          is_required: 0,
+          is_system: 0,
+          is_searchable: 1,
+          is_exportable: 1,
+          display_order: 20,
+        },
+      ],
+      now: 1700000000,
+      idFactory: () => 'generated-id',
+    });
+
+    expect(created).toBe(1);
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO custom_claim_schemas'),
+      expect.arrayContaining([
+        'generated-id',
+        'tenant-1',
+        'email',
+        'email',
+        'Email',
+        'string',
+        1,
+        0,
+        0,
+      ])
+    );
+  });
 });

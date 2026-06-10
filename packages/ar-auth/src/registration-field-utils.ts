@@ -28,8 +28,16 @@ type ValidationResult =
       missingRequiredFields?: MissingRequiredRegistrationField[];
     };
 
+const FIXED_REGISTRATION_FIELD_KEYS = new Set(['name', 'email', 'email_verified']);
+
 function getRequiredFieldError(label: string): string {
   return `${label} is required`;
+}
+
+function filterCustomRegistrationFieldSchemas(
+  schemas: RegistrationFieldSchemaRow[]
+): RegistrationFieldSchemaRow[] {
+  return schemas.filter((schema) => !FIXED_REGISTRATION_FIELD_KEYS.has(schema.field_key));
 }
 
 function toMissingRequiredRegistrationField(
@@ -53,7 +61,9 @@ export async function validateRegistrationFieldSubmission(
   tenantId: string,
   submitted: Record<string, unknown> | undefined
 ): Promise<ValidationResult> {
-  const schemas = await listRegistrationFieldSchemas(db, tenantId);
+  const schemas = filterCustomRegistrationFieldSchemas(
+    await listRegistrationFieldSchemas(db, tenantId)
+  );
   const input =
     submitted && typeof submitted === 'object' && !Array.isArray(submitted) ? submitted : {};
   const values: Record<string, string> = {};
@@ -198,11 +208,12 @@ export async function persistRegistrationFieldValues(
   }
 
   const schemas = await listRegistrationFieldSchemas(db, tenantId);
-  if (schemas.length === 0) {
+  const customSchemas = filterCustomRegistrationFieldSchemas(schemas);
+  if (customSchemas.length === 0) {
     return;
   }
 
-  const schemaMap = new Map(schemas.map((schema) => [schema.field_key, schema] as const));
+  const schemaMap = new Map(customSchemas.map((schema) => [schema.field_key, schema] as const));
   const nonPiiValues: Record<string, string> = {};
   const piiValues: Record<string, string> = {};
 
@@ -221,7 +232,7 @@ export async function persistRegistrationFieldValues(
 
   const validation: ValidatedCustomClaimWriteResult = {
     ok: true,
-    schemas: schemas.map((schema) => ({
+    schemas: customSchemas.map((schema) => ({
       ...schema,
       tenant_id: tenantId,
       id: `${tenantId}:${schema.field_key}`,

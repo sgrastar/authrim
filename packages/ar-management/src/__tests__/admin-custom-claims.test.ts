@@ -404,6 +404,40 @@ describe('Custom Claims Admin API', () => {
       expect(body.pagination.page).toBe(1);
     });
 
+    it('should include derived system usage bindings for built-in login method fields', async () => {
+      mockDbQuery.mockResolvedValueOnce([{ count: 1 }]).mockResolvedValueOnce([
+        createSchemaRow({
+          id: 'schema-email',
+          field_key: 'email',
+          display_label: 'Email',
+          is_pii: 1,
+        }),
+      ]);
+
+      const c = createMockContext({});
+      const res = await adminCustomClaimsListHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(body.schemas[0].is_system_used).toBe(true);
+      expect(body.schemas[0].usage_bindings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field_key: 'email',
+            binding_id: 'email_otp.login',
+            protection: 'delete_blocked',
+            source: 'derived',
+          }),
+          expect.objectContaining({
+            field_key: 'email',
+            binding_id: 'email_otp.signup',
+            protection: 'delete_blocked',
+            source: 'derived',
+          }),
+        ])
+      );
+    });
+
     it('should apply search filter', async () => {
       mockDbQuery.mockResolvedValueOnce([{ count: 0 }]).mockResolvedValueOnce([]);
 
@@ -477,6 +511,7 @@ describe('Custom Claims Admin API', () => {
       expect(body.skipped_field_keys).toEqual(['email']);
       expect(mockDbExecute.mock.calls[0][0]).toContain('INSERT INTO custom_claim_schemas');
       expect(mockDbExecute.mock.calls[0][0]).toContain('ui_group_key');
+      expect(mockDbExecute.mock.calls[0][0]).toContain('?, 0, 1, 0, ?');
     });
 
     it('should reject unknown preset field keys', async () => {
@@ -1233,6 +1268,37 @@ describe('Custom Claims Admin API', () => {
       expect(mockDbExecute.mock.calls[1][0]).toContain('DELETE FROM user_custom_fields');
       // Phase 3: delete schema
       expect(mockDbExecute.mock.calls[2][0]).toContain('DELETE FROM custom_claim_schemas');
+    });
+
+    it('should block deleting fields used by enabled built-in login methods', async () => {
+      mockDbQuery.mockResolvedValueOnce([
+        createSchemaRow({
+          id: 'schema-email',
+          field_key: 'email',
+          display_label: 'Email',
+          is_pii: 1,
+        }),
+      ]);
+
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: 'schema-email' },
+      });
+
+      const res = await adminCustomClaimDeleteHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(409);
+      expect(body.error).toBe('field_in_use');
+      expect(body.usage_bindings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            binding_id: 'email_otp.login',
+            protection: 'delete_blocked',
+          }),
+        ])
+      );
+      expect(mockDbExecute).not.toHaveBeenCalled();
     });
 
     it('should use CAS pattern and fail on concurrent modification', async () => {

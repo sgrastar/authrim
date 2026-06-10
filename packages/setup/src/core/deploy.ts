@@ -95,6 +95,7 @@ export interface DeploymentSummary {
 
 export interface BuildOptions {
   rootDir: string;
+  components?: WorkerComponent[];
   onProgress?: (message: string) => void;
 }
 
@@ -104,6 +105,7 @@ export interface BuildResult {
 }
 
 export const DEFAULT_INTER_DEPLOY_DELAY_MS = 10_000;
+const WORKER_DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 
 const UI_BUILD_ENV_KEYS = [
   'PUBLIC_API_BASE_URL',
@@ -112,6 +114,16 @@ const UI_BUILD_ENV_KEYS = [
   'PUBLIC_LOGIN_UI_CLIENT_ID',
   'API_BACKEND_URL',
 ] as const;
+
+function emitProcessOutput(onProgress: ((message: string) => void) | undefined, chunk: Buffer) {
+  const text = chunk.toString('utf-8');
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      onProgress?.(`  ${trimmed}`);
+    }
+  }
+}
 
 /**
  * Prepare build-time env for UI Workers.
@@ -172,17 +184,21 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
       reject: false, // Don't fail if directories don't exist
     });
 
-    // Use pnpm exec turbo instead of relying on global turbo
-    // This works because turbo is in devDependencies
-    onProgress?.('Building packages...');
-    await execa(
-      'pnpm',
-      ['exec', 'turbo', 'run', 'build', '--filter=!@authrim/ui-*', '--filter=!@authrim/setup'],
-      {
-        cwd: rootDir,
-        stdio: 'pipe',
-      }
+    const filters =
+      options.components && options.components.length > 0
+        ? options.components.map((component) => `--filter=@authrim/${component}`)
+        : ['--filter=!@authrim/ui-*', '--filter=!@authrim/setup'];
+
+    // Use pnpm exec turbo instead of relying on global turbo.
+    onProgress?.(
+      options.components && options.components.length > 0
+        ? `Building ${options.components.join(', ')}...`
+        : 'Building packages...'
     );
+    await execa('pnpm', ['exec', 'turbo', 'run', 'build', ...filters], {
+      cwd: rootDir,
+      stdio: 'pipe',
+    });
 
     return { success: true };
   } catch (error) {
@@ -293,10 +309,22 @@ export async function deployWorker(
 
       // Use wrangler deploy with --env to target [env.{env}] section in wrangler.toml
       // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
-      await execa('pnpm', ['exec', 'wrangler', 'deploy', '--env', env], {
+      const subprocess = execa('pnpm', ['exec', 'wrangler', 'deploy', '--env', env], {
         cwd: packageDir,
+        stdin: 'ignore',
+        stdout: 'pipe',
+        stderr: 'pipe',
         reject: true,
+        timeout: WORKER_DEPLOY_TIMEOUT_MS,
+        env: {
+          ...process.env,
+          CI: 'true',
+          NO_COLOR: '1',
+        },
       });
+      subprocess.stdout?.on('data', (chunk: Buffer) => emitProcessOutput(onProgress, chunk));
+      subprocess.stderr?.on('data', (chunk: Buffer) => emitProcessOutput(onProgress, chunk));
+      await subprocess;
 
       onProgress?.(`  ✓ ${workerName} deployed successfully`);
 

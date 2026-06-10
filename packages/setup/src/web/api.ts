@@ -71,7 +71,7 @@ import {
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../core/paths.js';
-import { generateWranglerConfig, toToml, buildResourceIdsFromLock } from '../core/wrangler.js';
+import { buildResourceIdsFromLock } from '../core/wrangler.js';
 import { saveMasterWranglerConfigs, syncWranglerConfigs } from '../core/wrangler-sync.js';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import {
@@ -1526,55 +1526,45 @@ export function createApiRoutes(): Hono {
 
         addProgress('Generating wrangler.toml files...');
 
-        // Build resource IDs from lock file
-        const resourceIds = {
-          d1: lock.d1,
-          kv: Object.fromEntries(
-            Object.entries(lock.kv).map(([k, v]) => [k, { id: v.id, name: v.name }])
-          ),
-          queues: lock.queues,
-          r2: lock.r2,
-        };
+        const resourceIds = buildResourceIdsFromLock(lock);
 
-        // Generate and save wrangler configs for each component
-        // Include optional components (ar-policy, ar-bridge, etc.) based on config
-        const enabledComponents = getEnabledComponents({
-          saml: config.components?.saml,
-          async: config.components?.async,
-          vc: config.components?.vc,
-          bridge: config.components?.bridge,
-          policy: config.components?.policy,
+        const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+          baseDir: rootDir,
+          env,
+          dryRun: false,
+          includeDurableObjectMigrations: false,
+          onProgress: addProgress,
         });
-
-        // Get workers.dev subdomain for CORS configuration
-        // Workers.dev URLs must be in format: {name}.{subdomain}.workers.dev
-        const workersSubdomain = await getWorkersSubdomain();
-
-        const generatedComponents: string[] = [];
-        for (const component of enabledComponents) {
-          const componentDir = join(rootDir, 'packages', component);
-          if (!existsSync(componentDir)) {
-            continue;
-          }
-
-          const wranglerConfig = generateWranglerConfig(
-            component,
-            config,
-            resourceIds,
-            workersSubdomain ?? undefined
+        if (!masterResult.success && masterResult.errors.length > 0) {
+          return c.json(
+            {
+              success: false,
+              error: `Wrangler generation failed: ${masterResult.errors.join(', ')}`,
+            },
+            500
           );
-          // Generate TOML with [env.{env}] section format
-          const tomlContent = toToml(wranglerConfig, env);
-          const tomlPath = join(componentDir, 'wrangler.toml');
-          await writeFile(tomlPath, tomlContent, 'utf-8');
-          generatedComponents.push(component);
+        }
+
+        const syncResult = await syncWranglerConfigs({
+          baseDir: rootDir,
+          env,
+          packagesDir: join(rootDir, 'packages'),
+          force: true,
+          dryRun: false,
+          onProgress: addProgress,
+        });
+        if (!syncResult.success && syncResult.errors.length > 0) {
+          return c.json(
+            { success: false, error: `Wrangler sync failed: ${syncResult.errors.join(', ')}` },
+            500
+          );
         }
 
         addProgress('Wrangler configs generated!');
 
         return c.json({
           success: true,
-          components: generatedComponents,
+          components: syncResult.synced,
         });
       } catch (error) {
         return c.json({ success: false, error: sanitizeError(error) }, 500);
@@ -1747,19 +1737,8 @@ export function createApiRoutes(): Hono {
           const { lock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
           if (lock) {
-            const { getWorkersSubdomain } = await import('../core/cloudflare.js');
-
-            // Get enabled components
-            const enabledForValidation = getEnabledComponents({
-              saml: cfg?.components?.saml,
-              async: cfg?.components?.async,
-              vc: cfg?.components?.vc,
-              bridge: cfg?.components?.bridge,
-              policy: cfg?.components?.policy,
-            });
             addProgress('Refreshing wrangler.toml files from current configuration...');
 
-            const workersSubdomain = await getWorkersSubdomain();
             let config: AuthrimConfig;
             const stateConfig = getStateConfigForEnv(env);
             if (stateConfig) {
@@ -1790,21 +1769,27 @@ export function createApiRoutes(): Hono {
 
             const lockResourceIds = buildResourceIdsFromLock(lock);
 
-            for (const component of enabledForValidation) {
-              const componentDir = join(resolve(rootDir), 'packages', component);
-              if (!existsSync(componentDir)) {
-                continue;
-              }
+            const masterResult = await saveMasterWranglerConfigs(config, lockResourceIds, {
+              baseDir: resolve(rootDir),
+              env,
+              dryRun: false,
+              includeDurableObjectMigrations: false,
+              onProgress: addProgress,
+            });
+            if (!masterResult.success && masterResult.errors.length > 0) {
+              throw new Error(`Wrangler generation failed: ${masterResult.errors.join(', ')}`);
+            }
 
-              const wranglerConfig = generateWranglerConfig(
-                component,
-                config,
-                lockResourceIds,
-                workersSubdomain ?? undefined
-              );
-              const tomlContent = toToml(wranglerConfig, env);
-              const tomlPath = join(componentDir, 'wrangler.toml');
-              await writeFile(tomlPath, tomlContent, 'utf-8');
+            const syncResult = await syncWranglerConfigs({
+              baseDir: resolve(rootDir),
+              env,
+              packagesDir: join(resolve(rootDir), 'packages'),
+              force: true,
+              dryRun: false,
+              onProgress: addProgress,
+            });
+            if (!syncResult.success && syncResult.errors.length > 0) {
+              throw new Error(`Wrangler sync failed: ${syncResult.errors.join(', ')}`);
             }
 
             addProgress('✓ wrangler.toml files refreshed');
@@ -3574,6 +3559,7 @@ export function createApiRoutes(): Hono {
                 type: 'ui-worker',
                 projectName: result.projectName,
                 deployedAt: result.deployedAt,
+                progress: state.progress,
               });
             } else {
               state.status = 'error';
@@ -3583,6 +3569,7 @@ export function createApiRoutes(): Hono {
                   component: componentName,
                   type: 'ui-worker',
                   error: result.error,
+                  progress: state.progress,
                 },
                 500
               );
@@ -3624,6 +3611,7 @@ export function createApiRoutes(): Hono {
                 env,
                 dryRun: false,
                 includeDurableObjectMigrations: false,
+                components: [componentName as WorkerComponent],
                 onProgress: addProgress,
               });
 
@@ -3640,6 +3628,7 @@ export function createApiRoutes(): Hono {
                 packagesDir: join(rootDir, 'packages'),
                 force: true,
                 dryRun: false,
+                components: [componentName as WorkerComponent],
                 onProgress: addProgress,
               });
 
@@ -3659,6 +3648,7 @@ export function createApiRoutes(): Hono {
             addProgress('Building packages...');
             const buildResult = await buildApiPackages({
               rootDir,
+              components: [componentName as WorkerComponent],
               onProgress: addProgress,
             });
 
@@ -3666,6 +3656,8 @@ export function createApiRoutes(): Hono {
               state.status = 'error';
               return c.json({ success: false, error: `Build failed: ${buildResult.error}` }, 500);
             }
+          } else if (skipBuild && !dryRun) {
+            addProgress('Skipping API package build for single worker deploy');
           }
 
           if (!dryRun && componentName === 'ar-router') {
@@ -3749,6 +3741,7 @@ export function createApiRoutes(): Hono {
               workerName: result.workerName,
               deployedAt: result.deployedAt,
               version: result.version,
+              progress: state.progress,
             });
           } else {
             state.status = 'error';
@@ -3758,6 +3751,7 @@ export function createApiRoutes(): Hono {
                 component: componentName,
                 type: 'worker',
                 error: result.error,
+                progress: state.progress,
               },
               500
             );

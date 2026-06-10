@@ -2,9 +2,11 @@
 	import { onMount } from 'svelte';
 	import {
 		adminLoginMethodsAPI,
+		type LoginMethodBuiltInSettings,
 		type LoginMethodExternalProvider,
 		type LoginMethodProviderType
 	} from '$lib/api/admin-login-methods';
+	import { ToggleSwitch } from '$lib/components';
 	import type { CategorySettings } from '$lib/api/admin-settings';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
@@ -16,6 +18,8 @@
 		startMode: 'direct',
 		startUrl: '',
 		enabled: true,
+		loginEnabled: true,
+		signupEnabled: true,
 		slug: '',
 		iconUrl: '',
 		buttonColor: '',
@@ -27,6 +31,19 @@
 	let error = $state('');
 	let successMessage = $state('');
 	let settings = $state<CategorySettings | null>(null);
+	let builtIn = $state<LoginMethodBuiltInSettings>({
+		passkeyLoginEnabled: true,
+		passkeySignupEnabled: true,
+		passkeyReauthEnabled: true,
+		passkeyAccountLinkEnabled: true,
+		emailOtpLoginEnabled: true,
+		emailOtpSignupEnabled: true,
+		emailOtpReauthEnabled: true,
+		emailOtpAccountLinkEnabled: true
+	});
+	let initialBuiltInJson = $state(
+		'{"passkeyLoginEnabled":true,"passkeySignupEnabled":true,"passkeyReauthEnabled":true,"passkeyAccountLinkEnabled":true,"emailOtpLoginEnabled":true,"emailOtpSignupEnabled":true,"emailOtpReauthEnabled":true,"emailOtpAccountLinkEnabled":true}'
+	);
 	let providers = $state<LoginMethodExternalProvider[]>([]);
 	let initialProvidersJson = $state('[]');
 	let form = $state<LoginMethodExternalProvider>({ ...EMPTY_FORM });
@@ -35,7 +52,10 @@
 
 	const currentTenantId = $derived(settingsContext.tenantId);
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
-	const hasChanges = $derived(JSON.stringify(providers) !== initialProvidersJson);
+	const hasChanges = $derived(
+		JSON.stringify(builtIn) !== initialBuiltInJson ||
+			JSON.stringify(providers) !== initialProvidersJson
+	);
 
 	onMount(async () => {
 		await settingsContext.initialize();
@@ -60,6 +80,8 @@
 		try {
 			const response = await adminLoginMethodsAPI.get(currentTenantId);
 			settings = response.settings;
+			builtIn = response.builtIn;
+			initialBuiltInJson = JSON.stringify(response.builtIn);
 			providers = response.providers;
 			initialProvidersJson = JSON.stringify(response.providers);
 			resetForm();
@@ -145,6 +167,7 @@
 			...form,
 			id: form.id.trim(),
 			name: form.name.trim(),
+			enabled: form.loginEnabled || form.signupEnabled,
 			startUrl: form.startUrl.trim(),
 			slug: form.slug?.trim() || undefined,
 			iconUrl: form.iconUrl?.trim() || undefined,
@@ -173,12 +196,14 @@
 		successMessage = '';
 		saving = true;
 		try {
-			const result = await adminLoginMethodsAPI.updateProviders(
+			const result = await adminLoginMethodsAPI.update(
 				settings,
+				builtIn,
 				providers,
 				currentTenantId
 			);
 			settings = { ...settings, version: result.version };
+			initialBuiltInJson = JSON.stringify(builtIn);
 			initialProvidersJson = JSON.stringify(providers);
 			successMessage = $LL.admin_login_methods_saved();
 		} catch (err) {
@@ -199,18 +224,6 @@
 			<h1>{$LL.admin_login_methods_title()}</h1>
 			<p>{$LL.admin_login_methods_description({ tenantId: currentTenantId })}</p>
 		</div>
-		<div class="actions">
-			<button class="btn secondary" disabled={!hasChanges || saving} onclick={loadData}
-				>{$LL.admin_login_methods_discard()}</button
-			>
-			<button
-				class="btn primary"
-				disabled={!canEdit || !hasChanges || saving}
-				onclick={saveProviders}
-			>
-				{saving ? $LL.admin_login_methods_saving() : $LL.admin_login_methods_save()}
-			</button>
-		</div>
 	</header>
 
 	{#if loading}
@@ -222,6 +235,66 @@
 		{#if successMessage}
 			<div class="alert success">{successMessage}</div>
 		{/if}
+
+		<section class="section">
+			<div class="section-header">
+				<div>
+					<h2>{$LL.admin_login_methods_builtin_title()}</h2>
+				</div>
+			</div>
+
+			<div class="method-matrix">
+				<div class="method-matrix-header"></div>
+				<div class="method-matrix-column">{$LL.admin_login_methods_signup_enabled()}</div>
+				<div class="method-matrix-column">{$LL.admin_login_methods_login_enabled()}</div>
+				<div class="method-matrix-column">{$LL.admin_login_methods_reauth_enabled()}</div>
+				<div class="method-matrix-column">{$LL.admin_login_methods_account_link_enabled()}</div>
+
+				<div class="method-title">{$LL.admin_login_methods_passkey()}</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.passkeySignupEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.passkeyLoginEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.passkeyReauthEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch
+						bind:checked={builtIn.passkeyAccountLinkEnabled}
+						disabled={!canEdit}
+						size="sm"
+					/>
+				</div>
+
+				<div class="method-title">{$LL.admin_login_methods_email_otp()}</div>
+				<div class="method-cell">
+					<ToggleSwitch
+						bind:checked={builtIn.emailOtpSignupEnabled}
+						disabled={!canEdit}
+						size="sm"
+					/>
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.emailOtpLoginEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch
+						bind:checked={builtIn.emailOtpReauthEnabled}
+						disabled={!canEdit}
+						size="sm"
+					/>
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch
+						bind:checked={builtIn.emailOtpAccountLinkEnabled}
+						disabled={!canEdit}
+						size="sm"
+					/>
+				</div>
+			</div>
+		</section>
 
 		<section class="section">
 			<div class="section-header">
@@ -240,6 +313,12 @@
 									<span>{provider.name}</span>
 									{#if !provider.enabled}
 										<span class="badge muted">{$LL.admin_login_methods_disabled()}</span>
+									{/if}
+									{#if provider.loginEnabled}
+										<span class="badge">{$LL.admin_login_methods_login_enabled()}</span>
+									{/if}
+									{#if provider.signupEnabled}
+										<span class="badge">{$LL.admin_login_methods_signup_enabled()}</span>
 									{/if}
 									<span class="badge">{provider.type}</span>
 									<span class="badge">{provider.startMode}</span>
@@ -361,10 +440,17 @@
 					<span>{$LL.admin_login_methods_button_color()}</span>
 					<input bind:value={form.buttonColor} disabled={!canEdit} placeholder="#2563eb" />
 				</label>
-				<label class="checkbox-label">
-					<input type="checkbox" bind:checked={form.enabled} disabled={!canEdit} />
+				<div class="toggle-group">
 					<span>{$LL.admin_login_methods_enabled()}</span>
-				</label>
+					<label class="checkbox-label">
+						<input type="checkbox" bind:checked={form.loginEnabled} disabled={!canEdit} />
+						<span>{$LL.admin_login_methods_login_enabled()}</span>
+					</label>
+					<label class="checkbox-label">
+						<input type="checkbox" bind:checked={form.signupEnabled} disabled={!canEdit} />
+						<span>{$LL.admin_login_methods_signup_enabled()}</span>
+					</label>
+				</div>
 			</div>
 
 			<div class="form-actions">
@@ -375,6 +461,19 @@
 				</button>
 			</div>
 		</section>
+
+		<div class="page-save-actions">
+			<button class="btn secondary" disabled={!hasChanges || saving} onclick={loadData}
+				>{$LL.admin_login_methods_discard()}</button
+			>
+			<button
+				class="btn primary"
+				disabled={!canEdit || !hasChanges || saving}
+				onclick={saveProviders}
+			>
+				{saving ? $LL.admin_login_methods_saving() : $LL.admin_login_methods_save()}
+			</button>
+		</div>
 	{/if}
 </div>
 
@@ -418,9 +517,9 @@
 		color: var(--color-text-muted, #6b7280);
 	}
 
-	.actions,
 	.row-actions,
 	.form-actions,
+	.page-save-actions,
 	.section-header {
 		display: flex;
 		align-items: center;
@@ -447,6 +546,54 @@
 		border: 1px solid var(--color-border, #e5e7eb);
 		border-radius: 8px;
 		overflow: hidden;
+	}
+
+	.method-matrix {
+		display: grid;
+		grid-template-columns: minmax(120px, 1fr) repeat(4, minmax(120px, 160px));
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 8px;
+		overflow: hidden;
+	}
+
+	.method-matrix-header,
+	.method-matrix-column,
+	.method-title,
+	.method-cell {
+		display: flex;
+		align-items: center;
+		min-height: 48px;
+		padding: 10px 14px;
+		border-right: 1px solid var(--color-border, #e5e7eb);
+		border-bottom: 1px solid var(--color-border, #e5e7eb);
+	}
+
+	.method-matrix-column {
+		justify-content: center;
+		font-size: 12px;
+		font-weight: 700;
+		color: var(--color-text-muted, #6b7280);
+		text-align: center;
+	}
+
+	.method-title {
+		font-weight: 650;
+	}
+
+	.method-cell {
+		justify-content: center;
+	}
+
+	.method-matrix > :nth-child(5n) {
+		border-right: 0;
+	}
+
+	.method-matrix > :nth-last-child(-n + 5) {
+		border-bottom: 0;
+	}
+
+	.page-save-actions {
+		justify-content: flex-end;
 	}
 
 	.provider-row {
@@ -508,6 +655,20 @@
 		align-items: center;
 		align-self: end;
 		min-height: 40px;
+	}
+
+	.toggle-group {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--color-text, #111827);
+	}
+
+	.toggle-group .checkbox-label {
+		align-self: start;
+		min-height: 24px;
 	}
 
 	input,
@@ -625,9 +786,21 @@
 			grid-template-columns: 1fr;
 		}
 
-		.actions,
-		.row-actions {
+		.row-actions,
+		.page-save-actions {
 			justify-content: flex-start;
+		}
+
+		.method-matrix {
+			grid-template-columns: minmax(104px, 1fr) repeat(4, minmax(84px, 1fr));
+			overflow-x: auto;
+		}
+
+		.method-matrix-header,
+		.method-matrix-column,
+		.method-title,
+		.method-cell {
+			padding: 10px;
 		}
 	}
 </style>

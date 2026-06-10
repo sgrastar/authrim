@@ -51,6 +51,52 @@ describe('registration-field-utils', () => {
     });
   });
 
+  it('does not treat fixed signup fields as custom registration fields', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      {
+        field_key: 'name',
+        display_label: 'Full Name',
+        field_type: 'string',
+        is_pii: 0,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
+        field_key: 'email',
+        display_label: 'Email',
+        field_type: 'string',
+        is_pii: 0,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
+        field_key: 'department',
+        display_label: 'Department',
+        field_type: 'string',
+        is_pii: 0,
+        registration_required: 0,
+        validation_rules: null,
+      },
+    ]);
+
+    const result = await validateRegistrationFieldSubmission(adapter, 'tenant-1', {
+      department: 'Sales',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      schemas: expect.arrayContaining([
+        expect.objectContaining({
+          field_key: 'department',
+        }),
+      ]),
+      values: {
+        department: 'Sales',
+      },
+    });
+  });
+
   it('validates enum/date/number fields and returns sanitized values', async () => {
     const adapter = createMockAdapter();
     vi.mocked(adapter.query).mockResolvedValueOnce([
@@ -101,6 +147,14 @@ describe('registration-field-utils', () => {
     const adapter = createMockAdapter();
     vi.mocked(adapter.query).mockResolvedValueOnce([
       {
+        field_key: 'name',
+        display_label: 'Full Name',
+        field_type: 'string',
+        is_pii: 0,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
         field_key: 'department',
         display_label: 'Department',
         field_type: 'string',
@@ -112,6 +166,7 @@ describe('registration-field-utils', () => {
 
     await persistRegistrationFieldValues(adapter, null, 'tenant-1', 'user-1', {
       department: 'Sales',
+      name: 'Test User',
       ignored: 'value',
     });
 

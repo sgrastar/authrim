@@ -390,6 +390,25 @@
 		return badges;
 	}
 
+	function usageBindingLabel(bindingId: string): string {
+		switch (bindingId) {
+			case 'passkey.signup':
+				return $LL.admin_custom_claims_usage_passkey_signup();
+			case 'email_otp.login':
+				return $LL.admin_custom_claims_usage_email_otp_login();
+			case 'email_otp.signup':
+				return $LL.admin_custom_claims_usage_email_otp_signup();
+			default:
+				return bindingId;
+		}
+	}
+
+	function hasBlockingUsage(schema: CustomClaimSchema): boolean {
+		return (
+			schema.usage_bindings?.some((binding) => binding.protection === 'delete_blocked') ?? false
+		);
+	}
+
 	function fieldTypeLabel(type: FieldType): string {
 		switch (type) {
 			case 'string':
@@ -749,11 +768,16 @@
 									onclick={() => goto(`/admin/custom-claims/${schema.id}`)}
 								>
 									<td>
-										<div class="flex items-center gap-2">
+										<div class="flex items-center gap-2 flex-wrap">
 											<code class="text-sm font-mono">{schema.field_key}</code>
 											{#if schema.is_system}
 												<span class="badge badge-neutral text-xs"
 													>{$LL.admin_custom_claims_system()}</span
+												>
+											{/if}
+											{#if schema.is_system_used || hasBlockingUsage(schema)}
+												<span class="badge badge-warning text-xs"
+													>{$LL.admin_custom_claims_used_by_system()}</span
 												>
 											{/if}
 											{#if schema.claim_namespace}
@@ -762,6 +786,19 @@
 												>
 											{/if}
 										</div>
+										{#if schema.usage_bindings && schema.usage_bindings.length > 0}
+											<div class="usage-bindings">
+												{#each schema.usage_bindings as binding (binding.id)}
+													<span
+														class:usage-binding-blocked={binding.protection === 'delete_blocked'}
+														class="usage-binding"
+														title={binding.reason ?? binding.binding_id}
+													>
+														{usageBindingLabel(binding.binding_id)}
+													</span>
+												{/each}
+											</div>
+										{/if}
 									</td>
 									<td>{schema.display_label}</td>
 									<td>
@@ -1370,6 +1407,29 @@
 		flex-wrap: wrap;
 		justify-content: flex-end;
 		gap: 0.375rem;
+	}
+
+	.usage-bindings {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+		margin-top: 0.25rem;
+	}
+
+	.usage-binding {
+		display: inline-flex;
+		align-items: center;
+		border-radius: 999px;
+		padding: 0.0625rem 0.375rem;
+		background: color-mix(in srgb, var(--info, #3b82f6) 10%, transparent);
+		color: var(--text-secondary);
+		font-size: 0.6875rem;
+		font-weight: 600;
+	}
+
+	.usage-binding-blocked {
+		background: color-mix(in srgb, var(--warning, #f59e0b) 18%, transparent);
+		color: var(--warning, #b45309);
 	}
 
 	/* Compact row spacing for schema list */

@@ -818,7 +818,7 @@ type RootTranslation = {
 	 */
 	admin_nav_resolution_center: string;
 	/**
-	 * L​o​g​i​n​ ​M​e​t​h​o​d​s
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​e​t​h​o​d​s
 	 */
 	admin_nav_login_methods: string;
 	/**
@@ -4659,7 +4659,7 @@ type RootTranslation = {
 	 */
 	admin_saml_local_dns_san_additional: string;
 	/**
-	 * A​d​d​ ​s​c​o​p​e​ ​d​o​m​a​i​n​s​ ​o​r​ ​o​t​h​e​r​ ​o​w​n​e​d​ ​D​N​S​ ​n​a​m​e​s​ ​e​x​p​l​i​c​i​t​l​y​.​ ​S​e​p​a​r​a​t​e​ ​v​a​l​u​e​s​ ​w​i​t​h​ ​s​p​a​c​e​s​,​ ​c​o​m​m​a​s​,​ ​o​r​ ​n​e​w​ ​l​i​n​e​s​.
+	 * A​d​d​ ​s​c​o​p​e​ ​d​o​m​a​i​n​s​ ​o​r​ ​o​t​h​e​r​ ​o​w​n​e​d​ ​D​N​S​ ​n​a​m​e​s​ ​e​x​p​l​i​c​i​t​l​y​.​ ​S​e​p​a​r​a​t​e​ ​v​a​l​u​e​s​ ​w​i​t​h​ ​s​p​a​c​e​s​ ​o​r​ ​c​o​m​m​a​s​.
 	 */
 	admin_saml_local_dns_san_additional_desc: string;
 	/**
@@ -10247,6 +10247,22 @@ type RootTranslation = {
 	 */
 	admin_custom_claims_system: string;
 	/**
+	 * U​s​e​d​ ​b​y​ ​s​y​s​t​e​m
+	 */
+	admin_custom_claims_used_by_system: string;
+	/**
+	 * P​a​s​s​k​e​y​ ​s​i​g​n​u​p
+	 */
+	admin_custom_claims_usage_passkey_signup: string;
+	/**
+	 * E​m​a​i​l​ ​O​T​P​ ​l​o​g​i​n
+	 */
+	admin_custom_claims_usage_email_otp_login: string;
+	/**
+	 * E​m​a​i​l​ ​O​T​P​ ​s​i​g​n​u​p
+	 */
+	admin_custom_claims_usage_email_otp_signup: string;
+	/**
 	 * N​o​ ​s​c​h​e​m​a​s​ ​f​o​u​n​d​.
 	 */
 	admin_custom_claims_empty: string;
@@ -10686,6 +10702,10 @@ type RootTranslation = {
 	 * S​y​s​t​e​m​ ​c​l​a​i​m​s​ ​c​a​n​n​o​t​ ​b​e​ ​d​e​l​e​t​e​d
 	 */
 	admin_custom_claims_system_delete_disabled: string;
+	/**
+	 * F​i​e​l​d​s​ ​c​u​r​r​e​n​t​l​y​ ​u​s​e​d​ ​b​y​ ​A​u​t​h​r​i​m​ ​f​e​a​t​u​r​e​s​ ​c​a​n​n​o​t​ ​b​e​ ​d​e​l​e​t​e​d
+	 */
+	admin_custom_claims_system_usage_delete_disabled: string;
 	/**
 	 * D​e​t​a​i​l​s
 	 */
@@ -25153,28 +25173,28 @@ type RootTranslation = {
 	 */
 	admin_policy_embedding_info_desc: string;
 	/**
-	 * L​o​g​i​n​ ​M​e​t​h​o​d​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​e​t​h​o​d​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
 	admin_login_methods_page_title: string;
 	/**
-	 * L​o​g​i​n​ ​M​e​t​h​o​d​s
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​e​t​h​o​d​s
 	 */
 	admin_login_methods_title: string;
 	/**
-	 * C​u​s​t​o​m​ ​e​x​t​e​r​n​a​l​ ​l​o​g​i​n​ ​p​r​o​v​i​d​e​r​s​ ​f​o​r​ ​t​e​n​a​n​t​ ​{​t​e​n​a​n​t​I​d​}
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​s​ ​a​n​d​ ​e​x​t​e​r​n​a​l​ ​i​d​e​n​t​i​t​y​ ​p​r​o​v​i​d​e​r​s​ ​f​o​r​ ​t​e​n​a​n​t​ ​{​t​e​n​a​n​t​I​d​}
 	 * @param {string} tenantId
 	 */
 	admin_login_methods_description: RequiredParams<'tenantId'>;
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s
 	 */
 	admin_login_methods_error_load: string;
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s
 	 */
 	admin_login_methods_error_save: string;
 	/**
-	 * L​o​g​i​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
 	 */
 	admin_login_methods_saved: string;
 	/**
@@ -25194,7 +25214,47 @@ type RootTranslation = {
 	 */
 	admin_login_methods_loading: string;
 	/**
-	 * C​o​n​f​i​g​u​r​e​d​ ​P​r​o​v​i​d​e​r​s
+	 * B​u​i​l​t​-​i​n​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​e​t​h​o​d​s
+	 */
+	admin_login_methods_builtin_title: string;
+	/**
+	 * S​e​l​e​c​t​ ​h​o​w​ ​A​u​t​h​r​i​m​ ​b​u​i​l​t​-​i​n​ ​m​e​t​h​o​d​s​ ​c​a​n​ ​b​e​ ​u​s​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.
+	 */
+	admin_login_methods_builtin_description: string;
+	/**
+	 * P​a​s​s​k​e​y
+	 */
+	admin_login_methods_passkey: string;
+	/**
+	 * A​l​l​o​w​ ​W​e​b​A​u​t​h​n​ ​p​a​s​s​k​e​y​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​o​r​ ​b​o​t​h​.
+	 */
+	admin_login_methods_passkey_description: string;
+	/**
+	 * E​m​a​i​l​ ​O​T​P
+	 */
+	admin_login_methods_email_otp: string;
+	/**
+	 * A​l​l​o​w​ ​e​m​a​i​l​ ​o​n​e​-​t​i​m​e​ ​c​o​d​e​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​o​r​ ​b​o​t​h​.
+	 */
+	admin_login_methods_email_otp_description: string;
+	/**
+	 * L​o​g​i​n
+	 */
+	admin_login_methods_login_enabled: string;
+	/**
+	 * S​i​g​n​u​p
+	 */
+	admin_login_methods_signup_enabled: string;
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n
+	 */
+	admin_login_methods_reauth_enabled: string;
+	/**
+	 * A​c​c​o​u​n​t​ ​l​i​n​k​i​n​g
+	 */
+	admin_login_methods_account_link_enabled: string;
+	/**
+	 * E​x​t​e​r​n​a​l​ ​I​d​e​n​t​i​t​y​ ​P​r​o​v​i​d​e​r​s
 	 */
 	admin_login_methods_configured: string;
 	/**
@@ -27026,7 +27086,7 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_resolution_center: () => LocalizedString;
 	/**
-	 * Login Methods
+	 * Authentication Methods
 	 */
 	admin_nav_login_methods: () => LocalizedString;
 	/**
@@ -30820,7 +30880,7 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_dns_san_additional: () => LocalizedString;
 	/**
-	 * Add scope domains or other owned DNS names explicitly. Separate values with spaces, commas, or new lines.
+	 * Add scope domains or other owned DNS names explicitly. Separate values with spaces or commas.
 	 */
 	admin_saml_local_dns_san_additional_desc: () => LocalizedString;
 	/**
@@ -36328,6 +36388,22 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_custom_claims_system: () => LocalizedString;
 	/**
+	 * Used by system
+	 */
+	admin_custom_claims_used_by_system: () => LocalizedString;
+	/**
+	 * Passkey signup
+	 */
+	admin_custom_claims_usage_passkey_signup: () => LocalizedString;
+	/**
+	 * Email OTP login
+	 */
+	admin_custom_claims_usage_email_otp_login: () => LocalizedString;
+	/**
+	 * Email OTP signup
+	 */
+	admin_custom_claims_usage_email_otp_signup: () => LocalizedString;
+	/**
 	 * No schemas found.
 	 */
 	admin_custom_claims_empty: () => LocalizedString;
@@ -36767,6 +36843,10 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * System claims cannot be deleted
 	 */
 	admin_custom_claims_system_delete_disabled: () => LocalizedString;
+	/**
+	 * Fields currently used by Authrim features cannot be deleted
+	 */
+	admin_custom_claims_system_usage_delete_disabled: () => LocalizedString;
 	/**
 	 * Details
 	 */
@@ -51104,27 +51184,27 @@ Remove this role from {email}?
 	 */
 	admin_policy_embedding_info_desc: () => LocalizedString;
 	/**
-	 * Login Methods - Authrim Admin
+	 * Authentication Methods - Authrim Admin
 	 */
 	admin_login_methods_page_title: () => LocalizedString;
 	/**
-	 * Login Methods
+	 * Authentication Methods
 	 */
 	admin_login_methods_title: () => LocalizedString;
 	/**
-	 * Custom external login providers for tenant {tenantId}
+	 * Authentication methods and external identity providers for tenant {tenantId}
 	 */
 	admin_login_methods_description: (arg: { tenantId: string }) => LocalizedString;
 	/**
-	 * Failed to load login method settings
+	 * Failed to load authentication method settings
 	 */
 	admin_login_methods_error_load: () => LocalizedString;
 	/**
-	 * Failed to save login method settings
+	 * Failed to save authentication method settings
 	 */
 	admin_login_methods_error_save: () => LocalizedString;
 	/**
-	 * Login method settings saved.
+	 * Authentication method settings saved.
 	 */
 	admin_login_methods_saved: () => LocalizedString;
 	/**
@@ -51144,7 +51224,47 @@ Remove this role from {email}?
 	 */
 	admin_login_methods_loading: () => LocalizedString;
 	/**
-	 * Configured Providers
+	 * Built-in Authentication Methods
+	 */
+	admin_login_methods_builtin_title: () => LocalizedString;
+	/**
+	 * Select how Authrim built-in methods can be used for this tenant.
+	 */
+	admin_login_methods_builtin_description: () => LocalizedString;
+	/**
+	 * Passkey
+	 */
+	admin_login_methods_passkey: () => LocalizedString;
+	/**
+	 * Allow WebAuthn passkeys for login, signup, or both.
+	 */
+	admin_login_methods_passkey_description: () => LocalizedString;
+	/**
+	 * Email OTP
+	 */
+	admin_login_methods_email_otp: () => LocalizedString;
+	/**
+	 * Allow email one-time codes for login, signup, or both.
+	 */
+	admin_login_methods_email_otp_description: () => LocalizedString;
+	/**
+	 * Login
+	 */
+	admin_login_methods_login_enabled: () => LocalizedString;
+	/**
+	 * Signup
+	 */
+	admin_login_methods_signup_enabled: () => LocalizedString;
+	/**
+	 * Re-authentication
+	 */
+	admin_login_methods_reauth_enabled: () => LocalizedString;
+	/**
+	 * Account linking
+	 */
+	admin_login_methods_account_link_enabled: () => LocalizedString;
+	/**
+	 * External Identity Providers
 	 */
 	admin_login_methods_configured: () => LocalizedString;
 	/**

@@ -99,14 +99,19 @@ describe('common-entry routing', () => {
 		const result = await rootLoad({
 			cookies: createCookies({ authrim_session: '0_session_active' }),
 			fetch,
-			request: new Request('https://multi-tenant.authrim.com/'),
+			request: new Request('https://multi-tenant.authrim.com/', {
+				headers: { cookie: 'authrim_session=0_session_active' }
+			}),
 			url: new URL('https://multi-tenant.authrim.com/')
 		} as never);
 
 		expect(result).toEqual({});
 		expect(fetch).toHaveBeenCalledTimes(1);
 		expect(fetch).toHaveBeenCalledWith('/api/sessions/status', {
-			headers: { 'x-authrim-original-host': 'multi-tenant.authrim.com' }
+			headers: {
+				'x-authrim-original-host': 'multi-tenant.authrim.com',
+				cookie: 'authrim_session=0_session_active'
+			}
 		});
 	});
 
@@ -137,7 +142,9 @@ describe('common-entry routing', () => {
 			rootLoad({
 				cookies: createCookies({ authrim_session: '0_session_expired' }),
 				fetch,
-				request: new Request('https://multi-tenant.authrim.com/'),
+				request: new Request('https://multi-tenant.authrim.com/', {
+					headers: { cookie: 'authrim_session=0_session_expired' }
+				}),
 				url: new URL('https://multi-tenant.authrim.com/')
 			} as never)
 		).rejects.toMatchObject({
@@ -237,14 +244,49 @@ describe('common-entry routing', () => {
 		const result = await rootLoad({
 			cookies: createCookies({ authrim_session: '0_session_active' }),
 			fetch,
-			request: new Request('https://first.multi-tenant.authrim.com/'),
+			request: new Request('https://first.multi-tenant.authrim.com/', {
+				headers: { cookie: 'authrim_session=0_session_active' }
+			}),
 			url: new URL('https://first.multi-tenant.authrim.com/')
 		} as never);
 
 		expect(result).toEqual({});
 		expect(fetch).toHaveBeenCalledTimes(1);
 		expect(fetch).toHaveBeenCalledWith('/api/sessions/status', {
-			headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
+			headers: {
+				'x-authrim-original-host': 'first.multi-tenant.authrim.com',
+				cookie: 'authrim_session=0_session_active'
+			}
+		});
+	});
+
+	it('redirects an already authenticated tenant-host /login request back to /', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				active: true,
+				user_id: 'user-123'
+			})
+		);
+
+		await expect(
+			loginLoad({
+				cookies: createCookies({ authrim_session: '0_session_active' }),
+				fetch,
+				request: new Request('https://first.multi-tenant.authrim.com/login', {
+					headers: { cookie: 'authrim_session=0_session_active' }
+				}),
+				url: new URL('https://first.multi-tenant.authrim.com/login')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: '/'
+		});
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(fetch).toHaveBeenCalledWith('/api/sessions/status', {
+			headers: {
+				'x-authrim-original-host': 'first.multi-tenant.authrim.com',
+				cookie: 'authrim_session=0_session_active'
+			}
 		});
 	});
 

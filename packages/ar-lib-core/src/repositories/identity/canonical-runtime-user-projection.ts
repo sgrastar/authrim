@@ -220,8 +220,9 @@ function activeClause(includeInactive: boolean | undefined): string {
   return includeInactive ? '' : " AND lifecycle_state = 'active'";
 }
 
-function unixToIso(value: number | null | undefined): string {
-  return new Date((value ?? 0) * 1000).toISOString();
+function timestampToIso(value: number | null | undefined): string {
+  const timestamp = value ?? 0;
+  return new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp).toISOString();
 }
 
 function parseJson(value: string | null | undefined): unknown {
@@ -376,8 +377,8 @@ export class CanonicalRuntimeUserProjectionRepository {
           : null,
       active: account.lifecycle_state === 'active' && subject.lifecycle_state === 'active' ? 1 : 0,
       custom_attributes_json: null,
-      created_at: unixToIso(account.created_at),
-      updated_at: unixToIso(Math.max(account.updated_at, subject.updated_at)),
+      created_at: timestampToIso(account.created_at),
+      updated_at: timestampToIso(Math.max(account.updated_at, subject.updated_at)),
     };
   }
 

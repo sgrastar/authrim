@@ -87,8 +87,8 @@
 		try {
 			const { data } = await fetchLoginMethods();
 			if (data) {
-				passkeyEnabled = data.methods.passkey.enabled;
-				emailCodeEnabled = data.methods.emailCode.enabled;
+				passkeyEnabled = data.methods.passkey.reauthEnabled ?? data.methods.passkey.enabled;
+				emailCodeEnabled = data.methods.emailCode.reauthEnabled ?? data.methods.emailCode.enabled;
 			}
 		} catch {
 			passkeyEnabled = true;

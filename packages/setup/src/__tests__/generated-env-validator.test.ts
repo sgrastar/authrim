@@ -243,6 +243,7 @@ function mockLiveRuntimeSchema(
         'profiles',
         'contact_points',
         'custom_claim_schemas',
+        'field_usage_bindings',
         'user_custom_fields',
       ],
     ],
