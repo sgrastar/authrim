@@ -1161,6 +1161,7 @@ export function createApiRoutes(): Hono {
           baseDir: rootDir,
           env,
           dryRun: false,
+          includeDurableObjectMigrations: false,
           onProgress: addProgress,
         });
 
@@ -3144,6 +3145,7 @@ export function createApiRoutes(): Hono {
           baseDir: rootDir,
           env,
           dryRun: false,
+          includeDurableObjectMigrations: false,
           onProgress: addProgress,
         });
 
@@ -3613,6 +3615,7 @@ export function createApiRoutes(): Hono {
                 baseDir: rootDir,
                 env,
                 dryRun: false,
+                includeDurableObjectMigrations: false,
                 onProgress: addProgress,
               });
 

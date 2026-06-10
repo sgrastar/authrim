@@ -251,9 +251,11 @@ export async function checkWranglerStatus(
 export async function saveMasterWranglerConfigs(
   config: AuthrimConfig,
   resourceIds: ResourceIds,
-  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'dryRun' | 'onProgress'>
+  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'dryRun' | 'onProgress'> & {
+    includeDurableObjectMigrations?: boolean;
+  }
 ): Promise<{ success: boolean; files: string[]; errors: string[] }> {
-  const { baseDir, env, dryRun, onProgress } = options;
+  const { baseDir, env, dryRun, onProgress, includeDurableObjectMigrations } = options;
   const envPaths = getEnvironmentPaths({ baseDir, env });
   const files: string[] = [];
   const errors: string[] = [];
@@ -273,7 +275,8 @@ export async function saveMasterWranglerConfigs(
         component,
         config,
         resourceIds,
-        workersSubdomain ?? undefined
+        workersSubdomain ?? undefined,
+        { includeDurableObjectMigrations }
       );
       // Generate TOML with [env.{env}] section format
       const tomlContent = toToml(wranglerConfig, env);

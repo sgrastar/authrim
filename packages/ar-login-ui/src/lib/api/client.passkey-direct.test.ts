@@ -108,6 +108,88 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		});
 	});
 
+	it('uses canonical Direct Auth signup endpoints and redeems the artifact into a managed session', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({ challenge_id: 'chal_signup', options: { challenge: 'signup' } }),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ direct_auth_artifact: 'artifact_signup', expires_in: 60 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						session: {
+							userId: 'user_signup',
+							createdAt: 1,
+							expiresAt: 2,
+							authTime: 1700000789,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['passkey_signup']
+						},
+						user: {
+							id: 'user_signup',
+							email: 'new@example.com',
+							name: 'New User'
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { passkeyAPI } = await loadClient();
+
+		const options = await passkeyAPI.getRegisterOptions({
+			email: 'new@example.com',
+			name: 'New User',
+			custom_fields: { affiliation: 'Faculty' }
+		});
+		const verified = await passkeyAPI.verifyRegistration({
+			userId: options.data!.userId,
+			credential: { id: 'credential' }
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
+			'/api/v1/auth/direct/passkey/signup/start'
+		);
+		expect(fetchMock.mock.calls[1]?.[0].toString()).toContain(
+			'/api/v1/auth/direct/passkey/signup/finish'
+		);
+		expect(fetchMock.mock.calls[2]?.[0].toString()).toContain('/api/v1/auth/direct/session');
+		for (const [url] of fetchMock.mock.calls) {
+			expect(url.toString()).not.toContain('/api/auth/passkeys');
+			expect(url.toString()).not.toContain('/api/auth/email-codes');
+		}
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			email: 'new@example.com',
+			display_name: 'New User',
+			custom_fields: { affiliation: 'Faculty' }
+		});
+		expect(verified.data).toMatchObject({
+			userId: 'user_signup',
+			user: {
+				email: 'new@example.com'
+			}
+		});
+	});
+
 	it('uses canonical Email Code endpoints and redeems the artifact into a managed session', async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()

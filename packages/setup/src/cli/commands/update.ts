@@ -307,7 +307,8 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
             component,
             config,
             resourceIds,
-            workersSubdomain ?? undefined
+            workersSubdomain ?? undefined,
+            { includeDurableObjectMigrations: false }
           );
           const tomlContent = toToml(wranglerConfig, env);
           const tomlPath = join(componentDir, 'wrangler.toml');

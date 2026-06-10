@@ -1304,7 +1304,7 @@ describe('Admin API Handlers', () => {
   describe('adminUserGetHandler', () => {
     it('should return user details with passkeys', async () => {
       const userId = 'user-123';
-      // Core DB returns users_core data (no PII) and passkeys
+      // Core DB returns canonical identity data plus passkeys.
       const mockDB = createMockDB({
         firstResult: {
           id: userId,
@@ -1354,7 +1354,13 @@ describe('Admin API Handlers', () => {
             id: userId,
             email: 'user@example.com',
           }),
-          passkeys: expect.any(Array),
+          passkeys: [
+            expect.objectContaining({
+              id: 'passkey-1',
+              credential_id: 'cred-abc',
+              device_name: 'Chrome on Mac',
+            }),
+          ],
         })
       );
 
