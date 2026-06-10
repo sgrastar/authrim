@@ -2188,6 +2188,10 @@ export function createApiRoutes(): Hono {
             const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
             const clientResult = await ensureLoginUiClient({
               apiBaseUrl,
+              apiBaseUrls: resolveApiBaseUrlCandidates(cfg, {
+                env,
+                purpose: 'tenant-scoped-admin',
+              }),
               loginUiUrl,
               adminApiSecretPath,
               keysDir,
@@ -3490,6 +3494,10 @@ export function createApiRoutes(): Hono {
                 const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
                 const clientResult = await ensureLoginUiClient({
                   apiBaseUrl,
+                  apiBaseUrls: resolveApiBaseUrlCandidates(cfg, {
+                    env,
+                    purpose: 'tenant-scoped-admin',
+                  }),
                   loginUiUrl,
                   adminApiSecretPath,
                   keysDir,

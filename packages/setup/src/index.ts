@@ -31,7 +31,7 @@ import { tenantDatabasePoolStatusCommand } from './cli/commands/tenant-db-pool-s
 import { tenantDatabaseSlotResetCommand } from './cli/commands/tenant-db-slot-reset.js';
 import { tenantDatabaseMigrateAllCommand } from './cli/commands/tenant-db-migrate-all.js';
 import { r2ProvisionCommand } from './cli/commands/r2-provision.js';
-import { resolveIssuerUrl } from './core/url-config.js';
+import { resolveApiBaseUrlCandidates, resolveIssuerUrl } from './core/url-config.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
@@ -338,6 +338,10 @@ program
             const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
             const clientResult = await ensureLoginUiClient({
               apiBaseUrl,
+              apiBaseUrls: resolveApiBaseUrlCandidates(cfg as AuthrimConfig, {
+                env,
+                purpose: 'tenant-scoped-admin',
+              }),
               loginUiUrl,
               adminApiSecretPath,
               keysDir,
