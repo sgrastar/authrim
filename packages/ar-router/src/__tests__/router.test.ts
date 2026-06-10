@@ -1089,6 +1089,34 @@ describe('Router Worker', () => {
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
     });
 
+    it('should proxy naked-domain root requests to Login UI when Login UI shares the API host', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithLoginUiOnApiHost = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        ADMIN_UI_URL: 'https://admin.example.com',
+        LOGIN_UI_URL: 'https://example.com',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://example.com/');
+      const res = await app.fetch(req, envWithLoginUiOnApiHost);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(adminUiWorker.fetch).not.toHaveBeenCalled();
+
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).pathname).toBe('/');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('example.com');
+    });
+
     it('should proxy admin UI through service binding when configured', async () => {
       const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
       const envWithAdminUi = {

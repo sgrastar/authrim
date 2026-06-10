@@ -226,6 +226,28 @@ describe('common-entry routing', () => {
 		});
 	});
 
+	it('does not redirect tenant-host root to /login when the browser has an active session', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				active: true,
+				user_id: 'user-123'
+			})
+		);
+
+		const result = await rootLoad({
+			cookies: createCookies({ authrim_session: '0_session_active' }),
+			fetch,
+			request: new Request('https://first.multi-tenant.authrim.com/'),
+			url: new URL('https://first.multi-tenant.authrim.com/')
+		} as never);
+
+		expect(result).toEqual({});
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(fetch).toHaveBeenCalledWith('/api/sessions/status', {
+			headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
+		});
+	});
+
 	it('allows a tenant-host login challenge only when it resolves for the current tenant', async () => {
 		const fetch = vi
 			.fn()

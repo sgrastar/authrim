@@ -264,6 +264,12 @@ describe('generateEnvVars - ar-router', () => {
 
     expect(vars['ENABLE_ADMIN_UI_PROXY']).toBe(adminProxyEnabled ? 'true' : 'false');
     expect(vars['ENABLE_LOGIN_UI_PROXY']).toBe(loginProxyEnabled ? 'true' : 'false');
+    const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+    const expectedLoginUiUrl =
+      scenario.config.loginUiSameAsApi || !!scenario.config.baseDomain
+        ? apiUrl
+        : config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || apiUrl;
+    expect(vars['LOGIN_UI_URL']).toBe(expectedLoginUiUrl);
 
     // AR_ADMIN_UI_URL is set when ar-router owns Admin UI paths.
     if (adminProxyEnabled) {
