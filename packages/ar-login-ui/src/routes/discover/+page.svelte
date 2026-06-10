@@ -2,7 +2,7 @@
 	import { getDefaultDiscoveryMode, getInteractiveDiscoveryMethods } from '$lib/discovery-ui';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
 	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 
@@ -148,11 +148,12 @@
 	}
 
 	function loginPath(url: string): string {
+		if (!isValidLinkUrl(url)) return '';
 		return new URL(url).host;
 	}
 
-	function rememberedCandidateHref(candidate: DiscoveryCandidate): string {
-		return candidate.login_url;
+	function candidateHref(candidate: DiscoveryCandidate): string | null {
+		return isValidLinkUrl(candidate.login_url) ? candidate.login_url : null;
 	}
 
 	function shouldPostCandidateSelection(): boolean {
@@ -235,7 +236,7 @@
 							disabled={discoverySubmitting}
 						>
 							<div class="tenant-branding">
-								{#if rememberedCandidate.logo_url}
+								{#if rememberedCandidate.logo_url && isValidImageUrl(rememberedCandidate.logo_url)}
 									<img src={rememberedCandidate.logo_url} alt={rememberedCandidate.display_name} />
 								{/if}
 								<div>
@@ -247,18 +248,21 @@
 						</button>
 					</form>
 				{:else}
-					<a class="tenant-option" href={rememberedCandidateHref(rememberedCandidate)}>
-						<div class="tenant-branding">
-							{#if rememberedCandidate.logo_url}
-								<img src={rememberedCandidate.logo_url} alt={rememberedCandidate.display_name} />
-							{/if}
-							<div>
-								<strong>{rememberedCandidate.display_name}</strong>
-								<p>{rememberedCandidate.tenant_code}</p>
+					{@const rememberedHref = candidateHref(rememberedCandidate)}
+					{#if rememberedHref}
+						<a class="tenant-option" href={rememberedHref}>
+							<div class="tenant-branding">
+								{#if rememberedCandidate.logo_url && isValidImageUrl(rememberedCandidate.logo_url)}
+									<img src={rememberedCandidate.logo_url} alt={rememberedCandidate.display_name} />
+								{/if}
+								<div>
+									<strong>{rememberedCandidate.display_name}</strong>
+									<p>{rememberedCandidate.tenant_code}</p>
+								</div>
 							</div>
-						</div>
-						<span>{loginPath(rememberedCandidate.login_url)}</span>
-					</a>
+							<span>{loginPath(rememberedCandidate.login_url)}</span>
+						</a>
+					{/if}
 				{/if}
 			</div>
 		{/if}
@@ -307,7 +311,9 @@
 
 				{#if selectedMode === 'wayf'}
 					<div class="form-group">
-						<label for="value">{wayfOnly ? $LL.discover_selectTenant() : modeLabel(selectedMode)}</label>
+						<label for="value"
+							>{wayfOnly ? $LL.discover_selectTenant() : modeLabel(selectedMode)}</label
+						>
 						<select id="value" name="value" bind:value required>
 							<option value="" disabled>{$LL.discover_selectTenant()}</option>
 							{#each wayfCandidates as candidate (candidate.tenant_id)}
@@ -373,7 +379,7 @@
 								disabled={discoverySubmitting}
 							>
 								<div class="tenant-branding">
-									{#if candidate.logo_url}
+									{#if candidate.logo_url && isValidImageUrl(candidate.logo_url)}
 										<img src={candidate.logo_url} alt={candidate.display_name} />
 									{/if}
 									<div>
@@ -385,18 +391,21 @@
 							</button>
 						</form>
 					{:else}
-						<a class="tenant-option" href={candidate.login_url}>
-							<div class="tenant-branding">
-								{#if candidate.logo_url}
-									<img src={candidate.logo_url} alt={candidate.display_name} />
-								{/if}
-								<div>
-									<strong>{candidate.display_name}</strong>
-									<p>{candidate.tenant_code}</p>
+						{@const href = candidateHref(candidate)}
+						{#if href}
+							<a class="tenant-option" {href}>
+								<div class="tenant-branding">
+									{#if candidate.logo_url && isValidImageUrl(candidate.logo_url)}
+										<img src={candidate.logo_url} alt={candidate.display_name} />
+									{/if}
+									<div>
+										<strong>{candidate.display_name}</strong>
+										<p>{candidate.tenant_code}</p>
+									</div>
 								</div>
-							</div>
-							<span>{loginPath(candidate.login_url)}</span>
-						</a>
+								<span>{loginPath(candidate.login_url)}</span>
+							</a>
+						{/if}
 					{/if}
 				{/each}
 			</div>

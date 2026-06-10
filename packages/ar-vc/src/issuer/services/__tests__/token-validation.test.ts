@@ -195,7 +195,7 @@ describe('validateProofOfPossession', () => {
     const futureJwt = await createProofJwt({
       aud: 'did:web:issuer.example.com',
       nonce: 'nonce-123',
-      iat: now + 11,
+      iat: now + 60,
     });
 
     await expect(

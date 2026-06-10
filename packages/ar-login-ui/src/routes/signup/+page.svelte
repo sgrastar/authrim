@@ -613,7 +613,7 @@
 								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 							>
-								{#if provider.iconUrl}
+								{#if provider.iconUrl && isValidImageUrl(provider.iconUrl)}
 									<img
 										src={provider.iconUrl}
 										alt=""
