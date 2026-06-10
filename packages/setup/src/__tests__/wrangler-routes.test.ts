@@ -27,6 +27,35 @@ describe('generateRoutes', () => {
     );
   });
 
+  it('exposes SAML and GakuNin/Shibboleth SAML2 compatibility routes on ar-saml', () => {
+    const routes = generateRoutes('ar-saml', 'conformance.authrim.com', 'authrim.com');
+
+    expect(routes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pattern: 'conformance.authrim.com/saml/*',
+          zone_name: 'authrim.com',
+        }),
+        expect.objectContaining({
+          pattern: 'conformance.authrim.com/idp/profile/SAML2/POST/SSO',
+          zone_name: 'authrim.com',
+        }),
+        expect.objectContaining({
+          pattern: 'conformance.authrim.com/idp/profile/SAML2/Redirect/SSO',
+          zone_name: 'authrim.com',
+        }),
+        expect.objectContaining({
+          pattern: 'conformance.authrim.com/idp/profile/SAML2/POST/SLO',
+          zone_name: 'authrim.com',
+        }),
+        expect.objectContaining({
+          pattern: 'conformance.authrim.com/idp/profile/SAML2/Redirect/SLO',
+          zone_name: 'authrim.com',
+        }),
+      ])
+    );
+  });
+
   it('adds Cloudflare Email Service bindings only to ar-auth and ar-management', () => {
     const config = {
       version: '1.0.0',

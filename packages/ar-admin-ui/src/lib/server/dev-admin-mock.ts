@@ -655,6 +655,18 @@ async function handleSamlProviders(
 			tenantId: TENANT_ID,
 			entityIdStyle: 'role_url',
 			interactiveLoginUrlPolicy: 'tenant_host',
+			certificateSubject: {
+				countryName: 'JP',
+				stateOrProvinceName: 'Tokyo',
+				localityName: 'Shinagawa',
+				organizationName: 'Authrim',
+				organizationalUnitName: 'Security',
+				commonName: 'localhost'
+			},
+			certificateSubjectAlternativeNames: {
+				includeGeneratedDnsNames: true,
+				dnsNames: ['localhost']
+			},
 			metadata: {
 				signingMode: 'enabled',
 				signingEnabled: true,
@@ -670,6 +682,22 @@ async function handleSamlProviders(
 				spEntityId: 'http://localhost:8787/saml/sp/metadata',
 				idpMetadataUrl: 'http://localhost:8787/saml/idp/metadata',
 				spMetadataUrl: 'http://localhost:8787/saml/sp/metadata'
+			},
+			localSigning: {
+				certificateSubject: {
+					countryName: 'JP',
+					stateOrProvinceName: 'Tokyo',
+					localityName: 'Shinagawa',
+					organizationName: 'Authrim',
+					organizationalUnitName: 'Security',
+					commonName: 'localhost'
+				},
+				certificateSubjectAlternativeNames: {
+					includeGeneratedDnsNames: true,
+					dnsNames: ['localhost']
+				},
+				idpSigningKeyPolicy: {},
+				spSigningKeyPolicy: {}
 			}
 		});
 	}

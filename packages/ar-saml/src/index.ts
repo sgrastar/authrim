@@ -7,8 +7,12 @@
  * - GET  /saml/idp/metadata - IdP metadata
  * - GET  /saml/idp/sso      - SSO (HTTP-Redirect Binding)
  * - POST /saml/idp/sso      - SSO (HTTP-POST Binding)
+ * - GET  /idp/profile/SAML2/Redirect/SSO - GakuNin/Shibboleth SAML2 SSO alias
+ * - POST /idp/profile/SAML2/POST/SSO     - GakuNin/Shibboleth SAML2 SSO alias
  * - GET  /saml/idp/init     - IdP-initiated SSO
  * - POST /saml/idp/slo      - Single Logout
+ * - GET  /idp/profile/SAML2/Redirect/SLO - GakuNin/Shibboleth SAML2 SLO alias
+ * - POST /idp/profile/SAML2/POST/SLO     - GakuNin/Shibboleth SAML2 SLO alias
  *
  * SP Endpoints:
  * - GET  /saml/sp/metadata  - SP metadata
@@ -81,6 +85,12 @@ import {
   handleRetireSigningBackup,
 } from './admin/providers';
 import { handleScheduled } from './scheduled';
+import {
+  GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_POST_PATH,
+  GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_REDIRECT_PATH,
+  GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_POST_PATH,
+  GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_REDIRECT_PATH,
+} from './idp/shibboleth-compat';
 
 // Create Hono app with Cloudflare Workers bindings
 const app = new Hono<{ Bindings: Env }>();
@@ -130,12 +140,14 @@ app.get('/saml/idp/metadata', handleIdPMetadata);
  * Receives SAML AuthnRequest via URL parameters
  */
 app.get('/saml/idp/sso', handleIdPSSO);
+app.get(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_REDIRECT_PATH, handleIdPSSO);
 
 /**
  * SSO Endpoint (HTTP-POST Binding)
  * Receives SAML AuthnRequest via POST body
  */
 app.post('/saml/idp/sso', handleIdPSSO);
+app.post(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_POST_PATH, handleIdPSSO);
 
 /**
  * Attribute release consent callback
@@ -153,11 +165,13 @@ app.get('/saml/idp/init', handleIdPInitiated);
  * Single Logout (IdP) - POST Binding
  */
 app.post('/saml/idp/slo', handleIdPSLO);
+app.post(GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_POST_PATH, handleIdPSLO);
 
 /**
  * Single Logout (IdP) - Redirect Binding
  */
 app.get('/saml/idp/slo', handleIdPSLO);
+app.get(GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_REDIRECT_PATH, handleIdPSLO);
 
 // ============================================================================
 // SP Endpoints

@@ -36,6 +36,9 @@ export interface SAMLSigningKeyReference {
 	validTo?: number;
 	publicKeyAlgorithm?: 'RSA';
 	publicKeySizeBits?: number;
+	subjectAlternativeNames?: {
+		dnsNames: string[];
+	};
 }
 
 export interface SAMLSigningKeyPolicy {
@@ -54,6 +57,11 @@ export interface SAMLSigningCertificateSubject {
 	organizationName: string;
 	organizationalUnitName: string;
 	commonName: string;
+}
+
+export interface SAMLSigningCertificateSubjectAlternativeNames {
+	includeGeneratedDnsNames: boolean;
+	dnsNames: string[];
 }
 
 export interface SAMLCertificateValidationStatus {
@@ -185,12 +193,14 @@ export interface SAMLSettings {
 	entityIdStyle: SAMLEntityIdStyle;
 	interactiveLoginUrlPolicy: SAMLInteractiveLoginUrlPolicy;
 	certificateSubject?: SAMLSigningCertificateSubject;
+	certificateSubjectAlternativeNames?: SAMLSigningCertificateSubjectAlternativeNames;
 	signingKeyPolicies?: {
 		idp?: SAMLSigningKeyPolicy;
 		sp?: SAMLSigningKeyPolicy;
 	};
 	localSigning?: {
 		certificateSubject: SAMLSigningCertificateSubject;
+		certificateSubjectAlternativeNames: SAMLSigningCertificateSubjectAlternativeNames;
 		idpSigningKeyPolicy: SAMLSigningKeyPolicy;
 		spSigningKeyPolicy: SAMLSigningKeyPolicy;
 	};
@@ -545,6 +555,7 @@ export const adminSAMLAPI = {
 		entityIdStyle?: SAMLEntityIdStyle;
 		interactiveLoginUrlPolicy?: SAMLInteractiveLoginUrlPolicy;
 		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
+		certificateSubjectAlternativeNames?: Partial<SAMLSigningCertificateSubjectAlternativeNames>;
 	}): Promise<SAMLSettings> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-settings`, {
 			method: 'PUT',
@@ -563,6 +574,7 @@ export const adminSAMLAPI = {
 		role: 'idp' | 'sp';
 		action: 'recreate_active' | 'publish_next' | 'promote_next' | 'retire_backup' | 'delete_next';
 		certificateSubject?: Partial<SAMLSigningCertificateSubject>;
+		certificateSubjectAlternativeNames?: Partial<SAMLSigningCertificateSubjectAlternativeNames>;
 		keepPreviousAsBackup?: boolean;
 		targetKid?: string;
 		targetKeyRef?: string;

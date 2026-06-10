@@ -1486,6 +1486,15 @@ export function generateRoutes(
     case 'ar-management':
       routes.push({ pattern: `${domain}/register`, zone_name: zoneName });
       break;
+    case 'ar-saml':
+      routes.push(
+        { pattern: `${domain}/saml/*`, zone_name: zoneName },
+        { pattern: `${domain}/idp/profile/SAML2/POST/SSO`, zone_name: zoneName },
+        { pattern: `${domain}/idp/profile/SAML2/Redirect/SSO`, zone_name: zoneName },
+        { pattern: `${domain}/idp/profile/SAML2/POST/SLO`, zone_name: zoneName },
+        { pattern: `${domain}/idp/profile/SAML2/Redirect/SLO`, zone_name: zoneName }
+      );
+      break;
   }
 
   return routes;

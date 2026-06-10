@@ -4643,6 +4643,26 @@ type RootTranslation = {
 	 */
 	admin_saml_local_common_name: string;
 	/**
+	 * A​u​t​o​m​a​t​i​c​a​l​l​y​ ​a​d​d​ ​D​N​S​ ​S​A​N​ ​f​r​o​m​ ​e​n​t​i​t​y​I​D​ ​a​n​d​ ​e​n​d​p​o​i​n​t​s
+	 */
+	admin_saml_local_dns_san_auto: string;
+	/**
+	 * A​d​d​s​ ​t​h​e​ ​h​o​s​t​n​a​m​e​s​ ​u​s​e​d​ ​b​y​ ​t​h​i​s​ ​r​o​l​e​,​ ​s​u​c​h​ ​a​s​ ​m​e​t​a​d​a​t​a​,​ ​S​S​O​,​ ​S​L​O​,​ ​o​r​ ​A​C​S​ ​U​R​L​s​.
+	 */
+	admin_saml_local_dns_san_auto_desc: string;
+	/**
+	 * G​e​n​e​r​a​t​e​d​ ​D​N​S​ ​S​A​N
+	 */
+	admin_saml_local_dns_san_generated: string;
+	/**
+	 * A​d​d​i​t​i​o​n​a​l​ ​D​N​S​ ​S​A​N
+	 */
+	admin_saml_local_dns_san_additional: string;
+	/**
+	 * A​d​d​ ​s​c​o​p​e​ ​d​o​m​a​i​n​s​ ​o​r​ ​o​t​h​e​r​ ​o​w​n​e​d​ ​D​N​S​ ​n​a​m​e​s​ ​e​x​p​l​i​c​i​t​l​y​.​ ​S​e​p​a​r​a​t​e​ ​v​a​l​u​e​s​ ​w​i​t​h​ ​s​p​a​c​e​s​,​ ​c​o​m​m​a​s​,​ ​o​r​ ​n​e​w​ ​l​i​n​e​s​.
+	 */
+	admin_saml_local_dns_san_additional_desc: string;
+	/**
 	 * T​h​e​ ​c​e​r​t​i​f​i​c​a​t​e​ ​c​r​e​a​t​e​d​ ​h​e​r​e​ ​i​s​ ​n​o​t​ ​u​s​e​d​ ​f​o​r​ ​s​i​g​n​i​n​g​ ​i​m​m​e​d​i​a​t​e​l​y​.​ ​S​e​l​e​c​t​ ​i​t​ ​i​n​ ​t​h​e​ ​s​t​o​r​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​ ​l​i​s​t​ ​a​n​d​ ​s​t​a​r​t​ ​u​s​i​n​g​ ​i​t​ ​w​h​e​n​ ​r​e​a​d​y​.
 	 */
 	admin_saml_local_subject_warning: string;
@@ -30783,6 +30803,26 @@ export type TranslationFunctions = {
 	 * CN (Common Name)
 	 */
 	admin_saml_local_common_name: () => LocalizedString;
+	/**
+	 * Automatically add DNS SAN from entityID and endpoints
+	 */
+	admin_saml_local_dns_san_auto: () => LocalizedString;
+	/**
+	 * Adds the hostnames used by this role, such as metadata, SSO, SLO, or ACS URLs.
+	 */
+	admin_saml_local_dns_san_auto_desc: () => LocalizedString;
+	/**
+	 * Generated DNS SAN
+	 */
+	admin_saml_local_dns_san_generated: () => LocalizedString;
+	/**
+	 * Additional DNS SAN
+	 */
+	admin_saml_local_dns_san_additional: () => LocalizedString;
+	/**
+	 * Add scope domains or other owned DNS names explicitly. Separate values with spaces, commas, or new lines.
+	 */
+	admin_saml_local_dns_san_additional_desc: () => LocalizedString;
 	/**
 	 * The certificate created here is not used for signing immediately. Select it in the stored certificate list and start using it when ready.
 	 */

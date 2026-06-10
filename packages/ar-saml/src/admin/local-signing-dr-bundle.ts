@@ -8,11 +8,14 @@ import {
   type SAMLSigningCertificateSubject,
 } from '../common/key-utils';
 import {
+  buildSAMLSigningCertificateSubjectAlternativeNames,
   getSAMLLocalEntityIds,
   getSAMLPublicSettings,
+  normalizeCertificateSubjectAlternativeNames,
   normalizeSAMLInteractiveLoginUrlPolicy,
   normalizeSAMLEntityIdStyle,
   putSAMLPublicSettings,
+  type SAMLSigningCertificateSubjectAlternativeNameSettings,
   type SAMLInteractiveLoginUrlPolicy,
   type SAMLEntityIdStyle,
 } from '../common/entity-id';
@@ -68,6 +71,7 @@ export interface SAMLLocalSigningSecretDRBundle {
     entityIdStyle: SAMLEntityIdStyle;
     interactiveLoginUrlPolicy: SAMLInteractiveLoginUrlPolicy;
     certificateSubject: Required<SAMLSigningCertificateSubject>;
+    certificateSubjectAlternativeNames: SAMLSigningCertificateSubjectAlternativeNameSettings;
     signingKeyPolicies: {
       idp?: SAMLSigningKeyPolicy;
       sp?: SAMLSigningKeyPolicy;
@@ -126,6 +130,7 @@ export async function buildSAMLLocalSigningSecretDRBundle(
       entityIdStyle: settings.entityIdStyle,
       interactiveLoginUrlPolicy: settings.interactiveLoginUrlPolicy,
       certificateSubject: settings.certificateSubject,
+      certificateSubjectAlternativeNames: settings.certificateSubjectAlternativeNames,
       signingKeyPolicies: settings.signingKeyPolicies,
     },
     generated,
@@ -179,6 +184,7 @@ export async function restoreSAMLLocalSigningSecretDRBundle(
       entityIdStyle: bundle.settings.entityIdStyle,
       interactiveLoginUrlPolicy: bundle.settings.interactiveLoginUrlPolicy,
       certificateSubject: bundle.settings.certificateSubject,
+      certificateSubjectAlternativeNames: bundle.settings.certificateSubjectAlternativeNames,
       signingKeyPolicies: bundle.settings.signingKeyPolicies,
     })
   );
@@ -333,6 +339,7 @@ async function collectSAMLSigningKeysForDRBundle(
 ): Promise<SAMLLocalSigningSecretDRKey[]> {
   const keys: SAMLLocalSigningSecretDRKey[] = [];
   const seen = new Set<string>();
+  const entityIds = await getSAMLLocalEntityIds(env, tenantId);
   for (const role of ['idp', 'sp'] as const) {
     const policy = settings.signingKeyPolicies[role] ?? {};
     const nextRefs = [policy.next, ...(policy.nextCandidates ?? [])]
@@ -372,6 +379,13 @@ async function collectSAMLSigningKeysForDRBundle(
       const exported = await exportSigningKeyWithPrivateMaterial(env, tenantId, {
         keyRef: ref.keyRef,
         certificateSubject: settings.certificateSubject,
+        certificateOptions: {
+          subjectAlternativeNames: buildSAMLSigningCertificateSubjectAlternativeNames(
+            entityIds,
+            ref.role,
+            settings.certificateSubjectAlternativeNames
+          ),
+        },
       });
       keys.push({
         role: ref.role,
@@ -490,6 +504,9 @@ function normalizeSAMLLocalSigningSecretDRBundle(input: unknown): SAMLLocalSigni
       entityIdStyle,
       interactiveLoginUrlPolicy,
       certificateSubject: normalizeCertificateSubject(settings.certificateSubject),
+      certificateSubjectAlternativeNames: normalizeCertificateSubjectAlternativeNames(
+        settings.certificateSubjectAlternativeNames
+      ),
       signingKeyPolicies: normalizeSigningKeyPolicies(settings.signingKeyPolicies),
     },
     generated: (typeof source.generated === 'object' && source.generated !== null

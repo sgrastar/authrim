@@ -35,7 +35,11 @@ import {
   shouldSignSAMLMetadata,
   signSAMLMetadata,
 } from '../common/metadata-signing';
-import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../common/entity-id';
+import {
+  buildSAMLSigningCertificateSubjectAlternativeNames,
+  getSAMLLocalEntityIds,
+  getSAMLPublicSettings,
+} from '../common/entity-id';
 
 /**
  * Handle SP metadata request
@@ -45,10 +49,16 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
   const log = getLogger(c).module('SAML-SP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  const [{ issuerUrl, spEntityId: entityId }, settings] = await Promise.all([
+  const [entityIds, settings] = await Promise.all([
     getSAMLLocalEntityIds(env, tenantId),
     getSAMLPublicSettings(env, tenantId),
   ]);
+  const { issuerUrl, spEntityId: entityId } = entityIds;
+  const certificateSubjectAlternativeNames = buildSAMLSigningCertificateSubjectAlternativeNames(
+    entityIds,
+    'sp',
+    settings.certificateSubjectAlternativeNames
+  );
 
   // Get signing certificates from KeyManager / SAML rollover policy.
   let signingCertificates: SAMLMetadataSigningCertificate[];
@@ -58,6 +68,7 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
       role: 'sp',
       policy: settings.signingKeyPolicies.sp,
       certificateSubject: settings.certificateSubject,
+      certificateSubjectAlternativeNames,
     });
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
@@ -78,6 +89,7 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
         role: 'sp',
         policy: settings.signingKeyPolicies.sp,
         certificateSubject: settings.certificateSubject,
+        certificateSubjectAlternativeNames,
       });
       metadataXml = signSAMLMetadata(metadataXml, signingMaterial);
     } catch (error) {
