@@ -27,6 +27,22 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 
+function normalizeSessionOrigin(value: string | undefined | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return null;
+    }
+    return url.origin === 'null' ? null : url.origin;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Issue a short-lived session token (5 minute TTL, single-use)
  * POST /auth/session/token
@@ -81,6 +97,18 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
 
     // Generate short-lived token
     const token = crypto.randomUUID();
+    const requestOriginHeader = c.req.header('Origin');
+    const requestOrigin = normalizeSessionOrigin(requestOriginHeader);
+
+    if (requestOriginHeader && !requestOrigin) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid Origin header',
+        },
+        400
+      );
+    }
 
     // Store token in ChallengeStore DO with 5 minute TTL (RPC)
     // This provides atomic single-use guarantee (prevents race conditions)
@@ -100,6 +128,7 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
       ttl: 5 * 60, // 5 minutes
       metadata: {
         sessionId: session.id,
+        ...(requestOrigin ? { rpOrigin: requestOrigin } : {}),
       },
     });
 
@@ -158,6 +187,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
 
     let sessionId: string;
     let userId: string;
+    let issuedRpOrigin: string | undefined;
     try {
       const challengeData = (await challengeStore.consumeChallengeRpc({
         id: `session_token:${token}`,
@@ -169,10 +199,12 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
         userId: string;
         metadata?: {
           sessionId: string;
+          rpOrigin?: string;
         };
       };
       userId = challengeData.userId;
       sessionId = challengeData.metadata?.sessionId || '';
+      issuedRpOrigin = challengeData.metadata?.rpOrigin;
     } catch {
       return c.json(
         {
@@ -214,8 +246,30 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
     // Create a new session for the RP domain (if rp_origin provided)
     // This allows the RP to have its own session cookie
     let rpSessionId = session.id;
+    const normalizedRpOrigin = normalizeSessionOrigin(rp_origin);
 
     if (rp_origin) {
+      if (!normalizedRpOrigin) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'rp_origin must be an http(s) origin',
+          },
+          400
+        );
+      }
+
+      const normalizedIssuedRpOrigin = normalizeSessionOrigin(issuedRpOrigin);
+      if (normalizedIssuedRpOrigin && normalizedRpOrigin !== normalizedIssuedRpOrigin) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'rp_origin does not match the session token origin',
+          },
+          400
+        );
+      }
+
       // Create new session linked to the same user via RPC
       try {
         const newSession = (await sessionStore.createSessionRpc(
@@ -223,7 +277,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
           session.userId,
           86400, // 24 hours TTL
           {
-            rpOrigin: rp_origin,
+            rpOrigin: normalizedRpOrigin,
             parentSessionId: session.id,
           },
           getTenantIdFromContext(c)

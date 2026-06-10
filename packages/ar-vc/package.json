@@ -26,7 +26,8 @@
     "eslint": "^9.22.0",
     "globals": "^16.0.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.0",
-    "wrangler": "^4.59.3"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.59.3",
+    "yaml": "2.8.3"
   }
 }

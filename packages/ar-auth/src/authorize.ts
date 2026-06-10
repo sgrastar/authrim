@@ -1393,6 +1393,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
           claimsRequestIntegrityProtected = false;
         } else {
+          if (alg !== 'RS256') {
+            return c.json(
+              {
+                error: 'invalid_request_object',
+                error_description: 'Unsupported request object signing algorithm',
+              },
+              400
+            );
+          }
+
           // Signed request object - verify using client's public key
           // Get client metadata to retrieve jwks or jwks_uri
           if (!client_id) {
@@ -1484,33 +1494,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               );
             }
           } else {
-            // Fallback: Use server's public key (for backward compatibility)
-            // This should be removed in production
-            const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-            if (!publicJwkJson) {
-              return c.json(
-                {
-                  error: 'invalid_request_object',
-                  error_description: 'No client public key available for verification',
-                },
-                400
-              );
-            }
-
-            let publicJwk;
-            try {
-              publicJwk = JSON.parse(publicJwkJson);
-            } catch {
-              return c.json(
-                {
-                  error: 'server_error',
-                  error_description: 'Server configuration error',
-                },
-                500
-              );
-            }
-
-            publicKey = (await importJWK(publicJwk, alg)) as CryptoKey;
+            return c.json(
+              {
+                error: 'invalid_request_object',
+                error_description: 'No client public key available for verification',
+              },
+              400
+            );
           }
 
           // Verify the signature

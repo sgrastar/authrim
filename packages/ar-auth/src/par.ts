@@ -37,10 +37,14 @@ import {
   // Logging
   getLogger,
   getTenantIdFromContext,
+  isSigningJWK,
 } from '@authrim/ar-lib-core';
+import type { JWK } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { jwtVerify, compactDecrypt, importJWK, createRemoteJWKSet } from 'jose';
+
+const REQUEST_OBJECT_SIGNING_ALGORITHMS = ['RS256'];
 
 /**
  * PAR request parameters interface
@@ -116,6 +120,29 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
         ? formData.authorization_details
         : undefined,
   };
+}
+
+function selectRequestObjectSigningKey(
+  jwks: { keys?: unknown },
+  alg: string,
+  kid?: string
+): JWK | undefined {
+  if (!Array.isArray(jwks.keys)) {
+    return undefined;
+  }
+
+  return (jwks.keys as JWK[]).find((key) => {
+    if (!isSigningJWK(key)) {
+      return false;
+    }
+    if (kid && key.kid !== kid) {
+      return false;
+    }
+    if (key.alg && key.alg !== alg) {
+      return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -341,7 +368,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         // Process JWT/JWS if not already processed
         if (!requestProcessed) {
           const parsed = parseToken(jwtRequest);
-          const header = parsed?.header as { alg?: string } | undefined;
+          const header = parsed?.header as { alg?: string; kid?: string } | undefined;
           const alg = header?.alg;
 
           // Handle unsigned request objects (alg=none)
@@ -386,6 +413,16 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             });
             requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
           } else {
+            if (!alg || !REQUEST_OBJECT_SIGNING_ALGORITHMS.includes(alg)) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'Unsupported request object signing algorithm',
+                },
+                400
+              );
+            }
+
             // Signed request object - verify using client's public key
             // Get client's public key from JWKS or jwks_uri
             let cryptoKey: CryptoKey | undefined;
@@ -397,7 +434,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
                 typeof clientMetadata.jwks === 'string'
                   ? JSON.parse(clientMetadata.jwks)
                   : clientMetadata.jwks;
-              const key = jwks.keys?.[0];
+              const key = selectRequestObjectSigningKey(jwks, alg, header?.kid);
               if (key) {
                 const imported = await importJWK(key, alg);
                 if (imported instanceof Uint8Array) {
@@ -410,6 +447,14 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
                   );
                 }
                 cryptoKey = imported as CryptoKey;
+              } else {
+                return c.json(
+                  {
+                    error: 'invalid_request_object',
+                    error_description: 'No suitable signing key found in client jwks',
+                  },
+                  400
+                );
               }
             } else if (clientMetadata.jwks_uri) {
               // Fetch from jwks_uri
@@ -446,6 +491,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               const verifyOptions = {
                 issuer: params.client_id, // RFC 9101: iss MUST be client_id
                 audience: issuer, // RFC 9101: aud MUST be OP issuer
+                algorithms: REQUEST_OBJECT_SIGNING_ALGORITHMS,
               };
 
               let payload: Record<string, unknown>;

@@ -19,9 +19,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
-    "@vitest/ui": "^4.0.13",
+    "@vitest/ui": "^4.1.8",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.13",
-    "wrangler": "^4.59.3"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.59.3",
+    "yaml": "2.8.3"
   }
 }

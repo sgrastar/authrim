@@ -530,15 +530,6 @@ async function authenticateSession(
  */
 async function isIpAllowed(c: Context<{ Bindings: Env }>, tenantId: string): Promise<boolean> {
   try {
-    // Get client IP from Cloudflare header
-    const clientIp =
-      c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim();
-
-    if (!clientIp) {
-      log.warn('Could not determine client IP for allowlist check');
-      return true; // Allow if we can't determine IP (fail open)
-    }
-
     const adminAdapter: DatabaseAdapter = requireAdminDatabaseAdapter(c.env, 'admin-auth');
 
     // Check if any enabled entries exist
@@ -554,6 +545,15 @@ async function isIpAllowed(c: Context<{ Bindings: Env }>, tenantId: string): Pro
       return true;
     }
 
+    // Get client IP from Cloudflare header after determining that an allowlist is active.
+    const clientIp =
+      c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim();
+
+    if (!clientIp) {
+      log.warn('Could not determine client IP for active allowlist check');
+      return false;
+    }
+
     // Check if client IP matches any entry
     for (const entry of entries) {
       if (ipMatches(clientIp, entry.ip_range)) {
@@ -565,7 +565,7 @@ async function isIpAllowed(c: Context<{ Bindings: Env }>, tenantId: string): Pro
     return false;
   } catch (error) {
     log.error('IP allowlist check failed', {}, error as Error);
-    return true; // Fail open on error (to prevent lockout)
+    return false;
   }
 }
 

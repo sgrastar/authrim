@@ -53,6 +53,8 @@ function createMockDB(
     machineCredentialPermissions?: Array<{ permission: string }>;
     machinePrincipalTenantScopes?: Array<{ scope_mode: string; tenant_id: string | null }>;
     machineCredentialTenantScopes?: Array<{ scope_mode: string; tenant_id: string | null }>;
+    ipAllowlistEntries?: Array<{ ip_range: string; ip_version: number }>;
+    throwOnIpAllowlist?: boolean;
     shouldThrow?: boolean;
   } = {}
 ): D1Database {
@@ -71,6 +73,8 @@ function createMockDB(
     machineCredentialPermissions = [],
     machinePrincipalTenantScopes = [{ scope_mode: 'allow', tenant_id: 'default' }],
     machineCredentialTenantScopes = [],
+    ipAllowlistEntries = [],
+    throwOnIpAllowlist = false,
     shouldThrow = false,
   } = options;
 
@@ -87,6 +91,10 @@ function createMockDB(
         }),
         all: vi.fn().mockImplementation(async () => {
           if (shouldThrow) throw new Error('DB connection failed');
+          if (sql.includes('admin_ip_allowlist')) {
+            if (throwOnIpAllowlist) throw new Error('IP allowlist query failed');
+            return { results: ipAllowlistEntries, success: true };
+          }
           if (sql.includes('admin_role_assignments')) {
             return { results: roles, success: true };
           }
@@ -783,6 +791,80 @@ describe('adminAuthMiddleware', () => {
       expect(data.adminAuth.userId).toBe(userId);
       expect(data.adminAuth.authMethod).toBe('session');
       expect(data.adminAuth.roles).toContain('admin');
+    });
+
+    it('should allow sessions without a client IP when no IP allowlist entries exist', async () => {
+      const userId = 'admin-user-123';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+        ipAllowlistEntries: [],
+      });
+
+      const env = createMockEnv({ DB: db });
+      const app = createTestApp(env);
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: {
+            Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should reject sessions without a client IP when an IP allowlist is active', async () => {
+      const userId = 'admin-user-123';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+        ipAllowlistEntries: [{ ip_range: '203.0.113.9', ip_version: 4 }],
+      });
+
+      const env = createMockEnv({ DB: db });
+      const app = createTestApp(env);
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: {
+            Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+          },
+        })
+      );
+      const data = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(403);
+      expect(data.error).toBe('access_denied');
+    });
+
+    it('should reject sessions when the active IP allowlist check fails', async () => {
+      const userId = 'admin-user-123';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+        throwOnIpAllowlist: true,
+      });
+
+      const env = createMockEnv({ DB: db });
+      const app = createTestApp(env);
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: {
+            Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+            'CF-Connecting-IP': '203.0.113.9',
+          },
+        })
+      );
+      const data = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(403);
+      expect(data.error).toBe('access_denied');
     });
 
     it('should reject X-Session-Id without the HttpOnly admin session cookie', async () => {
