@@ -49,6 +49,8 @@ interface Env {
   AR_ADMIN_UI_URL?: string;
   /** Public Admin UI URL (e.g., https://admin.example.com) */
   ADMIN_UI_URL?: string;
+  /** Public Login UI URL (e.g., https://login.example.com) */
+  LOGIN_UI_URL?: string;
   /** Login UI Worker service binding */
   LOGIN_UI_WORKER?: Fetcher;
   /** Admin UI Worker service binding */
@@ -1156,20 +1158,24 @@ app.all('/_app/*', async (c) => {
 // Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
 app.get('/', async (c) => {
   const requestHost = new URL(c.req.url).hostname.toLowerCase();
+  const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);
   const adminUiHost =
     getConfiguredUrlHostname(c.env.ADMIN_UI_URL) ||
     (c.env.BASE_DOMAIN ? `admin.${c.env.BASE_DOMAIN.toLowerCase()}` : null);
+  const loginEnabled = c.env.ENABLE_LOGIN_UI_PROXY === 'true' && !!c.env.AR_LOGIN_UI_URL;
+  const requestIsLoginUiHost = loginEnabled && loginUiHost !== null && requestHost === loginUiHost;
   if (
     adminUiHost &&
     requestHost === adminUiHost &&
+    !requestIsLoginUiHost &&
     c.env.ENABLE_ADMIN_UI_PROXY === 'true' &&
     c.env.AR_ADMIN_UI_URL
   ) {
     return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, '/', c.env.ADMIN_UI_WORKER);
   }
 
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, '/', c.env.LOGIN_UI_WORKER);
+  if (loginEnabled) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL!, '/', c.env.LOGIN_UI_WORKER);
   }
 
   // Return basic API info when Login UI proxy is not enabled.

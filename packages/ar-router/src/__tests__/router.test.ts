@@ -1245,6 +1245,7 @@ describe('Router Worker', () => {
         ...mockEnv,
         BASE_DOMAIN: 'example.com',
         ADMIN_UI_URL: 'https://admin.example.com',
+        LOGIN_UI_URL: 'https://example.com',
         ENABLE_LOGIN_UI_PROXY: 'true',
         AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
         LOGIN_UI_WORKER: loginUiWorker,
@@ -1263,6 +1264,34 @@ describe('Router Worker', () => {
       const proxiedRequest = adminUiWorker.fetch.mock.calls[0][0];
       expect(new URL(proxiedRequest.url).pathname).toBe('/');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('admin.example.com');
+    });
+
+    it('should prefer Login UI at root when API, Admin UI, and Login UI share one host', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithSharedHostUis = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        ADMIN_UI_URL: 'https://example.com',
+        LOGIN_UI_URL: 'https://example.com',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://example.com/');
+      const res = await app.fetch(req, envWithSharedHostUis);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(adminUiWorker.fetch).not.toHaveBeenCalled();
+
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).pathname).toBe('/');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('example.com');
     });
 
     it('should return API metadata at root when no UI proxy is enabled', async () => {
