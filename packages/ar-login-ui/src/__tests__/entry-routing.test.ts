@@ -88,6 +88,64 @@ describe('common-entry routing', () => {
 		});
 	});
 
+	it('does not redirect the common-entry root page when the browser has an active session', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				active: true,
+				user_id: 'user-123'
+			})
+		);
+
+		const result = await rootLoad({
+			cookies: createCookies({ authrim_session: '0_session_active' }),
+			fetch,
+			request: new Request('https://multi-tenant.authrim.com/'),
+			url: new URL('https://multi-tenant.authrim.com/')
+		} as never);
+
+		expect(result).toEqual({});
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(fetch).toHaveBeenCalledWith('/api/sessions/status', {
+			headers: { 'x-authrim-original-host': 'multi-tenant.authrim.com' }
+		});
+	});
+
+	it('continues root entry routing when the session cookie is inactive', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ active: false }))
+			.mockResolvedValueOnce(
+				jsonResponse({
+					config: {
+						tenant_id: 'default',
+						mode: 'discovery_optional',
+						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						selection_policy: 'select_if_multiple',
+						allow_manual_tenant_entry: true,
+						remember_last_tenant: true,
+						redirect_default_login_to_discovery: false,
+						require_common_discovery_before_login: true,
+						redirect_tenant_discover_to_common_entry: true
+					},
+					single_tenant_mode: false,
+					is_common_entry_host: true,
+					common_discover_url: 'https://multi-tenant.authrim.com/discover'
+				})
+			);
+
+		await expect(
+			rootLoad({
+				cookies: createCookies({ authrim_session: '0_session_expired' }),
+				fetch,
+				request: new Request('https://multi-tenant.authrim.com/'),
+				url: new URL('https://multi-tenant.authrim.com/')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: '/discover'
+		});
+	});
+
 	it('redirects misplaced root resolve actions to /discover', async () => {
 		await expect(rootActions.resolve({} as never)).rejects.toMatchObject({
 			status: 303,
@@ -165,6 +223,28 @@ describe('common-entry routing', () => {
 		).rejects.toMatchObject({
 			status: 303,
 			location: '/login'
+		});
+	});
+
+	it('does not redirect tenant-host root to /login when the browser has an active session', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				active: true,
+				user_id: 'user-123'
+			})
+		);
+
+		const result = await rootLoad({
+			cookies: createCookies({ authrim_session: '0_session_active' }),
+			fetch,
+			request: new Request('https://first.multi-tenant.authrim.com/'),
+			url: new URL('https://first.multi-tenant.authrim.com/')
+		} as never);
+
+		expect(result).toEqual({});
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(fetch).toHaveBeenCalledWith('/api/sessions/status', {
+			headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
 		});
 	});
 
