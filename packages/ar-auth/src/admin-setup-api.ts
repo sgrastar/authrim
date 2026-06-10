@@ -24,6 +24,13 @@ import {
   getDefaultTenantId,
   getAdminCookieSameSite,
   requireDedicatedAdminDatabaseAdapter,
+  timingSafeEqual,
+  ADMIN_UI_BFF_MODE_HEADER,
+  ADMIN_UI_FORWARDED_ORIGIN_HEADER,
+  adminWebAuthnOriginMatchesRpId,
+  getAdminWebAuthnRpIdForOrigin,
+  normalizeWebAuthnOrigin,
+  resolveAdminWebAuthnBrowserOrigin as resolveAdminWebAuthnBrowserOriginFromHeaders,
 } from '@authrim/ar-lib-core';
 
 import {
@@ -36,38 +43,17 @@ import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simp
 
 const logger = createLogger().module('ADMIN_SETUP_API');
 const RP_NAME = 'Authrim Admin';
-const ADMIN_UI_BFF_MODE_HEADER = 'X-Authrim-Admin-UI-Api-Mode';
-const ADMIN_UI_BFF_MODE_VALUE = 'cross-site-proxy-bff';
-const ADMIN_UI_FORWARDED_ORIGIN_HEADER = 'X-Authrim-Forwarded-Origin';
 
 // Helper type for credential ID conversion
 type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 
-function normalizeOrigin(value: string | undefined | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-      return null;
-    }
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
 export function resolveAdminWebAuthnBrowserOrigin(c: Context<{ Bindings: Env }>): string | null {
-  const origin = normalizeOrigin(c.req.header('origin'));
-  const isAdminUiBff = c.req.header(ADMIN_UI_BFF_MODE_HEADER) === ADMIN_UI_BFF_MODE_VALUE;
-
-  if (isAdminUiBff) {
-    return normalizeOrigin(c.req.header(ADMIN_UI_FORWARDED_ORIGIN_HEADER)) ?? origin;
-  }
-
-  return origin;
+  return resolveAdminWebAuthnBrowserOriginFromHeaders({
+    env: c.env,
+    originHeader: c.req.header('origin'),
+    bffModeHeader: c.req.header(ADMIN_UI_BFF_MODE_HEADER),
+    forwardedOriginHeader: c.req.header(ADMIN_UI_FORWARDED_ORIGIN_HEADER),
+  });
 }
 
 /**
@@ -124,7 +110,6 @@ adminSetupApiApp.post('/api/admin/setup-token/verify', async (c) => {
         500
       );
     }
-
     const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
     // Find the setup token
@@ -204,6 +189,21 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/options', async (c) => {
         500
       );
     }
+    if (!c.env.AUTHRIM_CONFIG) {
+      return c.json(
+        { error: 'server_error', error_description: 'Challenge storage not configured' },
+        500
+      );
+    }
+
+    const browserOrigin = resolveAdminWebAuthnBrowserOrigin(c);
+    if (!browserOrigin || !adminWebAuthnOriginMatchesRpId(browserOrigin, rp_id)) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Admin WebAuthn origin is not allowed' },
+        400
+      );
+    }
+    const rpID = getAdminWebAuthnRpIdForOrigin(browserOrigin)!;
 
     const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
 
@@ -233,7 +233,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/options', async (c) => {
     const encoder = new TextEncoder();
     const options = await generateRegistrationOptions({
       rpName: RP_NAME,
-      rpID: rp_id, // Admin UI's domain
+      rpID,
       userName: adminUser.email,
       userDisplayName: adminUser.name || adminUser.email,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
@@ -249,18 +249,17 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/options', async (c) => {
 
     // Store challenge for verification
     const challengeId = generateId();
-    if (c.env.AUTHRIM_CONFIG) {
-      await c.env.AUTHRIM_CONFIG.put(
-        `admin_setup:challenge:${challengeId}`,
-        JSON.stringify({
-          challenge: options.challenge,
-          rpID: rp_id,
-          userId: adminUser.id,
-          token,
-        }),
-        { expirationTtl: 300 } // 5 minutes
-      );
-    }
+    await c.env.AUTHRIM_CONFIG.put(
+      `admin_setup:challenge:${challengeId}`,
+      JSON.stringify({
+        challenge: options.challenge,
+        rpID,
+        origin: browserOrigin,
+        userId: adminUser.id,
+        token,
+      }),
+      { expirationTtl: 300 } // 5 minutes
+    );
 
     return c.json({
       options,
@@ -331,18 +330,24 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
     const {
       challenge,
       rpID,
+      origin: storedOrigin,
       userId,
       token: storedToken,
     } = JSON.parse(challengeData) as {
       challenge: string;
       rpID: string;
+      origin?: string;
       userId: string;
       token: string;
     };
 
     // Verify token matches
-    if (storedToken !== token) {
+    if (!timingSafeEqual(storedToken, token)) {
       return c.json({ error: 'invalid_token', error_description: 'Token mismatch' }, 401);
+    }
+    const normalizedOrigin = normalizeWebAuthnOrigin(origin);
+    if (!storedOrigin || !normalizedOrigin || normalizedOrigin !== storedOrigin) {
+      return c.json({ error: 'invalid_request', error_description: 'Origin mismatch' }, 400);
     }
 
     const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');
@@ -367,7 +372,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
       verification = await verifyRegistrationResponse({
         response: passkey_response,
         expectedChallenge: challenge,
-        expectedOrigin: origin,
+        expectedOrigin: storedOrigin,
         expectedRPID: rpID,
         requireUserVerification: false,
       });
@@ -494,16 +499,14 @@ adminSetupApiApp.post('/api/admin/setup-token/generate', async (c) => {
       );
     }
 
-    // Verify recovery key (stored in KV during initial setup)
-    if (c.env.AUTHRIM_CONFIG) {
-      const storedRecoveryKey = await c.env.AUTHRIM_CONFIG.get('setup:recovery_key');
-      if (storedRecoveryKey && recovery_key !== storedRecoveryKey) {
-        return c.json({ error: 'unauthorized', error_description: 'Invalid recovery key' }, 401);
-      }
-      if (!storedRecoveryKey && !recovery_key) {
-        // If no recovery key is set, this endpoint is disabled
-        return c.json({ error: 'unauthorized', error_description: 'Recovery key required' }, 401);
-      }
+    // Verify recovery key (stored in KV during initial setup). Fail closed when unavailable.
+    if (!c.env.AUTHRIM_CONFIG) {
+      return c.json({ error: 'unauthorized', error_description: 'Recovery key required' }, 401);
+    }
+
+    const storedRecoveryKey = await c.env.AUTHRIM_CONFIG.get('setup:recovery_key');
+    if (!storedRecoveryKey || !recovery_key || !timingSafeEqual(recovery_key, storedRecoveryKey)) {
+      return c.json({ error: 'unauthorized', error_description: 'Invalid recovery key' }, 401);
     }
 
     const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-setup-api');

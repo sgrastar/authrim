@@ -25,6 +25,7 @@ import {
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { generateSecureNonce } from '../../utils/crypto';
+import { createVCConfigManager } from '../../utils/vc-config';
 import { importPKCS8 } from 'jose';
 import { validateVCIAccessToken, validateProofOfPossession } from '../services/token-validation';
 import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
@@ -187,6 +188,11 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
       // Consume the nonce (single use)
       await c.env.AUTHRIM_CONFIG.delete(`cnonce:${tokenResult.userId}`);
+    }
+
+    const vcConfig = createVCConfigManager(c.env);
+    if ((await vcConfig.isHolderBindingRequired()) && !holderBinding) {
+      return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
     }
 
     // Get user claims from token result

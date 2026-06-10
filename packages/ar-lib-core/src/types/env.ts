@@ -338,6 +338,7 @@ export interface Env {
   DEFAULT_REDIRECT_URL?: string; // Default redirect URL for magic link verification
   UI_URL?: string; // URL of the Login UI deployment (e.g., https://login.example.com)
   ADMIN_UI_URL?: string; // URL of the Admin UI deployment (e.g., https://admin.example.com)
+  ADMIN_WEBAUTHN_ALLOWED_ORIGINS?: string; // Optional extra Admin WebAuthn origins
   LOGIN_UI_ENABLED?: string; // "true" when Login UI is deployed/enabled for this environment
   TRUSTED_JWT_ISSUERS?: string; // Comma-separated list of trusted issuers for JWT Bearer flow
   TRUSTED_DOMAINS?: string; // Comma-separated trusted client domains

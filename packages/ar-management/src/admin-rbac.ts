@@ -13,6 +13,7 @@
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
+  ADMIN_PERMISSIONS,
   getTenantIdFromContext,
   createAuthContextFromHono,
   createPIIContextFromHono,
@@ -26,6 +27,7 @@ import {
   generateId,
   createAuditLogFromContext,
   CanonicalRuntimeUserStore,
+  hasAdminPermission,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -52,6 +54,51 @@ function toMilliseconds(timestamp: number | null | undefined): number | null {
  */
 function getAdminAuth(c: AdminContext): AdminAuthContext | null {
   return c.get('adminAuth') ?? null;
+}
+
+function getAdminAuthFromContext(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
+  return (c as unknown as AdminContext).get('adminAuth') ?? null;
+}
+
+function getNumericHierarchyLevel(value: unknown): number {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function hasMachineFullAdminBypass(authContext: AdminAuthContext | null): boolean {
+  if (authContext?.authMethod !== 'machine_access_token') {
+    return false;
+  }
+  const permissions = authContext.permissions ?? [];
+  return (
+    hasAdminPermission(permissions, ADMIN_PERMISSIONS.ALL) ||
+    permissions.some((permission) => permission === 'admin:*')
+  );
+}
+
+function canManageRoleHierarchy(
+  authContext: AdminAuthContext | null,
+  targetHierarchyLevel: unknown
+): boolean {
+  if (hasMachineFullAdminBypass(authContext)) {
+    return true;
+  }
+
+  if (authContext?.hierarchyLevel === undefined) {
+    return false;
+  }
+
+  return getNumericHierarchyLevel(targetHierarchyLevel) < authContext.hierarchyLevel;
+}
+
+function insufficientAdminPermissions(c: Context<{ Bindings: Env }>) {
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
 }
 
 function normalizeMembershipType(value: unknown): MembershipType | null {
@@ -1114,6 +1161,10 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
       );
     }
 
+    if (adminAuth?.userId === userId) {
+      return insufficientAdminPermissions(c as unknown as Context<{ Bindings: Env }>);
+    }
+
     if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json(
         {
@@ -1125,7 +1176,7 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     }
 
     // Get role (by id or name)
-    let role;
+    let role: Record<string, unknown> | null;
     if (role_id) {
       role = await coreAdapter.queryOne<Record<string, unknown>>(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
@@ -1146,6 +1197,14 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
         },
         404
       );
+    }
+
+    if (role.is_assignable === 0 || role.is_assignable === false) {
+      return insufficientAdminPermissions(c as unknown as Context<{ Bindings: Env }>);
+    }
+
+    if (!canManageRoleHierarchy(adminAuth, role.hierarchy_level)) {
+      return insufficientAdminPermissions(c as unknown as Context<{ Bindings: Env }>);
     }
 
     const assignmentId = crypto.randomUUID();
@@ -1254,10 +1313,18 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const assignmentId = c.req.param('assignmentId')!;
+    const adminAuth = getAdminAuthFromContext(c);
+
+    if (adminAuth?.userId === userId) {
+      return insufficientAdminPermissions(c);
+    }
 
     // Check if assignment exists and belongs to this user
-    const assignment = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+    const assignment = await coreAdapter.queryOne<{ id: string; hierarchy_level: number }>(
+      `SELECT ra.id, r.hierarchy_level
+       FROM role_assignments ra
+       JOIN roles r ON r.id = ra.role_id AND r.tenant_id = ra.tenant_id
+       WHERE ra.tenant_id = ? AND ra.id = ? AND ra.subject_id = ?`,
       [tenantId, assignmentId, userId]
     );
 
@@ -1269,6 +1336,10 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
         },
         404
       );
+    }
+
+    if (!canManageRoleHierarchy(adminAuth, assignment.hierarchy_level)) {
+      return insufficientAdminPermissions(c);
     }
 
     await coreAdapter.execute('DELETE FROM role_assignments WHERE tenant_id = ? AND id = ?', [
@@ -2081,7 +2152,10 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       description?: string;
       permissions: string[];
       inherits_from?: string;
+      parent_role_id?: string;
+      hierarchy_level?: number;
     }>();
+    const adminAuth = getAdminAuthFromContext(c);
 
     // Validate name
     if (!body.name || body.name.length < 2 || body.name.length > 50) {
@@ -2102,7 +2176,17 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // System roles cannot be created
-    const systemRoles = ['system_admin', 'distributor_admin', 'tenant_admin', 'user'];
+    const systemRoles = [
+      'super_admin',
+      'system_admin',
+      'security_admin',
+      'distributor_admin',
+      'tenant_admin',
+      'admin',
+      'support',
+      'viewer',
+      'user',
+    ];
     if (systemRoles.includes(body.name.toLowerCase())) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'name', reason: 'Cannot create system roles' },
@@ -2129,6 +2213,11 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const { coreAdapter: adapter } = createAdaptersFromContext(c);
+    const hierarchyLevel = body.hierarchy_level ?? 0;
+
+    if (!canManageRoleHierarchy(adminAuth, hierarchyLevel)) {
+      return insufficientAdminPermissions(c);
+    }
 
     // Check if role name already exists
     const existingRole = await adapter.queryOne<{ id: string }>(
@@ -2142,17 +2231,23 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    const parentRoleId = body.parent_role_id ?? body.inherits_from;
+
     // Validate inherits_from if provided
-    if (body.inherits_from) {
-      const parentRole = await adapter.queryOne<{ id: string }>(
-        'SELECT id FROM roles WHERE tenant_id = ? AND id = ?',
-        [tenantId, body.inherits_from]
+    if (parentRoleId) {
+      const parentRole = await adapter.queryOne<{ id: string; hierarchy_level: number }>(
+        'SELECT id, hierarchy_level FROM roles WHERE tenant_id = ? AND id = ?',
+        [tenantId, parentRoleId]
       );
 
       if (!parentRole) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
-          variables: { resource: 'parent_role', id: body.inherits_from },
+          variables: { resource: 'parent_role', id: parentRoleId },
         });
+      }
+
+      if (!canManageRoleHierarchy(adminAuth, parentRole.hierarchy_level)) {
+        return insufficientAdminPermissions(c);
       }
     }
 
@@ -2161,16 +2256,22 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
 
     // Create the role
     await adapter.execute(
-      `INSERT INTO roles (id, tenant_id, name, description, permissions, inherits_from, is_system, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO roles (
+         id, tenant_id, name, description, permissions_json, role_type, hierarchy_level,
+         is_assignable, parent_role_id, is_system, created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         roleId,
         tenantId,
         body.name,
         body.description ?? null,
         JSON.stringify(body.permissions),
-        body.inherits_from ?? null,
-        0, // is_system = false for custom roles
+        'custom',
+        hierarchyLevel,
+        1,
+        parentRoleId ?? null,
+        0,
         nowTs,
         nowTs,
       ]
@@ -2180,7 +2281,7 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
     await createAuditLogFromContext(c, 'role.created', 'role', roleId, {
       name: body.name,
       permission_count: body.permissions.length,
-      inherits_from: body.inherits_from,
+      parent_role_id: parentRoleId,
     });
 
     log.info('Role created', { action: 'role_create', roleId, name: body.name });
@@ -2191,7 +2292,9 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
         name: body.name,
         description: body.description ?? null,
         permissions: body.permissions,
-        inherits_from: body.inherits_from ?? null,
+        parent_role_id: parentRoleId ?? null,
+        inherits_from: parentRoleId ?? null,
+        hierarchy_level: hierarchyLevel,
         is_system: false,
         created_at: new Date(nowTs).toISOString(),
       },
@@ -2216,7 +2319,11 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
     const body = await c.req.json<{
       description?: string;
       permissions?: string[];
+      hierarchy_level?: number;
+      parent_role_id?: string | null;
+      inherits_from?: string | null;
     }>();
+    const adminAuth = getAdminAuthFromContext(c);
 
     const { coreAdapter: adapter } = createAdaptersFromContext(c);
 
@@ -2225,11 +2332,15 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       id: string;
       name: string;
       description: string | null;
-      permissions: string;
+      permissions_json: string;
       is_system: number;
       role_type: string | null;
+      hierarchy_level: number;
+      parent_role_id: string | null;
     }>(
-      'SELECT id, name, description, permissions, is_system, role_type FROM roles WHERE tenant_id = ? AND id = ?',
+      `SELECT id, name, description, permissions_json, is_system, role_type, hierarchy_level,
+              parent_role_id
+       FROM roles WHERE tenant_id = ? AND id = ?`,
       [tenantId, roleId]
     );
 
@@ -2249,6 +2360,10 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
         { error: 'forbidden', error_description: 'System and builtin roles cannot be modified' },
         403
       );
+    }
+
+    if (!canManageRoleHierarchy(adminAuth, existingRole.hierarchy_level)) {
+      return insufficientAdminPermissions(c);
     }
 
     // Validate permissions if provided
@@ -2272,6 +2387,31 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
+    if (
+      body.hierarchy_level !== undefined &&
+      !canManageRoleHierarchy(adminAuth, body.hierarchy_level)
+    ) {
+      return insufficientAdminPermissions(c);
+    }
+
+    const parentRoleId = body.parent_role_id ?? body.inherits_from;
+    if (parentRoleId !== undefined && parentRoleId !== null) {
+      const parentRole = await adapter.queryOne<{ id: string; hierarchy_level: number }>(
+        'SELECT id, hierarchy_level FROM roles WHERE tenant_id = ? AND id = ?',
+        [tenantId, parentRoleId]
+      );
+
+      if (!parentRole) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+          variables: { resource: 'parent_role', id: parentRoleId },
+        });
+      }
+
+      if (!canManageRoleHierarchy(adminAuth, parentRole.hierarchy_level)) {
+        return insufficientAdminPermissions(c);
+      }
+    }
+
     const nowTs = Date.now();
     const updates: string[] = ['updated_at = ?'];
     const bindings: unknown[] = [nowTs];
@@ -2282,8 +2422,18 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     if (body.permissions !== undefined) {
-      updates.push('permissions = ?');
+      updates.push('permissions_json = ?');
       bindings.push(JSON.stringify(body.permissions));
+    }
+
+    if (body.hierarchy_level !== undefined) {
+      updates.push('hierarchy_level = ?');
+      bindings.push(body.hierarchy_level);
+    }
+
+    if (parentRoleId !== undefined) {
+      updates.push('parent_role_id = ?');
+      bindings.push(parentRoleId);
     }
 
     // Add WHERE clause bindings
@@ -2300,18 +2450,24 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       description_changed: body.description !== undefined,
       permissions_changed: body.permissions !== undefined,
       new_permission_count: body.permissions?.length,
+      hierarchy_changed: body.hierarchy_level !== undefined,
+      parent_role_changed: parentRoleId !== undefined,
     });
 
     log.info('Role updated', { action: 'role_update', roleId, name: existingRole.name });
 
     // Return updated role
-    const updatedPermissions = body.permissions ?? JSON.parse(existingRole.permissions || '[]');
+    const updatedPermissions =
+      body.permissions ?? JSON.parse(existingRole.permissions_json || '[]');
 
     return c.json({
       role_id: roleId,
       name: existingRole.name,
       description: body.description !== undefined ? body.description : existingRole.description,
       permissions: updatedPermissions,
+      parent_role_id: parentRoleId !== undefined ? parentRoleId : existingRole.parent_role_id,
+      hierarchy_level:
+        body.hierarchy_level !== undefined ? body.hierarchy_level : existingRole.hierarchy_level,
       is_system: false,
       updated_at: new Date(nowTs).toISOString(),
     });
@@ -2339,15 +2495,20 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
       name: string;
       is_system: number;
       role_type: string | null;
-    }>('SELECT id, name, is_system, role_type FROM roles WHERE tenant_id = ? AND id = ?', [
-      tenantId,
-      roleId,
-    ]);
+      hierarchy_level: number;
+    }>(
+      'SELECT id, name, is_system, role_type, hierarchy_level FROM roles WHERE tenant_id = ? AND id = ?',
+      [tenantId, roleId]
+    );
 
     if (!existingRole) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'role', id: roleId },
       });
+    }
+
+    if (!canManageRoleHierarchy(getAdminAuthFromContext(c), existingRole.hierarchy_level)) {
+      return insufficientAdminPermissions(c);
     }
 
     // Check if role can be deleted (only custom roles can be deleted)
