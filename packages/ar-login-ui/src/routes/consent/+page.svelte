@@ -458,7 +458,7 @@
 										<p class="text-xs mt-1" style="color: var(--text-secondary);">
 											{item.description}
 										</p>
-										{#if item.document_url}
+										{#if item.document_url && isValidLinkUrl(item.document_url)}
 											<a
 												href={item.document_url}
 												target="_blank"
@@ -524,7 +524,7 @@
 										<p class="text-xs mt-1" style="color: var(--text-secondary);">
 											{item.description}
 										</p>
-										{#if item.document_url}
+										{#if item.document_url && isValidLinkUrl(item.document_url)}
 											<a
 												href={item.document_url}
 												target="_blank"
@@ -542,7 +542,7 @@
 						</div>
 					{/if}
 
-										<!-- Scopes -->
+					<!-- Scopes -->
 					<h3 class="text-sm font-medium mb-4" style="color: var(--text-primary);">
 						{$LL.consent_scopesTitle()}
 					</h3>
@@ -634,7 +634,7 @@
 						</div>
 					{/if}
 					{@const deletionItem = consentData.consent_items?.find(
-						(i) => i.show_deletion_link && i.deletion_url
+						(i) => i.show_deletion_link && i.deletion_url && isValidLinkUrl(i.deletion_url)
 					)}
 					{#if deletionItem}
 						<div class="mt-3 text-center">

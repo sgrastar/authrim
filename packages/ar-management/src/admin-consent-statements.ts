@@ -15,6 +15,49 @@ import {
   activateVersion,
 } from '@authrim/ar-lib-core';
 
+type PublicLinkUrlValidation =
+  | { valid: true; value: string | null }
+  | { valid: false; fieldName: string };
+
+function normalizeOptionalPublicLinkUrl(
+  value: unknown,
+  fieldName: string
+): PublicLinkUrlValidation {
+  if (value === undefined || value === null) {
+    return { valid: true, value: null };
+  }
+
+  if (typeof value !== 'string') {
+    return { valid: false, fieldName };
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { valid: true, value: null };
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return { valid: true, value: trimmed };
+    }
+  } catch {
+    // Fall through to the uniform invalid_request response.
+  }
+
+  return { valid: false, fieldName };
+}
+
+function invalidPublicLinkUrlResponse(c: Context, fieldName: string): Response {
+  return c.json(
+    {
+      error: 'invalid_request',
+      error_description: `${fieldName} must be an http(s) URL`,
+    },
+    400
+  );
+}
+
 // =============================================================================
 // Consent Statements CRUD
 // =============================================================================
@@ -521,6 +564,11 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
       );
     }
 
+    const documentUrl = normalizeOptionalPublicLinkUrl(body.document_url, 'document_url');
+    if (!documentUrl.valid) {
+      return invalidPublicLinkUrlResponse(c, documentUrl.fieldName);
+    }
+
     const now = Date.now();
 
     // Check if existing
@@ -537,7 +585,7 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
         [
           body.title,
           body.description,
-          body.document_url ?? null,
+          documentUrl.value,
           body.inline_content ?? null,
           now,
           vid,
@@ -557,7 +605,7 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
           lang,
           body.title,
           body.description,
-          body.document_url ?? null,
+          documentUrl.value,
           body.inline_content ?? null,
           now,
           now,
@@ -662,6 +710,11 @@ export async function adminConsentRequirementUpsertHandler(c: Context<{ Bindings
       );
     }
 
+    const deletionUrl = normalizeOptionalPublicLinkUrl(body.deletion_url, 'deletion_url');
+    if (!deletionUrl.valid) {
+      return invalidPublicLinkUrlResponse(c, deletionUrl.fieldName);
+    }
+
     const now = Date.now();
     const existing = await authCtx.coreAdapter.query(
       `SELECT id FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
@@ -680,7 +733,7 @@ export async function adminConsentRequirementUpsertHandler(c: Context<{ Bindings
           body.min_version ?? null,
           body.enforcement ?? 'block',
           body.show_deletion_link ? 1 : 0,
-          body.deletion_url ?? null,
+          deletionUrl.value,
           body.conditional_rules ? JSON.stringify(body.conditional_rules) : null,
           body.display_order ?? 0,
           now,
@@ -703,7 +756,7 @@ export async function adminConsentRequirementUpsertHandler(c: Context<{ Bindings
           body.min_version ?? null,
           body.enforcement ?? 'block',
           body.show_deletion_link ? 1 : 0,
-          body.deletion_url ?? null,
+          deletionUrl.value,
           body.conditional_rules ? JSON.stringify(body.conditional_rules) : null,
           body.display_order ?? 0,
           now,
