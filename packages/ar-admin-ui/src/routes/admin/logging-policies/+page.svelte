@@ -115,33 +115,23 @@
 	const isPlatformAdmin = $derived(Boolean(adminAuth.user?.isPlatformAdmin));
 	const canFilterByTenant = $derived(isPlatformAdmin);
 	const canManagePlatformLogging = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_LOGGING_PLATFORM_DEFAULTS_UPDATE)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_LOGGING_PLATFORM_DEFAULTS_UPDATE)
 	);
-	const canReadDeliveryEvents = $derived(hasAdminPermission(PERM_LOGGING_DELIVERY_EVENTS_READ));
-	const canRetryDelivery = $derived(hasAdminPermission(PERM_LOGGING_DELIVERY_RETRY));
-	const canCreateExport = $derived(hasAdminPermission(PERM_LOGGING_EXPORT_CREATE));
+	const canReadDeliveryEvents = $derived(
+		adminAuth.hasPermission(PERM_LOGGING_DELIVERY_EVENTS_READ)
+	);
+	const canRetryDelivery = $derived(adminAuth.hasPermission(PERM_LOGGING_DELIVERY_RETRY));
+	const canCreateExport = $derived(adminAuth.hasPermission(PERM_LOGGING_EXPORT_CREATE));
 	const canExportSensitiveDetail = $derived(
-		hasAdminPermission(PERM_LOGGING_SENSITIVE_DETAIL_EXPORT)
+		adminAuth.hasPermission(PERM_LOGGING_SENSITIVE_DETAIL_EXPORT)
 	);
-	const canDeleteDlq = $derived(hasAdminPermission(PERM_LOGGING_DLQ_DELETE));
-	const canPurgeDlq = $derived(isPlatformAdmin && hasAdminPermission(PERM_LOGGING_DLQ_PURGE));
-	const canPublishSnapshots = $derived(hasAdminPermission(PERM_LOGGING_SNAPSHOTS_PUBLISH));
-	const canReadMessageRepair = $derived(hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_READ));
-	const canRunMessageRepair = $derived(hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_RUN));
-	const canReadDatabaseRouting = $derived(hasAdminPermission(PERM_DATABASE_ROUTING_READ));
-	const canWriteDatabaseRouting = $derived(hasAdminPermission(PERM_DATABASE_ROUTING_WRITE));
-
-	function hasAdminPermission(permission: string): boolean {
-		const permissions = adminAuth.user?.permissions ?? [];
-		if (permissions.includes('*') || permissions.includes(permission)) return true;
-		const parts = permission.split(':');
-		for (let i = parts.length - 1; i >= 0; i -= 1) {
-			if (permissions.includes([...parts.slice(0, i), '*'].join(':'))) {
-				return true;
-			}
-		}
-		return false;
-	}
+	const canDeleteDlq = $derived(adminAuth.hasPermission(PERM_LOGGING_DLQ_DELETE));
+	const canPurgeDlq = $derived(isPlatformAdmin && adminAuth.hasPermission(PERM_LOGGING_DLQ_PURGE));
+	const canPublishSnapshots = $derived(adminAuth.hasPermission(PERM_LOGGING_SNAPSHOTS_PUBLISH));
+	const canReadMessageRepair = $derived(adminAuth.hasPermission(PERM_ADMIN_LOGGING_REPAIR_READ));
+	const canRunMessageRepair = $derived(adminAuth.hasPermission(PERM_ADMIN_LOGGING_REPAIR_RUN));
+	const canReadDatabaseRouting = $derived(adminAuth.hasPermission(PERM_DATABASE_ROUTING_READ));
+	const canWriteDatabaseRouting = $derived(adminAuth.hasPermission(PERM_DATABASE_ROUTING_WRITE));
 
 	function requestDangerConfirmation(input: Omit<DangerConfirmationRequest, 'resolve'>) {
 		return new Promise<string | null>((resolve) => {

@@ -183,6 +183,7 @@ import {
 } from './admin-rbac';
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
 import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
+import { registerDeclaredAdminRouteAccessMiddleware } from './admin-route-access';
 import {
   adminRelationDefinitionsListHandler,
   adminRelationDefinitionGetHandler,
@@ -802,7 +803,7 @@ function requireClientManagementPermission() {
 }
 
 // Create Hono app with Cloudflare Workers types
-const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>();
 
 const loadPlugins = createPluginLoader([
   {
@@ -1138,6 +1139,7 @@ app.use('/api/admin/*', async (c, next) => {
 });
 
 // Admin API endpoints
+registerDeclaredAdminRouteAccessMiddleware(app);
 registerAdminResourcePermissionMiddleware(app);
 
 app.get('/api/admin/stats', adminStatsHandler);

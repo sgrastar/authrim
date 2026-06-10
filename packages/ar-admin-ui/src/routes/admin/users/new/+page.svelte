@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { adminUsersAPI, type CreateUserInput } from '$lib/api/admin-users';
 	import { ToggleSwitch } from '$lib/components';
+	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -17,8 +18,10 @@
 		family_name: '',
 		email_verified: false
 	});
+	const canCreateUsers = $derived(adminAuth.hasPermission('admin:users:write'));
 
 	async function handleSubmit() {
+		if (!canCreateUsers) return;
 		if (!form.email?.trim()) {
 			error = $LL.admin_users_email_required();
 			return;
@@ -194,14 +197,14 @@
 			<div style="display: flex; gap: 12px; margin-top: 24px;">
 				<button
 					type="submit"
-					disabled={saving}
+					disabled={saving || !canCreateUsers}
 					style="
 						padding: 10px 24px;
-						background-color: {saving ? '#9ca3af' : '#3b82f6'};
+						background-color: {saving || !canCreateUsers ? '#9ca3af' : '#3b82f6'};
 						color: white;
 						border: none;
 						border-radius: 6px;
-						cursor: {saving ? 'not-allowed' : 'pointer'};
+						cursor: {saving || !canCreateUsers ? 'not-allowed' : 'pointer'};
 						font-size: 14px;
 						font-weight: 500;
 					"

@@ -33,6 +33,17 @@ interface AdminAuthState {
 	error: string | null;
 }
 
+function permissionMatches(permissions: string[], required: string): boolean {
+	if (permissions.includes('*') || permissions.includes(required)) return true;
+	const parts = required.split(':');
+	for (let i = parts.length - 1; i >= 0; i -= 1) {
+		if (permissions.includes([...parts.slice(0, i), '*'].join(':'))) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /**
  * Create admin authentication store
  */
@@ -79,6 +90,22 @@ function createAdminAuthStore() {
 		 */
 		get error(): string | null {
 			return state.error;
+		},
+
+		hasPermission(permission: string): boolean {
+			return permissionMatches(state.user?.permissions ?? [], permission);
+		},
+
+		hasAnyPermission(permissions: string[]): boolean {
+			return permissions.some((permission) =>
+				permissionMatches(state.user?.permissions ?? [], permission)
+			);
+		},
+
+		hasAllPermissions(permissions: string[]): boolean {
+			return permissions.every((permission) =>
+				permissionMatches(state.user?.permissions ?? [], permission)
+			);
 		},
 
 		/**
