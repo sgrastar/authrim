@@ -57,6 +57,11 @@ export interface DiscoveryGrantVerifyResponse {
 	target_url: string;
 }
 
+export interface SessionStatusResponse {
+	active: boolean;
+	user_id?: string;
+}
+
 interface DiscoveryRequestEventLike {
 	request: Request;
 	url: URL;
@@ -80,6 +85,19 @@ export async function fetchDiscoveryConfig(
 		throw new Error('Failed to load discovery config');
 	}
 	return (await response.json()) as DiscoveryConfigResponse;
+}
+
+export async function isCurrentSessionActive(
+	fetchFn: typeof fetch,
+	headers?: HeadersInit
+): Promise<boolean> {
+	const response = await fetchFn('/api/sessions/status', headers ? { headers } : undefined);
+	if (!response.ok) {
+		return false;
+	}
+
+	const data = (await response.json()) as SessionStatusResponse;
+	return data.active === true && typeof data.user_id === 'string' && data.user_id.length > 0;
 }
 
 export async function verifyLoginChallengeForCurrentTenant(

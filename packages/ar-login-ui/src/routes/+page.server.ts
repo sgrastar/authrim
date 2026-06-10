@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import {
 	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
+	isCurrentSessionActive,
 	verifyLoginChallengeForCurrentTenant
 } from '../lib/discovery-entry';
 
@@ -17,6 +18,15 @@ export const load: PageServerLoad = async (event) => {
 			discoveryHeaders
 		).catch(() => false);
 		if (challengeBelongsToCurrentTenant) {
+			return {};
+		}
+	}
+
+	if (event.cookies.get('authrim_session')) {
+		const sessionActive = await isCurrentSessionActive(event.fetch, discoveryHeaders).catch(
+			() => false
+		);
+		if (sessionActive) {
 			return {};
 		}
 	}

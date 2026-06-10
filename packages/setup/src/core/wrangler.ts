@@ -927,6 +927,9 @@ export function generateEnvVars(
 
     const loginProxyEnabled = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
     vars['ENABLE_LOGIN_UI_PROXY'] = loginProxyEnabled ? 'true' : 'false';
+    if (uiUrl) {
+      vars['LOGIN_UI_URL'] = uiUrl;
+    }
     if (loginProxyEnabled) {
       const loginUiWorkerUrl = normalizeWorkersDevUrl(
         config.urls?.loginUi?.auto || config.urls?.loginUi?.custom || '',
