@@ -47,7 +47,7 @@ describe('UI Workers deployment smoke tests', () => {
 
     for (const path of [
       '/callback',
-      '/api/auth/login-methods',
+      '/api/auth/authentication-methods',
       '/api/v1/auth/direct/session',
       '/handoff/finalize',
       '/logout',
