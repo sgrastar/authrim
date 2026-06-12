@@ -1,13 +1,13 @@
 /**
- * Login Methods API
+ * Authentication Methods API
  *
- * Public endpoint to retrieve available login methods and UI configuration.
+ * Public endpoint to retrieve available authentication methods and UI configuration.
  * Used by Login UI to dynamically render authentication options.
  *
- * GET /api/auth/login-methods
+ * GET /api/auth/authentication-methods
  *   - No authentication required (public endpoint)
  *   - Rate limited with lenient profile
- *   - Returns enabled login methods + UI config
+ *   - Returns enabled authentication methods + UI config
  *
  * Data sources:
  *   - SETTINGS KV ("system_settings") → passkeyEnabled, magicLinkEnabled, UI theme
@@ -63,16 +63,16 @@ interface ExternalLoginProvider {
   startUrl?: string;
 }
 
-interface ExternalLoginMethod {
+interface ExternalAuthenticationMethod {
   enabled: boolean;
   providers: ExternalLoginProvider[];
 }
 
-interface LoginMethods {
+interface AuthenticationMethods {
   passkey: PasskeyMethod;
   emailCode: EmailCodeMethod;
   directoryPassword: DirectoryPasswordMethod;
-  external: ExternalLoginMethod;
+  external: ExternalAuthenticationMethod;
 }
 
 interface UIConfig {
@@ -100,18 +100,18 @@ interface UIConfig {
   supportedLocales: string[];
 }
 
-interface LoginMethodsMeta {
+interface AuthenticationMethodsMeta {
   cacheTTL: number;
   revision: string;
 }
 
-interface LoginMethodsResponse {
-  methods: LoginMethods;
+interface AuthenticationMethodsResponse {
+  methods: AuthenticationMethods;
   ui: UIConfig;
-  meta: LoginMethodsMeta;
+  meta: AuthenticationMethodsMeta;
 }
 
-interface LoginMethodsErrorResponse {
+interface AuthenticationMethodsErrorResponse {
   error: {
     code: string;
     message: string;
@@ -244,7 +244,7 @@ interface LoginUIKVSettings {
   'login-ui.custom_blocks'?: string;
 }
 
-interface LoginMethodKVSettings {
+interface AuthenticationMethodKVSettings {
   'login-methods.cache_ttl'?: number;
   'login-methods.external_providers'?: string | ExternalLoginProviderConfig[];
   'login-methods.directory_password.enabled'?: boolean | string;
@@ -603,7 +603,7 @@ async function fetchConfiguredExternalLoginProviders(
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
     if (!kvJson) return [];
 
-    const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
     const rawProviders = kvSettings['login-methods.external_providers'];
     const providers =
       typeof rawProviders === 'string'
@@ -659,7 +659,7 @@ async function resolveDirectoryPasswordMethod(
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
     if (!kvJson) return defaults;
 
-    const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
     return {
       enabled: normalizeBoolean(
         kvSettings['login-methods.directory_password.enabled'],
@@ -728,7 +728,7 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   try {
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
     if (kvJson) {
-      const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
+      const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
       const kvTTL = kvSettings['login-methods.cache_ttl'];
       if (typeof kvTTL === 'number' && kvTTL >= 0 && kvTTL <= 3600) {
         return kvTTL;
@@ -756,11 +756,11 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
 // =============================================================================
 
 /**
- * GET /api/auth/login-methods
+ * GET /api/auth/authentication-methods
  *
- * Public endpoint — returns available login methods and UI configuration.
+ * Public endpoint — returns available authentication methods and UI configuration.
  */
-export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
+export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LOGIN-METHODS');
 
   try {
@@ -790,7 +790,7 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
     // Check if at least one method is available
     if (!passkeyEnabled && !emailCodeEnabled && !directoryPasswordEnabled && !externalEnabled) {
       log.warn('No login method available', {});
-      const errorResponse: LoginMethodsErrorResponse = {
+      const errorResponse: AuthenticationMethodsErrorResponse = {
         error: {
           code: 'NO_LOGIN_METHOD_AVAILABLE',
           message: 'No login method is enabled for this tenant',
@@ -800,7 +800,7 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
       return c.json(errorResponse, 503);
     }
 
-    const methods: LoginMethods = {
+    const methods: AuthenticationMethods = {
       passkey: {
         enabled: passkeyEnabled,
         capabilities: passkeyEnabled ? ['conditional', 'discoverable'] : [],
@@ -827,7 +827,7 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
     ]);
     const ui = buildUIConfig(loginUISettings);
 
-    const response: LoginMethodsResponse = {
+    const response: AuthenticationMethodsResponse = {
       methods,
       ui,
       meta: {
@@ -841,12 +841,12 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(response);
   } catch (error) {
-    log.error('Failed to get login methods', {}, error as Error);
+    log.error('Failed to get authentication methods', {}, error as Error);
     c.header('Cache-Control', 'no-store');
     return c.json(
       {
         error: 'server_error',
-        error_description: 'Failed to retrieve login methods',
+        error_description: 'Failed to retrieve authentication methods',
       },
       500
     );

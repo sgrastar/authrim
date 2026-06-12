@@ -109,7 +109,7 @@ export async function fetchAuthenticationMethods(): Promise<{
 	const timeoutId = setTimeout(() => controller.abort(), 15000);
 
 	try {
-		const response = await authrimFetch('/api/auth/login-methods', {
+		const response = await authrimFetch('/api/auth/authentication-methods', {
 			method: 'GET',
 			headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
 			signal: controller.signal
