@@ -90,6 +90,10 @@ export interface WranglerConfig {
   }>;
 }
 
+export interface GenerateWranglerConfigOptions {
+  includeDurableObjectMigrations?: boolean;
+}
+
 const LOGGING_DELIVERY_QUEUE_DEFINITIONS = [
   {
     binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
@@ -430,7 +434,8 @@ export function generateWranglerConfig(
   component: WorkerComponent,
   config: AuthrimConfig,
   resourceIds: ResourceIds,
-  workersSubdomain?: string
+  workersSubdomain?: string,
+  options: GenerateWranglerConfigOptions = {}
 ): WranglerConfig {
   const env = config.environment.prefix;
   const multiTenantBaseDomain =
@@ -497,8 +502,11 @@ export function generateWranglerConfig(
       })),
     };
 
-    // Migrations for ar-lib-core
-    wranglerConfig.migrations = generateDOMigrations();
+    if (options.includeDurableObjectMigrations !== false) {
+      // Migrations for ar-lib-core. Existing environment updates must not resend
+      // initial new_sqlite_classes migrations for already-created Durable Objects.
+      wranglerConfig.migrations = generateDOMigrations();
+    }
   } else {
     // Other components reference DOs from ar-lib-core
     const doBindings = COMPONENT_DO_BINDINGS[component];
@@ -690,7 +698,7 @@ export function generateWranglerConfig(
 
   // Custom-domain routing is terminated at ar-router.
   // Non-router workers are reached through service bindings, otherwise ar-router's
-  // special-case routing (e.g. /api/auth/login-methods, /api/admin/setup-token/*)
+  // special-case routing (e.g. /api/auth/authentication-methods, /api/admin/setup-token/*)
   // is bypassed by Cloudflare route precedence.
 
   return wranglerConfig;
