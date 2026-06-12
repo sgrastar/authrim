@@ -52,7 +52,7 @@ export interface SettingMeta {
   /** Key in dot.notation format */
   key: string;
   /** Value type */
-  type: 'number' | 'boolean' | 'string' | 'duration' | 'enum';
+  type: 'number' | 'boolean' | 'string' | 'duration' | 'enum' | 'json';
   /** Default value (from code) */
   default: unknown;
   /** Environment variable key mapping */
@@ -220,6 +220,12 @@ function parseEnvValue(value: string | undefined, type: SettingMeta['type']): un
     case 'string':
     case 'enum':
       return value;
+    case 'json':
+      try {
+        return JSON.parse(value);
+      } catch {
+        return undefined;
+      }
     default:
       return value;
   }
@@ -745,6 +751,22 @@ export class SettingsManager {
           errors.push({ key, reason: `Expected string, got ${typeof value}` });
         } else if (meta.enum && !meta.enum.includes(value)) {
           errors.push({ key, reason: `Value must be one of: ${meta.enum.join(', ')}` });
+        }
+        break;
+
+      case 'json':
+        if (typeof value === 'string') {
+          try {
+            JSON.parse(value);
+          } catch {
+            errors.push({ key, reason: 'Expected valid JSON string' });
+          }
+        } else {
+          try {
+            JSON.stringify(value);
+          } catch {
+            errors.push({ key, reason: 'Expected JSON-serializable value' });
+          }
         }
         break;
     }

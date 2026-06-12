@@ -83,6 +83,15 @@ const TEST_CATEGORY_META: CategoryMeta = {
       enum: ['option1', 'option2', 'option3'],
       visibility: 'public',
     } as SettingMeta,
+    'test.json_setting': {
+      key: 'test.json_setting',
+      type: 'json',
+      default: [],
+      envKey: 'TEST_JSON_SETTING',
+      label: 'JSON Setting',
+      description: 'A test JSON setting',
+      visibility: 'public',
+    } as SettingMeta,
     'test.dependent_setting': {
       key: 'test.dependent_setting',
       type: 'boolean',
@@ -196,6 +205,20 @@ describe('SettingsManager', () => {
       // KV is set for number_setting
       expect(result.values['test.number_setting']).toBe(200);
       expect(result.sources['test.number_setting']).toBe('kv');
+    });
+
+    it('should parse JSON settings from env', async () => {
+      manager = createSettingsManager({
+        env: { TEST_JSON_SETTING: '[{"id":"passkey","enabled":true}]' },
+        kv: mockKV,
+        cacheTTL: 0,
+      });
+      manager.registerCategory(TEST_CATEGORY_META);
+
+      const result = await manager.getAll('test', { type: 'tenant', id: 'tenant_1' });
+
+      expect(result.values['test.json_setting']).toEqual([{ id: 'passkey', enabled: true }]);
+      expect(result.sources['test.json_setting']).toBe('env');
     });
 
     it('should handle DISABLED_MARKER correctly', async () => {
@@ -416,6 +439,28 @@ describe('SettingsManager', () => {
       expect(result.valid).toBe(false);
       const error = result.errors.find((e) => e.key === 'test.boolean_setting');
       expect(error?.reason).toContain('boolean');
+    });
+
+    it('should validate JSON settings', async () => {
+      expect(
+        manager.validate('test', {
+          'test.json_setting': '[{"id":"email_otp","login":true}]',
+        }).valid
+      ).toBe(true);
+
+      expect(
+        manager.validate('test', {
+          'test.json_setting': [{ id: 'passkey', signup: true }],
+        }).valid
+      ).toBe(true);
+
+      const result = manager.validate('test', {
+        'test.json_setting': '[invalid-json',
+      });
+
+      expect(result.valid).toBe(false);
+      const error = result.errors.find((e) => e.key === 'test.json_setting');
+      expect(error?.reason).toContain('valid JSON');
     });
 
     it('should reject invalid enum values', async () => {
