@@ -96,6 +96,13 @@ async function resolveLoginUiClientId(
   config: AuthrimConfig,
   resolved: ReturnType<typeof resolvePaths>
 ): Promise<string | undefined> {
+  const overrideClientId =
+    process.env.AUTHRIM_LOGIN_UI_CLIENT_ID?.trim() || process.env.PUBLIC_LOGIN_UI_CLIENT_ID?.trim();
+  if (overrideClientId) {
+    console.log(`Using Login UI client override: ${overrideClientId}`);
+    return overrideClientId;
+  }
+
   if (resolved.type !== 'new') {
     return undefined;
   }
@@ -123,8 +130,7 @@ async function resolveLoginUiClientId(
   });
 
   if (!clientResult.success) {
-    console.warn(`Warning: Login UI client creation skipped: ${clientResult.error}`);
-    return undefined;
+    throw new Error(`Login UI client resolution failed: ${clientResult.error || 'unknown error'}`);
   }
 
   if (clientResult.alreadyExists) {
