@@ -58,10 +58,10 @@ function createContext() {
   const headers = new Headers();
   const env = {
     AUTHRIM_CONFIG: createKV({
-      'settings:tenant:tenant-a:login-methods': {
-        'login-methods.directory_password.enabled': true,
-        'login-methods.directory_password.connector_id': 'campus',
-        'login-methods.directory_password.auto_provision': true,
+      'settings:tenant:tenant-a:authentication-methods': {
+        'authentication-methods.directory_password.enabled': true,
+        'authentication-methods.directory_password.connector_id': 'campus',
+        'authentication-methods.directory_password.auto_provision': true,
       },
       'settings:tenant:tenant-a:directory-connectors': {
         'directory-connectors.campus.endpoint_url': 'http://127.0.0.1:8080',

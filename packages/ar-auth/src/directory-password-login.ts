@@ -376,14 +376,17 @@ async function resolveDirectoryConnector(
   env: Env,
   tenantId: string
 ): Promise<ResolvedDirectoryConnector | null> {
-  const loginMethods = await readTenantSettings(env, tenantId, 'login-methods');
-  if (!normalizeBoolean(loginMethods?.['login-methods.directory_password.enabled'])) {
+  const authenticationMethods = await readTenantSettings(env, tenantId, 'authentication-methods');
+  if (
+    !normalizeBoolean(authenticationMethods?.['authentication-methods.directory_password.enabled'])
+  ) {
     return null;
   }
 
   const connectorId =
-    stringSetting(loginMethods?.['login-methods.directory_password.connector_id']) ||
-    DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID;
+    stringSetting(
+      authenticationMethods?.['authentication-methods.directory_password.connector_id']
+    ) || DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID;
   const connectorSettings = await readTenantSettings(env, tenantId, 'directory-connectors');
   const prefix = `directory-connectors.${connectorId}.`;
   const endpoint =
@@ -417,7 +420,7 @@ async function resolveDirectoryConnector(
       stringArraySetting(connectorSettings?.[`${prefix}attribute_names`]) ??
       DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
     autoProvision: normalizeBoolean(
-      loginMethods?.['login-methods.directory_password.auto_provision']
+      authenticationMethods?.['authentication-methods.directory_password.auto_provision']
     ),
   };
 }
