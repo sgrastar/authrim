@@ -245,10 +245,10 @@ interface LoginUIKVSettings {
 }
 
 interface AuthenticationMethodKVSettings {
-  'login-methods.cache_ttl'?: number;
-  'login-methods.external_providers'?: string | ExternalLoginProviderConfig[];
-  'login-methods.directory_password.enabled'?: boolean | string;
-  'login-methods.directory_password.label'?: string;
+  'authentication-methods.cache_ttl'?: number;
+  'authentication-methods.external_providers'?: string | ExternalLoginProviderConfig[];
+  'authentication-methods.directory_password.enabled'?: boolean | string;
+  'authentication-methods.directory_password.label'?: string;
 }
 
 interface ExternalLoginProviderConfig {
@@ -549,9 +549,13 @@ async function fetchSAMLLoginProviders(
   tenantId: string
 ): Promise<ExternalLoginProvider[]> {
   try {
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'login-methods-saml', {
-      tenantId,
-    });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'authentication-methods-saml',
+      {
+        tenantId,
+      }
+    );
     const rows = await adapter.query<{ id: string; name: string; config_json: string }>(
       `SELECT id, name, config_json
        FROM identity_providers
@@ -600,11 +604,11 @@ async function fetchConfiguredExternalLoginProviders(
   tenantId: string
 ): Promise<ExternalLoginProvider[]> {
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (!kvJson) return [];
 
     const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
-    const rawProviders = kvSettings['login-methods.external_providers'];
+    const rawProviders = kvSettings['authentication-methods.external_providers'];
     const providers =
       typeof rawProviders === 'string'
         ? safeParseJsonArray<ExternalLoginProviderConfig>(rawProviders)
@@ -656,17 +660,18 @@ async function resolveDirectoryPasswordMethod(
   };
 
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (!kvJson) return defaults;
 
     const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
     return {
       enabled: normalizeBoolean(
-        kvSettings['login-methods.directory_password.enabled'],
+        kvSettings['authentication-methods.directory_password.enabled'],
         defaults.enabled
       ),
       label:
-        truncateString(kvSettings['login-methods.directory_password.label'], 80) || defaults.label,
+        truncateString(kvSettings['authentication-methods.directory_password.label'], 80) ||
+        defaults.label,
     };
   } catch {
     return defaults;
@@ -721,15 +726,15 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
 
 /**
  * Resolve cache TTL from KV → env → default
- * Priority: KV (SETTINGS) → env (LOGIN_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
+ * Priority: KV (SETTINGS) → env (AUTHENTICATION_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
  */
 async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   // 1. Try KV (settings-v2) — tenant-aware
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (kvJson) {
       const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
-      const kvTTL = kvSettings['login-methods.cache_ttl'];
+      const kvTTL = kvSettings['authentication-methods.cache_ttl'];
       if (typeof kvTTL === 'number' && kvTTL >= 0 && kvTTL <= 3600) {
         return kvTTL;
       }
@@ -739,7 +744,7 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   }
 
   // 2. Try environment variable
-  const envTTL = (env as unknown as Record<string, unknown>).LOGIN_METHODS_CACHE_TTL;
+  const envTTL = (env as unknown as Record<string, unknown>).AUTHENTICATION_METHODS_CACHE_TTL;
   if (envTTL !== undefined && envTTL !== null && envTTL !== '') {
     const parsed = Number(envTTL);
     if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3600) {

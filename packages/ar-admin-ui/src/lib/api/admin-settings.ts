@@ -516,7 +516,7 @@ export const CATEGORY_NAMES = [
 	'check-api-audit',
 	// Login UI Customization
 	'login-ui',
-	'login-methods',
+	'authentication-methods',
 	// Login Entry / Discovery
 	'login-entry',
 	'tenant-discovery-ui',
