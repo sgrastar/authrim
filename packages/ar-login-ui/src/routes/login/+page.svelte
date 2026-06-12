@@ -16,7 +16,10 @@
 		isValidLinkUrl,
 		sanitizeColor
 	} from '$lib/utils/url-validation';
-	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
+	import {
+		fetchAuthenticationMethods,
+		type ExternalProvider
+	} from '$lib/api/authentication-methods';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -176,7 +179,7 @@
 			email = urlLoginHint;
 		}
 
-		const tasks: Promise<void>[] = [loadLoginMethods()];
+		const tasks: Promise<void>[] = [loadAuthenticationMethods()];
 		if (urlChallengeId) {
 			tasks.push(loadChallengeData(urlChallengeId));
 		}
@@ -186,11 +189,11 @@
 	// ---------------------------------------------------------------------------
 	// Data fetchers
 	// ---------------------------------------------------------------------------
-	async function loadLoginMethods() {
+	async function loadAuthenticationMethods() {
 		methodsLoading = true;
 		methodsError = '';
 		try {
-			const { data, error: apiError } = await fetchLoginMethods();
+			const { data, error: apiError } = await fetchAuthenticationMethods();
 			if (apiError) {
 				methodsError = apiError.error.message;
 				return;
