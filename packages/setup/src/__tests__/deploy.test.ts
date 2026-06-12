@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execa } from 'execa';
 import {
+  buildApiPackages,
   buildUiWorkerBuildEnv,
   deployAll,
   deployUiWorkerComponent,
@@ -97,6 +98,28 @@ describe('buildUiWorkerBuildEnv', () => {
 
     expect(result.PUBLIC_API_BASE_URL).toBeUndefined();
     expect(result.PUBLIC_LOGIN_UI_CLIENT_ID).toBeUndefined();
+  });
+});
+
+describe('buildApiPackages', () => {
+  it('builds only the requested worker component when components are specified', async () => {
+    const rootDir = createTempRoot();
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    const progressMessages: string[] = [];
+    const result = await buildApiPackages({
+      rootDir,
+      components: ['ar-auth'],
+      onProgress: (message) => progressMessages.push(message),
+    });
+
+    expect(result.success).toBe(true);
+    expect(progressMessages).toContain('Building ar-auth...');
+    expect(vi.mocked(execa)).toHaveBeenCalledWith(
+      'pnpm',
+      ['exec', 'turbo', 'run', 'build', '--filter=@authrim/ar-auth'],
+      expect.objectContaining({ cwd: rootDir })
+    );
   });
 });
 

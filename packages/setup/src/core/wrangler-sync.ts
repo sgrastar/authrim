@@ -37,6 +37,8 @@ export interface WranglerSyncOptions {
   dryRun?: boolean;
   /** Progress callback */
   onProgress?: (msg: string) => void;
+  /** Optional component subset to sync */
+  components?: WorkerComponent[];
 }
 
 export interface WranglerSyncResult {
@@ -166,7 +168,7 @@ export function mergeEnvironmentSectionIntoToml(
   env: string
 ): string {
   const withoutTargetEnv = removeEnvironmentSectionFromToml(deployContent, env).content.trimEnd();
-  const targetSection = masterContent.trim();
+  const targetSection = extractEnvironmentSectionFromToml(masterContent, env).trim();
   return [withoutTargetEnv, targetSection].filter(Boolean).join('\n\n') + '\n';
 }
 
@@ -222,8 +224,10 @@ export async function checkWranglerStatus(
     if (masterExists && deployExists) {
       const masterContent = await readFile(masterPath, 'utf-8');
       const deployContent = await readFile(deployPath, 'utf-8');
-      // Compare the relevant [env.xxx] section content
-      inSync = normalizeToml(masterContent) === normalizeToml(deployContent);
+      // Compare only the relevant [env.xxx] section content.
+      inSync =
+        normalizeToml(extractEnvironmentSectionFromToml(masterContent, env)) ===
+        normalizeToml(extractEnvironmentSectionFromToml(deployContent, env));
     } else if (masterExists !== deployExists) {
       inSync = false;
     }
@@ -251,9 +255,12 @@ export async function checkWranglerStatus(
 export async function saveMasterWranglerConfigs(
   config: AuthrimConfig,
   resourceIds: ResourceIds,
-  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'dryRun' | 'onProgress'>
+  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'dryRun' | 'onProgress'> & {
+    includeDurableObjectMigrations?: boolean;
+    components?: WorkerComponent[];
+  }
 ): Promise<{ success: boolean; files: string[]; errors: string[] }> {
-  const { baseDir, env, dryRun, onProgress } = options;
+  const { baseDir, env, dryRun, onProgress, includeDurableObjectMigrations } = options;
   const envPaths = getEnvironmentPaths({ baseDir, env });
   const files: string[] = [];
   const errors: string[] = [];
@@ -267,13 +274,19 @@ export async function saveMasterWranglerConfigs(
   // Workers.dev URLs must be in format: {name}.{subdomain}.workers.dev
   const workersSubdomain = await getWorkersSubdomain();
 
-  for (const component of getWranglerComponentsForConfig(config)) {
+  const configuredComponents = getWranglerComponentsForConfig(config);
+  const components = options.components
+    ? options.components.filter((component) => configuredComponents.includes(component))
+    : configuredComponents;
+
+  for (const component of components) {
     try {
       const wranglerConfig = generateWranglerConfig(
         component,
         config,
         resourceIds,
-        workersSubdomain ?? undefined
+        workersSubdomain ?? undefined,
+        { includeDurableObjectMigrations }
       );
       // Generate TOML with [env.{env}] section format
       const tomlContent = toToml(wranglerConfig, env);
@@ -329,7 +342,8 @@ export async function syncWranglerConfigs(
     return result;
   }
 
-  for (const component of WORKER_COMPONENTS) {
+  const components = options.components ?? WORKER_COMPONENTS;
+  for (const component of components) {
     const masterPath = getMasterWranglerPath(envPaths, component);
     const deployPath = getDeployWranglerPath(packagesDir, component);
     const componentDir = join(packagesDir, component);
