@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import {
 	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
+	isCurrentSessionActive,
 	verifyLoginChallengeForCurrentTenant,
 	verifyDiscoveryGrant
 } from '../../lib/discovery-entry';
@@ -55,6 +56,10 @@ function consumeVerifiedGrantCookie(
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);
+	const hasProtocolLoginContext =
+		!!challengeId ||
+		event.url.searchParams.has('saml_request_id') ||
+		event.url.searchParams.get('return_to') === 'saml_sso';
 
 	if (challengeId) {
 		const challengeBelongsToCurrentTenant = await verifyLoginChallengeForCurrentTenant(
@@ -64,6 +69,15 @@ export const load: PageServerLoad = async (event) => {
 		).catch(() => false);
 		if (challengeBelongsToCurrentTenant) {
 			return {};
+		}
+	}
+
+	if (!hasProtocolLoginContext && event.cookies.get('authrim_session')) {
+		const sessionActive = await isCurrentSessionActive(event.fetch, discoveryHeaders).catch(
+			() => false
+		);
+		if (sessionActive) {
+			throw redirect(303, '/');
 		}
 	}
 

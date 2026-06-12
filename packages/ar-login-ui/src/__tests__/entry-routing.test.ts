@@ -683,6 +683,47 @@ describe('common-entry routing', () => {
 		expect(result).toEqual({});
 	});
 
+	it('redirects direct /login visits to root when the browser has an active session', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				active: true,
+				user_id: 'user-123'
+			})
+		);
+
+		await expect(
+			loginLoad({
+				cookies: createCookies({ authrim_session: '0_session_active' }),
+				fetch,
+				request: new Request('https://auth.example.com/login'),
+				url: new URL('https://auth.example.com/login')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: '/'
+		});
+
+		expect(fetch).toHaveBeenCalledWith('/api/sessions/status', {
+			headers: { 'x-authrim-original-host': 'auth.example.com' }
+		});
+	});
+
+	it('keeps protocol login requests on /login even when a session cookie is present', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+		const result = await loginLoad({
+			cookies: createCookies({ authrim_session: '0_session_active' }),
+			fetch,
+			request: new Request('https://auth.example.com/login?challenge_id=login_challenge'),
+			url: new URL('https://auth.example.com/login?challenge_id=login_challenge')
+		} as never);
+
+		expect(result).toEqual({});
+		expect(fetch).toHaveBeenCalledWith('/auth/login-challenge?challenge_id=login_challenge', {
+			headers: { 'x-authrim-original-host': 'auth.example.com' }
+		});
+	});
+
 	it('does not redirect single-tenant signup pages', async () => {
 		const fetch = vi.fn().mockResolvedValueOnce(
 			jsonResponse({
