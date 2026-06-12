@@ -3654,6 +3654,7 @@ export function createApiRoutes(): Hono {
             addProgress('Building packages...');
             const buildResult = await buildApiPackages({
               rootDir,
+              components: [componentName as WorkerComponent],
               onProgress: addProgress,
             });
 
