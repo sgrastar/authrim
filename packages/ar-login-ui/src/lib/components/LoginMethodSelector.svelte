@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, Input, Alert } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { ExternalProvider } from '$lib/api/login-methods';
+	import type { ExternalProvider } from '$lib/api/authentication-methods';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { isValidImageUrl, sanitizeColor } from '$lib/utils/url-validation';
 

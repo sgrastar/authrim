@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExternalProvider } from '$lib/api/login-methods';
+import type { ExternalProvider } from '$lib/api/authentication-methods';
 import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 
 function provider(overrides: Partial<ExternalProvider>): ExternalProvider {

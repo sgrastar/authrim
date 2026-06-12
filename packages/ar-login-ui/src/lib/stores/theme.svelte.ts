@@ -6,11 +6,11 @@
  * - 6 variant options (3 light, 3 dark)
  * - localStorage persistence
  * - SSR-safe initialization
- * - Tenant theme defaults (from login-methods API)
+ * - Tenant theme defaults (from authentication methods API)
  *
  * Theme Resolution Order:
  * 1. User local preference (localStorage)
- * 2. Tenant theme (login-methods API → ui.theme/ui.variant)
+ * 2. Tenant theme (authentication methods API -> ui.theme/ui.variant)
  * 3. System preference (prefers-color-scheme)
  * 4. Default: light / beige
  */
@@ -79,7 +79,7 @@ function createThemeStore() {
 	// Get the current variant based on mode
 	const currentVariant = $derived(mode === 'light' ? lightVariant : darkVariant);
 
-	// Tenant defaults (set from login-methods API)
+	// Tenant defaults (set from authentication methods API)
 	let tenantMode: ThemeMode | null = null;
 	let tenantLightVariant: LightVariant | null = null;
 	let tenantDarkVariant: DarkVariant | null = null;
@@ -119,7 +119,7 @@ function createThemeStore() {
 	}
 
 	/**
-	 * Set tenant theme defaults from the login-methods API response.
+	 * Set tenant theme defaults from the authentication methods API response.
 	 * These are used as fallback when the user has no localStorage preference.
 	 * Call this before init() for correct resolution order.
 	 */
