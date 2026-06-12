@@ -5443,6 +5443,9 @@ describe('logging control routers', () => {
       encrypted: true,
       indexed_object_class_count: 1,
     });
+    expect(mockAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('INNER JOIN logging_key_registry kr ON kr.id = kv.key_registry_id')
+    );
 
     mockAdapter.queryOne
       .mockResolvedValueOnce(
