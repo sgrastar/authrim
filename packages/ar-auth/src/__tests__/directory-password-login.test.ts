@@ -64,9 +64,9 @@ function createContext(body: Record<string, unknown>, settings?: Record<string, 
   const headers = new Headers();
   const env = {
     AUTHRIM_CONFIG: createKV({
-      'settings:tenant:tenant-a:login-methods': {
-        'login-methods.directory_password.enabled': true,
-        'login-methods.directory_password.connector_id': 'campus',
+      'settings:tenant:tenant-a:authentication-methods': {
+        'authentication-methods.directory_password.enabled': true,
+        'authentication-methods.directory_password.connector_id': 'campus',
       },
       'settings:tenant:tenant-a:directory-connectors': {
         'directory-connectors.campus.endpoint_url': 'https://wordwarden.example.com',
@@ -165,10 +165,10 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:login-methods': {
-            'login-methods.directory_password.enabled': true,
-            'login-methods.directory_password.connector_id': 'campus',
-            'login-methods.directory_password.auto_provision': true,
+          'settings:tenant:tenant-a:authentication-methods': {
+            'authentication-methods.directory_password.enabled': true,
+            'authentication-methods.directory_password.connector_id': 'campus',
+            'authentication-methods.directory_password.auto_provision': true,
           },
         }
       ) as never
@@ -482,8 +482,8 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:login-methods': {
-            'login-methods.directory_password.enabled': false,
+          'settings:tenant:tenant-a:authentication-methods': {
+            'authentication-methods.directory_password.enabled': false,
           },
         }
       ) as never
