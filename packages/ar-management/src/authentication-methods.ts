@@ -792,13 +792,13 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const directoryPasswordEnabled = directoryPassword.enabled;
     const externalEnabled = externalProviders.length > 0;
 
-    // Check if at least one method is available
+    // Check if at least one authentication method is available
     if (!passkeyEnabled && !emailCodeEnabled && !directoryPasswordEnabled && !externalEnabled) {
-      log.warn('No login method available', {});
+      log.warn('No authentication method available', {});
       const errorResponse: AuthenticationMethodsErrorResponse = {
         error: {
-          code: 'NO_LOGIN_METHOD_AVAILABLE',
-          message: 'No login method is enabled for this tenant',
+          code: 'NO_AUTHENTICATION_METHOD_AVAILABLE',
+          message: 'No authentication method is enabled for this tenant',
         },
       };
       c.header('Cache-Control', 'no-store');

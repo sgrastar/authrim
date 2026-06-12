@@ -40,7 +40,7 @@
 	let nameError = $state('');
 	let externalIdpLoading = $state<string | null>(null);
 
-	// Login methods (from API)
+	// Authentication methods (from API)
 	let methodsLoading = $state(true);
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);

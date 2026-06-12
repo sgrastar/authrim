@@ -44,7 +44,7 @@
 		passkeyLoading || emailCodeLoading || directoryPasswordLoading || externalIdpLoading !== null
 	);
 
-	// Login methods (from API)
+	// Authentication methods (from API)
 	let methodsLoading = $state(true);
 	let methodsError = $state('');
 	let passkeyEnabled = $state(false);

@@ -454,7 +454,7 @@ describe('Authentication Methods API', () => {
       expect(res.status).toBe(503);
       const body = (await res.json()) as any;
 
-      expect(body.error.code).toBe('NO_LOGIN_METHOD_AVAILABLE');
+      expect(body.error.code).toBe('NO_AUTHENTICATION_METHOD_AVAILABLE');
       expect(body.error.message).toBeDefined();
     });
 
@@ -468,7 +468,7 @@ describe('Authentication Methods API', () => {
 
       await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
-      expect(mockLogger.warn).toHaveBeenCalledWith('No login method available', {});
+      expect(mockLogger.warn).toHaveBeenCalledWith('No authentication method available', {});
     });
   });
 

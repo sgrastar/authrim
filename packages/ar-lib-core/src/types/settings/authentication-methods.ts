@@ -79,7 +79,7 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
 export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
   category: 'authentication-methods',
   label: 'Authentication Methods',
-  description: 'Login method discovery and custom external provider settings',
+  description: 'Authentication method discovery and custom external provider settings',
   settings: AUTHENTICATION_METHODS_SETTINGS_META,
 };
 
