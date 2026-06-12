@@ -10,6 +10,23 @@ export interface RegistrationField {
 	order?: number;
 }
 
+const SIGNUP_BASE_FIELD_KEYS = new Set([
+	'email',
+	'field.canonical.email',
+	'name',
+	'field.canonical.name',
+	'email_verified',
+	'field.canonical.email_verified'
+]);
+
+export function isSignupBaseField(field: RegistrationField): boolean {
+	return SIGNUP_BASE_FIELD_KEYS.has(field.field_key.trim().toLowerCase());
+}
+
+export function filterCustomRegistrationFields(fields: RegistrationField[]): RegistrationField[] {
+	return fields.filter((field) => !isSignupBaseField(field));
+}
+
 export function resolveRegistrationFieldsUrl(apiBaseUrl = API_BASE_URL): string {
 	const base = apiBaseUrl.trim();
 	if (!base) {
@@ -34,7 +51,7 @@ export async function fetchRegistrationFields(
 		}
 
 		const data = (await response.json()) as { fields?: RegistrationField[] };
-		return Array.isArray(data.fields) ? data.fields : [];
+		return Array.isArray(data.fields) ? filterCustomRegistrationFields(data.fields) : [];
 	} catch {
 		return [];
 	}
