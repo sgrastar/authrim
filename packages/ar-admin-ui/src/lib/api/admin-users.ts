@@ -146,8 +146,11 @@ export const adminUsersAPI = {
 			throw new Error('Failed to fetch user');
 		}
 
-		const data = await response.json();
-		return data.user;
+		const data = (await response.json()) as { user: User; passkeys?: User['passkeys'] };
+		return {
+			...data.user,
+			passkeys: data.user.passkeys ?? data.passkeys
+		};
 	},
 
 	/**
