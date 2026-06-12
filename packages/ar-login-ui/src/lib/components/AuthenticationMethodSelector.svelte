@@ -81,8 +81,8 @@
 </script>
 
 <!--
-  LoginMethodSelector
-  - Renders available login methods based on server configuration
+  AuthenticationMethodSelector
+  - Renders available authentication methods based on server configuration
   - Delegates authentication actions to parent via callbacks
   - Handles passkey support detection and provider icon resolution
 -->

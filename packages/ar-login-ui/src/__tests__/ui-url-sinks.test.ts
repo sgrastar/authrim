@@ -31,7 +31,7 @@ describe('UI URL sink guards', () => {
 
 	it('guards external provider image URLs before using them as img src values', () => {
 		const sources = [
-			source('lib/components/LoginMethodSelector.svelte'),
+			source('lib/components/AuthenticationMethodSelector.svelte'),
 			source('routes/login/+page.svelte'),
 			source('routes/signup/+page.svelte')
 		];
