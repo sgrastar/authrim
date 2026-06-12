@@ -56,7 +56,7 @@ const adminShell = {
 	admin_nav_source_destination: '接続元と接続先',
 	admin_nav_mapping_policies: 'Field Mapping Sets',
 	admin_nav_resolution_center: '解決センター',
-	admin_nav_login_methods: 'ログイン方法',
+	admin_nav_login_methods: '認証方法',
 	admin_nav_login_ui: 'ログインUI',
 	admin_nav_tenant_discovery: 'テナントディスカバリー',
 	admin_nav_info: '情報',
