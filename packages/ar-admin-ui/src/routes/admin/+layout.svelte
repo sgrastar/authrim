@@ -125,7 +125,11 @@
 			]
 		},
 		branding: [
-			{ path: '/admin/login-methods', label: $LL.admin_nav_login_methods(), icon: 'i-ph-sign-in' },
+			{
+				path: '/admin/authentication-methods',
+				label: $LL.admin_nav_login_methods(),
+				icon: 'i-ph-sign-in'
+			},
 			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
 			{
 				path: '/admin/tenant-discovery',
