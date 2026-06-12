@@ -12,6 +12,7 @@ interface SamlAttributeTemplate {
 	label: string;
 	nameFormat: string;
 	valueType: string;
+	format?: string;
 	classification: Classification;
 	required?: boolean;
 	examples?: string[];
@@ -125,6 +126,46 @@ function contractAttribute(
 		nameFormat: BASIC_NAME_FORMAT,
 		valueType,
 		classification: 'pii',
+		required,
+		releasePolicy: { legalBasis: 'contract', purpose: 'attribute_release' }
+	};
+}
+
+function vendorAttribute(
+	name: string,
+	label: string,
+	valueType = 'string',
+	classification: Classification = 'pii',
+	required = false,
+	format?: string
+): SamlAttributeTemplate {
+	return {
+		name,
+		label,
+		nameFormat: BASIC_NAME_FORMAT,
+		valueType,
+		...(format ? { format } : {}),
+		classification,
+		required,
+		releasePolicy: { legalBasis: 'contract', purpose: 'attribute_release' }
+	};
+}
+
+function vendorUriAttribute(
+	name: string,
+	label: string,
+	valueType = 'string',
+	classification: Classification = 'pii',
+	required = false,
+	format?: string
+): SamlAttributeTemplate {
+	return {
+		name,
+		label,
+		nameFormat: URI_NAME_FORMAT,
+		valueType,
+		...(format ? { format } : {}),
+		classification,
 		required,
 		releasePolicy: { legalBasis: 'contract', purpose: 'attribute_release' }
 	};
@@ -265,7 +306,7 @@ const attr = {
 			uriAttribute(
 				'1.3.6.1.4.1.5923.1.1.1.10',
 				'eduPersonTargetedID',
-				'string',
+				'saml:persistent-nameid',
 				'internal',
 				required
 			),
@@ -634,6 +675,7 @@ function switchScopedAffiliation(attribute: SamlAttributeTemplate): SamlAttribut
 function samlSchema(nameIdSource: string, attributes: SamlAttributeTemplate[]) {
 	return {
 		destinationType: 'saml',
+		samlFlow: 'outbound',
 		nameId: {
 			format: PERSISTENT_NAME_ID,
 			source: nameIdSource
@@ -641,6 +683,77 @@ function samlSchema(nameIdSource: string, attributes: SamlAttributeTemplate[]) {
 		attributes
 	};
 }
+
+function emailNameIdSchema(nameIdSource: string, attributes: SamlAttributeTemplate[]) {
+	return {
+		destinationType: 'saml',
+		samlFlow: 'outbound',
+		nameId: {
+			format: EMAIL_NAME_ID,
+			source: nameIdSource
+		},
+		attributes
+	};
+}
+
+const vendor = {
+	email: (name = 'email', required = true) =>
+		withMeta(vendorAttribute(name, 'Email', 'email', 'pii', required, 'email'), {
+			examples: ['person@example.com'],
+			note: 'Email address used by the service provider for account lookup, notification, or just-in-time account creation.',
+			valueMultiplicity: 'single',
+			nullable: !required
+		}),
+	firstName: (name = 'firstName', required = false) =>
+		withMeta(vendorAttribute(name, 'First name', 'string', 'pii', required), {
+			examples: ['Taro'],
+			note: 'Given name released to populate the user profile in the service provider.',
+			valueMultiplicity: 'single',
+			nullable: !required
+		}),
+	lastName: (name = 'lastName', required = false) =>
+		withMeta(vendorAttribute(name, 'Last name', 'string', 'pii', required), {
+			examples: ['Yamada'],
+			note: 'Family name released to populate the user profile in the service provider.',
+			valueMultiplicity: 'single',
+			nullable: !required
+		}),
+	displayName: (name = 'displayName', required = false) =>
+		withMeta(vendorAttribute(name, 'Display name', 'string', 'pii', required), {
+			examples: ['Taro Yamada'],
+			note: 'Human-readable name displayed by the service provider.',
+			valueMultiplicity: 'single',
+			nullable: !required
+		}),
+	groups: (name = 'groups', required = false) =>
+		withMeta(vendorAttribute(name, 'Groups', 'string', 'public', required), {
+			examples: ['Engineering', 'Admins'],
+			note: 'Group names or identifiers used by the service provider for authorization or provisioning decisions.',
+			valueMultiplicity: 'multi',
+			nullable: !required
+		}),
+	role: (name = 'role', required = false) =>
+		withMeta(vendorAttribute(name, 'Role', 'string', 'public', required), {
+			examples: ['agent', 'admin'],
+			note: 'Application role or license class to assign in the service provider.',
+			valueMultiplicity: 'single',
+			nullable: !required
+		}),
+	externalId: (name = 'external_id', required = false) =>
+		withMeta(vendorAttribute(name, 'External ID', 'identifier', 'internal', required), {
+			examples: ['emp-10042'],
+			note: 'Stable external identifier used to correlate the user with an existing service-provider account.',
+			valueMultiplicity: 'single',
+			nullable: !required
+		}),
+	employeeId: (name = 'employeeID', required = false) =>
+		withMeta(vendorAttribute(name, 'Employee ID', 'identifier', 'pii', required), {
+			examples: ['E10042'],
+			note: 'Workforce employee identifier used by HR or enterprise applications.',
+			valueMultiplicity: 'single',
+			nullable: !required
+		})
+};
 
 export const samlDestinationTemplates: DestinationTemplate[] = [
 	{
@@ -894,9 +1007,559 @@ export const samlDestinationTemplates: DestinationTemplate[] = [
 		])
 	},
 	{
+		id: 'template_destination_saml_slack',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'slack_saml_workspace',
+		displayName: 'Slack SAML workspace',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'Slack workspace or Enterprise Grid SAML release contract using email NameID and optional profile or group attributes.',
+		schema: emailNameIdSchema('email', [
+			vendor.email('email', true),
+			vendor.firstName('first_name'),
+			vendor.lastName('last_name'),
+			vendor.displayName('displayName'),
+			vendor.groups('groups')
+		])
+	},
+	{
+		id: 'template_destination_saml_microsoft_entra_custom_app',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'microsoft_entra_custom_saml_app',
+		displayName: 'Microsoft Entra custom SAML app',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'Microsoft Entra-style custom SAML application contract with UPN or email NameID and common user, object, employee, and group claims.',
+		schema: {
+			destinationType: 'saml',
+			samlFlow: 'outbound',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+				source: 'userprincipalname'
+			},
+			attributes: [
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name',
+						'User principal name',
+						'email',
+						'pii',
+						true,
+						'upn'
+					),
+					{
+						examples: ['person@example.com'],
+						note: 'User principal name or immutable internal identifier used as the Microsoft-style primary user claim.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
+						'Email address',
+						'email',
+						'pii',
+						true,
+						'email'
+					),
+					{
+						examples: ['person@example.com'],
+						note: 'Mailbox address for applications that consume the Microsoft emailaddress claim URI.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname',
+						'Given name',
+						'string',
+						'pii'
+					),
+					{
+						examples: ['Taro'],
+						note: 'Given name mapped from the user profile.',
+						valueMultiplicity: 'single',
+						nullable: true
+					}
+				),
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname',
+						'Surname',
+						'string',
+						'pii'
+					),
+					{
+						examples: ['Yamada'],
+						note: 'Family name mapped from the user profile.',
+						valueMultiplicity: 'single',
+						nullable: true
+					}
+				),
+				withMeta(vendorAttribute('objectid', 'Object ID', 'identifier', 'internal'), {
+					examples: ['aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'],
+					note: 'Directory object identifier for applications that need a stable tenant-local user key.',
+					valueMultiplicity: 'single',
+					nullable: true
+				}),
+				vendor.employeeId('employeeid'),
+				vendor.groups('http://schemas.microsoft.com/ws/2008/06/identity/claims/groups', false)
+			]
+		}
+	},
+	{
+		id: 'template_destination_saml_salesforce',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'salesforce_saml_sso',
+		displayName: 'Salesforce SAML SSO',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'Salesforce SAML SSO release profile using Federation ID or username as NameID and common User attributes for login or JIT provisioning.',
+		schema: {
+			destinationType: 'saml',
+			samlFlow: 'outbound',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+				source: 'federation_identifier'
+			},
+			attributes: [
+				withMeta(
+					vendorAttribute('User.FederationIdentifier', 'Federation ID', 'identifier', 'pii', true),
+					{
+						examples: ['emp-10042'],
+						note: 'Stable Salesforce Federation ID used to match the SAML subject to a Salesforce user.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(vendorAttribute('User.Username', 'Username', 'email', 'pii', true, 'email'), {
+					examples: ['person@example.com'],
+					note: 'Salesforce username, commonly an email-shaped globally unique login value.',
+					valueMultiplicity: 'single',
+					nullable: false
+				}),
+				withMeta(vendorAttribute('User.Email', 'Email', 'email', 'pii', true, 'email'), {
+					examples: ['person@example.com'],
+					note: 'Email address for Salesforce user profile and notification delivery.',
+					valueMultiplicity: 'single',
+					nullable: false
+				}),
+				vendor.firstName('User.FirstName', true),
+				vendor.lastName('User.LastName', true),
+				vendor.role('User.ProfileId'),
+				vendor.role('User.RoleId')
+			]
+		}
+	},
+	{
+		id: 'template_destination_saml_sap_successfactors',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'sap_successfactors_saml',
+		displayName: 'SAP SuccessFactors SAML',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'SAP SuccessFactors workforce SAML release contract centered on personIdExternal, userId, email, and HR profile attributes.',
+		schema: {
+			destinationType: 'saml',
+			samlFlow: 'outbound',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+				source: 'personIdExternal'
+			},
+			attributes: [
+				withMeta(
+					vendorAttribute('personIdExternal', 'Person ID External', 'identifier', 'pii', true),
+					{
+						examples: ['100042'],
+						note: 'External person identifier used by SAP SuccessFactors to correlate workforce identities.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(vendorAttribute('userId', 'User ID', 'identifier', 'pii', true), {
+					examples: ['taro.yamada'],
+					note: 'SAP SuccessFactors user identifier for login and profile correlation.',
+					valueMultiplicity: 'single',
+					nullable: false
+				}),
+				vendor.email('email', true),
+				vendor.firstName('firstName', true),
+				vendor.lastName('lastName', true),
+				withMeta(vendorAttribute('department', 'Department', 'string', 'public'), {
+					examples: ['Engineering'],
+					note: 'Department name used for workforce profile enrichment or authorization.',
+					valueMultiplicity: 'single',
+					nullable: true
+				}),
+				vendor.groups('groups')
+			]
+		}
+	},
+	{
+		id: 'template_destination_saml_sap_btp_ias',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'sap_btp_ias_saml',
+		displayName: 'SAP BTP / IAS SAML',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'SAP BTP and Identity Authentication Service style SAML contract with user name, mail, display name, and Groups.',
+		schema: {
+			destinationType: 'saml',
+			samlFlow: 'outbound',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+				source: 'mail'
+			},
+			attributes: [
+				vendor.email('mail', true),
+				withMeta(vendorAttribute('userName', 'User name', 'identifier', 'pii', true), {
+					examples: ['taro.yamada'],
+					note: 'Application user name released for SAP account correlation.',
+					valueMultiplicity: 'single',
+					nullable: false
+				}),
+				vendor.firstName('firstName'),
+				vendor.lastName('lastName'),
+				vendor.displayName('displayName'),
+				vendor.groups('Groups')
+			]
+		}
+	},
+	{
+		id: 'template_destination_saml_zendesk',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'zendesk_saml_sso',
+		displayName: 'Zendesk SAML SSO',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'Zendesk SAML release contract for email-based login, JIT profile creation, organization assignment, tags, and role mapping.',
+		schema: emailNameIdSchema('email', [
+			vendor.email('email', true),
+			vendor.displayName('name', true),
+			vendor.firstName('first_name'),
+			vendor.lastName('last_name'),
+			withMeta(vendorAttribute('phone', 'Phone', 'phone', 'pii', false, 'phone'), {
+				examples: ['+1-415-555-0100'],
+				note: 'Phone number for the Zendesk user profile.',
+				valueMultiplicity: 'single',
+				nullable: true
+			}),
+			withMeta(vendorAttribute('organization', 'Organization', 'string', 'public'), {
+				examples: ['Example Corp'],
+				note: 'Zendesk organization name to associate with the user.',
+				valueMultiplicity: 'single',
+				nullable: true
+			}),
+			vendor.role('role'),
+			withMeta(vendorAttribute('tags', 'Tags', 'string', 'public'), {
+				examples: ['premium', 'apac'],
+				note: 'Zendesk tags assigned to the user during sign-in or provisioning.',
+				valueMultiplicity: 'multi',
+				nullable: true
+			}),
+			vendor.externalId('external_id')
+		])
+	},
+	{
+		id: 'template_destination_saml_box',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'box_saml_sso',
+		displayName: 'Box SAML SSO',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'Box SAML SSO release contract with primary email, optional aliases, first and last name for auto-provisioning, and SSO group sync.',
+		schema: emailNameIdSchema('primary_email', [
+			vendor.email('primary_email', true),
+			withMeta(vendorAttribute('email_aliases', 'Email aliases', 'email', 'pii', false, 'email'), {
+				examples: ['alias1@example.com', 'alias2@example.com'],
+				note: 'Multi-value email alias attribute accepted by Box for managed-domain aliases.',
+				valueMultiplicity: 'multi',
+				nullable: true
+			}),
+			vendor.firstName('firstName', true),
+			vendor.lastName('lastName', true),
+			withMeta(
+				vendorUriAttribute('http://schemas.xmlsoap.org/claims/Group', 'Groups', 'string', 'public'),
+				{
+					examples: ['Finance', 'Admins'],
+					note: 'Multi-value Box SSO group assertion used to add or remove group memberships on login.',
+					valueMultiplicity: 'multi',
+					nullable: true
+				}
+			)
+		])
+	},
+	{
+		id: 'template_destination_saml_atlassian',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'atlassian_cloud_saml',
+		displayName: 'Atlassian Cloud SAML',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'Atlassian Cloud SAML contract with non-email internal user ID claim, first and last name claims, and email or UPN NameID.',
+		schema: {
+			destinationType: 'saml',
+			samlFlow: 'outbound',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+				source: 'email'
+			},
+			attributes: [
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname',
+						'Given name',
+						'string',
+						'pii',
+						true
+					),
+					{
+						examples: ['Taro'],
+						note: 'First name claim required by Atlassian Cloud SAML setup guidance.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname',
+						'Surname',
+						'string',
+						'pii',
+						true
+					),
+					{
+						examples: ['Yamada'],
+						note: 'Last name claim required by Atlassian Cloud SAML setup guidance.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name',
+						'Internal user ID',
+						'identifier',
+						'internal',
+						true
+					),
+					{
+						examples: ['emp-10042'],
+						note: 'Stable internal ID for the user. Atlassian guidance states this value should not be the user email address.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(
+					vendorUriAttribute(
+						'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn',
+						'User principal name',
+						'email',
+						'pii',
+						false,
+						'upn'
+					),
+					{
+						examples: ['person@example.com'],
+						note: 'UPN alternative used by some Microsoft Azure AD or nested group configurations.',
+						valueMultiplicity: 'single',
+						nullable: true
+					}
+				)
+			]
+		}
+	},
+	{
+		id: 'template_destination_saml_aws',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'aws_saml_console',
+		displayName: 'AWS SAML console federation',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'AWS IAM SAML federation contract with Role, RoleSessionName, optional SessionDuration, and principal tag attributes.',
+		schema: {
+			destinationType: 'saml',
+			samlFlow: 'outbound',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+				source: 'subject_identifier'
+			},
+			attributes: [
+				withMeta(
+					vendorAttribute(
+						'https://aws.amazon.com/SAML/Attributes/Role',
+						'AWS role pairs',
+						'string',
+						'internal',
+						true,
+						'aws-role-pair'
+					),
+					{
+						examples: [
+							'arn:aws:iam::123456789012:role/Admin,arn:aws:iam::123456789012:saml-provider/Authrim'
+						],
+						note: 'AWS requires one or more role/principal ARN pairs in this exact case-sensitive attribute name.',
+						valueMultiplicity: 'multi',
+						nullable: false
+					}
+				),
+				withMeta(
+					vendorAttribute(
+						'https://aws.amazon.com/SAML/Attributes/RoleSessionName',
+						'Role session name',
+						'identifier',
+						'internal',
+						true,
+						'aws-role-session-name'
+					),
+					{
+						examples: ['person@example.com', 'taro.yamada'],
+						note: 'AWS role session name. Use a compact user ID or email-shaped value without spaces.',
+						valueMultiplicity: 'single',
+						nullable: false
+					}
+				),
+				withMeta(
+					vendorAttribute(
+						'https://aws.amazon.com/SAML/Attributes/SessionDuration',
+						'Session duration',
+						'number',
+						'internal',
+						false,
+						'integer-seconds'
+					),
+					{
+						examples: ['3600'],
+						note: 'Optional AWS console session duration in seconds. AWS accepts values from 900 to 43200.',
+						valueMultiplicity: 'single',
+						nullable: true
+					}
+				),
+				withMeta(
+					vendorAttribute(
+						'https://aws.amazon.com/SAML/Attributes/PrincipalTag:Email',
+						'Principal tag: Email',
+						'email',
+						'pii',
+						false,
+						'email'
+					),
+					{
+						examples: ['person@example.com'],
+						note: 'Optional session principal tag for AWS ABAC policies.',
+						valueMultiplicity: 'single',
+						nullable: true
+					}
+				),
+				withMeta(
+					vendorAttribute(
+						'https://aws.amazon.com/SAML/Attributes/TransitiveTagKeys',
+						'Transitive tag keys',
+						'string',
+						'internal',
+						false
+					),
+					{
+						examples: ['Email', 'Department'],
+						note: 'Optional multi-value list of principal tag keys that remain transitive across role chaining.',
+						valueMultiplicity: 'multi',
+						nullable: true
+					}
+				)
+			]
+		}
+	},
+	{
+		id: 'template_destination_saml_servicenow',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'servicenow_saml_sso',
+		displayName: 'ServiceNow SAML SSO',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'ServiceNow SAML SSO profile using user_name or email NameID plus profile, department, title, and group attributes.',
+		schema: {
+			destinationType: 'saml',
+			samlFlow: 'outbound',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+				source: 'user_name'
+			},
+			attributes: [
+				withMeta(vendorAttribute('user_name', 'User name', 'identifier', 'pii', true), {
+					examples: ['taro.yamada'],
+					note: 'ServiceNow user_name used as the account correlation key.',
+					valueMultiplicity: 'single',
+					nullable: false
+				}),
+				vendor.email('email', true),
+				vendor.firstName('first_name'),
+				vendor.lastName('last_name'),
+				withMeta(vendorAttribute('department', 'Department', 'string', 'public'), {
+					examples: ['IT Operations'],
+					note: 'Department value for ServiceNow user profile enrichment or access rules.',
+					valueMultiplicity: 'single',
+					nullable: true
+				}),
+				withMeta(vendorAttribute('title', 'Title', 'string', 'public'), {
+					examples: ['Service Desk Manager'],
+					note: 'Job title released to the ServiceNow user profile.',
+					valueMultiplicity: 'single',
+					nullable: true
+				}),
+				vendor.groups('groups')
+			]
+		}
+	},
+	{
+		id: 'template_destination_saml_google_workspace_custom_app',
+		destinationType: 'saml',
+		category: 'Vendor specific / outbound',
+		profileKey: 'google_workspace_custom_saml_app',
+		displayName: 'Google Workspace custom SAML app',
+		version: 'v1',
+		updatedAt: '2026-06-11',
+		description:
+			'Google Workspace custom SAML application style contract with primary email NameID and common profile or group attributes.',
+		schema: emailNameIdSchema('primaryEmail', [
+			vendor.email('primaryEmail', true),
+			vendor.firstName('firstName'),
+			vendor.lastName('lastName'),
+			vendor.displayName('displayName'),
+			vendor.groups('groups'),
+			withMeta(vendorAttribute('orgUnitPath', 'Org unit path', 'string', 'public'), {
+				examples: ['/Engineering/Platform'],
+				note: 'Google Workspace organizational unit path for applications that consume org-unit routing.',
+				valueMultiplicity: 'single',
+				nullable: true
+			})
+		])
+	},
+	{
 		id: 'template_destination_saml_enterprise_basic',
 		destinationType: 'saml',
-		category: 'Vendor specific',
+		category: 'Vendor specific / outbound',
 		profileKey: 'enterprise_saml_basic',
 		displayName: 'Enterprise SAML basic',
 		version: 'v1',
@@ -904,6 +1567,7 @@ export const samlDestinationTemplates: DestinationTemplate[] = [
 		description: 'Common enterprise SAML profile for workforce SaaS integrations.',
 		schema: {
 			destinationType: 'saml',
+			samlFlow: 'outbound',
 			nameId: {
 				format: EMAIL_NAME_ID,
 				source: 'email'

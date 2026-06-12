@@ -26,6 +26,10 @@ interface IdentityMappingFlowInput {
 	schemaReadinessRows: IdentityMappingSchemaReadinessRow[];
 }
 
+interface IdentityMappingFlowOptions {
+	includeSystemCanonicalTargets?: boolean;
+}
+
 interface ProfileSchema {
 	id: string;
 	title: string;
@@ -42,6 +46,7 @@ interface ExtractedField {
 	label: string;
 	caption: string;
 	type?: string;
+	format?: string | null;
 	required?: boolean;
 	privacy?: MappingNode['privacy'];
 	examples?: unknown[];
@@ -52,59 +57,10 @@ interface ExtractedField {
 }
 
 const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
-const defaultCanonicalTargetDefinitions = [
-	['field.canonical.subject_id', 'Subject Identifier', 'string', 'single', 'internal'],
-	['field.canonical.name', 'Full Name', 'string', 'single', 'pii'],
-	['field.canonical.given_name', 'First Name', 'string', 'single', 'pii'],
-	['field.canonical.family_name', 'Last Name', 'string', 'single', 'pii'],
-	['field.canonical.middle_name', 'Middle Name', 'string', 'single', 'pii'],
-	['field.canonical.nickname', 'Nickname', 'string', 'single', 'pii'],
-	['field.canonical.preferred_username', 'Preferred Username', 'string', 'single', 'internal'],
-	['field.canonical.profile', 'Profile URL', 'string', 'single', 'internal'],
-	['field.canonical.picture', 'Picture URL', 'string', 'single', 'pii'],
-	['field.canonical.website', 'Website', 'string', 'single', 'internal'],
-	['field.canonical.birthdate', 'Birthdate', 'date', 'single', 'pii'],
-	['field.canonical.zoneinfo', 'Time Zone', 'string', 'single', 'internal'],
-	['field.canonical.locale', 'Locale', 'string', 'single', 'internal'],
-	['field.canonical.updated_at', 'Last Updated', 'number', 'single', 'internal'],
-	['field.canonical.email', 'Email', 'string', 'single', 'pii'],
-	['field.canonical.email_verified', 'Email Verified', 'boolean', 'single', 'internal'],
-	['field.canonical.phone_number', 'Phone Number', 'string', 'single', 'pii'],
-	[
-		'field.canonical.phone_number_verified',
-		'Phone Number Verified',
-		'boolean',
-		'single',
-		'internal'
-	],
-	['field.canonical.address', 'Address', 'json', 'multi', 'pii'],
-	['field.canonical.address_formatted', 'Address (Formatted)', 'string', 'single', 'pii'],
-	['field.canonical.address_street_address', 'Street Address', 'string', 'single', 'pii'],
-	['field.canonical.address_locality', 'City / Locality', 'string', 'single', 'pii'],
-	['field.canonical.address_region', 'Region', 'string', 'single', 'pii'],
-	['field.canonical.address_postal_code', 'Postal Code', 'string', 'single', 'pii'],
-	['field.canonical.address_country', 'Country', 'string', 'single', 'pii'],
-	['field.canonical.group_membership', 'Group Membership', 'array', 'multi', 'internal'],
-	['field.canonical.entitlements', 'Entitlements', 'array', 'multi', 'internal'],
-	['field.canonical.linked_identity', 'Linked Identity', 'string', 'single', 'internal'],
-	['field.canonical.lifecycle_state', 'Lifecycle State', 'string', 'single', 'internal']
-] as const;
-
-const defaultCanonicalTargets: MappingNode[] = defaultCanonicalTargetDefinitions.map(
-	([stableFieldId, label, valueType, cardinality, classification]) =>
-		canonicalTargetNode({
-			id: stableFieldId,
-			stableFieldId,
-			path: stableFieldId.replace(/^field\.canonical\./, ''),
-			label,
-			valueType,
-			cardinality,
-			classification,
-			storageTarget: friendlyStorageTarget(stableFieldId, valueType)
-		})
-);
-
-export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
+export function buildIdentityMappingFlowSamples(
+	input: IdentityMappingFlowInput,
+	options: IdentityMappingFlowOptions = {}
+): MappingSample[] {
 	const sourceProfiles = [
 		...input.sourceProfiles.map(sourceProfileToProfile),
 		...input.externalSchemas.map(externalSchemaToProfile),
@@ -116,14 +72,17 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		...input.destinationProfiles.map(destinationProfileToProfile),
 		...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
 	];
-	const canonicalTargets = buildCanonicalTargets(input.catalogs);
+	const canonicalTargets = buildCanonicalTargets(input.catalogs, {
+		includeSystemCanonicalTargets: options.includeSystemCanonicalTargets === true
+	});
+	const hasCatalogData = input.catalogs.some((catalog) => (catalog.entries?.length ?? 0) > 0);
 
-	if (
-		sourceProfiles.length === 0 &&
-		canonicalTargets.length === 0 &&
-		destinationProfiles.length === 0
-	) {
+	if (sourceProfiles.length === 0 && destinationProfiles.length === 0 && !hasCatalogData) {
 		return [];
+	}
+
+	if (sourceProfiles.length === 0) {
+		return [buildSample(null, destinationProfiles, canonicalTargets, input.policies.length)];
 	}
 
 	return sourceProfiles.map((sourceProfile) =>
@@ -132,12 +91,12 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 }
 
 function buildSample(
-	sourceProfile: ProfileSchema,
+	sourceProfile: ProfileSchema | null,
 	destinationProfiles: ProfileSchema[],
 	canonicalTargets: MappingNode[],
 	policyCount: number
 ): MappingSample {
-	const sourceNodes = buildSchemaNodes(sourceProfile, 'source');
+	const sourceNodes = sourceProfile ? buildSchemaNodes(sourceProfile, 'source') : [];
 	const destinationNodes = destinationProfiles.flatMap((profile) =>
 		buildSchemaNodes(profile, 'destination')
 	);
@@ -150,17 +109,20 @@ function buildSample(
 		'OIDC';
 
 	return {
-		id: sourceProfile.id,
-		title: sourceProfile.title,
-		snapshot: sourceProfile.versionLabel,
-		status: sourceProfile.lifecycleState,
-		reviewGates: `${sourceNodes.length} source fields`,
-		sourceAdapter: sourceProfile.adapter,
+		id: sourceProfile?.id ?? controlPlaneOnlySampleId(destinationProfiles, canonicalTargets),
+		title: sourceProfile?.title ?? controlPlaneOnlySampleTitle(destinationProfiles),
+		snapshot:
+			sourceProfile?.versionLabel ?? destinationProfiles[0]?.versionLabel ?? 'not available',
+		status: sourceProfile?.lifecycleState ?? destinationProfiles[0]?.lifecycleState ?? 'available',
+		reviewGates: sourceProfile
+			? `${sourceNodes.length} source fields`
+			: `${destinationNodes.length} destination fields`,
+		sourceAdapter: sourceProfile?.adapter ?? 'CSV',
 		destinationAdapter: destinationAdapter,
 		activeRuleId,
 		metrics: [
 			`0 / ${sourceNodes.length}`,
-			`${Math.max(1, sourceNodes.length > 0 ? 2 : 1)} schemas`,
+			`${schemaCount(sourceNodes, canonicalTargets, destinationProfiles)} schemas`,
 			String(policyCount),
 			canonicalTargets.length > 0 ? `${canonicalTargets.length} targets` : 'no catalog'
 		],
@@ -168,6 +130,37 @@ function buildSample(
 		edges: [] satisfies MappingEdge[],
 		rules
 	};
+}
+
+function controlPlaneOnlySampleId(
+	destinationProfiles: ProfileSchema[],
+	canonicalTargets: MappingNode[]
+): string {
+	if (destinationProfiles.length === 1) {
+		return `destination-only-${destinationProfiles[0].id}`;
+	}
+	if (destinationProfiles.length > 1) {
+		return 'destination-only-profiles';
+	}
+	return canonicalTargets.length > 0 ? 'field-catalog-only' : 'empty-control-plane';
+}
+
+function controlPlaneOnlySampleTitle(destinationProfiles: ProfileSchema[]): string {
+	if (destinationProfiles.length === 1) return destinationProfiles[0].title;
+	if (destinationProfiles.length > 1) return 'Destination profiles';
+	return 'Field catalog';
+}
+
+function schemaCount(
+	sourceNodes: MappingNode[],
+	canonicalTargets: MappingNode[],
+	destinationProfiles: ProfileSchema[]
+): number {
+	return (
+		(sourceNodes.length > 0 ? 1 : 0) +
+		(canonicalTargets.length > 0 ? 1 : 0) +
+		destinationProfiles.length
+	);
 }
 
 function sourceProfileToProfile(profile: IdentityMappingSourceProfileSummary): ProfileSchema {
@@ -241,10 +234,16 @@ function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): 
 	};
 }
 
-function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): MappingNode[] {
+function buildCanonicalTargets(
+	catalogs: IdentityMappingCatalogSummary[],
+	options: { includeSystemCanonicalTargets?: boolean } = {}
+): MappingNode[] {
 	const activeCatalog =
 		catalogs.find((catalog) => catalog.lifecycleState === 'active') ?? catalogs[0];
-	const catalogEntries = activeCatalog?.entries ?? [];
+	const catalogEntries = [
+		...(activeCatalog?.entries ?? []),
+		...(options.includeSystemCanonicalTargets ? systemCanonicalCatalogEntries() : [])
+	];
 	if (catalogEntries.length > 0) {
 		return catalogEntries
 			.filter(
@@ -283,13 +282,83 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 			);
 	}
 
-	return defaultCanonicalTargets.map((target) => ({
-		...target
-	}));
+	return [];
 }
 
 function canonicalTargetSortPriority(stableFieldId: string): number {
-	return stableFieldId === 'field.canonical.subject_id' ? -1 : 0;
+	if (stableFieldId === 'field.canonical.subject_id') return -2;
+	if (stableFieldId.startsWith('field.system.')) return -1;
+	return 0;
+}
+
+function systemCanonicalCatalogEntries(): NonNullable<IdentityMappingCatalogSummary['entries']> {
+	return [
+		{
+			id: 'system_field_uid',
+			stableFieldId: 'field.system.uid',
+			namespace: 'authrim.system',
+			path: 'uid',
+			targetTaxonomy: 'canonical',
+			valueType: 'identifier',
+			cardinality: 'single',
+			classification: 'internal',
+			uiGroupKey: 'system',
+			uiGroupLabel: 'System',
+			uiGroupOrder: 5,
+			uiFieldOrder: 10,
+			examples: ['usr_01JZ8J9H8Q7V6T5R4P3N2M1K0H'],
+			note: 'Stable Authrim user identifier.'
+		},
+		{
+			id: 'system_field_created_at',
+			stableFieldId: 'field.system.created_at',
+			namespace: 'authrim.system',
+			path: 'created_at',
+			targetTaxonomy: 'canonical',
+			valueType: 'timestamp',
+			cardinality: 'single',
+			classification: 'internal',
+			uiGroupKey: 'system',
+			uiGroupLabel: 'System',
+			uiGroupOrder: 5,
+			uiFieldOrder: 30,
+			examples: ['2026-06-11T04:30:01.000Z'],
+			note: 'Account creation timestamp.'
+		},
+		{
+			id: 'system_field_updated_at',
+			stableFieldId: 'field.system.updated_at',
+			namespace: 'authrim.system',
+			path: 'updated_at',
+			targetTaxonomy: 'canonical',
+			valueType: 'timestamp',
+			cardinality: 'single',
+			classification: 'internal',
+			uiGroupKey: 'system',
+			uiGroupLabel: 'System',
+			uiGroupOrder: 5,
+			uiFieldOrder: 40,
+			examples: ['2026-06-11T04:45:12.000Z'],
+			note: 'Last account update timestamp.'
+		},
+		{
+			id: 'system_field_lifecycle_state',
+			stableFieldId: 'field.system.lifecycle_state',
+			namespace: 'authrim.system',
+			path: 'lifecycle_state',
+			targetTaxonomy: 'canonical',
+			valueType: 'string',
+			cardinality: 'single',
+			classification: 'internal',
+			uiGroupKey: 'system',
+			uiGroupLabel: 'System',
+			uiGroupOrder: 5,
+			uiFieldOrder: 50,
+			examples: ['active'],
+			allowedValues: ['active', 'suspended', 'deleted'],
+			note: 'Current account lifecycle state.'
+		}
+	];
 }
 
 function canonicalTargetNode(input: {
@@ -301,6 +370,7 @@ function canonicalTargetNode(input: {
 	cardinality: string;
 	classification: string;
 	storageTarget: string;
+	format?: string | null;
 	uiGroupKey?: string | null;
 	uiGroupLabel?: string | null;
 	uiGroupOrder?: number;
@@ -317,13 +387,17 @@ function canonicalTargetNode(input: {
 		ruleId: `canonical-${slug(input.id)}`,
 		role: 'target',
 		fieldRef: {
-			namespace: 'authrim.profile',
+			namespace: input.stableFieldId.startsWith('field.system.')
+				? 'authrim.system'
+				: 'authrim.profile',
 			path: input.path,
 			catalogEntryId: input.stableFieldId
 		},
 		label: input.label,
 		caption: '',
 		type: displayValueType(input.valueType),
+		valueType: input.valueType,
+		format: input.format,
 		storageTarget: input.storageTarget,
 		uiGroupKey: input.uiGroupKey,
 		uiGroupLabel: input.uiGroupLabel,
@@ -370,6 +444,8 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 			label: field.label,
 			caption: field.caption,
 			type: displayValueType(field.type),
+			valueType: field.type,
+			format: field.format,
 			privacy: field.privacy,
 			required: field.required,
 			examples: field.examples,
@@ -431,6 +507,7 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 				label: stringValue(item.label) ?? key,
 				caption: stringValue(item.description) ?? type ?? 'schema field',
 				type,
+				format: formatFromRecord(item),
 				required: required.has(key) || item.required === true,
 				privacy: privacyFrom(`${key} ${stringValue(item.classification) ?? ''}`),
 				examples: examplesFromRecord(item),
@@ -451,6 +528,7 @@ function fieldsFromClaims(value: unknown, required: Set<string>): ExtractedField
 		label: key,
 		caption: isRecord(claim) ? (stringValue(claim.description) ?? 'claim') : 'claim',
 		type: isRecord(claim) ? stringValue(claim.type) : undefined,
+		format: isRecord(claim) ? formatFromRecord(claim) : null,
 		required: required.has(key),
 		privacy: privacyFrom(key),
 		examples: isRecord(claim) ? examplesFromRecord(claim) : undefined,
@@ -468,6 +546,7 @@ function fieldsFromProperties(value: unknown, required: Set<string>): ExtractedF
 		label: key,
 		caption: isRecord(property) ? (stringValue(property.description) ?? 'property') : 'property',
 		type: isRecord(property) ? stringValue(property.type) : undefined,
+		format: isRecord(property) ? formatFromRecord(property) : null,
 		required: required.has(key),
 		privacy: privacyFrom(key),
 		examples: isRecord(property) ? examplesFromRecord(property) : undefined,
@@ -509,6 +588,11 @@ function nullableFromRecord(record: Record<string, unknown>): boolean | null {
 	if (typeof record.notNullable === 'boolean') return !record.notNullable;
 	if (typeof record.not_null === 'boolean') return !record.not_null;
 	return null;
+}
+
+function formatFromRecord(record: Record<string, unknown>): string | null {
+	const value = record.format ?? record.valueFormat ?? record.value_format;
+	return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function examplesFromRecord(record: Record<string, unknown>): unknown[] | undefined {
@@ -607,6 +691,9 @@ function labelForCatalogEntry(path: string): string {
 		zoneinfo: 'Time Zone',
 		locale: 'Locale',
 		updated_at: 'Last Updated',
+		uid: 'UID',
+		account_id: 'Account ID',
+		created_at: 'Created At',
 		email: 'Email',
 		email_verified: 'Email Verified',
 		phone_number: 'Phone Number',
@@ -650,6 +737,7 @@ function friendlyStorageTarget(stableFieldId: string, valueType: string): string
 	if (normalizedId.includes('subject_id') || normalizedId.includes('lifecycle_state')) {
 		return 'Account identity';
 	}
+	if (normalizedId.startsWith('field.system.')) return 'System profile field';
 	if (
 		normalizedId.includes('email') ||
 		normalizedId.includes('phone') ||

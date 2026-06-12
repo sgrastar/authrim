@@ -540,7 +540,7 @@ CREATE TABLE IF NOT EXISTS field_usage_bindings (
     UNIQUE(tenant_id, field_key, binding_type, binding_id),
   CONSTRAINT field_usage_bindings_binding_type_check CHECK (
     binding_type IN (
-      'login_method',
+      'authentication_method',
       'notification',
       'discovery',
       'consent',

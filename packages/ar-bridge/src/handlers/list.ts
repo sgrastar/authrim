@@ -35,6 +35,7 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
         buttonColor: p.buttonColor,
         buttonColorDark: p.buttonColorDark,
         buttonText: p.buttonText,
+        autoLinkEmail: p.autoLinkEmail,
         enabled: true, // All providers from listEnabledProviders are enabled
       })),
     };

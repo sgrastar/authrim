@@ -390,19 +390,6 @@
 		return badges;
 	}
 
-	function usageBindingLabel(bindingId: string): string {
-		switch (bindingId) {
-			case 'passkey.signup':
-				return $LL.admin_custom_claims_usage_passkey_signup();
-			case 'email_otp.login':
-				return $LL.admin_custom_claims_usage_email_otp_login();
-			case 'email_otp.signup':
-				return $LL.admin_custom_claims_usage_email_otp_signup();
-			default:
-				return bindingId;
-		}
-	}
-
 	function hasBlockingUsage(schema: CustomClaimSchema): boolean {
 		return (
 			schema.usage_bindings?.some((binding) => binding.protection === 'delete_blocked') ?? false
@@ -765,40 +752,10 @@
 								<tr
 									class="cursor-pointer hover:bg-gray-50"
 									class:opacity-50={!schema.is_active}
-									onclick={() => goto(`/admin/custom-claims/${schema.id}`)}
+									onclick={() => goto(`/admin/schema-settings/${schema.id}`)}
 								>
 									<td>
-										<div class="flex items-center gap-2 flex-wrap">
-											<code class="text-sm font-mono">{schema.field_key}</code>
-											{#if schema.is_system}
-												<span class="badge badge-neutral text-xs"
-													>{$LL.admin_custom_claims_system()}</span
-												>
-											{/if}
-											{#if schema.is_system_used || hasBlockingUsage(schema)}
-												<span class="badge badge-warning text-xs"
-													>{$LL.admin_custom_claims_used_by_system()}</span
-												>
-											{/if}
-											{#if schema.claim_namespace}
-												<span class="badge badge-neutral text-xs" title={schema.claim_namespace}
-													>NS</span
-												>
-											{/if}
-										</div>
-										{#if schema.usage_bindings && schema.usage_bindings.length > 0}
-											<div class="usage-bindings">
-												{#each schema.usage_bindings as binding (binding.id)}
-													<span
-														class:usage-binding-blocked={binding.protection === 'delete_blocked'}
-														class="usage-binding"
-														title={binding.reason ?? binding.binding_id}
-													>
-														{usageBindingLabel(binding.binding_id)}
-													</span>
-												{/each}
-											</div>
-										{/if}
+										<code class="text-sm font-mono">{schema.field_key}</code>
 									</td>
 									<td>{schema.display_label}</td>
 									<td>
@@ -832,29 +789,37 @@
 										{/if}
 									</td>
 									<td>
-										{#if schema.operation_status === 'error'}
-											<span class="badge badge-error"
-												>{operationStatusLabel(schema.operation_status)}</span
-											>
-											<button
-												class="btn btn-secondary btn-xs ml-1"
-												onclick={(e) => {
-													e.stopPropagation();
-													retryOperation(schema);
-												}}
-												title={$LL.admin_custom_claims_retry_failed_operation()}
-											>
-												<i class="i-ph-arrow-clockwise"></i>
-											</button>
-										{:else if schema.operation_status !== 'active'}
-											<span class="badge badge-warning"
-												>{operationStatusLabel(schema.operation_status)}</span
-											>
-										{:else if !schema.is_active}
-											<span class="badge badge-neutral">{$LL.admin_custom_claims_inactive()}</span>
-										{:else}
-											<span class="badge badge-success">{$LL.admin_custom_claims_active()}</span>
-										{/if}
+										<div class="schema-status-badges">
+											{#if schema.operation_status === 'error'}
+												<span class="badge badge-error"
+													>{operationStatusLabel(schema.operation_status)}</span
+												>
+												<button
+													class="btn btn-secondary btn-xs ml-1"
+													onclick={(e) => {
+														e.stopPropagation();
+														retryOperation(schema);
+													}}
+													title={$LL.admin_custom_claims_retry_failed_operation()}
+												>
+													<i class="i-ph-arrow-clockwise"></i>
+												</button>
+											{:else if schema.operation_status !== 'active'}
+												<span class="badge badge-warning"
+													>{operationStatusLabel(schema.operation_status)}</span
+												>
+											{:else if !schema.is_active}
+												<span class="badge badge-neutral">{$LL.admin_custom_claims_inactive()}</span
+												>
+											{:else}
+												<span class="badge badge-success">{$LL.admin_custom_claims_active()}</span>
+											{/if}
+											{#if schema.is_system_used || hasBlockingUsage(schema)}
+												<span class="badge badge-warning text-xs"
+													>{$LL.admin_custom_claims_used_by_system()}</span
+												>
+											{/if}
+										</div>
 									</td>
 								</tr>
 							{/each}
@@ -1409,27 +1374,11 @@
 		gap: 0.375rem;
 	}
 
-	.usage-bindings {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.25rem;
-		margin-top: 0.25rem;
-	}
-
-	.usage-binding {
+	.schema-status-badges {
 		display: inline-flex;
+		flex-wrap: wrap;
 		align-items: center;
-		border-radius: 999px;
-		padding: 0.0625rem 0.375rem;
-		background: color-mix(in srgb, var(--info, #3b82f6) 10%, transparent);
-		color: var(--text-secondary);
-		font-size: 0.6875rem;
-		font-weight: 600;
-	}
-
-	.usage-binding-blocked {
-		background: color-mix(in srgb, var(--warning, #f59e0b) 18%, transparent);
-		color: var(--warning, #b45309);
+		gap: 0.375rem;
 	}
 
 	/* Compact row spacing for schema list */

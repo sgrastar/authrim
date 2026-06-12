@@ -115,11 +115,11 @@
 			options: ['Password', 'Passkey', 'Email OTP', 'SMS OTP', 'Magic Link', 'Social']
 		},
 		{
-			type: 'login_method_select',
+			type: 'authentication_method_select',
 			label: 'Login Select',
 			icon: '🚪',
 			color: '#0ea5e9',
-			description: 'User selects login method',
+			description: 'User selects authentication method',
 			category: 'selection',
 			options: ['Email + Password', 'Social Login', 'Passkey', 'Enterprise SSO']
 		},

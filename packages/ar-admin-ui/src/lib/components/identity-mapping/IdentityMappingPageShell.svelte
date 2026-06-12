@@ -94,10 +94,12 @@
 		federationTrustSources: 0
 	});
 	const sourceProfileOptions = $derived(
-		flowSamples.map((sample) => ({
-			id: sample.id,
-			title: sample.title
-		}))
+		flowSamples
+			.filter(sampleHasSourceProfile)
+			.map((sample) => ({
+				id: sample.id,
+				title: sample.title
+			}))
 	);
 	const destinationProfileOptions = $derived(destinationProfileOptionsFromSamples(flowSamples));
 	const selectedEditorProfileId = $derived(
@@ -173,7 +175,11 @@
 		selectedFieldMappingOptionId ? 'policy' : laneSelectorMode
 	);
 	const editorSamples = $derived(
-		editorLaneSelectorMode === 'policy' && policySelectorOptions.length === 0 ? [] : flowSamples
+		editorLaneSelectorMode === 'policy' && policySelectorOptions.length === 0
+			? []
+			: showProfileModeControl && editSide !== 'destination'
+				? flowSamples.map(withoutSystemTargets)
+				: flowSamples
 	);
 
 	$effect(() => {
@@ -193,6 +199,18 @@
 	});
 
 	$effect(() => {
+		if (
+			selectedSourceProfileId &&
+			!sourceProfileOptions.some((option) => option.id === selectedSourceProfileId)
+		) {
+			selectedSourceProfileId = null;
+		}
+		if (
+			selectedDestinationProfileId &&
+			!destinationProfileOptions.some((option) => option.id === selectedDestinationProfileId)
+		) {
+			selectedDestinationProfileId = null;
+		}
 		if (!selectedSourceProfileId && sourceProfileOptions.length > 0) {
 			selectedSourceProfileId = sourceProfileOptions[0].id;
 		}
@@ -202,6 +220,10 @@
 				destinationProfileOptions[0].id;
 		}
 	});
+
+	function sampleHasSourceProfile(sample: MappingSample): boolean {
+		return sample.nodes.some((node) => node.role === 'source');
+	}
 
 	$effect(() => {
 		if (!showPolicySaveControl || policyDisplayNameTouched) return;
@@ -500,14 +522,6 @@
 	async function compileEditorDraft(draft: MappingDraftPayload) {
 		const displayName =
 			policyDisplayName.trim() || $LL.admin_identity_mapping_editor_policy_default_name();
-		const conflict = findPolicyNameConflict(displayName);
-		if (conflict) {
-			throw new Error(
-				$LL.admin_identity_mapping_editor_policy_conflict({
-					name: conflict.displayName
-				})
-			);
-		}
 		const catalogVersionId = catalogSummaries.find((catalog) => catalog.versionId)?.versionId;
 		if (!catalogVersionId) {
 			throw new Error($LL.admin_identity_mapping_editor_no_canonical_catalog());
@@ -517,6 +531,9 @@
 			? (fieldMappingSetSummaries.find((candidate) => candidate.id === selectedFieldMappingSetId) ??
 				null)
 			: null;
+		policy ??=
+			fieldMappingSetSummaries.find((candidate) => candidate.fieldMappingKey === fieldMappingKey) ??
+			null;
 		if (!policy) {
 			const createdPolicy = await adminIdentityMappingAPI.createFieldMappingSet({
 				fieldMappingKey,
@@ -539,6 +556,14 @@
 				...draft.metadata
 			}
 		});
+		selectedFieldMappingSetId = policy.id;
+		selectedFieldMappingVersionId = version.result.id;
+		selectedPolicySide = editSide;
+		const versions = await adminIdentityMappingAPI.listFieldMappingVersions(policy.id);
+		fieldMappingVersionsByFieldMappingSetId = {
+			...fieldMappingVersionsByFieldMappingSetId,
+			[policy.id]: versions.fieldMappingVersions
+		};
 		editorHasUnsavedDraftChanges = false;
 	}
 
@@ -553,9 +578,27 @@
 		return key || 'identity-mapping-ui-draft';
 	}
 
+	function withoutSystemTargets(sample: MappingSample): MappingSample {
+		const nodes = sample.nodes.filter(
+			(node) =>
+				!(
+					node.role === 'target' &&
+					String(node.fieldRef?.catalogEntryId ?? '').startsWith('field.system.')
+				)
+		);
+		return {
+			...sample,
+			nodes,
+			rules: Object.fromEntries(nodes.map((node) => [node.ruleId, sample.rules[node.ruleId]]))
+		};
+	}
+
 	function findPolicyNameConflict(
 		displayName: string
 	): IdentityMappingFieldMappingSetSummary | null {
+		if (!selectedFieldMappingSetId) {
+			return null;
+		}
 		const fieldMappingKey = fieldMappingKeyFromDisplayName(
 			displayName.trim() || $LL.admin_identity_mapping_editor_policy_default_name()
 		);
@@ -627,15 +670,20 @@
 				)
 			);
 			catalogSummaries = catalogs.catalogs;
-			flowSamples = buildIdentityMappingFlowSamples({
-				policies: policies.fieldMappingSets,
-				catalogs: catalogs.catalogs,
-				sourceProfiles: sourceProfiles.sourceProfiles,
-				destinationProfiles: destinationProfiles.destinationProfiles,
-				protocolSchemas: protocolSchemas.protocolSchemas,
-				externalSchemas: externalSchemas.externalSchemas,
-				schemaReadinessRows: schemaReadiness.rows
-			});
+			flowSamples = buildIdentityMappingFlowSamples(
+				{
+					policies: policies.fieldMappingSets,
+					catalogs: catalogs.catalogs,
+					sourceProfiles: sourceProfiles.sourceProfiles,
+					destinationProfiles: destinationProfiles.destinationProfiles,
+					protocolSchemas: protocolSchemas.protocolSchemas,
+					externalSchemas: externalSchemas.externalSchemas,
+					schemaReadinessRows: schemaReadiness.rows
+				},
+				{
+					includeSystemCanonicalTargets: showProfileModeControl
+				}
+			);
 		} catch (error) {
 			loadError =
 				error instanceof Error ? error.message : $LL.admin_identity_mapping_editor_load_failed();

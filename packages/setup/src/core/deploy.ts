@@ -1,7 +1,7 @@
 /**
  * Authrim Deployment Module
  *
- * Handles the deployment order, parallel execution, and retry logic
+ * Handles the deployment order, sequential execution, and retry logic
  * for Authrim Workers.
  */
 
@@ -106,6 +106,7 @@ export interface BuildResult {
 
 export const DEFAULT_INTER_DEPLOY_DELAY_MS = 10_000;
 const WORKER_DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
+const CRITICAL_DEPLOY_COMPONENTS = new Set<WorkerComponent>(['ar-lib-core', 'ar-discovery']);
 
 const UI_BUILD_ENV_KEYS = [
   'PUBLIC_API_BASE_URL',
@@ -123,6 +124,46 @@ function emitProcessOutput(onProgress: ((message: string) => void) | undefined, 
       onProgress?.(`  ${trimmed}`);
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatDelaySeconds(delayMs: number): string {
+  return delayMs % 1000 === 0 ? String(delayMs / 1000) : (delayMs / 1000).toFixed(1);
+}
+
+async function waitBeforeNextWorker(
+  options: DeployOptions,
+  processedComponents: number,
+  totalPlannedComponents: number
+): Promise<void> {
+  const delayMs = options.interDeploymentDelayMs ?? DEFAULT_INTER_DEPLOY_DELAY_MS;
+  if (options.dryRun || delayMs <= 0 || processedComponents >= totalPlannedComponents) {
+    return;
+  }
+
+  options.onProgress?.(
+    `  ⏳ Waiting ${formatDelaySeconds(delayMs)}s before deploying the next worker...`
+  );
+  await sleep(delayMs);
+}
+
+function createDeploymentSummary(
+  results: DeployResult[],
+  startedAt: string,
+  startTime: number
+): DeploymentSummary {
+  return {
+    totalComponents: results.length,
+    successCount: results.filter((r) => r.success).length,
+    failedCount: results.filter((r) => !r.success).length,
+    results,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    duration: Date.now() - startTime,
+  };
 }
 
 /**
@@ -212,7 +253,7 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
 // =============================================================================
 
 /**
- * Get deployment levels - components that can be deployed in parallel
+ * Get deployment levels in dependency order.
  */
 export function getDeploymentLevels(enabledComponents?: WorkerComponent[]): WorkerComponent[][] {
   // Convert array to Set for getDeploymentOrder
@@ -360,7 +401,7 @@ export async function deployWorker(
 }
 
 // =============================================================================
-// Parallel Deployment
+// Explicit Parallel Deployment
 // =============================================================================
 
 /**
@@ -396,7 +437,7 @@ export async function deployAll(
   options: DeployOptions,
   enabledComponents?: WorkerComponent[]
 ): Promise<DeploymentSummary> {
-  const { onProgress, onError, interDeploymentDelayMs = 0 } = options;
+  const { onProgress, onError } = options;
   const startedAt = new Date().toISOString();
   const startTime = Date.now();
 
@@ -404,6 +445,7 @@ export async function deployAll(
   const allResults: DeployResult[] = [];
   const totalPlannedComponents = levels.reduce((count, level) => count + level.length, 0);
   let processedComponents = 0;
+  let stopDeployment = false;
 
   onProgress?.('Starting Authrim deployment...\n');
   onProgress?.(`Environment: ${options.env}`);
@@ -411,6 +453,10 @@ export async function deployAll(
   onProgress?.(`Deployment levels: ${levels.length}\n`);
 
   for (let levelIndex = 0; levelIndex < levels.length; levelIndex++) {
+    if (stopDeployment) {
+      break;
+    }
+
     const level = levels[levelIndex];
     onProgress?.(`\n━━━ Level ${levelIndex} ━━━`);
 
@@ -424,50 +470,127 @@ export async function deployAll(
         onError?.(component, new Error(result.error));
 
         // Stop deployment if critical component fails
-        if (['ar-lib-core', 'ar-discovery'].includes(component)) {
+        if (CRITICAL_DEPLOY_COMPONENTS.has(component)) {
           onProgress?.(`\n⚠️  Critical component ${component} failed. Stopping deployment.`);
+          stopDeployment = true;
           break;
         }
       }
 
-      if (
-        result.success &&
-        !options.dryRun &&
-        interDeploymentDelayMs > 0 &&
-        processedComponents < totalPlannedComponents
-      ) {
-        const waitSeconds =
-          interDeploymentDelayMs % 1000 === 0
-            ? String(interDeploymentDelayMs / 1000)
-            : (interDeploymentDelayMs / 1000).toFixed(1);
-        onProgress?.(`  ⏳ Waiting ${waitSeconds}s before deploying the next worker...`);
-        await new Promise((resolve) => setTimeout(resolve, interDeploymentDelayMs));
+      if (result.success) {
+        await waitBeforeNextWorker(options, processedComponents, totalPlannedComponents);
       }
     }
   }
 
-  const completedAt = new Date().toISOString();
-  const successCount = allResults.filter((r) => r.success).length;
-  const failedCount = allResults.filter((r) => !r.success).length;
-
-  const summary: DeploymentSummary = {
-    totalComponents: allResults.length,
-    successCount,
-    failedCount,
-    results: allResults,
-    startedAt,
-    completedAt,
-    duration: Date.now() - startTime,
-  };
+  const summary = createDeploymentSummary(allResults, startedAt, startTime);
 
   // Print summary
   onProgress?.('\n━━━ Deployment Summary ━━━');
   onProgress?.(`Total: ${summary.totalComponents}`);
-  onProgress?.(`Success: ${successCount}`);
-  onProgress?.(`Failed: ${failedCount}`);
+  onProgress?.(`Success: ${summary.successCount}`);
+  onProgress?.(`Failed: ${summary.failedCount}`);
   onProgress?.(`Duration: ${(summary.duration / 1000).toFixed(1)}s`);
 
-  if (failedCount > 0) {
+  if (summary.failedCount > 0) {
+    onProgress?.('\nFailed components:');
+    for (const result of allResults.filter((r) => !r.success)) {
+      onProgress?.(`  • ${result.component}: ${result.error}`);
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * Build and deploy workers one component at a time.
+ *
+ * This mirrors the single-worker deployment path so bulk setup/update operations do
+ * not run one large Turbo build followed by a long deployment burst.
+ */
+export async function buildAndDeployAllSequentially(
+  options: DeployOptions,
+  enabledComponents?: WorkerComponent[]
+): Promise<DeploymentSummary> {
+  const { onProgress, onError } = options;
+  const startedAt = new Date().toISOString();
+  const startTime = Date.now();
+  const levels = getDeploymentLevels(enabledComponents);
+  const components = levels.flat();
+  const allResults: DeployResult[] = [];
+  let processedComponents = 0;
+  let stopDeployment = false;
+
+  onProgress?.('Starting sequential Authrim build and deployment...\n');
+  onProgress?.(`Environment: ${options.env}`);
+  onProgress?.(`Root directory: ${options.rootDir}`);
+  onProgress?.(`Workers: ${components.length}\n`);
+
+  for (let levelIndex = 0; levelIndex < levels.length; levelIndex++) {
+    if (stopDeployment) {
+      break;
+    }
+
+    const level = levels[levelIndex];
+    onProgress?.(`\n━━━ Level ${levelIndex} ━━━`);
+
+    for (const component of level) {
+      const componentStartTime = Date.now();
+      const workerName = getWorkerName(options.env, component);
+
+      if (!options.dryRun) {
+        onProgress?.(`Building ${component}...`);
+        const buildResult = await buildApiPackages({
+          rootDir: options.rootDir,
+          components: [component],
+          onProgress,
+        });
+
+        if (!buildResult.success) {
+          const result: DeployResult = {
+            component,
+            workerName,
+            success: false,
+            error: `Build failed: ${buildResult.error || 'Unknown error'}`,
+            duration: Date.now() - componentStartTime,
+          };
+          allResults.push(result);
+          onError?.(component, new Error(result.error));
+          onProgress?.(`  ✗ ${component} build failed: ${buildResult.error || 'Unknown error'}`);
+          stopDeployment = true;
+          break;
+        }
+      }
+
+      const result = await deployWorker(component, options);
+      allResults.push(result);
+      processedComponents++;
+
+      if (!result.success) {
+        onError?.(component, new Error(result.error));
+
+        if (CRITICAL_DEPLOY_COMPONENTS.has(component)) {
+          onProgress?.(`\n⚠️  Critical component ${component} failed. Stopping deployment.`);
+          stopDeployment = true;
+          break;
+        }
+      }
+
+      if (result.success) {
+        await waitBeforeNextWorker(options, processedComponents, components.length);
+      }
+    }
+  }
+
+  const summary = createDeploymentSummary(allResults, startedAt, startTime);
+
+  onProgress?.('\n━━━ Deployment Summary ━━━');
+  onProgress?.(`Total: ${summary.totalComponents}`);
+  onProgress?.(`Success: ${summary.successCount}`);
+  onProgress?.(`Failed: ${summary.failedCount}`);
+  onProgress?.(`Duration: ${(summary.duration / 1000).toFixed(1)}s`);
+
+  if (summary.failedCount > 0) {
     onProgress?.('\nFailed components:');
     for (const result of allResults.filter((r) => !r.success)) {
       onProgress?.(`  • ${result.component}: ${result.error}`);
@@ -887,6 +1010,10 @@ export async function deployAllUiWorkers(
       ...(options.perComponent?.['ar-login-ui'] || {}),
     });
     results.push(loginResult);
+
+    if (loginResult.success && enabledComponents.adminUi) {
+      await waitBeforeNextWorker(options, 1, 2);
+    }
   }
 
   if (enabledComponents.adminUi) {

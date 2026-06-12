@@ -246,12 +246,15 @@ export async function getKeyManagerSecret(
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   const response = await keyManager.fetch(
-    new Request(`https://key-manager/internal/secrets/${encodeURIComponent(options.secretRef)}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
-      },
-    })
+    new Request(
+      `https://key-manager/internal/secrets-read/${encodeURIComponent(options.secretRef)}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+        },
+      }
+    )
   );
 
   if (!response.ok) {

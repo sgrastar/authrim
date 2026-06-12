@@ -307,9 +307,12 @@ const adminSaml = {
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'None',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
-	admin_saml_detail_identity_mapping_policy_default: 'Tenant default / legacy release',
+	admin_saml_detail_identity_mapping_policy_default: 'Select Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Selects the active Field Mapping Set used for SAML Attribute release to this SP.',
+	admin_saml_detail_identity_mapping_required_error:
+		'Select a Field Mapping Set before saving this SAML SP.',
+	admin_saml_detail_field_mapping_inactive: 'not active',
 	admin_saml_detail_attribute_release_consent: 'Attribute release consent',
 	admin_saml_detail_attribute_release_consent_disabled: 'Do not ask before releasing attributes',
 	admin_saml_detail_attribute_release_consent_once: 'Ask the first time, then remember',
@@ -319,12 +322,18 @@ const adminSaml = {
 	admin_saml_detail_attribute_release_consent_hint:
 		'Controls whether Authrim must confirm attribute release before sending a SAML assertion to this SP. The same policy shape can be reused for OIDC clients.',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest Signature',
+	admin_saml_detail_authn_request_signature_hint:
+		'Controls whether Authrim requires signed AuthnRequest messages from this SP.',
 	admin_saml_detail_logout_request_signature: 'LogoutRequest Signature',
 	admin_saml_detail_sp_signature_hint:
 		'Required by default. Relax only for an explicit legacy SP exception.',
 	admin_saml_detail_authn_context_mode: 'AuthnContext Mode',
+	admin_saml_detail_authn_context_mode_hint:
+		'Controls how Authrim sets AuthnContextClassRef in SAML assertions for this SP.',
 	admin_saml_detail_default_authn_context: 'Default AuthnContext',
 	admin_saml_detail_passkey_authn_context: 'Passkey AuthnContext',
+	admin_saml_detail_passkey_authn_context_hint:
+		'AuthnContextClassRef sent when the user authenticated with a passkey.',
 	admin_saml_detail_sign_assertions: 'Sign Assertions',
 	admin_saml_detail_sign_assertions_desc: 'Sign SAML Assertions sent to this service provider.',
 	admin_saml_detail_sign_responses: 'Sign Responses',

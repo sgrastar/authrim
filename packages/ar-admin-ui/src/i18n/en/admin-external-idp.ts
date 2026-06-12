@@ -114,7 +114,7 @@ const adminExternalIdp = {
 	admin_external_idp_enable_sso: 'Enable SSO',
 	admin_external_idp_enable_sso_desc:
 		'When enabled, users are automatically signed in with a session after external IdP authentication (handoff flow). When disabled, the client receives an authorization code for token exchange (Direct Auth flow).',
-	admin_external_idp_priority_hint: 'Higher priority providers are shown first'
+	admin_external_idp_priority_hint: 'Lower priority values are shown first'
 } as const;
 
 export default adminExternalIdp;

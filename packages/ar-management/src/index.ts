@@ -360,7 +360,7 @@ import {
 import { requireSupportedTenantParam } from './single-tenant-guard';
 import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
-import { getLoginMethodsHandler } from './login-methods';
+import { getAuthenticationMethodsHandler } from './authentication-methods';
 import {
   getDiscoveryConfigHandler,
   postDiscoveryGrantHandler,
@@ -647,6 +647,14 @@ import {
   adminOidcReleasePreviewHandler,
   adminSamlReleasePreviewHandler,
 } from './identity-mapping-preview';
+import {
+  adminPersistentIdentifierProfileCreateHandler,
+  adminPersistentIdentifierProfileDeleteHandler,
+  adminPersistentIdentifierProfileGetHandler,
+  adminPersistentIdentifierProfilesListHandler,
+  adminPersistentIdentifierProfileUpdateHandler,
+  adminPersistentIdentifierPreviewHandler,
+} from './persistent-identifier-profiles';
 import {
   adminIdentityMappingCatalogCreateHandler,
   adminIdentityMappingCatalogsListHandler,
@@ -1024,16 +1032,16 @@ const healthHandlers = createHealthCheckHandlers({
 app.get('/health/live', healthHandlers.liveness);
 app.get('/health/ready', healthHandlers.readiness);
 
-// Login Methods API - public endpoint for Login UI
-// Returns enabled login methods (passkey, emailCode, external providers) and UI config
-app.use('/api/auth/login-methods', async (c, next) => {
+// Authentication Methods API - public endpoint for Login UI
+// Returns enabled authentication methods (passkey, emailCode, external providers) and UI config
+app.use('/api/auth/authentication-methods', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/api/auth/login-methods'],
+    endpoints: ['/api/auth/authentication-methods'],
   })(c, next);
 });
-app.get('/api/auth/login-methods', getLoginMethodsHandler);
+app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
 app.use('/api/auth/discovery', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
@@ -2271,6 +2279,36 @@ app.post(
   '/api/admin/field-mapping/preview/oidc',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminOidcReleasePreviewHandler
+);
+app.get(
+  '/api/admin/field-mapping/persistent-identifier-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierProfilesListHandler
+);
+app.get(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierProfileGetHandler
+);
+app.post(
+  '/api/admin/field-mapping/persistent-identifier-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileCreateHandler
+);
+app.put(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileUpdateHandler
+);
+app.delete(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileDeleteHandler
+);
+app.post(
+  '/api/admin/field-mapping/persistent-identifier-profiles/preview',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierPreviewHandler
 );
 app.get(
   '/api/admin/field-mapping/catalogs',

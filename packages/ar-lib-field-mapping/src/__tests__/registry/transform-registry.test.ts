@@ -33,6 +33,7 @@ describe('transform registry', () => {
 
   it('contains the PR1 operation set', () => {
     expect(TRANSFORM_OPERATION_SCHEMAS.map((schema) => schema.operation).sort()).toEqual([
+      'affix_text',
       'case',
       'concat',
       'copy',
@@ -42,6 +43,8 @@ describe('transform registry', () => {
       'json_extract_integer',
       'json_extract_text',
       'normalize',
+      'oidc_pairwise_sub',
+      'saml_edu_person_targeted_id',
       'text_to_boolean',
       'trim',
     ]);
@@ -81,6 +84,31 @@ describe('transform registry', () => {
     ).toBe(' user@example.test ');
   });
 
+  it('adds configured prefixes and suffixes to text values', () => {
+    const sourceRef = fieldRef('csv', 'orcid_id');
+    const targetRef = {
+      side: 'destination' as const,
+      namespace: 'saml.attribute',
+      path: 'eduPersonOrcid',
+    };
+    const mappingEdge = edge(sourceRef, targetRef);
+
+    expect(
+      executeTransformStep({
+        step: {
+          id: 'transform.orcid.url',
+          inputEdgeIds: [mappingEdge.id],
+          operation: 'affix_text',
+          parameters: { prefix: 'https://orcid.org/', suffix: '' },
+          outputTargetRef: targetRef,
+        },
+        edgeValues: new Map([
+          [mappingEdge.id, sourceValue('csv', 'orcid_id', '0000-0002-1825-0097')],
+        ]),
+      }).value?.value
+    ).toBe('https://orcid.org/0000-0002-1825-0097');
+  });
+
   it('converts configured text tokens to nullable booleans', () => {
     const sourceRef = fieldRef('csv', 'active');
     const targetRef = { side: 'canonical' as const, namespace: 'authrim.profile', path: 'active' };
@@ -115,6 +143,58 @@ describe('transform registry', () => {
         edgeValues: new Map([[mappingEdge.id, sourceValue('csv', 'active', '未確認')]]),
       }).value?.value
     ).toBeNull();
+  });
+
+  it('builds OIDC pairwise sub from runtime client context', () => {
+    const targetRef = {
+      side: 'destination' as const,
+      namespace: 'oidc.claim',
+      path: 'sub',
+    };
+    const result = executeTransformStep({
+      step: {
+        id: 'transform.oidc.pairwise-sub',
+        inputEdgeIds: [],
+        operation: 'oidc_pairwise_sub',
+        outputTargetRef: targetRef,
+      },
+      edgeValues: new Map(),
+      runtimeContext: {
+        oidc: {
+          pairwiseSubject: 'pairwise-client-subject',
+        },
+      },
+    });
+
+    expect(result.value?.value).toBe('pairwise-client-subject');
+  });
+
+  it('builds SAML eduPersonTargetedID from runtime SP context', () => {
+    const targetRef = {
+      side: 'destination' as const,
+      namespace: 'saml.attribute',
+      path: 'eduPersonTargetedID',
+    };
+    const result = executeTransformStep({
+      step: {
+        id: 'transform.saml.targeted-id',
+        inputEdgeIds: [],
+        operation: 'saml_edu_person_targeted_id',
+        outputTargetRef: targetRef,
+      },
+      edgeValues: new Map(),
+      runtimeContext: {
+        saml: {
+          localEntityId: 'https://idp.example.edu/idp/shibboleth',
+          partnerEntityId: 'https://sp.example.org/shibboleth-sp',
+          eduPersonTargetedIdOpaque: 'opaque-subject',
+        },
+      },
+    });
+
+    expect(result.value?.value).toBe(
+      'https://idp.example.edu/idp/shibboleth!https://sp.example.org/shibboleth-sp!opaque-subject'
+    );
   });
 
   it('builds JSON from multiple source values and parses single JSON text inputs', () => {

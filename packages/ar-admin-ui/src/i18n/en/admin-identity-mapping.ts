@@ -576,6 +576,13 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_transform_fallback_label: 'Fallback',
 	admin_identity_mapping_flow_transform_fallback_desc:
 		'Use the first non-empty connected input value.',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: 'OIDC pairwise sub',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc:
+		'Use the current OIDC client pairwise subject identifier.',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label:
+		'SAML eduPersonTargetedID',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc:
+		'Build IdP!SP!opaque targeted ID from the current SAML SP context.',
 	admin_identity_mapping_flow_transform_text_to_boolean_label: 'Text to boolean',
 	admin_identity_mapping_flow_transform_text_to_boolean_desc:
 		'Convert configured text tokens to true, false, or null before writing to a boolean target.',

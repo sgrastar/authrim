@@ -869,6 +869,10 @@ export class KeyManager extends DurableObject<Env> {
     return this.getOrCreateSecret(secretRef);
   }
 
+  async getSecretRpc(secretRef: string): Promise<StoredSecret | null> {
+    return this.getSecret(secretRef);
+  }
+
   async rotateSecretRpc(secretRef: string): Promise<StoredSecret> {
     return this.rotateSecret(secretRef);
   }
@@ -901,6 +905,12 @@ export class KeyManager extends DurableObject<Env> {
     state.secrets[secretRef] = secret;
     await this.saveState();
     return secret;
+  }
+
+  private async getSecret(secretRef: string): Promise<StoredSecret | null> {
+    await this.initializeState();
+    const state = this.getState();
+    return state.secrets?.[secretRef] ?? null;
   }
 
   private async rotateSecret(secretRef: string): Promise<StoredSecret> {
@@ -1507,6 +1517,21 @@ export class KeyManager extends DurableObject<Env> {
             headers: { 'Content-Type': 'application/json' },
           });
         }
+      }
+
+      const internalSecretReadPath = '/internal/secrets-read/';
+      if (path.startsWith(internalSecretReadPath) && request.method === 'GET') {
+        const secretRef = decodeURIComponent(path.slice(internalSecretReadPath.length));
+        const secret = await this.getSecret(secretRef);
+        if (!secret) {
+          return new Response(JSON.stringify({ error: 'not_found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify(secret), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       const internalSecretMatch = path.match(/^\/internal\/secrets\/([^/]+)$/);

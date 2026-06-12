@@ -7,7 +7,10 @@
 	import { fetchRegistrationFields, type RegistrationField } from '$lib/api/registration-fields';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
-	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
+	import {
+		fetchAuthenticationMethods,
+		type ExternalProvider
+	} from '$lib/api/authentication-methods';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -38,7 +41,7 @@
 	let nameError = $state('');
 	let externalIdpLoading = $state<string | null>(null);
 
-	// Login methods (from API)
+	// Authentication methods (from API)
 	let methodsLoading = $state(true);
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);
@@ -114,14 +117,14 @@
 			inviteTenantName = tenant;
 		}
 
-		await Promise.all([loadLoginMethods(), loadRegistrationFields()]);
+		await Promise.all([loadAuthenticationMethods(), loadRegistrationFields()]);
 	});
 
-	async function loadLoginMethods() {
+	async function loadAuthenticationMethods() {
 		methodsLoading = true;
 		methodsError = '';
 		try {
-			const { data, error: apiError } = await fetchLoginMethods();
+			const { data, error: apiError } = await fetchAuthenticationMethods();
 			if (data) {
 				passkeyEnabled = data.methods.passkey.signupEnabled ?? data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.signupEnabled ?? data.methods.emailCode.enabled;

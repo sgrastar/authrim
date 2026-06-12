@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS field_usage_bindings (
   field_key TEXT NOT NULL,
   binding_type TEXT NOT NULL CHECK (
     binding_type IN (
-      'login_method',
+      'authentication_method',
       'notification',
       'discovery',
       'consent',

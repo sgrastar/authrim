@@ -8,6 +8,9 @@ export type TransformOperation =
 	| 'normalize'
 	| 'case'
 	| 'trim'
+	| 'affix_text'
+	| 'oidc_pairwise_sub'
+	| 'saml_edu_person_targeted_id'
 	| 'text_to_boolean'
 	| 'json_build'
 	| 'json_extract_text'
@@ -29,6 +32,8 @@ export interface MappingNode {
 	label: string;
 	caption: string;
 	type?: string;
+	valueType?: string;
+	format?: string | null;
 	storageTarget?: string;
 	uiGroupKey?: string | null;
 	uiGroupLabel?: string | null;

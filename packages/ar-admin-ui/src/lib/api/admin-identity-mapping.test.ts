@@ -22,7 +22,13 @@ describe('adminIdentityMappingAPI', () => {
 						summary: { total: 0, pass: 0, attention: 0, blocked: 0, deferred: 0 },
 						federationTrustSources: [],
 						federationMetadataDocuments: [],
-						reviewTasks: []
+						reviewTasks: [],
+						profiles: [],
+						result: {
+							id: 'persistent profile 1',
+							opaque: 'opaque',
+							secretMaterialIncluded: false
+						}
 					}),
 					{ status: 200, headers: { 'Content-Type': 'application/json' } }
 				)
@@ -119,6 +125,19 @@ describe('adminIdentityMappingAPI', () => {
 		await adminIdentityMappingAPI.listFederationTrustSources();
 		await adminIdentityMappingAPI.listFederationMetadataDocuments('trust/source 1');
 		await adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 25 });
+		await adminIdentityMappingAPI.listPersistentIdentifierProfiles();
+		await adminIdentityMappingAPI.createPersistentIdentifierProfile({
+			displayName: 'Default persistent IDs'
+		});
+		await adminIdentityMappingAPI.updatePersistentIdentifierProfile('persistent profile 1', {
+			displayName: 'Updated persistent IDs'
+		});
+		await adminIdentityMappingAPI.previewPersistentIdentifier({
+			profileId: 'persistent profile 1',
+			subject: 'user-1',
+			audience: 'https://sp.example.edu/shibboleth-sp'
+		});
+		await adminIdentityMappingAPI.deletePersistentIdentifierProfile('persistent profile 1');
 		await adminIdentityMappingAPI.createFieldMappingSet({
 			fieldMappingKey: 'ui_draft',
 			displayName: 'UI Draft'
@@ -178,6 +197,11 @@ describe('adminIdentityMappingAPI', () => {
 			'/api/admin/field-mapping/federation-trust-sources',
 			'/api/admin/field-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
 			'/api/admin/field-mapping/review-tasks?status=open&limit=25',
+			'/api/admin/field-mapping/persistent-identifier-profiles',
+			'/api/admin/field-mapping/persistent-identifier-profiles',
+			'/api/admin/field-mapping/persistent-identifier-profiles/persistent%20profile%201',
+			'/api/admin/field-mapping/persistent-identifier-profiles/preview',
+			'/api/admin/field-mapping/persistent-identifier-profiles/persistent%20profile%201',
 			'/api/admin/field-mapping/field-mapping-sets',
 			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions',
 			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions',
@@ -200,16 +224,21 @@ describe('adminIdentityMappingAPI', () => {
 		expect(fetchMock.mock.calls[15][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[16][1]).toMatchObject({ method: 'DELETE' });
 		expect(fetchMock.mock.calls[18][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[26][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[26][1]).not.toMatchObject({ method: expect.any(String) });
 		expect(fetchMock.mock.calls[27][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[28][1]).not.toMatchObject({ method: expect.any(String) });
+		expect(fetchMock.mock.calls[28][1]).toMatchObject({ method: 'PUT' });
 		expect(fetchMock.mock.calls[29][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[30][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[30][1]).toMatchObject({ method: 'DELETE' });
 		expect(fetchMock.mock.calls[31][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[32][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[33][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[33][1]).not.toMatchObject({ method: expect.any(String) });
 		expect(fetchMock.mock.calls[34][1]).toMatchObject({ method: 'POST' });
-		for (const callIndex of [26, 27, 29, 30, 31, 32, 33, 34]) {
+		expect(fetchMock.mock.calls[35][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[36][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[37][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[38][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[39][1]).toMatchObject({ method: 'POST' });
+		for (const callIndex of [27, 28, 29, 30, 31, 32, 34, 35, 36, 37, 38, 39]) {
 			expect(requestHeader(fetchMock.mock.calls[callIndex][1], 'Idempotency-Key')).toEqual(
 				expect.any(String)
 			);
@@ -226,6 +255,23 @@ describe('adminIdentityMappingAPI', () => {
 
 		await expect(adminIdentityMappingAPI.listFieldMappingSets()).rejects.toThrow(
 			'schema-readiness gate failed'
+		);
+	});
+
+	it('sends an empty JSON body when deleting a field mapping set', async () => {
+		fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ result: { deleted: true } })));
+
+		await adminIdentityMappingAPI.deleteFieldMappingSet('field mapping set 1');
+
+		expect(requestPath(fetchMock.mock.calls[0][0])).toBe(
+			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201'
+		);
+		expect(fetchMock.mock.calls[0][1]).toMatchObject({
+			method: 'DELETE',
+			body: '{}'
+		});
+		expect(requestHeader(fetchMock.mock.calls[0][1], 'Idempotency-Key')).toEqual(
+			expect.any(String)
 		);
 	});
 });

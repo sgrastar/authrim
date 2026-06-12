@@ -7,6 +7,7 @@ import {
   buildSAMLPairwiseSecretRef,
   buildSAMLPairwiseSectorIdentifier,
   createSAMLSessionIndex,
+  generateSAMLPersistentIdentifier,
   resolveSAMLNameIDFormat,
   resolveSAMLNameIDValue,
   resolveSAMLPairwiseSalt,
@@ -68,6 +69,42 @@ describe('resolveSAMLNameIDValue', () => {
     expect(otherSp).not.toBe(base);
   });
 
+  it('supports legacy Shibboleth SHA-1 Base64 computed identifiers for migration profiles', async () => {
+    const value = await generateSAMLPersistentIdentifier(
+      'user-123',
+      'https://sp.example.com/shibboleth-sp',
+      'legacy-salt',
+      'shibboleth_sha1_base64'
+    );
+
+    expect(value).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
+    await expect(
+      generateSAMLPersistentIdentifier(
+        'user-123',
+        'https://sp.example.com/shibboleth-sp',
+        'legacy-salt',
+        'shibboleth_sha1_base64'
+      )
+    ).resolves.toBe(value);
+  });
+
+  it('uses the raw SP entityID audience for Shibboleth-compatible persistent runtime values', async () => {
+    const value = await resolveSAMLNameIDValue(subject, NAMEID_FORMATS.PERSISTENT, {
+      tenantId: 'tenant-a',
+      spEntityId: 'https://sp.example.com/shibboleth-sp',
+      pairwiseSalt: 'legacy-salt',
+      pairwiseAlgorithm: 'shibboleth_sha1_base64',
+    });
+    const expected = await generateSAMLPersistentIdentifier(
+      subject.id,
+      'https://sp.example.com/shibboleth-sp',
+      'legacy-salt',
+      'shibboleth_sha1_base64'
+    );
+
+    expect(value).toBe(expected);
+  });
+
   it('requires pairwise salt for persistent NameID format', async () => {
     await expect(
       resolveSAMLNameIDValue(subject, NAMEID_FORMATS.PERSISTENT, {
@@ -108,6 +145,17 @@ describe('resolveSAMLNameIDValue', () => {
       subjectId: 'user-123',
       nameId,
     });
+  });
+
+  it('scopes persistent NameID registry keys by profile when configured', () => {
+    expect(
+      buildSAMLPersistentNameIDRegistryKey(
+        'tenant-a',
+        'https://sp.example.com/saml',
+        'user-123',
+        'profile-legacy'
+      )
+    ).toContain(':profile:profile-legacy:');
   });
 
   it('uses existing persistent NameID registry values when AllowCreate=false', async () => {

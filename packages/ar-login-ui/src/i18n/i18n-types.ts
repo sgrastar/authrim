@@ -1500,7 +1500,7 @@ export type TranslationFunctions = {
 	 */
 	login_continueWith: (arg: { provider: string }) => LocalizedString;
 	/**
-	 * No login method is enabled for this tenant. Contact your administrator.
+	 * No authentication method is enabled for this tenant. Contact your administrator.
 	 */
 	login_noMethodsAvailable: () => LocalizedString;
 	/**

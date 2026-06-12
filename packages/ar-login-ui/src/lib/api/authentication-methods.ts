@@ -1,7 +1,7 @@
 /**
- * Login Methods API Client
+ * Authentication Methods API Client
  *
- * Fetches available login methods and UI configuration from the backend.
+ * Fetches available authentication methods and UI configuration from the backend.
  * Used to dynamically render authentication options on the login page.
  */
 
@@ -47,6 +47,8 @@ export interface ExternalProvider {
 	enabled?: boolean;
 	loginEnabled?: boolean;
 	signupEnabled?: boolean;
+	reauthEnabled?: boolean;
+	accountLinkEnabled?: boolean;
 	slug?: string;
 	iconUrl?: string;
 	iconName?: string;
@@ -61,7 +63,7 @@ export interface ExternalMethod {
 	providers: ExternalProvider[];
 }
 
-export interface LoginMethods {
+export interface AuthenticationMethods {
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
 	directoryPassword: DirectoryPasswordMethod;
@@ -78,18 +80,18 @@ export interface LoginUIConfig {
 	supportedLocales: string[];
 }
 
-export interface LoginMethodsMeta {
+export interface AuthenticationMethodsMeta {
 	cacheTTL: number;
 	revision: string;
 }
 
-export interface LoginMethodsResponse {
-	methods: LoginMethods;
+export interface AuthenticationMethodsResponse {
+	methods: AuthenticationMethods;
 	ui: LoginUIConfig;
-	meta: LoginMethodsMeta;
+	meta: AuthenticationMethodsMeta;
 }
 
-export interface LoginMethodsError {
+export interface AuthenticationMethodsError {
 	error: {
 		code: string;
 		message: string;
@@ -100,16 +102,16 @@ export interface LoginMethodsError {
 // API Client
 // =============================================================================
 
-let cachedResponse: LoginMethodsResponse | null = null;
+let cachedResponse: AuthenticationMethodsResponse | null = null;
 let cacheExpiry = 0;
 
 /**
- * Fetch available login methods from the backend.
+ * Fetch available authentication methods from the backend.
  * Results are cached per the server-provided TTL.
  */
-export async function fetchLoginMethods(): Promise<{
-	data?: LoginMethodsResponse;
-	error?: LoginMethodsError;
+export async function fetchAuthenticationMethods(): Promise<{
+	data?: AuthenticationMethodsResponse;
+	error?: AuthenticationMethodsError;
 }> {
 	// Return cached response if still valid
 	if (cachedResponse && Date.now() < cacheExpiry) {
@@ -120,7 +122,7 @@ export async function fetchLoginMethods(): Promise<{
 	const timeoutId = setTimeout(() => controller.abort(), 15000);
 
 	try {
-		const response = await authrimFetch('/api/auth/login-methods', {
+		const response = await authrimFetch('/api/auth/authentication-methods', {
 			method: 'GET',
 			headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
 			signal: controller.signal
@@ -129,10 +131,10 @@ export async function fetchLoginMethods(): Promise<{
 		const data = await response.json();
 
 		if (!response.ok) {
-			return { error: data as LoginMethodsError };
+			return { error: data as AuthenticationMethodsError };
 		}
 
-		const result = data as LoginMethodsResponse;
+		const result = data as AuthenticationMethodsResponse;
 
 		// Cache the response
 		cachedResponse = result;
@@ -148,7 +150,7 @@ export async function fetchLoginMethods(): Promise<{
 			error: {
 				error: {
 					code: 'NETWORK_ERROR',
-					message: 'Failed to fetch login methods'
+					message: 'Failed to fetch authentication methods'
 				}
 			}
 		};
@@ -158,9 +160,9 @@ export async function fetchLoginMethods(): Promise<{
 }
 
 /**
- * Clear the cached login methods response
+ * Clear the cached authentication methods response
  */
-export function clearLoginMethodsCache(): void {
+export function clearAuthenticationMethodsCache(): void {
 	cachedResponse = null;
 	cacheExpiry = 0;
 }

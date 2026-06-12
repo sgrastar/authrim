@@ -201,6 +201,33 @@ describe('SAML Assertion Builder', () => {
       expect(xml).toContain('xsi:type="xs:boolean"');
     });
 
+    it('should support persistent NameID AttributeValue output', () => {
+      const xml = buildSAMLResponse({
+        ...baseOptions,
+        attributes: [
+          {
+            name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10',
+            friendlyName: 'eduPersonTargetedID',
+            valueType: 'saml:persistent-nameid',
+            values: [
+              'https://idp.example.edu/idp/shibboleth!https://sp.example.org/shibboleth-sp!opaque-subject',
+            ],
+          },
+        ],
+      });
+      const doc = parseXml(xml);
+      const attributeValue = findElement(doc, SAML_NAMESPACES.SAML2, 'AttributeValue');
+      const nameID = findElement(attributeValue!, SAML_NAMESPACES.SAML2, 'NameID');
+
+      expect(getAttribute(nameID!, 'Format')).toBe(
+        'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent'
+      );
+      expect(getAttribute(nameID!, 'NameQualifier')).toBe('https://idp.example.edu/idp/shibboleth');
+      expect(getAttribute(nameID!, 'SPNameQualifier')).toBe('https://sp.example.org/shibboleth-sp');
+      expect(getTextContent(nameID)).toBe('opaque-subject');
+      expect(xml).not.toContain('xsi:type="saml:persistent-nameid"');
+    });
+
     it('should support multiple audience values without duplicates', () => {
       const xml = buildSAMLResponse({
         ...baseOptions,

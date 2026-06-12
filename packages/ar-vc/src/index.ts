@@ -8,7 +8,7 @@
  * - DID Resolver: Resolve did:web and did:key identifiers
  *
  * Design Principles:
- * - VCs are attribute proofs, NOT login methods
+ * - VCs are attribute proofs, NOT authentication methods
  * - Raw VCs are NOT stored (data minimization)
  * - Disclosed claims are normalized to user attributes
  * - HAIP compliance for high assurance use cases

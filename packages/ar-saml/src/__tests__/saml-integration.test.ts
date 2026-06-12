@@ -23,6 +23,7 @@ import { handleSPACS } from '../sp/acs';
 import { handleSPSLO } from '../sp/slo';
 import { handleSPMetadata } from '../sp/metadata';
 import { handleIdPMetadata } from '../idp/metadata';
+import { handleIdPSSO } from '../idp/sso';
 import { handleIdPSLO } from '../idp/slo';
 import { getSAMLMetadataSigningCertificates } from '../common/saml-signing-keys';
 
@@ -40,6 +41,7 @@ const {
   mockGetSPConfig,
   mockSessionStoreFetch,
   mockCreateAuditLog,
+  mockLoggerError,
 } = vi.hoisted(() => ({
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
@@ -62,6 +64,7 @@ const {
     .fn()
     .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
   mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
+  mockLoggerError: vi.fn(),
 }));
 
 // Mock modules
@@ -102,7 +105,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         info: vi.fn(),
         debug: vi.fn(),
         warn: vi.fn(),
-        error: vi.fn(),
+        error: mockLoggerError,
       }),
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
@@ -670,6 +673,43 @@ describe('SAML Integration', () => {
     return handler(context as unknown as Parameters<typeof handler>[0]);
   }
 
+  async function callIdPSSODirectly(
+    options: {
+      requestId?: string;
+      spEntityId?: string;
+      sessionId?: string;
+      env?: Partial<Env>;
+    } = {}
+  ): Promise<Response> {
+    const requestId = options.requestId ?? '_request_123';
+    const spEntityId = options.spEntityId ?? 'https://sp.example.com/saml';
+    const sessionId = options.sessionId ?? 'g1:apac:3:session_test';
+    const env = {
+      ...mockEnv,
+      ...options.env,
+    };
+    const context = {
+      env,
+      req: {
+        method: 'GET',
+        url: `https://auth.example.com/saml/idp/sso?saml_request_id=${encodeURIComponent(
+          requestId
+        )}&saml_sp_entity_id=${encodeURIComponent(spEntityId)}&return_to=saml_sso`,
+        header: vi.fn((name: string) =>
+          name === 'Cookie' ? `authrim_session=${encodeURIComponent(sessionId)}` : undefined
+        ),
+      },
+      json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
+      redirect: (url: string) => new Response(null, { status: 302, headers: { Location: url } }),
+      get: vi.fn((key: string) => (key === 'tenantId' ? 'default' : undefined)),
+      executionCtx: {
+        waitUntil: vi.fn(),
+      },
+    };
+
+    return handleIdPSSO(context as unknown as Parameters<typeof handleIdPSSO>[0]);
+  }
+
   async function callIdPSLODirectly(
     samlResponse: string,
     options: { tenantId?: string; headerTenantId?: string } = {}
@@ -697,6 +737,148 @@ describe('SAML Integration', () => {
 
     return handleIdPSLO(context as unknown as Parameters<typeof handleIdPSLO>[0]);
   }
+
+  describe('GET /saml/idp/sso - IdP SSO', () => {
+    it('returns an explicit identity mapping error when the runtime mapping storage is unavailable', async () => {
+      const requestId = '_request_mapping_schema_missing';
+      const spEntityId = 'https://sp.example.com/saml';
+      const sessionId = 'g1:apac:3:session_mapping_schema_missing';
+
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn().mockReturnValue('mock-store-id'),
+        get: vi.fn().mockReturnValue({
+          fetch: vi.fn().mockResolvedValue(
+            new Response(
+              JSON.stringify({
+                requestId,
+                issuer: spEntityId,
+                destination: 'https://auth.example.com/saml/idp/sso',
+                acsUrl: 'https://sp.example.com/saml/acs',
+                binding: 'redirect',
+                type: 'authn_request',
+                used: false,
+                createdAt: Date.now(),
+                expiresAt: Date.now() + 120000,
+                data: {
+                  id: requestId,
+                  issuer: spEntityId,
+                  issueInstant: new Date().toISOString(),
+                  assertionConsumerServiceURL: 'https://sp.example.com/saml/acs',
+                  protocolBinding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          ),
+        }),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+      mockEnv.SESSION_STORE = {
+        idFromName: vi.fn().mockReturnValue('mock-session-store-id'),
+        get: vi.fn().mockReturnValue({
+          fetch: vi.fn().mockResolvedValue(
+            new Response(JSON.stringify({ userId: 'user-001', data: { amr: ['passkey'] } }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          ),
+        }),
+      } as unknown as Env['SESSION_STORE'];
+      mockEnv.DB = {
+        prepare: vi.fn().mockImplementation((sql: string) => {
+          const stmt = {
+            bind: vi.fn(() => stmt),
+            first: vi.fn().mockImplementation(async () => {
+              if (sql.includes('FROM identity_accounts')) {
+                return {
+                  id: 'account-user-001',
+                  tenant_id: 'default',
+                  legacy_user_id: 'user-001',
+                  primary_subject_id: 'subject-user-001',
+                  account_type: 'end_user',
+                  lifecycle_state: 'active',
+                  display_label: 'Test User',
+                  metadata_json: '{}',
+                  created_at: Date.now(),
+                  updated_at: Date.now(),
+                };
+              }
+              if (sql.includes('FROM identity_subjects')) {
+                return {
+                  id: 'subject-user-001',
+                  tenant_id: 'default',
+                  lifecycle_state: 'active',
+                  display_label: 'Test User',
+                  created_at: Date.now(),
+                  updated_at: Date.now(),
+                };
+              }
+              return null;
+            }),
+            all: vi.fn().mockImplementation(async () => {
+              if (sql.includes('FROM contact_points')) {
+                return {
+                  results: [
+                    {
+                      id: 'contact-user-001-email',
+                      tenant_id: 'default',
+                      subject_id: 'subject-user-001',
+                      account_id: 'account-user-001',
+                      contact_type: 'email',
+                      value_storage_ref: 'canonical-sensitive://default/user-001/email',
+                      verification_state: 'verified',
+                      is_primary: 1,
+                      lifecycle_state: 'active',
+                      created_at: Date.now(),
+                      updated_at: Date.now(),
+                    },
+                  ],
+                };
+              }
+              if (sql.includes('FROM field_mapping_activations')) {
+                throw new Error('D1_ERROR: no such table: field_mapping_activations: SQLITE_ERROR');
+              }
+              return { results: [] };
+            }),
+            run: vi.fn().mockResolvedValue({ success: true }),
+          };
+          return stmt;
+        }),
+        batch: vi.fn().mockResolvedValue([]),
+      } as unknown as Env['DB'];
+      mockEnv.DB_PII = {
+        prepare: vi.fn().mockImplementation((sql: string) => {
+          const stmt = {
+            bind: vi.fn(() => stmt),
+            first: vi.fn().mockImplementation(async () => {
+              if (sql.includes('FROM identity_sensitive_values')) {
+                return { value_json: JSON.stringify('user@example.com') };
+              }
+              return null;
+            }),
+            all: vi.fn().mockResolvedValue({ results: [] }),
+            run: vi.fn().mockResolvedValue({ success: true }),
+          };
+          return stmt;
+        }),
+        batch: vi.fn().mockResolvedValue([]),
+      } as unknown as Env['DB_PII'];
+
+      const res = await callIdPSSODirectly({ requestId, spEntityId, sessionId });
+      const body = (await res.json()) as {
+        error: string;
+        message: string;
+        status_code: string;
+        details?: { reason_codes?: string[] };
+      };
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('saml_identity_mapping_not_configured');
+      expect(body.message).toBe(
+        'SAML identity mapping is not configured for this Service Provider'
+      );
+      expect(body.status_code).toBe('urn:oasis:names:tc:SAML:2.0:status:Responder');
+      expect(body.details?.reason_codes).toContain('policy.identity_mapping_unavailable');
+    });
+  });
 
   describe('POST /saml/sp/acs - Assertion Consumer Service', () => {
     it('should reject request without SAMLResponse', async () => {

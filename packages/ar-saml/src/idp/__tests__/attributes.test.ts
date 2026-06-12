@@ -540,6 +540,158 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
+  it('builds eduPersonTargetedID from the current SP context without releasing the input UID', () => {
+    const catalog = identityMappingSamlCatalog({
+      mailRequired: false,
+      targetedIdValueType: 'saml:persistent-nameid',
+    });
+    const uidToTargetedIdEdge = identityMappingEdge(
+      'field.system.uid',
+      'authrim.system',
+      'uid',
+      'field.saml.eduPersonTargetedID',
+      'eduPersonTargetedID'
+    );
+    const config = {
+      attributeMapping: {},
+      tenantId: 'default',
+      localEntityId: 'https://idp.example.edu/idp/shibboleth',
+      entityId: 'https://sp-a.example.org/shibboleth-sp',
+      identityMapping: {
+        role: 'idp' as const,
+        catalog,
+        edges: [{ ...uidToTargetedIdEdge, edgeKind: 'transform_input' }],
+        transforms: [
+          {
+            id: 'transform.eduPersonTargetedID',
+            inputEdgeIds: [uidToTargetedIdEdge.id],
+            operation: 'saml_edu_person_targeted_id' as const,
+            outputTargetRef: uidToTargetedIdEdge.targetRef,
+          },
+        ],
+        runtimeContext: {
+          saml: {
+            localEntityId: 'https://idp.example.edu/idp/shibboleth',
+            partnerEntityId: 'https://sp-a.example.org/shibboleth-sp',
+            eduPersonTargetedIdOpaque: 'opaque-for-sp-a',
+          },
+        },
+      },
+    };
+
+    const attributes = buildSAMLAttributesForSP(
+      {
+        id: 'user-123',
+        email: 'user@example.edu',
+      },
+      config
+    );
+
+    expect(attributes).toEqual([
+      {
+        name: 'eduPersonTargetedID',
+        valueType: 'saml:persistent-nameid',
+        values: [
+          'https://idp.example.edu/idp/shibboleth!https://sp-a.example.org/shibboleth-sp!opaque-for-sp-a',
+        ],
+      },
+    ]);
+    expect(JSON.stringify(attributes)).not.toContain('user-123');
+  });
+
+  it('keeps one mapping set while changing eduPersonTargetedID per SP runtime context', () => {
+    const catalog = identityMappingSamlCatalog({ mailRequired: false });
+    const uidToTargetedIdEdge = identityMappingEdge(
+      'field.system.uid',
+      'authrim.system',
+      'uid',
+      'field.saml.eduPersonTargetedID',
+      'eduPersonTargetedID'
+    );
+    const baseIdentityMapping = {
+      role: 'idp' as const,
+      catalog,
+      edges: [{ ...uidToTargetedIdEdge, edgeKind: 'transform_input' }],
+      transforms: [
+        {
+          id: 'transform.eduPersonTargetedID',
+          inputEdgeIds: [uidToTargetedIdEdge.id],
+          operation: 'saml_edu_person_targeted_id' as const,
+          outputTargetRef: uidToTargetedIdEdge.targetRef,
+        },
+      ],
+    };
+
+    const releaseFor = (spEntityId: string, opaque: string) =>
+      buildSAMLAttributesForSP(
+        {
+          id: 'user-123',
+          email: 'user@example.edu',
+        },
+        {
+          attributeMapping: {},
+          localEntityId: 'https://idp.example.edu/idp/shibboleth',
+          entityId: spEntityId,
+          identityMapping: {
+            ...baseIdentityMapping,
+            runtimeContext: {
+              saml: {
+                localEntityId: 'https://idp.example.edu/idp/shibboleth',
+                partnerEntityId: spEntityId,
+                eduPersonTargetedIdOpaque: opaque,
+              },
+            },
+          },
+        }
+      )[0]?.values[0];
+
+    expect(releaseFor('https://sp-a.example.org/shibboleth-sp', 'opaque-a')).toBe(
+      'https://idp.example.edu/idp/shibboleth!https://sp-a.example.org/shibboleth-sp!opaque-a'
+    );
+    expect(releaseFor('https://sp-b.example.org/shibboleth-sp', 'opaque-b')).toBe(
+      'https://idp.example.edu/idp/shibboleth!https://sp-b.example.org/shibboleth-sp!opaque-b'
+    );
+  });
+
+  it('selects an active tenant-scoped runtime binding when the SAML SP context includes tenantId', () => {
+    const attributes = buildSAMLAttributesForSP(
+      {
+        id: 'user-123',
+        email: 'user@example.edu',
+      },
+      {
+        attributeMapping: {},
+        tenantId: 'default',
+        localEntityId: 'https://idp.example.edu/idp/shibboleth',
+        entityId: 'https://sp.example.edu/shibboleth-sp',
+        identityMapping: {
+          id: 'mapping_activation_active',
+          role: 'idp' as const,
+          tenantId: 'default',
+          localEntityId: 'https://idp.example.edu/idp/shibboleth',
+          partnerEntityId: 'https://sp.example.edu/shibboleth-sp',
+          catalog: identityMappingSamlCatalog({ mailRequired: false }),
+          edges: [
+            identityMappingEdge(
+              'field.profile.email',
+              'authrim.profile',
+              'email',
+              'field.saml.mail',
+              'urn:oid:0.9.2342.19200300.100.1.3'
+            ),
+          ],
+        },
+      }
+    );
+
+    expect(attributes).toMatchObject([
+      {
+        name: 'urn:oid:0.9.2342.19200300.100.1.3',
+        values: ['user@example.edu'],
+      },
+    ]);
+  });
+
   it('does not fall back to another SP-specific field mapping binding', () => {
     let error: unknown;
     try {
@@ -701,9 +853,57 @@ describe('buildSAMLAttributesFromMapping', () => {
       },
     ]);
   });
+
+  it('emits mapped SAML attributes when the runtime catalog has no destination entries', () => {
+    const attributes = buildSAMLAttributesForSP(
+      {
+        id: 'user-123',
+        email: 'user@example.edu',
+      },
+      {
+        entityId: 'https://sp.example.edu/saml',
+        attributeMapping: {},
+        identityMapping: {
+          catalog: {
+            identity: {
+              id: 'empty-runtime-catalog',
+              version: 'v1',
+              contentHash: 'empty',
+              compatibilityRange: '^0.3.0',
+            },
+            entries: [],
+          },
+          edges: [
+            identityMappingEdge(
+              'field.profile.email',
+              'authrim.profile',
+              'email',
+              'field.saml.mail',
+              'urn:oid:0.9.2342.19200300.100.1.3'
+            ),
+          ],
+          attributeDescriptors: {
+            'field.saml.mail': {
+              friendlyName: 'mail',
+            },
+          },
+        },
+      }
+    );
+
+    expect(attributes).toEqual([
+      {
+        name: 'urn:oid:0.9.2342.19200300.100.1.3',
+        friendlyName: 'mail',
+        values: ['user@example.edu'],
+      },
+    ]);
+  });
 });
 
-function identityMappingSamlCatalog(options: { mailRequired?: boolean } = {}): FieldCatalogBundle {
+function identityMappingSamlCatalog(
+  options: { mailRequired?: boolean; targetedIdValueType?: string } = {}
+): FieldCatalogBundle {
   return {
     identity: {
       id: 'authrim.identity-mapping.saml.test',
@@ -731,6 +931,15 @@ function identityMappingSamlCatalog(options: { mailRequired?: boolean } = {}): F
         targetType: 'canonical',
       },
       {
+        id: 'field.system.uid',
+        namespace: 'authrim.system',
+        path: 'uid',
+        valueType: 'string',
+        cardinality: 'single',
+        classification: 'internal',
+        targetType: 'canonical',
+      },
+      {
         id: 'field.saml.mail',
         namespace: 'saml.attribute',
         path: 'urn:oid:0.9.2342.19200300.100.1.3',
@@ -745,6 +954,15 @@ function identityMappingSamlCatalog(options: { mailRequired?: boolean } = {}): F
         namespace: 'saml.attribute',
         path: 'urn:oid:2.16.840.1.113730.3.1.241',
         valueType: 'string',
+        cardinality: 'single',
+        classification: 'pii',
+        targetType: 'destination-only',
+      },
+      {
+        id: 'field.saml.eduPersonTargetedID',
+        namespace: 'saml.attribute',
+        path: 'eduPersonTargetedID',
+        valueType: options.targetedIdValueType ?? 'string',
         cardinality: 'single',
         classification: 'pii',
         targetType: 'destination-only',

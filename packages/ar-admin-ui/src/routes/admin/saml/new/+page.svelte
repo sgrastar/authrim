@@ -6,7 +6,6 @@
 	import {
 		adminSAMLAPI,
 		type CreateSAMLProviderRequest,
-		type SAMLAttributePreset,
 		type SAMLFederationTrustProfile,
 		type SAMLMetadataAggregatePreviewResponse,
 		type SAMLMetadataBatchStatus,
@@ -17,6 +16,10 @@
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingFieldMappingSetSummary
+	} from '$lib/api/admin-identity-mapping';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { onMount } from 'svelte';
 
@@ -47,7 +50,7 @@
 		}
 	];
 
-	let presets = $state<SAMLAttributePreset[]>([]);
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let setupTarget = $state<SetupTarget>('saml_idp');
 	let providerType = $state<SAMLProvider['providerType']>('saml_idp');
 	let setupMode = $state<SetupMode>('manual');
@@ -69,7 +72,6 @@
 	let allowRedirect = $state(true);
 	let signAssertions = $state(true);
 	let signResponses = $state(true);
-	let samlProfile = $state('baseline');
 	let authnRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('optional');
 	let logoutRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('required');
 	let authnContextPolicyMode = $state<'observe' | 'require_any'>('observe');
@@ -83,9 +85,8 @@
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
-	let attributePresetId = $state('basic.v1');
+	let identityMappingFieldMappingSetId = $state('');
 	let attributeMappingJson = $state('{\n\t"email": "email",\n\t"name": "name"\n}');
-	let loadingPresets = $state(false);
 	let importingMetadata = $state(false);
 	let metadataImported = $state(false);
 	let metadataImportedProviderType = $state<SAMLProvider['providerType'] | ''>('');
@@ -132,6 +133,9 @@
 	let metadataImportTimer: ReturnType<typeof setTimeout> | undefined;
 	let providerCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
 	let federationCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
+	const activeFieldMappingSets = $derived(
+		fieldMappingSets.filter((fieldMappingSet) => fieldMappingSet.lifecycleState === 'active')
+	);
 
 	onMount(() => {
 		const trustProfileId = $page.url.searchParams.get('trustProfileId');
@@ -144,18 +148,15 @@
 			providerType = requestedType === 'sp' ? 'saml_sp' : 'saml_idp';
 			setupTarget = providerType;
 		}
-		void loadPresets();
+		void loadFieldMappingSets();
 	});
 
-	async function loadPresets() {
-		loadingPresets = true;
+	async function loadFieldMappingSets() {
 		try {
-			const result = await adminSAMLAPI.listAttributePresets();
-			presets = result.presets;
+			const result = await adminIdentityMappingAPI.listFieldMappingSets();
+			fieldMappingSets = result.fieldMappingSets;
 		} catch {
-			presets = [];
-		} finally {
-			loadingPresets = false;
+			fieldMappingSets = [];
 		}
 	}
 
@@ -201,16 +202,6 @@
 		return bindings;
 	}
 
-	function selectedPresetConfig(): SAMLProviderConfig {
-		if (providerType !== 'saml_sp' || !attributePresetId) return {};
-		const preset = presets.find((item) => item.id === attributePresetId);
-		return {
-			attributePresetId,
-			attributePresetVersion: preset?.version,
-			attributeReleasePolicy: preset?.attributeReleasePolicy
-		};
-	}
-
 	function buildManualConfig(): SAMLProviderConfig {
 		const config: SAMLProviderConfig = {
 			description: description.trim() || undefined,
@@ -248,13 +239,15 @@
 			certificate: certificate.trim() || undefined,
 			signAssertions,
 			signResponses,
-			samlProfile,
 			authnRequestSignaturePolicy,
 			logoutRequestSignaturePolicy,
 			authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
-			...selectedPresetConfig()
+			identityMapping: {
+				fieldMappingSetId: identityMappingFieldMappingSetId,
+				destinationNamespace: 'saml.attribute'
+			}
 		};
 	}
 
@@ -262,8 +255,7 @@
 		const config: SAMLProviderConfig = {
 			description: description.trim() || undefined,
 			logoUrl: logoUrl.trim() || undefined,
-			iconName: iconName || undefined,
-			...selectedPresetConfig()
+			iconName: iconName || undefined
 		};
 		if (providerType !== 'saml_sp') {
 			return {
@@ -287,7 +279,11 @@
 			logoutRequestSignaturePolicy,
 			authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
-			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined
+			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
+			identityMapping: {
+				fieldMappingSetId: identityMappingFieldMappingSetId,
+				destinationNamespace: 'saml.attribute'
+			}
 		};
 	}
 
@@ -305,7 +301,6 @@
 		allowRedirect = config.allowedBindings?.includes('redirect') ?? true;
 		signAssertions = config.signAssertions ?? true;
 		signResponses = config.signResponses ?? true;
-		samlProfile = config.samlProfile || samlProfile;
 		authnRequestSignaturePolicy = config.authnRequestSignaturePolicy || 'optional';
 		logoutRequestSignaturePolicy = config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = config.authnContextPolicy?.mode || 'observe';
@@ -325,8 +320,6 @@
 			'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport';
 		passkeyAuthnContextClassRef =
 			config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
-		attributePresetId =
-			config.attributePresetId || (providerType === 'saml_sp' ? attributePresetId : '');
 		attributeMappingJson = JSON.stringify(config.attributeMapping || {}, null, 2);
 		if (!name.trim() && config.entityId) {
 			name = config.entityId;
@@ -423,9 +416,7 @@
 
 		try {
 			const preview = await adminSAMLAPI.previewMetadata({
-				metadataUrl: metadataUrl.trim(),
-				samlProfile,
-				attributePresetId: attributePresetId || undefined
+				metadataUrl: metadataUrl.trim()
 			});
 			await applyMetadataPreview(preview, {
 				source: 'url',
@@ -456,9 +447,7 @@
 
 		try {
 			const preview = await adminSAMLAPI.previewMetadata({
-				metadataXml: metadataXml.trim(),
-				samlProfile,
-				attributePresetId: attributePresetId || undefined
+				metadataXml: metadataXml.trim()
 			});
 			await applyMetadataPreview(preview, { source: 'xml' });
 		} catch (err) {
@@ -802,8 +791,6 @@
 		try {
 			aggregateBatch = await adminSAMLAPI.startAggregateBatchCreate(aggregatePreview.previewId, {
 				entityIds: selectedAggregateEntityIds,
-				samlProfile,
-				attributePresetId: attributePresetId || undefined,
 				enabled
 			});
 			if (aggregateBatchPolling) clearInterval(aggregateBatchPolling);
@@ -852,7 +839,13 @@
 			if (providerType === 'saml_sp' && !acsUrl.trim()) {
 				return $LL.admin_saml_detail_sp_required();
 			}
+			if (providerType === 'saml_sp' && !identityMappingFieldMappingSetId) {
+				return $LL.admin_saml_detail_identity_mapping_required_error();
+			}
 			parseMapping();
+		}
+		if (setupMode !== 'manual' && providerType === 'saml_sp' && !identityMappingFieldMappingSetId) {
+			return $LL.admin_saml_detail_identity_mapping_required_error();
 		}
 		return '';
 	}
@@ -897,10 +890,6 @@
 				request.config = buildMetadataConfig();
 				if (setupMode === 'metadata_url') request.metadataUrl = metadataUrl.trim();
 				if (setupMode === 'metadata_xml') request.metadataXml = metadataXml.trim();
-				if (providerType === 'saml_sp') {
-					request.samlProfile = samlProfile;
-					request.attributePresetId = attributePresetId || undefined;
-				}
 			}
 
 			const provider = await adminSAMLAPI.createProvider(request);
@@ -1892,31 +1881,24 @@
 
 						<div class="form-grid">
 							<div class="form-group">
-								<label for="samlProfile" class="form-label">{$LL.admin_saml_detail_profile()}</label
-								>
-								<select id="samlProfile" bind:value={samlProfile} class="form-select">
-									<option value="baseline">Baseline</option>
-									<option value="strict">Strict</option>
-									<option value="academic_publisher">Academic Publisher</option>
-									<option value="legacy">Legacy</option>
-								</select>
-							</div>
-
-							<div class="form-group">
-								<label for="attributePreset" class="form-label">
-									{$LL.admin_saml_detail_attribute_preset()}
+								<label for="identityMappingFieldMapping" class="form-label">
+									{$LL.admin_saml_detail_identity_mapping_policy()}
 								</label>
 								<select
-									id="attributePreset"
-									bind:value={attributePresetId}
+									id="identityMappingFieldMapping"
+									bind:value={identityMappingFieldMappingSetId}
 									class="form-select"
-									disabled={loadingPresets}
 								>
-									<option value="">{$LL.admin_saml_detail_none()}</option>
-									{#each presets as preset (preset.id)}
-										<option value={preset.id}>{preset.label}</option>
+									<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
+									{#each activeFieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+										<option value={fieldMappingSet.id}>
+											{fieldMappingSet.displayName}
+										</option>
 									{/each}
 								</select>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_identity_mapping_policy_hint()}
+								</p>
 							</div>
 
 							<div class="form-group">
@@ -1932,6 +1914,9 @@
 									<option value="required">{$LL.admin_saml_detail_required()}</option>
 									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 								</select>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_authn_request_signature_hint()}
+								</p>
 							</div>
 
 							<div class="form-group">
@@ -1964,6 +1949,9 @@
 									<option value="session">{$LL.admin_saml_detail_session_aware()}</option>
 									<option value="legacy_static">{$LL.admin_saml_detail_legacy_static()}</option>
 								</select>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_authn_context_mode_hint()}
+								</p>
 							</div>
 
 							<div class="form-group">
@@ -1988,6 +1976,9 @@
 									bind:value={passkeyAuthnContextClassRef}
 									class="form-input"
 								/>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_passkey_authn_context_hint()}
+								</p>
 							</div>
 						</div>
 
@@ -2102,6 +2093,13 @@
 		flex-wrap: wrap;
 		gap: 8px;
 		margin-top: 8px;
+	}
+
+	.field-hint {
+		margin: 4px 0 0;
+		color: var(--text-muted, #9ca3af);
+		font-size: 0.6875rem;
+		line-height: 1.45;
 	}
 
 	.certificate-preview {

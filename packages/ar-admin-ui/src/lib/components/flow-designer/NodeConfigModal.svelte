@@ -28,8 +28,8 @@
 	// Auth Method Select config (v1 selection node)
 	let authMethodSelectMethods = $state<string[]>(['password', 'passkey']);
 
-	// Login Method Select config (v1 selection node)
-	let loginMethodSelectMethods = $state<string[]>(['email', 'social']);
+	// Authentication Method Select config (v1 selection node)
+	let authenticationMethodSelectMethods = $state<string[]>(['email', 'social']);
 
 	// Check Session config (v1 declarative)
 	let sessionFact = $state('session.authenticated');
@@ -39,7 +39,7 @@
 	let errorAllowRetry = $state(false);
 
 	// Login config
-	let loginMethods = $state<string[]>(['password']);
+	let authenticationMethods = $state<string[]>(['password']);
 	let loginRememberMe = $state(true);
 
 	// Register config
@@ -177,8 +177,8 @@
 				}
 			} else if (node.type === 'auth_method_select') {
 				authMethodSelectMethods = (config.available_methods as string[]) || ['password', 'passkey'];
-			} else if (node.type === 'login_method_select') {
-				loginMethodSelectMethods = (config.available_methods as string[]) || ['email', 'social'];
+			} else if (node.type === 'authentication_method_select') {
+				authenticationMethodSelectMethods = (config.available_methods as string[]) || ['email', 'social'];
 			} else if (node.type === 'redirect') {
 				// Support new `to` semantic destination
 				redirectTo = (config.to as string) || 'post_login';
@@ -190,9 +190,9 @@
 				errorAllowRetry = config.allow_retry === true;
 			} else if (node.type === 'login') {
 				if (Array.isArray(config.methods)) {
-					loginMethods = config.methods as string[];
+					authenticationMethods = config.methods as string[];
 				} else {
-					loginMethods = ['password'];
+					authenticationMethods = ['password'];
 				}
 				loginRememberMe = config.remember_me !== false;
 			} else if (node.type === 'register') {
@@ -229,8 +229,8 @@
 			case 'auth_method_select':
 				config = { available_methods: authMethodSelectMethods };
 				break;
-			case 'login_method_select':
-				config = { available_methods: loginMethodSelectMethods };
+			case 'authentication_method_select':
+				config = { available_methods: authenticationMethodSelectMethods };
 				break;
 			case 'mfa':
 				config = { factors: mfaFactors };
@@ -245,7 +245,7 @@
 				config = { reason: errorReason, allow_retry: errorAllowRetry };
 				break;
 			case 'login':
-				config = { methods: loginMethods, remember_me: loginRememberMe };
+				config = { methods: authenticationMethods, remember_me: loginRememberMe };
 				break;
 			case 'register':
 				config = {
@@ -341,7 +341,7 @@
 			check_risk: 'Check Risk',
 			// 3. Selection Nodes
 			auth_method_select: 'Auth Method Select',
-			login_method_select: 'Login Method Select',
+			authentication_method_select: 'Authentication Method Select',
 			identifier: 'Identifier',
 			profile_input: 'Profile Input',
 			custom_form: 'Custom Form',
@@ -411,7 +411,7 @@
 			// 3. Selection Nodes
 			auth_method_select:
 				'Let user choose their preferred authentication method (password, passkey, etc.).',
-			login_method_select: 'Let user choose how to login (email, social provider, etc.).',
+			authentication_method_select: 'Let user choose how to login (email, social provider, etc.).',
 			identifier: 'Collect user identifier such as email address, phone number, or username.',
 			profile_input: 'Collect user profile information like display name or avatar.',
 			custom_form: 'Display a custom form with configurable fields.',
@@ -499,22 +499,22 @@
 		updateConfigFromForm();
 	}
 
-	function toggleLoginMethodSelect(method: string) {
-		if (loginMethodSelectMethods.includes(method)) {
-			loginMethodSelectMethods = loginMethodSelectMethods.filter((m) => m !== method);
-			if (loginMethodSelectMethods.length === 0) loginMethodSelectMethods = [method]; // At least one
+	function toggleAuthenticationMethodSelect(method: string) {
+		if (authenticationMethodSelectMethods.includes(method)) {
+			authenticationMethodSelectMethods = authenticationMethodSelectMethods.filter((m) => m !== method);
+			if (authenticationMethodSelectMethods.length === 0) authenticationMethodSelectMethods = [method]; // At least one
 		} else {
-			loginMethodSelectMethods = [...loginMethodSelectMethods, method];
+			authenticationMethodSelectMethods = [...authenticationMethodSelectMethods, method];
 		}
 		updateConfigFromForm();
 	}
 
-	function toggleLoginMethod(method: string) {
-		if (loginMethods.includes(method)) {
-			loginMethods = loginMethods.filter((m) => m !== method);
-			if (loginMethods.length === 0) loginMethods = [method];
+	function toggleAuthenticationMethod(method: string) {
+		if (authenticationMethods.includes(method)) {
+			authenticationMethods = authenticationMethods.filter((m) => m !== method);
+			if (authenticationMethods.length === 0) authenticationMethods = [method];
 		} else {
-			loginMethods = [...loginMethods, method];
+			authenticationMethods = [...authenticationMethods, method];
 		}
 		updateConfigFromForm();
 	}
@@ -862,8 +862,8 @@
 			</div>
 		{/if}
 
-		<!-- Login Method Select: Checkboxes (login options for user to choose) -->
-		{#if node.type === 'login_method_select'}
+		<!-- Authentication Method Select: Checkboxes (login options for user to choose) -->
+		{#if node.type === 'authentication_method_select'}
 			<div class="form-group">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
 				<label
@@ -874,8 +874,8 @@
 						<label class="checkbox-label">
 							<input
 								type="checkbox"
-								checked={loginMethodSelectMethods.includes(option.value)}
-								onchange={() => toggleLoginMethodSelect(option.value)}
+								checked={authenticationMethodSelectMethods.includes(option.value)}
+								onchange={() => toggleAuthenticationMethodSelect(option.value)}
 							/>
 							<span>{option.label}</span>
 						</label>
@@ -962,18 +962,18 @@
 			</div>
 		{/if}
 
-		<!-- Login Methods: Checkboxes + Remember Me -->
+		<!-- Authentication Methods: Checkboxes + Remember Me -->
 		{#if node.type === 'login'}
 			<div class="form-group">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
-				<label>Login Methods <span class="hint">(select one or more)</span></label>
+				<label>Authentication Methods <span class="hint">(select one or more)</span></label>
 				<div class="checkbox-group">
 					{#each [{ value: 'password', label: 'Password' }, { value: 'passkey', label: 'Passkey' }, { value: 'social', label: 'Social Login' }, { value: 'magic_link', label: 'Magic Link' }] as option (option.value)}
 						<label class="checkbox-label">
 							<input
 								type="checkbox"
-								checked={loginMethods.includes(option.value)}
-								onchange={() => toggleLoginMethod(option.value)}
+								checked={authenticationMethods.includes(option.value)}
+								onchange={() => toggleAuthenticationMethod(option.value)}
 							/>
 							<span>{option.label}</span>
 						</label>

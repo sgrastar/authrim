@@ -10,6 +10,7 @@
 		type IdentityMappingDestinationProfileSummary,
 		type IdentityMappingDestinationType,
 		type IdentityMappingOidcSurface,
+		type IdentityMappingSourceType,
 		type IdentityMappingSourceProfileColumn,
 		type IdentityMappingSourceProfileSchema,
 		type IdentityMappingSourceProfileSummary
@@ -22,17 +23,21 @@
 		destinationTemplates,
 		type DestinationTemplate
 	} from '$lib/admin/identity-mapping-destination-templates';
+	import { sourceTemplates, type SourceTemplate } from '$lib/admin/identity-mapping-source-templates';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type EditorKind = 'source' | 'destination';
 	type CsvCreateMode = 'upload' | 'manual';
 	type CsvDetailTab = 'summary' | 'parser' | 'columns' | 'warnings';
+	type SourceCreateMode = 'existing' | 'template' | 'manual';
 	type DestinationCreateMode = 'existing' | 'template' | 'manual';
 
 	interface OidcClaimDraft {
 		claimName: string;
 		label: string;
 		valueType: string;
+		examples: unknown[];
+		note: string;
 		allowedValues: string;
 		valueMultiplicity: 'single' | 'multi';
 		nullable: boolean;
@@ -50,6 +55,8 @@
 		label: string;
 		order: number;
 		valueType: string;
+		examples: unknown[];
+		note: string;
 		allowedValues: string;
 		valueMultiplicity: 'single' | 'multi';
 		nullable: boolean;
@@ -67,6 +74,7 @@
 		label: string;
 		nameFormat: string;
 		valueType: string;
+		format: string;
 		examples: unknown[];
 		note: string;
 		allowedValues: string;
@@ -91,11 +99,15 @@
 		'string',
 		'email',
 		'phone',
+		'identifier',
+		'uri',
+		'url',
 		'number',
 		'boolean',
 		'json',
 		'date',
-		'datetime'
+		'datetime',
+		'saml:persistent-nameid'
 	];
 	const valueMultiplicityOptions = ['single', 'multi'] as const;
 	const classificationOptions = ['internal', 'public', 'pii', 'regulated', 'secret'];
@@ -165,6 +177,12 @@
 	let attributeGroups = $state<IdentityMappingAttributeGroup[]>([]);
 	let attributeFields = $state<IdentityMappingAttributeField[]>([]);
 
+	let sourceKind = $state<IdentityMappingSourceType>('csv');
+	let sourceCreateMode = $state<SourceCreateMode>('manual');
+	let selectedExistingSourceId = $state('');
+	let selectedSourceTemplateCategory = $state('');
+	let selectedSourceTemplateId = $state('');
+	let previewSourceTemplate = $state<SourceTemplate | null>(null);
 	let csvMode = $state<CsvCreateMode>('upload');
 	let csvDetailTab = $state<CsvDetailTab>('summary');
 	let editingSourceProfileId = $state<string | null>(null);
@@ -257,14 +275,24 @@
 	let savingRegistry = $state(false);
 
 	const activeCsvSchema = $derived(csvMode === 'manual' ? buildManualCsvSchema() : parsedCsvSchema);
+	const activeSourceSchema = $derived(
+		sourceKind === 'saml' ? buildSamlSourceSchema() : activeCsvSchema
+	);
 	const csvBlockingWarningCount = $derived(getBlockingWarningCount(activeCsvSchema));
+	const sourceBlockingWarningCount = $derived(getBlockingWarningCount(activeSourceSchema));
 	const destinationBlockingWarningCount = $derived(getDestinationBlockingWarningCount());
 	const selectedTemplate = $derived(selectedDestinationTemplate());
-	const canSaveCsv = $derived(
+	const selectedSourceTemplate = $derived(selectedSourceProfileTemplate());
+	const canSaveSource = $derived(
 		Boolean(csvDisplayName.trim()) &&
 			Boolean(csvProfileKey.trim()) &&
-			Boolean(activeCsvSchema) &&
-			(csvBlockingWarningCount === 0 || blockingWarningsConfirmed)
+			Boolean(activeSourceSchema) &&
+			(sourceKind === 'saml'
+				? Boolean(selectedSamlNameIdFormat().trim()) &&
+					Boolean(selectedSamlNameIdValue().trim()) &&
+					samlAttributes.length > 0
+				: true) &&
+			(sourceBlockingWarningCount === 0 || blockingWarningsConfirmed)
 	);
 	const canSaveDestination = $derived(
 		Boolean(destinationDisplayName.trim()) &&
@@ -278,7 +306,7 @@
 					: csvDestinationColumns.length > 0) &&
 			(destinationBlockingWarningCount === 0 || destinationBlockingWarningsConfirmed)
 	);
-	const canSaveCsvDraft = $derived(canSaveCsv && canSaveDraft(sourceProfileVersionState));
+	const canSaveCsvDraft = $derived(canSaveSource && canSaveDraft(sourceProfileVersionState));
 	const canReviewCsvDraft = $derived(
 		Boolean(editingSourceProfileId) &&
 			Boolean(sourceProfileVersionId) &&
@@ -361,8 +389,8 @@
 				return;
 			}
 			editingSourceProfileId = sourceProfile.id;
-			csvMode = 'upload';
-			csvDetailTab = 'columns';
+			sourceKind = sourceProfile.sourceType;
+			sourceCreateMode = 'manual';
 			csvDisplayName = sourceProfile.displayName;
 			csvProfileKey = sourceProfile.profileKey;
 			csvVersionLabel = nextVersionLabel(sourceProfile.version?.versionLabel);
@@ -370,10 +398,9 @@
 			sourceProfileVersionState = sourceProfile.version?.lifecycleState ?? null;
 			selectedCsvFile = null;
 			parsedCsvDraftId = null;
-			parsedCsvSchema = cloneSchema(schema);
-			parsedCsvParserOptions = schema.parser ?? {};
+			loadSourceSchemaDraft(schema);
 			parsedCsvWarningSummary = sourceProfile.version?.warningSummary ?? {};
-			blockingWarningsConfirmed = getBlockingWarningCount(parsedCsvSchema) === 0;
+			blockingWarningsConfirmed = getBlockingWarningCount(activeSourceSchema) === 0;
 			message = $LL.admin_identity_mapping_profile_edit_editing_message({
 				name: sourceProfile.displayName
 			});
@@ -514,7 +541,7 @@
 	}
 
 	async function saveCsvProfile() {
-		const schema = activeCsvSchema;
+		const schema = activeSourceSchema;
 		if (!schema || !canSaveCsvDraft) {
 			message = $LL.admin_identity_mapping_profile_edit_save_csv_required();
 			return;
@@ -523,22 +550,29 @@
 		message = null;
 		try {
 			const request = {
-				sourceType: 'csv' as const,
+				sourceType: sourceKind,
 				profileKey: csvProfileKey.trim(),
 				displayName: csvDisplayName.trim(),
 				versionLabel: csvVersionLabel.trim() || 'v1',
 				parseDraftId:
-					csvMode === 'upload' && !editingSourceProfileId
+					sourceKind === 'csv' && csvMode === 'upload' && !editingSourceProfileId
 						? (parsedCsvDraftId ?? undefined)
 						: undefined,
 				schema,
-				parserOptions: csvMode === 'upload' ? parsedCsvParserOptions : {},
+				parserOptions: sourceKind === 'csv' && csvMode === 'upload' ? parsedCsvParserOptions : {},
 				warningSummary: {
-					...(csvMode === 'manual' ? schema.summary : parsedCsvWarningSummary),
-					confirmedBlockingWarningCount: blockingWarningsConfirmed ? csvBlockingWarningCount : 0
+					...(sourceKind === 'saml'
+						? { blockingWarningCount: sourceBlockingWarningCount }
+						: csvMode === 'manual'
+							? schema.summary
+							: parsedCsvWarningSummary),
+					confirmedBlockingWarningCount: blockingWarningsConfirmed
+						? sourceBlockingWarningCount
+						: 0
 				},
 				sourceMetadata: {
-					creationMode: editingSourceProfileId ? 'edit' : csvMode,
+					creationMode: editingSourceProfileId ? 'edit' : sourceCreateMode,
+					inputMode: sourceKind === 'csv' ? csvMode : 'saml_assertion',
 					rawContentPersisted: false
 				}
 			};
@@ -793,7 +827,7 @@
 	) {
 		const schema = activeCsvSchema;
 		if (!schema) return;
-		const nextColumns = schema.columns.map((column, columnIndex) =>
+		const nextColumns = (schema.columns ?? []).map((column, columnIndex) =>
 			columnIndex === index ? { ...column, [field]: value } : column
 		);
 		if (csvMode === 'manual') manualColumns = nextColumns;
@@ -867,7 +901,7 @@
 	function updateSamlAttribute(
 		index: number,
 		field: keyof SamlAttributeDraft,
-		value: string | boolean
+		value: string | boolean | unknown[]
 	) {
 		samlAttributes = samlAttributes.map((attribute, attributeIndex) =>
 			attributeIndex === index ? { ...attribute, [field]: value } : attribute
@@ -890,6 +924,112 @@
 		fieldSurfaces = checked
 			? Array.from(new Set([...fieldSurfaces, surface]))
 			: fieldSurfaces.filter((item) => item !== surface);
+	}
+
+	function setSourceKind(kind: IdentityMappingSourceType) {
+		sourceKind = kind;
+		sourceAdvancedSettings = false;
+		selectedExistingSourceId = '';
+		selectedSourceTemplateCategory = '';
+		selectedSourceTemplateId = '';
+		if (kind === 'csv') {
+			csvDetailTab = 'columns';
+			return;
+		}
+		csvMode = 'manual';
+	}
+
+	function sourceProfilesForCurrentKind() {
+		return sourceProfiles.filter((profile) => profile.sourceType === sourceKind);
+	}
+
+	function sourceTemplatesForCurrentKind() {
+		return sourceTemplates.filter((template) => template.sourceType === sourceKind);
+	}
+
+	function sourceTemplateCategories() {
+		return Array.from(new Set(sourceTemplatesForCurrentKind().map((template) => template.category)));
+	}
+
+	function sourceTemplateCategoryCount(category: string) {
+		return sourceTemplatesForCurrentKind().filter((template) => template.category === category).length;
+	}
+
+	function currentSourceTemplateCategory() {
+		const categories = sourceTemplateCategories();
+		return categories.includes(selectedSourceTemplateCategory)
+			? selectedSourceTemplateCategory
+			: (categories[0] ?? '');
+	}
+
+	function sourceTemplatesForCurrentCategory() {
+		const category = currentSourceTemplateCategory();
+		return sourceTemplatesForCurrentKind().filter((template) => template.category === category);
+	}
+
+	function selectedSourceProfileTemplate() {
+		const templates = sourceTemplatesForCurrentCategory();
+		return (
+			templates.find((template) => template.id === selectedSourceTemplateId) ?? templates[0] ?? null
+		);
+	}
+
+	function sourceTemplatePreviewRows(template: SourceTemplate | null): TemplatePreviewRow[] {
+		if (!template) return [];
+		if (template.sourceType === 'saml' && Array.isArray(template.schema.attributes)) {
+			return template.schema.attributes.filter(isRecord).map((attribute) => ({
+				name: String(attribute.name ?? ''),
+				label: String(attribute.label ?? attribute.name ?? ''),
+				type: String(attribute.valueType ?? 'string'),
+				required: Boolean(attribute.required)
+			}));
+		}
+		if (Array.isArray(template.schema.columns)) {
+			return template.schema.columns.filter(isRecord).map((column) => ({
+				name: String(column.headerName ?? column.columnName ?? ''),
+				label: String(column.label ?? column.headerName ?? column.columnName ?? ''),
+				type: String(column.valueType ?? 'string'),
+				required: Boolean(column.required)
+			}));
+		}
+		return [];
+	}
+
+	function copyExistingSourceProfile() {
+		const selected = sourceProfiles.find((profile) => profile.id === selectedExistingSourceId);
+		const schema = selected?.version?.schema;
+		if (!selected || !schema) {
+			message = $LL.admin_identity_mapping_profile_edit_existing_schema_required();
+			return;
+		}
+
+		const copyDisplayName = uniqueCopyDisplayName(
+			selected.displayName,
+			sourceProfiles.map((profile) => profile.displayName)
+		);
+		editingSourceProfileId = null;
+		sourceKind = selected.sourceType;
+		csvDisplayName = copyDisplayName;
+		csvProfileKey = uniqueProfileKey(copyDisplayName, sourceProfiles);
+		csvVersionLabel = 'v1';
+		loadSourceSchemaDraft(schema);
+		blockingWarningsConfirmed = getBlockingWarningCount(activeSourceSchema) === 0;
+		message = $LL.admin_identity_mapping_profile_edit_copied_existing({
+			name: selected.displayName
+		});
+	}
+
+	function copySourceTemplate(template: SourceTemplate) {
+		editorKind = 'source';
+		resetCsvComposer();
+		sourceKind = template.sourceType;
+		csvDisplayName = template.displayName.replace(/^Standard /, '');
+		csvProfileKey = uniqueProfileKey(template.profileKey, sourceProfiles);
+		loadSourceSchemaDraft(template.schema);
+		previewSourceTemplate = null;
+		message = $LL.admin_identity_mapping_profile_edit_copied_template({
+			name: template.displayName
+		});
 	}
 
 	function setDestinationKind(kind: IdentityMappingDestinationType) {
@@ -1061,6 +1201,8 @@
 			claimName,
 			label,
 			valueType,
+			examples: [],
+			note: '',
 			allowedValues: '',
 			valueMultiplicity: 'single',
 			nullable: false,
@@ -1086,6 +1228,8 @@
 			label,
 			order,
 			valueType,
+			examples: [],
+			note: '',
 			allowedValues: '',
 			valueMultiplicity: 'single',
 			nullable: false,
@@ -1110,6 +1254,7 @@
 			label,
 			nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
 			valueType,
+			format: '',
 			examples: [],
 			note: '',
 			allowedValues: '',
@@ -1140,6 +1285,31 @@
 		};
 	}
 
+	function buildSamlSourceSchema(): IdentityMappingSourceProfileSchema {
+		return {
+			sourceType: 'saml',
+			samlFlow: 'inbound',
+			nameId: {
+				format: selectedSamlNameIdFormat(),
+				source: selectedSamlNameIdValue()
+			},
+			attributes: samlAttributes.map((attribute) => ({
+				name: attribute.name.trim(),
+				label: attribute.label.trim() || attribute.name.trim(),
+				nameFormat: attribute.nameFormat.trim(),
+				valueType: attribute.valueType,
+				format: attribute.format.trim() || undefined,
+				examples: attribute.examples,
+				note: attribute.note.trim() || undefined,
+				allowedValues: splitCsv(attribute.allowedValues),
+				valueMultiplicity: attribute.valueMultiplicity,
+				nullable: attribute.nullable,
+				classification: attribute.classification,
+				required: attribute.required
+			}))
+		};
+	}
+
 	function buildOidcDestinationSchema(): Record<string, unknown> {
 		return {
 			destinationType: 'oidc',
@@ -1151,6 +1321,8 @@
 				claimName: claim.claimName.trim(),
 				label: claim.label.trim() || claim.claimName.trim(),
 				valueType: claim.valueType,
+				examples: claim.examples,
+				note: claim.note.trim() || undefined,
 				allowedValues: splitCsv(claim.allowedValues),
 				valueMultiplicity: claim.valueMultiplicity,
 				nullable: claim.nullable,
@@ -1185,6 +1357,8 @@
 				label: column.label.trim() || column.columnName.trim(),
 				order: column.order,
 				valueType: column.valueType,
+				examples: column.examples,
+				note: column.note.trim() || undefined,
 				allowedValues: splitCsv(column.allowedValues),
 				valueMultiplicity: column.valueMultiplicity,
 				nullable: column.nullable,
@@ -1216,6 +1390,7 @@
 				label: attribute.label.trim() || attribute.name.trim(),
 				nameFormat: attribute.nameFormat.trim(),
 				valueType: attribute.valueType,
+				format: attribute.format.trim() || undefined,
 				examples: attribute.examples,
 				note: attribute.note.trim() || undefined,
 				allowedValues: splitCsv(attribute.allowedValues),
@@ -1238,6 +1413,67 @@
 		};
 	}
 
+	function loadSourceSchemaDraft(schema: IdentityMappingSourceProfileSchema | Record<string, unknown>) {
+		if (schema.sourceType === 'saml') {
+			sourceKind = 'saml';
+			csvMode = 'manual';
+			parsedCsvDraftId = null;
+			parsedCsvSchema = null;
+			parsedCsvParserOptions = {};
+			parsedCsvWarningSummary = {};
+			const nameId = isRecord(schema.nameId) ? schema.nameId : {};
+			setSamlNameIdFormat(String(nameId.format ?? persistentNameIdFormat));
+			setSamlNameIdValue(String(nameId.source ?? 'subject_identifier'));
+			samlAttributes = Array.isArray(schema.attributes)
+				? schema.attributes.filter(isRecord).map((attribute) => ({
+						...createSamlAttributeDraft(
+							String(attribute.name ?? ''),
+							String(attribute.label ?? attribute.name ?? ''),
+							String(attribute.valueType ?? 'string'),
+							String(attribute.classification ?? 'internal')
+						),
+						nameFormat: String(
+							attribute.nameFormat ?? 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri'
+						),
+						format: String(attribute.format ?? ''),
+						required: Boolean(attribute.required),
+						examples: Array.isArray(attribute.examples) ? attribute.examples : [],
+						note: String(attribute.note ?? ''),
+						allowedValues: Array.isArray(attribute.allowedValues)
+							? attribute.allowedValues.map(String).join(',')
+							: '',
+						valueMultiplicity: attribute.valueMultiplicity === 'multi' ? 'multi' : 'single',
+						nullable: Boolean(attribute.nullable)
+					}))
+				: [createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')];
+			return;
+		}
+
+		sourceKind = 'csv';
+		csvDetailTab = 'columns';
+		parsedCsvSchema = cloneSchema(schema as IdentityMappingSourceProfileSchema);
+		parsedCsvParserOptions = isRecord(schema.parser) ? schema.parser : {};
+		manualColumns = Array.isArray(schema.columns)
+			? schema.columns.filter(isRecord).map((column, index) => ({
+					...createManualColumn(
+						String(column.headerName ?? column.columnName ?? `column_${index + 1}`),
+						String(column.label ?? column.headerName ?? column.columnName ?? `Column ${index + 1}`),
+						String(column.valueType ?? 'string')
+					),
+					...column,
+					allowedValues: Array.isArray(column.allowedValues)
+						? column.allowedValues.map(String)
+						: [],
+					examples: Array.isArray(column.examples) ? column.examples : [],
+					note: column.note == null ? null : String(column.note),
+					valueMultiplicity: column.valueMultiplicity === 'multi' ? 'multi' : 'single',
+					nullable: Boolean(column.nullable),
+					required: Boolean(column.required),
+					classification: String(column.classification ?? 'internal')
+				}))
+			: [createManualColumn('email', 'Email', 'email')];
+	}
+
 	function loadDestinationSchemaDraft(schema: Record<string, unknown>) {
 		destinationProtocolSchemaRef = getProtocolSchemaRef(schema);
 		if (schema.destinationType === 'csv') {
@@ -1258,6 +1494,8 @@
 								String(column.valueType ?? 'string'),
 								String(column.classification ?? 'internal')
 							),
+							examples: Array.isArray(column.examples) ? column.examples : [],
+							note: String(column.note ?? ''),
 							required: Boolean(column.required),
 							allowedValues: Array.isArray(column.allowedValues)
 								? column.allowedValues.map(String).join(',')
@@ -1292,6 +1530,7 @@
 							nameFormat: String(
 								attribute.nameFormat ?? 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri'
 							),
+							format: String(attribute.format ?? ''),
 							required: Boolean(attribute.required),
 							examples: Array.isArray(attribute.examples) ? attribute.examples : [],
 							note: String(attribute.note ?? ''),
@@ -1332,6 +1571,8 @@
 								: ['userinfo'],
 							Array.isArray(claim.requiredScopes) ? claim.requiredScopes.map(String).join(',') : ''
 						),
+						examples: Array.isArray(claim.examples) ? claim.examples : [],
+						note: String(claim.note ?? ''),
 						allowedValues: Array.isArray(claim.allowedValues)
 							? claim.allowedValues.map(String).join(',')
 							: '',
@@ -1370,7 +1611,7 @@
 		const summaryCount = schema?.summary?.blockingWarningCount;
 		if (typeof summaryCount === 'number') return summaryCount;
 		return (
-			schema?.columns.filter(
+			schema?.columns?.filter(
 				(column) =>
 					column.candidates?.classification === 'pii' ||
 					column.candidates?.classification === 'regulated'
@@ -1402,6 +1643,12 @@
 
 	function resetCsvComposer() {
 		editingSourceProfileId = null;
+		sourceKind = 'csv';
+		sourceCreateMode = 'manual';
+		selectedExistingSourceId = '';
+		selectedSourceTemplateCategory = '';
+		selectedSourceTemplateId = '';
+		previewSourceTemplate = null;
 		csvMode = 'upload';
 		csvDetailTab = 'summary';
 		csvDisplayName = '';
@@ -1475,10 +1722,12 @@
 	): IdentityMappingSourceProfileSchema {
 		return {
 			...schema,
-			columns: schema.columns.map((column) => ({
+			columns: schema.columns?.map((column) => ({
 				...column,
 				candidates: { ...column.candidates }
 			})),
+			attributes: schema.attributes?.map((attribute) => ({ ...attribute })),
+			nameId: schema.nameId ? { ...schema.nameId } : undefined,
 			warnings: schema.warnings?.map((warning) => ({ ...warning })),
 			summary: schema.summary ? { ...schema.summary } : {}
 		};
@@ -1634,17 +1883,17 @@
 			{#if editorKind === 'source'}
 				<button
 					type="button"
-					class:active={csvMode === 'upload'}
-					onclick={() => (csvMode = 'upload')}
+					class:active={sourceKind === 'csv'}
+					onclick={() => setSourceKind('csv')}
 				>
 					CSV
 				</button>
 				<button
 					type="button"
-					class:active={csvMode === 'manual'}
-					onclick={() => (csvMode = 'manual')}
+					class:active={sourceKind === 'saml'}
+					onclick={() => setSourceKind('saml')}
 				>
-					{$LL.admin_identity_mapping_profile_edit_manual()}
+					SAML
 				</button>
 			{:else}
 				<button
@@ -1671,6 +1920,134 @@
 			<div class="empty-state">{$LL.admin_identity_mapping_profile_edit_loading()}</div>
 		</section>
 	{:else if editorKind === 'source'}
+		{#if !getRequestedId()}
+			<section class="panel">
+				<div class="panel-heading">
+					<div>
+						<p class="eyebrow">{$LL.admin_identity_mapping_profile_edit_create_method()}</p>
+						<h2>{$LL.admin_identity_mapping_profile_edit_start_from_source()}</h2>
+					</div>
+				</div>
+				<div class="profile-tabs" aria-label="Source profile creation method">
+					<button
+						type="button"
+						class:active={sourceCreateMode === 'existing'}
+						onclick={() => (sourceCreateMode = 'existing')}
+					>
+						{$LL.admin_identity_mapping_profile_edit_create_from_existing()}
+					</button>
+					<button
+						type="button"
+						class:active={sourceCreateMode === 'template'}
+						onclick={() => (sourceCreateMode = 'template')}
+					>
+						{$LL.admin_identity_mapping_profile_edit_create_from_template()}
+					</button>
+					<button
+						type="button"
+						class:active={sourceCreateMode === 'manual'}
+						onclick={() => (sourceCreateMode = 'manual')}
+					>
+						{$LL.admin_identity_mapping_profile_edit_manual()}
+					</button>
+				</div>
+
+				{#if sourceCreateMode === 'existing'}
+					<div class="creation-source-grid">
+						<label>
+							<span>Existing {sourceKind.toUpperCase()} source</span>
+							<select
+								value={selectedExistingSourceId}
+								onchange={(event) => (selectedExistingSourceId = getInputValue(event))}
+							>
+								<option value="">Choose source profile</option>
+								{#each sourceProfilesForCurrentKind() as profile (profile.id)}
+									<option value={profile.id}>{profile.displayName}</option>
+								{/each}
+							</select>
+						</label>
+						<button
+							type="button"
+							onclick={copyExistingSourceProfile}
+							disabled={!selectedExistingSourceId}
+						>
+							{$LL.admin_identity_mapping_profile_edit_copy()}
+						</button>
+					</div>
+				{:else if sourceCreateMode === 'template'}
+					<div
+						class="template-browser"
+						aria-label={$LL.admin_identity_mapping_profile_edit_template_browser_aria()}
+					>
+						<div class="template-pane template-category-pane">
+							{#each sourceTemplateCategories() as category (category)}
+								<button
+									type="button"
+									class:active={currentSourceTemplateCategory() === category}
+									onclick={() => {
+										selectedSourceTemplateCategory = category;
+										selectedSourceTemplateId = '';
+									}}
+								>
+									<i
+										class={`template-category-icon ${templateCategoryIcon(category)}`}
+										aria-hidden="true"
+									></i>
+									<span>{category}</span>
+									<small>({sourceTemplateCategoryCount(category)})</small>
+								</button>
+							{/each}
+						</div>
+						<div class="template-pane">
+							{#each sourceTemplatesForCurrentCategory() as template (template.id)}
+								<button
+									type="button"
+									class:active={selectedSourceProfileTemplate()?.id === template.id}
+									onclick={() => (selectedSourceTemplateId = template.id)}
+								>
+									{template.displayName}
+								</button>
+							{/each}
+						</div>
+						<div class="template-detail">
+							{#if selectedSourceTemplate}
+								<span>Template / {selectedSourceTemplate.sourceType.toUpperCase()}</span>
+								<strong>{selectedSourceTemplate.displayName}</strong>
+								<p>{selectedSourceTemplate.description}</p>
+								<dl>
+									<div>
+										<dt>{$LL.admin_identity_mapping_profile_edit_version()}</dt>
+										<dd>{selectedSourceTemplate.version}</dd>
+									</div>
+									<div>
+										<dt>{$LL.admin_identity_mapping_profile_edit_updated()}</dt>
+										<dd>{selectedSourceTemplate.updatedAt}</dd>
+									</div>
+								</dl>
+								<div class="template-detail-actions">
+									<button
+										type="button"
+										onclick={() => (previewSourceTemplate = selectedSourceTemplate)}
+									>
+										{$LL.admin_identity_mapping_profile_edit_preview()}
+									</button>
+									<button type="button" onclick={() => copySourceTemplate(selectedSourceTemplate)}>
+										{$LL.admin_identity_mapping_profile_edit_use_template()}
+									</button>
+								</div>
+							{:else}
+								<div class="empty-state">
+									{$LL.admin_identity_mapping_profile_edit_no_templates()}
+								</div>
+							{/if}
+						</div>
+					</div>
+				{:else}
+					<div class="empty-state">Blank {sourceKind.toUpperCase()} source profile</div>
+				{/if}
+			</section>
+		{/if}
+
 		<section class="panel">
 			<div class="panel-heading">
 				<div>
@@ -1679,7 +2056,7 @@
 							? $LL.admin_identity_mapping_profile_edit_edit_source()
 							: $LL.admin_identity_mapping_profile_edit_create_source()}
 					</p>
-					<h2>{$LL.admin_identity_mapping_profile_edit_csv_source_profile()}</h2>
+					<h2>{sourceKind.toUpperCase()} source profile</h2>
 				</div>
 			</div>
 
@@ -1696,6 +2073,24 @@
 					/>
 				</label>
 			</div>
+
+			{#if sourceKind === 'csv'}
+				<div class="profile-tabs" aria-label="CSV source input mode">
+					<button
+						type="button"
+						class:active={csvMode === 'upload'}
+						onclick={() => (csvMode = 'upload')}
+					>
+						CSV upload
+					</button>
+					<button
+						type="button"
+						class:active={csvMode === 'manual'}
+						onclick={() => (csvMode = 'manual')}
+					>
+						Manual columns
+					</button>
+				</div>
 
 			{#if csvMode === 'upload'}
 				<div class="settings-grid parser-grid">
@@ -1784,7 +2179,7 @@
 						<div class="metrics-grid">
 							<div>
 								<span>{$LL.admin_identity_mapping_profile_edit_columns()}</span><strong
-									>{activeCsvSchema.columns.length}</strong
+									>{activeCsvSchema.columns?.length ?? 0}</strong
 								>
 							</div>
 							<div>
@@ -1844,7 +2239,7 @@
 										>{$LL.admin_identity_mapping_profile_edit_examples()}</span
 									><span>{$LL.admin_identity_mapping_profile_edit_note()}</span>{/if}<span></span>
 							</div>
-							{#each activeCsvSchema.columns as column, index (column.stableColumnId)}
+							{#each activeCsvSchema.columns ?? [] as column, index (column.stableColumnId)}
 								<div class="column-row" class:advanced={sourceAdvancedSettings}>
 									<input
 										value={column.headerName}
@@ -1943,6 +2338,168 @@
 					/>
 					<span>{$LL.admin_identity_mapping_profile_edit_confirm_csv_warnings()}</span>
 				</label>
+			{/if}
+			{:else}
+				<div class="settings-grid">
+					<label>
+						<span>{$LL.admin_identity_mapping_profile_edit_nameid_format()}</span>
+						<select
+							value={samlNameIdFormatOption}
+							onchange={(event) => setSamlNameIdFormatOption(getInputValue(event))}
+						>
+							{#each samlNameIdFormatOptions as option (option.value)}
+								<option value={option.value}>{option.label}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						<span>{$LL.admin_identity_mapping_profile_edit_nameid_value()}</span>
+						<select
+							value={samlNameIdValueOption}
+							onchange={(event) => setSamlNameIdValueOption(getInputValue(event))}
+						>
+							{#each samlNameIdValueOptions as option (option.value)}
+								<option value={option.value}>{option.label}</option>
+							{/each}
+						</select>
+					</label>
+					{#if samlNameIdFormatOption === customOptionValue}
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_custom_nameid_format()}</span>
+							<input
+								value={customSamlNameIdFormat}
+								placeholder={$LL.admin_identity_mapping_profile_edit_nameid_format_placeholder()}
+								oninput={(event) => (customSamlNameIdFormat = getInputValue(event))}
+							/>
+						</label>
+					{/if}
+					{#if samlNameIdValueOption === customOptionValue}
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_custom_nameid_value()}</span>
+							<input
+								value={customSamlNameIdValue}
+								placeholder={$LL.admin_identity_mapping_profile_edit_nameid_value_placeholder()}
+								oninput={(event) => (customSamlNameIdValue = getInputValue(event))}
+							/>
+						</label>
+					{/if}
+				</div>
+				<p class="profile-note">Inbound SAML assertion attributes expected from the source IdP.</p>
+				<div class="table-toolbar">
+					<span></span>
+					<label class="checkbox-row advanced-toggle">
+						<input
+							type="checkbox"
+							checked={sourceAdvancedSettings}
+							onchange={(event) => (sourceAdvancedSettings = getCheckboxValue(event))}
+						/>
+						<span>{$LL.admin_identity_mapping_profile_edit_advanced_settings()}</span>
+					</label>
+				</div>
+				<div class="saml-attribute-table">
+					<div class="saml-attribute-header" class:advanced={sourceAdvancedSettings}>
+						<span>{$LL.admin_identity_mapping_profile_edit_name()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_label()}</span
+						>{#if sourceAdvancedSettings}<span
+								>{$LL.admin_identity_mapping_profile_edit_name_format()}</span
+							>{/if}<span>{$LL.admin_identity_mapping_profile_edit_type()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
+						><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
+							>{$LL.admin_identity_mapping_profile_edit_required()}</span
+						>{#if sourceAdvancedSettings}<span
+								>{$LL.admin_identity_mapping_profile_edit_examples()}</span
+							><span>{$LL.admin_identity_mapping_profile_edit_note()}</span>{/if}<span></span>
+					</div>
+					{#each samlAttributes as attribute, index (`${attribute.name}-${index}`)}
+						<div class="saml-attribute-row" class:advanced={sourceAdvancedSettings}>
+							<input
+								value={attribute.name}
+								oninput={(event) => updateSamlAttribute(index, 'name', getInputValue(event))}
+							/>
+							<input
+								value={attribute.label}
+								oninput={(event) => updateSamlAttribute(index, 'label', getInputValue(event))}
+							/>
+							{#if sourceAdvancedSettings}
+								<input
+									value={attribute.nameFormat}
+									oninput={(event) =>
+										updateSamlAttribute(index, 'nameFormat', getInputValue(event))}
+								/>
+							{/if}
+							<select
+								value={attribute.valueType}
+								onchange={(event) => updateSamlAttribute(index, 'valueType', getInputValue(event))}
+							>
+								{#each valueTypeOptions as option (option)}<option value={option}>{option}</option
+									>{/each}
+							</select>
+							<input
+								value={attribute.allowedValues}
+								placeholder={$LL.admin_identity_mapping_profile_edit_allowed_values_placeholder()}
+								oninput={(event) =>
+									updateSamlAttribute(index, 'allowedValues', getInputValue(event))}
+							/>
+							<select
+								value={attribute.valueMultiplicity}
+								onchange={(event) =>
+									updateSamlAttribute(index, 'valueMultiplicity', getInputValue(event))}
+							>
+								{#each valueMultiplicityOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+							<label class="mini-check">
+								<input
+									type="checkbox"
+									checked={attribute.nullable}
+									onchange={(event) =>
+										updateSamlAttribute(index, 'nullable', getCheckboxValue(event))}
+								/>
+							</label>
+							<select
+								value={attribute.classification}
+								onchange={(event) =>
+									updateSamlAttribute(index, 'classification', getInputValue(event))}
+							>
+								{#each classificationOptions as option (option)}<option value={option}
+										>{option}</option
+									>{/each}
+							</select>
+							<label class="mini-check">
+								<input
+									type="checkbox"
+									checked={attribute.required}
+									onchange={(event) =>
+										updateSamlAttribute(index, 'required', getCheckboxValue(event))}
+								/>
+							</label>
+							{#if sourceAdvancedSettings}
+								<input
+									value={attribute.examples.map(String).join(',')}
+									placeholder={$LL.admin_identity_mapping_profile_edit_examples_placeholder()}
+									oninput={(event) =>
+										updateSamlAttribute(index, 'examples', splitCsv(getInputValue(event)))}
+								/>
+								<input
+									value={attribute.note}
+									placeholder={$LL.admin_identity_mapping_profile_edit_note_placeholder()}
+									oninput={(event) => updateSamlAttribute(index, 'note', getInputValue(event))}
+								/>
+							{/if}
+							<button type="button" onclick={() => removeSamlAttribute(index)}
+								>{$LL.admin_identity_mapping_profile_edit_remove()}</button
+							>
+						</div>
+					{/each}
+				</div>
+				<div class="table-add-action">
+					<button type="button" onclick={addSamlAttribute}
+						>{$LL.admin_identity_mapping_profile_edit_add_saml_attribute()}</button
+					>
+				</div>
 			{/if}
 
 			<div class="profile-actions">
@@ -2931,11 +3488,68 @@
 						<span role="cell">{row.name}</span>
 						<span role="cell">{row.label}</span>
 						<span role="cell">{row.type}</span>
-						<span role="cell"
-							>{row.required
-								? $LL.admin_identity_mapping_profile_edit_yes()
-								: $LL.admin_identity_mapping_profile_edit_no()}</span
-						>
+						<span role="cell">
+							{#if row.required}
+								<span class="template-required-badge"> Required </span>
+							{:else}
+								<span class="template-optional-text">
+									{$LL.admin_identity_mapping_profile_edit_no()}
+								</span>
+							{/if}
+						</span>
+					</div>
+				{:else}
+					<div class="template-preview-empty">
+						{$LL.admin_identity_mapping_profile_edit_no_template_attributes()}
+					</div>
+				{/each}
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if previewSourceTemplate}
+	<div class="modal-backdrop">
+		<div
+			class="template-preview-modal"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="source-template-preview-title"
+		>
+			<div class="template-preview-heading">
+				<div>
+					<p class="eyebrow">{$LL.admin_identity_mapping_profile_edit_template_preview()}</p>
+					<h2 id="source-template-preview-title">{previewSourceTemplate.displayName}</h2>
+				</div>
+				<button type="button" onclick={() => (previewSourceTemplate = null)}
+					>{$LL.admin_identity_mapping_profile_edit_close()}</button
+				>
+			</div>
+			<div
+				class="template-preview-table"
+				role="table"
+				aria-label={$LL.admin_identity_mapping_profile_edit_template_attribute_preview_aria()}
+			>
+				<div class="template-preview-row template-preview-header" role="row">
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_name()}</span>
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_label()}</span>
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_type()}</span>
+					<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_required()}</span>
+				</div>
+				{#each sourceTemplatePreviewRows(previewSourceTemplate) as row, index (`${row.name}-${index}`)}
+					<div class="template-preview-row" role="row">
+						<span role="cell">{row.name}</span>
+						<span role="cell">{row.label}</span>
+						<span role="cell">{row.type}</span>
+						<span role="cell">
+							{#if row.required}
+								<span class="template-required-badge"> Required </span>
+							{:else}
+								<span class="template-optional-text">
+									{$LL.admin_identity_mapping_profile_edit_no()}
+								</span>
+							{/if}
+						</span>
 					</div>
 				{:else}
 					<div class="template-preview-empty">
@@ -3274,6 +3888,25 @@
 		font-size: 12px;
 		font-weight: 800;
 		text-transform: uppercase;
+	}
+
+	.template-required-badge {
+		display: inline-flex;
+		align-items: center;
+		width: fit-content;
+		border: 1px solid color-mix(in srgb, #f59e0b 45%, transparent);
+		border-radius: 999px;
+		padding: 2px 8px;
+		background: color-mix(in srgb, #f59e0b 18%, transparent);
+		color: #fbbf24;
+		font-size: 11px;
+		font-weight: 900;
+		line-height: 1.4;
+		text-transform: uppercase;
+	}
+
+	.template-optional-text {
+		color: var(--text-muted);
 	}
 
 	.template-preview-empty {

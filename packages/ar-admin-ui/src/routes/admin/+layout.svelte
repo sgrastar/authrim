@@ -99,7 +99,7 @@
 			}
 		],
 		identitySchema: [
-			{ path: '/admin/custom-claims', label: $LL.admin_nav_schema_settings(), icon: 'i-ph-tag' },
+			{ path: '/admin/schema-settings', label: $LL.admin_nav_schema_settings(), icon: 'i-ph-tag' },
 			{
 				path: '/admin/scim-tokens',
 				label: $LL.admin_nav_scim_tokens(),
@@ -119,13 +119,17 @@
 					label: $LL.admin_nav_mapping_policies()
 				},
 				{
+					href: '/admin/field-mapping/persistent-identifiers',
+					label: $LL.admin_nav_persistent_identifiers()
+				},
+				{
 					href: '/admin/field-mapping/resolution-center',
 					label: $LL.admin_nav_resolution_center()
 				}
 			]
 		},
 		branding: [
-			{ path: '/admin/login-methods', label: $LL.admin_nav_login_methods(), icon: 'i-ph-sign-in' },
+			{ path: '/admin/authentication-methods', label: $LL.admin_nav_authentication_methods(), icon: 'i-ph-sign-in' },
 			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
 			{
 				path: '/admin/tenant-discovery',

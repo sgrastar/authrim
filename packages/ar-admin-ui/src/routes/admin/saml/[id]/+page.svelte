@@ -6,7 +6,6 @@
 	import {
 		adminSAMLAPI,
 		type AttributeReleaseConsentMode,
-		type SAMLAttributePreset,
 		type SAMLJitEmailLinkingPolicy,
 		type SAMLProvider,
 		type SAMLProviderConfig,
@@ -44,7 +43,6 @@
 	];
 
 	let provider = $state<SAMLProvider | null>(null);
-	let presets = $state<SAMLAttributePreset[]>([]);
 	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let loading = $state(true);
 	let saving = $state(false);
@@ -69,7 +67,6 @@
 	let allowRedirect = $state(true);
 	let signAssertions = $state(true);
 	let signResponses = $state(true);
-	let samlProfile = $state('baseline');
 	let authnRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('optional');
 	let logoutRequestSignaturePolicy = $state<'required' | 'optional' | 'disabled'>('required');
 	let authnContextPolicyMode = $state<'observe' | 'require_any'>('observe');
@@ -83,13 +80,25 @@
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
-	let attributePresetId = $state('');
 	let attributeReleaseConsentSetting = $state<'disabled' | AttributeReleaseConsentMode>('disabled');
 	let identityMappingFieldMappingSetId = $state('');
 	let attributeMappingJson = $state('{}');
 	let certificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
 	let certificatePreviewError = $state('');
 	let loadingCertificatePreview = $state(false);
+	const activeFieldMappingSets = $derived(
+		fieldMappingSets.filter((fieldMappingSet) => fieldMappingSet.lifecycleState === 'active')
+	);
+	const selectedInactiveFieldMappingSet = $derived(
+		identityMappingFieldMappingSetId &&
+			!activeFieldMappingSets.some(
+				(fieldMappingSet) => fieldMappingSet.id === identityMappingFieldMappingSetId
+			)
+			? (fieldMappingSets.find(
+					(fieldMappingSet) => fieldMappingSet.id === identityMappingFieldMappingSetId
+				) ?? null)
+			: null
+	);
 
 	onMount(() => {
 		void loadPage();
@@ -100,13 +109,11 @@
 		loading = true;
 		error = '';
 		try {
-			const [loadedProvider, presetResult, fieldMappingResult] = await Promise.all([
+			const [loadedProvider, fieldMappingResult] = await Promise.all([
 				adminSAMLAPI.getProvider(providerId),
-				adminSAMLAPI.listAttributePresets(),
 				adminIdentityMappingAPI.listFieldMappingSets()
 			]);
 			provider = loadedProvider;
-			presets = presetResult.presets;
 			fieldMappingSets = fieldMappingResult.fieldMappingSets;
 			populateForm(loadedProvider);
 		} catch (err) {
@@ -135,7 +142,6 @@
 		allowRedirect = data.config.allowedBindings?.includes('redirect') ?? true;
 		signAssertions = data.config.signAssertions ?? true;
 		signResponses = data.config.signResponses ?? true;
-		samlProfile = data.config.samlProfile || 'baseline';
 		authnRequestSignaturePolicy = data.config.authnRequestSignaturePolicy || 'optional';
 		logoutRequestSignaturePolicy = data.config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = data.config.authnContextPolicy?.mode || 'observe';
@@ -152,7 +158,6 @@
 			'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport';
 		passkeyAuthnContextClassRef =
 			data.config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
-		attributePresetId = data.config.attributePresetId || '';
 		attributeReleaseConsentSetting = data.config.attributeReleaseConsent?.enabled
 			? data.config.attributeReleaseConsent.mode
 			: 'disabled';
@@ -247,16 +252,6 @@
 		return bindings;
 	}
 
-	function selectedPresetConfig(): SAMLProviderConfig {
-		if (provider?.providerType !== 'saml_sp' || !attributePresetId) return {};
-		const preset = presets.find((item) => item.id === attributePresetId);
-		return {
-			attributePresetId,
-			attributePresetVersion: preset?.version,
-			attributeReleasePolicy: preset?.attributeReleasePolicy
-		};
-	}
-
 	function buildConfig(): SAMLProviderConfig {
 		const config: SAMLProviderConfig = {
 			description: description.trim(),
@@ -294,7 +289,6 @@
 			acsUrl: acsUrl.trim(),
 			signAssertions,
 			signResponses,
-			samlProfile,
 			authnRequestSignaturePolicy,
 			logoutRequestSignaturePolicy,
 			authnContextClassRefMode,
@@ -317,8 +311,7 @@
 						destinationNamespace:
 							provider?.config.identityMapping?.destinationNamespace ?? 'saml.attribute'
 					}
-				: undefined,
-			...selectedPresetConfig()
+				: undefined
 		};
 	}
 
@@ -332,6 +325,9 @@
 		}
 		if (provider?.providerType === 'saml_sp' && !acsUrl.trim()) {
 			return $LL.admin_saml_detail_sp_required();
+		}
+		if (provider?.providerType === 'saml_sp' && !identityMappingFieldMappingSetId) {
+			return $LL.admin_saml_detail_identity_mapping_required_error();
 		}
 		parseMapping();
 		return '';
@@ -805,28 +801,6 @@
 
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="samlProfile" class="form-label">{$LL.admin_saml_detail_profile()}</label>
-							<select id="samlProfile" bind:value={samlProfile} class="form-select">
-								<option value="baseline">Baseline</option>
-								<option value="strict">Strict</option>
-								<option value="academic_publisher">Academic Publisher</option>
-								<option value="legacy">Legacy</option>
-							</select>
-						</div>
-
-						<div class="form-group">
-							<label for="attributePreset" class="form-label"
-								>{$LL.admin_saml_detail_attribute_preset()}</label
-							>
-							<select id="attributePreset" bind:value={attributePresetId} class="form-select">
-								<option value="">{$LL.admin_saml_detail_none()}</option>
-								{#each presets as preset (preset.id)}
-									<option value={preset.id}>{preset.label}</option>
-								{/each}
-							</select>
-						</div>
-
-						<div class="form-group">
 							<label for="identityMappingFieldMapping" class="form-label"
 								>{$LL.admin_saml_detail_identity_mapping_policy()}</label
 							>
@@ -836,9 +810,15 @@
 								class="form-select"
 							>
 								<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
-								{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+								{#if selectedInactiveFieldMappingSet}
+									<option value={selectedInactiveFieldMappingSet.id} disabled>
+										{selectedInactiveFieldMappingSet.displayName}
+										({$LL.admin_saml_detail_field_mapping_inactive()})
+									</option>
+								{/if}
+								{#each activeFieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
 									<option value={fieldMappingSet.id}>
-										{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
+										{fieldMappingSet.displayName}
 									</option>
 								{/each}
 							</select>
@@ -887,6 +867,9 @@
 								<option value="required">{$LL.admin_saml_detail_required()}</option>
 								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
+							<p class="field-hint">
+								{$LL.admin_saml_detail_authn_request_signature_hint()}
+							</p>
 						</div>
 
 						<div class="form-group">
@@ -919,6 +902,9 @@
 								<option value="session">{$LL.admin_saml_detail_session_aware()}</option>
 								<option value="legacy_static">{$LL.admin_saml_detail_legacy_static()}</option>
 							</select>
+							<p class="field-hint">
+								{$LL.admin_saml_detail_authn_context_mode_hint()}
+							</p>
 						</div>
 
 						<div class="form-group">
@@ -943,6 +929,9 @@
 								bind:value={passkeyAuthnContextClassRef}
 								class="form-input"
 							/>
+							<p class="field-hint">
+								{$LL.admin_saml_detail_passkey_authn_context_hint()}
+							</p>
 						</div>
 					</div>
 
@@ -1070,6 +1059,13 @@
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		overflow-wrap: anywhere;
+	}
+
+	.field-hint {
+		margin: 4px 0 0;
+		color: var(--text-muted, #9ca3af);
+		font-size: 0.6875rem;
+		line-height: 1.45;
 	}
 
 	.binding-section {

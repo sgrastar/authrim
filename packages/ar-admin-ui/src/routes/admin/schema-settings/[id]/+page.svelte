@@ -185,7 +185,7 @@
 
 		try {
 			await adminCustomClaimsAPI.deleteSchema(schema.id);
-			goto('/admin/custom-claims');
+			goto('/admin/schema-settings');
 		} catch (err) {
 			deleteError = err instanceof Error ? err.message : $LL.admin_custom_claims_delete_failed();
 			deleting = false;
@@ -288,7 +288,7 @@
 <div class="admin-page">
 	<!-- Breadcrumb -->
 	<nav class="breadcrumb mb-4">
-		<a href="/admin/custom-claims" class="breadcrumb-link">{$LL.admin_custom_claims_title()}</a>
+		<a href="/admin/schema-settings" class="breadcrumb-link">{$LL.admin_custom_claims_title()}</a>
 		<span class="breadcrumb-sep">/</span>
 		<span class="breadcrumb-current"
 			>{loading ? '...' : (schema?.display_label ?? schema?.field_key ?? schemaId)}</span
@@ -347,7 +347,7 @@
 				{/if}
 			</div>
 			<div class="page-actions">
-				<a href="/admin/custom-claims" class="btn btn-secondary">
+				<a href="/admin/schema-settings" class="btn btn-secondary">
 					<i class="i-ph-arrow-left"></i>
 					{$LL.admin_custom_claims_back_to_list()}
 				</a>

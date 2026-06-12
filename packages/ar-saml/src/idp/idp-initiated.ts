@@ -19,7 +19,7 @@ import {
   createConfigurationError,
   usesNakedDomainIssuer,
   getLogger,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
@@ -28,7 +28,7 @@ import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
 import { getSamlUserInfoById } from '../common/user-store';
-import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
+import { getSAMLSigningMaterial, resolveSAMLIdPSigningPolicy } from '../common/saml-signing-keys';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSP,
@@ -222,7 +222,7 @@ async function generateIdPInitiatedResponse(
     tenantId,
     role: 'idp',
     counterpartyEntityId: spConfig.entityId,
-    policy: getSAMLSigningPolicy(spConfig),
+    policy: await resolveSAMLIdPSigningPolicy(env, tenantId, spConfig),
   });
 
   const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
@@ -246,6 +246,7 @@ async function generateIdPInitiatedResponse(
   );
   const attributes = buildSAMLAttributesForSP(userInfo, {
     ...spConfig,
+    tenantId,
     localEntityId: idpEntityId,
     identityMapping,
   });
@@ -309,7 +310,7 @@ async function resolveSAMLRuntimeIdentityMapping(
     return configured;
   }
 
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-identity-mapping');
+  const adapter = requireAdminDatabaseAdapter(env, 'saml-identity-mapping');
   const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
     tenantId,
     protocol: 'saml',

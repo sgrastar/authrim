@@ -1,10 +1,10 @@
 /**
  * Branding Store - Manages tenant branding state
  *
- * Provides brand name and logo URL from the login-methods API
+ * Provides brand name and logo URL from the authentication-methods API
  * to all pages via a shared reactive store.
  *
- * Populated in +layout.svelte from fetchLoginMethods() response.
+ * Populated in +layout.svelte from fetchAuthenticationMethods() response.
  */
 
 function createBrandingStore() {

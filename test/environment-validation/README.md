@@ -86,7 +86,7 @@ Main checks:
 - `GET /.well-known/openid-configuration`
 - `GET /.well-known/jwks.json`
 - `GET /api/auth/health`
-- `GET /api/auth/login-methods`
+- `GET /api/auth/authentication-methods`
 - `GET /authorize` expects OP_AUTH `invalid_request`, not router 404
 - `GET /auth/login-challenge?challenge_id=...` expects OP_AUTH `invalid_request`, not router 404
 - when Login UI is enabled, the same OIDC browser-helper probes are also run against the Login UI

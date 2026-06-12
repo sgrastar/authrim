@@ -582,6 +582,7 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
     const authCtx = createAuthContextFromHono(c, tenantId);
     const mapped = await applyOIDCIdentityMapping({
       adapter: authCtx.coreAdapter,
+      env: c.env,
       tenantId,
       clientId,
       selector: clientMetadata.identity_mapping,
@@ -6434,6 +6435,7 @@ async function handleNativeSSOTokenExchange(
   try {
     const mapped = await applyOIDCIdentityMapping({
       adapter: authCtx.coreAdapter,
+      env: c.env,
       tenantId,
       clientId,
       selector: clientMetadata.identity_mapping,

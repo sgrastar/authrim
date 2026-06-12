@@ -25,11 +25,11 @@ import {
 } from '../../core/paths.js';
 import {
   deployAll,
+  buildAndDeployAllSequentially,
   uploadSecrets,
   deployAllUiWorkers,
   deployUiWorkerBindingTargets,
   updateLockWithDeployments,
-  buildApiPackages,
   DEFAULT_INTER_DEPLOY_DELAY_MS,
   type DeployOptions,
 } from '../../core/deploy.js';
@@ -712,31 +712,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
   }
 
-  // Build packages first (unless skipped or dry-run)
-  if (!options.skipBuild && !options.dryRun) {
-    const buildSpinner = ora('Building packages...').start();
-
-    const buildResult = await buildApiPackages({
-      rootDir,
-      onProgress: (msg) => {
-        buildSpinner.text = msg;
-      },
-    });
-
-    if (buildResult.success) {
-      buildSpinner.succeed('Packages built successfully');
-    } else {
-      buildSpinner.fail('Failed to build packages');
-      console.error(chalk.red(`\nBuild error: ${buildResult.error}`));
-      console.log(chalk.yellow('\nYou can try building manually:'));
-      console.log(chalk.cyan('  pnpm install'));
-      console.log(chalk.cyan('  pnpm run build:api'));
-      process.exit(1);
-    }
-
-    console.log('');
-  }
-
   // Upload secrets first (if not skipped)
   if (!options.skipSecrets && !options.component) {
     const keysDir = getResolvedKeysDir();
@@ -861,7 +836,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     console.log('');
   }
 
-  const summary = await deployAll(deployOptions, componentsToDeply);
+  const summary =
+    !options.skipBuild && !options.dryRun
+      ? await buildAndDeployAllSequentially(deployOptions, componentsToDeply)
+      : await deployAll(deployOptions, componentsToDeply);
 
   // Update lock file with deployment results
   if (!options.dryRun && summary.successCount > 0) {

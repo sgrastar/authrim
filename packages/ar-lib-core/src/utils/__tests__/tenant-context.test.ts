@@ -82,7 +82,7 @@ describe('resolveTenantFromRequest', () => {
 
     it('should reject forwarded naked domain when tenant omission is disabled', () => {
       const request = new Request(
-        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/authentication-methods',
         {
           headers: {
             Host: 'test-ar-router.sgrastar.workers.dev',
@@ -98,7 +98,7 @@ describe('resolveTenantFromRequest', () => {
 
     it('should reject generic X-Forwarded-Host when Host is workers.dev', () => {
       const request = new Request(
-        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/authentication-methods',
         {
           headers: {
             Host: 'test-ar-router.sgrastar.workers.dev',
@@ -114,7 +114,7 @@ describe('resolveTenantFromRequest', () => {
 
     it('should not let forwarded tenant host override an unrecognized Host', () => {
       const request = new Request(
-        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/authentication-methods',
         {
           headers: {
             Host: 'test-ar-router.sgrastar.workers.dev',
@@ -131,7 +131,7 @@ describe('resolveTenantFromRequest', () => {
 
     it('should not let forwarded naked domain override an unrecognized Host', () => {
       const request = new Request(
-        'https://test-ar-router.sgrastar.workers.dev/api/auth/login-methods',
+        'https://test-ar-router.sgrastar.workers.dev/api/auth/authentication-methods',
         {
           headers: {
             Host: 'test-ar-router.sgrastar.workers.dev',
@@ -149,7 +149,7 @@ describe('resolveTenantFromRequest', () => {
     });
 
     it('should prefer Host when it already resolves to a tenant', () => {
-      const request = new Request('https://acme.test.authrim.com/api/auth/login-methods', {
+      const request = new Request('https://acme.test.authrim.com/api/auth/authentication-methods', {
         headers: {
           Host: 'acme.test.authrim.com',
           'X-Forwarded-Host': 'test.authrim.com',

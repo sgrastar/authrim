@@ -1,16 +1,16 @@
 /**
- * Login Methods API
+ * Authentication Methods API
  *
- * Public endpoint to retrieve available login methods and UI configuration.
+ * Public endpoint to retrieve available authentication methods and UI configuration.
  * Used by Login UI to dynamically render authentication options.
  *
- * GET /api/auth/login-methods
+ * GET /api/auth/authentication-methods
  *   - No authentication required (public endpoint)
  *   - Rate limited with lenient profile
- *   - Returns enabled login methods + UI config
+ *   - Returns enabled authentication methods + UI config
  *
  * Data sources:
- *   - SETTINGS KV ("settings:tenant:{tenantId}:login-methods") → built-in and external methods
+ *   - SETTINGS KV ("settings:tenant:{tenantId}:authentication-methods") → built-in and external methods
  *   - SETTINGS KV ("settings:tenant:{tenantId}:login-ui") → UI theme
  *   - EXTERNAL_IDP service binding → enabled external login providers
  *
@@ -67,6 +67,9 @@ interface ExternalLoginProvider {
   enabled: boolean;
   loginEnabled: boolean;
   signupEnabled: boolean;
+  reauthEnabled: boolean;
+  accountLinkEnabled: boolean;
+  autoLinkEmail?: boolean;
   slug?: string;
   iconUrl?: string;
   iconName?: string;
@@ -75,16 +78,16 @@ interface ExternalLoginProvider {
   startUrl?: string;
 }
 
-interface ExternalLoginMethod {
+interface ExternalAuthenticationMethod {
   enabled: boolean;
   providers: ExternalLoginProvider[];
 }
 
-interface LoginMethods {
+interface AuthenticationMethods {
   passkey: PasskeyMethod;
   emailCode: EmailCodeMethod;
   directoryPassword: DirectoryPasswordMethod;
-  external: ExternalLoginMethod;
+  external: ExternalAuthenticationMethod;
 }
 
 interface UIConfig {
@@ -112,18 +115,18 @@ interface UIConfig {
   supportedLocales: string[];
 }
 
-interface LoginMethodsMeta {
+interface AuthenticationMethodsMeta {
   cacheTTL: number;
   revision: string;
 }
 
-interface LoginMethodsResponse {
-  methods: LoginMethods;
+interface AuthenticationMethodsResponse {
+  methods: AuthenticationMethods;
   ui: UIConfig;
-  meta: LoginMethodsMeta;
+  meta: AuthenticationMethodsMeta;
 }
 
-interface LoginMethodsErrorResponse {
+interface AuthenticationMethodsErrorResponse {
   error: {
     code: string;
     message: string;
@@ -252,21 +255,22 @@ interface LoginUIKVSettings {
   'login-ui.custom_blocks'?: string;
 }
 
-interface LoginMethodKVSettings {
-  'login-methods.cache_ttl'?: number;
-  'login-methods.passkey.enabled'?: boolean | string;
-  'login-methods.passkey.login_enabled'?: boolean | string;
-  'login-methods.passkey.signup_enabled'?: boolean | string;
-  'login-methods.passkey.reauth_enabled'?: boolean | string;
-  'login-methods.passkey.account_link_enabled'?: boolean | string;
-  'login-methods.email_otp.enabled'?: boolean | string;
-  'login-methods.email_otp.login_enabled'?: boolean | string;
-  'login-methods.email_otp.signup_enabled'?: boolean | string;
-  'login-methods.email_otp.reauth_enabled'?: boolean | string;
-  'login-methods.email_otp.account_link_enabled'?: boolean | string;
-  'login-methods.external_providers'?: string | ExternalLoginProviderConfig[];
-  'login-methods.directory_password.enabled'?: boolean | string;
-  'login-methods.directory_password.label'?: string;
+interface AuthenticationMethodKVSettings {
+  'authentication-methods.cache_ttl'?: number;
+  'authentication-methods.passkey.enabled'?: boolean | string;
+  'authentication-methods.passkey.login_enabled'?: boolean | string;
+  'authentication-methods.passkey.signup_enabled'?: boolean | string;
+  'authentication-methods.passkey.reauth_enabled'?: boolean | string;
+  'authentication-methods.passkey.account_link_enabled'?: boolean | string;
+  'authentication-methods.email_otp.enabled'?: boolean | string;
+  'authentication-methods.email_otp.login_enabled'?: boolean | string;
+  'authentication-methods.email_otp.signup_enabled'?: boolean | string;
+  'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
+  'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
+  'authentication-methods.external_provider_usage'?: string | ExternalLoginProviderUsageConfig[];
+  'authentication-methods.external_providers'?: string | ExternalLoginProviderConfig[];
+  'authentication-methods.directory_password.enabled'?: boolean | string;
+  'authentication-methods.directory_password.label'?: string;
 }
 
 interface ExternalLoginProviderConfig {
@@ -283,6 +287,17 @@ interface ExternalLoginProviderConfig {
   enabled?: boolean;
   loginEnabled?: boolean;
   signupEnabled?: boolean;
+  reauthEnabled?: boolean;
+  accountLinkEnabled?: boolean;
+}
+
+interface ExternalLoginProviderUsageConfig {
+  id?: string;
+  providerId?: string;
+  loginEnabled?: boolean;
+  signupEnabled?: boolean;
+  reauthEnabled?: boolean;
+  accountLinkEnabled?: boolean;
 }
 
 /**
@@ -531,6 +546,7 @@ async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvi
         iconName?: string;
         buttonColor?: string;
         buttonText?: string;
+        autoLinkEmail?: boolean;
         enabled?: boolean;
       }>;
     };
@@ -554,6 +570,9 @@ async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvi
           enabled: true,
           loginEnabled: true,
           signupEnabled: true,
+          reauthEnabled: true,
+          accountLinkEnabled: p.autoLinkEmail !== false,
+          autoLinkEmail: p.autoLinkEmail !== false,
           slug: p.slug ? truncateString(p.slug) : undefined,
           iconUrl: isValidHttpsUrl(p.iconUrl) ? p.iconUrl : undefined,
           iconName: normalizeLoginProviderIconName(p.iconName),
@@ -572,9 +591,13 @@ async function fetchSAMLLoginProviders(
   tenantId: string
 ): Promise<ExternalLoginProvider[]> {
   try {
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'login-methods-saml', {
-      tenantId,
-    });
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'authentication-methods-saml',
+      {
+        tenantId,
+      }
+    );
     const rows = await adapter.query<{ id: string; name: string; config_json: string }>(
       `SELECT id, name, config_json
        FROM identity_providers
@@ -594,6 +617,9 @@ async function fetchSAMLLoginProviders(
         enabled: true,
         loginEnabled: true,
         signupEnabled: true,
+        reauthEnabled: true,
+        accountLinkEnabled: true,
+        autoLinkEmail: true,
         iconUrl: getSAMLProviderLogoUrl(row.config_json),
         iconName: getSAMLProviderIconName(row.config_json),
         startUrl: buildSAMLSPLoginStartUrl(row.id),
@@ -626,11 +652,11 @@ async function fetchConfiguredExternalLoginProviders(
   tenantId: string
 ): Promise<ExternalLoginProvider[]> {
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (!kvJson) return [];
 
-    const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
-    const rawProviders = kvSettings['login-methods.external_providers'];
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+    const rawProviders = kvSettings['authentication-methods.external_providers'];
     const providers =
       typeof rawProviders === 'string'
         ? safeParseJsonArray<ExternalLoginProviderConfig>(rawProviders)
@@ -652,14 +678,19 @@ async function fetchConfiguredExternalLoginProviders(
         const legacyEnabled = provider.enabled !== false;
         const loginEnabled = normalizeBoolean(provider.loginEnabled, legacyEnabled);
         const signupEnabled = normalizeBoolean(provider.signupEnabled, legacyEnabled);
+        const reauthEnabled = normalizeBoolean(provider.reauthEnabled, loginEnabled);
+        const accountLinkEnabled = normalizeBoolean(provider.accountLinkEnabled, legacyEnabled);
         return {
           id: truncateString(provider.id),
           name: truncateString(provider.name),
           type,
           startMode: normalizeExternalStartMode(provider.startMode, type),
-          enabled: legacyEnabled && (loginEnabled || signupEnabled),
+          enabled: legacyEnabled && (loginEnabled || signupEnabled || reauthEnabled),
           loginEnabled,
           signupEnabled,
+          reauthEnabled,
+          accountLinkEnabled,
+          autoLinkEmail: accountLinkEnabled,
           slug: provider.slug ? truncateString(provider.slug) : undefined,
           iconUrl: isValidHttpsUrl(provider.iconUrl) ? provider.iconUrl : undefined,
           iconName: normalizeLoginProviderIconName(provider.iconName),
@@ -690,7 +721,7 @@ interface BuiltInMethodsResolved {
   emailCodeAccountLinkEnabled: boolean;
 }
 
-async function resolveBuiltInLoginMethods(
+async function resolveBuiltInAuthenticationMethods(
   env: Env,
   tenantId: string
 ): Promise<BuiltInMethodsResolved> {
@@ -706,43 +737,43 @@ async function resolveBuiltInLoginMethods(
   };
 
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (!kvJson) return defaults;
 
-    const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
-    const legacyPasskeyEnabled = kvSettings['login-methods.passkey.enabled'];
-    const legacyEmailOtpEnabled = kvSettings['login-methods.email_otp.enabled'];
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+    const legacyPasskeyEnabled = kvSettings['authentication-methods.passkey.enabled'];
+    const legacyEmailOtpEnabled = kvSettings['authentication-methods.email_otp.enabled'];
     return {
       passkeyLoginEnabled: normalizeBoolean(
-        kvSettings['login-methods.passkey.login_enabled'],
+        kvSettings['authentication-methods.passkey.login_enabled'],
         normalizeBoolean(legacyPasskeyEnabled, defaults.passkeyLoginEnabled)
       ),
       passkeySignupEnabled: normalizeBoolean(
-        kvSettings['login-methods.passkey.signup_enabled'],
+        kvSettings['authentication-methods.passkey.signup_enabled'],
         normalizeBoolean(legacyPasskeyEnabled, defaults.passkeySignupEnabled)
       ),
       passkeyReauthEnabled: normalizeBoolean(
-        kvSettings['login-methods.passkey.reauth_enabled'],
+        kvSettings['authentication-methods.passkey.reauth_enabled'],
         normalizeBoolean(legacyPasskeyEnabled, defaults.passkeyReauthEnabled)
       ),
       passkeyAccountLinkEnabled: normalizeBoolean(
-        kvSettings['login-methods.passkey.account_link_enabled'],
+        kvSettings['authentication-methods.passkey.account_link_enabled'],
         normalizeBoolean(legacyPasskeyEnabled, defaults.passkeyAccountLinkEnabled)
       ),
       emailCodeLoginEnabled: normalizeBoolean(
-        kvSettings['login-methods.email_otp.login_enabled'],
+        kvSettings['authentication-methods.email_otp.login_enabled'],
         normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeLoginEnabled)
       ),
       emailCodeSignupEnabled: normalizeBoolean(
-        kvSettings['login-methods.email_otp.signup_enabled'],
+        kvSettings['authentication-methods.email_otp.signup_enabled'],
         normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeSignupEnabled)
       ),
       emailCodeReauthEnabled: normalizeBoolean(
-        kvSettings['login-methods.email_otp.reauth_enabled'],
+        kvSettings['authentication-methods.email_otp.reauth_enabled'],
         normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeReauthEnabled)
       ),
       emailCodeAccountLinkEnabled: normalizeBoolean(
-        kvSettings['login-methods.email_otp.account_link_enabled'],
+        kvSettings['authentication-methods.email_otp.account_link_enabled'],
         normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeAccountLinkEnabled)
       ),
     };
@@ -761,17 +792,18 @@ async function resolveDirectoryPasswordMethod(
   };
 
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (!kvJson) return defaults;
 
-    const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
     return {
       enabled: normalizeBoolean(
-        kvSettings['login-methods.directory_password.enabled'],
+        kvSettings['authentication-methods.directory_password.enabled'],
         defaults.enabled
       ),
       label:
-        truncateString(kvSettings['login-methods.directory_password.label'], 80) || defaults.label,
+        truncateString(kvSettings['authentication-methods.directory_password.label'], 80) ||
+        defaults.label,
     };
   } catch {
     return defaults;
@@ -800,6 +832,72 @@ function mergeExternalLoginProviders(
   return Array.from(providers.values()).slice(0, MAX_EXTERNAL_LOGIN_PROVIDERS);
 }
 
+async function resolveExternalProviderUsage(
+  env: Env,
+  tenantId: string
+): Promise<Record<string, ExternalLoginProviderUsageConfig>> {
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    if (!kvJson) return {};
+
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+    const rawUsage = kvSettings['authentication-methods.external_provider_usage'];
+    const usageItems =
+      typeof rawUsage === 'string'
+        ? safeParseJsonArray<ExternalLoginProviderUsageConfig>(rawUsage)
+        : rawUsage;
+
+    if (!Array.isArray(usageItems)) return {};
+
+    const entries = usageItems
+      .filter((item) => typeof item.id === 'string' || typeof item.providerId === 'string')
+      .flatMap((item) => {
+        const values: Array<[string, ExternalLoginProviderUsageConfig]> = [];
+        if (item.id) values.push([item.id, item]);
+        if (item.providerId) values.push([item.providerId, item]);
+        return values;
+      });
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+function applyExternalProviderUsage(
+  providers: ExternalLoginProvider[],
+  usageById: Record<string, ExternalLoginProviderUsageConfig>
+): ExternalLoginProvider[] {
+  return providers
+    .map((provider) => {
+      const saved =
+        usageById[provider.id] ?? (provider.slug ? usageById[provider.slug] : undefined);
+      if (!saved) return provider;
+
+      const providerEnabled = provider.enabled !== false;
+      const autoLinkEmail = provider.autoLinkEmail !== false;
+      const loginEnabled =
+        providerEnabled && normalizeBoolean(saved.loginEnabled, provider.loginEnabled);
+      const signupEnabled =
+        providerEnabled && normalizeBoolean(saved.signupEnabled, provider.signupEnabled);
+      const reauthEnabled =
+        providerEnabled && normalizeBoolean(saved.reauthEnabled, provider.reauthEnabled);
+      const accountLinkEnabled =
+        providerEnabled &&
+        autoLinkEmail &&
+        normalizeBoolean(saved.accountLinkEnabled, provider.accountLinkEnabled);
+
+      return {
+        ...provider,
+        loginEnabled,
+        signupEnabled,
+        reauthEnabled,
+        accountLinkEnabled,
+        enabled: loginEnabled || signupEnabled || reauthEnabled,
+      };
+    })
+    .filter((provider) => provider.enabled);
+}
+
 /**
  * Build UI config from resolved Login UI settings
  */
@@ -826,15 +924,15 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
 
 /**
  * Resolve cache TTL from KV → env → default
- * Priority: KV (SETTINGS) → env (LOGIN_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
+ * Priority: KV (SETTINGS) → env (AUTHENTICATION_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
  */
 async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   // 1. Try KV (settings-v2) — tenant-aware
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (kvJson) {
-      const kvSettings = JSON.parse(kvJson) as LoginMethodKVSettings;
-      const kvTTL = kvSettings['login-methods.cache_ttl'];
+      const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+      const kvTTL = kvSettings['authentication-methods.cache_ttl'];
       if (typeof kvTTL === 'number' && kvTTL >= 0 && kvTTL <= 3600) {
         return kvTTL;
       }
@@ -844,7 +942,7 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   }
 
   // 2. Try environment variable
-  const envTTL = (env as unknown as Record<string, unknown>).LOGIN_METHODS_CACHE_TTL;
+  const envTTL = (env as unknown as Record<string, unknown>).AUTHENTICATION_METHODS_CACHE_TTL;
   if (envTTL !== undefined && envTTL !== null && envTTL !== '') {
     const parsed = Number(envTTL);
     if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3600) {
@@ -861,11 +959,11 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
 // =============================================================================
 
 /**
- * GET /api/auth/login-methods
+ * GET /api/auth/authentication-methods
  *
- * Public endpoint — returns available login methods and UI configuration.
+ * Public endpoint — returns available authentication methods and UI configuration.
  */
-export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
+export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LOGIN-METHODS');
 
   try {
@@ -873,21 +971,27 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
 
     // Fetch data in parallel
-    const [settings, bridgeProviders, samlProviders, configuredProviders, directoryPassword] =
-      await Promise.all([
-        getSystemSettings(env),
-        fetchExternalLoginProviders(env),
-        fetchSAMLLoginProviders(env, tenantId),
-        fetchConfiguredExternalLoginProviders(env, tenantId),
-        resolveDirectoryPasswordMethod(env, tenantId),
-      ]);
-    const externalProviders = mergeExternalLoginProviders([
+    const [
+      settings,
       bridgeProviders,
       samlProviders,
       configuredProviders,
+      directoryPassword,
+      externalProviderUsage,
+    ] = await Promise.all([
+      getSystemSettings(env),
+      fetchExternalLoginProviders(env),
+      fetchSAMLLoginProviders(env, tenantId),
+      fetchConfiguredExternalLoginProviders(env, tenantId),
+      resolveDirectoryPasswordMethod(env, tenantId),
+      resolveExternalProviderUsage(env, tenantId),
     ]);
+    const externalProviders = applyExternalProviderUsage(
+      mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
+      externalProviderUsage
+    );
 
-    const builtInMethods = await resolveBuiltInLoginMethods(env, tenantId);
+    const builtInMethods = await resolveBuiltInAuthenticationMethods(env, tenantId);
     const passkeyLoginEnabled = builtInMethods.passkeyLoginEnabled;
     const passkeySignupEnabled = builtInMethods.passkeySignupEnabled;
     const passkeyReauthEnabled = builtInMethods.passkeyReauthEnabled;
@@ -911,18 +1015,18 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
 
     // Check if at least one method is available
     if (!passkeyEnabled && !emailCodeEnabled && !directoryPasswordEnabled && !externalEnabled) {
-      log.warn('No login method available', {});
-      const errorResponse: LoginMethodsErrorResponse = {
+      log.warn('No authentication method available', {});
+      const errorResponse: AuthenticationMethodsErrorResponse = {
         error: {
           code: 'NO_LOGIN_METHOD_AVAILABLE',
-          message: 'No login method is enabled for this tenant',
+          message: 'No authentication method is enabled for this tenant',
         },
       };
       c.header('Cache-Control', 'no-store');
       return c.json(errorResponse, 503);
     }
 
-    const methods: LoginMethods = {
+    const methods: AuthenticationMethods = {
       passkey: {
         enabled: passkeyEnabled,
         loginEnabled: passkeyLoginEnabled,
@@ -957,7 +1061,7 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
     ]);
     const ui = buildUIConfig(loginUISettings);
 
-    const response: LoginMethodsResponse = {
+    const response: AuthenticationMethodsResponse = {
       methods,
       ui,
       meta: {
@@ -971,12 +1075,12 @@ export async function getLoginMethodsHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(response);
   } catch (error) {
-    log.error('Failed to get login methods', {}, error as Error);
+    log.error('Failed to get authentication methods', {}, error as Error);
     c.header('Cache-Control', 'no-store');
     return c.json(
       {
         error: 'server_error',
-        error_description: 'Failed to retrieve login methods',
+        error_description: 'Failed to retrieve authentication methods',
       },
       500
     );

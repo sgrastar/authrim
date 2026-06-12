@@ -112,7 +112,7 @@ const adminExternalIdp = {
 	admin_external_idp_enable_sso: 'SSOを有効化',
 	admin_external_idp_enable_sso_desc:
 		'有効な場合、外部IdP認証後にsession付きで自動サインインします（handoff flow）。無効な場合、clientはtoken exchange用のauthorization codeを受け取ります（Direct Auth flow）。',
-	admin_external_idp_priority_hint: 'Priorityが高いproviderほど先に表示されます'
+	admin_external_idp_priority_hint: 'Priorityの数値が小さいproviderほど先に表示されます'
 } as const;
 
 export default adminExternalIdp;

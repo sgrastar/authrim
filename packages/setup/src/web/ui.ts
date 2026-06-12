@@ -5335,11 +5335,21 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return div;
     }
 
-    async function resetServerState() {
+    async function resetServerState(options = {}) {
+      const timeoutMs = options.timeoutMs ?? 1500;
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
       try {
-        await api('/reset', { method: 'POST' });
+        await api('/reset', { method: 'POST', signal: controller.signal });
       } catch (error) {
-        console.warn('Failed to reset setup state:', error);
+        if (error?.name === 'AbortError') {
+          console.warn('Timed out while resetting setup state; continuing with local reset.');
+        } else {
+          console.warn('Failed to reset setup state:', error);
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     }
 

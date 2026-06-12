@@ -76,7 +76,7 @@
 
 		// === 3. Selection/UI Nodes ===
 		auth_method_select: AuthMethodNode,
-		login_method_select: ActionNode,
+		authentication_method_select: ActionNode,
 		identifier: IdentifierNode,
 		profile_input: UserInputNode,
 		custom_form: UserInputNode,

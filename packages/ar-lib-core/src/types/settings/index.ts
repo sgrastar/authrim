@@ -33,7 +33,7 @@ export * from './assurance-levels';
 export * from './check-api-audit';
 export * from './dcr';
 export * from './login-ui';
-export * from './login-methods';
+export * from './authentication-methods';
 export * from './diagnostic-logging';
 export * from './dr-backup';
 export * from './login-entry';
@@ -93,7 +93,7 @@ import { ASSURANCE_LEVELS_CATEGORY_META } from './assurance-levels';
 import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
 import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
-import { LOGIN_METHODS_CATEGORY_META } from './login-methods';
+import { AUTHENTICATION_METHODS_CATEGORY_META } from './authentication-methods';
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from './diagnostic-logging';
 import { DR_BACKUP_CATEGORY_META } from './dr-backup';
 import { LOGIN_ENTRY_CATEGORY_META } from './login-entry';
@@ -146,7 +146,7 @@ export const ALL_CATEGORY_META = {
   dcr: DCR_CATEGORY_META,
   // Login UI Customization
   'login-ui': LOGIN_UI_CATEGORY_META,
-  'login-methods': LOGIN_METHODS_CATEGORY_META,
+  'authentication-methods': AUTHENTICATION_METHODS_CATEGORY_META,
   // Diagnostic Logging
   'diagnostic-logging': DIAGNOSTIC_LOGGING_CATEGORY_META,
   'dr-backup': DR_BACKUP_CATEGORY_META,
@@ -275,7 +275,7 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   'login-ui': {
     allowedScopes: ['tenant'],
   },
-  'login-methods': {
+  'authentication-methods': {
     allowedScopes: ['tenant'],
   },
   'login-entry': {

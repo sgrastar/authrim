@@ -25,9 +25,11 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(layout).toContain('/admin/field-mapping');
 		expect(layout).toContain('admin_nav_source_destination');
 		expect(layout).toContain('admin_nav_mapping_policies');
+		expect(layout).toContain('admin_nav_persistent_identifiers');
 		expect(layout).toContain('admin_nav_resolution_center');
 		expect(layout).toContain('/admin/field-mapping/profiles');
 		expect(layout).toContain('/admin/field-mapping/field-mapping-sets');
+		expect(layout).toContain('/admin/field-mapping/persistent-identifiers');
 		expect(layout).toContain('/admin/field-mapping/resolution-center');
 		expect(layout).not.toContain('Mapping Rules');
 		expect(layout).not.toContain('/admin/field-mapping/edit');
@@ -91,6 +93,8 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('normalize');
 		expect(flowEditor).toContain('case');
 		expect(flowEditor).toContain('trim');
+		expect(flowEditor).toContain('affix_text');
+		expect(flowEditor).toContain('oidc_pairwise_sub');
 		expect(flowEditor).toContain('text_to_boolean');
 		expect(flowEditor).toContain('json_build');
 		expect(flowEditor).toContain('json_extract_text');
@@ -126,7 +130,13 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('catalogEntryId: fieldRef.catalogEntryId');
 		expect(flowEditor).toContain("sourceRef: nodeFieldRef(fromNode, 'source')");
 		expect(flowEditor).toContain("targetRef: nodeFieldRef(toNode, 'destination')");
-		expect(flowData).toContain("namespace: 'authrim.profile'");
+		expect(flowEditor).toContain('sampleHasSourceProfile(candidate)');
+		expect(pageShell).toContain('filter(sampleHasSourceProfile)');
+		expect(flowData).toContain('buildSample(null');
+		expect(flowData).toContain('controlPlaneOnlySampleId');
+		expect(flowData).toContain("startsWith('field.system.')");
+		expect(flowData).toContain("'authrim.system'");
+		expect(flowData).toContain("'authrim.profile'");
 		expect(flowData).toContain('namespaceForProfile(profile.adapter)');
 		expect(flowData).toContain("return 'oidc.claim'");
 		expect(flowData).toContain("return 'saml.attribute'");
@@ -262,6 +272,7 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(operations).toContain('admin_identity_mapping_policies_create_source');
 		expect(operations).toContain('admin_identity_mapping_policies_create_destination');
 		expect(operations).toContain('direction');
+		expect(operations).not.toContain('{:else if policies.length === 0}');
 		expect(operations).not.toContain('Confirm rollback');
 		expect(operations).not.toContain('rollbackPolicy');
 		expect(operations).not.toContain('runPolicyOperation');

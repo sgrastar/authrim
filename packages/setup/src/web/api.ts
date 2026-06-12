@@ -88,6 +88,7 @@ import {
 } from '../core/tenant-d1-bootstrap.js';
 import {
   deployAll,
+  buildAndDeployAllSequentially,
   uploadSecrets,
   buildApiPackages,
   deployAllUiWorkers,
@@ -1601,30 +1602,6 @@ export function createApiRoutes(): Hono {
         // Debug: Log the resolved rootDir for migrations
         addProgress(`📂 Working directory: ${resolve(rootDir)}`);
 
-        // Build packages first (unless dry-run or skipped)
-        if (!dryRun && !skipBuild) {
-          const buildResult = await buildApiPackages({
-            rootDir: resolve(rootDir),
-            onProgress: addProgress,
-          });
-
-          if (!buildResult.success) {
-            state.status = 'error';
-            state.error = `Build failed: ${buildResult.error}`;
-            addProgress(`❌ ${state.error}`);
-            await flushProgressLog();
-            return c.json(
-              {
-                success: false,
-                error: `Build failed: ${sanitizeError(new Error(buildResult.error))}`,
-                logPath: state.logPath,
-              },
-              500
-            );
-          }
-          addProgress('Packages built successfully');
-        }
-
         const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
         let enabledComponents: WorkerComponent[] | undefined = components;
@@ -1854,19 +1831,21 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        const summary = await deployAll(
-          {
-            env,
-            rootDir: resolve(rootDir),
-            dryRun,
-            interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
-            onProgress: addProgress,
-            onError: (comp, error) => {
-              addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
-            },
+        const deployOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          dryRun,
+          interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
+          onProgress: addProgress,
+          onError: (comp: string, error: Error) => {
+            addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
           },
-          enabledComponents
-        );
+        };
+
+        const summary =
+          !dryRun && !skipBuild
+            ? await buildAndDeployAllSequentially(deployOptions, enabledComponents)
+            : await deployAll(deployOptions, enabledComponents);
 
         state.deployResults = summary.results;
 
@@ -3162,19 +3141,6 @@ export function createApiRoutes(): Hono {
 
         addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
 
-        // Build packages
-        addProgress('Building packages...');
-        const buildResult = await buildApiPackages({
-          rootDir: resolve(rootDir),
-          onProgress: addProgress,
-        });
-
-        if (!buildResult.success) {
-          state.status = 'error';
-          state.error = `Build failed: ${buildResult.error}`;
-          return c.json({ success: false, error: state.error }, 500);
-        }
-
         if (
           (config.components.loginUi || config.components.adminUi) &&
           componentsToUpdate.includes('ar-router')
@@ -3206,8 +3172,8 @@ export function createApiRoutes(): Hono {
         }
 
         // Deploy workers
-        addProgress('Deploying workers...');
-        const summary = await deployAll(
+        addProgress('Building and deploying workers one at a time...');
+        const summary = await buildAndDeployAllSequentially(
           {
             env,
             rootDir: resolve(rootDir),

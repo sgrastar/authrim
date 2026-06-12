@@ -113,7 +113,7 @@ export type GraphNodeType =
 
   // === 3. Selection/UI Nodes (selection/input nodes)===
   | 'auth_method_select' // authentication method selection (email, social, etc.)
-  | 'login_method_select' // login method selection (passkey, OTP, etc.)
+  | 'authentication_method_select' // authentication method selection (passkey, OTP, etc.)
   | 'identifier' // identifier input (email/phone/username)
   | 'profile_input' // profile input (name/birthdate, etc.)
   | 'custom_form' // administrator-defined form

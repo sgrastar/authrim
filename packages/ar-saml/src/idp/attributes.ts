@@ -1,4 +1,4 @@
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping';
+import { executeRuntimeMapping, findCatalogEntry } from '@authrim/ar-lib-field-mapping';
 import type {
   FieldCatalogBundle,
   FieldRef,
@@ -70,6 +70,7 @@ export interface SAMLIdentityMappingRuntimeContext {
   tenantId?: string;
   localEntityId?: string;
   partnerEntityId?: string;
+  runtimeContext?: Record<string, unknown>;
 }
 
 export interface SAMLIdentityMappingFieldMappingBinding {
@@ -89,6 +90,7 @@ export interface SAMLIdentityMappingFieldMappingBinding {
   fieldMappingVersionId?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
+  runtimeContext?: Record<string, unknown>;
 }
 
 export interface SAMLIdentityMappingReleaseConfig extends Partial<SAMLIdentityMappingFieldMappingBinding> {
@@ -183,6 +185,7 @@ export function buildSAMLAttributesForSPWithDiagnostics(
       tenantId: spConfig.tenantId,
       localEntityId: spConfig.localEntityId,
       partnerEntityId: spConfig.entityId,
+      runtimeContext: spConfig.identityMapping.runtimeContext,
     });
   }
 
@@ -254,6 +257,7 @@ function buildSAMLAttributesFromIdentityMapping(
     transforms: binding.transforms,
     validationRules: binding.validationRules,
     fieldMappingSet: binding.fieldMappingSet,
+    runtimeContext: context.runtimeContext ?? binding.runtimeContext,
   });
 
   if (result.status === 'failed') {
@@ -405,9 +409,47 @@ function buildAttributeFromMappedValue(
     name: descriptor?.name ?? mappedValue.sourceRef.path,
     nameFormat: descriptor?.nameFormat,
     friendlyName: descriptor?.friendlyName,
-    valueType: descriptor?.valueType,
+    valueType: resolveMappedAttributeValueType(mappedValue.sourceRef, config, descriptor),
     values,
   };
+}
+
+function resolveMappedAttributeValueType(
+  fieldRef: FieldRef,
+  config: SAMLIdentityMappingFieldMappingBinding,
+  descriptor?: SAMLIdentityMappingAttributeDescriptor
+): SAMLAttributeValueType | undefined {
+  return (
+    descriptor?.valueType ??
+    coerceSAMLAttributeValueType(fieldRef.valueType) ??
+    coerceSAMLAttributeValueType(findCatalogEntry(config.catalog, fieldRef)?.valueType)
+  );
+}
+
+function coerceSAMLAttributeValueType(valueType?: string): SAMLAttributeValueType | undefined {
+  const normalized = valueType?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === 'saml:persistent-nameid') {
+    return 'saml:persistent-nameid';
+  }
+  if (normalized === 'xs:boolean') {
+    return 'xs:boolean';
+  }
+  if (normalized === 'xs:integer') {
+    return 'xs:integer';
+  }
+  if (normalized === 'xs:datetime') {
+    return 'xs:dateTime';
+  }
+  if (normalized === 'xs:anyuri') {
+    return 'xs:anyURI';
+  }
+  if (normalized === 'xs:string') {
+    return 'xs:string';
+  }
+  return undefined;
 }
 
 function mergeSAMLAttributes(attributes: SAMLAttribute[]): SAMLAttribute[] {
@@ -540,6 +582,11 @@ function readMappingSourceValue(subject: SAMLAttributeSubject, fieldRef: FieldRe
     case 'authrim.attributes':
     case 'attributes':
       return readSubjectValue(subject, `attributes.${fieldRef.path}`);
+    case 'authrim.system':
+      if (fieldRef.path === 'uid') {
+        return subject.id;
+      }
+      return readSubjectValue(subject, fieldRef.path);
     default:
       return readSubjectValue(subject, fieldRef.path);
   }

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { dryRunMapping, dryRunMappingBatch } from '../../core/dry-run';
 import { executeRuntimeMapping } from '../../core/runtime';
-import { createTestFingerprintProvider, mappingInput, sourceValue } from '../../test-support';
+import {
+  createTestFingerprintProvider,
+  edge,
+  fieldRef,
+  mappingInput,
+  sourceValue,
+} from '../../test-support';
 
 describe('dry-run mapping', () => {
   it('returns redacted summaries without raw values', () => {
@@ -38,7 +44,7 @@ describe('dry-run mapping', () => {
     });
 
     expect(result.status).toBe('success');
-    expect(result.summary.mappedCount).toBe(2);
+    expect(result.summary.mappedCount).toBe(1);
     expect(result.ruleTrace.some((entry) => entry.action === 'transformed')).toBe(true);
     expect(JSON.stringify(result.redactedValueSummaries)).not.toContain('USER@EXAMPLE.TEST');
   });
@@ -110,6 +116,58 @@ describe('dry-run mapping', () => {
         sourceRef: expect.objectContaining({
           namespace: 'authrim.profile',
           path: 'email',
+        }),
+      }),
+    ]);
+  });
+
+  it('keeps destination outputs even when the compiled catalog has no destination entries', () => {
+    const result = executeRuntimeMapping({
+      catalog: {
+        identity: {
+          id: 'empty-runtime-catalog',
+          version: 'v1',
+          contentHash: 'empty',
+          compatibilityRange: '^0.3.0',
+        },
+        entries: [],
+      },
+      sourceValues: [
+        {
+          ...sourceValue('authrim.profile', 'email', 'user@example.test', 'pii'),
+          sourceRef: {
+            side: 'source',
+            namespace: 'authrim.profile',
+            path: 'email',
+            catalogEntryId: 'field.canonical.email',
+          },
+        },
+      ],
+      edges: [
+        edge(
+          {
+            ...fieldRef('authrim.profile', 'email', 'field.canonical.email'),
+            side: 'source',
+          },
+          {
+            side: 'destination',
+            namespace: 'saml.attribute',
+            path: 'urn:oid:0.9.2342.19200300.100.1.3',
+            catalogEntryId: 'field.saml.mail',
+          }
+        ),
+      ],
+    });
+
+    expect(result.status).toBe('partial');
+    expect(result.reasons.map((item) => item.code)).toContain('catalog.invalid_entry');
+    expect(result.values).toEqual([
+      expect.objectContaining({
+        value: 'user@example.test',
+        sourceRef: expect.objectContaining({
+          side: 'destination',
+          namespace: 'saml.attribute',
+          path: 'urn:oid:0.9.2342.19200300.100.1.3',
         }),
       }),
     ]);

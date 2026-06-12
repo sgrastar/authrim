@@ -45,7 +45,7 @@ import {
 import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import { STATUS_CODES, DEFAULTS, NAMEID_FORMATS } from '../common/constants';
 import { signRedirectBinding, signXml } from '../common/signature';
-import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
+import { getSAMLSigningMaterial, resolveSAMLIdPSigningPolicy } from '../common/saml-signing-keys';
 import { getSPConfig } from '../admin/providers';
 import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user-store';
 import { requireSAMLTenantId, resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -839,7 +839,7 @@ async function sendLogoutResponse(
       tenantId,
       role: 'idp',
       counterpartyEntityId: options.counterpartyEntityId,
-      policy: getSAMLSigningPolicy(spConfig ?? undefined),
+      policy: await resolveSAMLIdPSigningPolicy(env, tenantId, spConfig ?? undefined),
     });
 
     if (responseBinding === 'redirect') {
@@ -1070,7 +1070,7 @@ export async function initiateIdPLogout(
       tenantId: built.tenantId,
       role: 'idp',
       counterpartyEntityId: spConfig.entityId,
-      policy: getSAMLSigningPolicy(spConfig),
+      policy: await resolveSAMLIdPSigningPolicy(env, built.tenantId, spConfig),
     });
 
     logoutRequestXml = signXml(logoutRequestXml, {
@@ -1109,7 +1109,7 @@ export async function initiateIdPLogoutBindingResponse(
       tenantId: built.tenantId,
       role: 'idp',
       counterpartyEntityId: spConfig.entityId,
-      policy: getSAMLSigningPolicy(spConfig),
+      policy: await resolveSAMLIdPSigningPolicy(env, built.tenantId, spConfig),
     });
 
     let response: Response;
@@ -1292,7 +1292,7 @@ async function sendIdPLogoutRequestForTransactionTarget(
       tenantId: built.tenantId,
       role: 'idp',
       counterpartyEntityId: options.spConfig.entityId,
-      policy: getSAMLSigningPolicy(options.spConfig),
+      policy: await resolveSAMLIdPSigningPolicy(env, built.tenantId, options.spConfig),
     });
 
     let response: Response;

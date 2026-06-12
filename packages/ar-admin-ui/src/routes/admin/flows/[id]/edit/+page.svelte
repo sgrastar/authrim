@@ -140,7 +140,7 @@
 			check_risk: 'Check Risk',
 			// 3. Selection Nodes
 			auth_method_select: 'Auth Method Select',
-			login_method_select: 'Login Method Select',
+			authentication_method_select: 'Authentication Method Select',
 			identifier: 'Identifier Input',
 			profile_input: 'Profile Input',
 			custom_form: 'Custom Form',
@@ -220,7 +220,7 @@
 			// 3. Selection Nodes
 			case 'auth_method_select':
 				return { available_methods: ['password', 'passkey', 'email_otp'] };
-			case 'login_method_select':
+			case 'authentication_method_select':
 				return { available_methods: ['email', 'social'] };
 			case 'identifier':
 				return { type: 'email' };
@@ -340,7 +340,7 @@
 			check_risk: { icon: '⚠️', color: '#dc2626' },
 			// 3. Selection Nodes
 			auth_method_select: { icon: '🔑', color: '#3b82f6' },
-			login_method_select: { icon: '🚪', color: '#0ea5e9' },
+			authentication_method_select: { icon: '🚪', color: '#0ea5e9' },
 			identifier: { icon: '👤', color: '#06b6d4' },
 			profile_input: { icon: '📋', color: '#0891b2' },
 			custom_form: { icon: '📄', color: '#0284c7' },

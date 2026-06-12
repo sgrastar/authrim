@@ -2,6 +2,10 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import {
+		adminIdentityMappingAPI,
+		type PersistentIdentifierProfileSummary
+	} from '$lib/api/admin-identity-mapping';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		type MappingAdapter,
@@ -61,7 +65,6 @@
 				label: string;
 				kind: 'string';
 				required: boolean;
-				placeholder: string;
 		  };
 	type TransformOperationSchema = {
 		operation: TransformOperation;
@@ -127,8 +130,7 @@
 					name: 'delimiter',
 					label: 'Delimiter',
 					kind: 'string',
-					required: false,
-					placeholder: 'space, comma, or custom text'
+					required: false
 				}
 			]
 		},
@@ -137,6 +139,51 @@
 			label: 'Fallback',
 			description: 'Use the first non-empty connected input value.',
 			parameters: []
+		},
+		{
+			operation: 'affix_text',
+			label: 'Add prefix/suffix',
+			description: 'Add fixed text before or after the input value.',
+			parameters: [
+				{
+					name: 'prefix',
+					label: 'Prefix',
+					kind: 'string',
+					required: false
+				},
+				{
+					name: 'suffix',
+					label: 'Suffix',
+					kind: 'string',
+					required: false
+				}
+			]
+		},
+		{
+			operation: 'oidc_pairwise_sub',
+			label: 'OIDC pairwise sub',
+			description: 'Use the current OIDC client pairwise subject identifier.',
+			parameters: [
+				{
+					name: 'persistentIdentifierProfileId',
+					label: 'Persistent Identifier Profile',
+					kind: 'string',
+					required: false
+				}
+			]
+		},
+		{
+			operation: 'saml_edu_person_targeted_id',
+			label: 'SAML eduPersonTargetedID',
+			description: 'Build IdP!SP!opaque targeted ID from the current SAML SP context.',
+			parameters: [
+				{
+					name: 'persistentIdentifierProfileId',
+					label: 'Persistent Identifier Profile',
+					kind: 'string',
+					required: false
+				}
+			]
 		},
 		{
 			operation: 'text_to_boolean',
@@ -148,22 +195,19 @@
 					name: 'trueValues',
 					label: 'True values',
 					kind: 'string',
-					required: false,
-					placeholder: 'true, 1, yes, active'
+					required: false
 				},
 				{
 					name: 'falseValues',
 					label: 'False values',
 					kind: 'string',
-					required: false,
-					placeholder: 'false, 0, no, inactive'
+					required: false
 				},
 				{
 					name: 'nullValues',
 					label: 'Null values',
 					kind: 'string',
-					required: false,
-					placeholder: 'empty, null, none, n/a'
+					required: false
 				}
 			]
 		},
@@ -177,8 +221,7 @@
 					name: 'keyMap',
 					label: 'Key map',
 					kind: 'string',
-					required: false,
-					placeholder: '{"source_column":"jsonKey"}'
+					required: false
 				},
 				{
 					name: 'nullHandling',
@@ -201,8 +244,7 @@
 					name: 'path',
 					label: 'JSON path',
 					kind: 'string',
-					required: true,
-					placeholder: 'profile.name or emails[0].value'
+					required: true
 				}
 			]
 		},
@@ -215,8 +257,7 @@
 					name: 'path',
 					label: 'JSON path',
 					kind: 'string',
-					required: true,
-					placeholder: 'active or flags.enabled'
+					required: true
 				}
 			]
 		},
@@ -229,8 +270,7 @@
 					name: 'path',
 					label: 'JSON path',
 					kind: 'string',
-					required: true,
-					placeholder: 'quota.limit or memberships[0].rank'
+					required: true
 				}
 			]
 		}
@@ -306,6 +346,7 @@
 	const transformHeight = 38;
 	const graphBaseTop = $derived(showLaneProfileSelectors ? 76 : 48);
 	const graphStep = 50;
+	const graphOverlayBottomPadding = 170;
 	const targetGroupHeaderHeight = 28;
 	const targetGroupRowStep = targetHeight - 1;
 	const targetGroupGap = 10;
@@ -341,6 +382,7 @@
 	let hasUnsavedDraftChanges = $state(false);
 	let activeDraftResetKey = $state<number | null>(null);
 	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'info' | 'error'>('idle');
+	let persistentIdentifierProfiles = $state<PersistentIdentifierProfileSummary[]>([]);
 	let draftSubmitMessage = $state<string | null>(null);
 	let swappingNodeIds = $state<string[]>([]);
 	let nodeSwapAnimationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -458,13 +500,13 @@
 	const groupedTargetNodes = $derived(targetNodeGroups.flatMap((group) => group.nodes));
 	const destinationNodes = $derived(visibleNodes.filter((node) => node.role === 'destination'));
 	const sourceProfileOptions = $derived(
-		((samples.length > 0 ? samples : [sample]) as MappingSample[]).map(
-			(candidate: MappingSample) => ({
+		(samples as MappingSample[])
+			.filter((candidate: MappingSample) => sampleHasSourceProfile(candidate))
+			.map((candidate: MappingSample) => ({
 				id: candidate.id,
 				title: candidate.title,
 				adapter: candidate.sourceAdapter
-			})
-		)
+			}))
 	);
 	const destinationProfileOptions = $derived(destinationProfileOptionsForSample(sample));
 	const selectedSourcePolicyTitle = $derived(selectedSourcePolicy?.title ?? null);
@@ -650,9 +692,10 @@
 		}
 	});
 
-	onMount(() => {
-		const resize = () => {
-			const rect = canvas?.getBoundingClientRect();
+		onMount(() => {
+			void loadPersistentIdentifierProfiles();
+			const resize = () => {
+				const rect = canvas?.getBoundingClientRect();
 			if (!rect) return;
 			canvasWidth = Math.max(720, rect.width);
 		};
@@ -672,10 +715,21 @@
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('keydown', handleGlobalKeyDown);
 			window.removeEventListener('beforeunload', beforeUnload);
-		};
-	});
+			};
+		});
 
-	function activateSample(next: MappingSample) {
+		async function loadPersistentIdentifierProfiles() {
+			try {
+				const response = await adminIdentityMappingAPI.listPersistentIdentifierProfiles();
+				persistentIdentifierProfiles = response.profiles.filter(
+					(profile) => profile.lifecycleState === 'active'
+				);
+			} catch {
+				persistentIdentifierProfiles = [];
+			}
+		}
+
+		function activateSample(next: MappingSample) {
 		activeSampleRef = next;
 		selectedSampleId = next.id;
 		sourceAdapter = next.sourceAdapter;
@@ -1282,6 +1336,10 @@
 			});
 	}
 
+	function sampleHasSourceProfile(candidate: MappingSample): boolean {
+		return candidate.nodes.some((node) => node.role === 'source');
+	}
+
 	function targetGroupKey(node: MappingNode): string {
 		return node.uiGroupKey ?? node.uiGroupLabel ?? `ungrouped:${node.id}`;
 	}
@@ -1412,7 +1470,7 @@
 			};
 		});
 
-		const targetLayout = groupedTargetNodes.map((node) => ({
+			const targetLayout = groupedTargetNodes.map((node) => ({
 			...node,
 			top: rowTops[node.id] ?? graphBaseTop,
 			left: targetLeft,
@@ -1487,7 +1545,7 @@
 				minHeight,
 				...laidOut
 					.filter((node) => !node.hidden && !node.collapsed)
-					.map((node) => node.top + node.height + 36)
+					.map((node) => node.top + node.height + graphOverlayBottomPadding)
 			)
 		};
 	}
@@ -1889,11 +1947,44 @@
 	function isConnectionTypeMismatch(fromNode: MappingNode, toNode: MappingNode): boolean {
 		if (!isConnectionDirectionAllowed(fromNode, toNode)) return false;
 		if (toNode.role === 'transform') return !isTypeCompatibleWithTransformInput(fromNode, toNode);
-		if (fromNode.role === 'transform') return !isTransformOutputCompatible(fromNode, toNode);
-		return !isTypeCompatible(fromNode, toNode) || isValueConstraintMismatch(fromNode, toNode);
+		const typeMismatch =
+			fromNode.role === 'transform'
+				? !isTransformOutputCompatible(fromNode, toNode)
+				: !isTypeCompatible(fromNode, toNode);
+		return typeMismatch || isFormatMismatch(fromNode, toNode) || isValueConstraintMismatch(fromNode, toNode);
+	}
+
+	function isFormatMismatch(fromNode: MappingNode, toNode: MappingNode): boolean {
+		const toFormat = normalizedNodeFormat(toNode);
+		if (!toFormat) return false;
+		const fromFormat = effectiveNodeOutputFormat(fromNode);
+		if (!fromFormat) return false;
+		if (fromFormat === toFormat) return false;
+		return !areFormatsCompatible(fromFormat, toFormat);
+	}
+
+	function areFormatsCompatible(fromFormat: string, toFormat: string): boolean {
+		const compatibleFormats: Record<string, string[]> = {
+			email: ['email', 'upn'],
+			upn: ['email', 'upn'],
+			uri: ['uri', 'url'],
+			url: ['uri', 'url'],
+			'date-time': ['date-time', 'datetime', 'timestamp', 'iso8601'],
+			datetime: ['date-time', 'datetime', 'timestamp', 'iso8601'],
+			timestamp: ['date-time', 'datetime', 'timestamp', 'iso8601'],
+			iso8601: ['date-time', 'datetime', 'timestamp', 'iso8601'],
+			date: ['date'],
+			phone: ['phone', 'e164'],
+			e164: ['phone', 'e164']
+		};
+		return compatibleFormats[toFormat]?.includes(fromFormat) ?? false;
 	}
 
 	function isValueConstraintMismatch(fromNode: MappingNode, toNode: MappingNode): boolean {
+		const requiredTransform = requiredTransformOperationForNode(toNode);
+		if (requiredTransform) {
+			return fromNode.role !== 'transform' || activeTransformOperation(fromNode) !== requiredTransform;
+		}
 		if (toNode.valueMultiplicity === 'single' && fromNode.valueMultiplicity === 'multi')
 			return true;
 		const fromAllowed = nodeAllowedValues(fromNode);
@@ -1901,6 +1992,38 @@
 		if (fromAllowed.length === 0 || toAllowed.length === 0) return false;
 		const toAllowedValues = new Set(toAllowed.map((value) => value.toLowerCase()));
 		return fromAllowed.some((value) => !toAllowedValues.has(value.toLowerCase()));
+	}
+
+	function requiredTransformOperationForNode(node: MappingNode): TransformOperation | null {
+		const fieldRef = node.fieldRef;
+		if (!fieldRef) return null;
+		const namespace = fieldRef.namespace.toLowerCase();
+		const identifiers = [
+			fieldRef.path,
+			fieldRef.catalogEntryId,
+			node.label,
+			node.caption,
+			node.storageTarget
+		]
+			.filter(Boolean)
+			.map((value) => String(value).toLowerCase());
+		if (
+			namespace === 'oidc.claim' &&
+			identifiers.some((value) => value === 'sub' || value.endsWith('.sub'))
+		) {
+			return 'oidc_pairwise_sub';
+		}
+		if (
+			(namespace === 'saml.attribute' || node.adapter === 'SAML') &&
+			identifiers.some(
+				(value) =>
+					value.includes('edupersontargetedid') ||
+					value.includes('1.3.6.1.4.1.5923.1.1.1.10')
+			)
+		) {
+			return 'saml_edu_person_targeted_id';
+		}
+		return null;
 	}
 
 	function isConnectionCardinalityMismatch(edge: MappingEdge): boolean {
@@ -1947,6 +2070,13 @@
 		if (operation === 'json_extract_text') return fromType === 'json';
 		if (operation === 'json_extract_boolean') return fromType === 'json';
 		if (operation === 'json_extract_integer') return fromType === 'json';
+		if (operation === 'affix_text') {
+			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'number'].includes(
+				fromType
+			);
+		}
+		if (operation === 'oidc_pairwise_sub') return true;
+		if (operation === 'saml_edu_person_targeted_id') return true;
 		if (operation === 'text_to_boolean') {
 			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'boolean'].includes(
 				fromType
@@ -1999,6 +2129,8 @@
 		if (toType === 'identifier') return ['identifier', 'text'].includes(fromType);
 		if (toType === 'boolean') return fromType === 'boolean';
 		if (toType === 'number') return fromType === 'number';
+		if (toType === 'date') return fromType === 'date';
+		if (toType === 'datetime') return fromType === 'datetime' || fromType === 'date';
 		if (toType === 'enum') return fromType === 'enum';
 		if (toType === 'multi-value') return fromType === 'multi-value';
 		if (toType === 'json') return fromType === 'json';
@@ -2011,11 +2143,20 @@
 		return normalizeNodeType(node.type);
 	}
 
+	function effectiveNodeOutputFormat(node: MappingNode | undefined): string | null {
+		if (!node) return null;
+		if (node.role === 'transform') return firstTransformInputFormat(node);
+		return normalizedNodeFormat(node);
+	}
+
 	function transformOutputType(node: MappingNode): string | null {
 		const operation = activeTransformOperation(node);
 		if (operation === 'text_to_boolean' || operation === 'json_extract_boolean') return 'boolean';
 		if (operation === 'json_extract_integer') return 'number';
-		if (operation === 'json_extract_text' || operation === 'concat') return 'text';
+		if (operation === 'oidc_pairwise_sub' || operation === 'saml_edu_person_targeted_id')
+			return 'text';
+		if (operation === 'json_extract_text' || operation === 'concat' || operation === 'affix_text')
+			return 'text';
 		if (operation === 'json_build') return 'json';
 		return firstTransformInputType(node);
 	}
@@ -2026,6 +2167,38 @@
 			if (type) return type;
 		}
 		return null;
+	}
+
+	function firstTransformInputFormat(node: MappingNode): string | null {
+		for (const edge of transformInputEdges(node)) {
+			const format = effectiveNodeOutputFormat(nodeById(edge.from));
+			if (format) return format;
+		}
+		return null;
+	}
+
+	function normalizedNodeFormat(node: MappingNode | undefined): string | null {
+		if (!node) return null;
+		const explicitFormat = normalizeFormat(node.format);
+		if (explicitFormat) return explicitFormat;
+		const type = normalizeNodeType(node.type);
+		if (type === 'email') return 'email';
+		if (type === 'phone') return 'phone';
+		if (type === 'date') return 'date';
+		if (type === 'datetime' || type === 'timestamp') return 'date-time';
+		return null;
+	}
+
+	function normalizeFormat(format: string | null | undefined): string | null {
+		const normalized = format?.toLowerCase().trim().replace(/_/g, '-');
+		if (!normalized) return null;
+		if (['datetime', 'date-time', 'timestamp', 'iso8601', 'iso-8601'].includes(normalized)) {
+			return normalized === 'iso-8601' ? 'iso8601' : normalized;
+		}
+		if (['email', 'mail', 'upn'].includes(normalized)) return normalized === 'mail' ? 'email' : normalized;
+		if (['uri', 'url'].includes(normalized)) return normalized;
+		if (['phone', 'e164', 'e.164'].includes(normalized)) return normalized === 'e.164' ? 'e164' : normalized;
+		return normalized;
 	}
 
 	function normalizeNodeType(type: string | undefined): string | null {
@@ -2041,6 +2214,8 @@
 		) {
 			return 'number';
 		}
+		if (normalized.includes('datetime') || normalized.includes('timestamp')) return 'datetime';
+		if (normalized.includes('date')) return 'date';
 		if (['string', 'text', 'name'].some((needle) => normalized.includes(needle))) return 'text';
 		if (normalized.includes('email') || normalized.includes('mail')) return 'email';
 		if (
@@ -2698,6 +2873,12 @@
 				return $LL.admin_identity_mapping_flow_transform_concat_label();
 			case 'fallback':
 				return $LL.admin_identity_mapping_flow_transform_fallback_label();
+			case 'affix_text':
+				return 'Add prefix/suffix';
+			case 'oidc_pairwise_sub':
+				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_label();
+			case 'saml_edu_person_targeted_id':
+				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label();
 			case 'text_to_boolean':
 				return $LL.admin_identity_mapping_flow_transform_text_to_boolean_label();
 			case 'json_build':
@@ -2725,6 +2906,12 @@
 				return $LL.admin_identity_mapping_flow_transform_concat_desc();
 			case 'fallback':
 				return $LL.admin_identity_mapping_flow_transform_fallback_desc();
+			case 'affix_text':
+				return 'Add fixed text before or after the input value.';
+			case 'oidc_pairwise_sub':
+				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc();
+			case 'saml_edu_person_targeted_id':
+				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc();
 			case 'text_to_boolean':
 				return $LL.admin_identity_mapping_flow_transform_text_to_boolean_desc();
 			case 'json_build':
@@ -2738,12 +2925,16 @@
 		}
 	}
 
-	function transformParameterLabel(parameter: TransformParameterSchema): string {
-		switch (parameter.name) {
+		function transformParameterLabel(parameter: TransformParameterSchema): string {
+			switch (parameter.name) {
 			case 'mode':
 				return $LL.admin_identity_mapping_flow_transform_param_mode();
 			case 'delimiter':
 				return $LL.admin_identity_mapping_flow_transform_param_delimiter();
+			case 'prefix':
+				return 'Prefix';
+			case 'suffix':
+				return 'Suffix';
 			case 'trueValues':
 				return $LL.admin_identity_mapping_flow_transform_param_true_values();
 			case 'falseValues':
@@ -2754,12 +2945,33 @@
 				return $LL.admin_identity_mapping_flow_transform_param_key_map();
 			case 'nullHandling':
 				return $LL.admin_identity_mapping_flow_transform_param_null_handling();
-			case 'path':
-				return $LL.admin_identity_mapping_flow_transform_param_json_path();
-			default:
-				return parameter.label;
+				case 'path':
+					return $LL.admin_identity_mapping_flow_transform_param_json_path();
+				default:
+					return parameter.label;
+			}
 		}
-	}
+
+		function persistentIdentifierProfileOptions(operation: TransformOperation) {
+			const usage =
+				operation === 'oidc_pairwise_sub'
+					? 'oidc_pairwise_sub'
+					: operation === 'saml_edu_person_targeted_id'
+						? 'saml_edu_person_targeted_id'
+						: null;
+			const protocol =
+				operation === 'oidc_pairwise_sub'
+					? 'oidc'
+					: operation === 'saml_edu_person_targeted_id'
+						? 'saml'
+						: null;
+			return persistentIdentifierProfiles.filter((profile) => {
+				const usageMatches = !usage || profile.usage.length === 0 || profile.usage.includes(usage);
+				const protocolMatches =
+					!protocol || profile.protocolScope === 'any' || profile.protocolScope === protocol;
+				return usageMatches && protocolMatches;
+			});
+		}
 
 	function transformOptionLabel(parameterName: string, value: string, fallback: string): string {
 		if (parameterName === 'mode') {
@@ -2783,6 +2995,7 @@
 		if (operation === 'normalize') return { mode: 'whitespace' };
 		if (operation === 'case') return { mode: 'lower' };
 		if (operation === 'concat') return { delimiter: ' ' };
+		if (operation === 'affix_text') return { prefix: 'https://orcid.org/', suffix: '' };
 		if (operation === 'text_to_boolean') {
 			return {
 				trueValues: 'true,1,yes,y,on,active,enabled',
@@ -2923,7 +3136,7 @@
 			adapter: node.adapter,
 			profileId: node.profileId,
 			profileTitle: node.profileTitle,
-			valueType: node.type,
+			valueType: node.valueType ?? node.type,
 			storageTarget: node.storageTarget,
 			uiGroupKey: node.uiGroupKey,
 			locked: node.locked
@@ -2946,12 +3159,37 @@
 	}
 
 	function stableRuleKey(parts: string[]): string {
-		return parts
-			.join('.')
+		const raw = parts.join('.');
+		const hash = stableShortHash(raw);
+		const normalized = raw
 			.toLowerCase()
 			.replace(/[^a-z0-9]+/g, '-')
-			.replace(/^-+|-+$/g, '')
-			.slice(0, 96);
+			.replace(/^-+|-+$/g, '');
+		const prefix = normalized.slice(0, 112).replace(/-+$/g, '');
+		return `${prefix}-${hash}`.slice(0, 128);
+	}
+
+	function stableShortHash(value: string): string {
+		let hash = 2166136261;
+		for (let index = 0; index < value.length; index += 1) {
+			hash ^= value.charCodeAt(index);
+			hash = Math.imul(hash, 16777619);
+		}
+		return (hash >>> 0).toString(36).padStart(7, '0').slice(0, 7);
+	}
+
+	function uniqueDraftRuleKeys(rules: MappingDraftRuleInput[]): MappingDraftRuleInput[] {
+		const seen = new Map<string, number>();
+		return rules.map((rule) => {
+			const count = seen.get(rule.ruleKey) ?? 0;
+			seen.set(rule.ruleKey, count + 1);
+			if (count === 0) return rule;
+			const suffix = `-${count + 1}`;
+			return {
+				...rule,
+				ruleKey: `${rule.ruleKey.slice(0, 128 - suffix.length).replace(/-+$/g, '')}${suffix}`
+			};
+		});
 	}
 
 	function directDraftRule(edge: MappingEdge, fromNode: MappingNode, toNode: MappingNode) {
@@ -3030,10 +3268,12 @@
 		const transformRules = nodes
 			.filter((node) => node.role === 'transform')
 			.flatMap((node) => transformDraftRules(node));
+		const draftRules = uniqueDraftRuleKeys([...directRules, ...transformRules]);
+		const draftSuffix = Math.random().toString(36).slice(2, 8);
 		return {
-			versionLabel: `ui-draft-${new Date().toISOString()}`,
+			versionLabel: `ui-draft-${new Date().toISOString()}-${draftSuffix}`,
 			compatibilityRange: '>=0.2.0',
-			rules: [...directRules, ...transformRules],
+			rules: draftRules,
 			metadata: {
 				sampleId: sample.id,
 				sampleTitle: sample.title,
@@ -3579,6 +3819,11 @@
 								<span class="node-badge-row">
 									<span class="target-badges">
 										<span class="target-badge type">{node.type}</span>
+										{#if node.required}
+											<span class="target-badge required">
+												Required
+											</span>
+										{/if}
 									</span>
 								</span>
 							{/if}
@@ -3598,7 +3843,7 @@
 									<span class="target-badges meta-badges">
 										{#if node.required}
 											<span class="target-badge required">
-												{$LL.admin_identity_mapping_flow_required()}
+												Required
 											</span>
 										{/if}
 										{#if node.privacy}
@@ -3731,8 +3976,28 @@
 												>{$LL.admin_identity_mapping_flow_required_badge()}</em
 											>{/if}
 									</span>
-									{#if parameter.kind === 'enum'}
-										<select
+										{#if parameter.name === 'persistentIdentifierProfileId'}
+											<select
+												id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+												value={sanitizeTransformParameters(
+													activeTransformOperation(selectedTransformNode),
+													selectedTransformNode.transformParameters
+												)[parameter.name]}
+												disabled={!editable}
+												onchange={(event) =>
+													updateTransformParameter(
+														selectedTransformNode,
+														parameter.name,
+														(event.currentTarget as HTMLSelectElement).value
+													)}
+											>
+												<option value="">Profileを選択</option>
+												{#each persistentIdentifierProfileOptions(activeTransformOperation(selectedTransformNode)) as option (option.id)}
+													<option value={option.id}>{option.displayName}</option>
+												{/each}
+											</select>
+										{:else if parameter.kind === 'enum'}
+											<select
 											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
 											value={sanitizeTransformParameters(
 												activeTransformOperation(selectedTransformNode),
@@ -3763,7 +4028,6 @@
 												activeTransformOperation(selectedTransformNode),
 												selectedTransformNode.transformParameters
 											)[parameter.name]}
-											placeholder={parameter.placeholder}
 											disabled={!editable}
 											oninput={(event) =>
 												updateTransformParameter(
@@ -4573,7 +4837,13 @@
 		stroke-width: 1.7;
 	}
 
-	.edge.edge-invalid {
+	.edge.edge-invalid,
+	.edge.edge-invalid.active,
+	.edge.edge-invalid.edge-connected,
+	.edge.edge-invalid.edge-selected,
+	.edge.edge-invalid.edge-picked,
+	.edge.edge-invalid.custom-edge,
+	.edge.edge-invalid.destination-edge {
 		stroke: var(--map-red);
 		stroke-dasharray: var(--map-edge-dash-pattern);
 		opacity: 1;
@@ -4944,7 +5214,7 @@
 		position: absolute;
 		top: 4px;
 		right: 5px;
-		z-index: 7;
+		z-index: 70;
 		display: grid;
 		place-items: center;
 		width: 13px;
@@ -4976,7 +5246,7 @@
 		position: absolute;
 		top: 16px;
 		right: -6px;
-		z-index: 20;
+		z-index: 200;
 		display: none;
 		min-width: 190px;
 		max-width: 260px;
@@ -4987,6 +5257,16 @@
 		background: color-mix(in srgb, var(--map-surface) 96%, var(--map-canvas));
 		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
 		text-align: left;
+	}
+
+	.graph-node:has(.node-info:hover),
+	.graph-node:has(.node-info:focus-within) {
+		z-index: 80;
+	}
+
+	.graph-node:has(.node-info:hover) .node-info-overlay,
+	.graph-node:has(.node-info:focus-within) .node-info-overlay {
+		z-index: 220;
 	}
 
 	.node-info:hover .node-info-overlay {
@@ -5197,14 +5477,22 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 10px;
+		min-width: 0;
+	}
+
+	.transform-config-header > div {
+		min-width: 0;
 	}
 
 	.transform-config-header h3 {
 		margin: 2px 0 0;
 		font-size: 14px;
+		overflow-wrap: anywhere;
 	}
 
 	.transform-operation-pill {
+		min-width: 0;
+		max-width: 48%;
 		padding: 3px 8px;
 		border: 1px solid color-mix(in srgb, var(--map-green) 50%, transparent);
 		border-radius: 999px;
@@ -5212,6 +5500,19 @@
 		background: color-mix(in srgb, var(--map-green) 11%, transparent);
 		font-size: 11px;
 		font-weight: 900;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.transform-config-card .inspector-field {
+		min-width: 0;
+	}
+
+	.transform-config-card select {
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
 	}
 
 	.transform-description {

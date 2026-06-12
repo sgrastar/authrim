@@ -261,6 +261,7 @@ export interface ProviderListResponse {
     buttonColor?: string;
     buttonColorDark?: string;
     buttonText?: string;
+    autoLinkEmail: boolean;
     enabled: boolean;
   }>;
 }

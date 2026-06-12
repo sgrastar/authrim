@@ -24,6 +24,9 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
   const transformReasons: ReasonCode[] = [];
   const transformTrace: RuleTraceEntry[] = [];
   const mappingTrace: RuleTraceEntry[] = [];
+  const transformInputEdgeIds = new Set(
+    (input.transforms ?? []).flatMap((step) => step.inputEdgeIds)
+  );
 
   for (const edge of input.edges) {
     const sourceValue = findSourceValue(input.sourceValues, edge);
@@ -35,7 +38,9 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
       sourceRef: edge.targetRef,
     };
     edgeValues.set(edge.id, targetValue);
-    mappedValues.push(targetValue);
+    if (!isTransformInputEdge(edge, transformInputEdgeIds)) {
+      mappedValues.push(targetValue);
+    }
     mappingTrace.push(
       buildTraceEntry({
         reason: reason('trace.mapping_evaluated'),
@@ -47,7 +52,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
   }
 
   for (const step of input.transforms ?? []) {
-    const result = executeTransformStep({ step, edgeValues });
+    const result = executeTransformStep({ step, edgeValues, runtimeContext: input.runtimeContext });
     transformReasons.push(...result.reasons);
     transformTrace.push(...result.trace);
     if (result.value) {
@@ -78,6 +83,10 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
     ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
     redactedValueSummaries,
   };
+}
+
+function isTransformInputEdge(edge: MappingRuleEdge, transformInputEdgeIds: Set<string>) {
+  return edge.edgeKind === 'transform_input' || transformInputEdgeIds.has(edge.id);
 }
 
 export function dryRunMappingBatch(input: BatchMappingInput): BatchDryRunResult {

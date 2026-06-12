@@ -223,6 +223,156 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
     ]);
   });
 
+  it('derives the default canonical catalog from active custom claim schemas', async () => {
+    const adminAdapter = createAdapter({
+      queryRowSets: [
+        [
+          {
+            id: 'system_default_canonical_catalog',
+            tenant_id: 'tenant_a',
+            catalog_key: 'authrim.default_canonical',
+            display_name: 'Stale Canonical Catalog',
+            lifecycle_state: 'active',
+            version_id: 'stale_version',
+            version_label: 'stale',
+            bundle_hash: 'stale_hash',
+            entry_id: 'stale_address',
+            stable_field_id: 'field.canonical.address',
+            namespace: 'authrim.canonical',
+            path: 'address',
+            target_taxonomy: 'canonical',
+            value_type: 'string',
+            cardinality: 'single',
+            classification: 'pii',
+            aliases_json: null,
+            validation_json: null,
+            ui_group_key: 'address',
+            ui_group_label: 'Address',
+            ui_group_order: 30,
+            ui_field_order: 1,
+            examples_json: '["Tokyo"]',
+            note: null,
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({
+      queryRowSets: [
+        [
+          {
+            id: 'schema_name',
+            field_key: 'name',
+            active_field_key: 'name',
+            display_label: 'Full Name',
+            field_type: 'string',
+            is_pii: 1,
+            is_required: 0,
+            validation_rules: null,
+            description: 'OIDC profile claim: full display name.',
+            display_order: 1,
+            ui_group_key: 'profile',
+            ui_group_label: 'Profile',
+            ui_group_order: 10,
+            ui_field_order: 1,
+            examples_json: '{"values":["John Doe","山田 太郎"]}',
+            schema_version: 1,
+          },
+          {
+            id: 'schema_locale',
+            field_key: 'locale',
+            active_field_key: 'locale',
+            display_label: 'Locale',
+            field_type: 'enum',
+            is_pii: 0,
+            is_required: 0,
+            validation_rules: '{"enum_values":["ja-JP","en-US"]}',
+            description: 'OIDC profile claim: locale.',
+            display_order: 12,
+            ui_group_key: 'profile',
+            ui_group_label: 'Profile',
+            ui_group_order: 10,
+            ui_field_order: 12,
+            examples_json: '{"values":["ja-JP","en-US"]}',
+            schema_version: 2,
+          },
+          {
+            id: 'schema_email',
+            field_key: 'email',
+            active_field_key: 'email',
+            display_label: 'Email',
+            field_type: 'string',
+            is_pii: 1,
+            is_required: 1,
+            validation_rules: null,
+            description: 'OIDC email claim.',
+            display_order: 20,
+            ui_group_key: 'contact',
+            ui_group_label: 'Contact',
+            ui_group_order: 20,
+            ui_field_order: 1,
+            examples_json: '{"values":["john@example.com"]}',
+            schema_version: 1,
+          },
+          {
+            id: 'schema_email_verified',
+            field_key: 'email_verified',
+            active_field_key: 'email_verified',
+            display_label: 'Email Verified',
+            field_type: 'boolean',
+            is_pii: 0,
+            is_required: 0,
+            validation_rules: null,
+            description: 'OIDC email verification claim.',
+            display_order: 21,
+            ui_group_key: 'contact',
+            ui_group_label: 'Contact',
+            ui_group_order: 20,
+            ui_field_order: 2,
+            examples_json: '{"values":[true]}',
+            schema_version: 1,
+          },
+        ],
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(
+      adminAdapter,
+      () => 1000,
+      coreAdapter
+    );
+
+    const catalogs = await repository.listCatalogs('tenant_a');
+
+    expect(adminAdapter.queries[0].sql).toContain('FROM field_catalogs');
+    expect(coreAdapter.queries[0].sql).toContain('FROM custom_claim_schemas');
+    expect(catalogs).toHaveLength(1);
+    expect(catalogs[0]).toMatchObject({
+      id: 'system_default_canonical_catalog',
+      catalogKey: 'authrim.default_canonical',
+      displayName: 'Authrim Default Canonical Catalog',
+      versionLabel: 'v2',
+    });
+    expect(catalogs[0].entries.map((entry) => entry.path)).toEqual([
+      'name',
+      'locale',
+      'email',
+      'email_verified',
+    ]);
+    expect(catalogs[0].entries.map((entry) => entry.path)).not.toContain('address');
+    expect(catalogs[0].entries.find((entry) => entry.path === 'name')?.examples).toEqual([
+      'John Doe',
+      '山田 太郎',
+    ]);
+    expect(catalogs[0].entries.find((entry) => entry.path === 'locale')).toMatchObject({
+      valueType: 'string',
+      allowedValues: ['ja-JP', 'en-US'],
+    });
+    expect(catalogs[0].entries.find((entry) => entry.path === 'email')).toMatchObject({
+      classification: 'pii',
+      required: true,
+      nullable: false,
+    });
+  });
+
   it('deletes inactive policy sets with their control-plane children', async () => {
     const adapter = createAdapter({
       queryOneRows: [
@@ -1225,6 +1375,64 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(snapshotMetadata).toContain('"dependencyGraphId"');
   });
 
+  it('compiles against the configured canonical catalog without a stored catalog version', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+          compatibility_range: null,
+        },
+        null,
+      ],
+    });
+    const coreAdapter = createAdapter({
+      queryRows: [
+        {
+          id: 'schema_name',
+          field_key: 'name',
+          active_field_key: 'name',
+          display_label: 'Full Name',
+          field_type: 'string',
+          is_pii: 1,
+          is_required: 0,
+          validation_rules: '{}',
+          description: 'Full name',
+          display_order: 10,
+          ui_group_key: 'profile',
+          ui_group_label: 'Profile',
+          ui_group_order: 10,
+          ui_field_order: 10,
+          examples_json: '["Ada Lovelace"]',
+          schema_version: 1,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    const result = await repository.compileFieldMappingVersion(
+      'tenant_a',
+      'policy_1',
+      'policy_version_1',
+      {
+        catalogVersionId: 'system_default_canonical_catalog_schema_v1',
+      }
+    );
+
+    expect(result.catalogVersionId).toBe('system_default_canonical_catalog_schema_v1');
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO dependency_graph_snapshots'),
+      expect.stringContaining('INSERT INTO compiled_mapping_snapshots'),
+    ]);
+    expect(String(adapter.executes[1].params[3])).toBe(
+      'system_default_canonical_catalog_schema_v1'
+    );
+  });
+
   it('blocks activation when another holder has an unexpired lease', async () => {
     const adapter = createAdapter({
       queryOneRows: [
@@ -1354,6 +1562,34 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  it('returns a conflict for duplicate field mapping version labels', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_1',
+          tenant_id: 'tenant_a',
+          field_mapping_key: 'default',
+          display_name: 'Default field mapping set',
+          description: null,
+          lifecycle_state: 'draft',
+        },
+        { id: 'policy_version_existing' },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'ui-draft-2026-06-11T03:08:22.296Z',
+        rules: [],
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('rejects sensitive policy rule references before persistence', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -1420,6 +1656,34 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     ).rejects.toMatchObject({
       status: 400,
       code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects duplicate field mapping rule keys before persistence', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        rules: [
+          {
+            ruleKey: 'ui-duplicate',
+            ruleKind: 'destination_transform',
+            action: 'map',
+          },
+          {
+            ruleKey: 'ui-duplicate',
+            ruleKind: 'destination_transform',
+            action: 'map',
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: 'rules[1].ruleKey must be unique',
     });
     expect(adapter.executes).toHaveLength(0);
   });

@@ -698,7 +698,7 @@ export function generateWranglerConfig(
 
   // Custom-domain routing is terminated at ar-router.
   // Non-router workers are reached through service bindings, otherwise ar-router's
-  // special-case routing (e.g. /api/auth/login-methods, /api/admin/setup-token/*)
+  // special-case routing (e.g. /api/auth/authentication-methods, /api/admin/setup-token/*)
   // is bypassed by Cloudflare route precedence.
 
   return wranglerConfig;

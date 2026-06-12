@@ -132,6 +132,31 @@ export function getSAMLSigningPolicy(config?: SAMLSPConfig | SAMLIdPConfig): SAM
   return config?.signingKeyPolicy ?? {};
 }
 
+export async function resolveSAMLIdPSigningPolicy(
+  env: Env,
+  tenantId: string,
+  spConfig?: SAMLSPConfig
+): Promise<SAMLSigningKeyPolicy> {
+  const spPolicy = getSAMLSigningPolicy(spConfig);
+  if (hasExplicitSAMLSigningPolicy(spPolicy)) {
+    return spPolicy;
+  }
+
+  const settings = await getSAMLPublicSettings(env, tenantId);
+  return settings.signingKeyPolicies.idp ?? {};
+}
+
+function hasExplicitSAMLSigningPolicy(policy: SAMLSigningKeyPolicy): boolean {
+  return Boolean(
+    policy.scope ||
+    policy.metadataCertificatePublication ||
+    policy.active ||
+    policy.next ||
+    policy.nextCandidates?.length ||
+    policy.backup
+  );
+}
+
 async function resolvePublishedCertificate(
   env: Env,
   context: SAMLSigningKeyContext,

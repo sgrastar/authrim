@@ -54,6 +54,27 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
     outputCardinality: 'single',
   },
   {
+    operation: 'affix_text',
+    parameters: [
+      { name: 'prefix', kind: 'string', required: false },
+      { name: 'suffix', kind: 'string', required: false },
+    ],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
+    operation: 'oidc_pairwise_sub',
+    parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
+    operation: 'saml_edu_person_targeted_id',
+    parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
     operation: 'text_to_boolean',
     parameters: [
       { name: 'trueValues', kind: 'string', required: false },
@@ -163,7 +184,7 @@ export function executeTransformStep(input: TransformExecutionInput): TransformE
   }
 
   const sourceValues = values.filter(Boolean) as SourceValueEnvelope[];
-  const output = executeOperation(input.step, sourceValues);
+  const output = executeOperation(input.step, sourceValues, input.runtimeContext);
 
   if (!isTransformOutputValid(input.step.operation, output)) {
     reasons.push(reason('transform.invalid_output'));
@@ -222,7 +243,11 @@ function transformResult(
   };
 }
 
-function executeOperation(step: MappingTransformStep, values: SourceValueEnvelope[]): unknown {
+function executeOperation(
+  step: MappingTransformStep,
+  values: SourceValueEnvelope[],
+  runtimeContext?: Record<string, unknown>
+): unknown {
   const rawValues = values.map((item) => item.value);
 
   switch (step.operation) {
@@ -238,6 +263,12 @@ function executeOperation(step: MappingTransformStep, values: SourceValueEnvelop
       return caseValue(rawValues[0], step.parameters?.mode);
     case 'trim':
       return typeof rawValues[0] === 'string' ? rawValues[0].trim() : rawValues[0];
+    case 'affix_text':
+      return affixText(rawValues[0], step.parameters);
+    case 'oidc_pairwise_sub':
+      return buildOIDCPairwiseSub(runtimeContext, step.parameters);
+    case 'saml_edu_person_targeted_id':
+      return buildSAMLEduPersonTargetedID(runtimeContext);
     case 'text_to_boolean':
       return textToBoolean(rawValues[0], step.parameters);
     case 'json_build':
@@ -251,6 +282,55 @@ function executeOperation(step: MappingTransformStep, values: SourceValueEnvelop
     default:
       return undefined;
   }
+}
+
+function buildOIDCPairwiseSub(
+  runtimeContext?: Record<string, unknown>,
+  parameters?: Record<string, unknown>
+): string | undefined {
+  const oidcContext = isRecord(runtimeContext?.oidc) ? runtimeContext.oidc : runtimeContext;
+  const profileId = readString(parameters?.persistentIdentifierProfileId);
+  const persistentIdentifiers = isRecord(oidcContext?.persistentIdentifiers)
+    ? oidcContext.persistentIdentifiers
+    : undefined;
+  if (profileId) {
+    return readString(persistentIdentifiers?.[profileId]);
+  }
+  return readString(oidcContext?.pairwiseSubject) ?? readString(oidcContext?.subject);
+}
+
+function buildSAMLEduPersonTargetedID(
+  runtimeContext?: Record<string, unknown>
+): string | undefined {
+  const samlContext = isRecord(runtimeContext?.saml) ? runtimeContext.saml : runtimeContext;
+  const localEntityId = readString(samlContext?.localEntityId);
+  const partnerEntityId = readString(samlContext?.partnerEntityId);
+  const opaqueId = readString(samlContext?.eduPersonTargetedIdOpaque);
+  if (!localEntityId || !partnerEntityId || !opaqueId) {
+    return undefined;
+  }
+  return `${localEntityId}!${partnerEntityId}!${opaqueId}`;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function affixText(value: unknown, parameters: Record<string, unknown> | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const body = String(value).trim();
+  if (!body) {
+    return null;
+  }
+  const prefix = typeof parameters?.prefix === 'string' ? parameters.prefix : '';
+  const suffix = typeof parameters?.suffix === 'string' ? parameters.suffix : '';
+  return `${prefix}${body}${suffix}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function delimiter(step: MappingTransformStep): string {

@@ -16,7 +16,10 @@
 		isValidLinkUrl,
 		sanitizeColor
 	} from '$lib/utils/url-validation';
-	import { fetchLoginMethods, type ExternalProvider } from '$lib/api/login-methods';
+	import {
+		fetchAuthenticationMethods,
+		type ExternalProvider
+	} from '$lib/api/authentication-methods';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -41,7 +44,7 @@
 		passkeyLoading || emailCodeLoading || directoryPasswordLoading || externalIdpLoading !== null
 	);
 
-	// Login methods (from API)
+	// Authentication methods (from API)
 	let methodsLoading = $state(true);
 	let methodsError = $state('');
 	let passkeyEnabled = $state(false);
@@ -118,7 +121,7 @@
 
 	// Show passkey only if both server-enabled and browser-supported
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
-	const hasVisibleLoginMethod = $derived(
+	const hasVisibleAuthenticationMethod = $derived(
 		showPasskey ||
 			emailCodeEnabled ||
 			directoryPasswordEnabled ||
@@ -171,7 +174,7 @@
 			window.history.replaceState({}, '', newUrl.toString());
 		}
 
-		// Fetch login methods + challenge data in parallel
+		// Fetch authentication methods + challenge data in parallel
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
 		authorizationChallengeId = urlChallengeId || '';
 		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
@@ -182,7 +185,7 @@
 			email = urlLoginHint;
 		}
 
-		const tasks: Promise<void>[] = [loadLoginMethods()];
+		const tasks: Promise<void>[] = [loadAuthenticationMethods()];
 		if (urlChallengeId) {
 			tasks.push(loadChallengeData(urlChallengeId));
 		}
@@ -192,11 +195,11 @@
 	// ---------------------------------------------------------------------------
 	// Data fetchers
 	// ---------------------------------------------------------------------------
-	async function loadLoginMethods() {
+	async function loadAuthenticationMethods() {
 		methodsLoading = true;
 		methodsError = '';
 		try {
-			const { data, error: apiError } = await fetchLoginMethods();
+			const { data, error: apiError } = await fetchAuthenticationMethods();
 			if (apiError) {
 				methodsError = apiError.error.message;
 				return;
@@ -212,7 +215,7 @@
 				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
 			}
 		} catch {
-			methodsError = 'Failed to load login methods';
+			methodsError = 'Failed to load authentication methods';
 		} finally {
 			methodsLoading = false;
 		}
@@ -604,7 +607,7 @@
 					</Alert>
 				{/if}
 
-				{#if !hasVisibleLoginMethod}
+				{#if !hasVisibleAuthenticationMethod}
 					<Alert variant="error" class="mb-4">
 						{$LL.login_noMethodsAvailable()}
 					</Alert>

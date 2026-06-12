@@ -58,7 +58,7 @@ const en = {
 	login_orContinueWith: 'Or continue with',
 	login_continueWith: 'Continue with {provider:string}',
 	login_noMethodsAvailable:
-		'No login method is enabled for this tenant. Contact your administrator.',
+		'No authentication method is enabled for this tenant. Contact your administrator.',
 
 	discover_pageTitle: 'Tenant Discovery',
 	discover_kicker: 'Tenant discovery',

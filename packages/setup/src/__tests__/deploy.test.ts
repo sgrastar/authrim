@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execa } from 'execa';
 import {
+  buildAndDeployAllSequentially,
   buildUiWorkerBuildEnv,
   deployAll,
   deployUiWorkerComponent,
@@ -205,6 +206,7 @@ describe('deployUiWorkerBindingTargets', () => {
         env: 'test',
         rootDir,
         apiBaseUrl: 'https://test.example.com',
+        interDeploymentDelayMs: 0,
       },
       {
         loginUi: true,
@@ -253,5 +255,71 @@ describe('deployAll', () => {
     expect(summary.successCount).toBe(2);
     expect(vi.mocked(execa)).toHaveBeenCalledTimes(2);
     expect(progressMessages).toContain('  ⏳ Waiting 0.1s before deploying the next worker...');
+  });
+});
+
+describe('buildAndDeployAllSequentially', () => {
+  it('builds and deploys each worker before moving to the next worker', async () => {
+    const rootDir = createTempRoot();
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    createWorkerPackage(rootDir, 'ar-token', '1.0.0');
+
+    const summary = await buildAndDeployAllSequentially(
+      {
+        env: 'test',
+        rootDir,
+        interDeploymentDelayMs: 0,
+      },
+      ['ar-auth', 'ar-token']
+    );
+
+    expect(summary.successCount).toBe(2);
+    expect(vi.mocked(execa)).toHaveBeenNthCalledWith(
+      2,
+      'pnpm',
+      ['exec', 'turbo', 'run', 'build', '--filter=@authrim/ar-auth'],
+      expect.objectContaining({ cwd: rootDir })
+    );
+    expect(vi.mocked(execa)).toHaveBeenNthCalledWith(
+      3,
+      'pnpm',
+      ['exec', 'wrangler', 'deploy', '--env', 'test'],
+      expect.objectContaining({ cwd: join(rootDir, 'packages', 'ar-auth') })
+    );
+    expect(vi.mocked(execa)).toHaveBeenNthCalledWith(
+      5,
+      'pnpm',
+      ['exec', 'turbo', 'run', 'build', '--filter=@authrim/ar-token'],
+      expect.objectContaining({ cwd: rootDir })
+    );
+    expect(vi.mocked(execa)).toHaveBeenNthCalledWith(
+      6,
+      'pnpm',
+      ['exec', 'wrangler', 'deploy', '--env', 'test'],
+      expect.objectContaining({ cwd: join(rootDir, 'packages', 'ar-token') })
+    );
+  });
+
+  it('stops before deploy when a component build fails', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+
+    vi.mocked(execa).mockResolvedValueOnce({} as Awaited<ReturnType<typeof execa>>);
+    vi.mocked(execa).mockRejectedValueOnce(new Error('turbo failed'));
+
+    const summary = await buildAndDeployAllSequentially(
+      {
+        env: 'test',
+        rootDir,
+        interDeploymentDelayMs: 0,
+      },
+      ['ar-auth']
+    );
+
+    expect(summary.successCount).toBe(0);
+    expect(summary.failedCount).toBe(1);
+    expect(summary.results[0]?.error).toContain('Build failed: turbo failed');
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(2);
   });
 });

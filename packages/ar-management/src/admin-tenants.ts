@@ -569,12 +569,12 @@ async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId
     ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:tenant-discovery-ui`, JSON.stringify({})),
     env.SETTINGS?.put(
-      `settings:tenant:${tenantId}:login-methods`,
+      `settings:tenant:${tenantId}:authentication-methods`,
       JSON.stringify({
-        'login-methods.passkey.login_enabled': true,
-        'login-methods.passkey.signup_enabled': true,
-        'login-methods.email_otp.login_enabled': true,
-        'login-methods.email_otp.signup_enabled': true,
+        'authentication-methods.passkey.login_enabled': true,
+        'authentication-methods.passkey.signup_enabled': true,
+        'authentication-methods.email_otp.login_enabled': true,
+        'authentication-methods.email_otp.signup_enabled': true,
       })
     ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
@@ -1078,7 +1078,7 @@ async function runTenantD1PoolProvisioning(
         ? [
             c.env.SETTINGS.delete(`settings:tenant:${input.id}:login-ui`),
             c.env.SETTINGS.delete(`settings:tenant:${input.id}:tenant-discovery-ui`),
-            c.env.SETTINGS.delete(`settings:tenant:${input.id}:login-methods`),
+            c.env.SETTINGS.delete(`settings:tenant:${input.id}:authentication-methods`),
             c.env.SETTINGS.delete(`settings:tenant:${input.id}:login-entry`),
           ]
         : []),
@@ -1329,7 +1329,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     try {
       // 1. Write TenantContract to KV
       await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
-      // 2. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui, login-methods, login-entry)
+      // 2. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui, authentication-methods, login-entry)
       await seedTenantDefaultSettings(c, id);
       await seedBuiltinCanonicalSchemaFields(adapter, id);
       // 3. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
@@ -1349,7 +1349,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
         c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:tenant-discovery-ui`),
-        c.env.SETTINGS?.delete(`settings:tenant:${id}:login-methods`),
+        c.env.SETTINGS?.delete(`settings:tenant:${id}:authentication-methods`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-entry`),
         // KeyManager DO cleanup is not possible (no delete/reset RPC) — orphaned DO is harmless
       ]);
@@ -1753,7 +1753,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
       c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:tenant-discovery-ui`),
-      c.env.SETTINGS?.delete(`settings:tenant:${id}:login-methods`),
+      c.env.SETTINGS?.delete(`settings:tenant:${id}:authentication-methods`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:login-entry`),
     ]);
     await recordTenantSlotAudit(adminAdapter, {

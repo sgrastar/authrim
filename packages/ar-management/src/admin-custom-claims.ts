@@ -172,7 +172,7 @@ interface FieldUsageBindingView {
   updated_at: number;
 }
 
-interface LoginMethodsSettingsView {
+interface AuthenticationMethodsSettingsView {
   passkeyLoginEnabled: boolean;
   passkeySignupEnabled: boolean;
   emailOtpLoginEnabled: boolean;
@@ -308,11 +308,11 @@ function normalizeSettingBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-async function resolveLoginMethodsSettings(
+async function resolveAuthenticationMethodsSettings(
   env: Env,
   tenantId: string
-): Promise<LoginMethodsSettingsView> {
-  const defaults: LoginMethodsSettingsView = {
+): Promise<AuthenticationMethodsSettingsView> {
+  const defaults: AuthenticationMethodsSettingsView = {
     passkeyLoginEnabled: true,
     passkeySignupEnabled: true,
     emailOtpLoginEnabled: true,
@@ -320,26 +320,26 @@ async function resolveLoginMethodsSettings(
   };
 
   try {
-    const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-methods`);
+    const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
     if (!raw) return defaults;
     const settings = JSON.parse(raw) as Record<string, unknown>;
-    const legacyPasskeyEnabled = settings['login-methods.passkey.enabled'];
-    const legacyEmailOtpEnabled = settings['login-methods.email_otp.enabled'];
+    const legacyPasskeyEnabled = settings['authentication-methods.passkey.enabled'];
+    const legacyEmailOtpEnabled = settings['authentication-methods.email_otp.enabled'];
     return {
       passkeyLoginEnabled: normalizeSettingBoolean(
-        settings['login-methods.passkey.login_enabled'],
+        settings['authentication-methods.passkey.login_enabled'],
         normalizeSettingBoolean(legacyPasskeyEnabled, defaults.passkeyLoginEnabled)
       ),
       passkeySignupEnabled: normalizeSettingBoolean(
-        settings['login-methods.passkey.signup_enabled'],
+        settings['authentication-methods.passkey.signup_enabled'],
         normalizeSettingBoolean(legacyPasskeyEnabled, defaults.passkeySignupEnabled)
       ),
       emailOtpLoginEnabled: normalizeSettingBoolean(
-        settings['login-methods.email_otp.login_enabled'],
+        settings['authentication-methods.email_otp.login_enabled'],
         normalizeSettingBoolean(legacyEmailOtpEnabled, defaults.emailOtpLoginEnabled)
       ),
       emailOtpSignupEnabled: normalizeSettingBoolean(
-        settings['login-methods.email_otp.signup_enabled'],
+        settings['authentication-methods.email_otp.signup_enabled'],
         normalizeSettingBoolean(legacyEmailOtpEnabled, defaults.emailOtpSignupEnabled)
       ),
     };
@@ -357,7 +357,7 @@ function createDerivedFieldUsageBinding(
   return {
     id: `derived:${bindingId}:${fieldKey}`,
     field_key: fieldKey,
-    binding_type: 'login_method',
+    binding_type: 'authentication_method',
     binding_id: bindingId,
     protection: 'delete_blocked',
     reason,
@@ -373,7 +373,7 @@ async function resolveDerivedFieldUsageBindings(
   env: Env,
   tenantId: string
 ): Promise<FieldUsageBindingView[]> {
-  const settings = await resolveLoginMethodsSettings(env, tenantId);
+  const settings = await resolveAuthenticationMethodsSettings(env, tenantId);
   const bindings: FieldUsageBindingView[] = [];
 
   if (settings.passkeySignupEnabled) {

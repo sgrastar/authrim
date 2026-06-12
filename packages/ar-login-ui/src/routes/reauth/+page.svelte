@@ -7,7 +7,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, loginChallengeAPI } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl } from '$lib/utils/url-validation';
-	import { fetchLoginMethods } from '$lib/api/login-methods';
+	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { startAuthentication } from '@simplewebauthn/browser';
 
 	// ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@
 			return;
 		}
 
-		await Promise.all([loadChallengeData(), loadLoginMethods()]);
+		await Promise.all([loadChallengeData(), loadAuthenticationMethods()]);
 		loading = false;
 	});
 
@@ -83,9 +83,9 @@
 		}
 	}
 
-	async function loadLoginMethods() {
+	async function loadAuthenticationMethods() {
 		try {
-			const { data } = await fetchLoginMethods();
+			const { data } = await fetchAuthenticationMethods();
 			if (data) {
 				passkeyEnabled = data.methods.passkey.reauthEnabled ?? data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.reauthEnabled ?? data.methods.emailCode.enabled;

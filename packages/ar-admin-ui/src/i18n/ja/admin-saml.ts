@@ -305,9 +305,12 @@ const adminSaml = {
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'なし',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
-	admin_saml_detail_identity_mapping_policy_default: 'テナント既定 / legacy release',
+	admin_saml_detail_identity_mapping_policy_default: 'Field Mapping Setを選択',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'このSPへSAML Attributeをreleaseする時に使うactiveなField Mapping Setを選択します。',
+	admin_saml_detail_identity_mapping_required_error:
+		'SAML SPを保存する前にField Mapping Setを選択してください。',
+	admin_saml_detail_field_mapping_inactive: '未active',
 	admin_saml_detail_attribute_release_consent: '属性提供の同意',
 	admin_saml_detail_attribute_release_consent_disabled: '属性提供前に確認しない',
 	admin_saml_detail_attribute_release_consent_once: '初回だけ確認し、以後は記憶する',
@@ -316,13 +319,19 @@ const adminSaml = {
 		'提供する属性が変わった時に再確認する',
 	admin_saml_detail_attribute_release_consent_hint:
 		'このSPへSAML assertionを送信する前に、Authrimが属性提供の確認を必須にするかを制御します。同じpolicy形状をOIDC clientにも再利用できます。',
-	admin_saml_detail_authn_request_signature: 'AuthnRequest Signature',
-	admin_saml_detail_logout_request_signature: 'LogoutRequest Signature',
+	admin_saml_detail_authn_request_signature: 'AuthnRequest署名',
+	admin_saml_detail_authn_request_signature_hint:
+		'このSPから送られるAuthnRequestメッセージの署名をAuthrimが必須にするかを制御します。',
+	admin_saml_detail_logout_request_signature: 'LogoutRequest署名',
 	admin_saml_detail_sp_signature_hint:
 		'デフォルトはRequiredです。明示的なlegacy SP例外がある場合だけ緩和してください。',
-	admin_saml_detail_authn_context_mode: 'AuthnContext Mode',
+	admin_saml_detail_authn_context_mode: 'AuthnContext送信モード',
+	admin_saml_detail_authn_context_mode_hint:
+		'このSPへ送るSAML assertionのAuthnContextClassRefをAuthrimがどう設定するかを制御します。',
 	admin_saml_detail_default_authn_context: 'Default AuthnContext',
 	admin_saml_detail_passkey_authn_context: 'Passkey AuthnContext',
+	admin_saml_detail_passkey_authn_context_hint:
+		'ユーザーがPasskeyで認証した時に送信するAuthnContextClassRefです。',
 	admin_saml_detail_sign_assertions: 'Assertionsに署名',
 	admin_saml_detail_sign_assertions_desc:
 		'このservice providerへ送信するSAML Assertionsに署名します。',

@@ -186,8 +186,6 @@
 			<div class="empty-state">{$LL.admin_identity_mapping_policies_loading()}</div>
 		{:else if errorMessage}
 			<div class="empty-state">{errorMessage}</div>
-		{:else if policies.length === 0}
-			<div class="empty-state">{$LL.admin_identity_mapping_policies_empty()}</div>
 		{:else}
 			<div class="policy-columns">
 				<section class="policy-column" aria-labelledby="source-policy-heading">

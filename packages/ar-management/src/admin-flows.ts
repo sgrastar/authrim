@@ -311,7 +311,7 @@ function validateGraphDefinition(
       'check_risk',
       // 3. Selection/UI Nodes
       'auth_method_select',
-      'login_method_select',
+      'authentication_method_select',
       'identifier',
       'profile_input',
       'custom_form',

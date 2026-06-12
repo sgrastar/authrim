@@ -404,7 +404,7 @@ describe('Custom Claims Admin API', () => {
       expect(body.pagination.page).toBe(1);
     });
 
-    it('should include derived system usage bindings for built-in login method fields', async () => {
+    it('should include derived system usage bindings for built-in authentication method fields', async () => {
       mockDbQuery.mockResolvedValueOnce([{ count: 1 }]).mockResolvedValueOnce([
         createSchemaRow({
           id: 'schema-email',
@@ -1270,7 +1270,7 @@ describe('Custom Claims Admin API', () => {
       expect(mockDbExecute.mock.calls[2][0]).toContain('DELETE FROM custom_claim_schemas');
     });
 
-    it('should block deleting fields used by enabled built-in login methods', async () => {
+    it('should block deleting fields used by enabled built-in authentication methods', async () => {
       mockDbQuery.mockResolvedValueOnce([
         createSchemaRow({
           id: 'schema-email',

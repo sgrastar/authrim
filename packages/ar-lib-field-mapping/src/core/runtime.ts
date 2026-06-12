@@ -26,6 +26,9 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
   const transformReasons: ReasonCode[] = [];
   const transformTrace: RuleTraceEntry[] = [];
   const mappingTrace: RuleTraceEntry[] = [];
+  const transformInputEdgeIds = new Set(
+    (input.transforms ?? []).flatMap((step) => step.inputEdgeIds)
+  );
 
   for (const edge of input.edges) {
     const sourceValue = findSourceValue(input.sourceValues, edge);
@@ -37,7 +40,9 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
       sourceRef: edge.targetRef,
     };
     edgeValues.set(edge.id, targetValue);
-    mappedValues.push(targetValue);
+    if (!isTransformInputEdge(edge, transformInputEdgeIds)) {
+      mappedValues.push(targetValue);
+    }
     mappingTrace.push(
       buildTraceEntry({
         reason: reason('trace.mapping_evaluated'),
@@ -49,7 +54,7 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
   }
 
   for (const step of input.transforms ?? []) {
-    const result = executeTransformStep({ step, edgeValues });
+    const result = executeTransformStep({ step, edgeValues, runtimeContext: input.runtimeContext });
     transformReasons.push(...result.reasons);
     transformTrace.push(...result.trace);
     if (result.value) {
@@ -62,8 +67,25 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     status: statusFromReasons(reasons),
     reasons,
     ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
-    values: mappedValues.filter((value) => findCatalogEntry(input.catalog, value.sourceRef)),
+    values: mappedValues.filter((value) => shouldEmitMappedValue(input.catalog, value)),
   };
+}
+
+function shouldEmitMappedValue(
+  catalog: MappingInput['catalog'],
+  value: SourceValueEnvelope
+): boolean {
+  if (findCatalogEntry(catalog, value.sourceRef)) {
+    return true;
+  }
+  return value.sourceRef.side === 'destination';
+}
+
+function isTransformInputEdge(
+  edge: MappingInput['edges'][number],
+  transformInputEdgeIds: Set<string>
+) {
+  return edge.edgeKind === 'transform_input' || transformInputEdgeIds.has(edge.id);
 }
 
 function findSourceValue(

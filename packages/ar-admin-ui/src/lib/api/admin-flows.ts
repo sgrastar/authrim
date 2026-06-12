@@ -42,7 +42,7 @@ export type GraphNodeType =
 
 	// === 3. Selection/UI Nodes ===
 	| 'auth_method_select' // Auth method selection (email or social)
-	| 'login_method_select' // Login method selection (passkey or OTP)
+	| 'authentication_method_select' // Login method selection (passkey or OTP)
 	| 'identifier' // Identifier input (email/phone/username)
 	| 'profile_input' // Profile input (name/birthdate etc)
 	| 'custom_form' // Admin-defined form
@@ -135,7 +135,7 @@ export function getNodeCategory(type: GraphNodeType): NodeCategory {
 		check_risk: 'check',
 		// Selection
 		auth_method_select: 'selection',
-		login_method_select: 'selection',
+		authentication_method_select: 'selection',
 		identifier: 'selection',
 		profile_input: 'selection',
 		custom_form: 'selection',

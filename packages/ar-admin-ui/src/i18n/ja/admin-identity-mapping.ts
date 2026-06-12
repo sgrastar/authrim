@@ -576,6 +576,13 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_transform_fallback_label: 'フォールバック',
 	admin_identity_mapping_flow_transform_fallback_desc:
 		'接続された入力値のうち最初の非空値を使います。',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: 'OIDC pairwise sub',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc:
+		'現在のOIDC client contextからpairwise subject identifierを使います。',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label:
+		'SAML eduPersonTargetedID',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc:
+		'現在のSAML SP contextから IdP!SP!opaque 形式のtargeted IDを作成します。',
 	admin_identity_mapping_flow_transform_text_to_boolean_label: 'テキストをbooleanへ変換',
 	admin_identity_mapping_flow_transform_text_to_boolean_desc:
 		'設定したテキストtokenをtrue、false、nullへ変換してboolean targetへ書き込みます。',

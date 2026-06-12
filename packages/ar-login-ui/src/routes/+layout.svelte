@@ -5,7 +5,7 @@
 	import { setLocale, getLocale } from '$i18n/i18n-svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { brandingStore } from '$lib/stores/branding.svelte';
-	import { fetchLoginMethods } from '$lib/api/login-methods';
+	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { onMount } from 'svelte';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
@@ -33,12 +33,15 @@
 		if (data.shouldLoadTenantBranding) {
 			// Fetch tenant theme defaults (non-blocking for theme init)
 			try {
-				const { data: loginMethods } = await fetchLoginMethods();
-				if (loginMethods?.ui) {
-					themeStore.setTenantDefaults(loginMethods.ui.theme, loginMethods.ui.variant);
+				const { data: authenticationMethods } = await fetchAuthenticationMethods();
+				if (authenticationMethods?.ui) {
+					themeStore.setTenantDefaults(
+						authenticationMethods.ui.theme,
+						authenticationMethods.ui.variant
+					);
 					brandingStore.set(
-						loginMethods.ui.branding.brandName || '',
-						loginMethods.ui.branding.logoUrl || null
+						authenticationMethods.ui.branding.brandName || '',
+						authenticationMethods.ui.branding.logoUrl || null
 					);
 					document.documentElement.setAttribute('data-branding-loaded', '');
 				}

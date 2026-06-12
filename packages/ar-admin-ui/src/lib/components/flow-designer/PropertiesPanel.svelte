@@ -66,7 +66,7 @@
 			check_risk: 'Check Risk',
 			// 3. Selection Nodes
 			auth_method_select: 'Auth Method Select',
-			login_method_select: 'Login Method Select',
+			authentication_method_select: 'Authentication Method Select',
 			identifier: 'Identifier Input',
 			profile_input: 'Profile Input',
 			custom_form: 'Custom Form',
@@ -134,7 +134,7 @@
 			check_risk: '#dc2626',
 			// 3. Selection Nodes
 			auth_method_select: '#3b82f6',
-			login_method_select: '#0ea5e9',
+			authentication_method_select: '#0ea5e9',
 			identifier: '#06b6d4',
 			profile_input: '#0891b2',
 			custom_form: '#0284c7',

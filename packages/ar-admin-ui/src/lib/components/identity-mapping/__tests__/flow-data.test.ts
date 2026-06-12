@@ -13,7 +13,38 @@ describe('field mapping flow data adapter', () => {
 					lifecycleState: 'draft'
 				}
 			],
-			catalogs: [],
+			catalogs: [
+				{
+					id: 'catalog_default',
+					tenantId: 'tenant_a',
+					catalogKey: 'default',
+					displayName: 'Default Catalog',
+					versionLabel: 'v1',
+					lifecycleState: 'active',
+					entries: [
+						{
+							id: 'entry_subject_id',
+							stableFieldId: 'field.canonical.subject_id',
+							namespace: 'authrim.profile',
+							path: 'subject_id',
+							targetTaxonomy: 'canonical',
+							valueType: 'string',
+							cardinality: 'single',
+							classification: 'internal'
+						},
+						{
+							id: 'entry_groups',
+							stableFieldId: 'field.canonical.group_membership',
+							namespace: 'authrim.profile',
+							path: 'group_membership',
+							targetTaxonomy: 'canonical',
+							valueType: 'array',
+							cardinality: 'multi',
+							classification: 'internal'
+						}
+					]
+				}
+			],
 			sourceProfiles: [
 				{
 					id: 'source_csv',
@@ -89,7 +120,7 @@ describe('field mapping flow data adapter', () => {
 		expect(csvSample).toBeDefined();
 		expect(csvSample?.nodes.some((node) => node.label === 'employee_id')).toBe(true);
 		expect(csvSample?.nodes.some((node) => node.label === 'Subject Identifier')).toBe(true);
-		expect(csvSample?.nodes.some((node) => node.label === 'Email')).toBe(true);
+		expect(csvSample?.nodes.some((node) => node.label === 'Address')).toBe(false);
 		expect(csvSample?.nodes).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
@@ -139,6 +170,238 @@ describe('field mapping flow data adapter', () => {
 		});
 
 		expect(samples).toEqual([]);
+	});
+
+	it('builds a destination-only graph when no source profiles are registered yet', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			sourceProfiles: [],
+			destinationProfiles: [
+				{
+					id: 'destination_gakunin',
+					tenantId: 'tenant_a',
+					destinationType: 'saml',
+					profileKey: 'gakunin_application_standard_v2_8',
+					displayName: 'GakuNin application standard',
+					ownerScopeType: 'tenant',
+					lifecycleState: 'active',
+					version: {
+						id: 'destination_gakunin_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							attributes: [
+								{
+									name: 'eduPersonPrincipalName',
+									label: 'eduPersonPrincipalName',
+									valueType: 'string',
+									classification: 'pii'
+								}
+							]
+						}
+					}
+				}
+			],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			id: 'destination-only-destination-profile-destination_gakunin',
+			title: 'GakuNin application standard',
+			destinationAdapter: 'SAML',
+			reviewGates: '1 destination fields'
+		});
+		expect(samples[0].nodes.some((node) => node.role === 'source')).toBe(false);
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'destination',
+					label: 'eduPersonPrincipalName',
+					profileId: 'destination-profile-destination_gakunin',
+					profileTitle: 'GakuNin application standard'
+				})
+			])
+		);
+		expect(samples[0].nodes.some((node) => node.role === 'target')).toBe(false);
+	});
+
+	it('builds a source-only graph when no destination profiles are registered yet', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			sourceProfiles: [
+				{
+					id: 'source_csv',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'people_csv',
+					displayName: 'People CSV',
+					lifecycleState: 'active',
+					version: {
+						id: 'source_csv_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schemaHash: 'hash',
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.email',
+									headerName: 'Email',
+									label: 'Email',
+									valueType: 'email',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						},
+						warningSummary: {}
+					}
+				}
+			],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			id: 'source-profile-source_csv',
+			title: 'People CSV',
+			sourceAdapter: 'CSV',
+			destinationAdapter: 'OIDC',
+			reviewGates: '1 source fields'
+		});
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'source',
+					label: 'Email',
+					profileId: 'source-profile-source_csv'
+				})
+			])
+		);
+		expect(samples[0].nodes.some((node) => node.role === 'target')).toBe(false);
+		expect(samples[0].nodes.some((node) => node.role === 'destination')).toBe(false);
+	});
+
+	it('builds an identity schema graph from a field catalog without inventing a source profile', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [
+				{
+					id: 'catalog_1',
+					tenantId: 'tenant_a',
+					catalogKey: 'default',
+					displayName: 'Default Catalog',
+					versionLabel: 'v1',
+					lifecycleState: 'active',
+					entries: [
+						{
+							id: 'entry_subject_id',
+							stableFieldId: 'field.canonical.subject_id',
+							namespace: 'authrim.profile',
+							path: 'subject_id',
+							targetTaxonomy: 'canonical',
+							valueType: 'string',
+							cardinality: 'single',
+							classification: 'internal'
+						}
+					]
+				}
+			],
+			sourceProfiles: [],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			id: 'field-catalog-only',
+			title: 'Field catalog',
+			reviewGates: '0 destination fields',
+			metrics: ['0 / 0', '1 schemas', '0', '1 targets']
+		});
+		expect(samples[0].nodes).toEqual([
+			expect.objectContaining({
+				role: 'target',
+				label: 'Subject Identifier'
+			})
+		]);
+	});
+
+	it('adds system canonical targets only when requested for destination editing', () => {
+		const baseInput = {
+			policies: [],
+			catalogs: [
+				{
+					id: 'catalog_1',
+					tenantId: 'tenant_a',
+					catalogKey: 'default',
+					displayName: 'Default Catalog',
+					versionLabel: 'v1',
+					lifecycleState: 'active',
+					entries: [
+						{
+							id: 'entry_email',
+							stableFieldId: 'field.canonical.email',
+							namespace: 'authrim.profile',
+							path: 'email',
+							targetTaxonomy: 'canonical',
+							valueType: 'string',
+							cardinality: 'single',
+							classification: 'pii'
+						}
+					]
+				}
+			],
+			sourceProfiles: [],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		};
+
+		const sourceLikeSamples = buildIdentityMappingFlowSamples(baseInput);
+		const destinationSamples = buildIdentityMappingFlowSamples(baseInput, {
+			includeSystemCanonicalTargets: true
+		});
+
+		expect(sourceLikeSamples[0].nodes.some((node) => node.label === 'UID')).toBe(false);
+		expect(destinationSamples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'target',
+					label: 'UID',
+					fieldRef: expect.objectContaining({
+						namespace: 'authrim.system',
+						catalogEntryId: 'field.system.uid'
+					}),
+					uiGroupLabel: 'System'
+				}),
+				expect.objectContaining({
+					role: 'target',
+					label: 'Created At',
+					fieldRef: expect.objectContaining({
+						catalogEntryId: 'field.system.created_at'
+					})
+				}),
+				expect.objectContaining({
+					role: 'target',
+					label: 'Last Updated',
+					fieldRef: expect.objectContaining({
+						catalogEntryId: 'field.system.updated_at'
+					})
+				})
+			])
+		);
 	});
 
 	it('uses field catalog entries as canonical target nodes when catalogs are available', () => {
