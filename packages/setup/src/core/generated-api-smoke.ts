@@ -178,7 +178,7 @@ export function validateJwksPayload(payload: unknown): string[] {
   return failures;
 }
 
-export function validateLoginMethodsPayload(payload: unknown): string[] {
+export function validateAuthenticationMethodsPayload(payload: unknown): string[] {
   if (!isRecord(payload)) {
     return ['payload is not an object'];
   }
@@ -325,10 +325,10 @@ export function buildApiSmokeTargets(config: AuthrimConfig): ApiSmokeTarget[] {
       validate: (payload) => validateAuthHealthPayload(payload),
     },
     {
-      id: 'login-methods',
-      title: 'login methods endpoint',
-      path: '/api/auth/login-methods',
-      validate: (payload) => validateLoginMethodsPayload(payload),
+      id: 'authentication-methods',
+      title: 'authentication methods endpoint',
+      path: '/api/auth/authentication-methods',
+      validate: (payload) => validateAuthenticationMethodsPayload(payload),
     },
     ...buildBrowserOidcTargets(config),
   ];
