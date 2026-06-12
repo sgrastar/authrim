@@ -3144,6 +3144,8 @@ export function createApiRoutes(): Hono {
           baseDir: rootDir,
           env,
           dryRun: false,
+          includeDurableObjectMigrations: false,
+          components: componentsToUpdate,
           onProgress: addProgress,
         });
 
@@ -3160,6 +3162,7 @@ export function createApiRoutes(): Hono {
           packagesDir: join(rootDir, 'packages'),
           force: true,
           dryRun: false,
+          components: componentsToUpdate,
           onProgress: addProgress,
         });
 
@@ -3613,6 +3616,8 @@ export function createApiRoutes(): Hono {
                 baseDir: rootDir,
                 env,
                 dryRun: false,
+                includeDurableObjectMigrations: false,
+                components: [componentName as WorkerComponent],
                 onProgress: addProgress,
               });
 
@@ -3629,6 +3634,7 @@ export function createApiRoutes(): Hono {
                 packagesDir: join(rootDir, 'packages'),
                 force: true,
                 dryRun: false,
+                components: [componentName as WorkerComponent],
                 onProgress: addProgress,
               });
 
