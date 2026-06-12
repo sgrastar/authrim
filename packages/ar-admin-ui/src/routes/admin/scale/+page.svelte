@@ -245,7 +245,7 @@
 					selectedRegions = regions;
 					const dist: RegionDistribution = {};
 					for (const [key, data] of Object.entries(region.currentRegions)) {
-						dist[key] = Math.round((data.count / total) * 100);
+						dist[key] = Math.round((data.shardCount / total) * 100);
 					}
 					regionDistribution = dist;
 				}
