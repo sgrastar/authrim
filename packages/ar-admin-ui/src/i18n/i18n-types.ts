@@ -51120,11 +51120,11 @@ Remove this role from {email}?
 	 */
 	admin_authentication_methods_error_load: () => LocalizedString;
 	/**
-	 * Failed to save login method settings
+	 * Failed to save authentication method settings
 	 */
 	admin_authentication_methods_error_save: () => LocalizedString;
 	/**
-	 * Login method settings saved.
+	 * Authentication method settings saved.
 	 */
 	admin_authentication_methods_saved: () => LocalizedString;
 	/**

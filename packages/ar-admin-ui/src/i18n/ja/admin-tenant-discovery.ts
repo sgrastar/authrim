@@ -30,7 +30,7 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_entry_mode_discovery_optional_sample:
 		'Multi-tenant rolloutを段階的に進める場合の無難なdefaultです。',
 	admin_tenant_discovery_entry_mode_discovery_required_description:
-		'Login methodを表示する前に、ユーザーはtenantを解決する必要があります。',
+		'認証方法を表示する前に、ユーザーはtenantを解決する必要があります。',
 	admin_tenant_discovery_entry_mode_discovery_required_sample:
 		'Shared login entryで常に先にtenantを選ばせたい場合に使います。',
 	admin_tenant_discovery_example: '例: {sample}',

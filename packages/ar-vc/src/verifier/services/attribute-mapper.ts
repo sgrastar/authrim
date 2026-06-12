@@ -5,7 +5,7 @@
  * Implements data minimization by storing only normalized boolean/enum values.
  *
  * Design Philosophy:
- * - VC = Attribute Proof (NOT login method)
+ * - VC = Attribute Proof (NOT authentication method)
  * - Raw VC claims are discarded after verification
  * - Only normalized, policy-ready attributes are stored
  */
