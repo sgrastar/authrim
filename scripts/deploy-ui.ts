@@ -18,6 +18,7 @@ import {
 } from '../packages/setup/src/core/deploy.js';
 import { ensureLoginUiClient } from '../packages/setup/src/core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../packages/setup/src/core/ui-deployment.js';
+import { resolveApiBaseUrlCandidates } from '../packages/setup/src/core/url-config.js';
 
 interface CliOptions {
   env: string;
@@ -120,11 +121,17 @@ async function resolveLoginUiClientId(
   const adminApiSecretPath = foundKeys
     ? join(foundKeys.path, 'admin_api_secret.txt')
     : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
+  const keysDir = foundKeys ? foundKeys.path : (resolved.paths as EnvironmentPaths).keys;
 
   const clientResult = await ensureLoginUiClient({
     apiBaseUrl,
+    apiBaseUrls: resolveApiBaseUrlCandidates(config, {
+      env,
+      purpose: 'tenant-scoped-admin',
+    }),
     loginUiUrl,
     adminApiSecretPath,
+    keysDir,
     tenantId: config.tenant?.name,
     onProgress: (message) => console.log(message),
   });

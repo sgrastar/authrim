@@ -1291,6 +1291,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
       const clientResult = await ensureLoginUiClient({
         apiBaseUrl,
+        apiBaseUrls: resolveApiBaseUrlCandidates(config, {
+          env,
+          purpose: 'tenant-scoped-admin',
+        }),
         loginUiUrl,
         adminApiSecretPath,
         keysDir,
