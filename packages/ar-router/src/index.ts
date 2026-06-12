@@ -625,11 +625,11 @@ app.all('/api/v1/diagnostic-logs/*', async (c) => {
 });
 
 /**
- * Login methods endpoint - Route to OP_MANAGEMENT worker
+ * Authentication methods endpoint - Route to OP_MANAGEMENT worker
  * Must be registered BEFORE /api/auth/* to take priority.
- * - /api/auth/login-methods - Public endpoint for available login methods + UI config
+ * - /api/auth/authentication-methods - Public endpoint for available authentication methods + UI config
  */
-app.get('/api/auth/login-methods', async (c) => {
+app.get('/api/auth/authentication-methods', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
