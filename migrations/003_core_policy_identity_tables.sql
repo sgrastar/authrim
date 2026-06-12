@@ -77,7 +77,7 @@ CREATE TABLE organizations (
 CREATE TABLE "passkeys" (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
-  credential_id TEXT UNIQUE NOT NULL,
+  credential_id TEXT NOT NULL,
   public_key TEXT NOT NULL,
   counter INTEGER DEFAULT 0,
   transports TEXT,
@@ -85,7 +85,7 @@ CREATE TABLE "passkeys" (
   created_at INTEGER NOT NULL,
   last_used_at INTEGER,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
+  UNIQUE(tenant_id, credential_id)
 );
 
 CREATE TABLE "password_reset_tokens" (

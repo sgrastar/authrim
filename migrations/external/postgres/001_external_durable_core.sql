@@ -308,8 +308,7 @@ CREATE TABLE IF NOT EXISTS passkeys (
   device_name TEXT,
   created_at BIGINT NOT NULL,
   last_used_at BIGINT,
-  CONSTRAINT passkeys_unique_credential UNIQUE(tenant_id, credential_id),
-  CONSTRAINT passkeys_user_fk FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
+  CONSTRAINT passkeys_unique_credential UNIQUE(tenant_id, credential_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_passkeys_user
