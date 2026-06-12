@@ -168,7 +168,7 @@
 			window.history.replaceState({}, '', newUrl.toString());
 		}
 
-		// Fetch login methods + challenge data in parallel
+		// Fetch authentication methods + challenge data in parallel
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
 		authorizationChallengeId = urlChallengeId || '';
 		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
@@ -207,7 +207,7 @@
 				externalProviders = data.methods.external.providers;
 			}
 		} catch {
-			methodsError = 'Failed to load login methods';
+			methodsError = 'Failed to load authentication methods';
 		} finally {
 			methodsLoading = false;
 		}
