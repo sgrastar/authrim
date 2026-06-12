@@ -10,12 +10,12 @@ import {
 
 describe('Authrim LoginUI fetch profile', () => {
 	it('resolves relative requests against the configured API base URL', () => {
-		expect(resolveAuthrimRequestUrl('/api/auth/login-methods', 'https://auth.example.com')).toBe(
-			'https://auth.example.com/api/auth/login-methods'
-		);
-		expect(resolveAuthrimRequestUrl('api/auth/login-methods', 'https://auth.example.com/')).toBe(
-			'https://auth.example.com/api/auth/login-methods'
-		);
+		expect(
+			resolveAuthrimRequestUrl('/api/auth/authentication-methods', 'https://auth.example.com')
+		).toBe('https://auth.example.com/api/auth/authentication-methods');
+		expect(
+			resolveAuthrimRequestUrl('api/auth/authentication-methods', 'https://auth.example.com/')
+		).toBe('https://auth.example.com/api/auth/authentication-methods');
 		expect(
 			resolveAuthrimRequestUrl('https://issuer.example.com/userinfo', 'https://auth.example.com')
 		).toBe('https://issuer.example.com/userinfo');
