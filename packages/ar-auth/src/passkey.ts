@@ -533,10 +533,8 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       device_name: deviceName || 'Unknown Device',
     });
 
-    // Step 3: Update user's email_verified status in canonical contact points.
-    await runtimeUsers.markEmailVerified(userId);
-
-    // Get updated user details via canonical projection.
+    // Registering a passkey proves possession of the authenticator, not the email address.
+    // Keep email verification tied to email-code or explicit verification flows.
     const updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });
 
     const customFields = challengeData.metadata?.custom_fields;

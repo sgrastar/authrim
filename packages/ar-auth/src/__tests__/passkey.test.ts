@@ -852,7 +852,7 @@ describe('Passkey Handlers', () => {
       mockUserCoreRepository.findById.mockResolvedValue({
         id: 'user-123',
         is_active: true,
-        email_verified: true,
+        email_verified: false,
         created_at: Date.now(),
         updated_at: Date.now(),
         last_login_at: Date.now(),
@@ -894,6 +894,7 @@ describe('Passkey Handlers', () => {
       expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO user_custom_fields')
       );
+      expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
     });
   });
 

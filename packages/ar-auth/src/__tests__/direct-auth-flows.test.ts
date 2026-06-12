@@ -719,9 +719,9 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         device_name: 'Direct Auth Passkey',
       })
     );
-    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
-      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [expect.any(Number), 'user_new', 'tenant_test']
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('email_verified = 1'),
+      expect.any(Array)
     );
     expect(mocks.persistRegistrationFieldValuesFromEnv).toHaveBeenCalledWith(
       expect.any(Object),
