@@ -100,4 +100,15 @@ describe('external durable postgres schema', () => {
     expect(combinedSql).not.toMatch(/\bjson_valid\s*\(/i);
     expect(combinedSql).not.toMatch(/\bINTEGER PRIMARY KEY AUTOINCREMENT\b/i);
   });
+
+  it('keeps passkeys bound to canonical runtime user ids instead of users_core rows', () => {
+    const coreSql = readMigration('migrations/external/postgres/001_external_durable_core.sql');
+    const passkeysBlock = extractCreateTableBlock(coreSql, 'passkeys');
+
+    expect(passkeysBlock).toContain('user_id TEXT NOT NULL');
+    expect(passkeysBlock).toContain(
+      'CONSTRAINT passkeys_unique_credential UNIQUE(tenant_id, credential_id)'
+    );
+    expect(passkeysBlock).not.toMatch(/\bREFERENCES\s+users_core\b/i);
+  });
 });

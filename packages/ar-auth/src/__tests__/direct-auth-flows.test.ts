@@ -536,6 +536,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   });
 
   it('starts passkey signup by creating a new user and storing challenge mapping', async () => {
+    mocks.validateRegistrationFieldSubmissionFromEnv.mockResolvedValueOnce({
+      ok: true,
+      values: { affiliation: 'Faculty' },
+    });
     const { directPasskeySignupStartHandler } = await import('../direct-auth');
 
     const response = await directPasskeySignupStartHandler(
@@ -549,6 +553,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           channel: 'browser',
           scope: 'openid email',
           authenticator_type: 'platform',
+          custom_fields: { affiliation: 'Faculty' },
         },
         webHeaders()
       ) as never
@@ -586,6 +591,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           channel: 'browser',
           code_challenge: 'signup-pkce-challenge',
           origin: 'https://app.example.com',
+          custom_fields: { affiliation: 'Faculty' },
         }),
       })
     );
@@ -672,6 +678,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         scope: 'openid email',
         origin: 'https://app.example.com',
         rpID: 'app.example.com',
+        custom_fields: { affiliation: 'Faculty' },
       },
     });
     mocks.userCore.findById.mockResolvedValue({
@@ -715,6 +722,12 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
       'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
       [expect.any(Number), 'user_new', 'tenant_test']
+    );
+    expect(mocks.persistRegistrationFieldValuesFromEnv).toHaveBeenCalledWith(
+      expect.any(Object),
+      'tenant_test',
+      'user_new',
+      { affiliation: 'Faculty' }
     );
     expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
