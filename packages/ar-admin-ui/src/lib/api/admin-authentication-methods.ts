@@ -4,8 +4,8 @@ import {
 	type CategorySettings
 } from '$lib/api/admin-settings';
 
-const SETTINGS_CATEGORY = 'login-methods';
-const EXTERNAL_PROVIDERS_KEY = 'login-methods.external_providers';
+const SETTINGS_CATEGORY = 'authentication-methods';
+const EXTERNAL_PROVIDERS_KEY = 'authentication-methods.external_providers';
 
 export type AuthenticationMethodProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
 export type AuthenticationMethodProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';

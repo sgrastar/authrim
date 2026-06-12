@@ -244,14 +244,14 @@ describe('Authentication Methods API', () => {
       expect(body.methods.emailCode.steps).toEqual([]);
     });
 
-    it('should enable directory password from login-methods settings without exposing connector secrets', async () => {
+    it('should enable directory password from authentication-methods settings without exposing connector secrets', async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
           advanced: { passkeyEnabled: false, magicLinkEnabled: false },
         }),
-        'settings:tenant:default:login-methods': JSON.stringify({
-          'login-methods.directory_password.enabled': true,
-          'login-methods.directory_password.label': 'Campus ID',
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.directory_password.enabled': true,
+          'authentication-methods.directory_password.label': 'Campus ID',
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
@@ -346,10 +346,10 @@ describe('Authentication Methods API', () => {
       );
     });
 
-    it('should include configured VC/custom providers from login-methods settings', async () => {
+    it('should include configured VC/custom providers from authentication-methods settings', async () => {
       const settingsKV = createMockKV({
-        'settings:tenant:default:login-methods': JSON.stringify({
-          'login-methods.external_providers': [
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.external_providers': [
             {
               id: 'wallet-vp',
               name: 'Wallet Presentation',
