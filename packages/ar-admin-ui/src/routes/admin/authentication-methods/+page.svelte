@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import {
-		adminLoginMethodsAPI,
-		type LoginMethodExternalProvider,
-		type LoginMethodProviderType
-	} from '$lib/api/admin-login-methods';
+		adminAuthenticationMethodsAPI,
+		type AuthenticationMethodExternalProvider,
+		type AuthenticationMethodProviderType
+	} from '$lib/api/admin-authentication-methods';
 	import type { CategorySettings } from '$lib/api/admin-settings';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
-	const EMPTY_FORM: LoginMethodExternalProvider = {
+	const EMPTY_FORM: AuthenticationMethodExternalProvider = {
 		id: '',
 		name: '',
 		type: 'vc',
@@ -27,9 +27,9 @@
 	let error = $state('');
 	let successMessage = $state('');
 	let settings = $state<CategorySettings | null>(null);
-	let providers = $state<LoginMethodExternalProvider[]>([]);
+	let providers = $state<AuthenticationMethodExternalProvider[]>([]);
 	let initialProvidersJson = $state('[]');
-	let form = $state<LoginMethodExternalProvider>({ ...EMPTY_FORM });
+	let form = $state<AuthenticationMethodExternalProvider>({ ...EMPTY_FORM });
 	let editingIndex = $state<number | null>(null);
 	let formError = $state('');
 
@@ -58,7 +58,7 @@
 		successMessage = '';
 		formError = '';
 		try {
-			const response = await adminLoginMethodsAPI.get(currentTenantId);
+			const response = await adminAuthenticationMethodsAPI.get(currentTenantId);
 			settings = response.settings;
 			providers = response.providers;
 			initialProvidersJson = JSON.stringify(response.providers);
@@ -100,7 +100,7 @@
 		providers = [...providers.slice(0, index + 1), copy, ...providers.slice(index + 1)];
 	}
 
-	function setProviderType(type: LoginMethodProviderType) {
+	function setProviderType(type: AuthenticationMethodProviderType) {
 		form.type = type;
 		if (type === 'saml') {
 			form.startMode = 'saml_sp';
@@ -111,7 +111,7 @@
 		}
 	}
 
-	function validateProvider(provider: LoginMethodExternalProvider): string {
+	function validateProvider(provider: AuthenticationMethodExternalProvider): string {
 		if (!provider.id.trim()) return $LL.admin_login_methods_validation_id_required();
 		if (!/^[a-zA-Z0-9:_-]+$/.test(provider.id.trim())) {
 			return $LL.admin_login_methods_validation_id_format();
@@ -141,7 +141,7 @@
 	}
 
 	function upsertProvider() {
-		const normalized: LoginMethodExternalProvider = {
+		const normalized: AuthenticationMethodExternalProvider = {
 			...form,
 			id: form.id.trim(),
 			name: form.name.trim(),
@@ -173,7 +173,7 @@
 		successMessage = '';
 		saving = true;
 		try {
-			const result = await adminLoginMethodsAPI.updateProviders(
+			const result = await adminAuthenticationMethodsAPI.updateProviders(
 				settings,
 				providers,
 				currentTenantId
@@ -314,7 +314,7 @@
 						value={form.type}
 						disabled={!canEdit}
 						onchange={(event) =>
-							setProviderType(event.currentTarget.value as LoginMethodProviderType)}
+							setProviderType(event.currentTarget.value as AuthenticationMethodProviderType)}
 					>
 						<option value="vc">VC</option>
 						<option value="custom">Custom</option>
