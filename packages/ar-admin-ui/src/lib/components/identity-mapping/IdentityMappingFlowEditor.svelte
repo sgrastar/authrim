@@ -3179,10 +3179,10 @@
 	}
 
 	function uniqueDraftRuleKeys(rules: MappingDraftRuleInput[]): MappingDraftRuleInput[] {
-		const seen = new Map<string, number>();
+		const seen: Record<string, number> = {};
 		return rules.map((rule) => {
-			const count = seen.get(rule.ruleKey) ?? 0;
-			seen.set(rule.ruleKey, count + 1);
+			const count = seen[rule.ruleKey] ?? 0;
+			seen[rule.ruleKey] = count + 1;
 			if (count === 0) return rule;
 			const suffix = `-${count + 1}`;
 			return {
