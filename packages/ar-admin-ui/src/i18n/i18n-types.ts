@@ -27026,7 +27026,7 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_resolution_center: () => LocalizedString;
 	/**
-	 * Login Methods
+	 * Authentication Methods
 	 */
 	admin_nav_login_methods: () => LocalizedString;
 	/**
@@ -37036,7 +37036,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_tenant_discovery_entry_mode_discovery_optional_sample: () => LocalizedString;
 	/**
-	 * Users must resolve a tenant before login methods are shown.
+	 * Users must resolve a tenant before authentication methods are shown.
 	 */
 	admin_tenant_discovery_entry_mode_discovery_required_description: () => LocalizedString;
 	/**
@@ -51104,11 +51104,11 @@ Remove this role from {email}?
 	 */
 	admin_policy_embedding_info_desc: () => LocalizedString;
 	/**
-	 * Login Methods - Authrim Admin
+	 * Authentication Methods - Authrim Admin
 	 */
 	admin_authentication_methods_page_title: () => LocalizedString;
 	/**
-	 * Login Methods
+	 * Authentication Methods
 	 */
 	admin_authentication_methods_title: () => LocalizedString;
 	/**
@@ -51116,7 +51116,7 @@ Remove this role from {email}?
 	 */
 	admin_authentication_methods_description: (arg: { tenantId: string }) => LocalizedString;
 	/**
-	 * Failed to load login method settings
+	 * Failed to load authentication method settings
 	 */
 	admin_authentication_methods_error_load: () => LocalizedString;
 	/**
