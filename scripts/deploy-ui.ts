@@ -18,6 +18,7 @@ import {
 } from '../packages/setup/src/core/deploy.js';
 import { ensureLoginUiClient } from '../packages/setup/src/core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../packages/setup/src/core/ui-deployment.js';
+import { resolveApiBaseUrlCandidates } from '../packages/setup/src/core/url-config.js';
 
 interface CliOptions {
   env: string;
@@ -96,6 +97,13 @@ async function resolveLoginUiClientId(
   config: AuthrimConfig,
   resolved: ReturnType<typeof resolvePaths>
 ): Promise<string | undefined> {
+  const overrideClientId =
+    process.env.AUTHRIM_LOGIN_UI_CLIENT_ID?.trim() || process.env.PUBLIC_LOGIN_UI_CLIENT_ID?.trim();
+  if (overrideClientId) {
+    console.log(`Using Login UI client override: ${overrideClientId}`);
+    return overrideClientId;
+  }
+
   if (resolved.type !== 'new') {
     return undefined;
   }
@@ -113,18 +121,23 @@ async function resolveLoginUiClientId(
   const adminApiSecretPath = foundKeys
     ? join(foundKeys.path, 'admin_api_secret.txt')
     : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
+  const keysDir = foundKeys ? foundKeys.path : (resolved.paths as EnvironmentPaths).keys;
 
   const clientResult = await ensureLoginUiClient({
     apiBaseUrl,
+    apiBaseUrls: resolveApiBaseUrlCandidates(config, {
+      env,
+      purpose: 'tenant-scoped-admin',
+    }),
     loginUiUrl,
     adminApiSecretPath,
+    keysDir,
     tenantId: config.tenant?.name,
     onProgress: (message) => console.log(message),
   });
 
   if (!clientResult.success) {
-    console.warn(`Warning: Login UI client creation skipped: ${clientResult.error}`);
-    return undefined;
+    throw new Error(`Login UI client resolution failed: ${clientResult.error || 'unknown error'}`);
   }
 
   if (clientResult.alreadyExists) {

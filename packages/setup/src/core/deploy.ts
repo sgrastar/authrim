@@ -95,6 +95,7 @@ export interface DeploymentSummary {
 
 export interface BuildOptions {
   rootDir: string;
+  components?: WorkerComponent[];
   onProgress?: (message: string) => void;
 }
 
@@ -151,7 +152,7 @@ export function buildUiWorkerBuildEnv(
  * 3. Uses pnpm exec turbo (works even if turbo isn't globally installed)
  */
 export async function buildApiPackages(options: BuildOptions): Promise<BuildResult> {
-  const { rootDir, onProgress } = options;
+  const { rootDir, components, onProgress } = options;
 
   try {
     // Check if node_modules exists
@@ -172,17 +173,21 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
       reject: false, // Don't fail if directories don't exist
     });
 
-    // Use pnpm exec turbo instead of relying on global turbo
-    // This works because turbo is in devDependencies
-    onProgress?.('Building packages...');
-    await execa(
-      'pnpm',
-      ['exec', 'turbo', 'run', 'build', '--filter=!@authrim/ui-*', '--filter=!@authrim/setup'],
-      {
-        cwd: rootDir,
-        stdio: 'pipe',
-      }
+    const filters =
+      components && components.length > 0
+        ? components.map((component) => `--filter=@authrim/${component}`)
+        : ['--filter=!@authrim/ui-*', '--filter=!@authrim/setup'];
+
+    // Use pnpm exec turbo instead of relying on global turbo.
+    onProgress?.(
+      components && components.length > 0
+        ? `Building ${components.join(', ')}...`
+        : 'Building packages...'
     );
+    await execa('pnpm', ['exec', 'turbo', 'run', 'build', ...filters], {
+      cwd: rootDir,
+      stdio: 'pipe',
+    });
 
     return { success: true };
   } catch (error) {

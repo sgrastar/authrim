@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import {
+  extractEnvironmentSectionFromToml,
   mergeEnvironmentSectionIntoToml,
   removeEnvironmentSectionFromToml,
 } from '../core/wrangler-sync.js';
@@ -60,6 +61,41 @@ name = "prod-new"
     expect(merged).not.toContain('name = "prod-old"');
     expect(merged).toContain('[env.staging]');
     expect(merged).toContain('name = "staging-current"');
+  });
+
+  it('does not inject generated top-level wrangler keys into an env section', () => {
+    const deployContent = `main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Environment: conformance
+[env.conformance]
+name = "conformance-old"
+
+# Environment: test
+[env.test]
+name = "test-current"
+`;
+    const masterContent = `main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Environment: conformance
+[env.conformance]
+name = "conformance-new"
+
+[env.conformance.vars]
+FOO = "bar"
+`;
+
+    const merged = mergeEnvironmentSectionIntoToml(deployContent, masterContent, 'conformance');
+    const conformanceSection = extractEnvironmentSectionFromToml(merged, 'conformance');
+
+    expect(conformanceSection).toContain('name = "conformance-new"');
+    expect(conformanceSection).toContain('[env.conformance.vars]');
+    expect(conformanceSection).not.toContain('main = "src/index.ts"');
+    expect(conformanceSection).not.toContain('compatibility_date = "2024-09-23"');
+    expect(merged.match(/^main = "src\/index\.ts"$/gm) ?? []).toHaveLength(1);
   });
 });
 

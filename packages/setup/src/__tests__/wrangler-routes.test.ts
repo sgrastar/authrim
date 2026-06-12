@@ -157,6 +157,94 @@ describe('generateRoutes', () => {
     expect(authConfig.vars.EMAIL_FROM_NAME).toBe('Authrim');
   });
 
+  it('omits ar-lib-core Durable Object migrations for existing environment worker updates', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'existing' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://existing-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://existing-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://existing-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: true,
+        policy: true,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const resourceIds = { d1: {}, kv: {} };
+    const initialConfig = generateWranglerConfig('ar-lib-core', config, resourceIds);
+    const updateConfig = generateWranglerConfig('ar-lib-core', config, resourceIds, undefined, {
+      includeDurableObjectMigrations: false,
+    });
+
+    expect(initialConfig.migrations?.[0]?.new_sqlite_classes).toContain('SessionStore');
+    expect(updateConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ class_name: 'SessionStore' })])
+    );
+    expect(updateConfig.migrations).toBeUndefined();
+    expect(toToml(updateConfig, 'existing')).not.toContain('new_sqlite_classes');
+  });
+
   it('serializes send_email bindings in env-scoped wrangler.toml output', () => {
     const config = {
       main: 'src/index.ts',
