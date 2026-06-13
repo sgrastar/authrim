@@ -4,12 +4,9 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'packages/setup/**'
-      - '.github/workflows/publish-setup.yml'
 
 permissions:
-  id-token: write   # Required for OIDC trusted publishing
+  id-token: write # Required for OIDC trusted publishing
   contents: read
 
 jobs:
