@@ -69,38 +69,27 @@
 	const PERM_LOGGING_SENSITIVE_DETAIL_EXPORT = 'admin:logging:sensitive_detail:export';
 	const isPlatformAdmin = $derived(Boolean(adminAuth.user?.isPlatformAdmin));
 	const canViewCoverage = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_COVERAGE_READ)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_ADMIN_LOGGING_COVERAGE_READ)
 	);
 	const canCheckCoverage = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_COVERAGE_UPDATE)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_ADMIN_LOGGING_COVERAGE_UPDATE)
 	);
 	const canReadCatalogRepair = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_READ)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_ADMIN_LOGGING_REPAIR_READ)
 	);
 	const canViewCriticalPolicy = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_OVERVIEW_READ)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_ADMIN_LOGGING_OVERVIEW_READ)
 	);
 	const canRunCatalogRepair = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_REPAIR_RUN)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_ADMIN_LOGGING_REPAIR_RUN)
 	);
 	const canViewSensitiveDetailPolicy = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ)
 	);
 	const canProbeSensitiveDetail = $derived(
-		isPlatformAdmin && hasAdminPermission(PERM_LOGGING_SENSITIVE_DETAIL_EXPORT)
+		isPlatformAdmin && adminAuth.hasPermission(PERM_LOGGING_SENSITIVE_DETAIL_EXPORT)
 	);
-	const canReadMessageJobs = $derived(hasAdminPermission(PERM_LOGGING_DELIVERY_EVENTS_READ));
-	function hasAdminPermission(permission: string): boolean {
-		const permissions = adminAuth.user?.permissions ?? [];
-		if (permissions.includes('*') || permissions.includes(permission)) return true;
-		const parts = permission.split(':');
-		for (let i = parts.length - 1; i >= 0; i -= 1) {
-			if (permissions.includes([...parts.slice(0, i), '*'].join(':'))) {
-				return true;
-			}
-		}
-		return false;
-	}
+	const canReadMessageJobs = $derived(adminAuth.hasPermission(PERM_LOGGING_DELIVERY_EVENTS_READ));
 
 	function requestDangerConfirmation(input: Omit<DangerConfirmationRequest, 'resolve'>) {
 		return new Promise<string | null>((resolve) => {

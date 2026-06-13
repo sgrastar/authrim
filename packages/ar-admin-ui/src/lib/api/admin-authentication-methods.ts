@@ -4,17 +4,17 @@ import {
 	type CategorySettings
 } from '$lib/api/admin-settings';
 
-const CATEGORY = 'login-methods';
-const EXTERNAL_PROVIDERS_KEY = 'login-methods.external_providers';
+const SETTINGS_CATEGORY = 'authentication-methods';
+const EXTERNAL_PROVIDERS_KEY = 'authentication-methods.external_providers';
 
-export type LoginMethodProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
-export type LoginMethodProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
+export type AuthenticationMethodProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
+export type AuthenticationMethodProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
 
-export interface LoginMethodExternalProvider {
+export interface AuthenticationMethodExternalProvider {
 	id: string;
 	name: string;
-	type: LoginMethodProviderType;
-	startMode: LoginMethodProviderStartMode;
+	type: AuthenticationMethodProviderType;
+	startMode: AuthenticationMethodProviderStartMode;
 	startUrl: string;
 	enabled: boolean;
 	slug?: string;
@@ -24,12 +24,12 @@ export interface LoginMethodExternalProvider {
 	buttonText?: string;
 }
 
-export interface LoginMethodSettingsResponse {
+export interface AuthenticationMethodSettingsResponse {
 	settings: CategorySettings;
-	providers: LoginMethodExternalProvider[];
+	providers: AuthenticationMethodExternalProvider[];
 }
 
-function parseProviders(value: unknown): LoginMethodExternalProvider[] {
+function parseProviders(value: unknown): AuthenticationMethodExternalProvider[] {
 	if (Array.isArray(value)) {
 		return value.filter(isProviderLike).map(normalizeProvider);
 	}
@@ -43,13 +43,13 @@ function parseProviders(value: unknown): LoginMethodExternalProvider[] {
 	}
 }
 
-function isProviderLike(value: unknown): value is Partial<LoginMethodExternalProvider> {
+function isProviderLike(value: unknown): value is Partial<AuthenticationMethodExternalProvider> {
 	return typeof value === 'object' && value !== null;
 }
 
 function normalizeProvider(
-	provider: Partial<LoginMethodExternalProvider>
-): LoginMethodExternalProvider {
+	provider: Partial<AuthenticationMethodExternalProvider>
+): AuthenticationMethodExternalProvider {
 	const type = normalizeType(provider.type);
 	return {
 		id: String(provider.id || ''),
@@ -66,22 +66,22 @@ function normalizeProvider(
 	};
 }
 
-function normalizeType(value: unknown): LoginMethodProviderType {
+function normalizeType(value: unknown): AuthenticationMethodProviderType {
 	if (value === 'oidc' || value === 'oauth2' || value === 'saml' || value === 'vc') return value;
 	return 'custom';
 }
 
 function normalizeStartMode(
 	value: unknown,
-	type: LoginMethodProviderType
-): LoginMethodProviderStartMode {
+	type: AuthenticationMethodProviderType
+): AuthenticationMethodProviderStartMode {
 	if (value === 'oauth_redirect' || value === 'saml_sp' || value === 'direct') return value;
 	if (type === 'saml') return 'saml_sp';
 	if (type === 'oidc' || type === 'oauth2') return 'oauth_redirect';
 	return 'direct';
 }
 
-function serializeProviders(providers: LoginMethodExternalProvider[]): string {
+function serializeProviders(providers: AuthenticationMethodExternalProvider[]): string {
 	return JSON.stringify(
 		providers.map((provider) => ({
 			id: provider.id.trim(),
@@ -99,9 +99,9 @@ function serializeProviders(providers: LoginMethodExternalProvider[]): string {
 	);
 }
 
-export const adminLoginMethodsAPI = {
-	async get(tenantId?: string): Promise<LoginMethodSettingsResponse> {
-		const settings = await adminSettingsAPI.getSettings(CATEGORY, tenantId);
+export const adminAuthenticationMethodsAPI = {
+	async get(tenantId?: string): Promise<AuthenticationMethodSettingsResponse> {
+		const settings = await adminSettingsAPI.getSettings(SETTINGS_CATEGORY, tenantId);
 		return {
 			settings,
 			providers: parseProviders(settings.values[EXTERNAL_PROVIDERS_KEY])
@@ -110,12 +110,12 @@ export const adminLoginMethodsAPI = {
 
 	async updateProviders(
 		settings: CategorySettings,
-		providers: LoginMethodExternalProvider[],
+		providers: AuthenticationMethodExternalProvider[],
 		tenantId?: string
 	) {
 		try {
 			return await adminSettingsAPI.updateSettings(
-				CATEGORY,
+				SETTINGS_CATEGORY,
 				{
 					ifMatch: settings.version,
 					set: {

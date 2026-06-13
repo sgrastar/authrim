@@ -6,7 +6,7 @@
  * Config Level: tenant
  *
  * These settings are consumed by:
- * - login-methods API (GET /api/auth/login-methods → ui section)
+ * - authentication-methods API (GET /api/auth/authentication-methods → ui section)
  * - Login UI (theme store, branding display)
  */
 

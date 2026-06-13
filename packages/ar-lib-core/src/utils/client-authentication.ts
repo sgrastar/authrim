@@ -8,12 +8,15 @@ import { jwtVerify, importJWK, type JWK } from 'jose';
 import type { ClientMetadata } from '../types/oidc';
 import { isInternalUrl, safeFetchJson } from './url-security';
 import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
-import { timingSafeEqual } from './crypto';
+import { timingSafeEqual, verifyClientSecretHash } from './crypto';
 import { createLogger } from './logger';
+import { parseBasicAuth } from './basic-auth';
+import { parseToken } from './jwt';
 
 const log = createLogger().module('CLIENT_AUTH');
 const MAX_CLIENT_ASSERTION_SIZE_BYTES = 16 * 1024;
 const MAX_CLIENT_ASSERTION_SEGMENT_SIZE_BYTES = 8 * 1024;
+const CLIENT_ASSERTION_TYPE_JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 
 /**
  * Client Assertion Claims (RFC 7523 Section 3)
@@ -50,6 +53,137 @@ export interface ClientAssertionValidationOptions {
    * Default: true (industry standard)
    */
   acceptIssuerIdAsAudience?: boolean;
+}
+
+export interface OAuthClientAuthenticationParams {
+  clientId?: string;
+  clientSecret?: string;
+  clientAssertion?: string;
+  clientAssertionType?: string;
+  authorizationHeader?: string;
+}
+
+export interface ParsedOAuthClientAuthentication {
+  clientId?: string;
+  clientSecret?: string;
+  clientAssertion?: string;
+  clientAssertionType?: string;
+}
+
+export type ParseOAuthClientAuthenticationResult =
+  | { ok: true; credentials: ParsedOAuthClientAuthentication }
+  | { ok: false; error: 'invalid_client'; errorDescription: string };
+
+export type ConfidentialOAuthClientAuthenticationResult =
+  | { ok: true; method: 'client_secret' | 'client_assertion'; clientId: string }
+  | { ok: false; error: 'invalid_client'; errorDescription: string };
+
+/**
+ * Extract OAuth client authentication credentials from request parameters and Basic auth.
+ */
+export function parseOAuthClientAuthenticationParams(
+  params: OAuthClientAuthenticationParams
+): ParseOAuthClientAuthenticationResult {
+  let clientId = params.clientId;
+  let clientSecret = params.clientSecret;
+  const clientAssertion = params.clientAssertion;
+  const clientAssertionType = params.clientAssertionType;
+
+  if (clientAssertion && clientAssertionType === CLIENT_ASSERTION_TYPE_JWT_BEARER && !clientId) {
+    try {
+      const assertionPayload = parseToken(clientAssertion);
+      clientId =
+        typeof assertionPayload.sub === 'string'
+          ? assertionPayload.sub
+          : typeof assertionPayload.iss === 'string'
+            ? assertionPayload.iss
+            : undefined;
+    } catch {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Invalid client_assertion JWT format',
+      };
+    }
+  }
+
+  const basicAuth = parseBasicAuth(params.authorizationHeader);
+  if (basicAuth.success) {
+    clientId = clientId || basicAuth.credentials.username;
+    clientSecret = clientSecret || basicAuth.credentials.password;
+  } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
+    return {
+      ok: false,
+      error: 'invalid_client',
+      errorDescription: 'Invalid Authorization header format',
+    };
+  }
+
+  return {
+    ok: true,
+    credentials: {
+      clientId,
+      clientSecret,
+      clientAssertion,
+      clientAssertionType,
+    },
+  };
+}
+
+/**
+ * Authenticate a confidential OAuth client. Public clients are rejected.
+ *
+ * This is used by flows such as CIBA where client authentication is mandatory.
+ */
+export async function authenticateConfidentialOAuthClient(
+  client: ClientMetadata,
+  endpoint: string,
+  credentials: ParsedOAuthClientAuthentication
+): Promise<ConfidentialOAuthClientAuthenticationResult> {
+  if (credentials.clientId && !timingSafeEqual(credentials.clientId, client.client_id)) {
+    return {
+      ok: false,
+      error: 'invalid_client',
+      errorDescription: 'Client authentication failed',
+    };
+  }
+
+  if (
+    credentials.clientAssertion &&
+    credentials.clientAssertionType === CLIENT_ASSERTION_TYPE_JWT_BEARER
+  ) {
+    const assertionValidation = await validateClientAssertion(
+      credentials.clientAssertion,
+      endpoint,
+      client
+    );
+
+    if (!assertionValidation.valid) {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Client assertion validation failed',
+      };
+    }
+
+    return { ok: true, method: 'client_assertion', clientId: client.client_id };
+  }
+
+  if (client.client_secret_hash) {
+    const storedHash = client.client_secret_hash;
+    if (
+      credentials.clientSecret &&
+      (await verifyClientSecretHash(credentials.clientSecret, storedHash))
+    ) {
+      return { ok: true, method: 'client_secret', clientId: client.client_id };
+    }
+  }
+
+  return {
+    ok: false,
+    error: 'invalid_client',
+    errorDescription: 'Client authentication failed',
+  };
 }
 
 /**

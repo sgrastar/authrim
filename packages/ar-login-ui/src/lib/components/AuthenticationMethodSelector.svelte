@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { Button, Input, Alert } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { ExternalProvider } from '$lib/api/login-methods';
+	import type { ExternalProvider } from '$lib/api/authentication-methods';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
-	import { sanitizeColor } from '$lib/utils/url-validation';
+	import { isValidImageUrl, sanitizeColor } from '$lib/utils/url-validation';
 
 	interface Props {
 		passkeyEnabled: boolean;
@@ -81,8 +81,8 @@
 </script>
 
 <!--
-  LoginMethodSelector
-  - Renders available login methods based on server configuration
+  AuthenticationMethodSelector
+  - Renders available authentication methods based on server configuration
   - Delegates authentication actions to parent via callbacks
   - Handles passkey support detection and provider icon resolution
 -->
@@ -226,7 +226,7 @@
 				onclick={() => onExternalLogin?.(provider)}
 				style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 			>
-				{#if provider.iconUrl}
+				{#if provider.iconUrl && isValidImageUrl(provider.iconUrl)}
 					<img
 						src={provider.iconUrl}
 						alt=""

@@ -698,6 +698,70 @@ describe('HTTPS Request URI Security', () => {
       expect(body.error_description).toContain('No client public key');
     });
 
+    it('should reject signed request objects without using the server public key fallback', async () => {
+      const requestObject = createJwtRequestObject(
+        { alg: 'RS256', typ: 'oauth-authz-req+jwt' },
+        {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+        }
+      );
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request=${encodeURIComponent(requestObject)}`,
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          PUBLIC_JWK_JSON: JSON.stringify({
+            kty: 'RSA',
+            kid: 'server-key',
+            alg: 'RS256',
+            use: 'sig',
+            n: 'server-modulus',
+            e: 'AQAB',
+          }),
+        }
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_object');
+      expect(body.error_description).toContain('No client public key');
+    });
+
+    it('should reject unsupported signed request object algorithms before key import', async () => {
+      mockGetClient.mockResolvedValueOnce({
+        client_id: 'test-client',
+        redirect_uris: ['https://example.com/callback'],
+        response_types: ['code'],
+        jwks: {
+          keys: [{ kty: 'EC', kid: 'client-ec-key', use: 'sig', alg: 'ES256' }],
+        },
+      });
+      const requestObject = createJwtRequestObject(
+        { alg: 'ES256', typ: 'oauth-authz-req+jwt', kid: 'client-ec-key' },
+        {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+        }
+      );
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request=${encodeURIComponent(requestObject)}`,
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('invalid_request_object');
+      expect(body.error_description).toContain('Unsupported request object signing algorithm');
+    });
+
     it('should fetch and apply an unsigned request object only when explicitly enabled', async () => {
       const requestObject = createUnsignedRequestObject({
         response_type: 'code',

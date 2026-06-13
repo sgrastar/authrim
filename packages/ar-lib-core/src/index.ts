@@ -71,6 +71,7 @@ export * from './utils/keys';
 export * from './utils/kv';
 export * from './utils/logger';
 export * from './utils/origin-validator';
+export * from './utils/admin-webauthn-origin';
 export * from './utils/pairwise';
 export * from './utils/sd-jwt';
 export * from './utils/ec-keys';

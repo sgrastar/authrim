@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit dependencies
+        run: pnpm run security:audit
+
       - name: Setup environment variables
         run: |
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env

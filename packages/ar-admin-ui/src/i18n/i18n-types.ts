@@ -4643,6 +4643,26 @@ type RootTranslation = {
 	 */
 	admin_saml_local_common_name: string;
 	/**
+	 * A​u​t​o​m​a​t​i​c​a​l​l​y​ ​a​d​d​ ​D​N​S​ ​S​A​N​ ​f​r​o​m​ ​e​n​t​i​t​y​I​D​ ​a​n​d​ ​e​n​d​p​o​i​n​t​s
+	 */
+	admin_saml_local_dns_san_auto: string;
+	/**
+	 * A​d​d​s​ ​t​h​e​ ​h​o​s​t​n​a​m​e​s​ ​u​s​e​d​ ​b​y​ ​t​h​i​s​ ​r​o​l​e​,​ ​s​u​c​h​ ​a​s​ ​m​e​t​a​d​a​t​a​,​ ​S​S​O​,​ ​S​L​O​,​ ​o​r​ ​A​C​S​ ​U​R​L​s​.
+	 */
+	admin_saml_local_dns_san_auto_desc: string;
+	/**
+	 * G​e​n​e​r​a​t​e​d​ ​D​N​S​ ​S​A​N
+	 */
+	admin_saml_local_dns_san_generated: string;
+	/**
+	 * A​d​d​i​t​i​o​n​a​l​ ​D​N​S​ ​S​A​N
+	 */
+	admin_saml_local_dns_san_additional: string;
+	/**
+	 * A​d​d​ ​s​c​o​p​e​ ​d​o​m​a​i​n​s​ ​o​r​ ​o​t​h​e​r​ ​o​w​n​e​d​ ​D​N​S​ ​n​a​m​e​s​ ​e​x​p​l​i​c​i​t​l​y​.​ ​S​e​p​a​r​a​t​e​ ​v​a​l​u​e​s​ ​w​i​t​h​ ​s​p​a​c​e​s​,​ ​c​o​m​m​a​s​,​ ​o​r​ ​n​e​w​ ​l​i​n​e​s​.
+	 */
+	admin_saml_local_dns_san_additional_desc: string;
+	/**
 	 * T​h​e​ ​c​e​r​t​i​f​i​c​a​t​e​ ​c​r​e​a​t​e​d​ ​h​e​r​e​ ​i​s​ ​n​o​t​ ​u​s​e​d​ ​f​o​r​ ​s​i​g​n​i​n​g​ ​i​m​m​e​d​i​a​t​e​l​y​.​ ​S​e​l​e​c​t​ ​i​t​ ​i​n​ ​t​h​e​ ​s​t​o​r​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​ ​l​i​s​t​ ​a​n​d​ ​s​t​a​r​t​ ​u​s​i​n​g​ ​i​t​ ​w​h​e​n​ ​r​e​a​d​y​.
 	 */
 	admin_saml_local_subject_warning: string;
@@ -25135,176 +25155,176 @@ type RootTranslation = {
 	/**
 	 * L​o​g​i​n​ ​M​e​t​h​o​d​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
-	admin_login_methods_page_title: string;
+	admin_authentication_methods_page_title: string;
 	/**
 	 * L​o​g​i​n​ ​M​e​t​h​o​d​s
 	 */
-	admin_login_methods_title: string;
+	admin_authentication_methods_title: string;
 	/**
 	 * C​u​s​t​o​m​ ​e​x​t​e​r​n​a​l​ ​l​o​g​i​n​ ​p​r​o​v​i​d​e​r​s​ ​f​o​r​ ​t​e​n​a​n​t​ ​{​t​e​n​a​n​t​I​d​}
 	 * @param {string} tenantId
 	 */
-	admin_login_methods_description: RequiredParams<'tenantId'>;
+	admin_authentication_methods_description: RequiredParams<'tenantId'>;
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s
 	 */
-	admin_login_methods_error_load: string;
+	admin_authentication_methods_error_load: string;
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s
 	 */
-	admin_login_methods_error_save: string;
+	admin_authentication_methods_error_save: string;
 	/**
 	 * L​o​g​i​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
 	 */
-	admin_login_methods_saved: string;
+	admin_authentication_methods_saved: string;
 	/**
 	 * D​i​s​c​a​r​d
 	 */
-	admin_login_methods_discard: string;
+	admin_authentication_methods_discard: string;
 	/**
 	 * S​a​v​e
 	 */
-	admin_login_methods_save: string;
+	admin_authentication_methods_save: string;
 	/**
 	 * S​a​v​i​n​g​.​.​.
 	 */
-	admin_login_methods_saving: string;
+	admin_authentication_methods_saving: string;
 	/**
 	 * L​o​a​d​i​n​g​.​.​.
 	 */
-	admin_login_methods_loading: string;
+	admin_authentication_methods_loading: string;
 	/**
 	 * C​o​n​f​i​g​u​r​e​d​ ​P​r​o​v​i​d​e​r​s
 	 */
-	admin_login_methods_configured: string;
+	admin_authentication_methods_configured: string;
 	/**
 	 * N​o​ ​c​u​s​t​o​m​ ​p​r​o​v​i​d​e​r​s​ ​c​o​n​f​i​g​u​r​e​d​.
 	 */
-	admin_login_methods_empty: string;
+	admin_authentication_methods_empty: string;
 	/**
 	 * D​i​s​a​b​l​e​d
 	 */
-	admin_login_methods_disabled: string;
+	admin_authentication_methods_disabled: string;
 	/**
 	 * E​d​i​t
 	 */
-	admin_login_methods_edit_title: string;
+	admin_authentication_methods_edit_title: string;
 	/**
 	 * D​u​p​l​i​c​a​t​e
 	 */
-	admin_login_methods_duplicate_title: string;
+	admin_authentication_methods_duplicate_title: string;
 	/**
 	 * R​e​m​o​v​e
 	 */
-	admin_login_methods_remove_title: string;
+	admin_authentication_methods_remove_title: string;
 	/**
 	 * C​o​p​y
 	 */
-	admin_login_methods_copy_suffix: string;
+	admin_authentication_methods_copy_suffix: string;
 	/**
 	 * A​d​d​ ​P​r​o​v​i​d​e​r
 	 */
-	admin_login_methods_add_provider: string;
+	admin_authentication_methods_add_provider: string;
 	/**
 	 * E​d​i​t​ ​P​r​o​v​i​d​e​r
 	 */
-	admin_login_methods_edit_provider: string;
+	admin_authentication_methods_edit_provider: string;
 	/**
 	 * U​p​d​a​t​e​ ​P​r​o​v​i​d​e​r
 	 */
-	admin_login_methods_update_provider: string;
+	admin_authentication_methods_update_provider: string;
 	/**
 	 * C​a​n​c​e​l
 	 */
-	admin_login_methods_cancel: string;
+	admin_authentication_methods_cancel: string;
 	/**
 	 * P​r​o​v​i​d​e​r​ ​I​D
 	 */
-	admin_login_methods_provider_id: string;
+	admin_authentication_methods_provider_id: string;
 	/**
 	 * N​a​m​e
 	 */
-	admin_login_methods_name: string;
+	admin_authentication_methods_name: string;
 	/**
 	 * T​y​p​e
 	 */
-	admin_login_methods_type: string;
+	admin_authentication_methods_type: string;
 	/**
 	 * S​t​a​r​t​ ​M​o​d​e
 	 */
-	admin_login_methods_start_mode: string;
+	admin_authentication_methods_start_mode: string;
 	/**
 	 * S​t​a​r​t​ ​U​R​L
 	 */
-	admin_login_methods_start_url: string;
+	admin_authentication_methods_start_url: string;
 	/**
 	 * S​l​u​g
 	 */
-	admin_login_methods_slug: string;
+	admin_authentication_methods_slug: string;
 	/**
 	 * B​u​t​t​o​n​ ​T​e​x​t
 	 */
-	admin_login_methods_button_text: string;
+	admin_authentication_methods_button_text: string;
 	/**
 	 * I​c​o​n​ ​U​R​L
 	 */
-	admin_login_methods_icon_url: string;
+	admin_authentication_methods_icon_url: string;
 	/**
 	 * B​u​t​t​o​n​ ​C​o​l​o​r
 	 */
-	admin_login_methods_button_color: string;
+	admin_authentication_methods_button_color: string;
 	/**
 	 * E​n​a​b​l​e​d
 	 */
-	admin_login_methods_enabled: string;
+	admin_authentication_methods_enabled: string;
 	/**
 	 * D​i​r​e​c​t
 	 */
-	admin_login_methods_start_mode_direct: string;
+	admin_authentication_methods_start_mode_direct: string;
 	/**
 	 * S​A​M​L​ ​S​P
 	 */
-	admin_login_methods_start_mode_saml_sp: string;
+	admin_authentication_methods_start_mode_saml_sp: string;
 	/**
 	 * O​A​u​t​h​ ​R​e​d​i​r​e​c​t
 	 */
-	admin_login_methods_start_mode_oauth_redirect: string;
+	admin_authentication_methods_start_mode_oauth_redirect: string;
 	/**
 	 * P​r​o​v​i​d​e​r​ ​I​D​ ​i​s​ ​r​e​q​u​i​r​e​d​.
 	 */
-	admin_login_methods_validation_id_required: string;
+	admin_authentication_methods_validation_id_required: string;
 	/**
 	 * P​r​o​v​i​d​e​r​ ​I​D​ ​c​a​n​ ​c​o​n​t​a​i​n​ ​l​e​t​t​e​r​s​,​ ​n​u​m​b​e​r​s​,​ ​c​o​l​o​n​,​ ​h​y​p​h​e​n​,​ ​a​n​d​ ​u​n​d​e​r​s​c​o​r​e​.
 	 */
-	admin_login_methods_validation_id_format: string;
+	admin_authentication_methods_validation_id_format: string;
 	/**
 	 * P​r​o​v​i​d​e​r​ ​n​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d​.
 	 */
-	admin_login_methods_validation_name_required: string;
+	admin_authentication_methods_validation_name_required: string;
 	/**
 	 * S​t​a​r​t​ ​U​R​L​ ​i​s​ ​r​e​q​u​i​r​e​d​.
 	 */
-	admin_login_methods_validation_start_url_required: string;
+	admin_authentication_methods_validation_start_url_required: string;
 	/**
 	 * S​t​a​r​t​ ​U​R​L​ ​m​u​s​t​ ​n​o​t​ ​b​e​ ​p​r​o​t​o​c​o​l​-​r​e​l​a​t​i​v​e​.
 	 */
-	admin_login_methods_validation_start_url_protocol_relative: string;
+	admin_authentication_methods_validation_start_url_protocol_relative: string;
 	/**
 	 * R​e​l​a​t​i​v​e​ ​S​t​a​r​t​ ​U​R​L​ ​m​u​s​t​ ​s​t​a​r​t​ ​w​i​t​h​ ​/​.
 	 */
-	admin_login_methods_validation_relative_start_url: string;
+	admin_authentication_methods_validation_relative_start_url: string;
 	/**
 	 * A​b​s​o​l​u​t​e​ ​S​t​a​r​t​ ​U​R​L​ ​m​u​s​t​ ​u​s​e​ ​H​T​T​P​S​.
 	 */
-	admin_login_methods_validation_absolute_start_url: string;
+	admin_authentication_methods_validation_absolute_start_url: string;
 	/**
 	 * S​t​a​r​t​ ​U​R​L​ ​i​s​ ​i​n​v​a​l​i​d​.
 	 */
-	admin_login_methods_validation_start_url_invalid: string;
+	admin_authentication_methods_validation_start_url_invalid: string;
 	/**
 	 * P​r​o​v​i​d​e​r​ ​I​D​ ​m​u​s​t​ ​b​e​ ​u​n​i​q​u​e​.
 	 */
-	admin_login_methods_validation_id_unique: string;
+	admin_authentication_methods_validation_id_unique: string;
 	/**
 	 * L​o​g​i​n​ ​U​I​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
@@ -27006,7 +27026,7 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_resolution_center: () => LocalizedString;
 	/**
-	 * Login Methods
+	 * Authentication Methods
 	 */
 	admin_nav_login_methods: () => LocalizedString;
 	/**
@@ -30783,6 +30803,26 @@ export type TranslationFunctions = {
 	 * CN (Common Name)
 	 */
 	admin_saml_local_common_name: () => LocalizedString;
+	/**
+	 * Automatically add DNS SAN from entityID and endpoints
+	 */
+	admin_saml_local_dns_san_auto: () => LocalizedString;
+	/**
+	 * Adds the hostnames used by this role, such as metadata, SSO, SLO, or ACS URLs.
+	 */
+	admin_saml_local_dns_san_auto_desc: () => LocalizedString;
+	/**
+	 * Generated DNS SAN
+	 */
+	admin_saml_local_dns_san_generated: () => LocalizedString;
+	/**
+	 * Additional DNS SAN
+	 */
+	admin_saml_local_dns_san_additional: () => LocalizedString;
+	/**
+	 * Add scope domains or other owned DNS names explicitly. Separate values with spaces, commas, or new lines.
+	 */
+	admin_saml_local_dns_san_additional_desc: () => LocalizedString;
 	/**
 	 * The certificate created here is not used for signing immediately. Select it in the stored certificate list and start using it when ready.
 	 */
@@ -36996,7 +37036,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_tenant_discovery_entry_mode_discovery_optional_sample: () => LocalizedString;
 	/**
-	 * Users must resolve a tenant before login methods are shown.
+	 * Users must resolve a tenant before authentication methods are shown.
 	 */
 	admin_tenant_discovery_entry_mode_discovery_required_description: () => LocalizedString;
 	/**
@@ -51064,177 +51104,177 @@ Remove this role from {email}?
 	 */
 	admin_policy_embedding_info_desc: () => LocalizedString;
 	/**
-	 * Login Methods - Authrim Admin
+	 * Authentication Methods - Authrim Admin
 	 */
-	admin_login_methods_page_title: () => LocalizedString;
+	admin_authentication_methods_page_title: () => LocalizedString;
 	/**
-	 * Login Methods
+	 * Authentication Methods
 	 */
-	admin_login_methods_title: () => LocalizedString;
+	admin_authentication_methods_title: () => LocalizedString;
 	/**
 	 * Custom external login providers for tenant {tenantId}
 	 */
-	admin_login_methods_description: (arg: { tenantId: string }) => LocalizedString;
+	admin_authentication_methods_description: (arg: { tenantId: string }) => LocalizedString;
 	/**
-	 * Failed to load login method settings
+	 * Failed to load authentication method settings
 	 */
-	admin_login_methods_error_load: () => LocalizedString;
+	admin_authentication_methods_error_load: () => LocalizedString;
 	/**
-	 * Failed to save login method settings
+	 * Failed to save authentication method settings
 	 */
-	admin_login_methods_error_save: () => LocalizedString;
+	admin_authentication_methods_error_save: () => LocalizedString;
 	/**
-	 * Login method settings saved.
+	 * Authentication method settings saved.
 	 */
-	admin_login_methods_saved: () => LocalizedString;
+	admin_authentication_methods_saved: () => LocalizedString;
 	/**
 	 * Discard
 	 */
-	admin_login_methods_discard: () => LocalizedString;
+	admin_authentication_methods_discard: () => LocalizedString;
 	/**
 	 * Save
 	 */
-	admin_login_methods_save: () => LocalizedString;
+	admin_authentication_methods_save: () => LocalizedString;
 	/**
 	 * Saving...
 	 */
-	admin_login_methods_saving: () => LocalizedString;
+	admin_authentication_methods_saving: () => LocalizedString;
 	/**
 	 * Loading...
 	 */
-	admin_login_methods_loading: () => LocalizedString;
+	admin_authentication_methods_loading: () => LocalizedString;
 	/**
 	 * Configured Providers
 	 */
-	admin_login_methods_configured: () => LocalizedString;
+	admin_authentication_methods_configured: () => LocalizedString;
 	/**
 	 * No custom providers configured.
 	 */
-	admin_login_methods_empty: () => LocalizedString;
+	admin_authentication_methods_empty: () => LocalizedString;
 	/**
 	 * Disabled
 	 */
-	admin_login_methods_disabled: () => LocalizedString;
+	admin_authentication_methods_disabled: () => LocalizedString;
 	/**
 	 * Edit
 	 */
-	admin_login_methods_edit_title: () => LocalizedString;
+	admin_authentication_methods_edit_title: () => LocalizedString;
 	/**
 	 * Duplicate
 	 */
-	admin_login_methods_duplicate_title: () => LocalizedString;
+	admin_authentication_methods_duplicate_title: () => LocalizedString;
 	/**
 	 * Remove
 	 */
-	admin_login_methods_remove_title: () => LocalizedString;
+	admin_authentication_methods_remove_title: () => LocalizedString;
 	/**
 	 * Copy
 	 */
-	admin_login_methods_copy_suffix: () => LocalizedString;
+	admin_authentication_methods_copy_suffix: () => LocalizedString;
 	/**
 	 * Add Provider
 	 */
-	admin_login_methods_add_provider: () => LocalizedString;
+	admin_authentication_methods_add_provider: () => LocalizedString;
 	/**
 	 * Edit Provider
 	 */
-	admin_login_methods_edit_provider: () => LocalizedString;
+	admin_authentication_methods_edit_provider: () => LocalizedString;
 	/**
 	 * Update Provider
 	 */
-	admin_login_methods_update_provider: () => LocalizedString;
+	admin_authentication_methods_update_provider: () => LocalizedString;
 	/**
 	 * Cancel
 	 */
-	admin_login_methods_cancel: () => LocalizedString;
+	admin_authentication_methods_cancel: () => LocalizedString;
 	/**
 	 * Provider ID
 	 */
-	admin_login_methods_provider_id: () => LocalizedString;
+	admin_authentication_methods_provider_id: () => LocalizedString;
 	/**
 	 * Name
 	 */
-	admin_login_methods_name: () => LocalizedString;
+	admin_authentication_methods_name: () => LocalizedString;
 	/**
 	 * Type
 	 */
-	admin_login_methods_type: () => LocalizedString;
+	admin_authentication_methods_type: () => LocalizedString;
 	/**
 	 * Start Mode
 	 */
-	admin_login_methods_start_mode: () => LocalizedString;
+	admin_authentication_methods_start_mode: () => LocalizedString;
 	/**
 	 * Start URL
 	 */
-	admin_login_methods_start_url: () => LocalizedString;
+	admin_authentication_methods_start_url: () => LocalizedString;
 	/**
 	 * Slug
 	 */
-	admin_login_methods_slug: () => LocalizedString;
+	admin_authentication_methods_slug: () => LocalizedString;
 	/**
 	 * Button Text
 	 */
-	admin_login_methods_button_text: () => LocalizedString;
+	admin_authentication_methods_button_text: () => LocalizedString;
 	/**
 	 * Icon URL
 	 */
-	admin_login_methods_icon_url: () => LocalizedString;
+	admin_authentication_methods_icon_url: () => LocalizedString;
 	/**
 	 * Button Color
 	 */
-	admin_login_methods_button_color: () => LocalizedString;
+	admin_authentication_methods_button_color: () => LocalizedString;
 	/**
 	 * Enabled
 	 */
-	admin_login_methods_enabled: () => LocalizedString;
+	admin_authentication_methods_enabled: () => LocalizedString;
 	/**
 	 * Direct
 	 */
-	admin_login_methods_start_mode_direct: () => LocalizedString;
+	admin_authentication_methods_start_mode_direct: () => LocalizedString;
 	/**
 	 * SAML SP
 	 */
-	admin_login_methods_start_mode_saml_sp: () => LocalizedString;
+	admin_authentication_methods_start_mode_saml_sp: () => LocalizedString;
 	/**
 	 * OAuth Redirect
 	 */
-	admin_login_methods_start_mode_oauth_redirect: () => LocalizedString;
+	admin_authentication_methods_start_mode_oauth_redirect: () => LocalizedString;
 	/**
 	 * Provider ID is required.
 	 */
-	admin_login_methods_validation_id_required: () => LocalizedString;
+	admin_authentication_methods_validation_id_required: () => LocalizedString;
 	/**
 	 * Provider ID can contain letters, numbers, colon, hyphen, and underscore.
 	 */
-	admin_login_methods_validation_id_format: () => LocalizedString;
+	admin_authentication_methods_validation_id_format: () => LocalizedString;
 	/**
 	 * Provider name is required.
 	 */
-	admin_login_methods_validation_name_required: () => LocalizedString;
+	admin_authentication_methods_validation_name_required: () => LocalizedString;
 	/**
 	 * Start URL is required.
 	 */
-	admin_login_methods_validation_start_url_required: () => LocalizedString;
+	admin_authentication_methods_validation_start_url_required: () => LocalizedString;
 	/**
 	 * Start URL must not be protocol-relative.
 	 */
-	admin_login_methods_validation_start_url_protocol_relative: () => LocalizedString;
+	admin_authentication_methods_validation_start_url_protocol_relative: () => LocalizedString;
 	/**
 	 * Relative Start URL must start with /.
 	 */
-	admin_login_methods_validation_relative_start_url: () => LocalizedString;
+	admin_authentication_methods_validation_relative_start_url: () => LocalizedString;
 	/**
 	 * Absolute Start URL must use HTTPS.
 	 */
-	admin_login_methods_validation_absolute_start_url: () => LocalizedString;
+	admin_authentication_methods_validation_absolute_start_url: () => LocalizedString;
 	/**
 	 * Start URL is invalid.
 	 */
-	admin_login_methods_validation_start_url_invalid: () => LocalizedString;
+	admin_authentication_methods_validation_start_url_invalid: () => LocalizedString;
 	/**
 	 * Provider ID must be unique.
 	 */
-	admin_login_methods_validation_id_unique: () => LocalizedString;
+	admin_authentication_methods_validation_id_unique: () => LocalizedString;
 	/**
 	 * Login UI - Authrim Admin
 	 */

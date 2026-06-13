@@ -299,6 +299,8 @@ function makeApproval(overrides: Record<string, unknown> = {}) {
 }
 
 const mockEnv = {
+  ISSUER_URL: 'https://auth.example.com',
+  ADMIN_UI_URL: 'https://admin.example.com',
   DB_ADMIN: {},
   AUTHRIM_CONFIG: {
     get: vi.fn(),
@@ -950,6 +952,39 @@ describe('approval artifacts router', () => {
       options: '/api/approval-artifacts/apc_1/passkey/options',
       verify: '/api/approval-artifacts/apc_1/passkey/verify',
     });
+  });
+
+  it('rejects passkey options from an unconfigured Admin WebAuthn origin', async () => {
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({
+        method: 'passkey',
+        transport_channel: 'passkey',
+      })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({
+        method: 'passkey',
+        transport_channel: 'passkey',
+      })
+    );
+
+    const app = createApp();
+    const res = await app.request(
+      '/api/approval-artifacts/apc_1/passkey/options',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'https://evil.example.com',
+        },
+        body: JSON.stringify({ rp_id: 'evil.example.com' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockWebAuthnFunctions.generateAuthenticationOptions).not.toHaveBeenCalled();
+    expect(mockEnv.AUTHRIM_CONFIG!.put).not.toHaveBeenCalled();
   });
 
   it('verifies a passkey completion challenge and returns an assertion', async () => {

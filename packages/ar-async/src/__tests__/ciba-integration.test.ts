@@ -51,6 +51,26 @@ vi.mock('@authrim/ar-lib-core', async () => {
   };
 });
 
+const CIBA_CLIENT_SECRET = 'ciba-secret';
+const CIBA_CLIENT_SECRET_HASH = '3269ad7c6e3e2fe0a25f942328a6099e42978ee9c3d4f55bc222f7520a40d044';
+
+function withCIBAClientSecret(body: Record<string, any>): Record<string, any> {
+  return {
+    ...body,
+    client_secret: CIBA_CLIENT_SECRET,
+  };
+}
+
+function createCIBAClientMetadata(overrides: Record<string, any> = {}): Record<string, any> {
+  return {
+    client_id: 'ciba-client',
+    grant_types: ['urn:openid:params:grant-type:ciba'],
+    backchannel_token_delivery_mode: 'poll',
+    client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+    ...overrides,
+  };
+}
+
 describe('CIBA Integration', () => {
   let mockEnv: Partial<Env>;
   let storedCIBARequests: Map<string, CIBARequestMetadata>;
@@ -183,19 +203,20 @@ describe('CIBA Integration', () => {
 
   describe('POST /bc-authorize - Backchannel Authorization', () => {
     it('should successfully create CIBA request for valid client', async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'ciba-client',
-        client_name: 'CIBA Test Client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+      mockGetClient.mockResolvedValue(
+        createCIBAClientMetadata({
+          client_name: 'CIBA Test Client',
+        })
+      );
 
-      const ctx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid profile email',
-        login_hint: 'user@example.com',
-        binding_message: 'Sign in to Test App',
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid profile email',
+          login_hint: 'user@example.com',
+          binding_message: 'Sign in to Test App',
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;
@@ -207,6 +228,23 @@ describe('CIBA Integration', () => {
       );
       expect(body.expires_in).toBeGreaterThan(0);
       expect(body.interval).toBeGreaterThan(0); // Poll interval is calculated based on expires_in
+    });
+
+    it('should reject a registered CIBA client without client authentication', async () => {
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
+
+      const ctx = createMockContext({
+        client_id: 'ciba-client',
+        scope: 'openid profile email',
+        login_hint: 'user@example.com',
+      });
+
+      const response = await cibaAuthorizationHandler(ctx);
+      const body = (await response.json()) as any;
+
+      expect(response.status).toBe(401);
+      expect(body.error).toBe('invalid_client');
+      expect(storedCIBARequests.size).toBe(0);
     });
 
     it('should reject request without client_id', async () => {
@@ -243,16 +281,20 @@ describe('CIBA Integration', () => {
     });
 
     it('should reject client not authorized for CIBA', async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'non-ciba-client',
-        grant_types: ['authorization_code'], // CIBA not included
-      });
+      mockGetClient.mockResolvedValue(
+        createCIBAClientMetadata({
+          client_id: 'non-ciba-client',
+          grant_types: ['authorization_code'], // CIBA not included
+        })
+      );
 
-      const ctx = createMockContext({
-        client_id: 'non-ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'non-ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;
@@ -263,18 +305,35 @@ describe('CIBA Integration', () => {
       expect(body.error_description).toContain('not authorized to use this grant type');
     });
 
-    it('should reject request without openid scope', async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'ciba-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+    it('should reject login_hint_token until signed third-party validation is implemented', async () => {
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
 
-      const ctx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'profile email', // Missing openid
-        login_hint: 'user@example.com',
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint_token: 'header.payload.signature',
+        })
+      );
+
+      const response = await cibaAuthorizationHandler(ctx);
+      const body = (await response.json()) as any;
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+      expect(storedCIBARequests.size).toBe(0);
+    });
+
+    it('should reject request without openid scope', async () => {
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
+
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'profile email', // Missing openid
+          login_hint: 'user@example.com',
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;
@@ -286,11 +345,7 @@ describe('CIBA Integration', () => {
     });
 
     it('should reject request without any login hint', async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'ciba-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
 
       const ctx = createMockContext({
         client_id: 'ciba-client',
@@ -310,20 +365,23 @@ describe('CIBA Integration', () => {
     it('should reject client that does not support poll mode when falling back to poll', async () => {
       // Client configured for ping-only mode but determineDeliveryMode falls back to poll
       // This tests the delivery mode validation logic
-      mockGetClient.mockResolvedValue({
-        client_id: 'ping-only-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'ping', // Only ping supported
-        backchannel_client_notification_endpoint: 'https://client.example.com/ciba-callback',
-      });
+      mockGetClient.mockResolvedValue(
+        createCIBAClientMetadata({
+          client_id: 'ping-only-client',
+          backchannel_token_delivery_mode: 'ping', // Only ping supported
+          backchannel_client_notification_endpoint: 'https://client.example.com/ciba-callback',
+        })
+      );
 
-      const ctx = createMockContext({
-        client_id: 'ping-only-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-        // Without client_notification_token, determineDeliveryMode returns 'poll'
-        // But client only supports 'ping', so it should fail
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ping-only-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+          // Without client_notification_token, determineDeliveryMode returns 'poll'
+          // But client only supports 'ping', so it should fail
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;
@@ -365,17 +423,15 @@ describe('CIBA Integration', () => {
   describe('POST /api/ciba/approve - Request Approval', () => {
     beforeEach(async () => {
       // Set up a valid client and create a pending CIBA request
-      mockGetClient.mockResolvedValue({
-        client_id: 'ciba-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
 
-      const authCtx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid profile',
-        login_hint: 'user@example.com',
-      });
+      const authCtx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid profile',
+          login_hint: 'user@example.com',
+        })
+      );
 
       await cibaAuthorizationHandler(authCtx);
     });
@@ -476,17 +532,15 @@ describe('CIBA Integration', () => {
 
   describe('POST /api/ciba/deny - Request Denial', () => {
     beforeEach(async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'ciba-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
 
-      const authCtx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const authCtx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       await cibaAuthorizationHandler(authCtx);
     });
@@ -557,20 +611,18 @@ describe('CIBA Integration', () => {
      */
 
     beforeEach(async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'ciba-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
     });
 
     it('should return authorization_pending for unapproved request', async () => {
       // Create a pending request
-      const authCtx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const authCtx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const authResponse = await cibaAuthorizationHandler(authCtx);
       const authBody = (await authResponse.json()) as { auth_req_id: string };
@@ -588,11 +640,13 @@ describe('CIBA Integration', () => {
 
     it('should return access_denied for denied request', async () => {
       // Create and deny a request
-      const authCtx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const authCtx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const authResponse = await cibaAuthorizationHandler(authCtx);
       const authBody = (await authResponse.json()) as { auth_req_id: string };
@@ -608,11 +662,13 @@ describe('CIBA Integration', () => {
 
     it('should detect expired requests', async () => {
       // Create a request
-      const authCtx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const authCtx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const authResponse = await cibaAuthorizationHandler(authCtx);
       const authBody = (await authResponse.json()) as { auth_req_id: string };
@@ -631,11 +687,13 @@ describe('CIBA Integration', () => {
 
     it('should prevent token replay (one-time use)', async () => {
       // Create and approve a request
-      const authCtx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const authCtx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const authResponse = await cibaAuthorizationHandler(authCtx);
       const authBody = (await authResponse.json()) as { auth_req_id: string };
@@ -669,11 +727,13 @@ describe('CIBA Integration', () => {
 
     it('should track poll count for slow_down detection', async () => {
       // Create a request
-      const authCtx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const authCtx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const authResponse = await cibaAuthorizationHandler(authCtx);
       const authBody = (await authResponse.json()) as { auth_req_id: string };
@@ -696,17 +756,15 @@ describe('CIBA Integration', () => {
 
   describe('Poll Mode Delivery (Default)', () => {
     it('should include interval in response for poll mode', async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'poll-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata({ client_id: 'poll-client' }));
 
-      const ctx = createMockContext({
-        client_id: 'poll-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'poll-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;
@@ -720,17 +778,20 @@ describe('CIBA Integration', () => {
     });
 
     it('should default to poll mode when delivery mode not explicitly specified', async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'default-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        // No backchannel_token_delivery_mode specified
-      });
+      mockGetClient.mockResolvedValue(
+        createCIBAClientMetadata({
+          client_id: 'default-client',
+          backchannel_token_delivery_mode: undefined,
+        })
+      );
 
-      const ctx = createMockContext({
-        client_id: 'default-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'default-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;

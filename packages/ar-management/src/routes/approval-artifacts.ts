@@ -13,6 +13,11 @@ import {
   AR_ERROR_CODES,
   createStepUpErrorResponse,
   getTenantIdFromContext,
+  ADMIN_UI_BFF_MODE_HEADER,
+  ADMIN_UI_FORWARDED_ORIGIN_HEADER,
+  adminWebAuthnOriginMatchesRpId,
+  getAdminWebAuthnRpIdForOrigin,
+  resolveAdminWebAuthnBrowserOrigin,
   type ApprovalDecisionStatus,
   type ApprovalTransportMethod,
   type ApprovalApproverSubjectType,
@@ -395,24 +400,25 @@ approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
       );
     }
 
-    const rpId =
-      body.rp_id ??
-      (() => {
-        const originHeader = c.req.header('origin');
-        if (!originHeader) {
-          return null;
-        }
-        return new URL(originHeader).hostname;
-      })();
-    if (!rpId) {
+    const browserOrigin = resolveAdminWebAuthnBrowserOrigin({
+      env: c.env,
+      originHeader: c.req.header('origin'),
+      bffModeHeader: c.req.header(ADMIN_UI_BFF_MODE_HEADER),
+      forwardedOriginHeader: c.req.header(ADMIN_UI_FORWARDED_ORIGIN_HEADER),
+    });
+    if (
+      !browserOrigin ||
+      (body.rp_id && !adminWebAuthnOriginMatchesRpId(browserOrigin, body.rp_id))
+    ) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'rp_id or Origin header is required for passkey completion.',
+          error_description: 'Admin WebAuthn origin is not allowed for passkey completion.',
         },
         400
       );
     }
+    const rpId = getAdminWebAuthnRpIdForOrigin(browserOrigin)!;
 
     const passkeyRepo = new AdminPasskeyRepository(state.adapter);
     const passkeys = await passkeyRepo.getPasskeysByUser(state.approval.subject_id);
@@ -436,13 +442,12 @@ approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
     });
 
     const challengeId = `${state.artifact.artifact_id}:pk:${crypto.randomUUID()}`;
-    const originHeader = c.req.header('origin') ?? null;
     await c.env.AUTHRIM_CONFIG.put(
       `approval_passkey:challenge:${challengeId}`,
       JSON.stringify({
         challenge: options.challenge,
         rpID: rpId,
-        origin: originHeader,
+        origin: browserOrigin,
         artifactId: state.artifact.artifact_id,
         approvalId: state.approval.id,
         approverSubjectId: state.approval.subject_id,

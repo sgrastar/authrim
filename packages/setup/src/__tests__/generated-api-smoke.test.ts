@@ -8,7 +8,7 @@ import {
   validateDiscoveryPayload,
   validateInvalidRequestPayload,
   validateJwksPayload,
-  validateLoginMethodsPayload,
+  validateAuthenticationMethodsPayload,
 } from '../core/generated-api-smoke.js';
 
 describe('generated api smoke helpers', () => {
@@ -40,7 +40,7 @@ describe('generated api smoke helpers', () => {
       'oidc-discovery',
       'jwks',
       'auth-health',
-      'login-methods',
+      'authentication-methods',
       'oidc-authorize-invalid-request',
       'oidc-login-challenge-invalid-request',
       'login-ui-oidc-authorize-proxy',
@@ -101,9 +101,9 @@ describe('generated api smoke helpers', () => {
     expect(validateJwksPayload({ keys: [] })).toEqual(['keys is empty']);
   });
 
-  it('accepts a valid login-methods payload', () => {
+  it('accepts a valid authentication-methods payload', () => {
     expect(
-      validateLoginMethodsPayload({
+      validateAuthenticationMethodsPayload({
         methods: {
           passkey: { enabled: true, capabilities: [] },
           emailCode: { enabled: true, steps: [] },

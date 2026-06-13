@@ -32,9 +32,10 @@ const app = new Hono<{ Bindings: Env }>();
 app.use(
   '/*',
   cors({
-    origin: (origin) => origin, // Allow all origins for discovery
+    origin: '*',
     allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
+    credentials: false,
   })
 );
 

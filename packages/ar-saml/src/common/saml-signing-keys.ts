@@ -10,8 +10,15 @@ import type {
 import {
   getSigningCertificate,
   getSigningKey,
+  type SAMLSigningCertificateCreationOptions,
+  type SAMLSigningCertificateSubjectAlternativeNames,
   type SAMLSigningCertificateSubject,
 } from './key-utils';
+import {
+  buildSAMLSigningCertificateSubjectAlternativeNames,
+  getSAMLLocalEntityIds,
+  getSAMLPublicSettings,
+} from './entity-id';
 import { requireSAMLTenantId } from './tenant';
 
 export interface SAMLSigningKeyContext {
@@ -20,6 +27,7 @@ export interface SAMLSigningKeyContext {
   counterpartyEntityId?: string;
   policy?: SAMLSigningKeyPolicy;
   certificateSubject?: SAMLSigningCertificateSubject;
+  certificateSubjectAlternativeNames?: SAMLSigningCertificateSubjectAlternativeNames;
 }
 
 export interface SAMLSigningMaterial {
@@ -63,11 +71,16 @@ export async function getSAMLSigningMaterial(
   context: SAMLSigningKeyContext
 ): Promise<SAMLSigningMaterial> {
   const keyRef = resolveSAMLSigningKeyRef(context);
+  const certificateOptions = await resolveSAMLSigningCertificateOptions(env, context);
   const [key, certificate] = await Promise.all([
-    getSigningKey(env, context.tenantId, { keyRef }),
+    getSigningKey(env, context.tenantId, {
+      keyRef,
+      certificateOptions,
+    }),
     getSigningCertificate(env, context.tenantId, {
       keyRef,
       certificateSubject: context.certificateSubject,
+      certificateOptions,
     }),
   ]);
 
@@ -149,6 +162,7 @@ async function resolvePublishedCertificate(
   const certificate = await getSigningCertificate(env, context.tenantId, {
     keyRef: reference.keyRef,
     certificateSubject: context.certificateSubject,
+    certificateOptions: await resolveSAMLSigningCertificateOptions(env, context),
   });
 
   return {
@@ -156,6 +170,28 @@ async function resolvePublishedCertificate(
     keyRef: reference.keyRef,
     kid: reference.kid,
     certificate,
+  };
+}
+
+async function resolveSAMLSigningCertificateOptions(
+  env: Env,
+  context: SAMLSigningKeyContext
+): Promise<SAMLSigningCertificateCreationOptions> {
+  if (context.certificateSubjectAlternativeNames) {
+    return {
+      subjectAlternativeNames: context.certificateSubjectAlternativeNames,
+    };
+  }
+  const [entityIds, settings] = await Promise.all([
+    getSAMLLocalEntityIds(env, context.tenantId),
+    getSAMLPublicSettings(env, context.tenantId),
+  ]);
+  return {
+    subjectAlternativeNames: buildSAMLSigningCertificateSubjectAlternativeNames(
+      entityIds,
+      context.role,
+      settings.certificateSubjectAlternativeNames
+    ),
   };
 }
 

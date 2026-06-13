@@ -5,14 +5,13 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
+import type { Env, CIBARequestMetadata, ClientMetadata } from '@authrim/ar-lib-core';
 import {
   generateAuthReqId,
   generateCIBAUserCode,
   CIBA_CONSTANTS,
   validateCIBARequest,
   validateCIBAIdTokenHint,
-  validateCIBALoginHintToken,
   determineDeliveryMode,
   calculatePollingInterval,
   parseLoginHint,
@@ -23,6 +22,8 @@ import {
   getJwksWithCache,
   publishEvent,
   buildDOInstanceName,
+  parseOAuthClientAuthenticationParams,
+  authenticateConfidentialOAuthClient,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { resolveAsyncTenantId } from './tenant';
@@ -47,7 +48,18 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // Parse request body
     const body = await c.req.parseBody();
     const scope = (body.scope as string) || 'openid';
-    const client_id = body.client_id as string;
+    const clientAuth = parseOAuthClientAuthenticationParams({
+      clientId: body.client_id as string | undefined,
+      clientSecret: body.client_secret as string | undefined,
+      clientAssertion: body.client_assertion as string | undefined,
+      clientAssertionType: body.client_assertion_type as string | undefined,
+      authorizationHeader: c.req.header('Authorization') ?? undefined,
+    });
+    if (!clientAuth.ok) {
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+    }
+
+    const client_id = clientAuth.credentials.clientId;
     const login_hint = body.login_hint as string | undefined;
     const login_hint_token = body.login_hint_token as string | undefined;
     const id_token_hint = body.id_token_hint as string | undefined;
@@ -88,9 +100,19 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
     }
 
+    const clientAuthentication = await authenticateConfidentialOAuthClient(
+      clientMetadata as unknown as ClientMetadata,
+      `${requestIssuer}/bc-authorize`,
+      clientAuth.credentials
+    );
+
+    if (!clientAuthentication.ok) {
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+    }
+
     // Verify client is authorized to use CIBA grant type
-    const grantTypes = clientMetadata.grant_types as string[] | undefined;
-    if (grantTypes && !grantTypes.includes('urn:openid:params:grant-type:ciba')) {
+    const grantTypes = clientMetadata.grant_types as string[] | string | undefined;
+    if (!grantTypes || !grantTypes.includes('urn:openid:params:grant-type:ciba')) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
@@ -149,24 +171,10 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // Validate login_hint_token if provided (JWT from third party)
     if (login_hint_token && !resolvedSubjectId) {
-      // For login_hint_token, JWKS would come from the third-party issuer
-      // Currently we validate without signature verification for third-party tokens
-      // In production, implement dynamic JWKS fetching based on the token's issuer
-      const loginHintTokenValidation = await validateCIBALoginHintToken(login_hint_token, {
-        audience: requestIssuer,
-        // Note: Third-party JWKS not yet implemented
-        // jwks would need to be fetched from the third-party issuer's jwks_uri
+      log.warn('Rejected login_hint_token because third-party signature validation is disabled', {
+        action: 'reject_unsigned_login_hint_token',
       });
-
-      if (!loginHintTokenValidation.valid) {
-        return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
-      }
-
-      resolvedSubjectId = loginHintTokenValidation.subjectId;
-      log.debug('Validated login_hint_token', {
-        action: 'validate_login_hint_token',
-        subjectId: resolvedSubjectId,
-      });
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     // Parse login_hint if provided (fallback)

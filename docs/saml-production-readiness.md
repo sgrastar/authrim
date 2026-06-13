@@ -30,7 +30,7 @@ Authrim includes SAML 2.0 IdP and SP support for tenant-scoped deployments. The 
 - Configurable default signing-certificate subject fields for newly generated local SAML certificates, including country, state/province, locality, organization, organizational unit, and common name.
 - SP metadata import for ACS, SLO, signing certificates, encryption certificates, and RequestedAttribute data.
 - Aggregate metadata import with search, lazy loading, `mdui:Keywords` filtering, `mdui:Logo` display, and selected provider creation.
-- Provider Login UI logo URL and curated login-button icon selection for SAML/OIDC login methods.
+- Provider Login UI logo URL and curated login-button icon selection for SAML/OIDC authentication methods.
 - Metadata refresh diffing for entityID, `validUntil`, signing/encryption certificates, and SSO/SLO/ACS endpoints.
 - Built-in attribute preset catalog for common academic, federation, and enterprise SaaS profiles.
 - Response/assertion signing policy, AuthnRequest signature policy, SLO signature policy, and algorithm allow-list behavior.

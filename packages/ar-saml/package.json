@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-saml",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "private": true,
   "scripts": {
@@ -14,8 +14,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-core": "workspace:*",
+    "@authrim/ar-lib-field-mapping": "workspace:*",
     "@xmldom/xmldom": "^0.8.13",
     "hono": "4.12.21",
     "jose": "^6.1.2",
@@ -25,10 +25,11 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "@types/pako": "^2.0.4",
-    "@vitest/ui": "^4.0.13",
+    "@vitest/ui": "^4.1.8",
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.13",
-    "wrangler": "^4.59.3"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.59.3",
+    "yaml": "2.8.3"
   }
 }

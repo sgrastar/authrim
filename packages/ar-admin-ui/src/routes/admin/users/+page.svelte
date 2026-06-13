@@ -9,6 +9,7 @@
 		type Pagination,
 		type UserListParams
 	} from '$lib/api/admin-users';
+	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { Modal } from '$lib/components';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
@@ -28,6 +29,8 @@
 	let selectedIds = new SvelteSet<string>();
 	let isAllSelected = $derived(users.length > 0 && selectedIds.size === users.length);
 	let hasSelection = $derived(selectedIds.size > 0);
+	const canCreateUsers = $derived(adminAuth.hasPermission('admin:users:write'));
+	const canDeleteUsers = $derived(adminAuth.hasPermission('admin:users:delete'));
 
 	// Bulk delete dialog state
 	let showBulkDeleteDialog = $state(false);
@@ -146,6 +149,7 @@
 
 	// Selection functions
 	function toggleSelectAll() {
+		if (!canDeleteUsers) return;
 		if (isAllSelected) {
 			selectedIds.clear();
 		} else {
@@ -156,6 +160,7 @@
 
 	function toggleSelect(id: string, event: Event) {
 		event.stopPropagation();
+		if (!canDeleteUsers) return;
 		if (selectedIds.has(id)) {
 			selectedIds.delete(id);
 		} else {
@@ -164,6 +169,7 @@
 	}
 
 	function openBulkDeleteDialog() {
+		if (!canDeleteUsers) return;
 		bulkDeleteError = '';
 		bulkDeleteProgress = { current: 0, total: selectedIds.size, failed: 0 };
 		showBulkDeleteDialog = true;
@@ -228,16 +234,18 @@
 			<p class="page-description">{$LL.admin_users_description()}</p>
 		</div>
 		<div class="page-actions">
-			{#if hasSelection}
+			{#if canDeleteUsers && hasSelection}
 				<button class="btn btn-danger" onclick={openBulkDeleteDialog}>
 					<i class="i-ph-trash"></i>
 					{$LL.admin_users_delete_selected({ count: selectedIds.size })}
 				</button>
 			{/if}
-			<a href="/admin/users/new" class="btn btn-primary">
-				<i class="i-ph-plus"></i>
-				{$LL.admin_users_create()}
-			</a>
+			{#if canCreateUsers}
+				<a href="/admin/users/new" class="btn btn-primary">
+					<i class="i-ph-plus"></i>
+					{$LL.admin_users_create()}
+				</a>
+			{/if}
 		</div>
 	</div>
 
@@ -307,6 +315,7 @@
 								class="checkbox"
 								checked={isAllSelected}
 								onchange={toggleSelectAll}
+								disabled={!canDeleteUsers}
 								aria-label={$LL.admin_users_select_all()}
 							/>
 						</th>
@@ -333,6 +342,7 @@
 									class="checkbox"
 									checked={selectedIds.has(user.id)}
 									onchange={(e) => toggleSelect(user.id, e)}
+									disabled={!canDeleteUsers}
 									aria-label={$LL.admin_users_select_user({ user: user.email || user.id })}
 								/>
 							</td>

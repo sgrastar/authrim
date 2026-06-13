@@ -69,6 +69,38 @@ describe('SAML key utilities', () => {
     expect(certificate.issuer).toBe(certificate.subject);
   });
 
+  it('generates a self-signed certificate with DNS subject alternative names', async () => {
+    const keyPair = await crypto.subtle.generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['sign', 'verify']
+    );
+    const [publicJwk, privateKeyPkcs8] = await Promise.all([
+      crypto.subtle.exportKey('jwk', keyPair.publicKey),
+      crypto.subtle.exportKey('pkcs8', keyPair.privateKey),
+    ]);
+
+    const certificatePem = await generateSelfSignedCertificate(
+      publicJwk,
+      formatPem('PRIVATE KEY', arrayBufferToBase64(new Uint8Array(privateKeyPkcs8))),
+      { commonName: 'conformance.authrim.com' },
+      {
+        subjectAlternativeNames: {
+          dnsNames: ['conformance.authrim.com', 'authrim.com', 'conformance.authrim.com'],
+        },
+      }
+    );
+    const certificate = new X509Certificate(certificatePem);
+
+    expect(certificate.subjectAltName).toContain('DNS:conformance.authrim.com');
+    expect(certificate.subjectAltName).toContain('DNS:authrim.com');
+  });
+
   it('stores a generated certificate in KeyManager when a key has no certificate yet', async () => {
     const keyPair = await crypto.subtle.generateKey(
       {

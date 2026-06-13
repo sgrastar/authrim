@@ -86,6 +86,8 @@ import {
   validateJWEOptions,
   validateJWTBearerAssertion,
   validateClientAssertion,
+  parseOAuthClientAuthenticationParams,
+  authenticateConfidentialOAuthClient,
   parseTrustedIssuers,
   getIDTokenRBACClaims,
   getAccessTokenRBACClaims,
@@ -3793,14 +3795,24 @@ async function handleDeviceCodeGrant(
     return oauthError(c, 'invalid_target', audienceResolution.description, 400);
   }
 
-  // Delete the device code (one-time use)
-  await deviceCodeStore.fetch(
-    new Request('https://internal/delete', {
+  // Atomically reserve the approved device code before issuing tokens. This closes
+  // the get-then-delete race where concurrent polls could both observe approved.
+  const consumeResponse = await deviceCodeStore.fetch(
+    new Request('https://internal/mark-token-issued', {
       method: 'POST',
       headers: internalHeaders,
       body: JSON.stringify({ device_code: deviceCode }),
     })
   );
+  if (!consumeResponse.ok) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Device code has already been used or is not approved',
+      },
+      400
+    );
+  }
 
   // Get private key for signing tokens
   let privateKey: CryptoKey;
@@ -4109,7 +4121,18 @@ async function handleDeviceCodeGrant(
 async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<string, string>) {
   const log = getLogger(c).module('TOKEN');
   const authReqId = formData.auth_req_id;
-  const client_id = formData.client_id;
+  const clientAuth = parseOAuthClientAuthenticationParams({
+    clientId: formData.client_id,
+    clientSecret: formData.client_secret,
+    clientAssertion: formData.client_assertion,
+    clientAssertionType: formData.client_assertion_type,
+    authorizationHeader: c.req.header('Authorization') ?? undefined,
+  });
+  if (!clientAuth.ok) {
+    return oauthError(c, clientAuth.error, clientAuth.errorDescription, 401);
+  }
+
+  const client_id = clientAuth.credentials.clientId;
   const tenantId = getTenantIdFromContext(c);
   const internalHeaders = {
     'Content-Type': 'application/json',
@@ -4135,6 +4158,26 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       },
       400
     );
+  }
+
+  const clientMetadata = await getClientCached(c, c.env, client_id);
+  if (!clientMetadata) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+
+  const clientAuthentication = await authenticateConfidentialOAuthClient(
+    clientMetadata as unknown as ClientMetadata,
+    `${getRequestIssuer(c)}/token`,
+    clientAuth.credentials
+  );
+
+  if (!clientAuthentication.ok) {
+    return oauthError(c, clientAuthentication.error, clientAuthentication.errorDescription, 401);
+  }
+
+  const grantTypes = clientMetadata.grant_types as string[] | string | undefined;
+  if (!grantTypes || !grantTypes.includes('urn:openid:params:grant-type:ciba')) {
+    return oauthError(c, 'unauthorized_client', 'Client is not authorized for CIBA grant', 400);
   }
 
   // Get CIBA request metadata from CIBARequestStore
@@ -4291,11 +4334,6 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       },
       400
     );
-  }
-
-  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
-  if (!clientMetadata) {
-    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
   }
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);

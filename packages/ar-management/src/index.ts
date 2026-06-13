@@ -181,6 +181,9 @@ import {
   adminRoleUpdateHandler,
   adminRoleDeleteHandler,
 } from './admin-rbac';
+import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
+import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
+import { registerDeclaredAdminRouteAccessMiddleware } from './admin-route-access';
 import {
   adminRelationDefinitionsListHandler,
   adminRelationDefinitionGetHandler,
@@ -357,7 +360,7 @@ import {
 import { requireSupportedTenantParam } from './single-tenant-guard';
 import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
-import { getLoginMethodsHandler } from './login-methods';
+import { getAuthenticationMethodsHandler } from './authentication-methods';
 import {
   getDiscoveryConfigHandler,
   postDiscoveryGrantHandler,
@@ -800,7 +803,7 @@ function requireClientManagementPermission() {
 }
 
 // Create Hono app with Cloudflare Workers types
-const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>();
 
 const loadPlugins = createPluginLoader([
   {
@@ -1021,16 +1024,16 @@ const healthHandlers = createHealthCheckHandlers({
 app.get('/health/live', healthHandlers.liveness);
 app.get('/health/ready', healthHandlers.readiness);
 
-// Login Methods API - public endpoint for Login UI
-// Returns enabled login methods (passkey, emailCode, external providers) and UI config
-app.use('/api/auth/login-methods', async (c, next) => {
+// Authentication Methods API - public endpoint for Login UI
+// Returns enabled authentication methods (passkey, emailCode, external providers) and UI config
+app.use('/api/auth/authentication-methods', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/api/auth/login-methods'],
+    endpoints: ['/api/auth/authentication-methods'],
   })(c, next);
 });
-app.get('/api/auth/login-methods', getLoginMethodsHandler);
+app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
 app.use('/api/auth/discovery', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
@@ -1136,6 +1139,9 @@ app.use('/api/admin/*', async (c, next) => {
 });
 
 // Admin API endpoints
+registerDeclaredAdminRouteAccessMiddleware(app);
+registerAdminResourcePermissionMiddleware(app);
+
 app.get('/api/admin/stats', adminStatsHandler);
 app.get('/api/admin/users', adminUsersListHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
@@ -1742,6 +1748,7 @@ app.get('/api/admin/external-token-refresh/runs', adminExternalTokenRefreshRunsL
 app.post('/api/admin/external-token-refresh/run', adminExternalTokenRefreshRunHandler);
 
 // Admin RBAC endpoints - Phase 1
+registerAdminRbacPermissionMiddleware(app);
 
 // Organization management
 app.get('/api/admin/organizations', adminOrganizationsListHandler);
@@ -1876,16 +1883,7 @@ app.get(
 // =============================================================================
 // Manages custom policy rules for fine-grained access control.
 // Supports RBAC, ABAC, time-based, geo, and rate conditions.
-// RBAC: Requires tenant_admin or higher role.
-
-app.use(
-  '/api/admin/policies',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/policies/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+// RBAC: Protected by registerAdminRbacPermissionMiddleware().
 
 // Policy rules CRUD
 app.get('/api/admin/policies', adminPoliciesListHandler);

@@ -399,11 +399,12 @@ export class AdminLoggingControlRepository {
        LIMIT 100`
     );
     const keyVersions = await this.adapter.query<LoggingKeyVersionStatusRow>(
-      `SELECT status, COUNT(*) AS total
-       FROM logging_key_versions
-       WHERE plane = 'sensitive_detail'
-       GROUP BY status
-       ORDER BY status ASC`
+      `SELECT kv.status, COUNT(*) AS total
+       FROM logging_key_versions kv
+       INNER JOIN logging_key_registry kr ON kr.id = kv.key_registry_id
+       WHERE kr.plane = 'sensitive_detail'
+       GROUP BY kv.status
+       ORDER BY kv.status ASC`
     );
     const staleKeyCount = keyVersions
       .filter((row) => ['rewrap_required', 'compromised', 'retiring'].includes(row.status))

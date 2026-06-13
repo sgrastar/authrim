@@ -28,6 +28,21 @@ Documentation for the Authrim OpenID Connect Provider project.
 | [Admin Jobs](./admin-jobs.md)                                    | Tenant-scoped asynchronous Admin Jobs, result artifacts, retry state, and UI behavior                                                                       |
 | [Testing Documentation](./testing/README.md)                     | Lightweight ISO/IEC/IEEE 29119-aligned testing profile, regression bank, and release confidence checklist                                                   |
 | [SAML Production Readiness](./saml-production-readiness.md)      | SAML metadata, signing rollover, attribute presets, SLO fanout observation, and operational limits                                                          |
+| [Security and QA Roadmap](./ROADMAP.md#security-qa-and-validation) | Current security-validation status, remaining hardening tasks, and release-readiness criteria                                                               |
+
+---
+
+## Security Hardening Notes
+
+Authrim is pre-1.0 and security validation is ongoing. Recent internal review remediation
+covered selected management API authorization gates, CIBA client authentication, admin setup-token
+fail-closed behavior, Admin WebAuthn origin/RP ID validation, OTP HMAC secret handling,
+VCI holder binding, device-flow single-use token issuance, and SCIM filter fail-closed
+behavior.
+
+Remaining work includes a declarative fail-closed Admin API permission table with CI
+coverage for undeclared routes, lower-severity hardening items, and an external audit or
+penetration test before production-stability claims.
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-core",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -68,9 +68,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
-    "@types/pg": "^8.15.6",
     "@types/node": "^20.19.25",
+    "@types/pg": "^8.15.6",
     "fast-check": "^4.5.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "yaml": "2.8.3"
   }
 }

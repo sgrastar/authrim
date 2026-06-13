@@ -49,6 +49,8 @@ interface Env {
   AR_ADMIN_UI_URL?: string;
   /** Public Admin UI URL (e.g., https://admin.example.com) */
   ADMIN_UI_URL?: string;
+  /** Public Login UI URL (e.g., https://login.example.com) */
+  LOGIN_UI_URL?: string;
   /** Login UI Worker service binding */
   LOGIN_UI_WORKER?: Fetcher;
   /** Admin UI Worker service binding */
@@ -111,6 +113,15 @@ function isBearerTokenCanonicalPath(path: string): boolean {
 
 function matchesPathGroup(path: string, basePath: string): boolean {
   return path === basePath || path.startsWith(`${basePath}/`);
+}
+
+function isGakuNinShibbolethSAML2IdPPath(path: string): boolean {
+  return (
+    path === '/idp/profile/SAML2/POST/SSO' ||
+    path === '/idp/profile/SAML2/Redirect/SSO' ||
+    path === '/idp/profile/SAML2/POST/SLO' ||
+    path === '/idp/profile/SAML2/Redirect/SLO'
+  );
 }
 
 function bearerTokenTransportError(): Response {
@@ -261,6 +272,7 @@ app.use('*', async (c, next) => {
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||
     path.startsWith('/saml/') ||
+    isGakuNinShibbolethSAML2IdPPath(path) ||
     // UI proxy paths - UI Workers handle their own headers
     path.startsWith('/setup') ||
     path.startsWith('/admin') ||
@@ -613,11 +625,11 @@ app.all('/api/v1/diagnostic-logs/*', async (c) => {
 });
 
 /**
- * Login methods endpoint - Route to OP_MANAGEMENT worker
+ * Authentication methods endpoint - Route to OP_MANAGEMENT worker
  * Must be registered BEFORE /api/auth/* to take priority.
- * - /api/auth/login-methods - Public endpoint for available login methods + UI config
+ * - /api/auth/authentication-methods - Public endpoint for available authentication methods + UI config
  */
-app.get('/api/auth/login-methods', async (c) => {
+app.get('/api/auth/authentication-methods', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
@@ -906,8 +918,20 @@ app.all('/api/internal/*', async (c) => {
  * - /saml/idp/* - IdP endpoints (metadata, SSO, SLO, IdP-initiated)
  * - /saml/sp/* - SP endpoints (metadata, ACS, login, SLO)
  * - /saml/admin/* - Admin API for SAML provider management
+ * - /idp/profile/SAML2/* - GakuNin/Shibboleth SAML2 IdP compatibility aliases
  */
 app.all('/saml/*', async (c) => {
+  if (!c.env.OP_SAML) {
+    return notFoundResponse();
+  }
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_SAML.fetch(request);
+});
+
+app.all('/idp/profile/SAML2/*', async (c) => {
+  if (!isGakuNinShibbolethSAML2IdPPath(c.req.path)) {
+    return notFoundResponse();
+  }
   if (!c.env.OP_SAML) {
     return notFoundResponse();
   }
@@ -1134,20 +1158,24 @@ app.all('/_app/*', async (c) => {
 // Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
 app.get('/', async (c) => {
   const requestHost = new URL(c.req.url).hostname.toLowerCase();
+  const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);
   const adminUiHost =
     getConfiguredUrlHostname(c.env.ADMIN_UI_URL) ||
     (c.env.BASE_DOMAIN ? `admin.${c.env.BASE_DOMAIN.toLowerCase()}` : null);
+  const loginEnabled = c.env.ENABLE_LOGIN_UI_PROXY === 'true' && !!c.env.AR_LOGIN_UI_URL;
+  const requestIsLoginUiHost = loginEnabled && loginUiHost !== null && requestHost === loginUiHost;
   if (
     adminUiHost &&
     requestHost === adminUiHost &&
+    !requestIsLoginUiHost &&
     c.env.ENABLE_ADMIN_UI_PROXY === 'true' &&
     c.env.AR_ADMIN_UI_URL
   ) {
     return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, '/', c.env.ADMIN_UI_WORKER);
   }
 
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, '/', c.env.LOGIN_UI_WORKER);
+  if (loginEnabled) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL!, '/', c.env.LOGIN_UI_WORKER);
   }
 
   // Return basic API info when Login UI proxy is not enabled.

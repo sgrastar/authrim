@@ -1026,6 +1026,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       authenticator_type?: 'platform' | 'cross-platform' | 'any';
       resident_key?: 'required' | 'preferred' | 'discouraged';
       user_verification?: 'required' | 'preferred' | 'discouraged';
+      custom_fields?: Record<string, unknown>;
     }>();
 
     const {
@@ -1039,6 +1040,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       authenticator_type = 'any',
       resident_key = 'required',
       user_verification = 'required',
+      custom_fields,
     } = body;
 
     if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256' || !channel) {
@@ -1077,6 +1079,26 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const existingUser = await runtimeUsers.findByEmail(email.toLowerCase());
     if (existingUser) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
+    const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+      c.env,
+      tenantId,
+      custom_fields
+    );
+    if (!customFieldValidation.ok) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: 'custom_fields', reason: customFieldValidation.error },
+        extensions: customFieldValidation.missingRequiredFields
+          ? {
+              missing_required_fields: customFieldValidation.missingRequiredFields.map((field) => ({
+                field_key: field.fieldKey,
+                label: field.label,
+                field_type: field.fieldType,
+              })),
+            }
+          : undefined,
+      });
     }
 
     if (!user) {
@@ -1180,6 +1202,9 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         origin: originHeader,
         rpID,
         challenge_id: challengeId,
+        ...(Object.keys(customFieldValidation.values).length > 0
+          ? { custom_fields: customFieldValidation.values }
+          : {}),
       },
     });
 
@@ -1295,6 +1320,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         scope?: string;
         origin: string;
         rpID: string;
+        custom_fields?: Record<string, unknown>;
       };
     };
 
@@ -1372,14 +1398,25 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       device_name: 'Direct Auth Passkey',
     });
 
-    // Update email_verified
     const now = Date.now();
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    await runtimeUsers.markEmailVerified(userId);
 
     // Check if this is a new user (created in this flow)
     const runtimeUser = await runtimeUsers.findById(userId, { includeInactive: true });
     const isNewUser = runtimeUser ? now - Date.parse(runtimeUser.created_at) < 60000 : false;
+
+    const customFields = challengeData.metadata?.custom_fields;
+    if (customFields) {
+      try {
+        await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
+      } catch (persistError) {
+        log.warn(
+          'Failed to persist registration field values',
+          { action: 'registration_fields_persist' },
+          persistError as Error
+        );
+      }
+    }
 
     // Generate auth_code
     const authCode = await generateAuthCode(
@@ -1601,7 +1638,13 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const attemptId = crypto.randomUUID();
     const code = generateEmailCode();
     const issuedAt = Date.now();
-    const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+    const hmacSecret = c.env.OTP_HMAC_SECRET;
+    if (!hmacSecret) {
+      log.error('OTP_HMAC_SECRET must be configured for direct email-code auth', {
+        action: 'direct_email_code_send',
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+    }
 
     const [codeHash, emailHash, challengeStore] = await Promise.all([
       hashEmailCode(code, email.toLowerCase(), attemptId, issuedAt, hmacSecret),
@@ -1793,7 +1836,13 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Verify code hash
-    const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+    const hmacSecret = c.env.OTP_HMAC_SECRET;
+    if (!hmacSecret) {
+      log.error('OTP_HMAC_SECRET must be configured for direct email-code verification', {
+        action: 'direct_email_code_verify',
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+    }
     const isValidCode = await verifyEmailCodeHash(
       code,
       challengeData.email?.toLowerCase() || '',

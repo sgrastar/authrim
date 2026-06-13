@@ -23,6 +23,12 @@ import {
   adminAuthMiddleware,
   generateId,
   requireDedicatedAdminDatabaseAdapter,
+  ADMIN_UI_BFF_MODE_HEADER,
+  ADMIN_UI_FORWARDED_ORIGIN_HEADER,
+  adminWebAuthnOriginMatchesRpId,
+  getAdminWebAuthnRpIdForOrigin,
+  normalizeWebAuthnOrigin,
+  resolveAdminWebAuthnBrowserOrigin,
 } from '@authrim/ar-lib-core';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { writeAdminAuditLog } from '../../admin-shared';
@@ -160,6 +166,20 @@ myPasskeysRouter.post('/options', async (c) => {
     if (!body.rp_id) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
+    if (!c.env.AUTHRIM_CONFIG) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+
+    const browserOrigin = resolveAdminWebAuthnBrowserOrigin({
+      env: c.env,
+      originHeader: c.req.header('origin'),
+      bffModeHeader: c.req.header(ADMIN_UI_BFF_MODE_HEADER),
+      forwardedOriginHeader: c.req.header(ADMIN_UI_FORWARDED_ORIGIN_HEADER),
+    });
+    if (!browserOrigin || !adminWebAuthnOriginMatchesRpId(browserOrigin, body.rp_id)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+    const rpID = getAdminWebAuthnRpIdForOrigin(browserOrigin)!;
 
     const adapter = getAdminAdapter(c);
     const passkeyRepo = new AdminPasskeyRepository(adapter);
@@ -177,7 +197,7 @@ myPasskeysRouter.post('/options', async (c) => {
     const userName = authContext.email || authContext.userId;
     const options = await generateRegistrationOptions({
       rpName: RP_NAME,
-      rpID: body.rp_id,
+      rpID,
       userName,
       userDisplayName: userName,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
@@ -193,18 +213,17 @@ myPasskeysRouter.post('/options', async (c) => {
 
     // Store challenge for verification
     const challengeId = generateId();
-    if (c.env.AUTHRIM_CONFIG) {
-      await c.env.AUTHRIM_CONFIG.put(
-        `admin_passkey:challenge:${challengeId}`,
-        JSON.stringify({
-          challenge: options.challenge,
-          rpID: body.rp_id,
-          userId: authContext.userId,
-          deviceName: body.device_name || null,
-        }),
-        { expirationTtl: 300 } // 5 minutes
-      );
-    }
+    await c.env.AUTHRIM_CONFIG.put(
+      `admin_passkey:challenge:${challengeId}`,
+      JSON.stringify({
+        challenge: options.challenge,
+        rpID,
+        origin: browserOrigin,
+        userId: authContext.userId,
+        deviceName: body.device_name || null,
+      }),
+      { expirationTtl: 300 } // 5 minutes
+    );
 
     return c.json({
       options,
@@ -249,6 +268,7 @@ myPasskeysRouter.post('/complete', async (c) => {
     const storedChallenge = JSON.parse(storedChallengeJson) as {
       challenge: string;
       rpID: string;
+      origin?: string;
       userId: string;
       deviceName: string | null;
     };
@@ -258,6 +278,15 @@ myPasskeysRouter.post('/complete', async (c) => {
       await c.env.AUTHRIM_CONFIG?.delete(`admin_passkey:challenge:${body.challenge_id}`);
       return c.json({ error: 'invalid_challenge', error_description: 'User mismatch' }, 401);
     }
+    const normalizedOrigin = normalizeWebAuthnOrigin(body.origin);
+    if (
+      !storedChallenge.origin ||
+      !normalizedOrigin ||
+      normalizedOrigin !== storedChallenge.origin
+    ) {
+      await c.env.AUTHRIM_CONFIG?.delete(`admin_passkey:challenge:${body.challenge_id}`);
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
 
     // Verify passkey registration
     let verification;
@@ -265,7 +294,7 @@ myPasskeysRouter.post('/complete', async (c) => {
       verification = await verifyRegistrationResponse({
         response: body.passkey_response,
         expectedChallenge: storedChallenge.challenge,
-        expectedOrigin: body.origin,
+        expectedOrigin: storedChallenge.origin,
         expectedRPID: storedChallenge.rpID,
         requireUserVerification: false,
       });

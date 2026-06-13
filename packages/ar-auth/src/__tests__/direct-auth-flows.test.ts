@@ -214,6 +214,7 @@ async function s256Challenge(verifier: string): Promise<string> {
 function createEnv() {
   return {
     ISSUER_URL: 'https://issuer.example.com',
+    OTP_HMAC_SECRET: 'otp-test-secret',
     ALLOWED_ORIGINS: 'https://app.example.com',
     AUTHRIM_CONFIG: {
       get: vi.fn().mockResolvedValue(null),
@@ -535,6 +536,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   });
 
   it('starts passkey signup by creating a new user and storing challenge mapping', async () => {
+    mocks.validateRegistrationFieldSubmissionFromEnv.mockResolvedValueOnce({
+      ok: true,
+      values: { affiliation: 'Faculty' },
+    });
     const { directPasskeySignupStartHandler } = await import('../direct-auth');
 
     const response = await directPasskeySignupStartHandler(
@@ -548,6 +553,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           channel: 'browser',
           scope: 'openid email',
           authenticator_type: 'platform',
+          custom_fields: { affiliation: 'Faculty' },
         },
         webHeaders()
       ) as never
@@ -585,6 +591,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           channel: 'browser',
           code_challenge: 'signup-pkce-challenge',
           origin: 'https://app.example.com',
+          custom_fields: { affiliation: 'Faculty' },
         }),
       })
     );
@@ -671,6 +678,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         scope: 'openid email',
         origin: 'https://app.example.com',
         rpID: 'app.example.com',
+        custom_fields: { affiliation: 'Faculty' },
       },
     });
     mocks.userCore.findById.mockResolvedValue({
@@ -711,9 +719,15 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         device_name: 'Direct Auth Passkey',
       })
     );
-    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
-      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [expect.any(Number), 'user_new', 'tenant_test']
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('email_verified = 1'),
+      expect.any(Array)
+    );
+    expect(mocks.persistRegistrationFieldValuesFromEnv).toHaveBeenCalledWith(
+      expect.any(Object),
+      'tenant_test',
+      'user_new',
+      { affiliation: 'Faculty' }
     );
     expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -874,7 +888,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'new@example.com',
       expect.any(String),
       expect.any(Number),
-      'https://issuer.example.com'
+      'otp-test-secret'
     );
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -913,6 +927,26 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(response.status).toBe(500);
     expect(body).not.toHaveProperty('_dev_code');
     expect(body).not.toHaveProperty('code');
+  });
+
+  it('rejects email-code send when OTP_HMAC_SECRET is missing', async () => {
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const ctx = createContext(
+      {
+        client_id: 'web-client',
+        email: 'new@example.com',
+        code_challenge: 'email-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      webHeaders()
+    );
+    delete (ctx.env as { OTP_HMAC_SECRET?: string }).OTP_HMAC_SECRET;
+
+    const response = await directEmailCodeSendHandler(ctx as never);
+
+    expect(response.status).toBe(500);
+    expect(mocks.hashEmailCode).not.toHaveBeenCalled();
   });
 
   it('allows email-code signup from a tenant Login UI proxy origin not present in registry', async () => {
@@ -979,7 +1013,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'attempt_1',
       issuedAt,
       'hashed-email-code',
-      'https://issuer.example.com'
+      'otp-test-secret'
     );
     expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
       'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',

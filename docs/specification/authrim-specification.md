@@ -1788,7 +1788,7 @@ Defaults:
 LoginUI Worker route policy:
 
 - Core OAuth/OIDC endpoints such as `/authorize`, `/token`, `/userinfo`, `/introspect`, `/revoke`, `/register`, and `/.well-known/*` remain core Authrim endpoints.
-- LoginUI keeps UI-owned routes such as callback/handoff finalize, login methods proxy, Direct Auth session support, logout UI behavior, and local UI language route where applicable.
+- LoginUI keeps UI-owned routes such as callback/handoff finalize, authentication methods proxy, Direct Auth session support, logout UI behavior, and local UI language route where applicable.
 
 ## 17. Compatibility and Legacy Behavior
 

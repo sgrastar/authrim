@@ -2,6 +2,22 @@ import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 const MAX_ADMIN_API_RESPONSE_BYTES = 2 * 1024 * 1024;
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+function shouldAttachIdempotencyKey(method?: string): boolean {
+	return !IDEMPOTENT_METHODS.has((method ?? 'GET').toUpperCase());
+}
+
+function createIdempotencyKey(): string {
+	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+		return crypto.randomUUID();
+	}
+	const bytes = new Uint8Array(16);
+	if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+		crypto.getRandomValues(bytes);
+	}
+	return `admin-ui-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
 
 function getPersistedTenantId(): string | null {
 	if (typeof sessionStorage !== 'undefined') {
@@ -28,6 +44,7 @@ export function buildAdminHeaders(
 		tenantId?: string;
 		includeJsonContentType?: boolean;
 		skipTenantHeader?: boolean;
+		method?: string;
 	} = {}
 ): Headers {
 	const resolvedHeaders = new Headers(headers);
@@ -39,6 +56,10 @@ export function buildAdminHeaders(
 	const tenantId = resolveTenantId(options.tenantId);
 	if (tenantId && !options.skipTenantHeader) {
 		resolvedHeaders.set('X-Tenant-Id', tenantId);
+	}
+
+	if (shouldAttachIdempotencyKey(options.method) && !resolvedHeaders.has('Idempotency-Key')) {
+		resolvedHeaders.set('Idempotency-Key', createIdempotencyKey());
 	}
 
 	return resolvedHeaders;
@@ -63,7 +84,12 @@ export async function adminFetch(
 	const response = await fetch(input, {
 		...rest,
 		credentials: rest.credentials ?? 'include',
-		headers: buildAdminHeaders(headers, { tenantId, includeJsonContentType, skipTenantHeader })
+		headers: buildAdminHeaders(headers, {
+			tenantId,
+			includeJsonContentType,
+			skipTenantHeader,
+			method: rest.method
+		})
 	});
 
 	const contentLength = response.headers.get('content-length');

@@ -1,6 +1,6 @@
 {
   "name": "authrim",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A scalable Edge Identity Provider built on Cloudflare Workers - OIDC, OAuth 2.0, SAML",
   "private": true,
   "type": "module",
@@ -41,6 +41,7 @@
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"packages/**/*.ts\"",
     "format:check": "prettier --check \"packages/**/*.ts\"",
+    "security:audit": "pnpm audit --audit-level=high",
     "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts",
     "migrate:create": "tsx scripts/create-migration.ts",
@@ -90,16 +91,17 @@
     "@types/node": "^20.19.25",
     "@typescript-eslint/eslint-plugin": "^8.47.0",
     "@typescript-eslint/parser": "^8.47.0",
-    "@vitest/coverage-v8": "^4.0.13",
+    "@vitest/coverage-v8": "^4.1.8",
     "axe-core": "^4.11.0",
     "eslint": "^9.39.1",
     "globals": "^15.15.0",
     "prettier": "^3.6.2",
     "tsx": "^4.20.6",
-    "turbo": "^2.6.1",
+    "turbo": "^2.9.17",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.13",
-    "wrangler": "^4.59.3"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.59.3",
+    "yaml": "2.8.3"
   },
   "optionalDependencies": {
     "@esbuild/linux-x64": "^0.25.12"
@@ -109,18 +111,36 @@
   },
   "pnpm": {
     "overrides": {
-      "qs": ">=6.14.2",
-      "lodash": ">=4.17.23",
-      "lodash-es": ">=4.17.23",
-      "tmp": ">=0.2.4",
+      "qs": ">=6.15.2",
+      "ajv@<6.14.0": "6.15.0",
+      "brace-expansion@<1.1.13": "1.1.15",
+      "yaml@>=1.0.0 <1.10.3": "1.10.3",
+      "yaml@>=2.0.0 <2.8.3": "2.8.3",
+      "vite@7.3.5>yaml": "2.8.3",
+      "postcss": ">=8.5.15",
+      "ip-address": ">=10.2.0",
+      "ws": ">=8.21.0",
+      "uuid": ">=11.1.1",
+      "lodash": ">=4.18.0",
+      "lodash-es": ">=4.18.0",
+      "tmp": ">=0.2.6",
       "cookie": ">=0.7.0",
-      "basic-ftp": ">=5.2.0",
+      "basic-ftp": ">=5.3.1",
+      "path-to-regexp@<0.1.13": "0.1.13",
+      "picomatch": ">=4.0.4",
+      "undici": ">=7.24.0",
+      "defu": ">=6.1.5",
+      "vite": ">=7.3.2",
+      "@sveltejs/kit": ">=2.57.1",
       "rollup": ">=4.59.0",
       "hono": "4.12.21",
       "@hono/node-server": "^1.19.13",
       "tar": "^7.5.14",
-      "devalue": "^5.8.0",
-      "@xmldom/xmldom": "^0.8.13"
+      "devalue": "^5.8.1",
+      "minimatch@<3.1.4": "3.1.4",
+      "minimatch@>=9.0.0 <9.0.7": "9.0.7",
+      "@xmldom/xmldom": "^0.8.13",
+      "esbuild": "0.28.1"
     }
   }
 }

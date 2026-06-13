@@ -19,6 +19,9 @@ const {
   mockStoreRequestRpc,
   mockGetLogger,
   mockLogger,
+  mockJwtVerify,
+  mockImportJWK,
+  mockCreateRemoteJWKSet,
 } = vi.hoisted(() => {
   const logger = {
     module: vi.fn().mockReturnThis(),
@@ -46,6 +49,9 @@ const {
     mockStoreRequestRpc: vi.fn(),
     mockGetLogger: vi.fn().mockReturnValue(logger),
     mockLogger: logger,
+    mockJwtVerify: vi.fn(),
+    mockImportJWK: vi.fn(),
+    mockCreateRemoteJWKSet: vi.fn(),
   };
 });
 
@@ -74,6 +80,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 vi.mock('../issuer', () => ({
   getRequestIssuer: vi.fn().mockReturnValue('https://op.example.com'),
 }));
+
+vi.mock('jose', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('jose')>();
+  return {
+    ...actual,
+    jwtVerify: mockJwtVerify,
+    importJWK: mockImportJWK,
+    createRemoteJWKSet: mockCreateRemoteJWKSet,
+  };
+});
 
 import { parHandler } from '../par';
 
@@ -151,6 +167,16 @@ describe('PAR Handler', () => {
       },
     });
     mockGetLogger.mockReturnValue(mockLogger);
+    mockImportJWK.mockResolvedValue({ type: 'public' } as CryptoKey);
+    mockJwtVerify.mockResolvedValue({
+      payload: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+    mockCreateRemoteJWKSet.mockReturnValue(vi.fn());
   });
 
   it('rejects non form-encoded requests before processing the payload', async () => {
@@ -425,6 +451,159 @@ describe('PAR Handler', () => {
       error: 'invalid_request',
       error_description: 'client_id mismatch between request parameter and request object',
     });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('verifies signed request objects with the matching kid and explicit algorithm allowlist', async () => {
+    const matchingKey = {
+      kty: 'RSA',
+      kid: 'client-key-2',
+      alg: 'RS256',
+      use: 'sig',
+      n: 'test-modulus',
+      e: 'AQAB',
+    };
+    const firstKey = {
+      kty: 'RSA',
+      kid: 'client-key-1',
+      alg: 'RS256',
+      use: 'sig',
+      n: 'wrong-modulus',
+      e: 'AQAB',
+    };
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      jwks: {
+        keys: [firstKey, matchingKey],
+      },
+    });
+    mockParseToken.mockReturnValue({
+      header: {
+        alg: 'RS256',
+        kid: 'client-key-2',
+      },
+    });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        request: 'signed-request-object',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockImportJWK).toHaveBeenCalledWith(matchingKey, 'RS256');
+    expect(mockJwtVerify).toHaveBeenCalledWith(
+      'signed-request-object',
+      { type: 'public' },
+      {
+        issuer: 'client-123',
+        audience: 'https://op.example.com',
+        algorithms: ['RS256'],
+      }
+    );
+    expect(mockStoreRequestRpc).toHaveBeenCalled();
+  });
+
+  it('rejects signed request objects that do not use RS256', async () => {
+    mockParseToken.mockReturnValue({
+      header: {
+        alg: 'ES256',
+        kid: 'client-key-1',
+      },
+    });
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      jwks: {
+        keys: [
+          {
+            kty: 'EC',
+            kid: 'client-key-1',
+            alg: 'ES256',
+            use: 'sig',
+          },
+        ],
+      },
+    });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        request: 'signed-request-object',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request_object',
+      error_description: 'Unsupported request object signing algorithm',
+    });
+    expect(mockImportJWK).not.toHaveBeenCalled();
+    expect(mockJwtVerify).not.toHaveBeenCalled();
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects embedded JWKS request objects when the kid does not match a signing key', async () => {
+    mockParseToken.mockReturnValue({
+      header: {
+        alg: 'RS256',
+        kid: 'missing-key',
+      },
+    });
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      jwks: {
+        keys: [
+          {
+            kty: 'RSA',
+            kid: 'client-key-1',
+            alg: 'RS256',
+            use: 'sig',
+            n: 'test-modulus',
+            e: 'AQAB',
+          },
+        ],
+      },
+    });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        request: 'signed-request-object',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request_object',
+      error_description: 'No suitable signing key found in client jwks',
+    });
+    expect(mockImportJWK).not.toHaveBeenCalled();
+    expect(mockJwtVerify).not.toHaveBeenCalled();
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });
 

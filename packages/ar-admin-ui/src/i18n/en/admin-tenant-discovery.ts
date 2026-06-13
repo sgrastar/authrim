@@ -30,7 +30,7 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_entry_mode_discovery_optional_sample:
 		'Good default for gradual multi-tenant rollout.',
 	admin_tenant_discovery_entry_mode_discovery_required_description:
-		'Users must resolve a tenant before login methods are shown.',
+		'Users must resolve a tenant before authentication methods are shown.',
 	admin_tenant_discovery_entry_mode_discovery_required_sample:
 		'Use when the shared login entry should always choose a tenant first.',
 	admin_tenant_discovery_example: 'Example: {sample:string}',

@@ -80,7 +80,7 @@ Main checks:
 - `GET /.well-known/openid-configuration`
 - `GET /.well-known/jwks.json`
 - `GET /api/auth/health`
-- `GET /api/auth/login-methods`
+- `GET /api/auth/authentication-methods`
 
 ## Admin API smoke
 

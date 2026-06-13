@@ -119,7 +119,7 @@
 			label: 'Login Select',
 			icon: '🚪',
 			color: '#0ea5e9',
-			description: 'User selects login method',
+			description: 'User selects authentication method',
 			category: 'selection',
 			options: ['Email + Password', 'Social Login', 'Passkey', 'Enterprise SSO']
 		},

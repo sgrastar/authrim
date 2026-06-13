@@ -1,8 +1,8 @@
 /**
- * Login Methods API Tests
+ * Authentication Methods API Tests
  *
- * Tests for the public login methods endpoint:
- * - GET /api/auth/login-methods
+ * Tests for the public authentication methods endpoint:
+ * - GET /api/auth/authentication-methods
  *
  * Verifies:
  * - All methods enabled/disabled combinations
@@ -42,7 +42,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { getLoginMethodsHandler } from '../login-methods';
+import { getAuthenticationMethodsHandler } from '../authentication-methods';
 
 // =============================================================================
 // Mock helpers
@@ -109,7 +109,7 @@ function createTestApp(options: CreateTestAppOptions = {}) {
   const externalIdp = options.externalIdp !== undefined ? options.externalIdp : null;
 
   const app = new Hono<{ Bindings: Env }>();
-  app.get('/api/auth/login-methods', getLoginMethodsHandler);
+  app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
 
   const mockEnv = {
     SETTINGS: settingsKV,
@@ -124,7 +124,7 @@ function createTestApp(options: CreateTestAppOptions = {}) {
 // Tests
 // =============================================================================
 
-describe('Login Methods API', () => {
+describe('Authentication Methods API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
@@ -136,11 +136,11 @@ describe('Login Methods API', () => {
   // Default behavior
   // ===========================================================================
 
-  describe('GET /api/auth/login-methods (defaults)', () => {
+  describe('GET /api/auth/authentication-methods (defaults)', () => {
     it('should return passkey + emailCode enabled by default', async () => {
       const { app, mockEnv } = createTestApp();
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -161,7 +161,7 @@ describe('Login Methods API', () => {
     it('should return default UI config', async () => {
       const { app, mockEnv } = createTestApp();
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('light');
@@ -175,7 +175,7 @@ describe('Login Methods API', () => {
     it('should return default appearance config', async () => {
       const { app, mockEnv } = createTestApp();
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.ui.appearance.backgroundImageUrl).toBeNull();
@@ -189,7 +189,7 @@ describe('Login Methods API', () => {
     it('should include meta with cacheTTL and revision', async () => {
       const { app, mockEnv } = createTestApp();
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.meta.cacheTTL).toBe(300);
@@ -201,7 +201,7 @@ describe('Login Methods API', () => {
     it('should set Cache-Control header', async () => {
       const { app, mockEnv } = createTestApp();
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
     });
@@ -220,7 +220,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.passkey.enabled).toBe(false);
@@ -236,7 +236,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.passkey.enabled).toBe(true);
@@ -244,19 +244,19 @@ describe('Login Methods API', () => {
       expect(body.methods.emailCode.steps).toEqual([]);
     });
 
-    it('should enable directory password from login-methods settings without exposing connector secrets', async () => {
+    it('should enable directory password from authentication-methods settings without exposing connector secrets', async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
           advanced: { passkeyEnabled: false, magicLinkEnabled: false },
         }),
-        'settings:tenant:default:login-methods': JSON.stringify({
-          'login-methods.directory_password.enabled': true,
-          'login-methods.directory_password.label': 'Campus ID',
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.directory_password.enabled': true,
+          'authentication-methods.directory_password.label': 'Campus ID',
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(res.status).toBe(200);
@@ -294,7 +294,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ externalIdp });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.external.enabled).toBe(true);
@@ -329,7 +329,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp();
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.external.enabled).toBe(true);
@@ -346,10 +346,10 @@ describe('Login Methods API', () => {
       );
     });
 
-    it('should include configured VC/custom providers from login-methods settings', async () => {
+    it('should include configured VC/custom providers from authentication-methods settings', async () => {
       const settingsKV = createMockKV({
-        'settings:tenant:default:login-methods': JSON.stringify({
-          'login-methods.external_providers': [
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.external_providers': [
             {
               id: 'wallet-vp',
               name: 'Wallet Presentation',
@@ -364,7 +364,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.external.enabled).toBe(true);
@@ -389,7 +389,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ externalIdp });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.external.providers).toHaveLength(1);
@@ -400,7 +400,7 @@ describe('Login Methods API', () => {
       const externalIdp = createMockExternalIdp({ shouldFail: true });
       const { app, mockEnv } = createTestApp({ externalIdp });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.external.enabled).toBe(false);
@@ -413,7 +413,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ externalIdp });
 
-      await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       expect(externalIdp.fetch).toHaveBeenCalledWith(
         'https://external-idp/api/external/providers',
@@ -427,7 +427,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ externalIdp });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.methods.external.enabled).toBe(true);
@@ -449,12 +449,12 @@ describe('Login Methods API', () => {
       // No EXTERNAL_IDP → no external login
       const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       expect(res.status).toBe(503);
       const body = (await res.json()) as any;
 
-      expect(body.error.code).toBe('NO_LOGIN_METHOD_AVAILABLE');
+      expect(body.error.code).toBe('NO_AUTHENTICATION_METHOD_AVAILABLE');
       expect(body.error.message).toBeDefined();
     });
 
@@ -466,9 +466,9 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
-      expect(mockLogger.warn).toHaveBeenCalledWith('No login method available', {});
+      expect(mockLogger.warn).toHaveBeenCalledWith('No authentication method available', {});
     });
   });
 
@@ -500,7 +500,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('dark');
@@ -531,7 +531,7 @@ describe('Login Methods API', () => {
       // Empty configKV → no settings-v2
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('dark');
@@ -563,7 +563,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('dark');
@@ -587,7 +587,7 @@ describe('Login Methods API', () => {
       } as unknown as KVNamespace;
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       // Handler is resilient — KV failure falls back to defaults
       expect(res.status).toBe(200);
@@ -603,7 +603,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       // Should not crash — falls back to empty settings → defaults
       expect(res.status).toBe(200);
@@ -619,7 +619,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       // Should fall through to legacy → defaults
       expect(res.status).toBe(200);
@@ -641,7 +641,7 @@ describe('Login Methods API', () => {
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
 
-      const res = await app.request('/api/auth/login-methods', { method: 'GET' }, mockEnv);
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;

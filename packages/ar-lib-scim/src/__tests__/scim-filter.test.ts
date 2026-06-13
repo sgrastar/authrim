@@ -238,6 +238,15 @@ describe('SCIM Filter Parser', () => {
       expect(sql).toContain('preferred_username');
     });
 
+    it('should reject unmapped attributes when an attribute map is provided', () => {
+      const ast = parseScimFilter('permissions_json eq "admin:*"');
+      const attributeMap = { displayName: 'name', externalId: 'external_id' };
+
+      expect(() => filterToSql(ast, attributeMap)).toThrow(
+        'Unsupported SCIM filter attribute: permissions_json'
+      );
+    });
+
     it('should handle comparison operators', () => {
       const tests = [
         { filter: 'age gt 25', operator: '>' },

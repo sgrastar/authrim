@@ -5,7 +5,7 @@
  * V2 uses rtv (Refresh Token Version) for theft detection instead of token string comparison.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RefreshTokenRotator } from '../RefreshTokenRotator';
 import type { Env } from '../../types/env';
 
@@ -111,9 +111,15 @@ describe('RefreshTokenRotator V2', () => {
   let mockEnv: Env;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     mockState = new MockDurableObjectState();
     mockEnv = createMockEnv();
     rotator = new RefreshTokenRotator(mockState as unknown as DurableObjectState, mockEnv);
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   describe('Token Family Creation', () => {

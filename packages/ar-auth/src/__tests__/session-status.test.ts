@@ -54,12 +54,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-function createContext() {
+function createContext(options: { headers?: Record<string, string> } = {}) {
+  const headers = Object.fromEntries(
+    Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
+  );
+
   return {
     req: {
       path: '/session/status',
       raw: new Request('https://issuer.example.com/session/status'),
-      header: vi.fn(() => undefined),
+      header: vi.fn((name: string) => headers[name.toLowerCase()]),
       json: vi.fn(async () => ({})),
     },
     get: vi.fn((key: string) => (key === 'tenantId' ? 'default' : undefined)),
@@ -263,6 +267,33 @@ describe('ITP session token lifecycle', () => {
     });
   });
 
+  it('binds issued session tokens to the browser Origin when present', async () => {
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: Date.now() + 60_000,
+      data: {},
+    });
+    const { issueSessionTokenHandler } = await import('../session-management');
+
+    const response = await issueSessionTokenHandler(
+      createContext({ headers: { Origin: 'https://rp.example.com/path' } }) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: `session_token:${body.token}`,
+        metadata: {
+          sessionId: '0_session_123',
+          rpOrigin: 'https://rp.example.com',
+        },
+      })
+    );
+  });
+
   it('rejects session token issuance when no browser session cookie exists', async () => {
     mocks.getCookie.mockReturnValue(undefined);
     const { issueSessionTokenHandler } = await import('../session-management');
@@ -290,6 +321,7 @@ describe('ITP session token lifecycle', () => {
       userId: 'user_123',
       metadata: {
         sessionId: '0_session_123',
+        rpOrigin: 'https://rp.example.com',
       },
     });
     mocks.sessionStore.getSessionRpc.mockResolvedValue({
@@ -334,6 +366,73 @@ describe('ITP session token lifecycle', () => {
       },
       'default'
     );
+  });
+
+  it('rejects RP session creation when rp_origin differs from the issued token origin', async () => {
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({
+      token: 'session-token-123',
+      rp_origin: 'https://attacker.example.com',
+    }));
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'session-token-123',
+      userId: 'user_123',
+      metadata: {
+        sessionId: '0_session_123',
+        rpOrigin: 'https://rp.example.com',
+      },
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: {},
+    });
+    const { verifySessionTokenHandler } = await import('../session-management');
+
+    const response = await verifySessionTokenHandler(context as never);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: 'invalid_request',
+      error_description: 'rp_origin does not match the session token origin',
+    });
+    expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid rp_origin values', async () => {
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({
+      token: 'session-token-123',
+      rp_origin: 'javascript:alert(1)',
+    }));
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'session-token-123',
+      userId: 'user_123',
+      metadata: {
+        sessionId: '0_session_123',
+      },
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: {},
+    });
+    const { verifySessionTokenHandler } = await import('../session-management');
+
+    const response = await verifySessionTokenHandler(context as never);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      error: 'invalid_request',
+      error_description: 'rp_origin must be an http(s) origin',
+    });
+    expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
   });
 
   it('rejects verification when the single-use token was consumed already', async () => {

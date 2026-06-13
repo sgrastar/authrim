@@ -140,7 +140,7 @@
 			check_risk: 'Check Risk',
 			// 3. Selection Nodes
 			auth_method_select: 'Auth Method Select',
-			login_method_select: 'Login Method Select',
+			login_method_select: 'Authentication Method Select',
 			identifier: 'Identifier Input',
 			profile_input: 'Profile Input',
 			custom_form: 'Custom Form',

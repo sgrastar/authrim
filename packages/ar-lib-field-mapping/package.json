@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-field-mapping",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,6 +33,7 @@
     "@cloudflare/workers-types": "^4.20251121.0",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.13"
+    "vitest": "^4.1.8",
+    "yaml": "2.8.3"
   }
 }

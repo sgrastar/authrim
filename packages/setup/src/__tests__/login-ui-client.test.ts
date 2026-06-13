@@ -226,6 +226,105 @@ describe('ensureLoginUiClient', () => {
     );
   });
 
+  it('falls back to a tenant-scoped API candidate for setup machine provisioning', async () => {
+    const secrets = generateAllSecrets('login-ui-test-key');
+    await saveKeysToDirectory(secrets, { targetDir: tempDir });
+
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(
+          JSON.stringify({
+            error: 'not_found',
+            error_description: 'Tenant not found',
+          }),
+          404
+        )
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: 'tenant-machine-admin-token',
+          token_type: 'Bearer',
+          expires_in: 600,
+          scope: 'admin:clients:*',
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'tenant-login-ui-client',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://base.example.test',
+      apiBaseUrls: ['https://first.example.test', 'https://base.example.test'],
+      loginUiUrl: 'https://login.example.test',
+      adminApiSecretPath,
+      tenantId: 'first',
+      maxRetries: 1,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      clientId: 'tenant-login-ui-client',
+      alreadyExists: false,
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://base.example.test/token');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('https://first.example.test/token');
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
+      'https://first.example.test/api/admin/clients?search=Login%20UI&limit=10'
+    );
+    const listHeaders = fetchMock.mock.calls[2]?.[1]?.headers as Record<string, string>;
+    expect(listHeaders.Authorization).toBe('Bearer tenant-machine-admin-token');
+    expect(listHeaders['X-Tenant-Id']).toBe('first');
+  });
+
+  it('falls back to a tenant-scoped API candidate when legacy admin calls hit the wrong host', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(
+          JSON.stringify({
+            error: 'not_found',
+            error_description: 'Tenant not found',
+          }),
+          404
+        )
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'tenant-login-ui-client',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://base.example.test',
+      apiBaseUrls: ['https://first.example.test'],
+      loginUiUrl: 'https://login.example.test',
+      adminApiSecretPath,
+      tenantId: 'first',
+      maxRetries: 1,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      clientId: 'tenant-login-ui-client',
+      alreadyExists: false,
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://base.example.test/api/admin/clients?search=Login%20UI&limit=10'
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      'https://first.example.test/api/admin/clients?search=Login%20UI&limit=10'
+    );
+  });
+
   it('creates the built-in Login UI client with browser refresh tokens disabled', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
