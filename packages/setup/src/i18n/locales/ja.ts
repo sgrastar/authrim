@@ -117,7 +117,7 @@ const ja: Translations = {
   'env.custom': 'カスタム',
   'env.customDesc': 'カスタム環境名を入力',
   'env.customPrompt': 'カスタム環境名を入力',
-  'env.customValidation': '小文字英数字とハイフンのみ使用可能（例: prod, staging, dev）',
+  'env.customValidation': '小文字英数字とハイフンのみ使用可能（例: prod, main, tokyo, acme-dev）',
   'env.detected': '検出された環境:',
   'env.selectExisting': '既存の環境を選択',
   'env.createNew': '新しい環境を作成',
@@ -171,7 +171,7 @@ const ja: Translations = {
   'domain.customPrompt': 'カスタムドメインを入力（例: auth.example.com）',
   'domain.customValidation': '有効なドメインを入力してください（例: auth.example.com）',
   'domain.issuerUrl': 'Issuer URL: {{url}}',
-  'domain.checkZoneButton': 'ゾーンを確認',
+  'domain.checkZoneButton': 'ゾーン確認',
   'domain.checkingZone': '{{domain}} のCloudflareゾーンを確認中...',
   'domain.zoneFound': "ゾーン '{{zone}}' が見つかりました（ステータス: {{status}}）",
   'domain.zoneNotFound': "ゾーン '{{zone}}' がCloudflareアカウントに見つかりません",
@@ -697,7 +697,7 @@ const ja: Translations = {
   'web.systemMode': 'システム',
 
   // Web UI Prerequisites
-  'web.prereq.title': '前提条件',
+  'web.prereq.title': '準備',
   'web.prereq.checking': '確認中...',
   'web.prereq.checkingRequirements': 'システム要件を確認しています...',
   'web.prereq.ready': '準備完了',
@@ -763,31 +763,32 @@ const ja: Translations = {
 
   // Web UI Database
   'web.db.title': 'データベース設定',
-  'web.db.coreTitle': 'コアデータベース',
+  'web.db.coreTitle': 'Core データベース',
   'web.db.coreSubtitle': '（非PII）',
   'web.db.coreDesc':
     'クライアント、認可コード、トークン、セッションを保存。グローバルにレプリケート可能。',
-  'web.db.piiTitle': 'PIIデータベース',
+  'web.db.piiTitle': 'PII データベース',
   'web.db.piiSubtitle': '（個人識別情報）',
   'web.db.piiDesc':
     'ユーザープロファイル、認証情報、PIIを保存。コンプライアンスのため単一の管轄区域内に配置推奨。',
   'web.db.name': '名前',
   'web.db.region': 'リージョン',
   'web.db.regionAuto': '自動（最寄り）',
-  'web.db.storageProfileTitle': 'ストレージデプロイメントプロファイル',
+  'web.db.storageProfileTitle': 'ストレージ\nプロファイル',
   'web.db.storageProfileDesc':
     'このデプロイでユーザー core/PII データをどのように配置するかを選択します。',
-  'web.db.sharedD1Title': '共有 D1',
+  'web.db.sharedD1Title': '共有 D1（Shared D1）',
   'web.db.sharedD1Desc':
-    'デプロイ全体で core D1 と PII D1 を共有します。セットアップコストが最も低いデフォルト構成です。',
-  'web.db.tenantD1Title': 'テナント D1',
+    '環境全体で core D1 と PII D1 を1組ずつ共有します。構築コストが最小の標準構成です。',
+  'web.db.tenantD1Title': 'テナント別 D1（Tenant D1）',
   'web.db.tenantD1Desc':
-    'テナントごとに core/PII D1 のペアを用意します。テナント有効化前にテナントDBのプロビジョニングが必要です。',
+    'テナントごとに core / PII のD1ペアを割り当てます。テナント有効化の前にスロットの事前確保が必要です。',
   'web.db.preallocatedSlotsTitle': '事前確保するテナントスロット',
   'web.db.preallocatedSlotsDesc':
     '各テナントスロットは core と PII の 2 つの D1 データベースを作成します。',
   'web.db.slotsLabel': 'スロット',
-  'web.db.slotsHelp': 'デフォルトは 3、最大 500 スロットです。',
+  'web.db.slotsHelp':
+    'スロット1つにつき core / PII の2つのD1データベースが作成されます。既定値は3、最大500です。あとから環境管理画面で拡張できます。',
 
   // Web UI Email
   'web.email.title': 'メールプロバイダー',
@@ -826,19 +827,18 @@ const ja: Translations = {
   'web.complete.issuerUrl': 'Issuer URL',
   'web.complete.loginUrl': 'ログインURL',
   'web.complete.adminUrl': '管理URL',
-  'web.complete.nextSteps': '次のステップ:',
-  'web.complete.step1': '上のボタンから管理者の初期設定を完了',
-  'web.complete.step2': '管理UIで最初のOAuthクライアントを設定',
-  'web.complete.step3': 'アプリケーションと統合',
   'web.complete.saveConfig': '設定を保存',
   'web.complete.backToMain': 'メインに戻る',
+  'web.config.saveToFileTitle': '設定をファイルに保存',
+  'web.complete.backToMainTitle': 'メイン画面に戻る',
   'web.complete.canClose': 'セットアップが完了しました。このウィンドウを閉じても問題ありません。',
-  'web.complete.adminAccountTitle': '管理者アカウント設定',
+  'web.complete.adminAccountTitle': '管理者セットアップURL',
   'web.complete.adminAccountImportant': '重要',
-  'web.complete.adminAccountDesc': 'パスキー認証で最初の管理者アカウントを登録してください:',
-  'web.complete.copy': '📋 コピー',
+  'web.complete.adminAccountDesc':
+    'このURLをブラウザで開き、最初の管理者アカウントをパスキーで登録してください。パスワードは使いません。期限切れの場合は環境管理画面から再発行できます。',
+  'web.complete.copy': 'コピー',
   'web.complete.copied': '✓ コピー済み',
-  'web.complete.openSetup': '🔑 セットアップを開く',
+  'web.complete.openSetup': 'セットアップを開く ↗',
   'web.complete.urlWarning':
     'このURLは<strong>1回のみ</strong>使用可能で、<strong>{{date}}</strong>に失効します。',
   'web.complete.adminSetupUnavailable':
@@ -904,7 +904,7 @@ const ja: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': '環境名',
-  'web.form.envNamePlaceholder': '例: prod, staging, dev',
+  'web.form.envNamePlaceholder': '例: prod, main, tokyo, acme-dev',
   'web.form.envNameHint': '小文字英数字とハイフンのみ使用可能',
   'web.form.envNameError': '環境名は小文字英数字とハイフンのみ使用可能です（先頭は英字）',
   'web.form.baseDomain': 'ベースドメイン（APIドメイン）',
@@ -982,7 +982,7 @@ const ja: Translations = {
   'web.db.coreData5': '監査ログとセキュリティイベント',
   'web.db.coreHint':
     'このデータベースはすべての認証フローを処理するため、主要ユーザーベースの近くに配置してください。',
-  'web.db.piiLabel': '個人識別情報',
+  'web.db.piiLabel': '個人情報',
   'web.db.piiDataDesc': '以下の個人ユーザーデータを保存:',
   'web.db.piiData1': 'ユーザープロフィール（名前、メール、電話）',
   'web.db.piiData2': 'Passkey/WebAuthn認証情報',
@@ -992,11 +992,11 @@ const ja: Translations = {
     'このデータベースには個人データが含まれます。データ保護要件に準拠したリージョンへの配置を検討してください。',
   'web.db.locationHints': '場所ヒント',
   'web.db.jurisdiction': '管轄（コンプライアンス）',
-  'web.db.autoNearest': '自動（最寄り）',
-  'web.db.northAmericaWest': '北米（西部）',
-  'web.db.northAmericaEast': '北米（東部）',
-  'web.db.europeWest': 'ヨーロッパ（西部）',
-  'web.db.europeEast': 'ヨーロッパ（東部）',
+  'web.db.autoNearest': '自動（現在地から最寄り）',
+  'web.db.northAmericaWest': '北米（西）',
+  'web.db.northAmericaEast': '北米（東）',
+  'web.db.europeWest': '欧州（西）',
+  'web.db.europeEast': '欧州（東）',
   'web.db.asiaPacific': 'アジア太平洋',
   'web.db.oceania': 'オセアニア',
   'web.db.euJurisdiction': 'EU管轄（GDPR準拠）',
@@ -1004,13 +1004,13 @@ const ja: Translations = {
   // Web UI Email Section
   'web.email.introDesc':
     'メールOTPとメールアドレス確認の送信に使用します。後で設定することも可能です。',
-  'web.email.configureLater': '後で設定',
-  'web.email.configureLaterHint': '今はスキップして後で設定。',
-  'web.email.configureCloudflare': 'Cloudflare Email Serviceを設定',
+  'web.email.configureLater': 'あとで設定する',
+  'web.email.configureLaterHint': '今はスキップし、構築後に環境管理画面から設定します。',
+  'web.email.configureCloudflare': 'Cloudflare Email Service',
   'web.email.configureCloudflareHint':
-    'Workers ネイティブの Email Service binding を使います。Workers Paid Plan と Cloudflare DNS が必要です。',
-  'web.email.configureResend': 'Resendを設定',
-  'web.email.configureResendHint': 'Resendでメール送信を設定（本番環境推奨）。',
+    'Workers ネイティブのEmailバインディングを使用。Workers Paid プランと Cloudflare DNS が必要です。',
+  'web.email.configureResend': 'Resend',
+  'web.email.configureResendHint': 'Resend で送信します（本番環境での利用を推奨）。',
   'web.email.cloudflareSetup': 'Cloudflare Email Service',
   'web.email.cloudflareRequirements': '要件',
   'web.email.cloudflareRequirementPaid': 'Workers Paid Plan が必要です',
@@ -1023,29 +1023,30 @@ const ja: Translations = {
   'web.email.step2': 'ドメインを追加・認証:',
   'web.email.step3': 'APIキーを作成:',
   'web.email.resendApiKey': 'Resend APIキー',
-  'web.email.resendApiKeyHint': 'APIキーは "re_" で始まります',
+  'web.email.resendApiKeyHint':
+    'APIキーは re_ で始まります。Workersのシークレットとして保存され、設定ファイルには平文で残りません。',
   'web.email.resendApiKeyMissing': 'Resend APIキーを入力してください',
   'web.email.resendApiKeyConfirmInvalid':
     'APIキーが "re_" で始まっていません。有効な Resend APIキーではない可能性があります。このまま続行しますか？',
   'web.email.fromEmailAddress': '送信元メールアドレス',
   'web.email.cloudflareFromHint':
     'Cloudflare Email Service にオンボード済みのドメインのアドレスである必要があります',
-  'web.email.fromEmailHint': 'Resendアカウントで認証されたドメインのアドレスを使用',
+  'web.email.fromEmailHint': 'Resendで検証済みのドメインのアドレスである必要があります。',
   'web.email.fromEmailMissing': '送信元メールアドレスを入力してください',
   'web.email.fromEmailInvalid': '有効なメールアドレスを入力してください',
-  'web.email.fromDisplayName': '送信者表示名（オプション）',
-  'web.email.fromDisplayHint': 'メールクライアントに表示される送信者名',
+  'web.email.fromDisplayName': '送信者表示名（任意）',
+  'web.email.fromDisplayHint': 'メールクライアントで送信者名として表示されます。',
   'web.email.saveConfigFailed': 'メール設定の保存に失敗しました',
-  'web.email.domainVerificationTitle': 'ドメイン認証が必要',
+  'web.email.domainVerificationTitle': 'ドメイン検証が必要',
   'web.email.domainVerificationDesc':
     'ドメインが認証されるまで、メールは onboarding@resend.dev からのみ送信可能（テスト用）。',
   'web.email.learnMore': 'ドメイン認証の詳細 →',
 
   // Web UI Provision Section
-  'web.provision.resourcePreview': 'リソース名:',
-  'web.provision.d1Databases': 'D1データベース:',
-  'web.provision.kvNamespaces': 'KV名前空間:',
-  'web.provision.cryptoKeys': '暗号化キー:',
+  'web.provision.resourcePreview': 'リソース名',
+  'web.provision.d1Databases': 'D1 データベース',
+  'web.provision.kvNamespaces': 'KV 名前空間',
+  'web.provision.cryptoKeys': '暗号鍵',
   'web.provision.initializing': '初期化中...',
   'web.provision.showLog': '詳細ログを表示',
   'web.provision.hideLog': '詳細ログを非表示',
@@ -1158,7 +1159,7 @@ const ja: Translations = {
   'web.error.notLoggedIn': 'Cloudflareにログインしていません',
   'web.error.runCommand': 'ターミナルで以下のコマンドを実行してください:',
   'web.error.thenRefresh': 'その後、このページを更新してください。',
-  'web.error.checkingPrereq': '前提条件の確認中にエラー:',
+  'web.error.checkingPrereq': '準備の確認中にエラー:',
   'web.error.invalidJson': '無効なJSON:',
   'web.error.validationFailed': '検証リクエストが失敗しました:',
 
