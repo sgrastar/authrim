@@ -8,6 +8,9 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
 import chalk from 'chalk';
+import { readFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createApiRoutes, generateSessionToken, getSessionToken } from './api.js';
 import { getHtmlTemplate } from './ui.js';
 import {
@@ -20,6 +23,9 @@ import {
   type Locale,
   DEFAULT_LOCALE,
 } from '../i18n/index.js';
+
+const WEB_ASSETS_DIR = dirname(fileURLToPath(import.meta.url));
+const WEB_FONTS_DIR = join(WEB_ASSETS_DIR, 'fonts');
 
 // =============================================================================
 // Types
@@ -143,6 +149,25 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   });
 
   // Static assets (if needed in the future)
+  app.get('/assets/fonts/:file', async (c) => {
+    const file = c.req.param('file');
+    if (file !== basename(file) || !file.endsWith('.woff2')) {
+      return c.notFound();
+    }
+
+    try {
+      const font = await readFile(join(WEB_FONTS_DIR, file));
+      return new Response(font, {
+        headers: {
+          'Content-Type': 'font/woff2',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        },
+      });
+    } catch {
+      return c.notFound();
+    }
+  });
+
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
   // Translations API - for client-side language switching without reload

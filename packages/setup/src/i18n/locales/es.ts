@@ -119,7 +119,7 @@ const es: Translations = {
   'env.customDesc': 'Ingresa un nombre de entorno personalizado',
   'env.customPrompt': 'Ingresa nombre de entorno personalizado',
   'env.customValidation':
-    'Solo se permiten letras minúsculas, números y guiones (ej: prod, staging, dev)',
+    'Solo se permiten letras minúsculas, números y guiones (ej: prod, main, tokyo, acme-dev)',
   'env.detected': 'Entornos Detectados:',
   'env.selectExisting': 'Seleccionar entorno existente',
   'env.createNew': 'Crear nuevo entorno',
@@ -710,7 +710,7 @@ const es: Translations = {
   'web.systemMode': 'Sistema',
 
   // Web UI Prerequisites
-  'web.prereq.title': 'Requisitos Previos',
+  'web.prereq.title': 'Preparar',
   'web.prereq.checking': 'Verificando...',
   'web.prereq.checkingRequirements': 'Verificando requisitos del sistema...',
   'web.prereq.ready': 'Listo',
@@ -839,13 +839,10 @@ const es: Translations = {
   'web.complete.issuerUrl': 'URL del Emisor',
   'web.complete.loginUrl': 'URL de Inicio de Sesión',
   'web.complete.adminUrl': 'URL de Administración',
-  'web.complete.nextSteps': 'Próximos Pasos:',
-  'web.complete.step1':
-    'Completa la configuración inicial del administrador usando el botón de arriba',
-  'web.complete.step2': 'Configura tu primer cliente OAuth en la UI de Administración',
-  'web.complete.step3': 'Integra con tu aplicación',
   'web.complete.saveConfig': 'Guardar Configuración',
   'web.complete.backToMain': 'Volver al Inicio',
+  'web.config.saveToFileTitle': 'Guardar configuración en un archivo',
+  'web.complete.backToMainTitle': 'Volver a la pantalla principal',
   'web.complete.canClose':
     'La configuración está completa. Puedes cerrar esta ventana de forma segura.',
   'web.complete.adminAccountTitle': 'Configuración de cuenta de administrador',
@@ -921,7 +918,7 @@ const es: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': 'Nombre del Entorno',
-  'web.form.envNamePlaceholder': 'ej., prod, staging, dev',
+  'web.form.envNamePlaceholder': 'ej., prod, main, tokyo, acme-dev',
   'web.form.envNameHint': 'Solo letras minúsculas, números y guiones',
   'web.form.envNameError':
     'Solo se permiten letras minúsculas, números y guiones (debe comenzar con una letra)',
@@ -1104,6 +1101,34 @@ const es: Translations = {
   'web.envDetail.queues': 'Colas',
   'web.envDetail.r2Buckets': 'Buckets R2',
   'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'Configuración de email',
+  'web.envDetail.emailDesc': 'Habilita Cloudflare Email Service más tarde para este entorno.',
+  'web.envDetail.emailCurrentProvider': 'Proveedor actual',
+  'web.envDetail.emailCurrentStatus': 'Estado',
+  'web.envDetail.emailCurrentFrom': 'Dirección From',
+  'web.envDetail.emailConfigured': 'Configurado',
+  'web.envDetail.emailNotConfigured': 'No configurado',
+  'web.envDetail.emailProviderNone': 'No configurado',
+  'web.envDetail.emailCloudflareRequirements': 'Requisitos',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Se requiere Workers Paid Plan',
+  'web.envDetail.emailCloudflareRequirementDns':
+    'Se requiere DNS de Cloudflare y onboarding del dominio',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'La configuración del dominio en Cloudflare Dashboard sigue siendo manual',
+  'web.envDetail.emailCloudflareFromHint':
+    'Debe usar una dirección de un dominio incorporado a Cloudflare Email Service.',
+  'web.envDetail.emailFromAddress': 'Dirección de email From',
+  'web.envDetail.emailFromName': 'Nombre visible del remitente (opcional)',
+  'web.envDetail.emailEnableCloudflare': 'Habilitar Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Aplicando...',
+  'web.envDetail.emailProgress': 'Progreso de configuración de email:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email habilitado.',
+  'web.envDetail.emailUpdateFailed': 'No se pudo habilitar Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Ingresa una dirección de email From.',
+  'web.envDetail.emailFromInvalid': 'Ingresa una dirección de email válida.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'Este entorno ya tiene otro proveedor de email configurado. ¿Cambiar a Cloudflare Email Service?',
+  'web.envDetail.emailStarting': 'Iniciando configuración de Cloudflare Email...',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Actualizar todos los Workers',
@@ -1158,7 +1183,7 @@ const es: Translations = {
   'web.error.notLoggedIn': 'No has iniciado sesión en Cloudflare',
   'web.error.runCommand': 'Por favor ejecuta este comando en tu terminal:',
   'web.error.thenRefresh': 'Luego actualiza esta página.',
-  'web.error.checkingPrereq': 'Error verificando requisitos previos:',
+  'web.error.checkingPrereq': 'Error verificando preparación:',
   'web.error.invalidJson': 'JSON inválido:',
   'web.error.validationFailed': 'Solicitud de validación fallida:',
 
