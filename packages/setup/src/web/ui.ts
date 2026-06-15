@@ -5520,7 +5520,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // ========================================
     // THEME MANAGEMENT
     // ========================================
-    let themeTransitionSwitchTimer = null;
     let themeTransitionCleanupTimer = null;
 
     function initTheme() {
@@ -5545,7 +5544,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         updateThemeToggle(newTheme);
       };
 
-      if (themeTransitionSwitchTimer) window.clearTimeout(themeTransitionSwitchTimer);
       if (themeTransitionCleanupTimer) window.clearTimeout(themeTransitionCleanupTimer);
       root.classList.remove(
         'theme-transitioning',
@@ -5557,18 +5555,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         return;
       }
 
+      void root.offsetWidth;
       root.classList.add(
         'theme-transitioning',
         newTheme === 'dark' ? 'theme-transition-to-dark' : 'theme-transition-to-light'
       );
-      themeTransitionSwitchTimer = window.setTimeout(applyTheme, 1040);
+      window.requestAnimationFrame(applyTheme);
       themeTransitionCleanupTimer = window.setTimeout(() => {
         root.classList.remove(
           'theme-transitioning',
           'theme-transition-to-dark',
           'theme-transition-to-light'
         );
-        themeTransitionSwitchTimer = null;
         themeTransitionCleanupTimer = null;
       }, 2460);
     }
