@@ -309,8 +309,10 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('<div class="mode-icon">📂</div>');
     expect(html).not.toContain('<div class="mode-icon">⚙️</div>');
     expect(html).toContain('function runThemeTransition(newTheme)');
-    expect(html).toContain('themeTransitionSwitchTimer = window.setTimeout(applyTheme, 1040)');
+    expect(html).toContain('window.requestAnimationFrame(applyTheme)');
     expect(html).toContain('themeTransitionCleanupTimer = window.setTimeout');
+    expect(html).toContain('class="twocol ui-update-grid"');
+    expect(html).toContain('class="bigtable ui-update-card"');
     expect(html).toContain("'theme-transition-to-dark'");
     expect(html).toContain("'theme-transition-to-light'");
     expect(SETUP_WEB_UI_STYLE).toContain('--paper: #f9f8f3');
@@ -319,9 +321,8 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('@keyframes authrim-dusk');
     expect(SETUP_WEB_UI_STYLE).toContain('@keyframes authrim-dawn');
     expect(SETUP_WEB_UI_STYLE).toContain('html.theme-transitioning::after');
-    expect(SETUP_WEB_UI_STYLE).toContain('html.theme-transitioning .setup-wordmark');
-    expect(SETUP_WEB_UI_STYLE).toContain('html.theme-transitioning .setup-hero-title');
-    expect(SETUP_WEB_UI_STYLE).toContain('transition-duration: 120ms;');
+    expect(SETUP_WEB_UI_STYLE).toContain('html.theme-transitioning *');
+    expect(SETUP_WEB_UI_STYLE).toContain('transition-duration: 1800ms !important;');
     expect(SETUP_WEB_UI_STYLE).not.toContain('radial-gradient(circle at 18% 12%');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-hero.setup-enter .setup-hero-number');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .row');

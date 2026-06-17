@@ -1158,7 +1158,7 @@
 					{/each}
 				</div>
 				<button class="btn-add" onclick={addDecisionBranch} type="button">+ Add Branch</button>
-				<div class="form-group" style="margin-top: 12px;">
+				<div class="form-group form-group--spaced">
 					<label for="decision-default-branch"
 						>Default Branch ID <span class="hint">(fallback if no match)</span></label
 					>
@@ -1220,7 +1220,7 @@
 					{/each}
 				</div>
 				<button class="btn-add" onclick={addSwitchCase} type="button">+ Add Case</button>
-				<div class="form-group" style="margin-top: 12px;">
+				<div class="form-group form-group--spaced">
 					<label for="switch-default-case"
 						>Default Case ID <span class="hint">(fallback if no match)</span></label
 					>
@@ -1273,10 +1273,10 @@
 	.node-description {
 		margin: 0 0 16px 0;
 		padding: 12px;
-		background: #f8fafc;
-		border-radius: 6px;
+		background: var(--color-surface-muted);
+		border-radius: var(--radius-control);
 		font-size: 13px;
-		color: #475569;
+		color: var(--color-text-muted);
 		line-height: 1.5;
 	}
 
@@ -1288,32 +1288,38 @@
 		margin-bottom: 0;
 	}
 
+	.form-group--spaced {
+		margin-top: 12px;
+	}
+
 	.form-group > label {
 		display: block;
 		font-size: 12px;
 		font-weight: 500;
-		color: #374151;
+		color: var(--color-text);
 		margin-bottom: 6px;
 	}
 
 	.form-group > label .hint {
 		font-weight: 400;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 	}
 
 	.form-group input[type='text'] {
 		width: 100%;
 		padding: 8px 10px;
-		border: 1px solid #d1d5db;
-		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 13px;
 		font-family: inherit;
 	}
 
 	.form-group input[type='text']:focus {
 		outline: none;
-		border-color: #2563eb;
-		box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+		border-color: var(--control-focus-border, var(--color-accent));
+		box-shadow: var(--control-focus-shadow, 0 0 0 2px var(--color-accent-muted));
 	}
 
 	/* Radio group */
@@ -1328,28 +1334,28 @@
 		align-items: center;
 		gap: 8px;
 		padding: 8px 12px;
-		background: #f9fafb;
-		border: 1px solid #e5e7eb;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		cursor: pointer;
 		font-size: 13px;
-		color: #374151;
+		color: var(--color-text);
 		transition: all 0.15s;
 	}
 
 	.radio-label:hover {
-		background: #f3f4f6;
-		border-color: #d1d5db;
+		background: var(--color-surface-muted);
+		border-color: var(--color-border-strong);
 	}
 
 	.radio-label:has(input:checked) {
-		background: #eff6ff;
-		border-color: #2563eb;
-		color: #1d4ed8;
+		background: var(--color-accent-muted);
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
 	.radio-label input[type='radio'] {
-		accent-color: #2563eb;
+		accent-color: var(--color-accent);
 	}
 
 	/* Option content with label + description */
@@ -1365,12 +1371,12 @@
 
 	.option-description {
 		font-size: 10px;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		font-weight: 400;
 	}
 
 	.radio-label:has(input:checked) .option-description {
-		color: #60a5fa;
+		color: var(--color-accent);
 	}
 
 	/* Compact radio group (for error reasons) */
@@ -1397,34 +1403,34 @@
 		align-items: center;
 		gap: 8px;
 		padding: 8px 12px;
-		background: #f9fafb;
-		border: 1px solid #e5e7eb;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		cursor: pointer;
 		font-size: 13px;
-		color: #374151;
+		color: var(--color-text);
 		transition: all 0.15s;
 	}
 
 	.checkbox-label:hover {
-		background: #f3f4f6;
-		border-color: #d1d5db;
+		background: var(--color-surface-muted);
+		border-color: var(--color-border-strong);
 	}
 
 	.checkbox-label:has(input:checked) {
-		background: #eff6ff;
-		border-color: #2563eb;
-		color: #1d4ed8;
+		background: var(--color-accent-muted);
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
 	.checkbox-label input[type='checkbox'] {
-		accent-color: #2563eb;
+		accent-color: var(--color-accent);
 	}
 
 	/* JSON section */
 	.json-section {
 		margin-top: 16px;
-		border-top: 1px solid #e5e7eb;
+		border-top: 1px solid var(--color-border);
 		padding-top: 12px;
 	}
 
@@ -1436,12 +1442,12 @@
 		border: none;
 		padding: 4px 0;
 		font-size: 12px;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		cursor: pointer;
 	}
 
 	.json-toggle:hover {
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	.toggle-icon {
@@ -1456,9 +1462,11 @@
 	.json-content textarea {
 		width: 100%;
 		padding: 8px 10px;
-		border: 1px solid #d1d5db;
-		border-radius: 6px;
-		font-family: ui-monospace, SFMono-Regular, monospace;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
 		font-size: 11px;
 		line-height: 1.5;
 		resize: vertical;
@@ -1466,19 +1474,19 @@
 
 	.json-content textarea:focus {
 		outline: none;
-		border-color: #2563eb;
-		box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+		border-color: var(--control-focus-border, var(--color-accent));
+		box-shadow: var(--control-focus-shadow, 0 0 0 2px var(--color-accent-muted));
 	}
 
 	.json-content textarea.has-error {
-		border-color: #ef4444;
+		border-color: var(--color-danger);
 	}
 
 	.error-text {
 		display: block;
 		margin-top: 4px;
 		font-size: 11px;
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 
 	.footer-right {
@@ -1489,44 +1497,44 @@
 
 	.btn-primary {
 		padding: 6px 14px;
-		background-color: #2563eb;
-		color: white;
+		background-color: var(--color-accent);
+		color: var(--color-accent-contrast);
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-control);
 		font-size: 13px;
 		cursor: pointer;
 	}
 
 	.btn-primary:hover {
-		background-color: #1d4ed8;
+		background-color: var(--color-accent-hover, var(--color-accent));
 	}
 
 	.btn-secondary {
 		padding: 6px 14px;
-		background-color: white;
-		color: #374151;
-		border: 1px solid #d1d5db;
-		border-radius: 6px;
+		background-color: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		font-size: 13px;
 		cursor: pointer;
 	}
 
 	.btn-secondary:hover {
-		background-color: #f3f4f6;
+		background-color: var(--color-surface-muted);
 	}
 
 	.btn-delete {
 		padding: 6px 14px;
-		background: white;
-		border: 1px solid #fecaca;
-		border-radius: 6px;
-		color: #dc2626;
+		background: var(--color-surface);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 42%, var(--color-border));
+		border-radius: var(--radius-control);
+		color: var(--color-danger);
 		font-size: 13px;
 		cursor: pointer;
 	}
 
 	.btn-delete:hover {
-		background: #fef2f2;
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
 	}
 
 	/* Single checkbox (not in group) */
@@ -1546,20 +1554,20 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 8px 12px;
-		background: #f9fafb;
-		border: 1px solid #e5e7eb;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		transition: all 0.15s;
 	}
 
 	.field-item:hover {
-		background: #f3f4f6;
-		border-color: #d1d5db;
+		background: var(--color-surface-muted);
+		border-color: var(--color-border-strong);
 	}
 
 	.field-item.selected {
-		background: #eff6ff;
-		border-color: #2563eb;
+		background: var(--color-accent-muted);
+		border-color: var(--color-accent);
 	}
 
 	.field-checkbox {
@@ -1571,20 +1579,20 @@
 	}
 
 	.field-checkbox input[type='checkbox'] {
-		accent-color: #2563eb;
+		accent-color: var(--color-accent);
 	}
 
 	.field-label {
 		font-size: 13px;
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	.field-type {
 		font-size: 10px;
-		color: #9ca3af;
-		background: #e5e7eb;
+		color: var(--color-text-subtle);
+		background: var(--color-surface-muted);
 		padding: 1px 6px;
-		border-radius: 3px;
+		border-radius: var(--flow-node-badge-radius, var(--radius-xs, 3px));
 		margin-left: 8px;
 	}
 
@@ -1593,12 +1601,12 @@
 		align-items: center;
 		gap: 4px;
 		font-size: 11px;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		cursor: pointer;
 	}
 
 	.required-toggle input[type='checkbox'] {
-		accent-color: #2563eb;
+		accent-color: var(--color-accent);
 	}
 
 	.selected-fields {
@@ -1607,7 +1615,7 @@
 
 	.selected-fields .hint {
 		font-size: 11px;
-		color: #6b7280;
+		color: var(--color-text-muted);
 	}
 
 	/* Decision/Switch Node Styles */
@@ -1621,9 +1629,9 @@
 
 	.branch-item,
 	.case-item {
-		background: #f9fafb;
-		border: 1px solid #e5e7eb;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		padding: 12px;
 	}
 
@@ -1638,7 +1646,7 @@
 	.branch-priority {
 		font-size: 12px;
 		font-weight: 600;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		min-width: 24px;
 	}
 
@@ -1646,16 +1654,18 @@
 	.case-label-input {
 		flex: 1;
 		padding: 6px 10px;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 14px;
 	}
 
 	.btn-remove-small {
-		background: #ef4444;
-		color: white;
+		background: var(--color-danger);
+		color: var(--color-accent-contrast);
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-control);
 		width: 24px;
 		height: 24px;
 		display: flex;
@@ -1667,7 +1677,7 @@
 	}
 
 	.btn-remove-small:hover {
-		background: #dc2626;
+		background: color-mix(in srgb, var(--color-danger) 88%, var(--color-text));
 	}
 
 	.branch-condition {
@@ -1683,25 +1693,31 @@
 	.condition-key {
 		flex: 2;
 		padding: 6px 10px;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 13px;
-		font-family: 'Monaco', 'Menlo', monospace;
+		font-family: var(--font-mono, 'Monaco', 'Menlo', monospace);
 	}
 
 	.condition-operator {
 		flex: 1;
 		padding: 6px 10px;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 13px;
 	}
 
 	.condition-value {
 		flex: 1;
 		padding: 6px 10px;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 13px;
 	}
 
@@ -1712,24 +1728,26 @@
 	.values-input {
 		width: 100%;
 		padding: 6px 10px;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 13px;
-		font-family: 'Monaco', 'Menlo', monospace;
+		font-family: var(--font-mono, 'Monaco', 'Menlo', monospace);
 	}
 
 	.btn-add {
 		padding: 8px 16px;
-		background: #3b82f6;
-		color: white;
+		background: var(--color-accent);
+		color: var(--color-accent-contrast);
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-control);
 		cursor: pointer;
 		font-size: 14px;
 		font-weight: 500;
 	}
 
 	.btn-add:hover {
-		background: #2563eb;
+		background: var(--color-accent-hover, var(--color-accent));
 	}
 </style>

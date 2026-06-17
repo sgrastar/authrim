@@ -345,6 +345,12 @@ export interface OrgContext {
   on_behalf_of_org_id?: string;
 }
 
+export interface TokenScopedPermission {
+  permission: string;
+  scope_type: Exclude<ScopeType, 'global'>;
+  scope_target: string;
+}
+
 /**
  * RBAC claims to be added to tokens
  * Uses authrim_ prefix to avoid conflicts with standard claims.
@@ -370,6 +376,8 @@ export interface RBACTokenClaims {
   authrim_relationships_summary?: RelationshipsSummary;
   /** Resolved permissions from roles (Phase 2) */
   authrim_permissions?: string[];
+  /** Resource- or org-scoped permissions from scoped role assignments */
+  authrim_scoped_permissions?: TokenScopedPermission[];
   /** Organization context for acting as/on behalf of (Phase 2) */
   authrim_org_context?: OrgContext;
 }

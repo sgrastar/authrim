@@ -21,7 +21,7 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
-import { resolveEffectiveRoles } from './rbac-claims';
+import type { ScopeType } from '../types/rbac';
 
 /**
  * Standard OIDC scopes that should not be treated as resource:action permissions
@@ -47,6 +47,23 @@ export interface ScopeAction {
   original: string;
 }
 
+export interface ScopedPolicyPermission {
+  permission: string;
+  scope_type: Exclude<ScopeType, 'global'>;
+  scope_target: string;
+}
+
+export interface PolicyPermissionEmbedding {
+  permissions: string[];
+  scopedPermissions: ScopedPolicyPermission[];
+}
+
+interface UserPermissionGrant {
+  permission: string;
+  scopeType: ScopeType;
+  scopeTarget: string;
+}
+
 /**
  * Options for permission evaluation
  */
@@ -62,7 +79,7 @@ export interface PolicyEmbeddingOptions {
 /**
  * Role-permission mapping cache key prefix
  */
-const PERMISSION_CACHE_PREFIX = 'policy:perms:';
+const PERMISSION_CACHE_PREFIX = 'policy:perms:v2:';
 
 /**
  * Parse scope string into resource:action pairs
@@ -119,18 +136,20 @@ export function parseScopeToActions(scope: string): ScopeAction[] {
  * @param subjectId - User ID
  * @returns Set of permission strings (e.g., "documents:read")
  */
-async function getUserPermissionsFromRoles(
+async function getUserPermissionGrantsFromRoles(
   db: DatabaseSource,
   subjectId: string,
   tenantId: string
-): Promise<Set<string>> {
+): Promise<UserPermissionGrant[]> {
   const now = Math.floor(Date.now() / 1000);
 
   // Get permissions from all active roles
   const rows = await ensureDatabaseAdapter(db, 'policy-embedding').query<{
     permissions_json: string;
+    scope_type: ScopeType | null;
+    scope_target: string | null;
   }>(
-    `SELECT DISTINCT r.permissions_json
+    `SELECT r.permissions_json, ra.scope_type, ra.scope_target
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
@@ -142,20 +161,45 @@ async function getUserPermissionsFromRoles(
     [subjectId, tenantId, tenantId, now]
   );
 
-  const permissionsSet = new Set<string>();
+  const grants: UserPermissionGrant[] = [];
+  const seen = new Set<string>();
 
   for (const r of rows) {
     try {
       const perms = JSON.parse(r.permissions_json) as string[];
       for (const p of perms) {
-        permissionsSet.add(p);
+        const scopeType = r.scope_type ?? 'global';
+        const scopeTarget = r.scope_target ?? '';
+        const key = `${p}\u0000${scopeType}\u0000${scopeTarget}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        grants.push({ permission: p, scopeType, scopeTarget });
       }
     } catch {
       // Skip invalid JSON
     }
   }
 
-  return permissionsSet;
+  return grants;
+}
+
+function permissionMatches(grantPermission: string, action: ScopeAction): boolean {
+  if (grantPermission === action.original) {
+    return true;
+  }
+  if (grantPermission === `${action.resource}:*`) {
+    return true;
+  }
+  if (grantPermission === `*:${action.action}`) {
+    return true;
+  }
+  return grantPermission === '*:*';
+}
+
+function isTenantWideGrant(grant: UserPermissionGrant): boolean {
+  return grant.scopeType === 'global' || !grant.scopeTarget;
 }
 
 /**
@@ -188,79 +232,84 @@ export async function evaluatePermissionsForScope(
   scope: string,
   options: PolicyEmbeddingOptions
 ): Promise<string[]> {
+  const embedding = await evaluatePermissionEmbeddingForScope(db, subjectId, scope, options);
+  return embedding.permissions;
+}
+
+export async function evaluatePermissionEmbeddingForScope(
+  db: DatabaseSource,
+  subjectId: string,
+  scope: string,
+  options: PolicyEmbeddingOptions
+): Promise<PolicyPermissionEmbedding> {
   // Parse requested scopes
   const requestedActions = parseScopeToActions(scope);
   if (requestedActions.length === 0) {
-    return [];
+    return { permissions: [], scopedPermissions: [] };
   }
 
   // Try cache first
   const tenantId = options.tenantId;
   const cacheKey = options.cache ? `${PERMISSION_CACHE_PREFIX}${tenantId}:${subjectId}` : null;
-  let userPermissions: Set<string>;
+  let userGrants: UserPermissionGrant[];
 
   if (cacheKey && options.cache) {
     const cached = await options.cache.get(cacheKey);
     if (cached) {
       try {
-        userPermissions = new Set(JSON.parse(cached) as string[]);
+        userGrants = JSON.parse(cached) as UserPermissionGrant[];
       } catch {
-        userPermissions = await getUserPermissionsFromRoles(db, subjectId, tenantId);
+        userGrants = await getUserPermissionGrantsFromRoles(db, subjectId, tenantId);
       }
     } else {
-      userPermissions = await getUserPermissionsFromRoles(db, subjectId, tenantId);
+      userGrants = await getUserPermissionGrantsFromRoles(db, subjectId, tenantId);
       // Cache for next time
       const ttl = options.cacheTTL ?? 300;
-      await options.cache.put(cacheKey, JSON.stringify([...userPermissions]), {
+      await options.cache.put(cacheKey, JSON.stringify(userGrants), {
         expirationTtl: ttl,
       });
     }
   } else {
-    userPermissions = await getUserPermissionsFromRoles(db, subjectId, tenantId);
-  }
-
-  // Check if user has wildcard permission for any resource
-  // e.g., "documents:*" grants all document actions
-  const wildcardResources = new Set<string>();
-  for (const perm of userPermissions) {
-    if (perm.endsWith(':*')) {
-      wildcardResources.add(perm.slice(0, -2));
-    }
+    userGrants = await getUserPermissionGrantsFromRoles(db, subjectId, tenantId);
   }
 
   // Filter requested scopes to only those the user has permission for
   const grantedPermissions: string[] = [];
+  const scopedPermissions: ScopedPolicyPermission[] = [];
+  const grantedSet = new Set<string>();
+  const scopedSet = new Set<string>();
 
   for (const action of requestedActions) {
-    // Check exact match
-    if (userPermissions.has(action.original)) {
-      grantedPermissions.push(action.original);
-      continue;
-    }
+    for (const grant of userGrants) {
+      if (!permissionMatches(grant.permission, action)) {
+        continue;
+      }
 
-    // Check wildcard match (resource:*)
-    if (wildcardResources.has(action.resource)) {
-      grantedPermissions.push(action.original);
-      continue;
-    }
+      if (isTenantWideGrant(grant)) {
+        if (!grantedSet.has(action.original)) {
+          grantedSet.add(action.original);
+          grantedPermissions.push(action.original);
+        }
+        continue;
+      }
 
-    // Check if user has global wildcard for this action
-    // e.g., "*:read" grants read on all resources
-    if (userPermissions.has(`*:${action.action}`)) {
-      grantedPermissions.push(action.original);
-      continue;
+      if (grant.scopeType !== 'org' && grant.scopeType !== 'resource') {
+        continue;
+      }
+      const scopedPermission: ScopedPolicyPermission = {
+        permission: action.original,
+        scope_type: grant.scopeType,
+        scope_target: grant.scopeTarget,
+      };
+      const scopedKey = `${scopedPermission.permission}\u0000${scopedPermission.scope_type}\u0000${scopedPermission.scope_target}`;
+      if (!scopedSet.has(scopedKey)) {
+        scopedSet.add(scopedKey);
+        scopedPermissions.push(scopedPermission);
+      }
     }
-
-    // Check full wildcard
-    if (userPermissions.has('*:*')) {
-      grantedPermissions.push(action.original);
-      continue;
-    }
-
-    // User doesn't have this permission - skip
   }
 
-  return grantedPermissions;
+  return { permissions: grantedPermissions, scopedPermissions };
 }
 
 /**

@@ -36,6 +36,8 @@ docs/proposals/phase2-loginui-sdk-workers.md
 /coverage/
 packages/*/coverage/
 .nyc_output/
+security/asvs/asvs-coverage-summary.json
+security/asvs/asvs-coverage-summary.md
 
 # E2E Testing (Playwright)
 test-results/

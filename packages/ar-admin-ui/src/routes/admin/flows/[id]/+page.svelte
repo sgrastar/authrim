@@ -11,6 +11,12 @@
 		canDeleteFlow
 	} from '$lib/api/admin-flows';
 	import { Modal } from '$lib/components';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 
 	let flow: Flow | null = $state(null);
 	let loading = $state(true);
@@ -36,6 +42,10 @@
 	let compileError = $state('');
 
 	const flowId = $derived($page.params.id ?? '');
+	const flowIsBuiltin = $derived.by(() => flow?.is_builtin ?? false);
+	const flowIsActive = $derived.by(() => flow?.is_active ?? false);
+	const flowCanEdit = $derived.by(() => (flow ? canEditFlow(flow) : false));
+	const flowCanDelete = $derived.by(() => (flow ? canDeleteFlow(flow) : false));
 
 	async function loadFlow() {
 		if (!flowId) return;
@@ -169,7 +179,7 @@
 	<title>{flow ? `${flow.name} - Flows` : 'Flow Details'} - Admin Dashboard - Authrim</title>
 </svelte:head>
 
-<div class="admin-page">
+<AdminPageShell>
 	{#if loading}
 		<div class="loading-state">Loading flow...</div>
 	{:else if error && !flow}
@@ -181,48 +191,41 @@
 			</div>
 		</div>
 	{:else if flow}
-		<div class="page-header-with-status">
-			<div class="page-header-info">
-				<div class="breadcrumb">
-					<a href="/admin/flows">Flows</a>
-					<span>/</span>
-					<span>{flow.name}</span>
-				</div>
-				<div class="flow-title-row">
-					<h1 class="page-title">{flow.name}</h1>
-					{#if flow.is_builtin}
-						<span class="badge badge-primary">Builtin</span>
-					{/if}
-					<span
-						class="status-badge"
-						class:status-active={flow.is_active}
-						class:status-inactive={!flow.is_active}
-					>
-						{flow.is_active ? 'Active' : 'Inactive'}
-					</span>
-				</div>
-				{#if flow.description}
-					<p class="modal-description">{flow.description}</p>
+		<AdminPageHeader title={flow.name} description={flow.description || undefined}>
+			{#snippet titleAccessory()}
+				{#if flowIsBuiltin}
+					<span class="badge badge-primary">Builtin</span>
 				{/if}
-			</div>
-			<div class="action-buttons">
-				{#if canEditFlow(flow)}
+				<span
+					class="status-badge"
+					class:status-active={flowIsActive}
+					class:status-inactive={!flowIsActive}
+				>
+					{flowIsActive ? 'Active' : 'Inactive'}
+				</span>
+			{/snippet}
+			{#snippet actions()}
+				<button class="btn btn-secondary" onclick={navigateBack}>
+					<i class="i-ph-arrow-left"></i>
+					Back to Flows
+				</button>
+				{#if flowCanEdit}
 					<button class="btn btn-primary" onclick={navigateToEdit}>Edit Flow</button>
 				{/if}
 				<button class="btn btn-secondary" onclick={openCopyDialog}>Copy</button>
-				{#if canEditFlow(flow)}
+				{#if flowCanEdit}
 					<button class="btn btn-secondary" onclick={toggleActive} disabled={toggling}>
-						{toggling ? 'Updating...' : flow.is_active ? 'Deactivate' : 'Activate'}
+						{toggling ? 'Updating...' : flowIsActive ? 'Deactivate' : 'Activate'}
 					</button>
 				{/if}
-				{#if canDeleteFlow(flow)}
+				{#if flowCanDelete}
 					<button class="btn btn-danger" onclick={openDeleteDialog}>Delete</button>
 				{/if}
-			</div>
-		</div>
+			{/snippet}
+		</AdminPageHeader>
 
 		<!-- Flow Info Panel -->
-		<div class="panel">
+		<AdminSection>
 			<div class="info-grid">
 				<div class="info-item">
 					<dt class="info-label">ID</dt>
@@ -253,11 +256,10 @@
 					<dd class="info-value">{formatDate(flow.updated_at)}</dd>
 				</div>
 			</div>
-		</div>
+		</AdminSection>
 
 		<!-- Flow Definition Panel -->
-		<div class="panel">
-			<h2 class="panel-title">Flow Definition</h2>
+		<AdminSection title="Flow Definition">
 			{#if flow.graph_definition}
 				<div class="flow-stats">
 					<div class="flow-stat">
@@ -271,48 +273,44 @@
 				</div>
 				<div class="flow-nodes-table">
 					<h3 class="section-subtitle">Nodes</h3>
-					<div class="table-container">
-						<table class="data-table">
-							<thead>
+					<AdminDataTable compact>
+						<thead>
+							<tr>
+								<th>ID</th>
+								<th>Type</th>
+								<th>Label</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each flow.graph_definition.nodes as node (node.id)}
 								<tr>
-									<th>ID</th>
-									<th>Type</th>
-									<th>Label</th>
+									<td class="mono">{node.id}</td>
+									<td>
+										<span class="badge badge-neutral">{node.type}</span>
+									</td>
+									<td>{node.data.label}</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each flow.graph_definition.nodes as node (node.id)}
-									<tr>
-										<td class="mono">{node.id}</td>
-										<td>
-											<span class="badge badge-neutral">{node.type}</span>
-										</td>
-										<td>{node.data.label}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				</div>
 			{:else}
 				<p class="empty-text">No graph definition available.</p>
 			{/if}
-		</div>
+		</AdminSection>
 
 		<!-- Raw JSON Panel -->
-		<div class="panel">
-			<h2 class="panel-title">Raw JSON (Graph Definition)</h2>
+		<AdminSection title="Raw JSON (Graph Definition)">
 			<pre class="code-block"><code>{JSON.stringify(flow.graph_definition, null, 2)}</code></pre>
-		</div>
+		</AdminSection>
 
 		<!-- Compiled Plan Panel -->
-		<div class="panel">
-			<div class="panel-header">
-				<h2 class="panel-title">Compiled Plan</h2>
+		<AdminSection title="Compiled Plan">
+			{#snippet actions()}
 				<button class="btn btn-success btn-sm" onclick={compileFlow} disabled={compiling}>
 					{compiling ? 'Compiling...' : 'Compile Now'}
 				</button>
-			</div>
+			{/snippet}
 			{#if compileError}
 				<div class="alert alert-error">{compileError}</div>
 			{/if}
@@ -326,9 +324,9 @@
 					first executed.
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Delete Confirmation Dialog -->
 <Modal open={showDeleteDialog && !!flow} onClose={closeDeleteDialog} title="Delete Flow" size="sm">

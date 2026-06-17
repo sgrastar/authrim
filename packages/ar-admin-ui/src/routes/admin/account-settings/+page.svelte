@@ -2,17 +2,12 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { startRegistration } from '@simplewebauthn/browser';
-	import {
-		themeStore,
-		LIGHT_VARIANTS,
-		DARK_VARIANTS,
-		type LightVariant,
-		type DarkVariant,
-		type ThemeVariant
-	} from '$lib/stores/theme.svelte';
+	import { ADMIN_SKINS, themeStore, type AdminSkin } from '$lib/stores/theme.svelte';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { adminAuthAPI } from '$lib/api/admin-auth';
 	import { myPasskeysAPI, PasskeyError, type AdminPasskey } from '$lib/api/my-passkeys';
+	import { formatAdminSkinDescription, formatAdminSkinName } from '$lib/admin/admin-skins-i18n';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { Modal } from '$lib/components';
 	import { LL, getLocale, setLocale } from '$i18n/i18n-svelte';
 	import { LOCALE_LABELS, SUPPORTED_LOCALES, isSupportedLocale } from '$i18n/locales';
@@ -35,29 +30,8 @@
 	let newDeviceName = $state('');
 	let showDeleteConfirm = $state<string | null>(null);
 
-	function handleLightVariant(variant: LightVariant) {
-		themeStore.setLightVariant(variant);
-	}
-
-	function handleDarkVariant(variant: DarkVariant) {
-		themeStore.setDarkVariant(variant);
-	}
-
-	function getThemeVariantName(variant: ThemeVariant): string {
-		switch (variant) {
-			case 'beige':
-				return $LL.admin_account_theme_warm_beige();
-			case 'blue-gray':
-				return $LL.admin_account_theme_blue_gray();
-			case 'green':
-				return $LL.admin_account_theme_fresh_green();
-			case 'brown':
-				return $LL.admin_account_theme_dark_brown();
-			case 'navy':
-				return $LL.admin_account_theme_navy_blue();
-			case 'slate':
-				return $LL.admin_account_theme_slate_gray();
-		}
+	function handleSkin(skin: AdminSkin) {
+		themeStore.setSkin(skin);
 	}
 
 	function getLanguageName(language: Locales): string {
@@ -312,26 +286,15 @@
 	<title>{$LL.admin_account_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_account_heading()}</h1>
-			<p class="page-description">{$LL.admin_account_description()}</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_account_heading()}
+		description={$LL.admin_account_description()}
+	/>
 
-	<!-- Settings Sections -->
-	<div class="settings-container">
-		<!-- Security Section -->
-		<section class="settings-section">
-			<h2 class="section-title">
-				<i class="i-ph-shield-check"></i>
-				{$LL.admin_account_security()}
-			</h2>
-
+	<div class="settings-stack">
+		<AdminSection title={$LL.admin_account_security()}>
 			<div class="settings-card">
-				<!-- PassKeys Header -->
 				<div class="setting-row passkeys-header">
 					<div class="setting-info">
 						<h3 class="setting-label">{$LL.admin_account_passkeys()}</h3>
@@ -339,13 +302,12 @@
 							{$LL.admin_account_passkeys_desc()}
 						</p>
 					</div>
-					<button class="add-btn" onclick={openAddModal} disabled={addingPasskey}>
+					<button class="btn btn-primary" onclick={openAddModal} disabled={addingPasskey}>
 						<i class="i-ph-plus"></i>
 						{$LL.admin_account_add_new()}
 					</button>
 				</div>
 
-				<!-- PassKeys List -->
 				<div class="passkeys-section">
 					{#if passkeysLoading}
 						<div class="passkeys-loading">
@@ -356,7 +318,7 @@
 						<div class="passkeys-error">
 							<i class="i-ph-warning-circle"></i>
 							<span>{passkeysError}</span>
-							<button class="retry-btn" onclick={loadPasskeys}>
+							<button class="btn btn-secondary btn-sm" onclick={loadPasskeys}>
 								{$LL.admin_account_retry()}
 							</button>
 						</div>
@@ -364,7 +326,7 @@
 						<div class="passkeys-empty">
 							<i class="i-ph-key"></i>
 							<p>{$LL.admin_account_no_passkeys()}</p>
-							<button class="add-btn-small" onclick={openAddModal}>
+							<button class="btn btn-secondary btn-sm" onclick={openAddModal}>
 								<i class="i-ph-plus"></i>
 								{$LL.admin_account_add_first_passkey()}
 							</button>
@@ -387,10 +349,13 @@
 													maxlength="100"
 												/>
 												<div class="passkey-edit-actions">
-													<button class="save-btn" onclick={() => saveEditPasskey(passkey.id)}>
+													<button
+														class="btn btn-primary btn-sm"
+														onclick={() => saveEditPasskey(passkey.id)}
+													>
 														{$LL.admin_account_save()}
 													</button>
-													<button class="cancel-btn" onclick={cancelEditPasskey}>
+													<button class="btn btn-secondary btn-sm" onclick={cancelEditPasskey}>
 														{$LL.common_cancel()}
 													</button>
 												</div>
@@ -413,7 +378,7 @@
 												<div class="delete-confirm">
 													<span>{$LL.admin_account_delete_prompt()}</span>
 													<button
-														class="confirm-yes"
+														class="btn btn-danger btn-sm"
 														onclick={() => handleDeletePasskey(passkey.id)}
 														disabled={deletingPasskeyId === passkey.id}
 													>
@@ -423,7 +388,7 @@
 															{$LL.admin_account_yes()}
 														{/if}
 													</button>
-													<button class="confirm-no" onclick={cancelDeletePasskey}>
+													<button class="btn btn-secondary btn-sm" onclick={cancelDeletePasskey}>
 														{$LL.admin_account_no()}
 													</button>
 												</div>
@@ -458,17 +423,10 @@
 					{/if}
 				</div>
 			</div>
-		</section>
+		</AdminSection>
 
-		<!-- Appearance Section -->
-		<section class="settings-section">
-			<h2 class="section-title">
-				<i class="i-ph-paint-brush"></i>
-				{$LL.admin_account_appearance()}
-			</h2>
-
+		<AdminSection title={$LL.admin_account_appearance()}>
 			<div class="settings-card">
-				<!-- Theme Mode -->
 				<div class="setting-row">
 					<div class="setting-info">
 						<h3 class="setting-label">{$LL.admin_account_theme_mode()}</h3>
@@ -478,6 +436,8 @@
 						<button
 							class="mode-btn"
 							class:active={themeStore.isLight}
+							data-mode="light"
+							aria-pressed={themeStore.isLight}
 							onclick={() => themeStore.setMode('light')}
 						>
 							<i class="i-ph-sun"></i>
@@ -489,6 +449,8 @@
 						<button
 							class="mode-btn"
 							class:active={themeStore.isDark}
+							data-mode="dark"
+							aria-pressed={themeStore.isDark}
 							onclick={() => themeStore.setMode('dark')}
 						>
 							<i class="i-ph-moon"></i>
@@ -500,62 +462,37 @@
 					</div>
 				</div>
 
-				<!-- Theme Color Variants (shows only relevant variants based on current mode) -->
 				<div class="setting-row setting-row-vertical">
 					<div class="setting-info">
 						<h3 class="setting-label">{$LL.admin_account_theme_color()}</h3>
 						<p class="setting-description">
-							{#if themeStore.isLight}
-								{$LL.admin_account_light_theme_color_desc()}
-							{:else}
-								{$LL.admin_account_dark_theme_color_desc()}
-							{/if}
+							{$LL.admin_account_light_theme_color_desc()}
 						</p>
 					</div>
-					<div class="color-variant-options">
-						{#if themeStore.isLight}
-							{#each LIGHT_VARIANTS as variant (variant.id)}
-								<button
-									class="color-variant-btn"
-									class:active={themeStore.lightVariant === variant.id}
-									onclick={() => handleLightVariant(variant.id)}
-									title={getThemeVariantName(variant.id)}
-								>
-									<span class="color-swatch" style="background: {variant.color}"></span>
-									<span class="color-name">{getThemeVariantName(variant.id)}</span>
-									{#if themeStore.lightVariant === variant.id}
-										<i class="i-ph-check color-check"></i>
-									{/if}
-								</button>
-							{/each}
-						{:else}
-							{#each DARK_VARIANTS as variant (variant.id)}
-								<button
-									class="color-variant-btn"
-									class:active={themeStore.darkVariant === variant.id}
-									onclick={() => handleDarkVariant(variant.id)}
-									title={getThemeVariantName(variant.id)}
-								>
-									<span class="color-swatch" style="background: {variant.color}"></span>
-									<span class="color-name">{getThemeVariantName(variant.id)}</span>
-									{#if themeStore.darkVariant === variant.id}
-										<i class="i-ph-check color-check"></i>
-									{/if}
-								</button>
-							{/each}
-						{/if}
+					<div class="skin-options">
+						{#each ADMIN_SKINS as skin (skin.id)}
+							<button
+								class="skin-option-btn"
+								class:active={themeStore.skin === skin.id}
+								data-skin={skin.id}
+								aria-pressed={themeStore.skin === skin.id}
+								onclick={() => handleSkin(skin.id)}
+								title={formatAdminSkinDescription(skin.id, $LL)}
+							>
+								<span class="skin-swatch" data-skin={skin.id}></span>
+								<span class="skin-name">{formatAdminSkinName(skin.id, $LL)}</span>
+								<span class="skin-desc">{formatAdminSkinDescription(skin.id, $LL)}</span>
+								{#if themeStore.skin === skin.id}
+									<i class="i-ph-check color-check"></i>
+								{/if}
+							</button>
+						{/each}
 					</div>
 				</div>
 			</div>
-		</section>
+		</AdminSection>
 
-		<!-- Language Section -->
-		<section class="settings-section">
-			<h2 class="section-title">
-				<i class="i-ph-translate"></i>
-				{$LL.admin_account_language_region()}
-			</h2>
-
+		<AdminSection title={$LL.admin_account_language_region()}>
 			<div class="settings-card">
 				<div class="setting-row">
 					<div class="setting-info">
@@ -585,15 +522,9 @@
 					</div>
 				</div>
 			</div>
-		</section>
+		</AdminSection>
 
-		<!-- Account Section -->
-		<section class="settings-section">
-			<h2 class="section-title">
-				<i class="i-ph-user-circle"></i>
-				{$LL.admin_account_account()}
-			</h2>
-
+		<AdminSection title={$LL.admin_account_account()}>
 			<div class="settings-card">
 				<div class="setting-row">
 					<div class="setting-info">
@@ -602,15 +533,15 @@
 							{adminAuth.user?.email || $LL.admin_account_unknown()}
 						</p>
 					</div>
-					<button class="logout-btn" onclick={handleLogout}>
+					<button class="btn btn-danger" onclick={handleLogout}>
 						<i class="i-ph-sign-out"></i>
 						{$LL.admin_account_logout()}
 					</button>
 				</div>
 			</div>
-		</section>
+		</AdminSection>
 	</div>
-</div>
+</AdminPageShell>
 
 <!-- Add PassKey Modal -->
 <Modal
@@ -627,7 +558,7 @@
 		<input
 			id="device-name"
 			type="text"
-			class="form-input"
+			class="admin-input"
 			bind:value={newDeviceName}
 			placeholder={$LL.admin_account_device_name_example_placeholder()}
 			maxlength="100"
@@ -641,10 +572,10 @@
 		</div>
 	{/if}
 	{#snippet footer()}
-		<button class="modal-btn secondary" onclick={closeAddModal} disabled={addingPasskey}>
+		<button class="btn btn-secondary" onclick={closeAddModal} disabled={addingPasskey}>
 			{$LL.common_cancel()}
 		</button>
-		<button class="modal-btn primary" onclick={handleAddPasskey} disabled={addingPasskey}>
+		<button class="btn btn-primary" onclick={handleAddPasskey} disabled={addingPasskey}>
 			{#if addingPasskey}
 				<i class="i-ph-spinner spinner"></i>
 				{$LL.admin_account_registering()}
@@ -657,48 +588,27 @@
 </Modal>
 
 <style>
-	.settings-container {
+	.settings-stack {
 		display: flex;
 		flex-direction: column;
-		gap: 32px;
-	}
-
-	.settings-section {
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-	}
-
-	.section-title {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0;
-	}
-
-	.section-title :global(i) {
-		width: 22px;
-		height: 22px;
-		color: var(--primary);
+		gap: 4px;
 	}
 
 	.settings-card {
-		background: var(--bg-card);
-		border-radius: var(--radius-lg);
-		border: 1px solid var(--border-light);
 		overflow: hidden;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--card-shadow, var(--shadow-panel, none));
 	}
 
 	.setting-row {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
-		padding: 20px 24px;
-		border-bottom: 1px solid var(--border-light);
+		justify-content: space-between;
 		gap: 24px;
+		padding: 20px 24px;
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.setting-row:last-child {
@@ -706,64 +616,55 @@
 	}
 
 	.setting-row-vertical {
+		align-items: stretch;
 		flex-direction: column;
-		align-items: flex-start;
 		gap: 16px;
 	}
 
 	.setting-info {
-		flex: 1;
 		min-width: 0;
+		flex: 1;
 	}
 
 	.setting-label {
-		font-size: 0.9375rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0 0 4px 0;
+		margin: 0 0 4px;
+		color: var(--color-text);
+		font-size: 0.94rem;
+		font-weight: 700;
+		line-height: 1.35;
 	}
 
-	.setting-description {
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
+	.setting-description,
+	.passkey-meta {
 		margin: 0;
-	}
-
-	/* PassKeys Section */
-	.passkeys-header {
-		border-bottom: 1px solid var(--border-light);
-	}
-
-	.passkeys-section {
-		padding: 0;
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
+		line-height: 1.55;
 	}
 
 	.passkeys-loading,
 	.passkeys-empty,
 	.passkeys-error {
 		display: flex;
-		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: 40px 24px;
+		flex-direction: column;
 		gap: 12px;
-		color: var(--text-secondary);
+		min-height: 180px;
+		padding: 40px 24px;
+		color: var(--color-text-muted);
+		text-align: center;
 	}
 
 	.passkeys-loading :global(i),
 	.passkeys-empty :global(i) {
 		width: 40px;
 		height: 40px;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 	}
 
 	.passkeys-error {
-		color: var(--danger);
-	}
-
-	.passkeys-error :global(i) {
-		width: 32px;
-		height: 32px;
+		color: var(--color-danger);
 	}
 
 	.spinner {
@@ -789,7 +690,7 @@
 		align-items: center;
 		gap: 16px;
 		padding: 16px 24px;
-		border-bottom: 1px solid var(--border-light);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.passkey-item:last-child {
@@ -797,38 +698,34 @@
 	}
 
 	.passkey-icon {
-		width: 44px;
-		height: 44px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-md);
+		width: 44px;
+		height: 44px;
 		flex-shrink: 0;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
 	}
 
 	.passkey-icon :global(i) {
 		width: 24px;
 		height: 24px;
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	.passkey-info {
-		flex: 1;
 		min-width: 0;
+		flex: 1;
 	}
 
 	.passkey-name {
-		font-size: 0.9375rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0 0 4px 0;
-	}
-
-	.passkey-meta {
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
-		margin: 0;
+		margin: 0 0 4px;
+		color: var(--color-text);
+		font-size: 0.94rem;
+		font-weight: 700;
+		line-height: 1.35;
 	}
 
 	.passkey-edit-form {
@@ -838,71 +735,62 @@
 	}
 
 	.passkey-name-input {
-		padding: 8px 12px;
-		border: 1px solid var(--border-light);
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.875rem;
+		width: 100%;
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
 	}
 
 	.passkey-name-input:focus {
-		outline: none;
-		border-color: var(--primary);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
-	.passkey-edit-actions {
-		display: flex;
-		gap: 8px;
-	}
-
-	.save-btn,
-	.cancel-btn {
-		padding: 6px 12px;
-		border-radius: var(--radius-sm);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.save-btn {
-		background: var(--primary);
-		color: white;
-		border: none;
-	}
-
-	.save-btn:hover {
-		background: var(--primary-dark);
-	}
-
-	.cancel-btn {
-		background: transparent;
-		color: var(--text-secondary);
-		border: 1px solid var(--border-light);
-	}
-
-	.cancel-btn:hover {
-		background: var(--bg-tertiary);
-	}
-
-	.passkey-actions {
+	.passkey-edit-actions,
+	.passkey-actions,
+	.delete-confirm {
 		display: flex;
 		align-items: center;
 		gap: 8px;
+		flex-wrap: wrap;
 	}
 
 	.action-btn {
-		width: 36px;
-		height: 36px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border: none;
+		width: 36px;
+		height: 36px;
+		border: 1px solid transparent;
+		border-radius: var(--radius-control);
 		background: transparent;
-		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		transition:
+			background 0.16s ease,
+			border-color 0.16s ease,
+			color 0.16s ease;
+	}
+
+	.action-btn:hover:not(:disabled) {
+		border-color: var(--color-border);
+		background: var(--color-surface-muted);
+		color: var(--color-accent);
+	}
+
+	.action-btn.delete-action:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+	}
+
+	.action-btn:disabled {
+		cursor: not-allowed;
+		opacity: 0.42;
 	}
 
 	.action-btn :global(i) {
@@ -910,73 +798,11 @@
 		height: 18px;
 	}
 
-	.action-btn.edit-action {
-		color: var(--text-secondary);
-	}
-
-	.action-btn.edit-action:hover {
-		background: var(--bg-tertiary);
-		color: var(--primary);
-	}
-
-	.action-btn.delete-action {
-		color: var(--text-muted);
-	}
-
-	.action-btn.delete-action:hover:not(:disabled) {
-		background: rgba(220, 38, 38, 0.1);
-		color: var(--danger);
-	}
-
-	.action-btn:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
 	.delete-confirm {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 0.8125rem;
-	}
-
-	.delete-confirm span {
-		color: var(--danger);
-		font-weight: 500;
-	}
-
-	.confirm-yes,
-	.confirm-no {
-		padding: 4px 10px;
-		border-radius: var(--radius-sm);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.confirm-yes {
-		background: var(--danger);
-		color: white;
-		border: none;
-	}
-
-	.confirm-yes:hover:not(:disabled) {
-		background: #b91c1c;
-	}
-
-	.confirm-yes:disabled {
-		opacity: 0.7;
-	}
-
-	.confirm-no {
-		background: transparent;
-		color: var(--text-secondary);
-		border: 1px solid var(--border-light);
-	}
-
-	.confirm-no:hover {
-		background: var(--bg-tertiary);
+		justify-content: flex-end;
+		color: var(--color-danger);
+		font-size: 0.82rem;
+		font-weight: 700;
 	}
 
 	.passkeys-notice {
@@ -984,88 +810,16 @@
 		align-items: center;
 		gap: 8px;
 		padding: 12px 24px;
-		background: var(--bg-tertiary);
-		border-top: 1px solid var(--border-light);
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		border-top: 1px solid var(--color-border);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
 	}
 
 	.passkeys-notice :global(i) {
 		width: 16px;
 		height: 16px;
-		color: var(--info);
-	}
-
-	.add-btn {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 10px 16px;
-		border: none;
-		background: var(--primary);
-		border-radius: var(--radius-md);
-		color: white;
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.add-btn:hover:not(:disabled) {
-		background: var(--primary-dark);
-	}
-
-	.add-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.add-btn :global(i) {
-		width: 18px;
-		height: 18px;
-	}
-
-	.add-btn-small {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 8px 16px;
-		border: 1px solid var(--primary);
-		background: transparent;
-		border-radius: var(--radius-md);
-		color: var(--primary);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		margin-top: 8px;
-	}
-
-	.add-btn-small:hover {
-		background: var(--primary);
-		color: white;
-	}
-
-	.add-btn-small :global(i) {
-		width: 16px;
-		height: 16px;
-	}
-
-	.retry-btn {
-		padding: 8px 16px;
-		border: 1px solid var(--danger);
-		background: transparent;
-		border-radius: var(--radius-md);
-		color: var(--danger);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.retry-btn:hover {
-		background: var(--danger);
-		color: white;
+		color: var(--color-accent);
 	}
 
 	.form-group {
@@ -1075,27 +829,16 @@
 	}
 
 	.form-group label {
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
+		font-size: 0.82rem;
+		font-weight: 700;
 	}
 
-	.form-input {
-		padding: 12px 16px;
-		border: 1px solid var(--border-light);
-		border-radius: var(--radius-md);
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.9375rem;
-	}
-
-	.form-input:focus {
-		outline: none;
-		border-color: var(--primary);
-	}
-
-	.form-input:disabled {
-		opacity: 0.6;
+	.modal-description {
+		margin: 0 0 16px;
+		color: var(--color-text-muted);
+		font-size: 0.9rem;
+		line-height: 1.6;
 	}
 
 	.modal-error {
@@ -1104,92 +847,47 @@
 		gap: 8px;
 		margin-top: 16px;
 		padding: 12px;
-		background: rgba(220, 38, 38, 0.1);
-		border-radius: var(--radius-md);
-		color: var(--danger);
-		font-size: 0.8125rem;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
+		border-radius: var(--radius-control);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+		font-size: 0.82rem;
 	}
 
-	.modal-error :global(i) {
-		width: 18px;
-		height: 18px;
-		flex-shrink: 0;
-	}
-
-	.modal-btn {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 10px 20px;
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.modal-btn :global(i) {
-		width: 18px;
-		height: 18px;
-	}
-
-	.modal-btn.primary {
-		background: var(--primary);
-		color: white;
-		border: none;
-	}
-
-	.modal-btn.primary:hover:not(:disabled) {
-		background: var(--primary-dark);
-	}
-
-	.modal-btn.secondary {
-		background: transparent;
-		color: var(--text-secondary);
-		border: 1px solid var(--border-light);
-	}
-
-	.modal-btn.secondary:hover:not(:disabled) {
-		background: var(--bg-tertiary);
-	}
-
-	.modal-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	/* Theme Mode Toggle */
 	.theme-mode-toggle {
 		display: flex;
-		gap: 8px;
-		background: var(--bg-tertiary);
+		gap: 4px;
 		padding: 4px;
-		border-radius: var(--radius-md);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
 	}
 
 	.mode-btn {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 10px 16px;
-		border: none;
+		min-height: var(--control-height, 40px);
+		padding: 8px 14px;
+		border: 1px solid transparent;
+		border-radius: calc(var(--radius-control) - 1px);
 		background: transparent;
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-		font-weight: 500;
+		color: var(--color-text-muted);
+		font: inherit;
+		font-size: 0.86rem;
+		font-weight: 700;
 		cursor: pointer;
-		transition: all var(--transition-fast);
 	}
 
 	.mode-btn:hover {
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.mode-btn.active {
-		background: var(--bg-card);
-		color: var(--primary);
-		box-shadow: var(--shadow-sm);
+		border-color: var(--color-border);
+		background: var(--color-surface);
+		color: var(--color-accent);
+		box-shadow: var(--shadow-sm, none);
 	}
 
 	.mode-btn :global(i) {
@@ -1198,98 +896,125 @@
 	}
 
 	.mode-btn :global(.mode-check) {
-		color: var(--success);
-		margin-left: 4px;
+		color: var(--color-success);
 	}
 
-	/* Color Variant Options - unique class names to avoid conflicts with themes.css */
-	.color-variant-options {
-		display: flex;
+	.skin-options {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 12px;
-		flex-wrap: wrap;
 	}
 
-	.color-variant-btn {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 8px;
-		padding: 16px 20px;
-		border: 2px solid var(--border-light);
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-md);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		min-width: 100px;
+	.skin-option-btn {
 		position: relative;
+		display: grid;
+		grid-template-columns: auto 1fr;
+		grid-template-areas:
+			'swatch name'
+			'swatch desc';
+		align-items: center;
+		gap: 4px 12px;
+		min-width: 0;
+		padding: 14px 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background 0.16s ease,
+			border-color 0.16s ease,
+			box-shadow 0.16s ease;
 	}
 
-	.color-variant-btn:hover {
-		border-color: var(--primary-light);
-		background: var(--bg-card);
+	.skin-option-btn:hover {
+		border-color: var(--color-accent);
+		background: var(--color-surface);
 	}
 
-	.color-variant-btn.active {
-		border-color: var(--primary);
-		background: var(--bg-card);
+	.skin-option-btn.active {
+		border-color: var(--color-accent);
+		background: var(--color-surface);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
-	.color-swatch {
+	.skin-swatch {
+		grid-area: swatch;
 		display: block;
-		width: 40px;
-		height: 40px;
-		border-radius: var(--radius-md);
-		border: 1px solid rgba(0, 0, 0, 0.1);
-		flex-shrink: 0;
+		width: 42px;
+		height: 42px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 	}
 
-	.color-name {
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
-		text-align: center;
-		white-space: nowrap;
+	.skin-swatch[data-skin='classic'] {
+		background: linear-gradient(135deg, #f9f8f3 0%, #234168 62%, #b58b3b 100%);
 	}
 
-	.color-variant-btn.active .color-name {
-		color: var(--primary);
-		font-weight: 600;
+	.skin-swatch[data-skin='admin'] {
+		background: linear-gradient(135deg, #f6f5f1 0%, #141412 56%, #c7512f 100%);
 	}
 
-	.color-variant-btn :global(.color-check) {
+	.skin-swatch[data-skin='paper-beige'] {
+		background: linear-gradient(135deg, #f5f1e7 0%, #25332d 58%, #2f7a5a 100%);
+	}
+
+	.skin-swatch[data-skin='frosted'] {
+		background: linear-gradient(135deg, #eef3ff 0%, #d6e2ff 48%, #5b6ee1 100%);
+	}
+
+	.skin-name {
+		grid-area: name;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		font-weight: 800;
+		line-height: 1.3;
+	}
+
+	.skin-desc {
+		grid-area: desc;
+		color: var(--color-text-muted);
+		font-size: 0.74rem;
+		line-height: 1.45;
+	}
+
+	.skin-option-btn.active .skin-name,
+	.skin-option-btn :global(.color-check) {
+		color: var(--color-accent);
+	}
+
+	.skin-option-btn :global(.color-check) {
 		position: absolute;
 		top: 8px;
 		right: 8px;
 		width: 18px;
 		height: 18px;
-		color: var(--primary);
 	}
 
-	/* Language Select */
 	.language-control {
 		display: flex;
-		flex-direction: column;
 		align-items: flex-end;
+		flex-direction: column;
 		gap: 8px;
 	}
 
 	.language-select {
-		padding: 10px 40px 10px 16px;
-		border: 1px solid var(--border-light);
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-		color: var(--text-primary);
-		font-size: 0.875rem;
-		cursor: pointer;
-		appearance: none;
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-		background-repeat: no-repeat;
-		background-position: right 12px center;
 		min-width: 180px;
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		cursor: pointer;
 	}
 
 	.language-select:focus {
+		border-color: var(--color-accent);
 		outline: none;
-		border-color: var(--primary);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
 	.language-select:disabled {
@@ -1299,81 +1024,50 @@
 
 	.language-error {
 		margin: 0;
-		color: var(--error);
+		color: var(--color-danger);
 		font-size: 0.8rem;
 		text-align: right;
 	}
 
-	/* Logout Button */
-	.logout-btn {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 10px 20px;
-		border: 1px solid var(--danger);
-		background: transparent;
-		border-radius: var(--radius-md);
-		color: var(--danger);
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.logout-btn:hover {
-		background: var(--danger);
-		color: white;
-	}
-
-	.logout-btn :global(i) {
-		width: 18px;
-		height: 18px;
-	}
-
-	/* Responsive */
-	@media (max-width: 640px) {
+	@media (max-width: 720px) {
 		.setting-row {
-			flex-direction: column;
 			align-items: flex-start;
+			flex-direction: column;
 			gap: 16px;
 		}
 
 		.passkeys-header {
-			flex-direction: row;
 			align-items: center;
+			flex-direction: row;
 		}
 
 		.theme-mode-toggle,
-		.color-variant-options {
-			width: 100%;
-		}
-
-		.mode-btn {
-			flex: 1;
-			justify-content: center;
-		}
-
-		.color-variant-btn {
-			flex: 1;
-			min-width: 80px;
-			padding: 12px 16px;
-		}
-
-		.color-swatch {
-			width: 32px;
-			height: 32px;
-		}
-
+		.skin-options,
+		.language-control,
 		.language-select {
 			width: 100%;
 		}
 
-		.logout-btn {
-			width: 100%;
+		.mode-btn {
 			justify-content: center;
+			flex: 1 1 0;
+		}
+
+		.skin-options {
+			grid-template-columns: 1fr;
+		}
+
+		.skin-option-btn {
+			padding: 12px 14px;
+		}
+
+		.skin-swatch {
+			width: 34px;
+			height: 34px;
 		}
 
 		.passkey-item {
+			align-items: flex-start;
 			flex-wrap: wrap;
 		}
 

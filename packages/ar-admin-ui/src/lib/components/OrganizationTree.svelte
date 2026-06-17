@@ -125,12 +125,14 @@
 		gap: 8px;
 		padding: 8px 12px;
 		padding-left: calc(var(--depth) * var(--indent-size) + 12px);
-		border-radius: 6px;
-		transition: background-color 0.15s;
+		border-radius: var(--radius-control, 6px);
+		transition:
+			background-color 0.15s ease,
+			outline-color 0.15s ease;
 	}
 
 	.node-content:hover {
-		background-color: #f3f4f6;
+		background: var(--color-surface-muted);
 	}
 
 	.node-content.selectable {
@@ -138,12 +140,12 @@
 	}
 
 	.node-content.selected {
-		background-color: #dbeafe;
-		outline: 2px solid #2563eb;
+		background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface));
+		outline: 2px solid var(--color-accent);
 	}
 
 	.node-content.highlighted {
-		background-color: #fef3c7;
+		background: color-mix(in srgb, var(--color-warning) 15%, var(--color-surface));
 	}
 
 	.node-content.inactive {
@@ -160,13 +162,13 @@
 		background: none;
 		border: none;
 		cursor: pointer;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		font-size: 10px;
 		flex-shrink: 0;
 	}
 
 	.toggle-btn:hover:not(:disabled) {
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	.toggle-btn:disabled {
@@ -174,7 +176,7 @@
 	}
 
 	.toggle-icon.empty {
-		color: #d1d5db;
+		color: var(--color-text-subtle);
 	}
 
 	.node-info {
@@ -187,8 +189,8 @@
 
 	.node-name {
 		font-size: 14px;
-		font-weight: 500;
-		color: #111827;
+		font-weight: var(--font-weight-semibold, 600);
+		color: var(--color-text);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -196,7 +198,7 @@
 
 	.node-slug {
 		font-size: 12px;
-		color: #9ca3af;
+		color: var(--color-text-muted);
 		white-space: nowrap;
 	}
 
@@ -210,22 +212,22 @@
 	.badge {
 		font-size: 11px;
 		padding: 2px 6px;
-		border-radius: 4px;
+		border-radius: var(--radius-control, 6px);
 		white-space: nowrap;
 	}
 
 	.badge.inactive {
-		background-color: #fef2f2;
-		color: #b91c1c;
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.badge.member-count {
-		background-color: #f3f4f6;
-		color: #6b7280;
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.children {
-		border-left: 1px solid #e5e7eb;
+		border-left: 1px solid var(--color-border);
 		margin-left: calc(var(--depth) * var(--indent-size) + 21px);
 	}
 </style>

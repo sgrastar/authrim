@@ -1086,7 +1086,11 @@ const ko: Translations = {
   'web.envDetail.emailCloudflareRequirementManual':
     'Cloudflare Dashboard의 도메인 설정은 아직 수동으로 진행해야 합니다',
   'web.envDetail.emailCloudflareFromHint':
-    'Cloudflare Email Service에 온보딩된 도메인의 주소여야 합니다.',
+    'Cloudflare Email Service를 사용하는 경우 Cloudflare에 온보딩된 도메인의 주소여야 합니다.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Cloudflare Email Routing 설정',
+  'web.envDetail.emailResendFromHint':
+    'Resend를 사용하는 경우 Resend에 도메인을 추가하고 검증해야 합니다.',
+  'web.envDetail.emailResendDomainsLink': 'Resend Domains',
   'web.envDetail.emailFromAddress': 'From 이메일 주소',
   'web.envDetail.emailFromName': '보낸 사람 표시 이름(선택)',
   'web.envDetail.emailEnableCloudflare': 'Cloudflare Email Service 활성화',
@@ -1099,6 +1103,10 @@ const ko: Translations = {
   'web.envDetail.emailSwitchProviderConfirm':
     '이 환경에는 이미 다른 이메일 제공자가 설정되어 있습니다. Cloudflare Email Service로 전환할까요?',
   'web.envDetail.emailStarting': 'Cloudflare Email 설정을 시작합니다...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    '이 환경에는 이미 다른 이메일 제공자가 설정되어 있습니다. Resend로 전환할까요?',
+  'web.envDetail.emailResendStarting': 'Resend 이메일 설정을 저장하는 중...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Resend 이메일 설정을 저장했습니다.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '모든 Workers 업데이트',

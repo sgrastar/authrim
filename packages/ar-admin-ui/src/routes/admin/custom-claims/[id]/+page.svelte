@@ -12,6 +12,7 @@
 		parseValidationRules,
 		parseRequiredScopes
 	} from '$lib/api/admin-custom-claims';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -269,21 +270,38 @@
 	>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Breadcrumb -->
-	<nav class="breadcrumb mb-4">
-		<a href="/admin/custom-claims" class="breadcrumb-link">{$LL.admin_custom_claims_title()}</a>
-		<span class="breadcrumb-sep">/</span>
-		<span class="breadcrumb-current"
-			>{loading ? '...' : (schema?.display_label ?? schema?.field_key ?? schemaId)}</span
-		>
-	</nav>
+{#snippet pageActions()}
+	<a href="/admin/custom-claims" class="btn btn-secondary">
+		<i class="i-ph-arrow-left"></i>
+		{$LL.admin_custom_claims_back_to_list()}
+	</a>
+{/snippet}
 
+{#snippet titleAccessory()}
+	{#if schema}
+		<code class="schema-key">{schema.field_key}</code>
+		{#if schema.is_pii}
+			<span class="badge badge-warning">PII</span>
+		{:else}
+			<span class="badge badge-success">Non-PII</span>
+		{/if}
+		{#if isSystem}
+			<span class="badge badge-neutral">{$LL.admin_custom_claims_system()}</span>
+		{/if}
+		{#if schema.operation_status !== 'active'}
+			<span class="badge badge-warning">{operationStatusLabel(schema.operation_status)}</span>
+		{/if}
+	{/if}
+{/snippet}
+
+<AdminPageShell>
 	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>{$LL.admin_custom_claims_loading()}</p>
-		</div>
+		<AdminSection>
+			<div class="loading-state">
+				<i class="i-ph-circle-notch loading-spinner"></i>
+				<p>{$LL.admin_custom_claims_loading()}</p>
+			</div>
+		</AdminSection>
 	{:else if error}
 		<div class="alert alert-error">
 			<span>{error}</span>
@@ -292,48 +310,23 @@
 			>
 		</div>
 	{:else if schema}
-		<!-- Page Header -->
-		<div class="page-header">
-			<div>
-				<div class="flex items-center gap-3">
-					<h1 class="page-title">{schema.display_label}</h1>
-					<code class="text-sm font-mono text-gray-500">{schema.field_key}</code>
-					{#if schema.is_pii}
-						<span class="badge badge-warning">PII</span>
-					{:else}
-						<span class="badge badge-success">Non-PII</span>
-					{/if}
-					{#if isSystem}
-						<span class="badge badge-neutral">{$LL.admin_custom_claims_system()}</span>
-					{/if}
-					{#if schema.operation_status !== 'active'}
-						<span class="badge badge-warning">{operationStatusLabel(schema.operation_status)}</span>
-					{/if}
-				</div>
-				<p class="page-description">
-					{schema.description || $LL.admin_custom_claims_no_description()}
-				</p>
-			</div>
-			<div class="page-actions">
-				<a href="/admin/custom-claims" class="btn btn-secondary">
-					<i class="i-ph-arrow-left"></i>
-					{$LL.admin_custom_claims_back_to_list()}
-				</a>
-			</div>
-		</div>
+		<AdminPageHeader
+			title={schema.display_label}
+			description={schema.description || $LL.admin_custom_claims_no_description()}
+			{titleAccessory}
+			actions={pageActions}
+		/>
 
 		<!-- Operation error banner -->
 		{#if schema.operation_status === 'error'}
-			<div class="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
-				<div class="flex items-center justify-between">
-					<div class="flex items-start gap-3">
-						<span class="i-ph-warning text-red-600 text-xl mt-0.5"></span>
+			<div class="operation-error-banner">
+				<div class="operation-error-content">
+					<div class="operation-error-message">
+						<span class="i-ph-warning" aria-hidden="true"></span>
 						<div>
-							<h3 class="font-semibold text-red-900">
-								{$LL.admin_custom_claims_operation_failed()}
-							</h3>
+							<h3>{$LL.admin_custom_claims_operation_failed()}</h3>
 							{#if schema.operation_detail}
-								<p class="text-sm text-red-800 mt-1">{schema.operation_detail}</p>
+								<p>{schema.operation_detail}</p>
 							{/if}
 						</div>
 					</div>
@@ -347,56 +340,55 @@
 
 		<!-- Save feedback -->
 		{#if saveError}
-			<div class="alert alert-error mb-4">{saveError}</div>
+			<div class="alert alert-error">{saveError}</div>
 		{/if}
 		{#if saveSuccess}
-			<div class="alert alert-success mb-4">{$LL.admin_custom_claims_changes_saved()}</div>
+			<div class="alert alert-success">{$LL.admin_custom_claims_changes_saved()}</div>
 		{/if}
 
 		<div class="detail-layout">
 			<!-- ===== Main settings ===== -->
 			<div class="detail-main">
 				<!-- Section: Identity & Classification -->
-				<div class="panel mb-4">
-					<h2 class="panel-title">{$LL.admin_custom_claims_identity_classification()}</h2>
-
+				<AdminSection title={$LL.admin_custom_claims_identity_classification()}>
 					<div class="form-grid">
 						<!-- field_key (read-only) -->
-						<div class="form-group">
-							<label class="form-label" for="field-key">{$LL.admin_custom_claims_field_key()}</label
+						<div class="admin-field">
+							<label class="admin-field__label" for="field-key"
+								>{$LL.admin_custom_claims_field_key()}</label
 							>
 							<input
 								id="field-key"
 								type="text"
-								class="form-input"
+								class="admin-input"
 								value={schema.field_key}
 								disabled
 							/>
-							<p class="form-hint">{$LL.admin_custom_claims_field_key_readonly_hint()}</p>
+							<p class="field-hint">{$LL.admin_custom_claims_field_key_readonly_hint()}</p>
 						</div>
 
 						<!-- display_label -->
-						<div class="form-group">
-							<label class="form-label" for="display-label"
+						<div class="admin-field">
+							<label class="admin-field__label" for="display-label"
 								>{$LL.admin_custom_claims_display_label()}</label
 							>
 							<input
 								id="display-label"
 								type="text"
-								class="form-input"
+								class="admin-input"
 								bind:value={editForm.display_label}
 								disabled={!isEditable}
 							/>
 						</div>
 
 						<!-- field_type -->
-						<div class="form-group">
-							<label class="form-label" for="field-type"
+						<div class="admin-field">
+							<label class="admin-field__label" for="field-type"
 								>{$LL.admin_custom_claims_field_type()}</label
 							>
 							<select
 								id="field-type"
-								class="form-select"
+								class="admin-select"
 								bind:value={editForm.field_type}
 								disabled={!isEditable || isSystem}
 							>
@@ -409,9 +401,9 @@
 						</div>
 
 						<!-- is_pii (read-only after creation) -->
-						<div class="form-group">
-							<p class="form-label">{$LL.admin_custom_claims_pii_classification()}</p>
-							<div class="flex items-center gap-2 mt-1">
+						<div class="admin-field">
+							<p class="admin-field__label">{$LL.admin_custom_claims_pii_classification()}</p>
+							<div class="inline-badges">
 								{#if schema.is_pii}
 									<span class="badge badge-warning"
 										>{$LL.admin_custom_claims_pii_storage_badge()}</span
@@ -422,33 +414,33 @@
 									>
 								{/if}
 							</div>
-							<p class="form-hint text-amber-600">
+							<p class="field-hint field-hint--warning">
 								{$LL.admin_custom_claims_cannot_change_after_creation()}
 							</p>
 						</div>
 
 						<!-- display_order -->
-						<div class="form-group">
-							<label class="form-label" for="display-order"
+						<div class="admin-field">
+							<label class="admin-field__label" for="display-order"
 								>{$LL.admin_custom_claims_display_order()}</label
 							>
 							<input
 								id="display-order"
 								type="number"
-								class="form-input"
+								class="admin-input"
 								bind:value={editForm.display_order}
 								disabled={!isEditable}
 							/>
 						</div>
 
 						<!-- description -->
-						<div class="form-group col-span-2">
-							<label class="form-label" for="description"
+						<div class="admin-field col-span-2">
+							<label class="admin-field__label" for="description"
 								>{$LL.admin_custom_claims_description_label()}</label
 							>
 							<textarea
 								id="description"
-								class="form-input"
+								class="admin-input"
 								rows="2"
 								bind:value={editForm.description}
 								disabled={!isEditable}
@@ -456,33 +448,32 @@
 						</div>
 
 						<!-- toggles -->
-						<div class="form-group">
-							<label class="form-label">
+						<div class="admin-field">
+							<label class="admin-field__label">
 								<input type="checkbox" bind:checked={editForm.is_required} disabled={!isEditable} />
 								{$LL.admin_custom_claims_required_field()}
 							</label>
 						</div>
 
-						<div class="form-group">
-							<label class="form-label">
+						<div class="admin-field">
+							<label class="admin-field__label">
 								<input type="checkbox" bind:checked={editForm.is_active} disabled={!isEditable} />
 								{$LL.admin_custom_claims_active()}
 							</label>
 						</div>
 					</div>
-				</div>
+				</AdminSection>
 
 				<!-- Section: Token & Endpoint Inclusion -->
-				<div class="panel mb-4">
-					<h2 class="panel-title">{$LL.admin_custom_claims_token_endpoint_inclusion()}</h2>
-					<p class="text-sm text-gray-500 mb-4">
+				<AdminSection title={$LL.admin_custom_claims_token_endpoint_inclusion()}>
+					<p class="section-hint">
 						{$LL.admin_custom_claims_token_endpoint_description()}
 					</p>
 
 					<div class="form-grid">
-						<div class="form-group col-span-2">
-							<div class="flex gap-6 flex-wrap">
-								<label class="form-label">
+						<div class="admin-field col-span-2">
+							<div class="check-list check-list--inline">
+								<label class="admin-field__label">
 									<input
 										type="checkbox"
 										bind:checked={editForm.include_in_id_token}
@@ -490,7 +481,7 @@
 									/>
 									ID Token
 								</label>
-								<label class="form-label">
+								<label class="admin-field__label">
 									<input
 										type="checkbox"
 										bind:checked={editForm.include_in_userinfo}
@@ -498,8 +489,8 @@
 									/>
 									UserInfo
 								</label>
-								<label class="form-label flex-col items-start">
-									<span class="flex items-center gap-1">
+								<label class="admin-field__label check-with-hint">
+									<span class="inline-check">
 										<input
 											type="checkbox"
 											bind:checked={editForm.include_in_introspection}
@@ -507,35 +498,35 @@
 										/>
 										Introspection
 									</span>
-									<small style="color: var(--color-warning, #b08800); font-size: 0.75rem;"
+									<small class="field-warning-note"
 										>{$LL.admin_custom_claims_introspection_disabled()}</small
 									>
 								</label>
 							</div>
 						</div>
 
-						<div class="form-group">
-							<label class="form-label" for="required-scopes"
+						<div class="admin-field">
+							<label class="admin-field__label" for="required-scopes"
 								>{$LL.admin_custom_claims_required_scopes()}</label
 							>
 							<input
 								id="required-scopes"
 								type="text"
-								class="form-input"
+								class="admin-input"
 								placeholder={$LL.admin_custom_claims_required_scopes_placeholder()}
 								bind:value={editForm.required_scopes_text}
 								disabled={!isEditable}
 							/>
-							<p class="form-hint">{$LL.admin_custom_claims_required_scopes_hint()}</p>
+							<p class="field-hint">{$LL.admin_custom_claims_required_scopes_hint()}</p>
 						</div>
 
-						<div class="form-group">
-							<label class="form-label" for="scope-mode"
+						<div class="admin-field">
+							<label class="admin-field__label" for="scope-mode"
 								>{$LL.admin_custom_claims_scope_mode()}</label
 							>
 							<select
 								id="scope-mode"
-								class="form-select"
+								class="admin-select"
 								bind:value={editForm.scope_mode}
 								disabled={!isEditable}
 							>
@@ -544,61 +535,58 @@
 							</select>
 						</div>
 
-						<div class="form-group col-span-2">
-							<label class="form-label" for="claim-namespace"
+						<div class="admin-field col-span-2">
+							<label class="admin-field__label" for="claim-namespace"
 								>{$LL.admin_custom_claims_claim_namespace()}</label
 							>
 							<input
 								id="claim-namespace"
 								type="text"
-								class="form-input"
+								class="admin-input"
 								placeholder={$LL.admin_custom_claims_claim_namespace_placeholder()}
 								bind:value={editForm.claim_namespace}
 								disabled={!isEditable}
 							/>
 						</div>
 					</div>
-				</div>
+				</AdminSection>
 
 				<!-- Section: Validation Rules -->
-				<div class="panel mb-4">
-					<h2 class="panel-title">{$LL.admin_custom_claims_validation_rules_title()}</h2>
-					<p class="text-sm text-gray-500 mb-3">
+				<AdminSection title={$LL.admin_custom_claims_validation_rules_title()}>
+					<p class="section-hint">
 						{$LL.admin_custom_claims_validation_hint()}
 					</p>
 					<textarea
-						class="form-input font-mono text-sm w-full"
+						class="admin-input admin-input--mono"
 						rows="5"
 						placeholder={$LL.admin_custom_claims_validation_placeholder()}
 						bind:value={editForm.validation_rules_json}
 						disabled={!isEditable}
 					></textarea>
-				</div>
+				</AdminSection>
 
 				<!-- Section: Advanced -->
-				<div class="panel mb-4">
-					<h2 class="panel-title">{$LL.admin_custom_claims_advanced()}</h2>
-					<div class="flex gap-6 flex-wrap">
-						<label class="form-label">
+				<AdminSection title={$LL.admin_custom_claims_advanced()}>
+					<div class="check-list check-list--inline">
+						<label class="admin-field__label">
 							<input type="checkbox" bind:checked={editForm.is_searchable} disabled={!isEditable} />
 							{$LL.admin_custom_claims_searchable()}
 						</label>
-						<label class="form-label">
+						<label class="admin-field__label">
 							<input type="checkbox" bind:checked={editForm.is_exportable} disabled={!isEditable} />
 							{$LL.admin_custom_claims_exportable()}
 						</label>
-						<label class="form-label">
+						<label class="admin-field__label">
 							<input type="checkbox" bind:checked={editForm.is_vc_claim} disabled={!isEditable} />
 							{$LL.admin_custom_claims_vc_claim()}
 						</label>
 					</div>
-				</div>
+				</AdminSection>
 
 				<!-- Section: Registration Form -->
-				<div class="panel mb-4">
-					<h2 class="panel-title">{$LL.admin_custom_claims_registration_form()}</h2>
-					<div class="flex gap-6 flex-wrap mb-4">
-						<label class="form-label">
+				<AdminSection title={$LL.admin_custom_claims_registration_form()}>
+					<div class="check-list check-list--inline">
+						<label class="admin-field__label">
 							<input
 								type="checkbox"
 								bind:checked={editForm.show_on_registration}
@@ -606,7 +594,7 @@
 							/>
 							{$LL.admin_custom_claims_show_on_signup()}
 						</label>
-						<label class="form-label">
+						<label class="admin-field__label">
 							<input
 								type="checkbox"
 								bind:checked={editForm.registration_required}
@@ -621,9 +609,9 @@
 						aria-disabled={registrationConfigDisabled}
 					>
 						{#if editForm.show_on_registration}
-							<div class="flex gap-4 flex-wrap">
-								<div style="min-width:120px;">
-									<label class="form-label" for="reg-order"
+							<div class="registration-grid">
+								<div class="registration-order-field">
+									<label class="admin-field__label" for="reg-order"
 										>{$LL.admin_custom_claims_registration_display_order()}</label
 									>
 									<input
@@ -632,11 +620,11 @@
 										bind:value={editForm.registration_order}
 										disabled={!isEditable}
 										min="0"
-										class="form-input"
+										class="admin-input"
 									/>
 								</div>
-								<div style="flex:1; min-width:200px;">
-									<label class="form-label" for="reg-placeholder"
+								<div class="registration-placeholder-field">
+									<label class="admin-field__label" for="reg-placeholder"
 										>{$LL.admin_custom_claims_registration_placeholder()}</label
 									>
 									<input
@@ -645,7 +633,7 @@
 										bind:value={editForm.registration_placeholder}
 										disabled={!isEditable}
 										placeholder={$LL.admin_custom_claims_registration_placeholder_example()}
-										class="form-input"
+										class="admin-input"
 									/>
 								</div>
 							</div>
@@ -655,11 +643,11 @@
 							</p>
 						{/if}
 					</div>
-				</div>
+				</AdminSection>
 
 				<!-- Save button -->
 				{#if isEditable}
-					<div class="flex justify-end">
+					<div class="save-actions">
 						<button class="btn btn-primary" onclick={submitSave} disabled={saving}>
 							{saving ? $LL.admin_custom_claims_saving() : $LL.admin_custom_claims_save_changes()}
 						</button>
@@ -667,73 +655,72 @@
 				{/if}
 
 				<!-- Danger Zone -->
-				<div class="danger-panel mt-6">
-					<h2 class="panel-title danger-title">{$LL.admin_custom_claims_danger_zone()}</h2>
-
-					<div class="flex flex-col gap-3">
-						<!-- Rename -->
-						<div class="danger-zone-row">
-							<div>
-								<p class="danger-zone-row-title">
-									{$LL.admin_custom_claims_rename_field_key()}
-								</p>
-								<p class="danger-zone-description">
-									{$LL.admin_custom_claims_rename_description()}
-								</p>
+				<AdminSection title={$LL.admin_custom_claims_danger_zone()}>
+					<div class="danger-panel">
+						<div class="danger-list">
+							<!-- Rename -->
+							<div class="danger-zone-row">
+								<div>
+									<p class="danger-zone-row-title">
+										{$LL.admin_custom_claims_rename_field_key()}
+									</p>
+									<p class="danger-zone-description">
+										{$LL.admin_custom_claims_rename_description()}
+									</p>
+								</div>
+								<button
+									class="btn btn-secondary btn-sm"
+									onclick={() => {
+										renameNewKey = '';
+										renameError = '';
+										showRenameDialog = true;
+									}}
+									disabled={isSystem || !isEditable}
+									title={isSystem ? $LL.admin_custom_claims_system_rename_disabled() : undefined}
+								>
+									<i class="i-ph-pencil-simple"></i>
+									{$LL.admin_custom_claims_rename()}
+								</button>
 							</div>
-							<button
-								class="btn btn-secondary btn-sm"
-								onclick={() => {
-									renameNewKey = '';
-									renameError = '';
-									showRenameDialog = true;
-								}}
-								disabled={isSystem || !isEditable}
-								title={isSystem ? $LL.admin_custom_claims_system_rename_disabled() : undefined}
-							>
-								<i class="i-ph-pencil-simple"></i>
-								{$LL.admin_custom_claims_rename()}
-							</button>
-						</div>
 
-						<!-- Delete -->
-						<div class="danger-zone-row">
-							<div>
-								<p class="danger-zone-row-title">{$LL.admin_custom_claims_delete_schema()}</p>
-								<p class="danger-zone-description">
-									{$LL.admin_custom_claims_delete_description()}
-									{#if userCount > 0}
-										<span class="danger-zone-affected">
-											{$LL.admin_custom_claims_user_data_loss({
-												prefix: userCountApproximate ? '~' : '',
-												count: userCount
-											})}
-										</span>
-									{/if}
-								</p>
+							<!-- Delete -->
+							<div class="danger-zone-row">
+								<div>
+									<p class="danger-zone-row-title">{$LL.admin_custom_claims_delete_schema()}</p>
+									<p class="danger-zone-description">
+										{$LL.admin_custom_claims_delete_description()}
+										{#if userCount > 0}
+											<span class="danger-zone-affected">
+												{$LL.admin_custom_claims_user_data_loss({
+													prefix: userCountApproximate ? '~' : '',
+													count: userCount
+												})}
+											</span>
+										{/if}
+									</p>
+								</div>
+								<button
+									class="btn btn-danger btn-sm"
+									onclick={() => {
+										deleteError = '';
+										showDeleteDialog = true;
+									}}
+									disabled={isSystem ||
+										(schema.operation_status !== 'active' && schema.operation_status !== 'error')}
+									title={isSystem ? $LL.admin_custom_claims_system_delete_disabled() : undefined}
+								>
+									<i class="i-ph-trash"></i>
+									{$LL.admin_custom_claims_delete()}
+								</button>
 							</div>
-							<button
-								class="btn btn-danger btn-sm"
-								onclick={() => {
-									deleteError = '';
-									showDeleteDialog = true;
-								}}
-								disabled={isSystem ||
-									(schema.operation_status !== 'active' && schema.operation_status !== 'error')}
-								title={isSystem ? $LL.admin_custom_claims_system_delete_disabled() : undefined}
-							>
-								<i class="i-ph-trash"></i>
-								{$LL.admin_custom_claims_delete()}
-							</button>
 						</div>
 					</div>
-				</div>
+				</AdminSection>
 			</div>
 
 			<!-- ===== Sidebar ===== -->
 			<div class="detail-sidebar">
-				<div class="panel">
-					<h3 class="font-semibold text-sm mb-3">{$LL.admin_custom_claims_details()}</h3>
+				<AdminSection title={$LL.admin_custom_claims_details()}>
 					<dl class="detail-dl">
 						<dt>{$LL.admin_custom_claims_schema_version()}</dt>
 						<dd>{schema.schema_version}</dd>
@@ -759,14 +746,14 @@
 
 						{#if schema.created_by}
 							<dt>{$LL.admin_custom_claims_created_by()}</dt>
-							<dd><code class="text-xs">{schema.created_by}</code></dd>
+							<dd><code class="admin-code admin-code--tiny">{schema.created_by}</code></dd>
 						{/if}
 					</dl>
-				</div>
+				</AdminSection>
 			</div>
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Rename Modal -->
 <Modal
@@ -780,14 +767,14 @@
 	size="md"
 >
 	{#if renameError}
-		<div class="alert alert-error alert-sm mb-4">{renameError}</div>
+		<div class="alert alert-error alert-sm modal-alert">{renameError}</div>
 	{/if}
 
-	<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
-		<h4 class="font-semibold text-blue-900 text-sm mb-1">
+	<div class="recommended-approach">
+		<h4>
 			{$LL.admin_custom_claims_recommended_approach_lower()}
 		</h4>
-		<ol class="text-sm text-blue-800 list-decimal list-inside space-y-1">
+		<ol>
 			<li>{$LL.admin_custom_claims_rename_step_deactivate()}</li>
 			<li>{$LL.admin_custom_claims_rename_step_create()}</li>
 			<li>{$LL.admin_custom_claims_rename_step_migrate()}</li>
@@ -795,18 +782,18 @@
 		</ol>
 	</div>
 
-	<div class="alert alert-warning mb-4">
+	<div class="alert alert-warning modal-alert">
 		<strong>{$LL.admin_custom_claims_warning_label()}</strong>
 		{$LL.admin_custom_claims_rename_warning()}
 	</div>
 
-	<div class="bg-gray-50 rounded-lg p-3 mb-4">
-		<p class="text-sm">
+	<div class="modal-summary">
+		<p>
 			<strong>{$LL.admin_custom_claims_current_key()}:</strong>
 			<code>{schema?.field_key}</code>
 		</p>
 		{#if userCount > 0}
-			<p class="text-amber-600 font-semibold text-sm mt-1">
+			<p class="modal-impact modal-impact--warning">
 				{$LL.admin_custom_claims_affected_users({
 					prefix: userCountApproximate ? '~' : '',
 					count: userCount,
@@ -816,16 +803,18 @@
 		{/if}
 	</div>
 
-	<div class="form-group">
-		<label class="form-label" for="rename-new-key">{$LL.admin_custom_claims_new_field_key()}</label>
+	<div class="admin-field">
+		<label class="admin-field__label" for="rename-new-key"
+			>{$LL.admin_custom_claims_new_field_key()}</label
+		>
 		<input
 			id="rename-new-key"
 			type="text"
-			class="form-input"
+			class="admin-input"
 			placeholder={$LL.admin_custom_claims_field_key_placeholder()}
 			bind:value={renameNewKey}
 		/>
-		<p class="form-hint">{$LL.admin_custom_claims_field_key_short_hint()}</p>
+		<p class="field-hint">{$LL.admin_custom_claims_field_key_short_hint()}</p>
 	</div>
 
 	{#snippet footer()}
@@ -849,32 +838,32 @@
 	size="md"
 >
 	{#if deleteError}
-		<div class="alert alert-error alert-sm mb-4">{deleteError}</div>
+		<div class="alert alert-error alert-sm modal-alert">{deleteError}</div>
 	{/if}
 
 	{#if schema}
-		<div class="alert alert-warning mb-4">
+		<div class="alert alert-warning modal-alert">
 			<strong>{$LL.admin_custom_claims_warning_label()}</strong>
 			{$LL.admin_custom_claims_delete_warning()}
 		</div>
 
-		<div class="bg-gray-50 rounded-lg p-3 mb-4">
-			<p class="text-sm">
+		<div class="modal-summary">
+			<p>
 				<strong>{$LL.admin_custom_claims_field_key()}:</strong>
 				<code>{schema.field_key}</code>
 			</p>
-			<p class="text-sm">
+			<p>
 				<strong>{$LL.admin_custom_claims_label()}:</strong>
 				{schema.display_label}
 			</p>
-			<p class="text-sm">
+			<p>
 				<strong>{$LL.admin_custom_claims_storage()}:</strong>
 				{schema.is_pii
 					? $LL.admin_custom_claims_pii_database()
 					: $LL.admin_custom_claims_core_database()}
 			</p>
 			{#if userCount > 0}
-				<p class="text-red-600 font-semibold text-sm mt-2">
+				<p class="modal-impact modal-impact--danger modal-impact--spaced">
 					{$LL.admin_custom_claims_affected_users({
 						prefix: userCountApproximate ? '~' : '',
 						count: userCount,
@@ -912,46 +901,226 @@
 		top: 1rem;
 	}
 
-	.breadcrumb {
+	.schema-key {
+		color: var(--color-text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.82rem;
+	}
+
+	.operation-error-banner {
+		margin-bottom: 18px;
+		padding: 14px 16px;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		border-radius: var(--radius-card);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+	}
+
+	.operation-error-content,
+	.operation-error-message,
+	.inline-badges,
+	.inline-check,
+	.check-list {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.875rem;
+		gap: 10px;
 	}
 
-	.breadcrumb-link {
-		color: var(--color-primary, #3b82f6);
-		text-decoration: none;
+	.operation-error-content {
+		justify-content: space-between;
 	}
 
-	.breadcrumb-link:hover {
-		text-decoration: underline;
+	.operation-error-message {
+		align-items: flex-start;
 	}
 
-	.breadcrumb-sep {
-		color: #9ca3af;
+	.operation-error-message h3,
+	.operation-error-message p,
+	.section-hint {
+		margin: 0;
 	}
 
-	.breadcrumb-current {
-		color: #374151;
+	.operation-error-message h3 {
+		font-size: 0.92rem;
+		font-weight: 700;
 	}
 
-	.panel-title {
-		font-size: 1rem;
-		font-weight: 600;
+	.operation-error-message p {
+		margin-top: 4px;
+		font-size: 0.84rem;
+		line-height: 1.55;
+	}
+
+	.section-hint {
+		margin-bottom: 14px;
+		color: var(--color-text-muted);
+		font-size: 0.85rem;
+		line-height: 1.6;
+	}
+
+	.check-list {
+		flex-wrap: wrap;
+		gap: 14px 24px;
+	}
+
+	.check-with-hint {
+		display: grid;
+		gap: 4px;
+	}
+
+	.save-actions {
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.admin-field {
+		display: grid;
+		gap: 6px;
+	}
+
+	.admin-field__label {
+		color: var(--color-text);
+		font-size: 0.84rem;
+		font-weight: 700;
+	}
+
+	.admin-input,
+	.admin-select {
+		width: 100%;
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
+	}
+
+	.admin-input:focus,
+	.admin-select:focus {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.admin-input:disabled,
+	.admin-select:disabled {
+		opacity: 0.7;
+		cursor: not-allowed;
+	}
+
+	.admin-input--mono,
+	textarea.admin-input {
+		font-family: var(--font-mono);
+		font-size: 0.82rem;
+		line-height: 1.55;
+		resize: vertical;
+	}
+
+	.field-hint {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		line-height: 1.45;
+	}
+
+	.field-hint--warning {
+		color: var(--color-warning);
+	}
+
+	.field-warning-note {
+		color: var(--color-warning);
+		font-size: 0.75rem;
+	}
+
+	.modal-alert {
 		margin-bottom: 1rem;
+	}
+
+	.admin-code {
+		font-family: var(--font-mono);
+		color: var(--color-text);
+	}
+
+	.admin-code--tiny {
+		font-size: 0.72rem;
+	}
+
+	.recommended-approach,
+	.modal-summary {
+		margin-bottom: 1rem;
+		padding: 0.75rem;
+		border-radius: var(--radius-card);
+	}
+
+	.recommended-approach {
+		border: 1px solid color-mix(in srgb, var(--color-info) 28%, var(--color-border));
+		background: color-mix(in srgb, var(--color-info) 10%, var(--color-surface));
+	}
+
+	.recommended-approach h4 {
+		margin: 0 0 0.25rem;
+		color: var(--color-info-700);
+		font-size: 0.875rem;
+		font-weight: 700;
+	}
+
+	.recommended-approach ol {
+		margin: 0;
+		padding-left: 1.25rem;
+		color: var(--color-info-700);
+		font-size: 0.875rem;
+		line-height: 1.55;
+	}
+
+	.modal-summary {
+		background: var(--color-surface-muted);
+	}
+
+	.modal-summary p {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		line-height: 1.55;
+	}
+
+	.modal-summary p + p {
+		margin-top: 0.25rem;
+	}
+
+	.modal-impact {
+		font-weight: 700;
+	}
+
+	.modal-impact--spaced {
+		margin-top: 0.5rem;
+	}
+
+	.modal-impact--warning {
+		color: var(--color-warning);
+	}
+
+	.modal-impact--danger {
+		color: var(--color-danger);
 	}
 
 	/* Danger Zone */
 	.danger-panel {
-		background: var(--bg-card, #fff);
-		border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 30%, var(--border, #e5e7eb));
-		border-radius: 8px;
-		padding: 1.25rem;
+		background: var(
+			--danger-zone-bg,
+			color-mix(in srgb, var(--color-danger) 5%, var(--color-surface))
+		);
+		border: var(
+			--danger-zone-border,
+			1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border))
+		);
+		border-radius: var(--danger-zone-radius, var(--radius-panel));
+		padding: var(--danger-zone-padding, 1.25rem);
 	}
 
-	.danger-title {
-		color: var(--danger, #dc2626);
+	.danger-list {
+		display: grid;
+		gap: 12px;
 	}
 
 	.danger-zone-row {
@@ -960,26 +1129,29 @@
 		justify-content: space-between;
 		gap: 1rem;
 		padding: 0.75rem;
-		background: color-mix(in srgb, var(--danger, #dc2626) 5%, var(--bg-subtle, #f8fafc));
-		border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 20%, var(--border, #e5e7eb));
-		border-radius: 6px;
+		background: var(--danger-zone-row-bg, var(--color-surface));
+		border: var(
+			--danger-zone-row-border,
+			1px solid color-mix(in srgb, var(--color-danger) 20%, var(--color-border))
+		);
+		border-radius: var(--danger-zone-row-radius, var(--radius-control));
 	}
 
 	.danger-zone-row-title {
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--text-primary, #111827);
+		font-size: var(--danger-zone-title-size, 0.875rem);
+		font-weight: var(--danger-zone-title-weight, 500);
+		color: var(--color-text);
 		margin: 0 0 0.25rem 0;
 	}
 
 	.danger-zone-description {
-		font-size: 0.75rem;
-		color: var(--text-secondary, #6b7280);
+		font-size: var(--danger-zone-description-size, 0.75rem);
+		color: var(--color-text-muted);
 		margin: 0;
 	}
 
 	.danger-zone-affected {
-		color: var(--danger, #dc2626);
+		color: var(--color-danger);
 		font-weight: 500;
 	}
 
@@ -993,15 +1165,9 @@
 		grid-column: span 2;
 	}
 
-	.form-hint {
-		font-size: 0.75rem;
-		color: #6b7280;
-		margin-top: 0.25rem;
-	}
-
 	.registration-settings {
-		border: 1px dashed color-mix(in srgb, var(--border, #e5e7eb) 85%, transparent);
-		border-radius: 8px;
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-card);
 		padding: 0.875rem;
 		transition:
 			opacity 0.15s ease,
@@ -1022,7 +1188,22 @@
 	.registration-disabled-hint {
 		margin: 0;
 		font-size: 0.875rem;
-		color: var(--text-secondary, #6b7280);
+		color: var(--color-text-muted);
+	}
+
+	.registration-grid {
+		display: flex;
+		gap: 16px;
+		flex-wrap: wrap;
+	}
+
+	.registration-order-field {
+		min-width: 120px;
+	}
+
+	.registration-placeholder-field {
+		flex: 1;
+		min-width: 200px;
 	}
 
 	.detail-dl {
@@ -1033,14 +1214,40 @@
 	}
 
 	.detail-dl dt {
-		color: #6b7280;
+		color: var(--color-text-muted);
 		white-space: nowrap;
 	}
 
 	.detail-dl dd {
-		color: #111827;
+		color: var(--color-text);
 		word-break: break-all;
 		margin: 0;
+	}
+
+	.badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2px 8px;
+		border-radius: var(--radius-full);
+		font-size: 0.72rem;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	.badge-neutral {
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+	}
+
+	.badge-success {
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
+	}
+
+	.badge-warning {
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	@media (max-width: 768px) {

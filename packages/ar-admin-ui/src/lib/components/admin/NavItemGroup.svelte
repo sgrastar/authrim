@@ -5,6 +5,7 @@
 		href: string;
 		icon?: string;
 		label: string;
+		activePaths?: string[];
 	}
 
 	interface Props {
@@ -24,7 +25,14 @@
 	}
 
 	function isChildActive(href: string): boolean {
-		return $page.url.pathname.startsWith(href);
+		const child = children.find((item) => item.href === href);
+		return (
+			$page.url.pathname.startsWith(href) ||
+			(child?.activePaths?.some(
+				(path) => $page.url.pathname === path || $page.url.pathname.startsWith(`${path}/`)
+			) ??
+				false)
+		);
 	}
 </script>
 
@@ -61,13 +69,16 @@
 	.nav-item {
 		display: flex;
 		align-items: center;
-		gap: 14px;
-		padding: 4px 12px;
-		margin-bottom: 1px;
-		border-radius: var(--radius-md);
-		color: var(--nav-text, rgba(255, 255, 255, 0.6));
-		font-size: 0.9375rem;
-		font-weight: 500;
+		gap: var(--nav-item-gap, 10px);
+		min-height: var(--nav-item-min-height, 32px);
+		padding: var(--nav-item-padding, 7px 20px);
+		margin-bottom: var(--nav-item-gap-y, 1px);
+		border-left: var(--nav-active-border-width, 3px) solid transparent;
+		border-radius: var(--nav-item-radius, 0);
+		color: var(--nav-text, var(--color-text-muted));
+		font-size: var(--nav-item-font-size, 0.9rem);
+		font-weight: var(--nav-item-font-weight, 500);
+		line-height: var(--nav-item-line-height, 1.35);
 		transition: all var(--transition-fast);
 		position: relative;
 		text-decoration: none;
@@ -75,11 +86,11 @@
 	}
 
 	.nav-item :global(.nav-icon) {
-		width: 22px;
-		height: 22px;
-		font-size: 22px;
+		display: var(--nav-icon-display, inline-block);
+		width: var(--nav-icon-size, 18px);
+		height: var(--nav-icon-size, 18px);
+		font-size: var(--nav-icon-size, 18px);
 		flex-shrink: 0;
-		transition: transform var(--transition-fast);
 	}
 
 	.nav-item :global(.nav-icon-small) {
@@ -89,8 +100,6 @@
 	}
 
 	.nav-item-text {
-		opacity: 0;
-		transition: opacity var(--transition-base);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -98,49 +107,41 @@
 		min-width: 0;
 	}
 
-	/* Expanded state - show text */
-	:global(.nav-floating.expanded) .nav-item-text,
-	:global(.nav-floating.open) .nav-item-text {
-		opacity: 1;
-	}
-
 	/* Hover state */
 	.nav-item:hover {
-		background: rgba(255, 255, 255, 0.08);
-		color: var(--nav-text-hover, var(--text-inverse));
-	}
-
-	.nav-item:hover :global(.nav-icon) {
-		transform: scale(1.1);
+		background: var(--nav-hover-bg, var(--color-surface-muted));
+		color: var(--nav-text-hover, var(--color-text));
 	}
 
 	/* Active state */
 	.nav-item.active {
 		background: var(--nav-active-bg, var(--gradient-primary));
-		color: var(--text-inverse);
-		box-shadow: 0 4px 16px rgba(51, 51, 51, 0.4);
+		color: var(--nav-active-text, var(--color-accent-contrast));
+		border-left-color: var(--nav-active-border, var(--color-accent));
+		box-shadow: var(--nav-active-shadow, none);
+	}
+
+	.nav-item:focus-visible {
+		outline: var(--nav-focus-outline, 2px solid var(--nav-active-border, var(--color-accent)));
+		outline-offset: var(--nav-focus-outline-offset, -2px);
 	}
 
 	/* === Children Container with Vertical Line === */
 	.nav-children {
 		position: relative;
-		padding-left: 20px;
-		margin-left: 18px; /* Align with icon center */
-		border-left: 2px solid rgba(255, 255, 255, 0.15);
-	}
-
-	/* Hide vertical line when collapsed */
-	:global(.nav-floating:not(.expanded):not(.open)) .nav-children {
-		border-left-color: transparent;
+		margin: var(--nav-child-margin, 0);
+		padding: var(--nav-child-padding, 0);
+		border-left: var(--nav-child-border, none);
 	}
 
 	/* Child items */
 	.nav-child {
-		padding: 4px 12px;
-		font-size: 0.875rem;
+		padding: var(--nav-child-item-padding, 6px 20px 6px 42px);
+		font-size: var(--nav-child-font-size, 0.82rem);
 	}
 
 	.nav-child :global(.nav-icon) {
+		display: var(--nav-icon-display, inline-block);
 		width: 18px;
 		height: 18px;
 		font-size: 18px;
@@ -150,14 +151,14 @@
 	.nav-dot {
 		width: 6px;
 		height: 6px;
-		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.4);
+		border-radius: var(--nav-item-dot-radius, 50%);
+		background: var(--nav-item-dot-bg, var(--nav-text, var(--color-text-muted)));
 		flex-shrink: 0;
 		margin-left: 6px;
 		margin-right: 6px;
 	}
 
 	.nav-child.active .nav-dot {
-		background: var(--text-inverse);
+		background: var(--nav-active-text, var(--color-accent-contrast));
 	}
 </style>

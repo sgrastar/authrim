@@ -5,6 +5,7 @@
 		type IdentityMappingFieldMappingVersionSummary,
 		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type PolicySide = 'source' | 'destination';
@@ -160,158 +161,115 @@
 	<title>{$LL.admin_identity_mapping_policies_head_title()}</title>
 </svelte:head>
 
-<div class="operations-page">
-	<div class="page-heading">
-		<div>
-			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
-			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
-			<h1>{$LL.admin_identity_mapping_policies_title()}</h1>
-			<p class="summary">
-				{$LL.admin_identity_mapping_policies_description()}
-			</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		eyebrow={$LL.admin_identity_mapping_title()}
+		title={$LL.admin_identity_mapping_policies_title()}
+		description={$LL.admin_identity_mapping_policies_description()}
+	/>
 
-	<section class="policy-panel">
-		<div class="panel-heading">
-			<div>
-				<h2>{$LL.admin_identity_mapping_policies_lists_title()}</h2>
-			</div>
+	<AdminSection title={$LL.admin_identity_mapping_policies_lists_title()}>
+		{#snippet actions()}
 			<button type="button" onclick={loadPolicies} disabled={loading}>
 				{$LL.admin_identity_mapping_refresh()}
 			</button>
-		</div>
+		{/snippet}
 
 		{#if loading}
 			<div class="empty-state">{$LL.admin_identity_mapping_policies_loading()}</div>
 		{:else if errorMessage}
 			<div class="empty-state">{errorMessage}</div>
-		{:else if policies.length === 0}
-			<div class="empty-state">{$LL.admin_identity_mapping_policies_empty()}</div>
 		{:else}
 			<div class="policy-columns">
-				<section class="policy-column" aria-labelledby="source-policy-heading">
-					<div class="column-heading">
+				<section class="policy-column-shell" aria-labelledby="source-policy-heading">
+					<div class="column-toolbar">
 						<h3 id="source-policy-heading">
 							{$LL.admin_identity_mapping_policies_source_title()}
 						</h3>
+					</div>
+					<div class="column-action-row">
 						<a class="create-policy-link" href={newPolicyHref('source')}>
 							{$LL.admin_identity_mapping_policies_create_source()}
 						</a>
 					</div>
-					{#if sourcePolicyItems.length === 0}
-						<div class="column-empty">{$LL.admin_identity_mapping_policies_no_source()}</div>
-					{:else}
-						<div class="policy-list">
-							{#each sourcePolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
-								<a class="policy-item" href={item.href}>
-									<div>
-										<h4>{item.policy.displayName}</h4>
-										<span>{item.policy.description ?? item.profileSummary}</span>
-									</div>
-									<div class="policy-meta">
-										<span class="state-pill" class:active={item.policy.lifecycleState === 'active'}
-											>{item.policy.lifecycleState}</span
-										>
-										<span>{item.versionSummary}</span>
-									</div>
-								</a>
-							{/each}
-						</div>
-					{/if}
+					<div class="policy-column">
+						{#if sourcePolicyItems.length === 0}
+							<div class="column-empty">{$LL.admin_identity_mapping_policies_no_source()}</div>
+						{:else}
+							<div class="policy-list">
+								{#each sourcePolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
+									<a class="policy-item" href={item.href}>
+										<div>
+											<h4>{item.policy.displayName}</h4>
+											<span>{item.policy.description ?? item.profileSummary}</span>
+										</div>
+										<div class="policy-meta">
+											<span
+												class="state-pill"
+												class:active={item.policy.lifecycleState === 'active'}
+												>{item.policy.lifecycleState}</span
+											>
+											<span>{item.versionSummary}</span>
+										</div>
+									</a>
+								{/each}
+							</div>
+						{/if}
+					</div>
 				</section>
 
-				<section class="policy-column" aria-labelledby="destination-policy-heading">
-					<div class="column-heading">
+				<section class="policy-column-shell" aria-labelledby="destination-policy-heading">
+					<div class="column-toolbar">
 						<h3 id="destination-policy-heading">
 							{$LL.admin_identity_mapping_policies_destination_title()}
 						</h3>
+					</div>
+					<div class="column-action-row">
 						<a class="create-policy-link" href={newPolicyHref('destination')}>
 							{$LL.admin_identity_mapping_policies_create_destination()}
 						</a>
 					</div>
-					{#if destinationPolicyItems.length === 0}
-						<div class="column-empty">
-							{$LL.admin_identity_mapping_policies_no_destination()}
-						</div>
-					{:else}
-						<div class="policy-list">
-							{#each destinationPolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
-								<a class="policy-item" href={item.href}>
-									<div>
-										<h4>{item.policy.displayName}</h4>
-										<span>{item.policy.description ?? item.profileSummary}</span>
-									</div>
-									<div class="policy-meta">
-										<span class="state-pill" class:active={item.policy.lifecycleState === 'active'}
-											>{item.policy.lifecycleState}</span
-										>
-										<span>{item.versionSummary}</span>
-									</div>
-								</a>
-							{/each}
-						</div>
-					{/if}
+					<div class="policy-column">
+						{#if destinationPolicyItems.length === 0}
+							<div class="column-empty">
+								{$LL.admin_identity_mapping_policies_no_destination()}
+							</div>
+						{:else}
+							<div class="policy-list">
+								{#each destinationPolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
+									<a class="policy-item" href={item.href}>
+										<div>
+											<h4>{item.policy.displayName}</h4>
+											<span>{item.policy.description ?? item.profileSummary}</span>
+										</div>
+										<div class="policy-meta">
+											<span
+												class="state-pill"
+												class:active={item.policy.lifecycleState === 'active'}
+												>{item.policy.lifecycleState}</span
+											>
+											<span>{item.versionSummary}</span>
+										</div>
+									</a>
+								{/each}
+							</div>
+						{/if}
+					</div>
 				</section>
 			</div>
 		{/if}
-	</section>
-</div>
+	</AdminSection>
+</AdminPageShell>
 
 <style>
-	.operations-page {
-		display: grid;
-		gap: 18px;
-	}
-
-	.page-heading,
-	.panel-heading {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 18px;
-	}
-
-	.back-link {
-		display: inline-flex;
-		margin-bottom: 12px;
-		color: var(--color-primary);
-		font-size: 13px;
-		font-weight: 700;
-		text-decoration: none;
-	}
-
-	.eyebrow {
-		margin: 0;
-		color: var(--text-muted);
-		font-size: 12px;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	h1,
-	h2,
-	h3,
-	h4,
-	p {
-		margin: 0;
-	}
-
-	h1 {
-		color: var(--text-primary);
-		font-size: 28px;
-		line-height: 1.2;
-	}
-
-	h2,
 	h3,
 	h4 {
-		color: var(--text-primary);
+		margin: 0;
 	}
 
-	h2 {
-		font-size: 18px;
+	h3,
+	h4 {
+		color: var(--color-text);
 	}
 
 	h3 {
@@ -324,40 +282,29 @@
 		line-height: 1.25;
 	}
 
-	.summary,
 	.policy-item span,
 	.column-empty {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 13px;
 		line-height: 1.45;
 	}
 
-	.summary {
-		max-width: 760px;
-		margin-top: 8px;
-		font-size: 14px;
-	}
-
-	.policy-panel,
 	.empty-state,
 	.policy-column {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
-	}
-
-	.policy-panel {
-		padding: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	button {
-		min-height: 36px;
+		min-height: var(--control-height, 36px);
 		padding: 0 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-weight: 800;
+		cursor: pointer;
 	}
 
 	button:disabled {
@@ -366,16 +313,20 @@
 	}
 
 	.empty-state {
-		margin-top: 14px;
 		padding: 18px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.policy-columns {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 14px;
-		margin-top: 14px;
+		gap: var(--policy-column-gap, 14px);
+	}
+
+	.policy-column-shell {
+		min-width: 0;
+		display: grid;
+		gap: 8px;
 	}
 
 	.policy-column {
@@ -383,13 +334,13 @@
 		overflow: hidden;
 	}
 
-	.column-heading {
+	.column-toolbar {
+		display: block;
+	}
+
+	.column-action-row {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		padding: 14px;
-		border-bottom: 1px solid var(--border-color);
+		justify-content: flex-end;
 	}
 
 	.create-policy-link {
@@ -398,10 +349,10 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0 10px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-size: 12px;
 		font-weight: 800;
 		text-decoration: none;
@@ -410,7 +361,7 @@
 
 	.create-policy-link:hover,
 	.create-policy-link:focus-visible {
-		background: var(--bg-muted);
+		background: var(--color-surface-muted);
 		outline: none;
 	}
 
@@ -424,7 +375,7 @@
 		justify-content: space-between;
 		gap: 14px;
 		padding: 13px 14px;
-		border-bottom: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 		color: inherit;
 		text-decoration: none;
 		transition:
@@ -438,7 +389,7 @@
 
 	.policy-item:hover,
 	.policy-item:focus-visible {
-		background: var(--bg-muted);
+		background: var(--color-surface-muted);
 		outline: none;
 	}
 
@@ -460,16 +411,16 @@
 	.state-pill {
 		width: fit-content;
 		padding: 3px 8px;
-		border-radius: 999px;
-		background: var(--bg-muted);
-		color: var(--text-secondary);
+		border-radius: var(--status-badge-radius, 999px);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 		font-size: 12px;
 		font-weight: 800;
 	}
 
 	.state-pill.active {
-		color: #047857;
-		background: rgba(16, 185, 129, 0.14);
+		color: var(--color-success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
 	}
 
 	.column-empty {
@@ -477,8 +428,6 @@
 	}
 
 	@media (max-width: 900px) {
-		.page-heading,
-		.panel-heading,
 		.policy-item {
 			display: grid;
 		}
@@ -487,10 +436,6 @@
 			min-width: 0;
 			justify-items: stretch;
 			text-align: left;
-		}
-
-		.column-heading {
-			display: grid;
 		}
 
 		.policy-columns {

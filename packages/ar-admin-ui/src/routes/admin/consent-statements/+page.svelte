@@ -8,6 +8,13 @@
 		type TenantConsentRequirement
 	} from '$lib/api/admin-consent-statements';
 	import { adminClientsAPI } from '$lib/api/admin-clients';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminTabs,
+		type AdminTabItem
+	} from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// ---------------------------------------------------------------------------
@@ -75,6 +82,32 @@
 
 	// Derived
 	const selectedStatement = $derived(statements.find((s) => s.id === selectedStatementId) || null);
+	const consentTabs = $derived<AdminTabItem[]>([
+		{
+			id: 'statements',
+			label: $LL.admin_consent_statements_tab_statements(),
+			panelId: 'consent-statements-panel'
+		},
+		{
+			id: 'versions',
+			label: selectedStatement
+				? `${$LL.admin_consent_statements_tab_versions()} (${selectedStatement.slug})`
+				: $LL.admin_consent_statements_tab_versions(),
+			panelId: 'consent-versions-panel',
+			disabled: !selectedStatementId
+		},
+		{
+			id: 'localizations',
+			label: $LL.admin_consent_statements_tab_localizations(),
+			panelId: 'consent-localizations-panel',
+			disabled: !selectedVersionId
+		},
+		{
+			id: 'requirements',
+			label: $LL.admin_consent_statements_tab_requirements(),
+			panelId: 'consent-requirements-panel'
+		}
+	]);
 
 	const CATEGORIES = [
 		'terms_of_service',
@@ -88,12 +121,6 @@
 	];
 
 	const LEGAL_BASES = ['consent', 'legitimate_interest', 'contract', 'legal_obligation'];
-
-	const VERSION_STATUS_COLORS: Record<string, string> = {
-		draft: 'var(--text-muted)',
-		active: 'var(--success)',
-		archived: 'var(--warning)'
-	};
 
 	// ---------------------------------------------------------------------------
 	// Lifecycle
@@ -177,6 +204,17 @@
 		else if (tab === 'versions') loadVersions();
 		else if (tab === 'localizations') loadLocalizations();
 		else if (tab === 'requirements') loadRequirements();
+	}
+
+	function handleTabChange(tab: string) {
+		if (
+			tab === 'statements' ||
+			tab === 'versions' ||
+			tab === 'localizations' ||
+			tab === 'requirements'
+		) {
+			switchTab(tab);
+		}
 	}
 
 	// ---------------------------------------------------------------------------
@@ -459,20 +497,6 @@
 		});
 	}
 
-	function getCategoryBadgeColor(category: string): string {
-		const colors: Record<string, string> = {
-			terms_of_service: '#6366f1',
-			privacy_policy: '#8b5cf6',
-			cookie_policy: '#f59e0b',
-			marketing: '#10b981',
-			data_sharing: '#3b82f6',
-			analytics: '#06b6d4',
-			do_not_sell: '#ef4444',
-			custom: '#6b7280'
-		};
-		return colors[category] || colors.custom;
-	}
-
 	function getCategoryLabel(category: string): string {
 		switch (category) {
 			case 'terms_of_service':
@@ -536,69 +560,39 @@
 	<title>{$LL.admin_consent_statements_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="admin-page__header">
-		<h1 class="admin-page__title">{$LL.admin_consent_statements_title()}</h1>
-		<p class="admin-page__subtitle">
-			{$LL.admin_consent_statements_subtitle()}
-		</p>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_consent_statements_title()}
+		description={$LL.admin_consent_statements_subtitle()}
+	/>
 
 	<!-- Messages -->
 	{#if error}
-		<div class="admin-alert admin-alert--error mb-4">
+		<div class="admin-alert admin-alert--error admin-alert--stacked">
 			<span>{error}</span>
 			<button onclick={() => (error = '')}>x</button>
 		</div>
 	{/if}
 	{#if successMessage}
-		<div class="admin-alert admin-alert--success mb-4">
+		<div class="admin-alert admin-alert--success admin-alert--stacked">
 			<span>{successMessage}</span>
 			<button onclick={() => (successMessage = '')}>x</button>
 		</div>
 	{/if}
 
-	<!-- Tab Navigation -->
-	<div class="admin-tabs mb-6">
-		<button
-			class="admin-tab"
-			class:admin-tab--active={activeTab === 'statements'}
-			onclick={() => switchTab('statements')}
-		>
-			{$LL.admin_consent_statements_tab_statements()}
-		</button>
-		<button
-			class="admin-tab"
-			class:admin-tab--active={activeTab === 'versions'}
-			onclick={() => switchTab('versions')}
-			disabled={!selectedStatementId}
-		>
-			{$LL.admin_consent_statements_tab_versions()}
-			{selectedStatement ? `(${selectedStatement.slug})` : ''}
-		</button>
-		<button
-			class="admin-tab"
-			class:admin-tab--active={activeTab === 'localizations'}
-			onclick={() => switchTab('localizations')}
-			disabled={!selectedVersionId}
-		>
-			{$LL.admin_consent_statements_tab_localizations()}
-		</button>
-		<button
-			class="admin-tab"
-			class:admin-tab--active={activeTab === 'requirements'}
-			onclick={() => switchTab('requirements')}
-		>
-			{$LL.admin_consent_statements_tab_requirements()}
-		</button>
-	</div>
+	<AdminTabs
+		items={consentTabs}
+		active={activeTab}
+		onChange={handleTabChange}
+		ariaLabel={$LL.admin_consent_statements_title()}
+	/>
 
 	<!-- Tab Content -->
 	{#if loading}
 		<div class="admin-loading">{$LL.admin_consent_statements_loading()}</div>
 	{:else if activeTab === 'statements'}
 		<!-- ===== STATEMENTS TAB ===== -->
-		<div class="admin-section">
+		<div class="admin-section" id="consent-statements-panel" role="tabpanel">
 			<div class="admin-section__header">
 				<h2>{$LL.admin_consent_statements_consent_statements()}</h2>
 				<button
@@ -614,7 +608,7 @@
 			</div>
 
 			{#if showStatementForm}
-				<div class="admin-form-card mb-4">
+				<div class="admin-form-card admin-form-card--stacked">
 					<h3 class="admin-form-card__title">
 						{editingStatementId
 							? $LL.admin_consent_statements_edit()
@@ -664,7 +658,7 @@
 								bind:value={statementFormData.display_order}
 							/>
 						</div>
-						<div class="admin-form-group" style="grid-column: 1 / -1;">
+						<div class="admin-form-group admin-form-group--full">
 							<label for="stmt-purpose">{$LL.admin_consent_statements_purpose()}</label>
 							<textarea
 								id="stmt-purpose"
@@ -694,103 +688,92 @@
 				</div>
 			{/if}
 
-			<div class="admin-table-container">
-				<table class="admin-table">
-					<thead>
-						<tr>
-							<th>{$LL.admin_consent_statements_slug()}</th>
-							<th>{$LL.admin_consent_statements_category()}</th>
-							<th>{$LL.admin_consent_statements_legal_basis()}</th>
-							<th>{$LL.admin_consent_statements_order()}</th>
-							<th>{$LL.admin_consent_statements_active()}</th>
-							<th>{$LL.admin_consent_statements_created()}</th>
-							<th>{$LL.admin_consent_statements_actions()}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each statements as stmt (stmt.id)}
-							<tr
-								class:admin-table__row--selected={selectedStatementId === stmt.id}
-								onclick={() => selectStatement(stmt.id)}
-								style="cursor: pointer;"
-							>
-								<td>
-									<code class="text-sm">{stmt.slug}</code>
-								</td>
-								<td>
-									<span
-										class="admin-badge"
-										style="background: {getCategoryBadgeColor(
-											stmt.category
-										)}20; color: {getCategoryBadgeColor(stmt.category)};"
-									>
-										{getCategoryLabel(stmt.category)}
-									</span>
-								</td>
-								<td class="text-sm">{getLegalBasisLabel(stmt.legal_basis)}</td>
-								<td class="text-sm">{stmt.display_order}</td>
-								<td>
+			<AdminDataTable width="wide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_consent_statements_slug()}</th>
+						<th>{$LL.admin_consent_statements_category()}</th>
+						<th>{$LL.admin_consent_statements_legal_basis()}</th>
+						<th>{$LL.admin_consent_statements_order()}</th>
+						<th>{$LL.admin_consent_statements_active()}</th>
+						<th>{$LL.admin_consent_statements_created()}</th>
+						<th>{$LL.admin_consent_statements_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each statements as stmt (stmt.id)}
+						<tr
+							class:admin-table__row--selected={selectedStatementId === stmt.id}
+							data-clickable="true"
+							onclick={() => selectStatement(stmt.id)}
+						>
+							<td>
+								<code class="admin-code">{stmt.slug}</code>
+							</td>
+							<td>
+								<span class="admin-badge admin-badge--category" data-category={stmt.category}>
+									{getCategoryLabel(stmt.category)}
+								</span>
+							</td>
+							<td class="admin-table-cell--compact">{getLegalBasisLabel(stmt.legal_basis)}</td>
+							<td class="admin-table-cell--compact">{stmt.display_order}</td>
+							<td>
+								<button
+									class="admin-badge admin-badge--toggle"
+									data-state={stmt.is_active ? 'active' : 'inactive'}
+									onclick={(e) => {
+										e.stopPropagation();
+										toggleStatementActive(stmt);
+									}}
+								>
+									{stmt.is_active
+										? $LL.admin_consent_statements_active()
+										: $LL.admin_consent_statements_inactive()}
+								</button>
+							</td>
+							<td class="admin-table-cell--compact">{formatDate(stmt.created_at)}</td>
+							<td>
+								<div class="admin-actions-cell">
 									<button
-										class="admin-badge"
-										style="background: {stmt.is_active
-											? 'var(--success)'
-											: 'var(--text-muted)'}20; color: {stmt.is_active
-											? 'var(--success)'
-											: 'var(--text-muted)'}; cursor: pointer;"
+										class="admin-btn admin-btn--ghost admin-btn--sm"
 										onclick={(e) => {
 											e.stopPropagation();
-											toggleStatementActive(stmt);
+											editStatement(stmt);
 										}}
 									>
-										{stmt.is_active
-											? $LL.admin_consent_statements_active()
-											: $LL.admin_consent_statements_inactive()}
+										{$LL.admin_consent_statements_edit_action()}
 									</button>
-								</td>
-								<td class="text-sm">{formatDate(stmt.created_at)}</td>
-								<td>
-									<div class="admin-actions-cell">
-										<button
-											class="admin-btn admin-btn--ghost admin-btn--sm"
-											onclick={(e) => {
-												e.stopPropagation();
-												editStatement(stmt);
-											}}
-										>
-											{$LL.admin_consent_statements_edit_action()}
-										</button>
-										<button
-											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
-											onclick={(e) => {
-												e.stopPropagation();
-												deleteStatement(stmt);
-											}}
-										>
-											{$LL.admin_consent_statements_delete_action()}
-										</button>
-									</div>
-								</td>
-							</tr>
-						{:else}
-							<tr>
-								<td colspan="7" class="text-center text-sm" style="color: var(--text-muted);">
-									{$LL.admin_consent_statements_empty()}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+									<button
+										class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
+										onclick={(e) => {
+											e.stopPropagation();
+											deleteStatement(stmt);
+										}}
+									>
+										{$LL.admin_consent_statements_delete_action()}
+									</button>
+								</div>
+							</td>
+						</tr>
+					{:else}
+						<tr>
+							<td colspan="7" class="admin-table-empty">
+								{$LL.admin_consent_statements_empty()}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 
 			{#if selectedStatementId}
-				<p class="mt-3 text-sm" style="color: var(--text-secondary);">
+				<p class="selection-hint">
 					{$LL.admin_consent_statements_selected({ slug: selectedStatement?.slug || '' })}
 				</p>
 			{/if}
 		</div>
 	{:else if activeTab === 'versions'}
 		<!-- ===== VERSIONS TAB ===== -->
-		<div class="admin-section">
+		<div class="admin-section" id="consent-versions-panel" role="tabpanel">
 			<div class="admin-section__header">
 				<h2>
 					{$LL.admin_consent_versions_title({ slug: selectedStatement?.slug || '' })}
@@ -801,7 +784,7 @@
 			</div>
 
 			{#if showVersionForm}
-				<div class="admin-form-card mb-4">
+				<div class="admin-form-card admin-form-card--stacked">
 					<h3 class="admin-form-card__title">{$LL.admin_consent_versions_new()}</h3>
 					<div class="admin-form-grid">
 						<div class="admin-form-group">
@@ -851,94 +834,83 @@
 				</div>
 			{/if}
 
-			<div class="admin-table-container">
-				<table class="admin-table">
-					<thead>
-						<tr>
-							<th>{$LL.admin_consent_versions_version()}</th>
-							<th>{$LL.admin_consent_versions_content_type()}</th>
-							<th>{$LL.admin_consent_statements_status()}</th>
-							<th>{$LL.admin_consent_versions_effective()}</th>
-							<th>{$LL.admin_consent_versions_hash()}</th>
-							<th>{$LL.admin_consent_statements_actions()}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each versions as ver (ver.id)}
-							{@const statusColor =
-								VERSION_STATUS_COLORS[ver.status] || VERSION_STATUS_COLORS.draft}
-							<tr
-								class:admin-table__row--selected={selectedVersionId === ver.id}
-								onclick={() => selectVersion(ver.id)}
-								style="cursor: pointer;"
-							>
-								<td>
-									<code class="text-sm">{ver.version}</code>
-									{#if ver.is_current}
-										<span
-											class="admin-badge"
-											style="background: var(--success)20; color: var(--success); margin-left: 4px;"
-										>
-											{$LL.admin_consent_versions_current()}
-										</span>
-									{/if}
-								</td>
-								<td class="text-sm">
-									{ver.content_type === 'inline'
-										? $LL.admin_consent_content_type_inline()
-										: $LL.admin_consent_content_type_url()}
-								</td>
-								<td>
-									<span
-										class="admin-badge"
-										style="background: {statusColor}20; color: {statusColor};"
-									>
-										{getVersionStatusLabel(ver.status)}
+			<AdminDataTable width="wide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_consent_versions_version()}</th>
+						<th>{$LL.admin_consent_versions_content_type()}</th>
+						<th>{$LL.admin_consent_statements_status()}</th>
+						<th>{$LL.admin_consent_versions_effective()}</th>
+						<th>{$LL.admin_consent_versions_hash()}</th>
+						<th>{$LL.admin_consent_statements_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each versions as ver (ver.id)}
+						<tr
+							class:admin-table__row--selected={selectedVersionId === ver.id}
+							data-clickable="true"
+							onclick={() => selectVersion(ver.id)}
+						>
+							<td>
+								<code class="admin-code">{ver.version}</code>
+								{#if ver.is_current}
+									<span class="admin-badge admin-badge--success admin-badge--inline">
+										{$LL.admin_consent_versions_current()}
 									</span>
-								</td>
-								<td class="text-sm">{formatDate(ver.effective_at)}</td>
-								<td class="text-sm">
-									{ver.content_hash ? ver.content_hash.slice(0, 8) + '...' : '-'}
-								</td>
-								<td>
-									<div class="admin-actions-cell">
-										{#if ver.status === 'draft'}
-											<button
-												class="admin-btn admin-btn--ghost admin-btn--sm"
-												style="color: var(--success);"
-												onclick={(e) => {
-													e.stopPropagation();
-													confirmActivate(ver.id);
-												}}
-											>
-												{$LL.admin_consent_versions_activate()}
-											</button>
-											<button
-												class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
-												onclick={(e) => {
-													e.stopPropagation();
-													deleteVersion(ver.id);
-												}}
-											>
-												{$LL.admin_consent_statements_delete_action()}
-											</button>
-										{/if}
-									</div>
-								</td>
-							</tr>
-						{:else}
-							<tr>
-								<td colspan="6" class="text-center text-sm" style="color: var(--text-muted);">
-									{$LL.admin_consent_versions_empty()}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+								{/if}
+							</td>
+							<td class="admin-table-cell--compact">
+								{ver.content_type === 'inline'
+									? $LL.admin_consent_content_type_inline()
+									: $LL.admin_consent_content_type_url()}
+							</td>
+							<td>
+								<span class="admin-badge admin-badge--version" data-status={ver.status}>
+									{getVersionStatusLabel(ver.status)}
+								</span>
+							</td>
+							<td class="admin-table-cell--compact">{formatDate(ver.effective_at)}</td>
+							<td class="admin-table-cell--compact">
+								{ver.content_hash ? ver.content_hash.slice(0, 8) + '...' : '-'}
+							</td>
+							<td>
+								<div class="admin-actions-cell">
+									{#if ver.status === 'draft'}
+										<button
+											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--success"
+											onclick={(e) => {
+												e.stopPropagation();
+												confirmActivate(ver.id);
+											}}
+										>
+											{$LL.admin_consent_versions_activate()}
+										</button>
+										<button
+											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
+											onclick={(e) => {
+												e.stopPropagation();
+												deleteVersion(ver.id);
+											}}
+										>
+											{$LL.admin_consent_statements_delete_action()}
+										</button>
+									{/if}
+								</div>
+							</td>
+						</tr>
+					{:else}
+						<tr>
+							<td colspan="6" class="admin-table-empty">
+								{$LL.admin_consent_versions_empty()}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 
 			{#if selectedVersionId}
-				<p class="mt-3 text-sm" style="color: var(--text-secondary);">
+				<p class="selection-hint">
 					{$LL.admin_consent_versions_selected()}
 				</p>
 			{/if}
@@ -979,7 +951,7 @@
 		{/if}
 	{:else if activeTab === 'localizations'}
 		<!-- ===== LOCALIZATIONS TAB ===== -->
-		<div class="admin-section">
+		<div class="admin-section" id="consent-localizations-panel" role="tabpanel">
 			<div class="admin-section__header">
 				<h2>{$LL.admin_consent_statements_tab_localizations()}</h2>
 				<button
@@ -995,7 +967,7 @@
 			</div>
 
 			{#if showLocalizationForm}
-				<div class="admin-form-card mb-4">
+				<div class="admin-form-card admin-form-card--stacked">
 					<h3 class="admin-form-card__title">
 						{editingLanguage
 							? $LL.admin_consent_localizations_edit({ language: editingLanguage })
@@ -1023,7 +995,7 @@
 								placeholder={$LL.admin_consent_localizations_placeholder_title()}
 							/>
 						</div>
-						<div class="admin-form-group" style="grid-column: 1 / -1;">
+						<div class="admin-form-group admin-form-group--full">
 							<label for="loc-desc">{$LL.admin_consent_localizations_description()}</label>
 							<textarea
 								id="loc-desc"
@@ -1043,7 +1015,7 @@
 								placeholder="https://example.com/policy.html"
 							/>
 						</div>
-						<div class="admin-form-group" style="grid-column: 1 / -1;">
+						<div class="admin-form-group admin-form-group--full">
 							<label for="loc-inline">{$LL.admin_consent_localizations_inline()}</label>
 							<textarea
 								id="loc-inline"
@@ -1073,75 +1045,70 @@
 				</div>
 			{/if}
 
-			<div class="admin-table-container">
-				<table class="admin-table">
-					<thead>
+			<AdminDataTable width="wide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_consent_localizations_language()}</th>
+						<th>{$LL.admin_consent_localizations_title()}</th>
+						<th>{$LL.admin_consent_localizations_description()}</th>
+						<th>{$LL.admin_consent_localizations_url()}</th>
+						<th>{$LL.admin_consent_statements_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each localizations as loc (loc.id)}
 						<tr>
-							<th>{$LL.admin_consent_localizations_language()}</th>
-							<th>{$LL.admin_consent_localizations_title()}</th>
-							<th>{$LL.admin_consent_localizations_description()}</th>
-							<th>{$LL.admin_consent_localizations_url()}</th>
-							<th>{$LL.admin_consent_statements_actions()}</th>
+							<td>
+								<code class="admin-code">{loc.language}</code>
+							</td>
+							<td class="admin-table-cell--compact">{loc.title}</td>
+							<td class="admin-table-cell--compact admin-cell--truncate">
+								{loc.description}
+							</td>
+							<td class="admin-table-cell--compact">
+								{#if loc.document_url}
+									<a
+										href={loc.document_url}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="admin-link"
+									>
+										{$LL.admin_consent_localizations_link()}
+									</a>
+								{:else}
+									-
+								{/if}
+							</td>
+							<td>
+								<div class="admin-actions-cell">
+									<button
+										class="admin-btn admin-btn--ghost admin-btn--sm"
+										onclick={() => editLocalization(loc)}
+									>
+										{$LL.admin_consent_statements_edit_action()}
+									</button>
+									<button
+										class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
+										onclick={() => deleteLocalization(loc.language)}
+									>
+										{$LL.admin_consent_statements_delete_action()}
+									</button>
+								</div>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each localizations as loc (loc.id)}
-							<tr>
-								<td>
-									<code class="text-sm">{loc.language}</code>
-								</td>
-								<td class="text-sm">{loc.title}</td>
-								<td
-									class="text-sm"
-									style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;"
-								>
-									{loc.description}
-								</td>
-								<td class="text-sm">
-									{#if loc.document_url}
-										<a
-											href={loc.document_url}
-											target="_blank"
-											rel="noopener noreferrer"
-											style="color: var(--primary);"
-										>
-											{$LL.admin_consent_localizations_link()}
-										</a>
-									{:else}
-										-
-									{/if}
-								</td>
-								<td>
-									<div class="admin-actions-cell">
-										<button
-											class="admin-btn admin-btn--ghost admin-btn--sm"
-											onclick={() => editLocalization(loc)}
-										>
-											{$LL.admin_consent_statements_edit_action()}
-										</button>
-										<button
-											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
-											onclick={() => deleteLocalization(loc.language)}
-										>
-											{$LL.admin_consent_statements_delete_action()}
-										</button>
-									</div>
-								</td>
-							</tr>
-						{:else}
-							<tr>
-								<td colspan="5" class="text-center text-sm" style="color: var(--text-muted);">
-									{$LL.admin_consent_localizations_empty()}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{:else}
+						<tr>
+							<td colspan="5" class="admin-table-empty">
+								{$LL.admin_consent_localizations_empty()}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		</div>
 	{:else if activeTab === 'requirements'}
 		<!-- ===== REQUIREMENTS TAB ===== -->
-		<div class="admin-section">
+		<div class="admin-section" id="consent-requirements-panel" role="tabpanel">
 			<div class="admin-section__header">
 				<h2>{$LL.admin_consent_requirements_title()}</h2>
 				<button
@@ -1156,7 +1123,7 @@
 			</div>
 
 			{#if showRequirementForm}
-				<div class="admin-form-card mb-4">
+				<div class="admin-form-card admin-form-card--stacked">
 					<h3 class="admin-form-card__title">
 						{requirementFormData.statement_id
 							? $LL.admin_consent_requirements_edit()
@@ -1256,7 +1223,7 @@
 								/>
 							</div>
 						{/if}
-						<div class="admin-form-group" style="grid-column: 1 / -1;">
+						<div class="admin-form-group admin-form-group--full">
 							<label for="req-rules">{$LL.admin_consent_requirements_rules()}</label>
 							<textarea
 								id="req-rules"
@@ -1281,146 +1248,99 @@
 				</div>
 			{/if}
 
-			<div class="admin-table-container">
-				<table class="admin-table">
-					<thead>
+			<AdminDataTable width="wide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_consent_requirements_statement()}</th>
+						<th>{$LL.admin_consent_requirements_required()}</th>
+						<th>{$LL.admin_consent_requirements_enforcement()}</th>
+						<th>{$LL.admin_consent_requirements_min_version()}</th>
+						<th>{$LL.admin_consent_statements_order()}</th>
+						<th>{$LL.admin_consent_statements_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each requirements as req (req.id)}
 						<tr>
-							<th>{$LL.admin_consent_requirements_statement()}</th>
-							<th>{$LL.admin_consent_requirements_required()}</th>
-							<th>{$LL.admin_consent_requirements_enforcement()}</th>
-							<th>{$LL.admin_consent_requirements_min_version()}</th>
-							<th>{$LL.admin_consent_statements_order()}</th>
-							<th>{$LL.admin_consent_statements_actions()}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each requirements as req (req.id)}
-							<tr>
-								<td>
-									<code class="text-sm">{getStatementSlug(req.statement_id)}</code>
-								</td>
-								<td>
-									<span
-										class="admin-badge"
-										style="background: {req.is_required
-											? 'var(--danger)'
-											: 'var(--text-muted)'}20; color: {req.is_required
-											? 'var(--danger)'
-											: 'var(--text-muted)'};"
+							<td>
+								<code class="admin-code">{getStatementSlug(req.statement_id)}</code>
+							</td>
+							<td>
+								<span
+									class="admin-badge admin-badge--requirement"
+									data-required={req.is_required ? 'true' : 'false'}
+								>
+									{req.is_required
+										? $LL.admin_consent_requirements_required()
+										: $LL.admin_consent_requirements_optional()}
+								</span>
+							</td>
+							<td class="admin-table-cell--compact">{getEnforcementLabel(req.enforcement)}</td>
+							<td class="admin-table-cell--compact">{req.min_version || '-'}</td>
+							<td class="admin-table-cell--compact">{req.display_order}</td>
+							<td>
+								<div class="admin-actions-cell">
+									<button
+										class="admin-btn admin-btn--ghost admin-btn--sm"
+										onclick={() => editRequirement(req)}
 									>
-										{req.is_required
-											? $LL.admin_consent_requirements_required()
-											: $LL.admin_consent_requirements_optional()}
-									</span>
-								</td>
-								<td class="text-sm">{getEnforcementLabel(req.enforcement)}</td>
-								<td class="text-sm">{req.min_version || '-'}</td>
-								<td class="text-sm">{req.display_order}</td>
-								<td>
-									<div class="admin-actions-cell">
-										<button
-											class="admin-btn admin-btn--ghost admin-btn--sm"
-											onclick={() => editRequirement(req)}
-										>
-											{$LL.admin_consent_statements_edit_action()}
-										</button>
-										<button
-											class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
-											onclick={() => deleteRequirement(req.statement_id)}
-										>
-											{$LL.admin_consent_statements_delete_action()}
-										</button>
-									</div>
-								</td>
-							</tr>
-						{:else}
-							<tr>
-								<td colspan="6" class="text-center text-sm" style="color: var(--text-muted);">
-									{$LL.admin_consent_requirements_empty()}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+										{$LL.admin_consent_statements_edit_action()}
+									</button>
+									<button
+										class="admin-btn admin-btn--ghost admin-btn--sm admin-btn--danger"
+										onclick={() => deleteRequirement(req.statement_id)}
+									>
+										{$LL.admin_consent_statements_delete_action()}
+									</button>
+								</div>
+							</td>
+						</tr>
+					{:else}
+						<tr>
+							<td colspan="6" class="admin-table-empty">
+								{$LL.admin_consent_requirements_empty()}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.admin-page {
-		max-width: 1200px;
-		margin: 0 auto;
-		padding: 24px;
-	}
-
-	.admin-page__header {
-		margin-bottom: 24px;
-	}
-
-	.admin-page__title {
-		font-size: 1.5rem;
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.admin-page__subtitle {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		margin-top: 4px;
-	}
-
-	.admin-tabs {
-		display: flex;
-		gap: 4px;
-		border-bottom: 1px solid var(--border);
-		padding-bottom: 0;
-	}
-
-	.admin-tab {
-		padding: 8px 16px;
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		background: none;
-		border: none;
-		border-bottom: 2px solid transparent;
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-
-	.admin-tab:hover:not(:disabled) {
-		color: var(--text-primary);
-	}
-
-	.admin-tab--active {
-		color: var(--primary);
-		border-bottom-color: var(--primary);
-		font-weight: 500;
-	}
-
-	.admin-tab:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
+	.admin-section,
+	.admin-section *,
+	.admin-section *::before,
+	.admin-section *::after,
+	.admin-modal,
+	.admin-modal *,
+	.admin-modal *::before,
+	.admin-modal *::after {
+		box-sizing: border-box;
 	}
 
 	.admin-section {
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 20px;
+		background: var(--settings-panel-bg, var(--color-surface));
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		padding: var(--settings-panel-padding, 20px);
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
+		min-width: 0;
 	}
 
 	.admin-section__header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: 12px;
 		margin-bottom: 16px;
 	}
 
 	.admin-section__header h2 {
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: var(--text-primary);
+		font-size: var(--settings-section-title-size, 1.125rem);
+		font-weight: var(--settings-section-title-weight, 600);
+		color: var(--color-text);
 	}
 
 	.admin-alert {
@@ -1428,18 +1348,18 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 12px 16px;
-		border-radius: 8px;
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
 	}
 
 	.admin-alert--error {
-		background: var(--danger-light, #fef2f2);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-danger);
 	}
 
 	.admin-alert--success {
-		background: var(--success-light, #f0fdf4);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
 	}
 
 	.admin-alert button {
@@ -1451,10 +1371,15 @@
 		opacity: 0.7;
 	}
 
+	.admin-alert--stacked,
+	.admin-form-card--stacked {
+		margin-bottom: 1rem;
+	}
+
 	.admin-form-card {
-		background: var(--surface-secondary, #f9fafb);
-		border: 1px solid var(--border);
-		border-radius: 8px;
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 16px;
 	}
 
@@ -1462,13 +1387,14 @@
 		font-size: 0.875rem;
 		font-weight: 600;
 		margin-bottom: 12px;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.admin-form-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: 12px;
+		min-width: 0;
 	}
 
 	.admin-form-group {
@@ -1477,25 +1403,30 @@
 		gap: 4px;
 	}
 
+	.admin-form-group--full {
+		grid-column: 1 / -1;
+	}
+
 	.admin-form-group label {
-		font-size: 0.75rem;
-		font-weight: 500;
-		color: var(--text-secondary);
+		font-size: var(--settings-label-size, 0.75rem);
+		font-weight: var(--settings-label-weight, 500);
+		color: var(--color-text-muted);
 	}
 
 	.admin-input {
-		padding: 8px 12px;
-		border: 1px solid var(--border);
-		border-radius: 6px;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
-		background: var(--surface);
-		color: var(--text-primary);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 	}
 
 	.admin-input:focus {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 2px var(--primary-light, rgba(59, 130, 246, 0.15));
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 2px var(--color-accent-muted);
 	}
 
 	textarea.admin-input {
@@ -1504,6 +1435,7 @@
 
 	.admin-form-actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 8px;
 		justify-content: flex-end;
 		margin-top: 12px;
@@ -1511,7 +1443,7 @@
 
 	.admin-btn {
 		padding: 6px 14px;
-		border-radius: 6px;
+		border-radius: var(--radius-control);
 		font-size: 0.813rem;
 		font-weight: 500;
 		cursor: pointer;
@@ -1520,8 +1452,8 @@
 	}
 
 	.admin-btn--primary {
-		background: var(--primary);
-		color: white;
+		background: var(--color-accent);
+		color: var(--color-accent-contrast);
 	}
 
 	.admin-btn--primary:hover {
@@ -1529,19 +1461,19 @@
 	}
 
 	.admin-btn--secondary {
-		background: var(--surface);
-		border-color: var(--border);
-		color: var(--text-primary);
+		background: var(--color-surface);
+		border-color: var(--color-border);
+		color: var(--color-text);
 	}
 
 	.admin-btn--ghost {
 		background: none;
-		color: var(--primary);
+		color: var(--color-accent);
 		padding: 4px 8px;
 	}
 
 	.admin-btn--ghost:hover {
-		background: var(--primary-light, rgba(59, 130, 246, 0.1));
+		background: var(--color-accent-muted);
 	}
 
 	.admin-btn--sm {
@@ -1550,72 +1482,136 @@
 	}
 
 	.admin-btn--danger {
-		color: var(--danger);
+		color: var(--color-danger);
+	}
+
+	.admin-btn--success {
+		color: var(--color-success);
 	}
 
 	.admin-btn--danger:hover {
-		background: var(--danger-light, rgba(239, 68, 68, 0.1));
-	}
-
-	.admin-table-container {
-		overflow-x: auto;
-	}
-
-	.admin-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-	}
-
-	.admin-table th {
-		text-align: left;
-		padding: 8px 12px;
-		font-weight: 500;
-		color: var(--text-secondary);
-		border-bottom: 1px solid var(--border);
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.admin-table td {
-		padding: 10px 12px;
-		border-bottom: 1px solid var(--border);
-		color: var(--text-primary);
-	}
-
-	.admin-table tbody tr:hover {
-		background: var(--surface-secondary, #f9fafb);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 	}
 
 	:global(.admin-table__row--selected) {
-		background: var(--primary-light, rgba(59, 130, 246, 0.08)) !important;
+		background: var(--color-accent-muted) !important;
+	}
+
+	.admin-table-empty,
+	.selection-hint {
+		color: var(--color-text-muted);
+	}
+
+	.admin-table-empty {
+		text-align: center;
+		font-size: 0.875rem;
+	}
+
+	.selection-hint {
+		margin: 0.75rem 0 0;
+		font-size: 0.875rem;
+		line-height: 1.5;
+	}
+
+	.admin-code,
+	.admin-table-cell--compact {
+		font-size: 0.875rem;
+	}
+
+	.admin-code {
+		font-family: var(--font-mono);
+		color: var(--color-text);
+	}
+
+	.admin-cell--truncate {
+		max-width: 200px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.admin-link {
+		color: var(--color-accent);
 	}
 
 	.admin-badge {
 		display: inline-block;
-		padding: 2px 8px;
-		border-radius: 12px;
-		font-size: 0.75rem;
+		padding: var(--settings-badge-padding, 2px 8px);
+		border: var(--settings-badge-border, none);
+		border-radius: var(--settings-badge-radius, 12px);
+		font-size: var(--settings-badge-size, 0.75rem);
 		font-weight: 500;
-		border: none;
+		letter-spacing: var(--settings-badge-letter-spacing, 0);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+	}
+
+	.admin-badge--inline {
+		margin-left: 4px;
+	}
+
+	.admin-badge--toggle {
+		cursor: pointer;
+	}
+
+	.admin-badge--success,
+	.admin-badge--toggle[data-state='active'],
+	.admin-badge--version[data-status='active'] {
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
+	}
+
+	.admin-badge--toggle[data-state='inactive'],
+	.admin-badge--version[data-status='draft'],
+	.admin-badge--requirement[data-required='false'] {
+		background: var(--color-surface-muted);
+		color: var(--color-text-subtle);
+	}
+
+	.admin-badge--version[data-status='archived'] {
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
+	}
+
+	.admin-badge--requirement[data-required='true'],
+	.admin-badge--category[data-category='do_not_sell'] {
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-danger);
+	}
+
+	.admin-badge--category[data-category='cookie_policy'] {
+		background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+		color: var(--color-warning);
+	}
+
+	.admin-badge--category[data-category='marketing'] {
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
+	}
+
+	.admin-badge--category[data-category='terms_of_service'],
+	.admin-badge--category[data-category='privacy_policy'],
+	.admin-badge--category[data-category='data_sharing'],
+	.admin-badge--category[data-category='analytics'] {
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.admin-actions-cell {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 4px;
 	}
 
 	.admin-loading {
 		text-align: center;
 		padding: 48px;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 	}
 
 	.admin-modal-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--color-overlay-scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1623,31 +1619,48 @@
 	}
 
 	.admin-modal {
-		background: var(--surface);
-		border-radius: 12px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 24px;
 		max-width: 480px;
 		width: 90%;
-		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+		box-shadow: var(--card-shadow, var(--shadow-panel));
 	}
 
 	.admin-modal__title {
 		font-size: 1.125rem;
 		font-weight: 600;
 		margin-bottom: 8px;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.admin-modal__text {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-bottom: 20px;
 		line-height: 1.5;
 	}
 
 	.admin-modal__actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 8px;
 		justify-content: flex-end;
+	}
+
+	@media (max-width: 640px) {
+		.admin-section {
+			padding: 16px;
+		}
+
+		.admin-section__header {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.admin-form-grid {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

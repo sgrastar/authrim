@@ -1,6 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
+	import { Modal } from '$lib/components';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 
 	// ==========================================================================
 	// Types
@@ -83,7 +91,7 @@
 			};
 			mappings = result.mappings;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load mappings';
+			error = err instanceof Error ? err.message : $LL.admin_tenant_domain_mappings_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -105,7 +113,7 @@
 
 	async function handleCreate() {
 		if (!newDomain.trim() || !newTenantId.trim()) {
-			createError = 'Domain and Tenant ID are required';
+			createError = $LL.admin_tenant_domain_mappings_required();
 			return;
 		}
 		creating = true;
@@ -120,10 +128,13 @@
 				})
 			});
 			showCreateDialog = false;
-			successMessage = `Domain mapping for "${newDomain.trim()}" created successfully.`;
+			successMessage = $LL.admin_tenant_domain_mappings_create_success({
+				domain: newDomain.trim()
+			});
 			await loadMappings();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create mapping';
+			createError =
+				err instanceof Error ? err.message : $LL.admin_tenant_domain_mappings_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -143,7 +154,7 @@
 
 	async function handleInitiateVerification() {
 		if (!verifyingMapping || !verifyDomain.trim()) {
-			verifyError = 'Domain is required';
+			verifyError = $LL.admin_tenant_domain_mappings_verify_domain_required();
 			return;
 		}
 		verifying = true;
@@ -159,7 +170,8 @@
 				type: result.dns_record_type
 			};
 		} catch (err) {
-			verifyError = err instanceof Error ? err.message : 'Failed to initiate verification';
+			verifyError =
+				err instanceof Error ? err.message : $LL.admin_tenant_domain_mappings_verify_failed();
 		} finally {
 			verifying = false;
 		}
@@ -175,10 +187,13 @@
 				body: JSON.stringify({ id: verifyingMapping.id, domain: verifyDomain.trim() })
 			});
 			showVerifyDialog = false;
-			successMessage = `Domain "${verifyDomain.trim()}" verified successfully.`;
+			successMessage = $LL.admin_tenant_domain_mappings_verify_success({
+				domain: verifyDomain.trim()
+			});
 			await loadMappings();
 		} catch (err) {
-			verifyError = err instanceof Error ? err.message : 'Verification failed. Check DNS record.';
+			verifyError =
+				err instanceof Error ? err.message : $LL.admin_tenant_domain_mappings_confirm_failed();
 		} finally {
 			confirmingVerification = false;
 		}
@@ -189,14 +204,14 @@
 	// ==========================================================================
 
 	async function handleDelete(id: string) {
-		if (!confirm('Delete this domain mapping? This cannot be undone.')) return;
+		if (!confirm($LL.admin_tenant_domain_mappings_delete_confirm())) return;
 		deletingId = id;
 		try {
 			await apiFetch(`/api/admin/platform/tenant-domain-mappings/${id}`, { method: 'DELETE' });
 			mappings = mappings.filter((m) => m.id !== id);
-			successMessage = 'Domain mapping deleted.';
+			successMessage = $LL.admin_tenant_domain_mappings_delete_success();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete mapping';
+			error = err instanceof Error ? err.message : $LL.admin_tenant_domain_mappings_delete_failed();
 		} finally {
 			deletingId = '';
 		}
@@ -211,21 +226,24 @@
 	}
 </script>
 
-<div class="page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">Tenant Domain Mappings</h1>
-			<p class="page-description">
-				Map email domains to tenants for automatic routing during signup. Requires <strong
-					>system admin</strong
-				> privileges.
-			</p>
-		</div>
-		<button class="btn btn-primary" onclick={openCreateDialog}>
-			<i class="i-ph-plus"></i>
-			Add Mapping
-		</button>
-	</div>
+<svelte:head>
+	<title>{$LL.admin_tenant_domain_mappings_head_title()}</title>
+</svelte:head>
+
+{#snippet pageActions()}
+	<button class="btn btn-primary" onclick={openCreateDialog}>
+		<i class="i-ph-plus"></i>
+		{$LL.admin_tenant_domain_mappings_add()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_tenant_domain_mappings_title()}
+		description={$LL.admin_tenant_domain_mappings_description()}
+		eyebrow={$LL.admin_tenant_domain_mappings_platform()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">
@@ -244,351 +262,326 @@
 	<div class="info-box">
 		<i class="i-ph-info"></i>
 		<div>
-			<strong>How it works:</strong> When a user signs up with an email like
-			<code>user@company.com</code>, and <code>company.com</code> is mapped to the
-			<code>acme</code> tenant (verified, active), they will be automatically routed to that tenant. Host
-			header resolution takes priority over this mapping.
+			<strong>{$LL.admin_tenant_domain_mappings_how_it_works_label()}</strong>
+			{$LL.admin_tenant_domain_mappings_how_it_works({
+				email: 'user@company.com',
+				domain: 'company.com',
+				tenant: 'acme'
+			})}
 		</div>
 	</div>
 
-	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch animate-spin"></i>
-			Loading mappings...
-		</div>
-	{:else if mappings.length === 0}
-		<div class="empty-state">
-			<i class="i-ph-globe"></i>
-			<p>No tenant domain mappings configured.</p>
-		</div>
-	{:else}
-		<div class="table-container">
-			<table class="table">
-				<thead>
-					<tr>
-						<th>Tenant</th>
-						<th>Priority</th>
-						<th>Status</th>
-						<th>Verified</th>
-						<th>Created</th>
-						<th>Actions</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each mappings as mapping (mapping.id)}
+	<AdminSection>
+		{#if loading}
+			<div class="loading-state">
+				<i class="i-ph-circle-notch animate-spin"></i>
+				{$LL.admin_tenant_domain_mappings_loading()}
+			</div>
+		{:else if mappings.length === 0}
+			<div class="empty-state">
+				<i class="i-ph-globe"></i>
+				<p>{$LL.admin_tenant_domain_mappings_empty()}</p>
+			</div>
+		{:else}
+			<div class="mapping-table">
+				<AdminDataTable>
+					<thead>
 						<tr>
-							<td class="mono">{mapping.tenant_id}</td>
-							<td>{mapping.priority}</td>
-							<td>
+							<th>{$LL.admin_tenant_domain_mappings_tenant()}</th>
+							<th>{$LL.admin_tenant_domain_mappings_priority()}</th>
+							<th>{$LL.admin_tenant_domain_mappings_status()}</th>
+							<th>{$LL.admin_tenant_domain_mappings_verified()}</th>
+							<th>{$LL.admin_tenant_domain_mappings_created()}</th>
+							<th>{$LL.admin_tenant_domain_mappings_actions()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each mappings as mapping (mapping.id)}
+							<tr>
+								<td class="mono">{mapping.tenant_id}</td>
+								<td>{mapping.priority}</td>
+								<td>
+									{#if mapping.is_active}
+										<span class="badge badge-active"
+											>{$LL.admin_tenant_domain_mappings_active()}</span
+										>
+									{:else}
+										<span class="badge badge-inactive"
+											>{$LL.admin_tenant_domain_mappings_inactive()}</span
+										>
+									{/if}
+								</td>
+								<td>
+									{#if mapping.verified}
+										<span class="badge badge-verified">
+											<i class="i-ph-check"></i>
+											{$LL.admin_tenant_domain_mappings_verified()}
+										</span>
+									{:else}
+										<span class="badge badge-unverified">
+											{$LL.admin_tenant_domain_mappings_unverified()}
+										</span>
+									{/if}
+								</td>
+								<td>{formatDate(mapping.created_at)}</td>
+								<td class="actions">
+									{#if !mapping.verified}
+										<button
+											class="btn btn-sm btn-secondary"
+											onclick={() => openVerifyDialog(mapping)}
+										>
+											{$LL.admin_tenant_domain_mappings_verify_dns()}
+										</button>
+									{/if}
+									<button
+										class="btn btn-sm btn-danger-outline"
+										disabled={deletingId === mapping.id}
+										onclick={() => handleDelete(mapping.id)}
+									>
+										{#if deletingId === mapping.id}
+											<i class="i-ph-circle-notch animate-spin"></i>
+										{:else}
+											{$LL.admin_tenant_domain_mappings_delete()}
+										{/if}
+									</button>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</AdminDataTable>
+			</div>
+
+			<div class="mapping-cards">
+				{#each mappings as mapping (mapping.id)}
+					<article class="mapping-card">
+						<div class="mapping-card__header">
+							<div>
+								<p class="mapping-card__label">{$LL.admin_tenant_domain_mappings_tenant()}</p>
+								<p class="mapping-card__title">{mapping.tenant_id}</p>
+							</div>
+							<div class="mapping-card__badges">
 								{#if mapping.is_active}
-									<span class="badge badge-active">Active</span>
+									<span class="badge badge-active">{$LL.admin_tenant_domain_mappings_active()}</span
+									>
 								{:else}
-									<span class="badge badge-inactive">Inactive</span>
+									<span class="badge badge-inactive"
+										>{$LL.admin_tenant_domain_mappings_inactive()}</span
+									>
 								{/if}
-							</td>
-							<td>
 								{#if mapping.verified}
 									<span class="badge badge-verified">
 										<i class="i-ph-check"></i>
-										Verified
+										{$LL.admin_tenant_domain_mappings_verified()}
 									</span>
 								{:else}
-									<span class="badge badge-unverified">Unverified</span>
+									<span class="badge badge-unverified">
+										{$LL.admin_tenant_domain_mappings_unverified()}
+									</span>
 								{/if}
-							</td>
-							<td>{formatDate(mapping.created_at)}</td>
-							<td class="actions">
-								{#if !mapping.verified}
-									<button
-										class="btn btn-sm btn-secondary"
-										onclick={() => openVerifyDialog(mapping)}
-									>
-										Verify DNS
-									</button>
-								{/if}
-								<button
-									class="btn btn-sm btn-danger-outline"
-									disabled={deletingId === mapping.id}
-									onclick={() => handleDelete(mapping.id)}
-								>
-									{#if deletingId === mapping.id}
-										<i class="i-ph-circle-notch animate-spin"></i>
-									{:else}
-										Delete
-									{/if}
+							</div>
+						</div>
+						<dl class="mapping-card__meta">
+							<div>
+								<dt>{$LL.admin_tenant_domain_mappings_priority()}</dt>
+								<dd>{mapping.priority}</dd>
+							</div>
+							<div>
+								<dt>{$LL.admin_tenant_domain_mappings_created()}</dt>
+								<dd>{formatDate(mapping.created_at)}</dd>
+							</div>
+						</dl>
+						<div class="mapping-card__actions">
+							{#if !mapping.verified}
+								<button class="btn btn-secondary" onclick={() => openVerifyDialog(mapping)}>
+									{$LL.admin_tenant_domain_mappings_verify_dns()}
 								</button>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
-</div>
+							{/if}
+							<button
+								class="btn btn-danger-outline"
+								disabled={deletingId === mapping.id}
+								onclick={() => handleDelete(mapping.id)}
+							>
+								{deletingId === mapping.id
+									? $LL.admin_tenant_domain_mappings_deleting()
+									: $LL.admin_tenant_domain_mappings_delete()}
+							</button>
+						</div>
+					</article>
+				{/each}
+			</div>
+		{/if}
+	</AdminSection>
+</AdminPageShell>
 
 <!-- Create Dialog -->
-{#if showCreateDialog}
-	<div
-		class="modal-overlay"
-		onclick={() => (showCreateDialog = false)}
-		role="button"
-		tabindex="-1"
-		aria-label="Close dialog"
-		onkeydown={(e) => e.key === 'Escape' && (showCreateDialog = false)}
-	></div>
-	<div class="modal" role="dialog" aria-modal="true" aria-labelledby="create-dialog-title">
-		<div class="modal-header">
-			<h2 id="create-dialog-title">Add Domain Mapping</h2>
-			<button class="modal-close" onclick={() => (showCreateDialog = false)} aria-label="Close">
-				<i class="i-ph-x"></i>
-			</button>
-		</div>
-		<div class="modal-body">
-			{#if createError}
-				<div class="alert alert-error">{createError}</div>
-			{/if}
-			<div class="form-group">
-				<label for="new-domain" class="form-label">Domain <span class="required">*</span></label>
-				<input
-					id="new-domain"
-					type="text"
-					class="form-input"
-					bind:value={newDomain}
-					placeholder="e.g. company.com"
-					autocomplete="off"
-				/>
-				<p class="field-hint">
-					Lowercase domain. Users with this email domain will be routed to the tenant.
-				</p>
-			</div>
-			<div class="form-group">
-				<label for="new-tenant" class="form-label">Tenant ID <span class="required">*</span></label>
-				<input
-					id="new-tenant"
-					type="text"
-					class="form-input"
-					bind:value={newTenantId}
-					placeholder="e.g. acme"
-					autocomplete="off"
-				/>
-			</div>
-			<div class="form-group">
-				<label for="new-priority" class="form-label">Priority</label>
-				<input
-					id="new-priority"
-					type="number"
-					class="form-input"
-					bind:value={newPriority}
-					min="0"
-					max="1000"
-				/>
-				<p class="field-hint">Higher value = higher priority. Used when multiple mappings match.</p>
-			</div>
-		</div>
-		<div class="modal-footer">
-			<button
-				class="btn btn-secondary"
-				onclick={() => (showCreateDialog = false)}
-				disabled={creating}
-			>
-				Cancel
-			</button>
-			<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
-				{#if creating}
-					<i class="i-ph-circle-notch animate-spin"></i>
-					Creating...
-				{:else}
-					Create Mapping
-				{/if}
-			</button>
-		</div>
+<Modal
+	open={showCreateDialog}
+	onClose={() => (showCreateDialog = false)}
+	title={$LL.admin_tenant_domain_mappings_add_title()}
+>
+	{#if createError}
+		<div class="alert alert-error">{createError}</div>
+	{/if}
+	<div class="form-group">
+		<label for="new-domain" class="form-label">
+			{$LL.admin_tenant_domain_mappings_domain()} <span class="required">*</span>
+		</label>
+		<input
+			id="new-domain"
+			type="text"
+			class="form-input"
+			bind:value={newDomain}
+			placeholder={$LL.admin_tenant_domain_mappings_domain_placeholder()}
+			autocomplete="off"
+		/>
+		<p class="field-hint">
+			{$LL.admin_tenant_domain_mappings_domain_hint()}
+		</p>
 	</div>
-{/if}
+	<div class="form-group">
+		<label for="new-tenant" class="form-label">
+			{$LL.admin_tenant_domain_mappings_tenant_id()} <span class="required">*</span>
+		</label>
+		<input
+			id="new-tenant"
+			type="text"
+			class="form-input"
+			bind:value={newTenantId}
+			placeholder={$LL.admin_tenant_domain_mappings_tenant_placeholder()}
+			autocomplete="off"
+		/>
+	</div>
+	<div class="form-group">
+		<label for="new-priority" class="form-label">
+			{$LL.admin_tenant_domain_mappings_priority()}
+		</label>
+		<input
+			id="new-priority"
+			type="number"
+			class="form-input"
+			bind:value={newPriority}
+			min="0"
+			max="1000"
+		/>
+		<p class="field-hint">{$LL.admin_tenant_domain_mappings_priority_hint()}</p>
+	</div>
+
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={() => (showCreateDialog = false)}
+			disabled={creating}
+		>
+			{$LL.admin_tenant_domain_mappings_cancel()}
+		</button>
+		<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
+			{#if creating}
+				<i class="i-ph-circle-notch animate-spin"></i>
+				{$LL.admin_tenant_domain_mappings_creating()}
+			{:else}
+				{$LL.admin_tenant_domain_mappings_create()}
+			{/if}
+		</button>
+	{/snippet}
+</Modal>
 
 <!-- Verify Dialog -->
-{#if showVerifyDialog && verifyingMapping}
-	<div
-		class="modal-overlay"
-		onclick={() => (showVerifyDialog = false)}
-		role="button"
-		tabindex="-1"
-		aria-label="Close dialog"
-		onkeydown={(e) => e.key === 'Escape' && (showVerifyDialog = false)}
-	></div>
-	<div
-		class="modal modal-wide"
-		role="dialog"
-		aria-modal="true"
-		aria-labelledby="verify-dialog-title"
-	>
-		<div class="modal-header">
-			<h2 id="verify-dialog-title">Verify Domain Ownership</h2>
-			<button class="modal-close" onclick={() => (showVerifyDialog = false)} aria-label="Close">
-				<i class="i-ph-x"></i>
+<Modal
+	open={showVerifyDialog && !!verifyingMapping}
+	onClose={() => (showVerifyDialog = false)}
+	title={$LL.admin_tenant_domain_mappings_verify_title()}
+	size="lg"
+>
+	{#if verifyingMapping}
+		{#if verifyError}
+			<div class="alert alert-error">{verifyError}</div>
+		{/if}
+		<p class="verify-intro">
+			{$LL.admin_tenant_domain_mappings_verify_intro({ tenant: verifyingMapping.tenant_id })}
+		</p>
+		<div class="form-group">
+			<label for="verify-domain" class="form-label">
+				{$LL.admin_tenant_domain_mappings_domain()} <span class="required">*</span>
+			</label>
+			<input
+				id="verify-domain"
+				type="text"
+				class="form-input"
+				bind:value={verifyDomain}
+				placeholder={$LL.admin_tenant_domain_mappings_domain_placeholder()}
+				autocomplete="off"
+			/>
+		</div>
+		{#if !verifyDnsRecord}
+			<button
+				class="btn btn-primary"
+				onclick={handleInitiateVerification}
+				disabled={verifying || !verifyDomain.trim()}
+			>
+				{#if verifying}
+					<i class="i-ph-circle-notch animate-spin"></i>
+					{$LL.admin_tenant_domain_mappings_generating()}
+				{:else}
+					{$LL.admin_tenant_domain_mappings_generate_dns()}
+				{/if}
 			</button>
-		</div>
-		<div class="modal-body">
-			{#if verifyError}
-				<div class="alert alert-error">{verifyError}</div>
-			{/if}
-			<p class="verify-intro">
-				Verify that you own the domain for tenant <strong>{verifyingMapping.tenant_id}</strong>.
-				Enter the domain and add the DNS TXT record shown below.
-			</p>
-			<div class="form-group">
-				<label for="verify-domain" class="form-label">Domain <span class="required">*</span></label>
-				<input
-					id="verify-domain"
-					type="text"
-					class="form-input"
-					bind:value={verifyDomain}
-					placeholder="e.g. company.com"
-					autocomplete="off"
-				/>
-			</div>
-			{#if !verifyDnsRecord}
-				<button
-					class="btn btn-primary"
-					onclick={handleInitiateVerification}
-					disabled={verifying || !verifyDomain.trim()}
-				>
-					{#if verifying}
-						<i class="i-ph-circle-notch animate-spin"></i>
-						Generating...
-					{:else}
-						Generate DNS Record
-					{/if}
-				</button>
-			{:else}
-				<div class="dns-record">
-					<p class="dns-record-title">Add this DNS TXT record to your domain:</p>
-					<div class="dns-row">
-						<span class="dns-label">Type</span>
-						<code class="dns-value">{verifyDnsRecord.type}</code>
-					</div>
-					<div class="dns-row">
-						<span class="dns-label">Name</span>
-						<code class="dns-value">{verifyDnsRecord.name}</code>
-					</div>
-					<div class="dns-row">
-						<span class="dns-label">Value</span>
-						<code class="dns-value dns-value-long">{verifyDnsRecord.value}</code>
-					</div>
-					<p class="field-hint">
-						DNS propagation can take up to 48 hours. Click "Confirm Verification" once the record is
-						added.
-					</p>
+		{:else}
+			<div class="dns-record">
+				<p class="dns-record-title">{$LL.admin_tenant_domain_mappings_dns_title()}</p>
+				<div class="dns-row">
+					<span class="dns-label">{$LL.admin_tenant_domain_mappings_dns_type()}</span>
+					<code class="dns-value">{verifyDnsRecord.type}</code>
 				</div>
-				<button
-					class="btn btn-primary"
-					onclick={handleConfirmVerification}
-					disabled={confirmingVerification}
-				>
-					{#if confirmingVerification}
-						<i class="i-ph-circle-notch animate-spin"></i>
-						Checking DNS...
-					{:else}
-						Confirm Verification
-					{/if}
-				</button>
-			{/if}
-		</div>
-		<div class="modal-footer">
-			<button class="btn btn-secondary" onclick={() => (showVerifyDialog = false)}> Close </button>
-		</div>
-	</div>
-{/if}
+				<div class="dns-row">
+					<span class="dns-label">{$LL.admin_tenant_domain_mappings_dns_name()}</span>
+					<code class="dns-value">{verifyDnsRecord.name}</code>
+				</div>
+				<div class="dns-row">
+					<span class="dns-label">{$LL.admin_tenant_domain_mappings_dns_value()}</span>
+					<code class="dns-value dns-value-long">{verifyDnsRecord.value}</code>
+				</div>
+				<p class="field-hint">{$LL.admin_tenant_domain_mappings_dns_hint()}</p>
+			</div>
+			<button
+				class="btn btn-primary"
+				onclick={handleConfirmVerification}
+				disabled={confirmingVerification}
+			>
+				{#if confirmingVerification}
+					<i class="i-ph-circle-notch animate-spin"></i>
+					{$LL.admin_tenant_domain_mappings_checking_dns()}
+				{:else}
+					{$LL.admin_tenant_domain_mappings_confirm_verify()}
+				{/if}
+			</button>
+		{/if}
+	{/if}
+
+	{#snippet footer()}
+		<button class="btn btn-secondary" onclick={() => (showVerifyDialog = false)}>
+			{$LL.admin_tenant_domain_mappings_close()}
+		</button>
+	{/snippet}
+</Modal>
 
 <style>
-	.page {
-		display: flex;
-		flex-direction: column;
-		gap: 24px;
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 16px;
-	}
-
-	.page-title {
-		font-family: var(--font-display);
-		font-size: 1.5rem;
-		font-weight: 700;
-		color: var(--text-primary);
-		margin: 0 0 4px;
-	}
-
-	.page-description {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		margin: 0;
-	}
-
 	.info-box {
 		display: flex;
 		gap: 12px;
 		padding: 14px 16px;
-		background: var(--primary-light, var(--bg-subtle));
-		border: 1px solid var(--primary-border, var(--border));
-		border-radius: var(--radius-md);
+		background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
+		border-radius: var(--radius-panel);
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.info-box :global(i) {
 		width: 18px;
 		height: 18px;
-		color: var(--primary);
+		color: var(--color-accent);
 		flex-shrink: 0;
 		margin-top: 1px;
-	}
-
-	.info-box code {
-		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-		background: var(--bg-card);
-		padding: 1px 4px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--border);
-	}
-
-	.table-container {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		overflow: hidden;
-	}
-
-	.table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.table th {
-		padding: 12px 16px;
-		text-align: left;
-		font-size: 0.75rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--text-muted);
-		background: var(--bg-subtle);
-		border-bottom: 1px solid var(--border);
-	}
-
-	.table td {
-		padding: 14px 16px;
-		font-size: 0.875rem;
-		color: var(--text-primary);
-		border-bottom: 1px solid var(--border-subtle);
-		vertical-align: middle;
-	}
-
-	.table tr:last-child td {
-		border-bottom: none;
 	}
 
 	.mono {
@@ -612,23 +605,23 @@
 	}
 
 	.badge-active {
-		background: var(--success-subtle);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.badge-inactive {
-		background: var(--bg-subtle);
-		color: var(--text-muted);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.badge-verified {
-		background: var(--success-subtle);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.badge-unverified {
-		background: var(--warning-subtle);
-		color: var(--warning-dark);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.actions {
@@ -643,7 +636,7 @@
 		align-items: center;
 		gap: 6px;
 		padding: 8px 16px;
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
 		font-weight: 500;
 		cursor: pointer;
@@ -663,32 +656,32 @@
 	}
 
 	.btn-primary {
-		background: var(--primary);
-		color: white;
+		background: var(--color-accent);
+		color: var(--color-accent-contrast);
 	}
 
 	.btn-primary:hover:not(:disabled) {
-		background: var(--primary-dark);
+		filter: brightness(0.96);
 	}
 
 	.btn-secondary {
-		background: var(--bg-subtle);
-		color: var(--text-primary);
-		border: 1px solid var(--border);
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: var(--bg-card);
+		background: var(--color-surface-muted);
 	}
 
 	.btn-danger-outline {
 		background: transparent;
-		color: var(--danger);
-		border: 1px solid var(--danger);
+		color: var(--color-danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 52%, var(--color-border));
 	}
 
 	.btn-danger-outline:hover:not(:disabled) {
-		background: var(--danger-subtle);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 	}
 
 	.btn-sm {
@@ -702,8 +695,9 @@
 		align-items: flex-start;
 		gap: 10px;
 		padding: 12px 16px;
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-panel);
 		font-size: 0.875rem;
+		margin-bottom: 16px;
 	}
 
 	.alert :global(i) {
@@ -714,15 +708,15 @@
 	}
 
 	.alert-error {
-		background: var(--danger-subtle);
-		color: var(--danger);
-		border: 1px solid var(--danger-border);
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 42%, var(--color-border));
 	}
 
 	.alert-success {
-		background: var(--success-subtle);
-		color: var(--success);
-		border: 1px solid var(--success-border, var(--success-subtle));
+		background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+		color: var(--color-success);
+		border: 1px solid color-mix(in srgb, var(--color-success) 42%, var(--color-border));
 	}
 
 	/* Loading / Empty */
@@ -733,7 +727,7 @@
 		align-items: center;
 		gap: 12px;
 		padding: 48px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
@@ -743,115 +737,30 @@
 		height: 32px;
 	}
 
-	/* Modal */
-	.modal-overlay {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.5);
-		z-index: 100;
-		border: none;
-		cursor: default;
-	}
-
-	.modal {
-		position: fixed;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
-		width: 100%;
-		max-width: 480px;
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-xl);
-		z-index: 101;
-		display: flex;
-		flex-direction: column;
-		max-height: 90vh;
-	}
-
-	.modal-wide {
-		max-width: 600px;
-	}
-
-	.modal-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 20px 24px 16px;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.modal-header h2 {
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0;
-	}
-
-	.modal-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		border: none;
-		background: transparent;
-		color: var(--text-muted);
-		cursor: pointer;
-		border-radius: var(--radius-sm);
-		transition: all var(--transition-fast);
-	}
-
-	.modal-close:hover {
-		background: var(--bg-subtle);
-		color: var(--text-primary);
-	}
-
-	.modal-close :global(i) {
-		width: 18px;
-		height: 18px;
-	}
-
-	.modal-body {
-		padding: 20px 24px;
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-		overflow-y: auto;
-	}
-
-	.modal-footer {
-		display: flex;
-		justify-content: flex-end;
-		gap: 12px;
-		padding: 16px 24px 20px;
-		border-top: 1px solid var(--border);
-	}
-
 	/* Form */
 	.form-group {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+		margin-bottom: 16px;
 	}
 
 	.form-label {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.required {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
 	.form-input {
 		padding: 8px 12px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-		color: var(--text-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-family: var(--font-body);
 		transition: border-color var(--transition-fast);
@@ -861,27 +770,27 @@
 	}
 
 	.form-input:focus {
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-light);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
 	.field-hint {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		margin: 0;
 	}
 
 	/* DNS record display */
 	.verify-intro {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0;
 	}
 
 	.dns-record {
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 16px;
 		display: flex;
 		flex-direction: column;
@@ -891,7 +800,7 @@
 	.dns-record-title {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0;
 	}
 
@@ -905,22 +814,110 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		min-width: 48px;
 	}
 
 	.dns-value {
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
-		background: var(--bg-card);
+		background: var(--color-surface);
 		padding: 4px 8px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--border);
-		color: var(--text-primary);
+		border-radius: var(--radius-control);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
 		word-break: break-all;
 	}
 
 	.dns-value-long {
 		font-size: 0.75rem;
+	}
+
+	.mapping-cards {
+		display: none;
+	}
+
+	.mapping-card {
+		display: grid;
+		gap: 16px;
+		padding: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+	}
+
+	.mapping-card__header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.mapping-card__label,
+	.mapping-card__meta dt {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: 0.68rem;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.mapping-card__title {
+		margin: 4px 0 0;
+		color: var(--color-text);
+		font-family: var(--font-mono);
+		font-weight: 700;
+		overflow-wrap: anywhere;
+	}
+
+	.mapping-card__badges {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 6px;
+	}
+
+	.mapping-card__meta {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+		margin: 0;
+	}
+
+	.mapping-card__meta div {
+		display: grid;
+		gap: 3px;
+	}
+
+	.mapping-card__meta dd {
+		margin: 0;
+		color: var(--color-text);
+	}
+
+	.mapping-card__actions {
+		display: grid;
+		gap: 8px;
+	}
+
+	@media (max-width: 720px) {
+		.mapping-table {
+			display: none;
+		}
+
+		.mapping-cards {
+			display: grid;
+			gap: 14px;
+		}
+
+		.info-box {
+			align-items: flex-start;
+		}
+
+		.dns-row {
+			align-items: stretch;
+			flex-direction: column;
+			gap: 4px;
+		}
 	}
 </style>

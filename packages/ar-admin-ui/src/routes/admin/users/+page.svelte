@@ -12,6 +12,12 @@
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { Modal } from '$lib/components';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let users: User[] = $state([]);
 	let pagination: Pagination | null = $state(null);
@@ -226,69 +232,65 @@
 	<title>{$LL.admin_users_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_users_heading()}</h1>
-			<p class="page-description">{$LL.admin_users_description()}</p>
-		</div>
-		<div class="page-actions">
-			{#if canDeleteUsers && hasSelection}
-				<button class="btn btn-danger" onclick={openBulkDeleteDialog}>
-					<i class="i-ph-trash"></i>
-					{$LL.admin_users_delete_selected({ count: selectedIds.size })}
-				</button>
-			{/if}
-			{#if canCreateUsers}
-				<a href="/admin/users/new" class="btn btn-primary">
-					<i class="i-ph-plus"></i>
-					{$LL.admin_users_create()}
-				</a>
-			{/if}
-		</div>
-	</div>
+{#snippet headerActions()}
+	{#if canDeleteUsers && hasSelection}
+		<button class="btn btn-danger" onclick={openBulkDeleteDialog}>
+			<i class="i-ph-trash"></i>
+			{$LL.admin_users_delete_selected({ count: selectedIds.size })}
+		</button>
+	{/if}
+	{#if canCreateUsers}
+		<a href="/admin/users/new" class="btn btn-primary">
+			<i class="i-ph-plus"></i>
+			{$LL.admin_users_create()}
+		</a>
+	{/if}
+{/snippet}
 
-	<!-- Search and Filters -->
-	<div class="panel">
-		<div class="filter-row">
-			<div class="form-group">
-				<label for="search" class="form-label">{$LL.admin_users_search_label()}</label>
-				<input
-					id="search"
-					type="text"
-					class="form-input"
-					placeholder={$LL.admin_users_search_placeholder()}
-					bind:value={searchQuery}
-					oninput={handleSearch}
-				/>
-			</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_users_heading()}
+		description={$LL.admin_users_description()}
+		actions={headerActions}
+	/>
 
-			<div class="form-group">
-				<label for="status" class="form-label">{$LL.admin_users_status_label()}</label>
-				<select
-					id="status"
-					class="form-select"
-					bind:value={statusFilter}
-					onchange={handleStatusChange}
-				>
-					<option value="">{$LL.admin_users_all()}</option>
-					<option value="active">{$LL.admin_users_status_active()}</option>
-					<option value="suspended">{$LL.admin_users_status_suspended()}</option>
-					<option value="locked">{$LL.admin_users_status_locked()}</option>
-				</select>
-			</div>
-
-			<div class="form-group">
-				<label for="verified" class="form-label">{$LL.admin_users_verified_label()}</label>
-				<select id="verified" class="form-select" onchange={handleVerifiedChange}>
-					<option value="">{$LL.admin_users_all()}</option>
-					<option value="true">{$LL.admin_users_verified()}</option>
-					<option value="false">{$LL.admin_users_unverified()}</option>
-				</select>
-			</div>
+	<AdminToolbar>
+		<div class="admin-field admin-field--search">
+			<label for="search" class="admin-field__label">{$LL.admin_users_search_label()}</label>
+			<input
+				id="search"
+				type="text"
+				class="admin-input"
+				placeholder={$LL.admin_users_search_placeholder()}
+				bind:value={searchQuery}
+				oninput={handleSearch}
+			/>
 		</div>
-	</div>
+
+		<div class="admin-field admin-field--compact">
+			<label for="status" class="admin-field__label">{$LL.admin_users_status_label()}</label>
+			<select
+				id="status"
+				class="admin-select"
+				bind:value={statusFilter}
+				onchange={handleStatusChange}
+			>
+				<option value="">{$LL.admin_users_all()}</option>
+				<option value="active">{$LL.admin_users_status_active()}</option>
+				<option value="suspended">{$LL.admin_users_status_suspended()}</option>
+				<option value="locked">{$LL.admin_users_status_locked()}</option>
+			</select>
+		</div>
+
+		<div class="admin-field admin-field--compact">
+			<label for="verified" class="admin-field__label">{$LL.admin_users_verified_label()}</label>
+			<select id="verified" class="admin-select" onchange={handleVerifiedChange}>
+				<option value="">{$LL.admin_users_all()}</option>
+				<option value="true">{$LL.admin_users_verified()}</option>
+				<option value="false">{$LL.admin_users_unverified()}</option>
+			</select>
+		</div>
+	</AdminToolbar>
 
 	{#if loading}
 		<div class="loading-state">
@@ -298,15 +300,14 @@
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if users.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p>{$LL.admin_users_empty()}</p>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<!-- Users Table -->
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection>
+			<AdminDataTable width="wide">
 				<thead>
 					<tr>
 						<th>
@@ -363,39 +364,27 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
-		<!-- Pagination -->
 		{#if pagination && pagination.totalPages > 1}
-			<div class="pagination">
-				<p class="pagination-info">
-					{$LL.admin_users_pagination({
-						start: (pagination.page - 1) * pagination.limit + 1,
-						end: Math.min(pagination.page * pagination.limit, pagination.total),
-						total: pagination.total
-					})}
-				</p>
-				<div class="pagination-buttons">
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage - 1)}
-						disabled={!pagination.hasPrev}
-					>
-						{$LL.common_previous()}
-					</button>
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage + 1)}
-						disabled={!pagination.hasNext}
-					>
-						{$LL.common_next()}
-					</button>
-				</div>
-			</div>
+			<AdminPagination
+				label={$LL.admin_users_heading()}
+				info={$LL.admin_users_pagination({
+					start: (pagination.page - 1) * pagination.limit + 1,
+					end: Math.min(pagination.page * pagination.limit, pagination.total),
+					total: pagination.total
+				})}
+				previousLabel={$LL.common_previous()}
+				nextLabel={$LL.common_next()}
+				hasPrevious={pagination.hasPrev}
+				hasNext={pagination.hasNext}
+				onPrevious={() => goToPage(currentPage - 1)}
+				onNext={() => goToPage(currentPage + 1)}
+			/>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Bulk Delete Confirmation Dialog -->
 <Modal
@@ -404,25 +393,23 @@
 	title={$LL.admin_users_delete_title({ count: selectedIds.size })}
 	size="md"
 >
-	<div class="alert alert-error" style="margin-bottom: 16px;">
-		<p style="margin: 0; font-weight: 500;">{$LL.admin_users_delete_warning_title()}</p>
-		<p style="margin: 8px 0 0 0; font-size: 0.875rem;">
+	<div class="alert alert-error users-delete-warning">
+		<p class="users-delete-warning__title">{$LL.admin_users_delete_warning_title()}</p>
+		<p class="users-delete-warning__description">
 			{$LL.admin_users_delete_warning_desc()}
 		</p>
 	</div>
 
-	<div style="margin-bottom: 16px;">
-		<p style="font-weight: 500; margin: 0 0 8px 0; color: var(--text-primary);">
+	<div class="users-delete-list">
+		<p class="users-delete-list__title">
 			{$LL.admin_users_delete_list_title()}
 		</p>
-		<div class="panel" style="max-height: 200px; overflow-y: auto; padding: 0;">
+		<div class="users-delete-list__items">
 			{#each getSelectedUsers() as user (user.id)}
-				<div
-					style="padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 0.875rem;"
-				>
-					<span style="color: var(--text-primary);">{user.email || user.id}</span>
+				<div class="users-delete-list__item">
+					<span class="users-delete-list__email">{user.email || user.id}</span>
 					{#if user.name}
-						<span style="color: var(--text-secondary); margin-left: 8px;">({user.name})</span>
+						<span class="users-delete-list__name">({user.name})</span>
 					{/if}
 				</div>
 			{/each}
@@ -430,23 +417,19 @@
 	</div>
 
 	{#if bulkDeleting}
-		<div style="margin-bottom: 16px;">
-			<div class="progress-bar">
-				<div
-					class="progress-bar-fill"
-					class:warning={bulkDeleteProgress.failed > 0}
-					style="width: {(bulkDeleteProgress.current / bulkDeleteProgress.total) * 100}%;"
-				></div>
-			</div>
-			<p
-				style="font-size: 0.75rem; color: var(--text-secondary); margin: 8px 0 0 0; text-align: center;"
-			>
+		<div class="users-delete-progress">
+			<progress
+				class:warning={bulkDeleteProgress.failed > 0}
+				value={bulkDeleteProgress.current}
+				max={bulkDeleteProgress.total}
+			></progress>
+			<p class="users-delete-progress__text">
 				{$LL.admin_users_deleting_progress({
 					current: bulkDeleteProgress.current,
 					total: bulkDeleteProgress.total
 				})}
 				{#if bulkDeleteProgress.failed > 0}
-					<span style="color: var(--danger);">
+					<span class="users-delete-progress__failed">
 						{$LL.admin_users_delete_failed_count({ count: bulkDeleteProgress.failed })}
 					</span>
 				{/if}
@@ -468,3 +451,102 @@
 		</button>
 	{/snippet}
 </Modal>
+
+<style>
+	:global(.admin-data-table-wrap tr[role='button']) {
+		cursor: pointer;
+	}
+
+	:global(.admin-data-table-wrap tr.selected) {
+		background: var(--color-accent-muted);
+	}
+
+	.users-delete-warning,
+	.users-delete-list,
+	.users-delete-progress {
+		margin-bottom: 16px;
+	}
+
+	.users-delete-warning__title {
+		margin: 0;
+		font-weight: 700;
+	}
+
+	.users-delete-warning__description {
+		margin: 8px 0 0;
+		font-size: 0.875rem;
+	}
+
+	.users-delete-list__title {
+		margin: 0 0 8px;
+		color: var(--color-text);
+		font-weight: 700;
+	}
+
+	.users-delete-list__items {
+		max-height: 200px;
+		overflow-y: auto;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+	}
+
+	.users-delete-list__item {
+		padding: 8px 12px;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 0.875rem;
+	}
+
+	.users-delete-list__item:last-child {
+		border-bottom: 0;
+	}
+
+	.users-delete-list__email {
+		color: var(--color-text);
+	}
+
+	.users-delete-list__name {
+		margin-left: 8px;
+		color: var(--color-text-muted);
+	}
+
+	.users-delete-progress progress {
+		width: 100%;
+		height: 8px;
+		overflow: hidden;
+		border: 0;
+		border-radius: 999px;
+		background: var(--color-border);
+	}
+
+	.users-delete-progress progress::-webkit-progress-bar {
+		background: var(--color-border);
+	}
+
+	.users-delete-progress progress::-webkit-progress-value {
+		background: var(--color-accent);
+	}
+
+	.users-delete-progress progress.warning::-webkit-progress-value {
+		background: var(--color-warning);
+	}
+
+	.users-delete-progress progress::-moz-progress-bar {
+		background: var(--color-accent);
+	}
+
+	.users-delete-progress progress.warning::-moz-progress-bar {
+		background: var(--color-warning);
+	}
+
+	.users-delete-progress__text {
+		margin: 8px 0 0;
+		color: var(--color-text-muted);
+		text-align: center;
+		font-size: 0.75rem;
+	}
+
+	.users-delete-progress__failed {
+		color: var(--color-danger);
+	}
+</style>

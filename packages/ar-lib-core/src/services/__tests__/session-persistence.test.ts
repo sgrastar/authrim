@@ -25,6 +25,10 @@ class InMemorySessionAdapter implements DatabaseAdapter {
     string,
     { id: string; tenant_id?: string; user_id: string; expires_at: number; created_at: number }
   >();
+  private revocationEpochs = new Map<
+    string,
+    { tenant_id: string; user_id: string; revoked_after_ms: number; updated_at: number }
+  >();
 
   seed(
     rows: Array<{
@@ -70,6 +74,11 @@ class InMemorySessionAdapter implements DatabaseAdapter {
   }
 
   async queryOne<T>(sql: string, params?: unknown[]): Promise<T | null> {
+    if (sql.includes('FROM session_revocation_epochs')) {
+      const [tenantId, userId] = params as [string, string];
+      return (this.revocationEpochs.get(`${tenantId}:${userId}`) as T | undefined) ?? null;
+    }
+
     if (sql.includes('FROM sessions') && sql.includes('WHERE id = ?')) {
       const id = params?.[0] as string;
       const tenantId = sql.includes('tenant_id = ?') ? (params?.[1] as string) : undefined;
@@ -194,6 +203,42 @@ class InMemorySessionAdapter implements DatabaseAdapter {
         return { success: true, rowsAffected: 0 };
       }
       this.rows.set(id, { ...existing, user_id: userId });
+      return { success: true, rowsAffected: 1 };
+    }
+
+    if (sql.startsWith('UPDATE session_revocation_epochs')) {
+      const [revokedAfterMs, updatedAt, tenantId, userId] = params as [
+        number,
+        number,
+        string,
+        string,
+      ];
+      const key = `${tenantId}:${userId}`;
+      if (!this.revocationEpochs.has(key)) {
+        return { success: true, rowsAffected: 0 };
+      }
+      this.revocationEpochs.set(key, {
+        tenant_id: tenantId,
+        user_id: userId,
+        revoked_after_ms: revokedAfterMs,
+        updated_at: updatedAt,
+      });
+      return { success: true, rowsAffected: 1 };
+    }
+
+    if (sql.startsWith('INSERT INTO session_revocation_epochs')) {
+      const [tenantId, userId, revokedAfterMs, updatedAt] = params as [
+        string,
+        string,
+        number,
+        number,
+      ];
+      this.revocationEpochs.set(`${tenantId}:${userId}`, {
+        tenant_id: tenantId,
+        user_id: userId,
+        revoked_after_ms: revokedAfterMs,
+        updated_at: updatedAt,
+      });
       return { success: true, rowsAffected: 1 };
     }
 
@@ -389,5 +434,30 @@ describe('session-persistence', () => {
     await persistence!.batchDeleteSessions(['sess_1', 'sess_2']);
 
     expect(adapter.getAll()).toEqual([]);
+  });
+
+  it('stores and updates a tenant-bound user session revocation epoch', async () => {
+    const adapter = new InMemorySessionAdapter();
+    const persistence = createSessionPersistenceAdapter(adapter, 'session-store', 'tenant-a');
+
+    await persistence!.setUserSessionsRevokedAfter('shared-user', 1_750_000_000_123);
+    await expect(persistence!.getUserSessionsRevokedAfter('shared-user')).resolves.toBe(
+      1_750_000_000_123
+    );
+
+    await persistence!.setUserSessionsRevokedAfter('shared-user', 1_750_000_000_456);
+    await expect(persistence!.getUserSessionsRevokedAfter('shared-user')).resolves.toBe(
+      1_750_000_000_456
+    );
+  });
+
+  it('does not share user session revocation epochs across tenants', async () => {
+    const adapter = new InMemorySessionAdapter();
+    const tenantA = createSessionPersistenceAdapter(adapter, 'session-store', 'tenant-a');
+    const tenantB = createSessionPersistenceAdapter(adapter, 'session-store', 'tenant-b');
+
+    await tenantA!.setUserSessionsRevokedAfter('shared-user', 1_750_000_000_123);
+
+    await expect(tenantB!.getUserSessionsRevokedAfter('shared-user')).resolves.toBeNull();
   });
 });

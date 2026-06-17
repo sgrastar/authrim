@@ -14,6 +14,7 @@
 		type AdminDestinationDiffPreview,
 		type AdminDestinationScope
 	} from '$lib/api/admin-logging-control';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -634,13 +635,12 @@
 	<title>{$LL.admin_storage_destinations_page_title()}</title>
 </svelte:head>
 
-<div class="page-shell">
-	<header class="page-header">
-		<div class="page-title-group">
-			<h1 class="page-title">{$LL.admin_storage_destinations_title()}</h1>
-			<p class="page-description">{$LL.admin_storage_destinations_description()}</p>
-		</div>
-		<div class="page-actions">
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_storage_destinations_title()}
+		description={$LL.admin_storage_destinations_description()}
+	>
+		{#snippet actions()}
 			<label class="scope-label">
 				<span>{$LL.admin_storage_destinations_registry()}</span>
 				<select bind:value={scopeType} onchange={load}>
@@ -661,10 +661,11 @@
 				</select>
 			</label>
 			<button class="btn btn-secondary" onclick={load} disabled={loading}>
+				<i class="i-ph-arrows-clockwise"></i>
 				{$LL.admin_storage_destinations_refresh()}
 			</button>
-		</div>
-	</header>
+		{/snippet}
+	</AdminPageHeader>
 
 	{#if error}<div class="alert alert-error">{error}</div>{/if}
 	{#if success}<div class="alert alert-success">{success}</div>{/if}
@@ -698,7 +699,7 @@
 							{#if item.read_only}
 								<span class="badge badge-muted">{$LL.admin_storage_destinations_setup()}</span>
 							{:else}
-								<span class="text-muted text-sm"
+								<span class="text-muted meta-text"
 									>{item.has_credential
 										? $LL.admin_storage_destinations_credential_set()
 										: $LL.admin_storage_destinations_no_credential()}</span
@@ -877,7 +878,7 @@
 			<div class="panel-header">
 				<div>
 					<h2 class="panel-title">{selected.display_name}</h2>
-					<p class="text-muted text-sm">{selected.scope_type}:{selected.scope_id}</p>
+					<p class="text-muted meta-text">{selected.scope_type}:{selected.scope_id}</p>
 				</div>
 				{#if canManagePlatformStorage && !selected.read_only}
 					<button class="btn btn-danger btn-sm" onclick={deleteSelected} disabled={saving}
@@ -946,141 +947,139 @@
 		{:else if controlPlaneItems.length === 0}
 			<p class="text-muted">{$LL.admin_storage_destinations_control_plane_empty()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable width="xwide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_storage_destinations_name()}</th>
+						<th>{$LL.admin_storage_destinations_provider()}</th>
+						<th>{$LL.admin_storage_destinations_runtime()}</th>
+						<th>{$LL.admin_storage_destinations_lifecycle()}</th>
+						<th>{$LL.admin_storage_destinations_health()}</th>
+						<th>{$LL.admin_storage_destinations_credential()}</th>
+						<th>{$LL.admin_storage_destinations_retention()}</th>
+						<th>{$LL.admin_storage_destinations_last_check()}</th>
+						<th>{$LL.admin_storage_destinations_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each controlPlaneItems as item (item.id)}
 						<tr>
-							<th>{$LL.admin_storage_destinations_name()}</th>
-							<th>{$LL.admin_storage_destinations_provider()}</th>
-							<th>{$LL.admin_storage_destinations_runtime()}</th>
-							<th>{$LL.admin_storage_destinations_lifecycle()}</th>
-							<th>{$LL.admin_storage_destinations_health()}</th>
-							<th>{$LL.admin_storage_destinations_credential()}</th>
-							<th>{$LL.admin_storage_destinations_retention()}</th>
-							<th>{$LL.admin_storage_destinations_last_check()}</th>
-							<th>{$LL.admin_storage_destinations_actions()}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each controlPlaneItems as item (item.id)}
-							<tr>
-								<td>
-									<div class="cell-name">{item.display_name}</div>
-									<div class="cell-sub">{item.name}</div>
-								</td>
-								<td><span class="badge badge-neutral">{item.provider}</span></td>
-								<td>
-									<span
-										class="badge {item.runtime_status === 'supported'
-											? 'badge-success'
-											: 'badge-neutral'}"
-										>{item.runtime_status ?? $LL.admin_storage_destinations_unknown()}</span
+							<td>
+								<div class="cell-name">{item.display_name}</div>
+								<div class="cell-sub">{item.name}</div>
+							</td>
+							<td><span class="badge badge-neutral">{item.provider}</span></td>
+							<td>
+								<span
+									class="badge {item.runtime_status === 'supported'
+										? 'badge-success'
+										: 'badge-neutral'}"
+									>{item.runtime_status ?? $LL.admin_storage_destinations_unknown()}</span
+								>
+								{#if item.runtime_unsupported_reason}
+									<div class="cell-sub">{item.runtime_unsupported_reason}</div>
+								{/if}
+							</td>
+							<td
+								><span
+									class="badge {item.lifecycle_status === 'active'
+										? 'badge-success'
+										: item.lifecycle_status === 'disabled'
+											? 'badge-neutral'
+											: 'badge-warning'}">{item.lifecycle_status}</span
+								></td
+							>
+							<td
+								><span
+									class="badge {item.health_status === 'healthy'
+										? 'badge-success'
+										: item.health_status === 'unhealthy'
+											? 'badge-error'
+											: 'badge-neutral'}">{item.health_status}</span
+								></td
+							>
+							<td>
+								<div class="cell-name">v{item.credential_version}</div>
+								<div class="cell-sub">{item.rotation_status}</div>
+							</td>
+							<td
+								>{item.retention_days
+									? $LL.admin_storage_destinations_days_short({
+											count: item.retention_days
+										})
+									: $LL.admin_storage_destinations_default()}</td
+							>
+							<td class="meta-text">{formatDate(item.last_health_check_at)}</td>
+							<td>
+								<div class="row-actions">
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={() => loadControlPlaneDestinationDetail(item)}
+										>{$LL.admin_storage_destinations_details()}</button
 									>
-									{#if item.runtime_unsupported_reason}
-										<div class="cell-sub">{item.runtime_unsupported_reason}</div>
-									{/if}
-								</td>
-								<td
-									><span
-										class="badge {item.lifecycle_status === 'active'
-											? 'badge-success'
-											: item.lifecycle_status === 'disabled'
-												? 'badge-neutral'
-												: 'badge-warning'}">{item.lifecycle_status}</span
-									></td
-								>
-								<td
-									><span
-										class="badge {item.health_status === 'healthy'
-											? 'badge-success'
-											: item.health_status === 'unhealthy'
-												? 'badge-error'
-												: 'badge-neutral'}">{item.health_status}</span
-									></td
-								>
-								<td>
-									<div class="cell-name">v{item.credential_version}</div>
-									<div class="cell-sub">{item.rotation_status}</div>
-								</td>
-								<td
-									>{item.retention_days
-										? $LL.admin_storage_destinations_days_short({
-												count: item.retention_days
-											})
-										: $LL.admin_storage_destinations_default()}</td
-								>
-								<td class="text-sm">{formatDate(item.last_health_check_at)}</td>
-								<td>
-									<div class="row-actions">
-										<button
-											class="btn btn-secondary btn-sm"
-											onclick={() => loadControlPlaneDestinationDetail(item)}
-											>{$LL.admin_storage_destinations_details()}</button
-										>
-										<button
-											class="btn btn-secondary btn-sm"
-											onclick={() => runHealthCheck(item, 'quick')}
-											disabled={Boolean(healthActionId)}
-											>{$LL.admin_storage_destinations_quick()}</button
-										>
-										<button
-											class="btn btn-secondary btn-sm"
-											onclick={() => runHealthCheck(item, 'deep')}
-											disabled={Boolean(healthActionId)}
-											>{$LL.admin_storage_destinations_deep()}</button
-										>
-										{#if canManageControlPlaneDestination}
-											{#if item.lifecycle_status === 'disabled'}
-												<button
-													class="btn btn-secondary btn-sm"
-													onclick={() => enableControlPlaneDestination(item)}
-													disabled={Boolean(lifecycleActionId)}
-													>{$LL.admin_storage_destinations_enable()}</button
-												>
-											{:else}
-												<button
-													class="btn btn-secondary btn-sm"
-													onclick={() => disableControlPlaneDestination(item)}
-													disabled={Boolean(lifecycleActionId)}
-													>{$LL.admin_storage_destinations_disable()}</button
-												>
-											{/if}
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={() => runHealthCheck(item, 'quick')}
+										disabled={Boolean(healthActionId)}
+										>{$LL.admin_storage_destinations_quick()}</button
+									>
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={() => runHealthCheck(item, 'deep')}
+										disabled={Boolean(healthActionId)}
+										>{$LL.admin_storage_destinations_deep()}</button
+									>
+									{#if canManageControlPlaneDestination}
+										{#if item.lifecycle_status === 'disabled'}
 											<button
 												class="btn btn-secondary btn-sm"
-												onclick={() => prepareControlPlaneCredential(item)}
-												disabled={Boolean(credentialActionId)}
-												>{$LL.admin_storage_destinations_prepare()}</button
+												onclick={() => enableControlPlaneDestination(item)}
+												disabled={Boolean(lifecycleActionId)}
+												>{$LL.admin_storage_destinations_enable()}</button
 											>
+										{:else}
 											<button
 												class="btn btn-secondary btn-sm"
-												onclick={() => markControlPlaneCredentialReady(item)}
-												disabled={Boolean(credentialActionId) || !item.next_credential_ref}
-												>{$LL.admin_storage_destinations_ready()}</button
-											>
-											<button
-												class="btn btn-secondary btn-sm"
-												onclick={() => activateControlPlaneCredential(item)}
-												disabled={Boolean(credentialActionId) || !item.next_credential_ref}
-												>{$LL.admin_storage_destinations_activate()}</button
-											>
-											<button
-												class="btn btn-secondary btn-sm"
-												onclick={() => retirePreviousControlPlaneCredential(item)}
-												disabled={Boolean(credentialActionId) || !item.previous_credential_ref}
-												>{$LL.admin_storage_destinations_retire()}</button
+												onclick={() => disableControlPlaneDestination(item)}
+												disabled={Boolean(lifecycleActionId)}
+												>{$LL.admin_storage_destinations_disable()}</button
 											>
 										{/if}
-									</div>
-									<details class="config-details">
-										<summary>{$LL.admin_storage_destinations_config()}</summary>
-										<pre class="code-block">{providerConfigText(item)}</pre>
-									</details>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={() => prepareControlPlaneCredential(item)}
+											disabled={Boolean(credentialActionId)}
+											>{$LL.admin_storage_destinations_prepare()}</button
+										>
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={() => markControlPlaneCredentialReady(item)}
+											disabled={Boolean(credentialActionId) || !item.next_credential_ref}
+											>{$LL.admin_storage_destinations_ready()}</button
+										>
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={() => activateControlPlaneCredential(item)}
+											disabled={Boolean(credentialActionId) || !item.next_credential_ref}
+											>{$LL.admin_storage_destinations_activate()}</button
+										>
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={() => retirePreviousControlPlaneCredential(item)}
+											disabled={Boolean(credentialActionId) || !item.previous_credential_ref}
+											>{$LL.admin_storage_destinations_retire()}</button
+										>
+									{/if}
+								</div>
+								<details class="config-details">
+									<summary>{$LL.admin_storage_destinations_config()}</summary>
+									<pre class="code-block">{providerConfigText(item)}</pre>
+								</details>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</div>
 
@@ -1089,7 +1088,7 @@
 			<div class="drawer-header">
 				<div>
 					<h2 class="drawer-title">{selectedControlPlane.display_name}</h2>
-					<p class="text-muted text-sm">
+					<p class="text-muted meta-text">
 						{selectedControlPlane.scope_type}:{selectedControlPlane.scope_id}
 					</p>
 				</div>
@@ -1227,7 +1226,7 @@
 			{/if}
 		</aside>
 	{/if}
-</div>
+</AdminPageShell>
 
 <DangerConfirmationModal
 	open={Boolean(dangerConfirmation)}
@@ -1240,44 +1239,26 @@
 />
 
 <style>
-	.page-shell {
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-	}
-
-	.page-title {
-		margin: 0 0 0.25rem;
-		font-size: 1.5rem;
-	}
-
-	.page-description {
-		margin: 0;
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-	}
-
-	.page-actions {
-		display: flex;
-		align-items: flex-end;
-		gap: 0.75rem;
-		flex-shrink: 0;
+	.split-panel,
+	.panel,
+	.detail-drawer,
+	.item-list,
+	.form-section,
+	.stat-card,
+	input,
+	select,
+	textarea {
+		box-sizing: border-box;
+		min-width: 0;
 	}
 
 	.scope-label {
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
-		font-size: 0.75rem;
+		font-size: var(--settings-label-size, 0.75rem);
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.scope-label select {
@@ -1286,20 +1267,20 @@
 
 	.alert {
 		padding: 0.75rem 1rem;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
 	}
 
 	.alert-error {
-		background: rgba(239, 68, 68, 0.08);
-		color: #991b1b;
-		border: 1px solid rgba(239, 68, 68, 0.2);
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		color: var(--color-danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
 	}
 
 	.alert-success {
-		background: rgba(16, 185, 129, 0.08);
-		color: #065f46;
-		border: 1px solid rgba(16, 185, 129, 0.2);
+		background: color-mix(in srgb, var(--color-success) 10%, var(--color-surface));
+		color: var(--color-success);
+		border: 1px solid color-mix(in srgb, var(--color-success) 32%, var(--color-border));
 	}
 
 	.split-panel {
@@ -1310,10 +1291,12 @@
 	}
 
 	.panel {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		padding: 1.5rem;
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		background: var(--settings-panel-bg, var(--color-surface));
+		padding: var(--settings-panel-padding, 1.5rem);
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
+		min-width: 0;
 	}
 
 	.panel-header {
@@ -1326,13 +1309,13 @@
 
 	.panel-title {
 		margin: 0;
-		font-size: 1.05rem;
+		font-size: var(--settings-section-title-size, 1.05rem);
 		font-weight: 600;
 	}
 
 	.panel-description {
 		margin: 0.25rem 0 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		line-height: 1.45;
 	}
@@ -1340,9 +1323,10 @@
 	.item-list {
 		display: flex;
 		flex-direction: column;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		overflow: hidden;
+		background: var(--settings-card-bg, var(--color-surface));
 	}
 
 	.item-row {
@@ -1352,8 +1336,8 @@
 		gap: 0.75rem;
 		padding: 0.75rem 1rem;
 		border: none;
-		border-bottom: 1px solid var(--border);
-		background: var(--bg-card);
+		border-bottom: var(--settings-row-border-bottom, 1px solid var(--color-border));
+		background: transparent;
 		text-align: left;
 		cursor: pointer;
 		transition: background var(--transition-fast);
@@ -1365,17 +1349,17 @@
 
 	.item-row:hover,
 	.item-row.selected {
-		background: var(--bg-subtle);
+		background: var(--table-row-hover-bg, var(--color-surface-muted));
 	}
 
 	.item-name strong {
 		display: block;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.item-name small {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 	}
 
@@ -1390,23 +1374,23 @@
 	}
 
 	.badge-neutral {
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.badge-success {
-		background: rgba(16, 185, 129, 0.1);
-		color: #065f46;
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
 	}
 
 	.badge-error {
-		background: rgba(239, 68, 68, 0.1);
-		color: #991b1b;
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-danger);
 	}
 
 	.badge-warning {
-		background: rgba(245, 158, 11, 0.12);
-		color: #92400e;
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.form-grid {
@@ -1426,33 +1410,33 @@
 		gap: 0.45rem;
 		font-size: 0.875rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.form-label-group small {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		font-weight: 400;
 		line-height: 1.4;
 	}
 
 	.form-section {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 		padding: 1rem;
 	}
 
 	.form-section-title {
 		margin: 0;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.9375rem;
 		font-weight: 600;
 	}
 
 	.form-section-description {
 		margin: 0.25rem 0 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.45;
 	}
@@ -1461,7 +1445,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.625rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-weight: 500;
 	}
@@ -1485,21 +1469,21 @@
 	input,
 	select,
 	textarea {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		padding: 0.625rem 0.75rem;
-		background: var(--bg-input);
-		color: var(--text-primary);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		padding: var(--control-padding, 0.625rem 0.75rem);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font: inherit;
 		font-size: 0.875rem;
-		min-height: 2.625rem;
+		min-height: var(--control-height, 2.625rem);
 		width: 100%;
 	}
 
 	input:focus,
 	select:focus,
 	textarea:focus {
-		outline: 2px solid color-mix(in srgb, var(--primary) 28%, transparent);
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
 		outline-offset: 1px;
 	}
 
@@ -1516,9 +1500,9 @@
 
 	.code-block {
 		padding: 0.75rem;
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		overflow: auto;
 		max-height: 220px;
 		margin: 0.75rem 0 0;
@@ -1536,14 +1520,15 @@
 	}
 
 	.stat-card {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, transparent);
 		padding: 0.75rem;
 	}
 
 	.stat-card span {
 		display: block;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		margin-bottom: 0.25rem;
 	}
@@ -1567,39 +1552,14 @@
 	.credential-section {
 		margin-top: 1.25rem;
 		padding-top: 1.25rem;
-		border-top: 1px solid var(--border);
+		border-top: var(--settings-row-border-bottom, 1px solid var(--color-border));
 	}
 
 	.subsection-title {
 		margin: 0 0 0.75rem;
 		font-size: 0.875rem;
 		font-weight: 600;
-		color: var(--text-secondary);
-	}
-
-	.table-wrap {
-		overflow-x: auto;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	th,
-	td {
-		padding: 0.75rem;
-		border-bottom: 1px solid var(--border);
-		text-align: left;
-		vertical-align: top;
-	}
-
-	th {
-		color: var(--text-secondary);
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		font-weight: 600;
-		white-space: nowrap;
+		color: var(--color-text-muted);
 	}
 
 	.cell-name {
@@ -1608,7 +1568,7 @@
 	}
 
 	.cell-sub {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		margin-top: 2px;
 	}
@@ -1623,7 +1583,7 @@
 	.config-details summary {
 		cursor: pointer;
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-top: 0.5rem;
 	}
 
@@ -1633,10 +1593,10 @@
 	}
 
 	.text-muted {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
-	.text-sm {
+	.meta-text {
 		font-size: 0.8125rem;
 	}
 
@@ -1648,9 +1608,9 @@
 		width: min(560px, calc(100vw - 24px));
 		height: 100vh;
 		overflow-y: auto;
-		background: var(--bg-card);
-		border-left: 1px solid var(--border);
-		box-shadow: var(--shadow-lg);
+		background: var(--settings-panel-bg, var(--color-surface));
+		border-left: var(--settings-panel-border, 1px solid var(--color-border));
+		box-shadow: var(--settings-panel-shadow, var(--shadow-lg));
 		padding: 1.25rem;
 	}
 
@@ -1675,9 +1635,9 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		padding: 0.5rem 0.875rem;
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		padding: var(--button-padding, 0.5rem 0.875rem);
 		font: inherit;
 		font-size: 0.875rem;
 		cursor: pointer;
@@ -1691,32 +1651,32 @@
 	}
 
 	.btn-primary {
-		background: var(--primary);
-		color: #fff;
-		border-color: var(--primary);
+		background: var(--color-accent);
+		color: var(--color-accent-contrast);
+		border-color: var(--color-accent);
 	}
 
 	.btn-primary:hover:not(:disabled) {
-		background: var(--primary-hover);
+		background: color-mix(in srgb, var(--color-accent) 88%, var(--color-text) 12%);
 	}
 
 	.btn-secondary {
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: var(--border);
+		background: var(--color-border);
 	}
 
 	.btn-danger {
-		background: rgba(239, 68, 68, 0.1);
-		color: #991b1b;
-		border-color: rgba(239, 68, 68, 0.3);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+		border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
 	}
 
 	.btn-danger:hover:not(:disabled) {
-		background: rgba(239, 68, 68, 0.18);
+		background: color-mix(in srgb, var(--color-danger) 18%, transparent);
 	}
 
 	.btn-sm {
@@ -1730,6 +1690,21 @@
 		.stat-grid.compact,
 		.form-grid {
 			grid-template-columns: 1fr;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.panel {
+			padding: 1.25rem;
+		}
+
+		.panel-header {
+			flex-wrap: wrap;
+		}
+
+		.item-row {
+			grid-template-columns: 1fr;
+			align-items: flex-start;
 		}
 	}
 </style>

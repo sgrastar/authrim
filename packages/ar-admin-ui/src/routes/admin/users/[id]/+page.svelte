@@ -4,7 +4,8 @@
 	import { goto } from '$app/navigation';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { adminUsersAPI, type User, type UpdateUserInput } from '$lib/api/admin-users';
-	import { adminSessionsAPI } from '$lib/api/admin-sessions';
+	import { adminSessionsAPI, type Session } from '$lib/api/admin-sessions';
+	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
 	import {
 		adminRolesAPI,
 		type Role,
@@ -18,6 +19,11 @@
 	} from '$lib/api/admin-consent-statements';
 	import OrganizationSelectDialog from '$lib/components/OrganizationSelectDialog.svelte';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -32,6 +38,14 @@
 
 	// Edit form state
 	let editForm = $state<UpdateUserInput>({});
+
+	type UserSchemaField = {
+		key: string;
+		label: string;
+		type: string;
+		value: string | null;
+		missingRequired: boolean;
+	};
 
 	// Role assignment state
 	let userRoles = $state<RoleAssignment[]>([]);
@@ -65,13 +79,45 @@
 	let revokedSessionsCount = $state<number | null>(null);
 
 	// Tab management
-	type TabId = 'overview' | 'roles' | 'consents' | 'actions';
+	type TabId =
+		| 'overview'
+		| 'authentication-methods'
+		| 'sessions'
+		| 'audit-logs'
+		| 'roles'
+		| 'consents'
+		| 'actions';
 	let activeTab = $state<TabId>('overview');
+	const USER_TAB_DEFINITIONS: ReadonlyArray<{ id: TabId; icon: string }> = [
+		{ id: 'overview', icon: 'i-ph-user' },
+		{ id: 'authentication-methods', icon: 'i-ph-fingerprint' },
+		{ id: 'sessions', icon: 'i-ph-clock' },
+		{ id: 'audit-logs', icon: 'i-ph-file-text' },
+		{ id: 'roles', icon: 'i-ph-shield-check' },
+		{ id: 'consents', icon: 'i-ph-check-circle' },
+		{ id: 'actions', icon: 'i-ph-gear' }
+	];
+	const userTabItems = $derived<AdminTabItem[]>(
+		USER_TAB_DEFINITIONS.map((tab) => ({
+			id: tab.id,
+			icon: tab.icon,
+			label: tabLabel(tab.id),
+			panelId: `${tab.id}-panel`
+		}))
+	);
 
 	// Consent records state
 	let consentRecords = $state<UserConsentRecord[]>([]);
 	let consentLoading = $state(false);
 	let consentError = $state('');
+
+	// User activity tab state
+	let userSessions = $state<Session[]>([]);
+	let sessionsLoading = $state(false);
+	let sessionsError = $state('');
+	let auditEntries = $state<AuditLogEntry[]>([]);
+	let auditLoading = $state(false);
+	let auditError = $state('');
 
 	// Consent history modal
 	let showHistoryModal = $state(false);
@@ -120,6 +166,9 @@
 				email_verified: user.email_verified,
 				phone_number_verified: user.phone_number_verified
 			};
+			for (const field of userSchemaFieldsFor(user)) {
+				editForm[field.key] = fieldValueForForm(field);
+			}
 		}
 	}
 
@@ -136,8 +185,12 @@
 		actionError = '';
 		rolesError = '';
 		consentError = '';
+		sessionsError = '';
+		auditError = '';
 		consentRecords = [];
 		consentHistory = [];
+		userSessions = [];
+		auditEntries = [];
 		showHistoryModal = false;
 		showWithdrawModal = false;
 		statementToWithdraw = null;
@@ -300,7 +353,8 @@
 		actionError = '';
 
 		try {
-			user = await adminUsersAPI.update(userId, editForm);
+			await adminUsersAPI.update(userId, editForm);
+			user = await adminUsersAPI.get(userId);
 			isEditing = false;
 		} catch (err) {
 			console.error('Failed to update user:', err);
@@ -352,6 +406,7 @@
 				case 'revoke-sessions': {
 					const result = await adminSessionsAPI.revokeAllForUser(userId);
 					revokedSessionsCount = result.revokedCount ?? 0;
+					await loadUserSessions();
 					// Don't close dialog immediately - show success message
 					confirmLoading = false;
 					return;
@@ -376,6 +431,207 @@
 		return new Date(timestamp).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
+	function formatDateValue(value: string | null): string {
+		if (!value) return '-';
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return sanitizeText(value);
+		return date.toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+	}
+
+	function formatIsoDateTime(value: string | null): string {
+		if (!value) return '-';
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return sanitizeText(value);
+		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+	}
+
+	function relativeTimeFromIso(value: string | null): string {
+		if (!value) return '-';
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return sanitizeText(value);
+		const diffMs = Date.now() - date.getTime();
+		const absMs = Math.abs(diffMs);
+		const minutes = Math.floor(absMs / 60000);
+		const hours = Math.floor(absMs / 3600000);
+		const days = Math.floor(absMs / 86400000);
+		if (minutes < 1) return $LL.admin_sessions_just_now();
+		if (hours < 1) return $LL.admin_sessions_minutes_ago({ count: minutes });
+		if (days < 1) return $LL.admin_sessions_hours_ago({ count: hours });
+		return $LL.admin_sessions_days_ago({ count: days });
+	}
+
+	function timeUntilIso(value: string | null): string {
+		if (!value) return '-';
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return sanitizeText(value);
+		const diffMs = date.getTime() - Date.now();
+		if (diffMs <= 0) return $LL.admin_sessions_expired();
+		const minutes = Math.floor(diffMs / 60000);
+		const hours = Math.floor(diffMs / 3600000);
+		const days = Math.floor(diffMs / 86400000);
+		if (hours < 1) return $LL.admin_sessions_minutes({ count: minutes });
+		if (days < 1) return $LL.admin_sessions_hours({ count: hours });
+		return $LL.admin_sessions_days({ count: days });
+	}
+
+	function formatDateInput(value: unknown): string {
+		if (typeof value !== 'string' || !value) return '';
+		if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return value;
+		return date.toISOString().slice(0, 10);
+	}
+
+	function humanizeFieldName(value: string): string {
+		return value
+			.replace(/[_./:-]+/g, ' ')
+			.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+			.trim()
+			.replace(/\s+/g, ' ')
+			.replace(/\b\w/g, (char) => char.toUpperCase());
+	}
+
+	function userSchemaFieldsFor(target: User): UserSchemaField[] {
+		const fields = new Map<string, UserSchemaField>();
+		for (const field of target.customFields ?? []) {
+			fields.set(field.field_name, {
+				key: field.field_name,
+				label: humanizeFieldName(field.field_name),
+				type: field.field_type,
+				value: field.field_value,
+				missingRequired: false
+			});
+		}
+		for (const field of target.missing_required_fields ?? []) {
+			if (fields.has(field.field_key)) continue;
+			fields.set(field.field_key, {
+				key: field.field_key,
+				label: field.label || humanizeFieldName(field.field_key),
+				type: field.field_type,
+				value: null,
+				missingRequired: true
+			});
+		}
+		return [...fields.values()];
+	}
+
+	function fieldValueForForm(field: UserSchemaField): string | boolean | number | null {
+		if (field.value === null) return field.type === 'boolean' ? false : '';
+		switch (field.type) {
+			case 'boolean':
+				return field.value === 'true' || field.value === '1';
+			case 'number': {
+				const parsed = Number(field.value);
+				return Number.isFinite(parsed) ? parsed : '';
+			}
+			case 'date':
+				return formatDateInput(field.value);
+			default:
+				return field.value;
+		}
+	}
+
+	function formatSchemaFieldValue(field: UserSchemaField): string {
+		if (field.value === null || field.value === '') return '-';
+		switch (field.type) {
+			case 'boolean':
+				return formatYesNo(field.value === 'true' || field.value === '1');
+			case 'date':
+				return formatDateValue(field.value);
+			default:
+				return sanitizeText(field.value);
+		}
+	}
+
+	function updateSchemaField(field: UserSchemaField, value: string | boolean | number | null) {
+		editForm = {
+			...editForm,
+			[field.key]: value
+		};
+	}
+
+	function inputTypeForSchemaField(field: UserSchemaField): string {
+		switch (field.type) {
+			case 'number':
+				return 'number';
+			case 'date':
+				return 'date';
+			default:
+				return 'text';
+		}
+	}
+
+	function roleSummary() {
+		return userRoles.map((role) => role.role_display_name || role.role_name).filter(Boolean);
+	}
+
+	function mfaSummary(target: User): string {
+		const count = target.passkeys?.length ?? 0;
+		if (count > 0) {
+			return getLocale() === 'ja' ? `有効（Passkey ×${count}）` : `Enabled (Passkey x${count})`;
+		}
+		return getLocale() === 'ja' ? '未設定' : 'Not configured';
+	}
+
+	function parseUserAgent(userAgent: string | null): string {
+		if (!userAgent) return '-';
+
+		let browser = String($LL.admin_sessions_unknown());
+		let os = String($LL.admin_sessions_unknown());
+
+		if (userAgent.includes('Edg')) browser = 'Edge';
+		else if (userAgent.includes('Chrome')) browser = 'Chrome';
+		else if (userAgent.includes('Firefox')) browser = 'Firefox';
+		else if (userAgent.includes('Safari')) browser = 'Safari';
+
+		if (userAgent.includes('iPhone') || userAgent.includes('iPad')) os = 'iOS';
+		else if (userAgent.includes('Windows')) os = 'Windows';
+		else if (userAgent.includes('Mac OS')) os = 'macOS';
+		else if (userAgent.includes('Linux')) os = 'Linux';
+		else if (userAgent.includes('Android')) os = 'Android';
+
+		return `${browser} / ${os}`;
+	}
+
+	function passkeySyncLabel(): string {
+		return getLocale() === 'ja' ? '同期型' : 'Synced';
+	}
+
+	function fallbackMethodDescription(target: User): string {
+		const email = sanitizeText(target.email || '-');
+		return getLocale() === 'ja'
+			? `${email} 宛のワンタイムコード。Passkey 紛失時のフォールバックです。`
+			: `One-time code sent to ${email}. Used as a fallback if passkeys are unavailable.`;
+	}
+
+	function auditActionLabel(action: string): string {
+		return action
+			.split('.')
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+			.join(' ');
+	}
+
+	function auditResourceSummary(entry: AuditLogEntry): string {
+		const resource = [entry.resourceType, entry.resourceId].filter(Boolean).join(': ');
+		const parts = [
+			resource,
+			entry.ipAddress ? `ip: ${entry.ipAddress}` : '',
+			entry.userAgent ? parseUserAgent(entry.userAgent) : ''
+		].filter(Boolean);
+		return parts.length ? parts.join(' / ') : '-';
+	}
+
+	function auditBadgeClass(action: string): string {
+		if (action.includes('failed') || action.includes('delete') || action.includes('revoke')) {
+			return 'badge badge-danger';
+		}
+		if (action.includes('login') || action.includes('create') || action.includes('issue')) {
+			return 'badge badge-success';
+		}
+		if (action.includes('update') || action.includes('refresh')) return 'badge badge-info';
+		return 'badge badge-neutral';
+	}
+
 	function getStatusBadgeClass(status: string): string {
 		switch (status) {
 			case 'active':
@@ -389,11 +645,54 @@
 		}
 	}
 
-	// Tab switching - load consent records on first access to consents tab
+	// Tab switching - load tab-specific records on first access
 	function switchTab(tab: TabId) {
 		activeTab = tab;
 		if (tab === 'consents' && consentRecords.length === 0 && !consentLoading) {
 			loadConsentRecords();
+		}
+		if (tab === 'sessions' && userSessions.length === 0 && !sessionsLoading) {
+			loadUserSessions();
+		}
+		if (tab === 'audit-logs' && auditEntries.length === 0 && !auditLoading) {
+			loadUserAuditLogs();
+		}
+	}
+
+	async function loadUserSessions() {
+		sessionsLoading = true;
+		sessionsError = '';
+		try {
+			const response = await adminSessionsAPI.list({
+				page: 1,
+				limit: 10,
+				user_id: userId,
+				status: 'active'
+			});
+			userSessions = response.sessions;
+		} catch (err) {
+			console.error('Failed to load user sessions:', err);
+			sessionsError = err instanceof Error ? err.message : $LL.admin_sessions_load_failed();
+		} finally {
+			sessionsLoading = false;
+		}
+	}
+
+	async function loadUserAuditLogs() {
+		auditLoading = true;
+		auditError = '';
+		try {
+			const response = await adminAuditLogsAPI.list({
+				page: 1,
+				limit: 10,
+				user_id: userId
+			});
+			auditEntries = response.entries;
+		} catch (err) {
+			console.error('Failed to load user audit logs:', err);
+			auditError = err instanceof Error ? err.message : $LL.admin_audit_logs_load_failed();
+		} finally {
+			auditLoading = false;
 		}
 	}
 
@@ -510,6 +809,25 @@
 		}
 	}
 
+	function tabLabel(tab: TabId): string {
+		switch (tab) {
+			case 'overview':
+				return $LL.admin_user_detail_tab_overview();
+			case 'authentication-methods':
+				return $LL.admin_user_detail_tab_authentication_methods();
+			case 'sessions':
+				return $LL.admin_user_detail_tab_sessions();
+			case 'audit-logs':
+				return $LL.admin_user_detail_tab_audit_logs();
+			case 'roles':
+				return $LL.admin_user_detail_tab_roles();
+			case 'consents':
+				return $LL.admin_user_detail_tab_consents();
+			case 'actions':
+				return $LL.admin_user_detail_tab_actions();
+		}
+	}
+
 	function getScopeLabel(scope: ScopeType): string {
 		switch (scope) {
 			case 'global':
@@ -533,35 +851,35 @@
 					title: $LL.admin_user_detail_suspend_user(),
 					description: $LL.admin_user_detail_suspend_desc(),
 					buttonText: $LL.admin_user_detail_suspend_action(),
-					buttonColor: '#f59e0b'
+					buttonColor: 'var(--color-warning)'
 				};
 			case 'lock':
 				return {
 					title: $LL.admin_user_detail_lock_account(),
 					description: $LL.admin_user_detail_lock_desc(),
 					buttonText: $LL.admin_user_detail_lock_action(),
-					buttonColor: '#ef4444'
+					buttonColor: 'var(--color-danger)'
 				};
 			case 'activate':
 				return {
 					title: $LL.admin_user_detail_activate_user(),
 					description: $LL.admin_user_detail_activate_desc(),
 					buttonText: $LL.admin_user_detail_activate_action(),
-					buttonColor: '#10b981'
+					buttonColor: 'var(--color-success)'
 				};
 			case 'revoke-sessions':
 				return {
 					title: $LL.admin_user_detail_revoke_all_sessions(),
 					description: $LL.admin_user_detail_revoke_sessions_desc(),
 					buttonText: $LL.admin_user_detail_revoke_all_action(),
-					buttonColor: '#dc2626'
+					buttonColor: 'var(--color-danger)'
 				};
 			case 'delete':
 				return {
 					title: $LL.admin_user_detail_deleteUser(),
 					description: $LL.admin_user_detail_delete_desc(),
 					buttonText: $LL.admin_users_delete(),
-					buttonColor: '#dc2626'
+					buttonColor: 'var(--color-danger)'
 				};
 			default:
 				return { title: '', description: '', buttonText: '', buttonColor: '' };
@@ -575,9 +893,7 @@
 	>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/users" class="back-link">← {$LL.admin_users_back_to_users()}</a>
-
+<AdminPageShell>
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
@@ -586,64 +902,116 @@
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if user}
-		<!-- User Header -->
-		<div class="page-header-with-status">
-			<div class="page-header-info">
-				<h1>{sanitizeText(user.name || user.email || $LL.admin_user_detail_unknown_user())}</h1>
-				<p>{sanitizeText(user.email || '')}</p>
-			</div>
-			<span class={getStatusBadgeClass(user.status)}>{getStatusLabel(user.status)}</span>
-		</div>
+		{#snippet titleAccessory()}
+			{#if user}
+				<span class={getStatusBadgeClass(user.status)}>{getStatusLabel(user.status)}</span>
+			{/if}
+		{/snippet}
+
+		<AdminPageHeader
+			title={sanitizeText(user.name || user.email || $LL.admin_user_detail_unknown_user())}
+			description={sanitizeText(user.email || '')}
+			eyebrow={user.id}
+			{titleAccessory}
+		/>
 
 		{#if actionError}
 			<div class="alert alert-error">{actionError}</div>
 		{/if}
 
-		<!-- Tab Navigation -->
-		<div class="tabs">
-			<button
-				class="tab"
-				class:active={activeTab === 'overview'}
-				onclick={() => switchTab('overview')}
-			>
-				<i class="i-ph-user"></i>
-				{$LL.admin_user_detail_tab_overview()}
-			</button>
-			<button class="tab" class:active={activeTab === 'roles'} onclick={() => switchTab('roles')}>
-				<i class="i-ph-shield-check"></i>
-				{$LL.admin_user_detail_tab_roles()}
-			</button>
-			<button
-				class="tab"
-				class:active={activeTab === 'consents'}
-				onclick={() => switchTab('consents')}
-			>
-				<i class="i-ph-check-circle"></i>
-				{$LL.admin_user_detail_tab_consents()}
-			</button>
-			<button
-				class="tab"
-				class:active={activeTab === 'actions'}
-				onclick={() => switchTab('actions')}
-			>
-				<i class="i-ph-gear"></i>
-				{$LL.admin_user_detail_tab_actions()}
-			</button>
-		</div>
+		<AdminTabs
+			items={userTabItems}
+			active={activeTab}
+			onChange={(tabId) => switchTab(tabId as TabId)}
+			ariaLabel={$LL.admin_user_detail_title()}
+		/>
 
 		<!-- Overview Tab -->
 		{#if activeTab === 'overview'}
-			<!-- User Details -->
-			<div class="panel">
-				<div class="panel-header">
-					<h2 class="panel-title">{$LL.admin_user_detail_user_information()}</h2>
-					{#if !isEditing && canWriteUsers}
-						<button class="btn btn-primary btn-sm" onclick={startEditing}
-							>{$LL.admin_users_edit()}</button
-						>
+			<!-- Account Information -->
+			<AdminSection title={$LL.admin_user_detail_account_information()}>
+				<dl class="account-info-list">
+					<div class="account-info-row">
+						<dt>{$LL.admin_users_email()}</dt>
+						<dd class="info-value mono">
+							{sanitizeText(user.email || '-')}
+							{#if user.email_verified}
+								<span class="badge badge-success">{$LL.admin_users_verified()}</span>
+							{:else}
+								<span class="badge badge-neutral">{$LL.admin_users_unverified()}</span>
+							{/if}
+						</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_user_id()}</dt>
+						<dd class="info-value mono">{user.id}</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_tenant()}</dt>
+						<dd class="info-value mono">{sanitizeText(user.tenant_id || '-')}</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_users_status()}</dt>
+						<dd class="info-value">
+							<span class={getStatusBadgeClass(user.status)}>{getStatusLabel(user.status)}</span>
+						</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_user_type()}</dt>
+						<dd class="info-value">{sanitizeText(user.user_type || '-')}</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_role()}</dt>
+						<dd class="info-value role-chip-list">
+							{#each roleSummary() as role (role)}
+								<span class="badge badge-neutral">{sanitizeText(role)}</span>
+							{:else}
+								-
+							{/each}
+						</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_created_at()}</dt>
+						<dd class="info-value mono">{formatTimestamp(user.created_at)}</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_updated_at()}</dt>
+						<dd class="info-value mono">{formatTimestamp(user.updated_at)}</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_last_login_at()}</dt>
+						<dd class="info-value mono">{formatTimestamp(user.last_login_at)}</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_user_detail_mfa()}</dt>
+						<dd class="info-value">{mfaSummary(user)}</dd>
+					</div>
+					{#if user.suspended_at}
+						<div class="account-info-row">
+							<dt>{$LL.admin_user_detail_suspended_at()}</dt>
+							<dd class="info-value warning mono">{formatTimestamp(user.suspended_at)}</dd>
+						</div>
 					{/if}
-				</div>
+					{#if user.locked_at}
+						<div class="account-info-row">
+							<dt>{$LL.admin_user_detail_locked_at()}</dt>
+							<dd class="info-value danger mono">{formatTimestamp(user.locked_at)}</dd>
+						</div>
+					{/if}
+				</dl>
+			</AdminSection>
 
+			<!-- User Information -->
+			{#snippet userInfoActions()}
+				{#if !isEditing && canWriteUsers}
+					<button class="btn btn-primary btn-sm" onclick={startEditing}
+						>{$LL.admin_users_edit()}</button
+					>
+				{/if}
+			{/snippet}
+
+			<AdminSection title={$LL.admin_user_detail_user_information()} actions={userInfoActions}>
+				{@const schemaFields = userSchemaFieldsFor(user)}
 				{#if isEditing}
 					<!-- Edit Form -->
 					<form
@@ -652,80 +1020,52 @@
 							saveChanges();
 						}}
 					>
-						<div class="form-grid">
-							<div class="form-group">
-								<label for="email" class="form-label">{$LL.admin_users_email()}</label>
-								<input id="email" type="email" class="form-input" bind:value={editForm.email} />
+						{#if schemaFields.length > 0}
+							<div class="schema-form-grid">
+								{#each schemaFields as field (field.key)}
+									<div class="form-group">
+										<label for={`schema-${field.key}`} class="form-label">
+											{sanitizeText(field.label)}
+											{#if field.missingRequired}
+												<span class="required-marker">*</span>
+											{/if}
+										</label>
+										{#if field.type === 'boolean'}
+											<ToggleSwitch
+												checked={Boolean(editForm[field.key])}
+												label={sanitizeText(field.label)}
+												description={field.key}
+												onchange={(checked) => updateSchemaField(field, checked)}
+											/>
+										{:else}
+											<input
+												id={`schema-${field.key}`}
+												type={inputTypeForSchemaField(field)}
+												class="form-input"
+												value={field.type === 'date'
+													? formatDateInput(editForm[field.key])
+													: (editForm[field.key] ?? '')}
+												oninput={(event) => {
+													const value = event.currentTarget.value;
+													updateSchemaField(
+														field,
+														field.type === 'number' ? (value === '' ? null : Number(value)) : value
+													);
+												}}
+											/>
+										{/if}
+										<p class="field-key-hint">{field.key}</p>
+									</div>
+								{/each}
 							</div>
-							<div class="form-group">
-								<label for="name" class="form-label">{$LL.admin_users_name()}</label>
-								<input id="name" type="text" class="form-input" bind:value={editForm.name} />
+						{:else}
+							<div class="empty-state">
+								<p class="empty-state-description">
+									{$LL.admin_user_detail_no_user_information_fields()}
+								</p>
 							</div>
-							<div class="form-group">
-								<label for="given_name" class="form-label">{$LL.admin_users_given_name()}</label>
-								<input
-									id="given_name"
-									type="text"
-									class="form-input"
-									bind:value={editForm.given_name}
-								/>
-							</div>
-							<div class="form-group">
-								<label for="family_name" class="form-label">{$LL.admin_users_family_name()}</label>
-								<input
-									id="family_name"
-									type="text"
-									class="form-input"
-									bind:value={editForm.family_name}
-								/>
-							</div>
-							<div class="form-group">
-								<label for="nickname" class="form-label">{$LL.admin_user_detail_nickname()}</label>
-								<input
-									id="nickname"
-									type="text"
-									class="form-input"
-									bind:value={editForm.nickname}
-								/>
-							</div>
-							<div class="form-group">
-								<label for="preferred_username" class="form-label"
-									>{$LL.admin_user_detail_preferred_username()}</label
-								>
-								<input
-									id="preferred_username"
-									type="text"
-									class="form-input"
-									bind:value={editForm.preferred_username}
-								/>
-							</div>
-							<div class="form-group">
-								<label for="phone_number" class="form-label"
-									>{$LL.admin_user_detail_phone_number()}</label
-								>
-								<input
-									id="phone_number"
-									type="tel"
-									class="form-input"
-									bind:value={editForm.phone_number}
-								/>
-							</div>
-							<div class="form-group form-group-full">
-								<ToggleSwitch
-									bind:checked={editForm.email_verified}
-									label={$LL.admin_users_verified_label()}
-									description={$LL.admin_user_detail_email_verified_desc()}
-								/>
-							</div>
-							<div class="form-group form-group-full">
-								<ToggleSwitch
-									bind:checked={editForm.phone_number_verified}
-									label={$LL.admin_user_detail_phone_verified()}
-									description={$LL.admin_user_detail_phone_verified_desc()}
-								/>
-							</div>
-						</div>
-						<div class="action-buttons" style="margin-top: 20px;">
+						{/if}
+						<div class="action-buttons user-detail-form-actions">
 							<button type="submit" class="btn btn-primary" disabled={saving}>
 								{saving ? $LL.admin_client_detail_saving() : $LL.admin_user_detail_save()}
 							</button>
@@ -741,146 +1081,219 @@
 					</form>
 				{:else}
 					<!-- Display Mode -->
-					<dl class="info-grid">
-						<div class="info-item">
-							<dt>ID</dt>
-							<dd class="info-value mono">{user.id}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_users_email()}</dt>
-							<dd class="info-value">{sanitizeText(user.email || '-')}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_users_name()}</dt>
-							<dd class="info-value">{sanitizeText(user.name || '-')}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_users_given_name()}</dt>
-							<dd class="info-value">{sanitizeText(user.given_name || '-')}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_users_family_name()}</dt>
-							<dd class="info-value">{sanitizeText(user.family_name || '-')}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_user_detail_nickname()}</dt>
-							<dd class="info-value">{sanitizeText(user.nickname || '-')}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_user_detail_preferred_username()}</dt>
-							<dd class="info-value">{sanitizeText(user.preferred_username || '-')}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_user_detail_phone_number()}</dt>
-							<dd class="info-value">{sanitizeText(user.phone_number || '-')}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_user_detail_user_type()}</dt>
-							<dd class="info-value">{user.user_type}</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_users_verified_label()}</dt>
-							<dd class="info-value">
-								{#if user.email_verified}
-									<span class="verify-yes">✓ {formatYesNo(true)}</span>
-								{:else}
-									<span class="verify-no">✗ {formatYesNo(false)}</span>
-								{/if}
-							</dd>
-						</div>
-						<div class="info-item">
-							<dt>{$LL.admin_user_detail_phone_verified()}</dt>
-							<dd class="info-value">
-								{#if user.phone_number_verified}
-									<span class="verify-yes">✓ {formatYesNo(true)}</span>
-								{:else}
-									<span class="verify-no">✗ {formatYesNo(false)}</span>
-								{/if}
-							</dd>
-						</div>
-					</dl>
-				{/if}
-			</div>
-
-			<!-- Timestamps -->
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_user_detail_timestamps()}</h2>
-				<dl class="info-grid">
-					<div class="info-item">
-						<dt>{$LL.admin_user_detail_created_at()}</dt>
-						<dd class="info-value">{formatTimestamp(user.created_at)}</dd>
-					</div>
-					<div class="info-item">
-						<dt>{$LL.admin_user_detail_updated_at()}</dt>
-						<dd class="info-value">{formatTimestamp(user.updated_at)}</dd>
-					</div>
-					<div class="info-item">
-						<dt>{$LL.admin_user_detail_last_login_at()}</dt>
-						<dd class="info-value">{formatTimestamp(user.last_login_at)}</dd>
-					</div>
-					{#if user.suspended_at}
-						<div class="info-item">
-							<dt>{$LL.admin_user_detail_suspended_at()}</dt>
-							<dd class="info-value warning">{formatTimestamp(user.suspended_at)}</dd>
-						</div>
-					{/if}
-					{#if user.locked_at}
-						<div class="info-item">
-							<dt>{$LL.admin_user_detail_locked_at()}</dt>
-							<dd class="info-value danger">{formatTimestamp(user.locked_at)}</dd>
-						</div>
-					{/if}
-				</dl>
-			</div>
-
-			<!-- Passkeys -->
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_user_detail_passkeys()}</h2>
-				{#if user.passkeys && user.passkeys.length > 0}
-					<ul class="passkey-list">
-						{#each user.passkeys as passkey (passkey.id)}
-							<li class="passkey-item">
-								<div class="passkey-header">
-									<div>
-										<p class="passkey-name">
-											{sanitizeText(passkey.device_name || $LL.admin_user_detail_unnamed_device())}
-										</p>
-										<p class="passkey-meta">
-											{$LL.admin_user_detail_passkey_created({
-												date: formatTimestamp(passkey.created_at)
-											})}
-										</p>
-									</div>
-									<p class="passkey-meta">
-										{$LL.admin_user_detail_passkey_last_used({
-											date: formatTimestamp(passkey.last_used_at)
-										})}
-									</p>
+					{#if schemaFields.length > 0}
+						<dl class="schema-info-grid">
+							{#each schemaFields as field (field.key)}
+								<div class="info-item">
+									<dt>
+										{sanitizeText(field.label)}
+										{#if field.missingRequired}
+											<span class="required-marker">*</span>
+										{/if}
+									</dt>
+									<dd class="info-value" class:mono={field.type !== 'boolean'}>
+										{formatSchemaFieldValue(field)}
+									</dd>
 								</div>
-							</li>
-						{/each}
-					</ul>
+							{/each}
+						</dl>
+					{:else}
+						<div class="empty-state">
+							<p class="empty-state-description">
+								{$LL.admin_user_detail_no_user_information_fields()}
+							</p>
+						</div>
+					{/if}
+				{/if}
+			</AdminSection>
+		{/if}
+
+		<!-- Authentication Methods Tab -->
+		{#if activeTab === 'authentication-methods'}
+			<AdminSection title={$LL.admin_user_detail_passkeys()}>
+				{#if user.passkeys && user.passkeys.length > 0}
+					<AdminDataTable width="wide">
+						<thead>
+							<tr>
+								<th>{$LL.admin_user_detail_auth_method_name()}</th>
+								<th>{$LL.admin_user_detail_auth_method_type()}</th>
+								<th>{$LL.admin_user_detail_created_at()}</th>
+								<th>{$LL.admin_user_detail_last_used()}</th>
+								<th>{$LL.admin_users_status()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each user.passkeys as passkey (passkey.id)}
+								<tr>
+									<td>
+										<div class="cell-primary">
+											{sanitizeText(passkey.device_name || $LL.admin_user_detail_unnamed_device())}
+										</div>
+										<div class="cell-secondary mono">{passkey.id}</div>
+									</td>
+									<td class="muted">Passkey / WebAuthn</td>
+									<td class="muted nowrap">{formatTimestamp(passkey.created_at)}</td>
+									<td class="muted nowrap">{formatTimestamp(passkey.last_used_at)}</td>
+									<td><span class="badge badge-success">{passkeySyncLabel()}</span></td>
+								</tr>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_passkeys()}</p>
 					</div>
 				{/if}
-			</div>
+			</AdminSection>
+
+			<AdminSection title={$LL.admin_user_detail_other_auth_methods()}>
+				<div class="auth-method-list">
+					<div class="auth-method-row">
+						<div>
+							<p class="auth-method-title">{$LL.admin_user_detail_email_otp()}</p>
+							<p class="auth-method-description">{fallbackMethodDescription(user)}</p>
+						</div>
+						<span class={user.email_verified ? 'badge badge-success' : 'badge badge-neutral'}>
+							{user.email_verified
+								? $LL.admin_user_detail_available()
+								: $LL.admin_user_detail_unavailable()}
+						</span>
+					</div>
+					<div class="auth-method-row">
+						<div>
+							<p class="auth-method-title">{$LL.admin_user_detail_phone_otp()}</p>
+							<p class="auth-method-description">{sanitizeText(user.phone_number || '-')}</p>
+						</div>
+						<span
+							class={user.phone_number_verified ? 'badge badge-success' : 'badge badge-neutral'}
+						>
+							{user.phone_number_verified
+								? $LL.admin_user_detail_available()
+								: $LL.admin_user_detail_unavailable()}
+						</span>
+					</div>
+				</div>
+			</AdminSection>
+		{/if}
+
+		<!-- Sessions Tab -->
+		{#if activeTab === 'sessions'}
+			{#snippet sessionActions()}
+				{#if canRevokeSessions}
+					<button
+						class="btn btn-danger btn-sm"
+						onclick={() => openConfirmDialog('revoke-sessions')}
+					>
+						{$LL.admin_user_detail_revoke_all_sessions()}
+					</button>
+				{/if}
+			{/snippet}
+
+			<AdminSection title={$LL.admin_user_detail_sessions()} actions={sessionActions}>
+				{#if sessionsError}
+					<div class="alert alert-error">{sessionsError}</div>
+				{/if}
+
+				{#if sessionsLoading}
+					<div class="loading-state">
+						<i class="i-ph-circle-notch loading-spinner"></i>
+						<p>{$LL.admin_sessions_loading()}</p>
+					</div>
+				{:else if userSessions.length > 0}
+					<AdminDataTable width="wide">
+						<thead>
+							<tr>
+								<th>{$LL.admin_sessions_user()}</th>
+								<th>{$LL.admin_sessions_device()}</th>
+								<th>{$LL.admin_sessions_ip_address()}</th>
+								<th>{$LL.admin_sessions_last_access()}</th>
+								<th>{$LL.admin_sessions_expires()}</th>
+								<th>{$LL.admin_sessions_status()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each userSessions as session (session.id)}
+								<tr>
+									<td>
+										<div class="cell-primary mono">{session.id}</div>
+										<div class="cell-secondary">{sanitizeText(session.user_email || '-')}</div>
+									</td>
+									<td class="muted">{parseUserAgent(session.user_agent)}</td>
+									<td class="muted mono">{session.ip_address || '-'}</td>
+									<td class="muted nowrap">
+										<span title={formatIsoDateTime(session.last_accessed_at)}>
+											{relativeTimeFromIso(session.last_accessed_at)}
+										</span>
+									</td>
+									<td class="muted nowrap">
+										<span title={formatIsoDateTime(session.expires_at)}>
+											{timeUntilIso(session.expires_at)}
+										</span>
+									</td>
+									<td>
+										<span class={session.is_active ? 'badge badge-success' : 'badge badge-neutral'}>
+											{session.is_active
+												? $LL.admin_sessions_active()
+												: $LL.admin_sessions_expired()}
+										</span>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</AdminDataTable>
+				{:else}
+					<div class="empty-state">
+						<p class="empty-state-description">{$LL.admin_sessions_empty()}</p>
+					</div>
+				{/if}
+			</AdminSection>
+		{/if}
+
+		<!-- Audit Logs Tab -->
+		{#if activeTab === 'audit-logs'}
+			<AdminSection title={$LL.admin_user_detail_user_events()}>
+				{#if auditError}
+					<div class="alert alert-error">{auditError}</div>
+				{/if}
+
+				{#if auditLoading}
+					<div class="loading-state">
+						<i class="i-ph-circle-notch loading-spinner"></i>
+						<p>{$LL.admin_audit_logs_loading()}</p>
+					</div>
+				{:else if auditEntries.length > 0}
+					<div class="user-audit-list">
+						{#each auditEntries as entry (entry.id)}
+							<div class="user-audit-row">
+								<span class="user-audit-time">{formatIsoDateTime(entry.createdAt)}</span>
+								<div class="user-audit-detail">
+									<span class="user-detail-strong">{auditActionLabel(entry.action)}</span>
+									<span class="muted"> - {auditResourceSummary(entry)}</span>
+								</div>
+								<span class={auditBadgeClass(entry.action)}>{entry.action}</span>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="empty-state">
+						<p class="empty-state-description">{$LL.admin_audit_logs_empty()}</p>
+					</div>
+				{/if}
+			</AdminSection>
 		{/if}
 
 		<!-- Roles Tab -->
 		{#if activeTab === 'roles'}
 			<!-- Role Assignments -->
-			<div class="panel">
-				<div class="panel-header">
-					<h2 class="panel-title">{$LL.admin_user_detail_role_assignments()}</h2>
-					{#if canManageRoles}
-						<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}
-							>{$LL.admin_user_detail_assign_role()}</button
-						>
-					{/if}
-				</div>
+			{#snippet roleActions()}
+				{#if canManageRoles}
+					<button class="btn btn-primary btn-sm" onclick={openAssignRoleDialog}
+						>{$LL.admin_user_detail_assign_role()}</button
+					>
+				{/if}
+			{/snippet}
 
+			<AdminSection title={$LL.admin_user_detail_role_assignments()} actions={roleActions}>
 				{#if rolesError}
 					<div class="alert alert-error">{rolesError}</div>
 				{/if}
@@ -891,66 +1304,58 @@
 						<p>{$LL.admin_user_detail_loading_roles()}</p>
 					</div>
 				{:else if userRoles.length > 0}
-					<div class="data-table-container">
-						<table class="data-table">
-							<thead>
+					<AdminDataTable width="wide">
+						<thead>
+							<tr>
+								<th>{$LL.admin_user_detail_role()}</th>
+								<th>{$LL.admin_user_detail_scope()}</th>
+								<th>{$LL.admin_user_detail_scope_target()}</th>
+								<th>{$LL.admin_user_detail_expires()}</th>
+								<th class="text-right">{$LL.admin_users_actions()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each userRoles as role (role.id)}
 								<tr>
-									<th>{$LL.admin_user_detail_role()}</th>
-									<th>{$LL.admin_user_detail_scope()}</th>
-									<th>{$LL.admin_user_detail_scope_target()}</th>
-									<th>{$LL.admin_user_detail_expires()}</th>
-									<th class="text-right">{$LL.admin_users_actions()}</th>
+									<td>
+										<span class="user-detail-strong">
+											{role.role_display_name || role.role_name}
+										</span>
+										{#if role.is_system_role}
+											<span class="badge-system">{$LL.admin_user_detail_system()}</span>
+										{/if}
+									</td>
+									<td>
+										<span class={getScopeBadgeClass(role.scope)}>{getScopeLabel(role.scope)}</span>
+									</td>
+									<td class="muted">{role.scope_target || '-'}</td>
+									<td class="muted"
+										>{role.expires_at
+											? formatTimestamp(role.expires_at)
+											: $LL.admin_user_detail_never()}</td
+									>
+									<td class="text-right">
+										{#if canManageRoles}
+											<button class="btn btn-danger btn-sm" onclick={() => confirmRemoveRole(role)}>
+												{$LL.admin_user_detail_remove()}
+											</button>
+										{/if}
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each userRoles as role (role.id)}
-									<tr>
-										<td>
-											<span style="font-weight: 500;">
-												{role.role_display_name || role.role_name}
-											</span>
-											{#if role.is_system_role}
-												<span class="badge-system">{$LL.admin_user_detail_system()}</span>
-											{/if}
-										</td>
-										<td>
-											<span class={getScopeBadgeClass(role.scope)}>{getScopeLabel(role.scope)}</span
-											>
-										</td>
-										<td class="muted">{role.scope_target || '-'}</td>
-										<td class="muted"
-											>{role.expires_at
-												? formatTimestamp(role.expires_at)
-												: $LL.admin_user_detail_never()}</td
-										>
-										<td class="text-right">
-											{#if canManageRoles}
-												<button
-													class="btn btn-danger btn-sm"
-													onclick={() => confirmRemoveRole(role)}
-												>
-													{$LL.admin_user_detail_remove()}
-												</button>
-											{/if}
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_roles()}</p>
 					</div>
 				{/if}
-			</div>
+			</AdminSection>
 		{/if}
 
 		<!-- Consents Tab -->
 		{#if activeTab === 'consents'}
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_user_detail_consent_records()}</h2>
-
+			<AdminSection title={$LL.admin_user_detail_consent_records()}>
 				{#if consentError}
 					<div class="alert alert-error">{consentError}</div>
 				{/if}
@@ -961,74 +1366,71 @@
 						<p>{$LL.admin_user_detail_loading_consent_records()}</p>
 					</div>
 				{:else if consentRecords.length > 0}
-					<div class="data-table-container">
-						<table class="data-table">
-							<thead>
+					<AdminDataTable width="xwide">
+						<thead>
+							<tr>
+								<th>{$LL.admin_user_detail_statement()}</th>
+								<th>{$LL.admin_user_detail_version()}</th>
+								<th>{$LL.admin_users_status()}</th>
+								<th>{$LL.admin_user_detail_granted_at()}</th>
+								<th>{$LL.admin_user_detail_withdrawn_at()}</th>
+								<th>{$LL.admin_user_detail_expires_at()}</th>
+								<th class="text-right">{$LL.admin_users_actions()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each consentRecords as record (record.id)}
 								<tr>
-									<th>{$LL.admin_user_detail_statement()}</th>
-									<th>{$LL.admin_user_detail_version()}</th>
-									<th>{$LL.admin_users_status()}</th>
-									<th>{$LL.admin_user_detail_granted_at()}</th>
-									<th>{$LL.admin_user_detail_withdrawn_at()}</th>
-									<th>{$LL.admin_user_detail_expires_at()}</th>
-									<th class="text-right">{$LL.admin_users_actions()}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each consentRecords as record (record.id)}
-									<tr>
-										<td><span style="font-weight: 500;">{record.statement_id}</span></td>
-										<td class="muted">{record.version}</td>
-										<td>
-											<span class={getConsentStatusBadgeClass(record.status)}>
-												{getConsentStatusLabel(record.status)}
-											</span>
-										</td>
-										<td class="muted">{formatTimestamp(record.granted_at ?? null)}</td>
-										<td class="muted">{formatTimestamp(record.withdrawn_at ?? null)}</td>
-										<td class="muted">{formatTimestamp(record.expires_at ?? null)}</td>
-										<td class="text-right">
+									<td><span class="user-detail-strong">{record.statement_id}</span></td>
+									<td class="muted">{record.version}</td>
+									<td>
+										<span class={getConsentStatusBadgeClass(record.status)}>
+											{getConsentStatusLabel(record.status)}
+										</span>
+									</td>
+									<td class="muted">{formatTimestamp(record.granted_at ?? null)}</td>
+									<td class="muted">{formatTimestamp(record.withdrawn_at ?? null)}</td>
+									<td class="muted">{formatTimestamp(record.expires_at ?? null)}</td>
+									<td class="text-right">
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={() => {
+												selectedStatementForHistory = record.statement_id;
+												loadConsentHistory(record.statement_id);
+											}}
+										>
+											{$LL.admin_user_detail_history()}
+										</button>
+										{#if canWriteUsers && record.status === 'granted'}
 											<button
-												class="btn btn-secondary btn-sm"
+												class="btn btn-danger btn-sm"
 												onclick={() => {
-													selectedStatementForHistory = record.statement_id;
-													loadConsentHistory(record.statement_id);
+													statementToWithdraw = {
+														id: record.statement_id,
+														version: record.version
+													};
+													showWithdrawModal = true;
 												}}
 											>
-												{$LL.admin_user_detail_history()}
+												{$LL.admin_user_detail_withdraw()}
 											</button>
-											{#if canWriteUsers && record.status === 'granted'}
-												<button
-													class="btn btn-danger btn-sm"
-													onclick={() => {
-														statementToWithdraw = {
-															id: record.statement_id,
-															version: record.version
-														};
-														showWithdrawModal = true;
-													}}
-												>
-													{$LL.admin_user_detail_withdraw()}
-												</button>
-											{/if}
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+										{/if}
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_consent_records()}</p>
 					</div>
 				{/if}
-			</div>
+			</AdminSection>
 		{/if}
 
 		<!-- Actions Tab -->
 		{#if activeTab === 'actions'}
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_user_detail_tab_actions()}</h2>
+			<AdminSection title={$LL.admin_user_detail_tab_actions()}>
 				<div class="action-buttons">
 					{#if canWriteUsers && user.status === 'active'}
 						<button class="btn btn-warning" onclick={() => openConfirmDialog('suspend')}>
@@ -1053,10 +1455,10 @@
 						</button>
 					{/if}
 				</div>
-			</div>
+			</AdminSection>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Confirmation Dialog -->
 {#if showConfirmDialog}
@@ -1254,42 +1656,40 @@
 			<p>{$LL.admin_user_detail_loading_history()}</p>
 		</div>
 	{:else if consentHistory.length > 0}
-		<div class="data-table-container">
-			<table class="data-table">
-				<thead>
+		<AdminDataTable width="wide">
+			<thead>
+				<tr>
+					<th>{$LL.admin_user_detail_action()}</th>
+					<th>{$LL.admin_user_detail_version()}</th>
+					<th>{$LL.admin_user_detail_status_change()}</th>
+					<th>{$LL.admin_user_detail_timestamp()}</th>
+					<th>{$LL.admin_user_detail_client()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each consentHistory as item (item.id)}
 					<tr>
-						<th>{$LL.admin_user_detail_action()}</th>
-						<th>{$LL.admin_user_detail_version()}</th>
-						<th>{$LL.admin_user_detail_status_change()}</th>
-						<th>{$LL.admin_user_detail_timestamp()}</th>
-						<th>{$LL.admin_user_detail_client()}</th>
+						<td><span class="user-detail-strong">{getActionLabel(item.action)}</span></td>
+						<td class="muted">
+							{#if item.version_before !== item.version_after}
+								{item.version_before || '-'} → {item.version_after || '-'}
+							{:else}
+								{item.version_after || '-'}
+							{/if}
+						</td>
+						<td class="muted">
+							{#if item.status_before !== item.status_after}
+								{item.status_before || '-'} → {item.status_after || '-'}
+							{:else}
+								{item.status_after || '-'}
+							{/if}
+						</td>
+						<td class="muted">{formatTimestamp(item.created_at)}</td>
+						<td class="muted">{item.client_id || '-'}</td>
 					</tr>
-				</thead>
-				<tbody>
-					{#each consentHistory as item (item.id)}
-						<tr>
-							<td><span style="font-weight: 500;">{getActionLabel(item.action)}</span></td>
-							<td class="muted">
-								{#if item.version_before !== item.version_after}
-									{item.version_before || '-'} → {item.version_after || '-'}
-								{:else}
-									{item.version_after || '-'}
-								{/if}
-							</td>
-							<td class="muted">
-								{#if item.status_before !== item.status_after}
-									{item.status_before || '-'} → {item.status_after || '-'}
-								{:else}
-									{item.status_after || '-'}
-								{/if}
-							</td>
-							<td class="muted">{formatTimestamp(item.created_at)}</td>
-							<td class="muted">{item.client_id || '-'}</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+				{/each}
+			</tbody>
+		</AdminDataTable>
 	{:else}
 		<div class="empty-state">
 			<p class="empty-state-description">{$LL.admin_user_detail_no_history()}</p>
@@ -1349,3 +1749,149 @@
 		</button>
 	{/snippet}
 </Modal>
+
+<style>
+	.account-info-list,
+	.schema-info-grid {
+		margin: 0;
+	}
+
+	.account-info-list {
+		border-top: var(--user-detail-rule-strong, 1px solid var(--color-border-strong));
+	}
+
+	.account-info-row {
+		display: grid;
+		grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+		gap: 18px;
+		align-items: baseline;
+		padding: 11px 4px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.account-info-row dt,
+	.schema-info-grid dt {
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.12em);
+		text-transform: uppercase;
+	}
+
+	.account-info-row dd,
+	.schema-info-grid dd {
+		margin: 0;
+	}
+
+	.role-chip-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.auth-method-list {
+		display: grid;
+		gap: 10px;
+	}
+
+	.auth-method-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 18px;
+		padding: 14px 4px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.auth-method-row:last-child {
+		border-bottom: none;
+	}
+
+	.auth-method-title {
+		margin: 0;
+		color: var(--color-text);
+		font-weight: 650;
+	}
+
+	.auth-method-description {
+		margin: 4px 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.86rem;
+	}
+
+	.user-audit-list {
+		border-top: var(--user-detail-rule-strong, 1px solid var(--color-border-strong));
+	}
+
+	.user-audit-row {
+		display: grid;
+		grid-template-columns: minmax(150px, 210px) minmax(0, 1fr) auto;
+		gap: 16px;
+		align-items: center;
+		padding: 13px 4px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.user-audit-time {
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-mono, monospace));
+		font-size: 0.78rem;
+	}
+
+	.user-audit-detail {
+		min-width: 0;
+		word-break: break-word;
+	}
+
+	.schema-info-grid,
+	.schema-form-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 24px 44px;
+	}
+
+	.schema-info-grid .info-item {
+		min-width: 0;
+	}
+
+	.schema-info-grid .info-value {
+		margin-top: 8px;
+		word-break: break-word;
+	}
+
+	.required-marker {
+		margin-left: 6px;
+		color: var(--color-danger);
+	}
+
+	.field-key-hint {
+		margin: 6px 0 0;
+		color: var(--color-text-subtle);
+		font-family: var(--font-meta, var(--font-mono, monospace));
+		font-size: 0.72rem;
+	}
+
+	.user-detail-form-actions {
+		margin-top: 20px;
+	}
+
+	.user-detail-strong {
+		font-weight: 600;
+		color: var(--color-text);
+	}
+
+	@media (max-width: 760px) {
+		.account-info-row,
+		.user-audit-row,
+		.schema-info-grid,
+		.schema-form-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.auth-method-row {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+	}
+</style>

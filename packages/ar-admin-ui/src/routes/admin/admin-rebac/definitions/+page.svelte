@@ -6,6 +6,13 @@
 		AdminRebacDefinitionCreateInput,
 		AdminRebacDefinitionUpdateInput
 	} from '$lib/api/admin-admin-rebac';
+	import {
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
+	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let definitions: AdminRebacDefinition[] = [];
@@ -13,7 +20,6 @@
 	let error = '';
 	let searchQuery = '';
 
-	// Create dialog state
 	let showCreateDialog = false;
 	let createForm: AdminRebacDefinitionCreateInput = {
 		relation_name: '',
@@ -24,14 +30,12 @@
 	let createLoading = false;
 	let createError = '';
 
-	// Edit dialog state
 	let showEditDialog = false;
 	let editingDefinition: AdminRebacDefinition | null = null;
 	let editForm: AdminRebacDefinitionUpdateInput = {};
 	let editLoading = false;
 	let editError = '';
 
-	// Delete confirmation state
 	let showDeleteDialog = false;
 	let deletingDefinition: AdminRebacDefinition | null = null;
 	let deleteLoading = false;
@@ -62,6 +66,7 @@
 	}
 
 	async function handleCreate() {
+		if (!createForm.relation_name) return;
 		createLoading = true;
 		createError = '';
 		try {
@@ -127,22 +132,15 @@
 		}
 	}
 
-	function closeOnBackdropKeydown(event: KeyboardEvent, close: () => void) {
-		if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
-			event.preventDefault();
-			close();
-		}
-	}
-
 	onMount(() => {
 		loadDefinitions();
 	});
 
 	$: filteredDefinitions = definitions.filter(
-		(d) =>
-			d.relation_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			d.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			d.description?.toLowerCase().includes(searchQuery.toLowerCase())
+		(definition) =>
+			definition.relation_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			definition.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			definition.description?.toLowerCase().includes(searchQuery.toLowerCase())
 	);
 </script>
 
@@ -150,383 +148,513 @@
 	<title>{$LL.admin_admin_rebac_definitions_head_title()}</title>
 </svelte:head>
 
-<div class="container mx-auto px-4 py-8">
-	<!-- Breadcrumb -->
-	<nav class="mb-4 text-sm">
-		<a href="/admin/admin-rebac" class="text-blue-600 hover:text-blue-700">
-			{$LL.admin_admin_rebac_title()}
-		</a>
-		<span class="mx-2 text-gray-400">/</span>
-		<span class="text-gray-600">{$LL.admin_admin_rebac_definitions_breadcrumb()}</span>
-	</nav>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admin_rebac_definitions_title()}
+		description={$LL.admin_admin_rebac_definitions_description()}
+	>
+		{#snippet actions()}
+			<button class="btn btn-primary" onclick={openCreateDialog}>
+				<span class="i-ph-plus"></span>
+				{$LL.admin_admin_rebac_create_definition()}
+			</button>
+		{/snippet}
+	</AdminPageHeader>
 
-	<!-- Header -->
-	<div class="flex items-center justify-between mb-6">
-		<div>
-			<h1 class="text-3xl font-bold mb-2">{$LL.admin_admin_rebac_definitions_title()}</h1>
-			<p class="text-gray-600">{$LL.admin_admin_rebac_definitions_description()}</p>
-		</div>
-		<button
-			on:click={openCreateDialog}
-			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center"
-		>
-			<span class="i-ph-plus mr-2"></span>
-			{$LL.admin_admin_rebac_create_definition()}
-		</button>
-	</div>
-
-	<!-- Error Message -->
 	{#if error}
-		<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-			{error}
-		</div>
+		<div class="alert alert-error">{error}</div>
 	{/if}
 
-	<!-- Search Bar -->
-	<div class="mb-6">
-		<div class="relative">
-			<span class="absolute left-3 top-3 i-ph-magnifying-glass text-gray-400"></span>
-			<input
-				type="text"
-				bind:value={searchQuery}
-				placeholder={$LL.admin_admin_rebac_search_definitions_placeholder()}
-				class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-			/>
+	<AdminToolbar>
+		<div class="admin-field admin-field--search">
+			<label class="admin-field__label" for="rebac-definition-search">
+				{$LL.admin_admin_rebac_search_definitions_placeholder()}
+			</label>
+			<div class="search-box">
+				<span class="i-ph-magnifying-glass"></span>
+				<input
+					id="rebac-definition-search"
+					class="admin-input search-input"
+					type="text"
+					bind:value={searchQuery}
+					placeholder={$LL.admin_admin_rebac_search_definitions_placeholder()}
+				/>
+			</div>
 		</div>
-	</div>
+	</AdminToolbar>
 
-	<!-- Loading State -->
 	{#if loading}
-		<div class="flex justify-center py-12">
-			<div class="text-gray-500">{$LL.admin_admin_rebac_loading_definitions()}</div>
-		</div>
+		<AdminSection>
+			<div class="loading-state">{$LL.admin_admin_rebac_loading_definitions()}</div>
+		</AdminSection>
 	{:else if filteredDefinitions.length === 0}
-		<div class="bg-white border border-gray-200 rounded-lg p-12 text-center">
-			<div class="text-gray-400 text-5xl mb-4 i-ph-arrows-split"></div>
-			<h3 class="text-xl font-semibold mb-2">
-				{$LL.admin_admin_rebac_no_definitions_found()}
-			</h3>
-			<p class="text-gray-600 mb-4">
-				{searchQuery
-					? $LL.admin_admin_rebac_try_adjusting_search()
-					: $LL.admin_admin_rebac_create_definition_empty()}
-			</p>
-			{#if !searchQuery}
-				<button
-					on:click={openCreateDialog}
-					class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-				>
-					{$LL.admin_admin_rebac_create_definition()}
-				</button>
-			{/if}
-		</div>
+		<AdminSection>
+			<div class="empty-state">
+				<span class="i-ph-arrows-split empty-state__icon"></span>
+				<h2>{$LL.admin_admin_rebac_no_definitions_found()}</h2>
+				<p>
+					{searchQuery
+						? $LL.admin_admin_rebac_try_adjusting_search()
+						: $LL.admin_admin_rebac_create_definition_empty()}
+				</p>
+				{#if !searchQuery}
+					<button class="btn btn-primary" onclick={openCreateDialog}>
+						{$LL.admin_admin_rebac_create_definition()}
+					</button>
+				{/if}
+			</div>
+		</AdminSection>
 	{:else}
-		<!-- Definitions Grid -->
-		<div class="grid grid-cols-1 gap-4">
-			{#each filteredDefinitions as definition (definition.id)}
-				<div
-					class="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow"
-				>
-					<div class="flex items-start justify-between">
-						<div class="flex-1">
-							<div class="flex items-center space-x-3 mb-2">
-								<h3 class="text-lg font-semibold font-mono">{definition.relation_name}</h3>
+		<AdminSection>
+			<div class="definition-list">
+				{#each filteredDefinitions as definition (definition.id)}
+					<article class="definition-card">
+						<div class="definition-card__main">
+							<div class="definition-card__heading">
+								<h2>{definition.relation_name}</h2>
 								{#if definition.is_system}
-									<span
-										class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded-full font-medium"
-									>
-										{$LL.admin_admin_rebac_system()}
-									</span>
+									<span class="mini-badge">{$LL.admin_admin_rebac_system()}</span>
 								{/if}
 							</div>
 							{#if definition.display_name}
-								<p class="text-gray-900 mb-1">{definition.display_name}</p>
+								<p class="definition-card__name">{definition.display_name}</p>
 							{/if}
 							{#if definition.description}
-								<p class="text-gray-600 text-sm mb-3">{definition.description}</p>
+								<p class="definition-card__description">{definition.description}</p>
 							{/if}
-							<div class="flex items-center space-x-4 text-sm text-gray-500">
+							<div class="definition-card__meta">
 								<span>{$LL.admin_admin_rebac_priority({ priority: definition.priority })}</span>
 								<span>{$LL.admin_admin_rebac_tenant({ tenant: definition.tenant_id })}</span>
 							</div>
 						</div>
-						<div class="flex items-center space-x-2 ml-4">
+						<div class="definition-card__actions">
 							{#if !definition.is_system}
 								<button
-									on:click={() => openEditDialog(definition)}
-									class="p-2 text-gray-600 hover:bg-gray-100 rounded transition-colors"
+									class="icon-action"
+									onclick={() => openEditDialog(definition)}
 									title={$LL.admin_admin_rebac_edit()}
+									aria-label={$LL.admin_admin_rebac_edit()}
 								>
-									<span class="i-ph-pencil text-lg"></span>
+									<span class="i-ph-pencil"></span>
 								</button>
 								<button
-									on:click={() => openDeleteDialog(definition)}
-									class="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
+									class="icon-action icon-action--danger"
+									onclick={() => openDeleteDialog(definition)}
 									title={$LL.admin_admin_rebac_delete()}
+									aria-label={$LL.admin_admin_rebac_delete()}
 								>
-									<span class="i-ph-trash text-lg"></span>
+									<span class="i-ph-trash"></span>
 								</button>
 							{:else}
-								<span class="text-xs text-gray-500 italic">
-									{$LL.admin_admin_rebac_system_protected()}
-								</span>
+								<span class="system-note">{$LL.admin_admin_rebac_system_protected()}</span>
 							{/if}
 						</div>
-					</div>
-				</div>
-			{/each}
+					</article>
+				{/each}
+			</div>
+		</AdminSection>
+	{/if}
+</AdminPageShell>
+
+<Modal
+	open={showCreateDialog}
+	onClose={() => (showCreateDialog = false)}
+	title={$LL.admin_admin_rebac_create_relationship_definition()}
+	size="md"
+>
+	{#if createError}
+		<div class="alert alert-error">{createError}</div>
+	{/if}
+	<div class="modal-form">
+		<label class="form-field" for="relation_name">
+			<span>{$LL.admin_admin_rebac_relation_name()} <b>*</b></span>
+			<input
+				id="relation_name"
+				class="form-control form-control--mono"
+				type="text"
+				bind:value={createForm.relation_name}
+				placeholder="admin_supervises"
+			/>
+			<small>{$LL.admin_admin_rebac_relation_name_help()}</small>
+		</label>
+		<label class="form-field" for="display_name">
+			<span>{$LL.admin_admin_rebac_display_name()}</span>
+			<input
+				id="display_name"
+				class="form-control"
+				type="text"
+				bind:value={createForm.display_name}
+				placeholder={$LL.admin_admin_rebac_display_name_placeholder()}
+			/>
+		</label>
+		<label class="form-field" for="description">
+			<span>{$LL.admin_admin_rebac_description_label()}</span>
+			<textarea
+				id="description"
+				class="form-control"
+				bind:value={createForm.description}
+				placeholder={$LL.admin_admin_rebac_description_placeholder()}
+				rows="3"
+			></textarea>
+		</label>
+		<label class="form-field" for="priority">
+			<span>{$LL.admin_admin_rebac_priority_label()}</span>
+			<input
+				id="priority"
+				class="form-control"
+				type="number"
+				bind:value={createForm.priority}
+				placeholder="0"
+			/>
+			<small>{$LL.admin_admin_rebac_priority_help()}</small>
+		</label>
+	</div>
+
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={() => (showCreateDialog = false)}
+			disabled={createLoading}
+		>
+			{$LL.admin_admin_rebac_cancel()}
+		</button>
+		<button
+			class="btn btn-primary"
+			onclick={handleCreate}
+			disabled={createLoading || !createForm.relation_name}
+		>
+			{createLoading ? $LL.admin_admin_rebac_creating() : $LL.admin_admin_rebac_create()}
+		</button>
+	{/snippet}
+</Modal>
+
+<Modal
+	open={showEditDialog && !!editingDefinition}
+	onClose={() => (showEditDialog = false)}
+	title={$LL.admin_admin_rebac_edit_relationship_definition()}
+	size="md"
+>
+	{#if editError}
+		<div class="alert alert-error">{editError}</div>
+	{/if}
+	{#if editingDefinition}
+		<div class="modal-form">
+			<div class="form-field">
+				<span>{$LL.admin_admin_rebac_relation_name()}</span>
+				<div class="readonly-value">{editingDefinition.relation_name}</div>
+				<small>{$LL.admin_admin_rebac_relation_name_readonly_help()}</small>
+			</div>
+			<label class="form-field" for="edit_display_name">
+				<span>{$LL.admin_admin_rebac_display_name()}</span>
+				<input
+					id="edit_display_name"
+					class="form-control"
+					type="text"
+					bind:value={editForm.display_name}
+					placeholder={$LL.admin_admin_rebac_display_name_placeholder()}
+				/>
+			</label>
+			<label class="form-field" for="edit_description">
+				<span>{$LL.admin_admin_rebac_description_label()}</span>
+				<textarea
+					id="edit_description"
+					class="form-control"
+					bind:value={editForm.description}
+					placeholder={$LL.admin_admin_rebac_description_placeholder()}
+					rows="3"
+				></textarea>
+			</label>
+			<label class="form-field" for="edit_priority">
+				<span>{$LL.admin_admin_rebac_priority_label()}</span>
+				<input
+					id="edit_priority"
+					class="form-control"
+					type="number"
+					bind:value={editForm.priority}
+					placeholder="0"
+				/>
+			</label>
 		</div>
 	{/if}
-</div>
 
-<!-- Create Dialog -->
-{#if showCreateDialog}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		role="button"
-		tabindex="0"
-		aria-label={$LL.admin_admin_rebac_close_create_definition_dialog()}
-		on:click|self={() => (showCreateDialog = false)}
-		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
-	>
-		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
-			<h2 class="text-xl font-semibold mb-4">
-				{$LL.admin_admin_rebac_create_relationship_definition()}
-			</h2>
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={() => (showEditDialog = false)}
+			disabled={editLoading}
+		>
+			{$LL.admin_admin_rebac_cancel()}
+		</button>
+		<button class="btn btn-primary" onclick={handleEdit} disabled={editLoading}>
+			{editLoading ? $LL.admin_admin_rebac_saving() : $LL.admin_admin_rebac_save()}
+		</button>
+	{/snippet}
+</Modal>
 
-			{#if createError}
-				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-					{createError}
-				</div>
-			{/if}
+<Modal
+	open={showDeleteDialog && !!deletingDefinition}
+	onClose={() => (showDeleteDialog = false)}
+	title={$LL.admin_admin_rebac_delete_relationship_definition()}
+	size="md"
+>
+	{#if deleteError}
+		<div class="alert alert-error">{deleteError}</div>
+	{/if}
+	{#if deletingDefinition}
+		<p class="confirm-copy">
+			{$LL.admin_admin_rebac_delete_definition_confirm({
+				name: deletingDefinition.relation_name
+			})}
+		</p>
+		<p class="danger-copy">{$LL.admin_admin_rebac_delete_definition_warning()}</p>
+	{/if}
 
-			<form on:submit|preventDefault={handleCreate}>
-				<div class="space-y-4">
-					<div>
-						<label for="relation_name" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_relation_name()} <span class="text-red-500">*</span>
-						</label>
-						<input
-							id="relation_name"
-							type="text"
-							bind:value={createForm.relation_name}
-							required
-							placeholder="admin_supervises"
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-						/>
-						<p class="text-xs text-gray-500 mt-1">
-							{$LL.admin_admin_rebac_relation_name_help()}
-						</p>
-					</div>
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={() => (showDeleteDialog = false)}
+			disabled={deleteLoading}
+		>
+			{$LL.admin_admin_rebac_cancel()}
+		</button>
+		<button class="btn btn-danger" onclick={handleDelete} disabled={deleteLoading}>
+			{deleteLoading ? $LL.admin_admin_rebac_deleting() : $LL.admin_admin_rebac_delete()}
+		</button>
+	{/snippet}
+</Modal>
 
-					<div>
-						<label for="display_name" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_display_name()}
-						</label>
-						<input
-							id="display_name"
-							type="text"
-							bind:value={createForm.display_name}
-							placeholder={$LL.admin_admin_rebac_display_name_placeholder()}
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						/>
-					</div>
+<style>
+	.search-box {
+		position: relative;
+	}
 
-					<div>
-						<label for="description" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_description_label()}
-						</label>
-						<textarea
-							id="description"
-							bind:value={createForm.description}
-							placeholder={$LL.admin_admin_rebac_description_placeholder()}
-							rows="3"
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						></textarea>
-					</div>
+	.search-box :global(.i-ph-magnifying-glass) {
+		position: absolute;
+		left: 0.75rem;
+		top: 50%;
+		width: 18px;
+		height: 18px;
+		color: var(--color-text-subtle);
+		transform: translateY(-50%);
+	}
 
-					<div>
-						<label for="priority" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_priority_label()}
-						</label>
-						<input
-							id="priority"
-							type="number"
-							bind:value={createForm.priority}
-							placeholder="0"
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						/>
-						<p class="text-xs text-gray-500 mt-1">
-							{$LL.admin_admin_rebac_priority_help()}
-						</p>
-					</div>
-				</div>
+	.search-input {
+		padding-left: 2.5rem;
+	}
 
-				<div class="mt-6 flex justify-end space-x-3">
-					<button
-						type="button"
-						on:click={() => (showCreateDialog = false)}
-						disabled={createLoading}
-						class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-					>
-						{$LL.admin_admin_rebac_cancel()}
-					</button>
-					<button
-						type="submit"
-						disabled={createLoading || !createForm.relation_name}
-						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-					>
-						{createLoading ? $LL.admin_admin_rebac_creating() : $LL.admin_admin_rebac_create()}
-					</button>
-				</div>
-			</form>
-		</div>
-	</div>
-{/if}
+	.alert {
+		padding: 12px 14px;
+		border-radius: var(--radius-control);
+		margin-bottom: 1rem;
+	}
 
-<!-- Edit Dialog -->
-{#if showEditDialog && editingDefinition}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		role="button"
-		tabindex="0"
-		aria-label={$LL.admin_admin_rebac_close_edit_definition_dialog()}
-		on:click|self={() => (showEditDialog = false)}
-		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showEditDialog = false))}
-	>
-		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
-			<h2 class="text-xl font-semibold mb-4">
-				{$LL.admin_admin_rebac_edit_relationship_definition()}
-			</h2>
+	.alert-error {
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+		color: var(--color-danger);
+	}
 
-			{#if editError}
-				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-					{editError}
-				</div>
-			{/if}
+	.loading-state,
+	.empty-state {
+		display: grid;
+		place-items: center;
+		gap: 12px;
+		min-height: 220px;
+		padding: 36px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		text-align: center;
+	}
 
-			<form on:submit|preventDefault={handleEdit}>
-				<div class="space-y-4">
-					<div>
-						<p class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_relation_name()}
-						</p>
-						<div class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-mono text-sm">
-							{editingDefinition.relation_name}
-						</div>
-						<p class="text-xs text-gray-500 mt-1">
-							{$LL.admin_admin_rebac_relation_name_readonly_help()}
-						</p>
-					</div>
+	.empty-state h2,
+	.empty-state p {
+		margin: 0;
+	}
 
-					<div>
-						<label for="edit_display_name" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_display_name()}
-						</label>
-						<input
-							id="edit_display_name"
-							type="text"
-							bind:value={editForm.display_name}
-							placeholder={$LL.admin_admin_rebac_display_name_placeholder()}
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						/>
-					</div>
+	.empty-state h2 {
+		color: var(--color-text);
+		font-size: 1.1rem;
+	}
 
-					<div>
-						<label for="edit_description" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_description_label()}
-						</label>
-						<textarea
-							id="edit_description"
-							bind:value={editForm.description}
-							placeholder={$LL.admin_admin_rebac_description_placeholder()}
-							rows="3"
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						></textarea>
-					</div>
+	.empty-state__icon {
+		color: var(--color-text-subtle);
+		font-size: 3rem;
+	}
 
-					<div>
-						<label for="edit_priority" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_priority_label()}
-						</label>
-						<input
-							id="edit_priority"
-							type="number"
-							bind:value={editForm.priority}
-							placeholder="0"
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						/>
-					</div>
-				</div>
+	.definition-list {
+		display: grid;
+		gap: 14px;
+	}
 
-				<div class="mt-6 flex justify-end space-x-3">
-					<button
-						type="button"
-						on:click={() => (showEditDialog = false)}
-						disabled={editLoading}
-						class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-					>
-						{$LL.admin_admin_rebac_cancel()}
-					</button>
-					<button
-						type="submit"
-						disabled={editLoading}
-						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-					>
-						{editLoading ? $LL.admin_admin_rebac_saving() : $LL.admin_admin_rebac_save()}
-					</button>
-				</div>
-			</form>
-		</div>
-	</div>
-{/if}
+	.definition-card {
+		display: flex;
+		justify-content: space-between;
+		gap: 18px;
+		padding: 20px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--card-shadow, var(--shadow-sm));
+		transition:
+			border-color var(--transition-fast),
+			box-shadow var(--transition-fast);
+	}
 
-<!-- Delete Confirmation Dialog -->
-{#if showDeleteDialog && deletingDefinition}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		role="button"
-		tabindex="0"
-		aria-label={$LL.admin_admin_rebac_close_delete_definition_dialog()}
-		on:click|self={() => (showDeleteDialog = false)}
-		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
-	>
-		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
-			<h2 class="text-xl font-semibold mb-4">
-				{$LL.admin_admin_rebac_delete_relationship_definition()}
-			</h2>
+	.definition-card:hover {
+		border-color: var(--color-accent);
+		box-shadow: var(--shadow-md);
+	}
 
-			{#if deleteError}
-				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-					{deleteError}
-				</div>
-			{/if}
+	.definition-card__main {
+		min-width: 0;
+	}
 
-			<p class="text-gray-700 mb-4">
-				{$LL.admin_admin_rebac_delete_definition_confirm({
-					name: deletingDefinition.relation_name
-				})}
-			</p>
-			<p class="text-sm text-red-600 mb-4">
-				{$LL.admin_admin_rebac_delete_definition_warning()}
-			</p>
+	.definition-card__heading {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+		margin-bottom: 8px;
+	}
 
-			<div class="flex justify-end space-x-3">
-				<button
-					on:click={() => (showDeleteDialog = false)}
-					disabled={deleteLoading}
-					class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-				>
-					{$LL.admin_admin_rebac_cancel()}
-				</button>
-				<button
-					on:click={handleDelete}
-					disabled={deleteLoading}
-					class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-				>
-					{deleteLoading ? $LL.admin_admin_rebac_deleting() : $LL.admin_admin_rebac_delete()}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+	.definition-card__heading h2 {
+		margin: 0;
+		color: var(--color-text);
+		font-family: var(--font-mono);
+		font-size: 1rem;
+	}
+
+	.definition-card__name {
+		margin: 0 0 5px;
+		color: var(--color-text);
+	}
+
+	.definition-card__description {
+		margin: 0 0 12px;
+		color: var(--color-text-muted);
+		font-size: 0.88rem;
+		line-height: 1.65;
+	}
+
+	.definition-card__meta {
+		display: flex;
+		gap: 14px;
+		flex-wrap: wrap;
+		color: var(--color-text-subtle);
+		font-size: 0.78rem;
+	}
+
+	.definition-card__actions {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		flex: 0 0 auto;
+	}
+
+	.icon-action {
+		display: grid;
+		width: 34px;
+		height: 34px;
+		place-items: center;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+
+	.icon-action:hover {
+		border-color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.icon-action--danger:hover {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
+	}
+
+	.mini-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 3px 8px;
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 600;
+	}
+
+	.system-note {
+		color: var(--color-text-subtle);
+		font-size: 0.76rem;
+		font-style: italic;
+	}
+
+	.modal-form {
+		display: grid;
+		gap: 16px;
+	}
+
+	.form-field {
+		display: grid;
+		gap: 6px;
+		color: var(--color-text);
+		font-size: 0.88rem;
+	}
+
+	.form-field b,
+	.danger-copy {
+		color: var(--color-danger);
+	}
+
+	.form-field small {
+		color: var(--color-text-subtle);
+		font-size: 0.76rem;
+	}
+
+	.form-control,
+	.readonly-value {
+		width: 100%;
+		padding: 9px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+	}
+
+	.form-control--mono,
+	.readonly-value {
+		font-family: var(--font-mono);
+		font-size: 0.86rem;
+	}
+
+	.readonly-value {
+		background: var(--color-surface-muted);
+	}
+
+	.form-control:focus {
+		outline: none;
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.confirm-copy,
+	.danger-copy {
+		margin: 0 0 12px;
+		line-height: 1.7;
+	}
+
+	.confirm-copy {
+		color: var(--color-text-muted);
+	}
+
+	@media (max-width: 720px) {
+		.definition-card {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+	}
+</style>

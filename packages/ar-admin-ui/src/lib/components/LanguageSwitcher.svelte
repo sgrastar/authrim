@@ -41,14 +41,14 @@
 	}
 </script>
 
-<div class="flex items-center gap-2">
-	<div class="i-heroicons-globe-alt h-4 w-4 text-gray-500"></div>
+<div class="language-switcher">
+	<div class="i-heroicons-globe-alt language-icon"></div>
 	<select
 		value={currentLang}
 		onchange={(e) => switchLanguage(e.currentTarget.value as Locales)}
 		aria-label={$LL.language_select_label()}
 		aria-invalid={errorMessage ? 'true' : undefined}
-		class="px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+		class="language-select"
 	>
 		{#each SUPPORTED_LOCALES as lang (lang)}
 			<option value={lang}>
@@ -60,3 +60,36 @@
 		<span class="sr-only" role="alert">{errorMessage}</span>
 	{/if}
 </div>
+
+<style>
+	.language-switcher {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.language-icon {
+		width: 16px;
+		height: 16px;
+		font-size: 16px;
+		color: var(--color-text-muted);
+	}
+
+	.language-select {
+		min-height: 32px;
+		padding: 4px 8px;
+		border: var(--control-border, 1px solid var(--color-border));
+		border-radius: var(--radius-control, 6px);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		box-shadow: var(--control-shadow, none);
+		font: inherit;
+		font-size: 14px;
+	}
+
+	.language-select:focus {
+		outline: none;
+		border-color: var(--control-focus-border, var(--color-accent));
+		box-shadow: var(--control-focus-shadow, 0 0 0 3px var(--color-accent-muted));
+	}
+</style>

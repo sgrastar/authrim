@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { GraphNode, GraphNodeType } from '$lib/api/admin-flows';
+	import { getFlowNodeColor } from './flow-node-metadata';
 
 	interface Props {
 		selectedNode: GraphNode | null;
@@ -118,79 +119,11 @@
 		};
 		return labels[type] || type;
 	}
-
-	function getNodeTypeColor(type: GraphNodeType): string {
-		const colors: Partial<Record<GraphNodeType, string>> = {
-			// 1. Control Nodes
-			start: '#22c55e',
-			end: '#10b981',
-			goto: '#64748b',
-			// 2. Check Nodes
-			check_session: '#a855f7',
-			check_auth_level: '#8b5cf6',
-			check_first_login: '#7c3aed',
-			check_user_attribute: '#6366f1',
-			check_context: '#4f46e5',
-			check_risk: '#dc2626',
-			// 3. Selection Nodes
-			auth_method_select: '#3b82f6',
-			login_method_select: '#0ea5e9',
-			identifier: '#06b6d4',
-			profile_input: '#0891b2',
-			custom_form: '#0284c7',
-			information: '#64748b',
-			challenge: '#f59e0b',
-			// 4. Authentication Nodes
-			login: '#6366f1',
-			mfa: '#f59e0b',
-			register: '#10b981',
-			// 5. Consent Nodes
-			consent: '#06b6d4',
-			check_consent_status: '#0891b2',
-			record_consent: '#0284c7',
-			// 6. Resolve Nodes
-			resolve_tenant: '#8b5cf6',
-			resolve_org: '#7c3aed',
-			resolve_policy: '#6366f1',
-			// 7. Session Nodes
-			issue_tokens: '#22c55e',
-			refresh_session: '#10b981',
-			revoke_session: '#ef4444',
-			bind_device: '#f59e0b',
-			link_account: '#ec4899',
-			// 8. Side Effect Nodes
-			redirect: '#0891b2',
-			webhook: '#0284c7',
-			event_emit: '#059669',
-			email_send: '#7c3aed',
-			sms_send: '#8b5cf6',
-			push_notify: '#a855f7',
-			// 9. Logic Nodes
-			decision: '#ec4899',
-			switch: '#f43f5e',
-			// 10. Policy Nodes
-			policy_check: '#4f46e5',
-			// 11. Error Nodes
-			error: '#ef4444',
-			log: '#64748b',
-			// Legacy (deprecated)
-			auth_method: '#8b5cf6',
-			user_input: '#0ea5e9',
-			wait_input: '#64748b',
-			condition: '#ec4899',
-			check_user: '#7c3aed',
-			risk_check: '#dc2626',
-			set_variable: '#059669',
-			call_api: '#0284c7',
-			send_notification: '#7c3aed'
-		};
-		return colors[type] || '#6b7280';
-	}
 </script>
 
 <div class="properties-panel">
 	{#if selectedNode}
-		<div class="panel-header" style="--type-color: {getNodeTypeColor(selectedNode.type)}">
+		<div class="panel-header" style="--type-color: {getFlowNodeColor(selectedNode.type)}">
 			<span class="type-badge">{getNodeTypeLabel(selectedNode.type)}</span>
 			<span class="node-id">{selectedNode.id}</span>
 		</div>
@@ -345,18 +278,20 @@
 <style>
 	.properties-panel {
 		width: 280px;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 8px;
+		background: var(--flow-panel-bg, var(--color-surface));
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, 8px);
+		color: var(--color-text);
 		display: flex;
 		flex-direction: column;
 		max-height: 100%;
 		overflow: hidden;
+		box-shadow: var(--shadow-panel, none);
 	}
 
 	.panel-header {
 		padding: 16px;
-		border-bottom: 1px solid #e5e7eb;
+		border-bottom: 1px solid var(--color-border);
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
@@ -370,8 +305,8 @@
 
 	.node-id {
 		font-size: 11px;
-		color: #9ca3af;
-		font-family: ui-monospace, SFMono-Regular, monospace;
+		color: var(--color-text-muted);
+		font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
 	}
 
 	.panel-content {
@@ -391,22 +326,26 @@
 	.form-group label {
 		display: block;
 		font-size: 13px;
-		font-weight: 500;
-		color: #374151;
+		font-weight: var(--form-label-weight, 500);
+		color: var(--form-label-color, var(--color-text));
 		margin-bottom: 6px;
 	}
 
 	.form-group label .hint {
 		font-weight: 400;
-		color: #9ca3af;
+		color: var(--color-text-muted);
 	}
 
 	.form-group input,
 	.form-group textarea {
 		width: 100%;
-		padding: 8px 12px;
-		border: 1px solid #d1d5db;
-		border-radius: 6px;
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 8px 12px);
+		border: var(--control-border, 1px solid var(--color-border));
+		border-radius: var(--radius-control, 6px);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		box-shadow: var(--control-shadow, none);
 		font-size: 14px;
 		font-family: inherit;
 	}
@@ -414,49 +353,50 @@
 	.form-group input:focus,
 	.form-group textarea:focus {
 		outline: none;
-		border-color: #2563eb;
-		box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+		border-color: var(--control-focus-border, var(--color-accent));
+		box-shadow: var(--control-focus-shadow, 0 0 0 2px var(--color-accent-muted));
 	}
 
 	.form-group textarea {
 		resize: vertical;
-		font-family: ui-monospace, SFMono-Regular, monospace;
+		font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
 		font-size: 12px;
 	}
 
 	.form-group textarea.has-error {
-		border-color: #ef4444;
+		border-color: var(--color-danger);
 	}
 
 	.error-text {
 		display: block;
 		margin-top: 4px;
 		font-size: 12px;
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 
 	.position-display {
 		display: flex;
 		gap: 16px;
 		padding: 8px 12px;
-		background: #f9fafb;
-		border-radius: 6px;
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 6px);
 		font-size: 13px;
-		color: #6b7280;
-		font-family: ui-monospace, SFMono-Regular, monospace;
+		color: var(--color-text-muted);
+		font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
 	}
 
 	.config-helpers {
 		margin-top: 16px;
 		padding-top: 16px;
-		border-top: 1px solid #e5e7eb;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.config-helpers h4 {
 		margin: 0 0 8px 0;
 		font-size: 12px;
-		font-weight: 500;
-		color: #6b7280;
+		font-weight: var(--font-weight-semibold, 600);
+		color: var(--color-text-muted);
 	}
 
 	.helper-buttons {
@@ -467,44 +407,50 @@
 
 	.helper-buttons button {
 		padding: 4px 10px;
-		background: #f3f4f6;
-		border: 1px solid #e5e7eb;
-		border-radius: 4px;
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 6px);
 		font-size: 12px;
-		color: #374151;
+		color: var(--color-text);
 		cursor: pointer;
-		transition: all 0.2s;
+		transition:
+			background 0.2s ease,
+			border-color 0.2s ease,
+			color 0.2s ease;
 	}
 
 	.helper-buttons button:hover {
-		background: #e5e7eb;
+		border-color: var(--color-border-strong);
+		background: var(--color-surface);
 	}
 
 	.panel-footer {
 		padding: 16px;
-		border-top: 1px solid #e5e7eb;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.btn-delete {
 		width: 100%;
 		padding: 8px 16px;
-		background: white;
-		border: 1px solid #fecaca;
-		border-radius: 6px;
-		color: #dc2626;
+		background: var(--color-surface);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 34%, var(--color-border));
+		border-radius: var(--radius-control, 6px);
+		color: var(--color-danger);
 		font-size: 13px;
 		cursor: pointer;
-		transition: all 0.2s;
+		transition:
+			background 0.2s ease,
+			border-color 0.2s ease;
 	}
 
 	.btn-delete:hover {
-		background: #fef2f2;
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
 	}
 
 	.empty-state {
 		padding: 32px 16px;
 		text-align: center;
-		color: #9ca3af;
+		color: var(--color-text-muted);
 	}
 
 	.empty-icon {

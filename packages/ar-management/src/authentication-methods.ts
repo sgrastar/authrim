@@ -10,7 +10,8 @@
  *   - Returns enabled authentication methods + UI config
  *
  * Data sources:
- *   - SETTINGS KV ("system_settings") → passkeyEnabled, magicLinkEnabled, UI theme
+ *   - SETTINGS KV ("settings:tenant:{tenantId}:authentication-methods") → built-in and external methods
+ *   - SETTINGS KV ("settings:tenant:{tenantId}:login-ui") → UI theme
  *   - EXTERNAL_IDP service binding → enabled external login providers
  *
  * Security:
@@ -33,11 +34,19 @@ import {
 
 interface PasskeyMethod {
   enabled: boolean;
+  loginEnabled: boolean;
+  signupEnabled: boolean;
+  reauthEnabled: boolean;
+  accountLinkEnabled: boolean;
   capabilities: string[];
 }
 
 interface EmailCodeMethod {
   enabled: boolean;
+  loginEnabled: boolean;
+  signupEnabled: boolean;
+  reauthEnabled: boolean;
+  accountLinkEnabled: boolean;
   steps: string[];
 }
 
@@ -55,6 +64,12 @@ interface ExternalLoginProvider {
   name: string;
   type: ExternalLoginProviderType;
   startMode: ExternalLoginStartMode;
+  enabled: boolean;
+  loginEnabled: boolean;
+  signupEnabled: boolean;
+  reauthEnabled: boolean;
+  accountLinkEnabled: boolean;
+  autoLinkEmail?: boolean;
   slug?: string;
   iconUrl?: string;
   iconName?: string;
@@ -246,6 +261,17 @@ interface LoginUIKVSettings {
 
 interface AuthenticationMethodKVSettings {
   'authentication-methods.cache_ttl'?: number;
+  'authentication-methods.passkey.enabled'?: boolean | string;
+  'authentication-methods.passkey.login_enabled'?: boolean | string;
+  'authentication-methods.passkey.signup_enabled'?: boolean | string;
+  'authentication-methods.passkey.reauth_enabled'?: boolean | string;
+  'authentication-methods.passkey.account_link_enabled'?: boolean | string;
+  'authentication-methods.email_otp.enabled'?: boolean | string;
+  'authentication-methods.email_otp.login_enabled'?: boolean | string;
+  'authentication-methods.email_otp.signup_enabled'?: boolean | string;
+  'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
+  'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
+  'authentication-methods.external_provider_usage'?: string | ExternalLoginProviderUsageConfig[];
   'authentication-methods.external_providers'?: string | ExternalLoginProviderConfig[];
   'authentication-methods.directory_password.enabled'?: boolean | string;
   'authentication-methods.directory_password.label'?: string;
@@ -263,6 +289,19 @@ interface ExternalLoginProviderConfig {
   buttonText?: string;
   startUrl?: string;
   enabled?: boolean;
+  loginEnabled?: boolean;
+  signupEnabled?: boolean;
+  reauthEnabled?: boolean;
+  accountLinkEnabled?: boolean;
+}
+
+interface ExternalLoginProviderUsageConfig {
+  id?: string;
+  providerId?: string;
+  loginEnabled?: boolean;
+  signupEnabled?: boolean;
+  reauthEnabled?: boolean;
+  accountLinkEnabled?: boolean;
 }
 
 /**
@@ -511,6 +550,7 @@ async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvi
         iconName?: string;
         buttonColor?: string;
         buttonText?: string;
+        autoLinkEmail?: boolean;
         enabled?: boolean;
       }>;
     };
@@ -531,6 +571,12 @@ async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvi
           name: truncateString(p.name),
           type,
           startMode: 'oauth_redirect',
+          enabled: true,
+          loginEnabled: true,
+          signupEnabled: true,
+          reauthEnabled: true,
+          accountLinkEnabled: p.autoLinkEmail !== false,
+          autoLinkEmail: p.autoLinkEmail !== false,
           slug: p.slug ? truncateString(p.slug) : undefined,
           iconUrl: isValidHttpsUrl(p.iconUrl) ? p.iconUrl : undefined,
           iconName: normalizeLoginProviderIconName(p.iconName),
@@ -572,6 +618,12 @@ async function fetchSAMLLoginProviders(
         name: truncateString(row.name),
         type: 'saml',
         startMode: 'saml_sp',
+        enabled: true,
+        loginEnabled: true,
+        signupEnabled: true,
+        reauthEnabled: true,
+        accountLinkEnabled: true,
+        autoLinkEmail: true,
         iconUrl: getSAMLProviderLogoUrl(row.config_json),
         iconName: getSAMLProviderIconName(row.config_json),
         startUrl: buildSAMLSPLoginStartUrl(row.id),
@@ -627,11 +679,22 @@ async function fetchConfiguredExternalLoginProviders(
       .slice(0, MAX_EXTERNAL_LOGIN_PROVIDERS)
       .map((provider) => {
         const type = normalizeExternalProviderType(provider.type);
+        const legacyEnabled = provider.enabled !== false;
+        const loginEnabled = normalizeBoolean(provider.loginEnabled, legacyEnabled);
+        const signupEnabled = normalizeBoolean(provider.signupEnabled, legacyEnabled);
+        const reauthEnabled = normalizeBoolean(provider.reauthEnabled, loginEnabled);
+        const accountLinkEnabled = normalizeBoolean(provider.accountLinkEnabled, legacyEnabled);
         return {
           id: truncateString(provider.id),
           name: truncateString(provider.name),
           type,
           startMode: normalizeExternalStartMode(provider.startMode, type),
+          enabled: legacyEnabled && (loginEnabled || signupEnabled || reauthEnabled),
+          loginEnabled,
+          signupEnabled,
+          reauthEnabled,
+          accountLinkEnabled,
+          autoLinkEmail: accountLinkEnabled,
           slug: provider.slug ? truncateString(provider.slug) : undefined,
           iconUrl: isValidHttpsUrl(provider.iconUrl) ? provider.iconUrl : undefined,
           iconName: normalizeLoginProviderIconName(provider.iconName),
@@ -639,7 +702,8 @@ async function fetchConfiguredExternalLoginProviders(
           buttonText: provider.buttonText ? truncateString(provider.buttonText, 100) : undefined,
           startUrl: provider.startUrl,
         };
-      });
+      })
+      .filter((provider) => provider.enabled);
   } catch {
     return [];
   }
@@ -648,6 +712,82 @@ async function fetchConfiguredExternalLoginProviders(
 interface DirectoryPasswordResolved {
   enabled: boolean;
   label: string;
+}
+
+interface BuiltInMethodsResolved {
+  passkeyLoginEnabled: boolean;
+  passkeySignupEnabled: boolean;
+  passkeyReauthEnabled: boolean;
+  passkeyAccountLinkEnabled: boolean;
+  emailCodeLoginEnabled: boolean;
+  emailCodeSignupEnabled: boolean;
+  emailCodeReauthEnabled: boolean;
+  emailCodeAccountLinkEnabled: boolean;
+}
+
+async function resolveBuiltInAuthenticationMethods(
+  env: Env,
+  tenantId: string,
+  systemSettings?: SystemSettings
+): Promise<BuiltInMethodsResolved> {
+  const legacySettings = systemSettings ?? (await getSystemSettings(env));
+  const legacyPasskeyDefault = legacySettings.advanced?.passkeyEnabled !== false;
+  const legacyEmailCodeDefault = legacySettings.advanced?.magicLinkEnabled !== false;
+  const defaults: BuiltInMethodsResolved = {
+    passkeyLoginEnabled: legacyPasskeyDefault,
+    passkeySignupEnabled: legacyPasskeyDefault,
+    passkeyReauthEnabled: legacyPasskeyDefault,
+    passkeyAccountLinkEnabled: legacyPasskeyDefault,
+    emailCodeLoginEnabled: legacyEmailCodeDefault,
+    emailCodeSignupEnabled: legacyEmailCodeDefault,
+    emailCodeReauthEnabled: legacyEmailCodeDefault,
+    emailCodeAccountLinkEnabled: legacyEmailCodeDefault,
+  };
+
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    if (!kvJson) return defaults;
+
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+    const legacyPasskeyEnabled = kvSettings['authentication-methods.passkey.enabled'];
+    const legacyEmailOtpEnabled = kvSettings['authentication-methods.email_otp.enabled'];
+    return {
+      passkeyLoginEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.passkey.login_enabled'],
+        normalizeBoolean(legacyPasskeyEnabled, defaults.passkeyLoginEnabled)
+      ),
+      passkeySignupEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.passkey.signup_enabled'],
+        normalizeBoolean(legacyPasskeyEnabled, defaults.passkeySignupEnabled)
+      ),
+      passkeyReauthEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.passkey.reauth_enabled'],
+        normalizeBoolean(legacyPasskeyEnabled, defaults.passkeyReauthEnabled)
+      ),
+      passkeyAccountLinkEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.passkey.account_link_enabled'],
+        normalizeBoolean(legacyPasskeyEnabled, defaults.passkeyAccountLinkEnabled)
+      ),
+      emailCodeLoginEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.email_otp.login_enabled'],
+        normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeLoginEnabled)
+      ),
+      emailCodeSignupEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.email_otp.signup_enabled'],
+        normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeSignupEnabled)
+      ),
+      emailCodeReauthEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.email_otp.reauth_enabled'],
+        normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeReauthEnabled)
+      ),
+      emailCodeAccountLinkEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.email_otp.account_link_enabled'],
+        normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeAccountLinkEnabled)
+      ),
+    };
+  } catch {
+    return defaults;
+  }
 }
 
 async function resolveDirectoryPasswordMethod(
@@ -698,6 +838,72 @@ function mergeExternalLoginProviders(
     }
   }
   return Array.from(providers.values()).slice(0, MAX_EXTERNAL_LOGIN_PROVIDERS);
+}
+
+async function resolveExternalProviderUsage(
+  env: Env,
+  tenantId: string
+): Promise<Record<string, ExternalLoginProviderUsageConfig>> {
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    if (!kvJson) return {};
+
+    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+    const rawUsage = kvSettings['authentication-methods.external_provider_usage'];
+    const usageItems =
+      typeof rawUsage === 'string'
+        ? safeParseJsonArray<ExternalLoginProviderUsageConfig>(rawUsage)
+        : rawUsage;
+
+    if (!Array.isArray(usageItems)) return {};
+
+    const entries = usageItems
+      .filter((item) => typeof item.id === 'string' || typeof item.providerId === 'string')
+      .flatMap((item) => {
+        const values: Array<[string, ExternalLoginProviderUsageConfig]> = [];
+        if (item.id) values.push([item.id, item]);
+        if (item.providerId) values.push([item.providerId, item]);
+        return values;
+      });
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+function applyExternalProviderUsage(
+  providers: ExternalLoginProvider[],
+  usageById: Record<string, ExternalLoginProviderUsageConfig>
+): ExternalLoginProvider[] {
+  return providers
+    .map((provider) => {
+      const saved =
+        usageById[provider.id] ?? (provider.slug ? usageById[provider.slug] : undefined);
+      if (!saved) return provider;
+
+      const providerEnabled = provider.enabled !== false;
+      const autoLinkEmail = provider.autoLinkEmail !== false;
+      const loginEnabled =
+        providerEnabled && normalizeBoolean(saved.loginEnabled, provider.loginEnabled);
+      const signupEnabled =
+        providerEnabled && normalizeBoolean(saved.signupEnabled, provider.signupEnabled);
+      const reauthEnabled =
+        providerEnabled && normalizeBoolean(saved.reauthEnabled, provider.reauthEnabled);
+      const accountLinkEnabled =
+        providerEnabled &&
+        autoLinkEmail &&
+        normalizeBoolean(saved.accountLinkEnabled, provider.accountLinkEnabled);
+
+      return {
+        ...provider,
+        loginEnabled,
+        signupEnabled,
+        reauthEnabled,
+        accountLinkEnabled,
+        enabled: loginEnabled || signupEnabled || reauthEnabled,
+      };
+    })
+    .filter((provider) => provider.enabled);
 }
 
 /**
@@ -773,26 +979,49 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const tenantId = getTenantIdFromContext(c);
 
     // Fetch data in parallel
-    const [settings, bridgeProviders, samlProviders, configuredProviders, directoryPassword] =
-      await Promise.all([
-        getSystemSettings(env),
-        fetchExternalLoginProviders(env),
-        fetchSAMLLoginProviders(env, tenantId),
-        fetchConfiguredExternalLoginProviders(env, tenantId),
-        resolveDirectoryPasswordMethod(env, tenantId),
-      ]);
-    const externalProviders = mergeExternalLoginProviders([
+    const [
+      settings,
       bridgeProviders,
       samlProviders,
       configuredProviders,
+      directoryPassword,
+      externalProviderUsage,
+    ] = await Promise.all([
+      getSystemSettings(env),
+      fetchExternalLoginProviders(env),
+      fetchSAMLLoginProviders(env, tenantId),
+      fetchConfiguredExternalLoginProviders(env, tenantId),
+      resolveDirectoryPasswordMethod(env, tenantId),
+      resolveExternalProviderUsage(env, tenantId),
     ]);
+    const externalProviders = applyExternalProviderUsage(
+      mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
+      externalProviderUsage
+    );
 
-    const passkeyEnabled = settings.advanced?.passkeyEnabled !== false;
-    const emailCodeEnabled = settings.advanced?.magicLinkEnabled !== false;
+    const builtInMethods = await resolveBuiltInAuthenticationMethods(env, tenantId, settings);
+    const passkeyLoginEnabled = builtInMethods.passkeyLoginEnabled;
+    const passkeySignupEnabled = builtInMethods.passkeySignupEnabled;
+    const passkeyReauthEnabled = builtInMethods.passkeyReauthEnabled;
+    const passkeyAccountLinkEnabled = builtInMethods.passkeyAccountLinkEnabled;
+    const passkeyEnabled =
+      passkeyLoginEnabled ||
+      passkeySignupEnabled ||
+      passkeyReauthEnabled ||
+      passkeyAccountLinkEnabled;
+    const emailCodeLoginEnabled = builtInMethods.emailCodeLoginEnabled;
+    const emailCodeSignupEnabled = builtInMethods.emailCodeSignupEnabled;
+    const emailCodeReauthEnabled = builtInMethods.emailCodeReauthEnabled;
+    const emailCodeAccountLinkEnabled = builtInMethods.emailCodeAccountLinkEnabled;
+    const emailCodeEnabled =
+      emailCodeLoginEnabled ||
+      emailCodeSignupEnabled ||
+      emailCodeReauthEnabled ||
+      emailCodeAccountLinkEnabled;
     const directoryPasswordEnabled = directoryPassword.enabled;
     const externalEnabled = externalProviders.length > 0;
 
-    // Check if at least one authentication method is available
+    // Check if at least one method is available
     if (!passkeyEnabled && !emailCodeEnabled && !directoryPasswordEnabled && !externalEnabled) {
       log.warn('No authentication method available', {});
       const errorResponse: AuthenticationMethodsErrorResponse = {
@@ -808,10 +1037,18 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const methods: AuthenticationMethods = {
       passkey: {
         enabled: passkeyEnabled,
+        loginEnabled: passkeyLoginEnabled,
+        signupEnabled: passkeySignupEnabled,
+        reauthEnabled: passkeyReauthEnabled,
+        accountLinkEnabled: passkeyAccountLinkEnabled,
         capabilities: passkeyEnabled ? ['conditional', 'discoverable'] : [],
       },
       emailCode: {
         enabled: emailCodeEnabled,
+        loginEnabled: emailCodeLoginEnabled,
+        signupEnabled: emailCodeSignupEnabled,
+        reauthEnabled: emailCodeReauthEnabled,
+        accountLinkEnabled: emailCodeAccountLinkEnabled,
         steps: emailCodeEnabled ? ['email', 'code'] : [],
       },
       directoryPassword: {

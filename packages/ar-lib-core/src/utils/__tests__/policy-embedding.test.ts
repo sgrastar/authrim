@@ -3,8 +3,64 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { parseScopeToActions, isPolicyEmbeddingEnabled } from '../policy-embedding';
+import {
+  evaluatePermissionEmbeddingForScope,
+  evaluatePermissionsForScope,
+  parseScopeToActions,
+  isPolicyEmbeddingEnabled,
+} from '../policy-embedding';
 import type { KVNamespace } from '@cloudflare/workers-types';
+import type {
+  DatabaseAdapter,
+  ExecuteResult,
+  HealthStatus,
+  TransactionContext,
+} from '../../db/adapter';
+
+class PolicyEmbeddingAdapter implements DatabaseAdapter {
+  constructor(
+    private readonly rows: Array<{
+      permissions_json: string;
+      scope_type: 'global' | 'org' | 'resource';
+      scope_target: string;
+    }>
+  ) {}
+
+  async query<T>(): Promise<T[]> {
+    return this.rows as T[];
+  }
+
+  async queryOne<T>(): Promise<T | null> {
+    return null;
+  }
+
+  async execute(): Promise<ExecuteResult> {
+    return { success: true, rowsAffected: 0 };
+  }
+
+  async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
+    const tx: TransactionContext = {
+      query: this.query.bind(this),
+      queryOne: this.queryOne.bind(this),
+      execute: this.execute.bind(this),
+    };
+    return fn(tx);
+  }
+
+  async batch(): Promise<ExecuteResult[]> {
+    return [];
+  }
+
+  async isHealthy(): Promise<HealthStatus> {
+    return { healthy: true, latencyMs: 0, type: 'memory' };
+  }
+
+  getType(): string {
+    return 'memory';
+  }
+
+  async close(): Promise<void> {}
+}
 
 describe('parseScopeToActions', () => {
   it('should return empty array for empty scope', () => {
@@ -165,5 +221,49 @@ describe('isPolicyEmbeddingEnabled', () => {
     });
 
     expect(result).toBe(true);
+  });
+});
+
+describe('evaluatePermissionEmbeddingForScope', () => {
+  it('keeps resource-scoped permissions out of tenant-wide authrim_permissions', async () => {
+    const db = new PolicyEmbeddingAdapter([
+      {
+        permissions_json: JSON.stringify(['documents:read']),
+        scope_type: 'resource',
+        scope_target: 'document:doc_123',
+      },
+    ]);
+
+    const embedding = await evaluatePermissionEmbeddingForScope(
+      db,
+      'user_123',
+      'openid documents:read',
+      { tenantId: 'tenant-a' }
+    );
+
+    expect(embedding.permissions).toEqual([]);
+    expect(embedding.scopedPermissions).toEqual([
+      {
+        permission: 'documents:read',
+        scope_type: 'resource',
+        scope_target: 'document:doc_123',
+      },
+    ]);
+  });
+
+  it('continues returning tenant-wide permissions through the legacy helper', async () => {
+    const db = new PolicyEmbeddingAdapter([
+      {
+        permissions_json: JSON.stringify(['documents:*']),
+        scope_type: 'global',
+        scope_target: '',
+      },
+    ]);
+
+    await expect(
+      evaluatePermissionsForScope(db, 'user_123', 'documents:read documents:write', {
+        tenantId: 'tenant-a',
+      })
+    ).resolves.toEqual(['documents:read', 'documents:write']);
   });
 });

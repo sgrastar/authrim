@@ -16,6 +16,7 @@
 		type LoggingCatalogRepairJob,
 		type LogCatalogRepairFinding
 	} from '$lib/api/admin-logging-control';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -465,26 +466,24 @@
 	<title>{$LL.admin_admin_logging_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_admin_logging_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_admin_logging_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<select bind:value={windowHours} onchange={load}>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admin_logging_title()}
+		description={$LL.admin_admin_logging_description()}
+	>
+		{#snippet actions()}
+			<select class="admin-select window-select" bind:value={windowHours} onchange={load}>
 				<option value={1}>{$LL.admin_admin_logging_window_1h()}</option>
 				<option value={6}>{$LL.admin_admin_logging_window_6h()}</option>
 				<option value={24}>{$LL.admin_admin_logging_window_24h()}</option>
 				<option value={72}>{$LL.admin_admin_logging_window_72h()}</option>
 			</select>
 			<button class="btn btn-secondary" onclick={load} disabled={loading}>
+				<i class="i-ph-arrows-clockwise"></i>
 				{$LL.admin_admin_logging_refresh()}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	{#if error}<div class="alert error">{error}</div>{/if}
 
@@ -546,28 +545,26 @@
 						: $LL.admin_admin_logging_coverage_permission()}
 				</p>
 			{:else}
-				<div class="table-wrap">
-					<table>
-						<thead>
+				<AdminDataTable>
+					<thead>
+						<tr>
+							<th>{$LL.admin_admin_logging_operation()}</th>
+							<th>{$LL.admin_admin_logging_surface()}</th>
+							<th>{$LL.admin_admin_logging_criticality()}</th>
+							<th>{$LL.admin_admin_logging_status()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each coverageItems as item (item.operation_id)}
 							<tr>
-								<th>{$LL.admin_admin_logging_operation()}</th>
-								<th>{$LL.admin_admin_logging_surface()}</th>
-								<th>{$LL.admin_admin_logging_criticality()}</th>
-								<th>{$LL.admin_admin_logging_status()}</th>
+								<td>{item.operation_id}</td>
+								<td>{item.surface}</td>
+								<td>{item.criticality}</td>
+								<td>{item.status}</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each coverageItems as item (item.operation_id)}
-								<tr>
-									<td>{item.operation_id}</td>
-									<td>{item.surface}</td>
-									<td>{item.criticality}</td>
-									<td>{item.status}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</section>
 
@@ -632,44 +629,42 @@
 				{#if repairFindings.length === 0}
 					<p class="muted">{$LL.admin_admin_logging_no_catalog_findings()}</p>
 				{:else}
-					<div class="table-wrap">
-						<table>
-							<thead>
+					<AdminDataTable>
+						<thead>
+							<tr>
+								<th>{$LL.admin_admin_logging_action()}</th>
+								<th>{$LL.admin_admin_logging_log_type()}</th>
+								<th>{$LL.admin_admin_logging_plane()}</th>
+								<th>{$LL.admin_admin_logging_object()}</th>
+								<th>{$LL.admin_admin_logging_reason()}</th>
+								<th>{$LL.admin_admin_logging_actions()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each repairFindings as item (`${item.type}:${item.action}:${item.objectCatalogId ?? item.shard ?? item.bucketStartAt ?? item.reason}`)}
 								<tr>
-									<th>{$LL.admin_admin_logging_action()}</th>
-									<th>{$LL.admin_admin_logging_log_type()}</th>
-									<th>{$LL.admin_admin_logging_plane()}</th>
-									<th>{$LL.admin_admin_logging_object()}</th>
-									<th>{$LL.admin_admin_logging_reason()}</th>
-									<th>{$LL.admin_admin_logging_actions()}</th>
+									<td>{item.action}</td>
+									<td>{item.logType}</td>
+									<td>{item.plane}</td>
+									<td>{item.objectCatalogId ?? item.shard ?? '-'}</td>
+									<td>{item.reason}</td>
+									<td>
+										{#if item.objectCatalogId}
+											<button
+												class="btn btn-danger"
+												onclick={() => applyDangerousDeleteObject(item)}
+												disabled={Boolean(dangerousRepairId) || !canRunCatalogRepair}
+											>
+												{$LL.admin_admin_logging_delete_object()}
+											</button>
+										{:else}
+											-
+										{/if}
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each repairFindings as item (`${item.type}:${item.action}:${item.objectCatalogId ?? item.shard ?? item.bucketStartAt ?? item.reason}`)}
-									<tr>
-										<td>{item.action}</td>
-										<td>{item.logType}</td>
-										<td>{item.plane}</td>
-										<td>{item.objectCatalogId ?? item.shard ?? '-'}</td>
-										<td>{item.reason}</td>
-										<td>
-											{#if item.objectCatalogId}
-												<button
-													class="btn btn-danger"
-													onclick={() => applyDangerousDeleteObject(item)}
-													disabled={Boolean(dangerousRepairId) || !canRunCatalogRepair}
-												>
-													{$LL.admin_admin_logging_delete_object()}
-												</button>
-											{:else}
-												-
-											{/if}
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 					{#if dangerousRepairPlan}
 						<div class="danger-preview">
 							<strong>{dangerousRepairPlan.action}</strong>
@@ -682,28 +677,26 @@
 					{/if}
 				{/if}
 				{#if catalogRepairJobs.length > 0}
-					<div class="table-wrap">
-						<table>
-							<thead>
+					<AdminDataTable>
+						<thead>
+							<tr>
+								<th>{$LL.admin_admin_logging_job()}</th>
+								<th>{$LL.admin_admin_logging_status()}</th>
+								<th>{$LL.admin_admin_logging_progress()}</th>
+								<th>{$LL.admin_admin_logging_artifact()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each catalogRepairJobs as job (job.id)}
 								<tr>
-									<th>{$LL.admin_admin_logging_job()}</th>
-									<th>{$LL.admin_admin_logging_status()}</th>
-									<th>{$LL.admin_admin_logging_progress()}</th>
-									<th>{$LL.admin_admin_logging_artifact()}</th>
+									<td>{job.job_kind}</td>
+									<td>{job.status}</td>
+									<td>{job.progress_current}/{job.progress_total ?? '-'}</td>
+									<td>{job.preview_artifact_ref ?? '-'}</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each catalogRepairJobs as job (job.id)}
-									<tr>
-										<td>{job.job_kind}</td>
-										<td>{job.status}</td>
-										<td>{job.progress_current}/{job.progress_total ?? '-'}</td>
-										<td>{job.preview_artifact_ref ?? '-'}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{/if}
 			</section>
 		{/if}
@@ -717,32 +710,30 @@
 				{#if !criticalPolicy || criticalPolicy.destinations.length === 0}
 					<p class="muted">{$LL.admin_admin_logging_no_critical_destinations()}</p>
 				{:else}
-					<div class="table-wrap">
-						<table>
-							<thead>
+					<AdminDataTable>
+						<thead>
+							<tr>
+								<th>{$LL.admin_admin_logging_destination()}</th>
+								<th>{$LL.admin_admin_logging_provider()}</th>
+								<th>{$LL.admin_admin_logging_health()}</th>
+								<th>{$LL.admin_admin_logging_fallback()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each criticalPolicy.destinations as item (item.id)}
 								<tr>
-									<th>{$LL.admin_admin_logging_destination()}</th>
-									<th>{$LL.admin_admin_logging_provider()}</th>
-									<th>{$LL.admin_admin_logging_health()}</th>
-									<th>{$LL.admin_admin_logging_fallback()}</th>
+									<td>{item.display_name || item.name}</td>
+									<td>{item.provider}</td>
+									<td>{item.health_status}</td>
+									<td>
+										{item.default_fallback_eligible
+											? $LL.admin_admin_logging_yes()
+											: $LL.admin_admin_logging_no()}
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each criticalPolicy.destinations as item (item.id)}
-									<tr>
-										<td>{item.display_name || item.name}</td>
-										<td>{item.provider}</td>
-										<td>{item.health_status}</td>
-										<td>
-											{item.default_fallback_eligible
-												? $LL.admin_admin_logging_yes()
-												: $LL.admin_admin_logging_no()}
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{/if}
 			</section>
 		{/if}
@@ -781,26 +772,24 @@
 					{#if sensitiveDetailPolicy.index_summary.length === 0}
 						<p class="muted">{$LL.admin_admin_logging_no_sensitive_index()}</p>
 					{:else}
-						<div class="table-wrap">
-							<table>
-								<thead>
+						<AdminDataTable>
+							<thead>
+								<tr>
+									<th>{$LL.admin_admin_logging_class()}</th>
+									<th>{$LL.admin_admin_logging_records_label()}</th>
+									<th>{$LL.admin_admin_logging_last_record()}</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each sensitiveDetailPolicy.index_summary as item (item.object_class)}
 									<tr>
-										<th>{$LL.admin_admin_logging_class()}</th>
-										<th>{$LL.admin_admin_logging_records_label()}</th>
-										<th>{$LL.admin_admin_logging_last_record()}</th>
+										<td>{item.object_class}</td>
+										<td>{item.total}</td>
+										<td>{formatDate(item.last_created_at)}</td>
 									</tr>
-								</thead>
-								<tbody>
-									{#each sensitiveDetailPolicy.index_summary as item (item.object_class)}
-										<tr>
-											<td>{item.object_class}</td>
-											<td>{item.total}</td>
-											<td>{formatDate(item.last_created_at)}</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
-						</div>
+								{/each}
+							</tbody>
+						</AdminDataTable>
 					{/if}
 					<div class="probe-box">
 						<div class="repair-controls">
@@ -863,53 +852,51 @@
 				{#if keyRegistryItems.length === 0}
 					<p class="muted">{$LL.admin_admin_logging_no_key_registry()}</p>
 				{:else}
-					<div class="table-wrap">
-						<table>
-							<thead>
+					<AdminDataTable>
+						<thead>
+							<tr>
+								<th>{$LL.admin_admin_logging_scope()}</th>
+								<th>{$LL.admin_admin_logging_active()}</th>
+								<th>{$LL.admin_admin_logging_version()}</th>
+								<th>{$LL.admin_admin_logging_status()}</th>
+								<th>{$LL.admin_admin_logging_usage()}</th>
+								<th>{$LL.admin_admin_logging_stale()}</th>
+								<th>{$LL.admin_admin_logging_actions()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each keyRegistryItems as item (item.id)}
 								<tr>
-									<th>{$LL.admin_admin_logging_scope()}</th>
-									<th>{$LL.admin_admin_logging_active()}</th>
-									<th>{$LL.admin_admin_logging_version()}</th>
-									<th>{$LL.admin_admin_logging_status()}</th>
-									<th>{$LL.admin_admin_logging_usage()}</th>
-									<th>{$LL.admin_admin_logging_stale()}</th>
-									<th>{$LL.admin_admin_logging_actions()}</th>
+									<td>{item.log_type}:{item.plane}</td>
+									<td>{item.active_version}</td>
+									<td>{item.version ?? '-'}</td>
+									<td>{item.version_status ?? item.registry_status}</td>
+									<td>{item.usage_count}</td>
+									<td>{item.stale_count}</td>
+									<td>
+										<div class="row-actions">
+											<button
+												class="btn btn-secondary"
+												onclick={() => loadKeyImpact(item)}
+												disabled={keyActionId === item.id}
+											>
+												{$LL.admin_admin_logging_impact()}
+											</button>
+											<button
+												class="btn btn-secondary"
+												onclick={() => createRewrapJobs(item)}
+												disabled={keyActionId === item.id ||
+													item.version === null ||
+													!canRunCatalogRepair}
+											>
+												{$LL.admin_admin_logging_queue_rewrap()}
+											</button>
+										</div>
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each keyRegistryItems as item (item.id)}
-									<tr>
-										<td>{item.log_type}:{item.plane}</td>
-										<td>{item.active_version}</td>
-										<td>{item.version ?? '-'}</td>
-										<td>{item.version_status ?? item.registry_status}</td>
-										<td>{item.usage_count}</td>
-										<td>{item.stale_count}</td>
-										<td>
-											<div class="row-actions">
-												<button
-													class="btn btn-secondary"
-													onclick={() => loadKeyImpact(item)}
-													disabled={keyActionId === item.id}
-												>
-													{$LL.admin_admin_logging_impact()}
-												</button>
-												<button
-													class="btn btn-secondary"
-													onclick={() => createRewrapJobs(item)}
-													disabled={keyActionId === item.id ||
-														item.version === null ||
-														!canRunCatalogRepair}
-												>
-													{$LL.admin_admin_logging_queue_rewrap()}
-												</button>
-											</div>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 					{#if keyImpact}
 						<pre class="summary-preview">{JSON.stringify(
 								{
@@ -934,32 +921,30 @@
 				{#if messageJobs.length === 0}
 					<p class="muted">{$LL.admin_admin_logging_no_message_jobs()}</p>
 				{:else}
-					<div class="table-wrap">
-						<table>
-							<thead>
+					<AdminDataTable>
+						<thead>
+							<tr>
+								<th>{$LL.admin_admin_logging_created()}</th>
+								<th>{$LL.admin_admin_logging_kind()}</th>
+								<th>{$LL.admin_admin_logging_status()}</th>
+								<th>{$LL.admin_admin_logging_lane()}</th>
+								<th>{$LL.admin_admin_logging_source()}</th>
+								<th>{$LL.admin_admin_logging_error()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each messageJobs as job (job.id)}
 								<tr>
-									<th>{$LL.admin_admin_logging_created()}</th>
-									<th>{$LL.admin_admin_logging_kind()}</th>
-									<th>{$LL.admin_admin_logging_status()}</th>
-									<th>{$LL.admin_admin_logging_lane()}</th>
-									<th>{$LL.admin_admin_logging_source()}</th>
-									<th>{$LL.admin_admin_logging_error()}</th>
+									<td>{formatDate(job.created_at)}</td>
+									<td>{job.kind}</td>
+									<td>{job.status}</td>
+									<td>{job.lane}</td>
+									<td>{job.source_type}:{job.source_id}</td>
+									<td>{job.last_error ?? job.blocked_reason ?? '-'}</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each messageJobs as job (job.id)}
-									<tr>
-										<td>{formatDate(job.created_at)}</td>
-										<td>{job.kind}</td>
-										<td>{job.status}</td>
-										<td>{job.lane}</td>
-										<td>{job.source_type}:{job.source_id}</td>
-										<td>{job.last_error ?? job.blocked_reason ?? '-'}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{/if}
 			</section>
 		{/if}
@@ -973,80 +958,78 @@
 				{#if rewrapJobs.length === 0}
 					<p class="muted">{$LL.admin_admin_logging_no_rewrap_jobs()}</p>
 				{:else}
-					<div class="table-wrap">
-						<table>
-							<thead>
+					<AdminDataTable>
+						<thead>
+							<tr>
+								<th>{$LL.admin_admin_logging_status()}</th>
+								<th>{$LL.admin_admin_logging_scope()}</th>
+								<th>{$LL.admin_admin_logging_version()}</th>
+								<th>{$LL.admin_admin_logging_priority()}</th>
+								<th>{$LL.admin_admin_logging_object()}</th>
+								<th>{$LL.admin_admin_logging_created()}</th>
+								<th>{$LL.admin_admin_logging_actions()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each rewrapJobs as job (job.id)}
 								<tr>
-									<th>{$LL.admin_admin_logging_status()}</th>
-									<th>{$LL.admin_admin_logging_scope()}</th>
-									<th>{$LL.admin_admin_logging_version()}</th>
-									<th>{$LL.admin_admin_logging_priority()}</th>
-									<th>{$LL.admin_admin_logging_object()}</th>
-									<th>{$LL.admin_admin_logging_created()}</th>
-									<th>{$LL.admin_admin_logging_actions()}</th>
+									<td>{job.status}</td>
+									<td>{job.log_type ?? '-'}:{job.plane ?? '-'}</td>
+									<td>{job.from_version} -> {job.to_version}</td>
+									<td>
+										<div class="priority-control">
+											<input
+												type="number"
+												min="0"
+												max="1000"
+												value={rewrapPriorityFor(job)}
+												disabled={job.status !== 'queued' || rewrapJobActionId === job.id}
+												oninput={(event) =>
+													(rewrapPriorityInputs = {
+														...rewrapPriorityInputs,
+														[job.id]: Number((event.currentTarget as HTMLInputElement).value)
+													})}
+											/>
+											<button
+												class="btn btn-secondary btn-small"
+												onclick={() => updateRewrapJobPriority(job)}
+												disabled={job.status !== 'queued' ||
+													rewrapJobActionId === job.id ||
+													rewrapPriorityFor(job) === job.priority ||
+													!canRunCatalogRepair}
+											>
+												{$LL.admin_admin_logging_set()}
+											</button>
+										</div>
+									</td>
+									<td>{job.object_catalog_id ?? '-'}</td>
+									<td>{formatDate(job.created_at)}</td>
+									<td>
+										<div class="row-actions">
+											<button
+												class="btn btn-secondary btn-small"
+												onclick={() => retryRewrapJob(job)}
+												disabled={!['failed', 'skipped'].includes(job.status) ||
+													rewrapJobActionId === job.id ||
+													!canRunCatalogRepair}
+											>
+												{$LL.admin_admin_logging_retry()}
+											</button>
+											<button
+												class="btn btn-danger btn-small"
+												onclick={() => cancelRewrapJob(job)}
+												disabled={!['queued', 'running', 'failed'].includes(job.status) ||
+													rewrapJobActionId === job.id ||
+													!canRunCatalogRepair}
+											>
+												{$LL.admin_admin_logging_cancel()}
+											</button>
+										</div>
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each rewrapJobs as job (job.id)}
-									<tr>
-										<td>{job.status}</td>
-										<td>{job.log_type ?? '-'}:{job.plane ?? '-'}</td>
-										<td>{job.from_version} -> {job.to_version}</td>
-										<td>
-											<div class="priority-control">
-												<input
-													type="number"
-													min="0"
-													max="1000"
-													value={rewrapPriorityFor(job)}
-													disabled={job.status !== 'queued' || rewrapJobActionId === job.id}
-													oninput={(event) =>
-														(rewrapPriorityInputs = {
-															...rewrapPriorityInputs,
-															[job.id]: Number((event.currentTarget as HTMLInputElement).value)
-														})}
-												/>
-												<button
-													class="btn btn-secondary btn-small"
-													onclick={() => updateRewrapJobPriority(job)}
-													disabled={job.status !== 'queued' ||
-														rewrapJobActionId === job.id ||
-														rewrapPriorityFor(job) === job.priority ||
-														!canRunCatalogRepair}
-												>
-													{$LL.admin_admin_logging_set()}
-												</button>
-											</div>
-										</td>
-										<td>{job.object_catalog_id ?? '-'}</td>
-										<td>{formatDate(job.created_at)}</td>
-										<td>
-											<div class="row-actions">
-												<button
-													class="btn btn-secondary btn-small"
-													onclick={() => retryRewrapJob(job)}
-													disabled={!['failed', 'skipped'].includes(job.status) ||
-														rewrapJobActionId === job.id ||
-														!canRunCatalogRepair}
-												>
-													{$LL.admin_admin_logging_retry()}
-												</button>
-												<button
-													class="btn btn-danger btn-small"
-													onclick={() => cancelRewrapJob(job)}
-													disabled={!['queued', 'running', 'failed'].includes(job.status) ||
-														rewrapJobActionId === job.id ||
-														!canRunCatalogRepair}
-												>
-													{$LL.admin_admin_logging_cancel()}
-												</button>
-											</div>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{/if}
 			</section>
 		{/if}
@@ -1059,30 +1042,28 @@
 			{#if overview.recent_changes.length === 0}
 				<p class="muted">{$LL.admin_admin_logging_no_recent_critical_changes()}</p>
 			{:else}
-				<div class="table-wrap">
-					<table>
-						<thead>
+				<AdminDataTable>
+					<thead>
+						<tr>
+							<th>{$LL.admin_admin_logging_action()}</th>
+							<th>{$LL.admin_admin_logging_resource()}</th>
+							<th>{$LL.admin_admin_logging_severity()}</th>
+							<th>{$LL.admin_admin_logging_actor()}</th>
+							<th>{$LL.admin_admin_logging_time()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each overview.recent_changes as item (item.audit_id)}
 							<tr>
-								<th>{$LL.admin_admin_logging_action()}</th>
-								<th>{$LL.admin_admin_logging_resource()}</th>
-								<th>{$LL.admin_admin_logging_severity()}</th>
-								<th>{$LL.admin_admin_logging_actor()}</th>
-								<th>{$LL.admin_admin_logging_time()}</th>
+								<td>{item.action}</td>
+								<td>{item.resource_type ?? '-'}:{item.resource_id ?? '-'}</td>
+								<td>{item.severity}</td>
+								<td>{item.actor_id ?? '-'}</td>
+								<td>{formatDate(item.created_at)}</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each overview.recent_changes as item (item.audit_id)}
-								<tr>
-									<td>{item.action}</td>
-									<td>{item.resource_type ?? '-'}:{item.resource_id ?? '-'}</td>
-									<td>{item.severity}</td>
-									<td>{item.actor_id ?? '-'}</td>
-									<td>{formatDate(item.created_at)}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</section>
 
@@ -1094,30 +1075,28 @@
 			{#if overview.archive.length === 0}
 				<p class="muted">{$LL.admin_admin_logging_no_archive_chunks()}</p>
 			{:else}
-				<div class="table-wrap">
-					<table>
-						<thead>
+				<AdminDataTable>
+					<thead>
+						<tr>
+							<th>{$LL.admin_admin_logging_log_type()}</th>
+							<th>{$LL.admin_admin_logging_plane()}</th>
+							<th>{$LL.admin_admin_logging_status()}</th>
+							<th>{$LL.admin_admin_logging_chunks()}</th>
+							<th>{$LL.admin_admin_logging_records_label()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each overview.archive as item (`${item.log_type}:${item.plane}:${item.status}`)}
 							<tr>
-								<th>{$LL.admin_admin_logging_log_type()}</th>
-								<th>{$LL.admin_admin_logging_plane()}</th>
-								<th>{$LL.admin_admin_logging_status()}</th>
-								<th>{$LL.admin_admin_logging_chunks()}</th>
-								<th>{$LL.admin_admin_logging_records_label()}</th>
+								<td>{item.log_type}</td>
+								<td>{item.plane}</td>
+								<td>{item.status}</td>
+								<td>{item.chunks ?? 0}</td>
+								<td>{item.records ?? 0}</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each overview.archive as item (`${item.log_type}:${item.plane}:${item.status}`)}
-								<tr>
-									<td>{item.log_type}</td>
-									<td>{item.plane}</td>
-									<td>{item.status}</td>
-									<td>{item.chunks ?? 0}</td>
-									<td>{item.records ?? 0}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</section>
 
@@ -1129,30 +1108,28 @@
 			{#if overview.delivery.length === 0}
 				<p class="muted">{$LL.admin_admin_logging_no_delivery_events()}</p>
 			{:else}
-				<div class="table-wrap">
-					<table>
-						<thead>
+				<AdminDataTable>
+					<thead>
+						<tr>
+							<th>{$LL.admin_admin_logging_lane()}</th>
+							<th>{$LL.admin_admin_logging_status()}</th>
+							<th>{$LL.admin_admin_logging_total()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each overview.delivery as item (`${item.lane}:${item.status}`)}
 							<tr>
-								<th>{$LL.admin_admin_logging_lane()}</th>
-								<th>{$LL.admin_admin_logging_status()}</th>
-								<th>{$LL.admin_admin_logging_total()}</th>
+								<td>{item.lane}</td>
+								<td>{item.status}</td>
+								<td>{item.total}</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each overview.delivery as item (`${item.lane}:${item.status}`)}
-								<tr>
-									<td>{item.lane}</td>
-									<td>{item.status}</td>
-									<td>{item.total}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</section>
 	{/if}
-</div>
+</AdminPageShell>
 
 <DangerConfirmationModal
 	open={Boolean(dangerConfirmation)}
@@ -1165,32 +1142,8 @@
 />
 
 <style>
-	.admin-page {
-		padding: 2rem;
-	}
-
-	.page-header {
-		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
-		align-items: flex-start;
-		margin-bottom: 1.5rem;
-	}
-
-	.page-title {
-		margin: 0;
-		font-size: 1.875rem;
-	}
-
-	.page-description,
 	.muted {
-		color: var(--color-text-secondary, #64748b);
-	}
-
-	.page-actions {
-		display: flex;
-		gap: 0.75rem;
-		align-items: center;
+		color: var(--color-text-muted);
 	}
 
 	.stats {
@@ -1206,19 +1159,22 @@
 
 	.stat,
 	.panel {
-		border: 1px solid var(--color-border, #e2e8f0);
-		border-radius: 8px;
-		background: var(--color-surface, #fff);
+		box-sizing: border-box;
+		min-width: 0;
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-panel));
+		background: var(--settings-card-bg, var(--color-surface));
+		color: var(--color-text);
 	}
 
 	.stat {
-		padding: 1rem;
+		padding: var(--settings-row-padding, 1rem);
 	}
 
 	.stat span {
 		display: block;
-		color: var(--color-text-secondary, #64748b);
-		font-size: 0.875rem;
+		color: var(--color-text-muted);
+		font-size: var(--settings-description-size, 0.875rem);
 	}
 
 	.stat strong {
@@ -1229,7 +1185,11 @@
 
 	.panel {
 		margin-bottom: 1rem;
-		padding: 1rem;
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		background: var(--settings-panel-bg, var(--color-surface));
+		padding: var(--settings-panel-padding, 1rem);
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
 	}
 
 	.section-header {
@@ -1241,7 +1201,8 @@
 
 	.section-header h2 {
 		margin: 0;
-		font-size: 1rem;
+		color: var(--color-text);
+		font-size: var(--settings-section-title-size, 1rem);
 	}
 
 	.inline-actions {
@@ -1274,25 +1235,31 @@
 	}
 
 	.repair-controls input,
-	.repair-controls select {
-		min-height: 2.25rem;
+	.repair-controls select,
+	.inline-actions input,
+	.priority-control input,
+	.window-select {
+		min-height: var(--control-height, 2.25rem);
+		padding: var(--control-padding, 0.45rem 0.65rem);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
 	}
 
 	.probe-box {
 		margin-top: 0.75rem;
 		padding-top: 0.75rem;
-		border-top: 1px solid var(--color-border, #e2e8f0);
+		border-top: var(--settings-row-border-bottom, 1px solid var(--color-border));
 	}
 
 	.detail-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 0.5rem;
-		color: var(--color-text-secondary, #64748b);
-	}
-
-	.table-wrap {
-		overflow-x: auto;
+		color: var(--color-text-muted);
 	}
 
 	.danger-preview {
@@ -1300,38 +1267,27 @@
 		gap: 0.75rem;
 		align-items: center;
 		margin-top: 0.75rem;
-		color: #991b1b;
+		color: var(--color-danger);
 	}
 
 	.summary-preview {
 		margin: 0.75rem 0 0;
 		overflow: auto;
-		border: 1px solid var(--color-border, #e2e8f0);
-		border-radius: 6px;
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.75rem;
-		background: #f8fafc;
-		color: #334155;
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		color: var(--color-text);
 		font-size: 0.8125rem;
 		white-space: pre-wrap;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	th,
-	td {
-		text-align: left;
-		padding: 0.75rem;
-		border-top: 1px solid var(--color-border, #e2e8f0);
 	}
 
 	.alert.error {
 		margin-bottom: 1rem;
 		padding: 0.75rem;
-		border-radius: 8px;
-		background: #fef2f2;
-		color: #991b1b;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		border-radius: var(--radius-control);
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		color: var(--color-danger);
 	}
 </style>

@@ -38,11 +38,9 @@
 
 <style>
 	.stat-card {
-		background: var(--bg-card);
-		backdrop-filter: var(--blur-sm);
-		-webkit-backdrop-filter: var(--blur-sm);
-		border-radius: var(--radius-xl);
-		border: 1px solid var(--border-glass);
+		background: var(--color-surface);
+		border-radius: var(--radius-panel, var(--radius-xl));
+		border: 1px solid var(--color-border);
 		padding: 24px;
 		transition: all var(--transition-base);
 		position: relative;
@@ -56,14 +54,14 @@
 		left: 0;
 		right: 0;
 		height: 3px;
-		background: var(--gradient-primary);
+		background: var(--stat-card-accent-bg, var(--gradient-primary));
 		opacity: 0;
 		transition: opacity var(--transition-fast);
 	}
 
 	.stat-card:hover {
-		transform: translateY(-6px);
-		box-shadow: var(--shadow-lg);
+		transform: var(--stat-card-hover-transform, translateY(-6px));
+		box-shadow: var(--stat-card-hover-shadow, var(--shadow-lg));
 	}
 
 	.stat-card:hover::before {
@@ -72,17 +70,17 @@
 
 	/* Hierarchy level indicators */
 	.stat-card[data-level='system']::before {
-		background: var(--system-color);
+		background: var(--color-text-muted);
 		opacity: 1;
 	}
 
 	.stat-card[data-level='tenant']::before {
-		background: var(--gradient-primary);
+		background: var(--stat-card-accent-bg, var(--gradient-primary));
 		opacity: 1;
 	}
 
 	.stat-card[data-level='client']::before {
-		background: linear-gradient(135deg, var(--client-color), #fbbf24);
+		background: var(--color-warning);
 		opacity: 1;
 	}
 
@@ -96,7 +94,7 @@
 	.stat-icon {
 		width: 48px;
 		height: 48px;
-		border-radius: var(--radius-lg);
+		border-radius: var(--stat-icon-radius, var(--radius-control, var(--radius-lg)));
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -109,23 +107,23 @@
 	}
 
 	.stat-icon.purple {
-		background: var(--primary-light);
-		color: var(--primary);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.stat-icon.green {
-		background: var(--success-light);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.stat-icon.pink {
-		background: var(--accent-light);
-		color: var(--accent);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.stat-icon.orange {
-		background: var(--warning-light);
-		color: var(--warning);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.stat-change {
@@ -135,17 +133,17 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		padding: 4px 10px;
-		border-radius: var(--radius-full);
+		border-radius: var(--status-badge-radius, var(--radius-full));
 	}
 
 	.stat-change.positive {
-		background: var(--success-light);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.stat-change.negative {
-		background: var(--danger-light);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+		color: var(--color-danger);
 	}
 
 	.stat-change :global(i) {
@@ -158,13 +156,13 @@
 		font-family: var(--font-display);
 		font-size: 2rem;
 		font-weight: 800;
-		color: var(--text-primary);
+		color: var(--color-text);
 		line-height: 1.1;
 	}
 
 	.stat-label {
 		font-size: 0.875rem;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		margin-top: 4px;
 	}
 </style>

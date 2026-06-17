@@ -17,7 +17,7 @@
 
 	const label = $derived(data?.label || 'Action');
 	const icon = $derived(data?.icon || '⚡');
-	const color = $derived(data?.color || '#6b7280');
+	const color = $derived(data?.color || 'var(--flow-node-color-muted)');
 
 	// Get display config items (max 2)
 	const configItems = $derived(() => {
@@ -70,15 +70,17 @@
 <style>
 	.action-node {
 		position: relative;
-		background: white;
-		border: 1px solid #ededed;
+		background: var(--flow-node-bg, var(--color-surface));
+		border: 1px solid var(--color-border);
 		border-left: 3px solid var(--node-color);
-		border-radius: 6px;
+		border-radius: var(--radius-panel, 6px);
+		color: var(--color-text);
 		min-width: 100px;
+		box-shadow: var(--flow-node-shadow, var(--shadow-sm));
 	}
 
 	.action-node.selected {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -91,11 +93,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 4px);
 		cursor: pointer;
-		color: #9ca3af;
+		color: var(--color-text-muted);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -106,8 +108,8 @@
 	}
 
 	.config-btn:hover {
-		background: #f3f4f6;
-		color: #374151;
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.node-header {
@@ -115,9 +117,9 @@
 		align-items: center;
 		gap: 5px;
 		padding: 5px 8px;
-		font-weight: 500;
+		font-weight: var(--font-weight-semibold, 600);
 		font-size: 10px;
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	.icon {
@@ -134,7 +136,7 @@
 	.node-body {
 		padding: 4px 10px 6px;
 		font-size: 9px;
-		border-top: 1px solid #f3f4f6;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.config-item {
@@ -148,11 +150,11 @@
 	}
 
 	.config-key {
-		color: #9ca3af;
+		color: var(--color-text-muted);
 	}
 
 	.config-value {
-		color: #374151;
-		font-weight: 500;
+		color: var(--color-text);
+		font-weight: var(--font-weight-semibold, 600);
 	}
 </style>

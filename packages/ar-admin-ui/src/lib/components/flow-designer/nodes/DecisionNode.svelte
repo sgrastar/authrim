@@ -150,11 +150,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--flow-node-control-radius, var(--radius-xs, 3px));
 		cursor: pointer;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -165,25 +165,25 @@
 	}
 
 	.config-btn:hover {
-		background: #f3f4f6;
-		color: #374151;
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.node-shape {
 		position: relative;
 		min-width: 100px;
 		padding: 10px 16px;
-		background: white;
-		border: 2px solid #8b5cf6;
-		border-radius: 8px;
+		background: var(--color-surface);
+		border: 2px solid var(--flow-node-decision-color, var(--flow-node-color-check-alt));
+		border-radius: var(--radius-control);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		box-shadow: 0 2px 4px rgba(139, 92, 246, 0.1);
+		box-shadow: var(--flow-node-decision-shadow, var(--flow-node-shadow, var(--shadow-sm)));
 	}
 
 	.decision-node.selected .node-shape {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -196,20 +196,20 @@
 
 	.icon {
 		font-size: 14px;
-		color: #8b5cf6;
+		color: var(--flow-node-decision-color, var(--flow-node-color-check-alt));
 		font-weight: bold;
 	}
 
 	.label {
 		font-size: 11px;
 		font-weight: 600;
-		color: #374151;
+		color: var(--color-text);
 		white-space: nowrap;
 	}
 
 	.branch-count {
 		font-size: 8px;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		font-style: italic;
 	}
 
@@ -224,10 +224,14 @@
 		font-size: 8px;
 		font-weight: 600;
 		padding: 2px 5px;
-		border-radius: 3px;
+		border-radius: var(--flow-node-control-radius, var(--radius-xs, 3px));
 		pointer-events: none;
-		background: #ede9fe;
-		color: #5b21b6;
+		background: color-mix(
+			in srgb,
+			var(--flow-node-decision-color, var(--flow-node-color-check-alt)) 16%,
+			var(--color-surface)
+		);
+		color: var(--flow-node-decision-color, var(--flow-node-color-check-alt));
 		margin-left: 10px;
 		white-space: nowrap;
 	}

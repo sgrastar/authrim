@@ -11,6 +11,13 @@
 		canDeleteRole,
 		type RoleType
 	} from '$lib/api/admin-roles';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminTabs
+	} from '$lib/components/admin';
 	import RoleAssignmentRules from '$lib/components/admin/RoleAssignmentRules.svelte';
 	import { Modal } from '$lib/components';
 	import { formatRoleFilterType, formatRoleType } from '$lib/admin/roles-i18n';
@@ -136,62 +143,62 @@
 			day: 'numeric'
 		});
 	}
+
+	const tabs = $derived([
+		{
+			id: 'roles',
+			label: $LL.admin_roles_tab_roles(),
+			icon: 'i-ph-shield-check'
+		},
+		{
+			id: 'rules',
+			label: $LL.admin_roles_tab_rules(),
+			icon: 'i-ph-git-branch'
+		}
+	]);
 </script>
 
 <svelte:head>
 	<title>{$LL.admin_roles_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Info Banner -->
-	<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
-		<div class="flex items-start">
-			<span class="i-ph-info text-blue-600 text-xl mr-3 mt-0.5"></span>
+<AdminPageShell>
+	<AdminSection>
+		<div class="info-box">
+			<i class="i-ph-info" aria-hidden="true"></i>
 			<div>
-				<h3 class="font-semibold text-blue-900 mb-1">{$LL.admin_roles_end_user_rbac()}</h3>
-				<p class="text-sm text-blue-800">
+				<strong>{$LL.admin_roles_end_user_rbac()}</strong>
+				<p>
 					{$LL.admin_roles_info_banner()}
-					<a href="/admin/admin-rbac" class="underline hover:text-blue-900">
-						{$LL.admin_roles_admin_rbac()}
-					</a>
+					<a href="/admin/admin-rbac">{$LL.admin_roles_admin_rbac()}</a>
 				</p>
 			</div>
 		</div>
-	</div>
+	</AdminSection>
 
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_roles_title()}</h1>
-			<p class="page-description">{$LL.admin_roles_description()}</p>
-		</div>
-		{#if activeTab === 'roles'}
-			<div class="page-actions">
+	<AdminPageHeader title={$LL.admin_roles_title()} description={$LL.admin_roles_description()}>
+		{#snippet actions()}
+			{#if activeTab === 'roles'}
 				<button class="btn btn-primary" onclick={navigateToCreate}>
 					<i class="i-ph-plus"></i>
 					{$LL.admin_roles_create_role()}
 				</button>
-			</div>
-		{/if}
-	</div>
+			{/if}
+		{/snippet}
+	</AdminPageHeader>
 
-	<!-- Tab Navigation -->
-	<div class="tab-nav">
-		<button class="tab-btn" class:active={activeTab === 'roles'} onclick={() => switchTab('roles')}>
-			<i class="i-ph-shield-check"></i>
-			{$LL.admin_roles_tab_roles()}
-		</button>
-		<button class="tab-btn" class:active={activeTab === 'rules'} onclick={() => switchTab('rules')}>
-			<i class="i-ph-git-branch"></i>
-			{$LL.admin_roles_tab_rules()}
-		</button>
-	</div>
+	<AdminTabs
+		items={tabs}
+		active={activeTab}
+		onChange={switchTab}
+		ariaLabel={$LL.admin_roles_title()}
+	/>
 
 	<!-- Tab Content -->
 	{#if activeTab === 'roles'}
 		<!-- Roles Tab -->
 		{#if error}
-			<div class="alert alert-error" style="margin-bottom: 16px;">
+			<div class="alert alert-error alert--stacked">
 				{error}
 				<button class="btn btn-secondary btn-sm" onclick={loadRoles}>
 					{$LL.admin_roles_retry()}
@@ -200,37 +207,39 @@
 		{/if}
 
 		<!-- Filter Bar -->
-		<div class="filter-bar">
-			<span class="filter-label">{$LL.admin_roles_filter()}</span>
-			<button
-				class="filter-btn"
-				class:active={filterType === 'all'}
-				onclick={() => (filterType = 'all')}
-			>
-				{$LL.admin_roles_filter_all()}
-			</button>
-			<button
-				class="filter-btn"
-				class:active={filterType === 'system'}
-				onclick={() => (filterType = 'system')}
-			>
-				{$LL.admin_roles_filter_system()}
-			</button>
-			<button
-				class="filter-btn"
-				class:active={filterType === 'builtin'}
-				onclick={() => (filterType = 'builtin')}
-			>
-				{$LL.admin_roles_filter_builtin()}
-			</button>
-			<button
-				class="filter-btn"
-				class:active={filterType === 'custom'}
-				onclick={() => (filterType = 'custom')}
-			>
-				{$LL.admin_roles_filter_custom()}
-			</button>
-		</div>
+		<AdminSection>
+			<div class="filter-bar">
+				<span class="filter-label">{$LL.admin_roles_filter()}</span>
+				<button
+					class="filter-btn"
+					class:active={filterType === 'all'}
+					onclick={() => (filterType = 'all')}
+				>
+					{$LL.admin_roles_filter_all()}
+				</button>
+				<button
+					class="filter-btn"
+					class:active={filterType === 'system'}
+					onclick={() => (filterType = 'system')}
+				>
+					{$LL.admin_roles_filter_system()}
+				</button>
+				<button
+					class="filter-btn"
+					class:active={filterType === 'builtin'}
+					onclick={() => (filterType = 'builtin')}
+				>
+					{$LL.admin_roles_filter_builtin()}
+				</button>
+				<button
+					class="filter-btn"
+					class:active={filterType === 'custom'}
+					onclick={() => (filterType = 'custom')}
+				>
+					{$LL.admin_roles_filter_custom()}
+				</button>
+			</div>
+		</AdminSection>
 
 		{#if loading}
 			<div class="loading-state">
@@ -238,7 +247,7 @@
 				<p>{$LL.admin_roles_loading()}</p>
 			</div>
 		{:else if filteredRoles.length === 0}
-			<div class="panel">
+			<AdminSection>
 				<div class="empty-state">
 					{#if filterType === 'all'}
 						<p class="empty-state-description">{$LL.admin_roles_empty()}</p>
@@ -250,10 +259,10 @@
 						</p>
 					{/if}
 				</div>
-			</div>
+			</AdminSection>
 		{:else}
-			<div class="data-table-container">
-				<table class="data-table">
+			<AdminSection>
+				<AdminDataTable width="wide">
 					<thead>
 						<tr>
 							<th>{$LL.admin_roles_name()}</th>
@@ -269,6 +278,7 @@
 							<tr
 								onclick={() => navigateToRole(role)}
 								onkeydown={(e) => e.key === 'Enter' && navigateToRole(role)}
+								data-clickable="true"
 								tabindex="0"
 								role="button"
 							>
@@ -283,7 +293,7 @@
 										>{formatRoleType(roleType, $LL)}</span
 									>
 								</td>
-								<td class="muted truncate" style="max-width: 300px;">
+								<td class="muted truncate description-cell">
 									{role.description || '-'}
 								</td>
 								<td class="muted nowrap">{formatDate(role.created_at)}</td>
@@ -311,14 +321,14 @@
 							</tr>
 						{/each}
 					</tbody>
-				</table>
-			</div>
+				</AdminDataTable>
+			</AdminSection>
 		{/if}
 	{:else if activeTab === 'rules'}
 		<!-- Assignment Rules Tab -->
 		<RoleAssignmentRules />
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Delete Confirmation Dialog -->
 <Modal
@@ -349,42 +359,16 @@
 </Modal>
 
 <style>
-	/* Tab Navigation */
-	.tab-nav {
-		display: flex;
-		gap: 4px;
-		margin-bottom: 24px;
-		border-bottom: 1px solid var(--border-primary);
-		padding-bottom: 0;
+	.info-box :global(i) {
+		font-size: 1.2rem;
+		color: var(--color-accent);
 	}
 
-	.tab-btn {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 12px 20px;
-		background: none;
-		border: none;
-		border-bottom: 2px solid transparent;
-		margin-bottom: -1px;
-		color: var(--text-secondary);
-		font-size: 0.9375rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
+	.alert--stacked {
+		margin-bottom: 16px;
 	}
 
-	.tab-btn:hover {
-		color: var(--text-primary);
-	}
-
-	.tab-btn.active {
-		color: var(--primary);
-		border-bottom-color: var(--primary);
-	}
-
-	.tab-btn :global(i) {
-		width: 18px;
-		height: 18px;
+	.description-cell {
+		max-width: 300px;
 	}
 </style>

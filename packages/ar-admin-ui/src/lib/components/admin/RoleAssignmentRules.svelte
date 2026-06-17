@@ -12,6 +12,13 @@
 	} from '$lib/api/admin-role-rules';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import { formatScope } from '$lib/admin/roles-i18n';
+	import AdminDataTable from './AdminDataTable.svelte';
+
+	interface Props {
+		showDescription?: boolean;
+	}
+
+	let { showDescription = true }: Props = $props();
 
 	let rules: RoleAssignmentRule[] = $state([]);
 	let loading = $state(true);
@@ -222,7 +229,9 @@
 
 <div class="rules-container">
 	<div class="rules-header">
-		<p class="rules-description">{$LL.admin_roles_rules_description()}</p>
+		{#if showDescription}
+			<p class="rules-description">{$LL.admin_roles_rules_description()}</p>
+		{/if}
 		<button class="btn btn-primary" onclick={openCreateDialog}>{$LL.admin_roles_rules_add()}</button
 		>
 	</div>
@@ -239,7 +248,7 @@
 	{:else if rules.length === 0}
 		<div class="empty-state">
 			<p>{$LL.admin_roles_rules_empty()}</p>
-			<p class="text-muted">{$LL.admin_roles_rules_empty_hint()}</p>
+			<p class="empty-state-hint">{$LL.admin_roles_rules_empty_hint()}</p>
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				{$LL.admin_roles_rules_add_first()}
 			</button>
@@ -249,70 +258,66 @@
 			{$LL.admin_roles_rules_result_count({ shown: rules.length, total })}
 		</div>
 
-		<div class="data-table-container">
-			<table class="data-table">
-				<thead>
+		<AdminDataTable width="wide">
+			<thead>
+				<tr>
+					<th>{$LL.admin_roles_name()}</th>
+					<th>{$LL.admin_roles_rules_condition()}</th>
+					<th>{$LL.admin_roles_rules_role()}</th>
+					<th>{$LL.admin_roles_scope()}</th>
+					<th>{$LL.admin_roles_rules_priority()}</th>
+					<th>{$LL.admin_roles_rules_status()}</th>
+					<th class="text-right">{$LL.admin_roles_actions()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each rules as rule (rule.id)}
 					<tr>
-						<th>{$LL.admin_roles_name()}</th>
-						<th>{$LL.admin_roles_rules_condition()}</th>
-						<th>{$LL.admin_roles_rules_role()}</th>
-						<th>{$LL.admin_roles_scope()}</th>
-						<th>{$LL.admin_roles_rules_priority()}</th>
-						<th>{$LL.admin_roles_rules_status()}</th>
-						<th class="text-right">{$LL.admin_roles_actions()}</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each rules as rule (rule.id)}
-						<tr>
-							<td>
-								<div class="cell-primary">{rule.name}</div>
-								{#if rule.description}
-									<div class="cell-secondary">{rule.description}</div>
-								{/if}
-							</td>
-							<td>
-								<code class="condition-code">{formatCondition(rule.condition)}</code>
-							</td>
-							<td class="mono">{rule.role_id}</td>
-							<td>
-								<span class={getScopeBadgeClass(rule.scope_type)}>
-									{formatScope(rule.scope_type, $LL)}
-								</span>
-							</td>
-							<td>
-								{rule.priority}
-								{#if rule.stop_processing}
-									<span class="stop-indicator">⬛ {$LL.admin_roles_rules_stops()}</span>
-								{/if}
-							</td>
-							<td>
-								<span class="badge {rule.is_active ? 'badge-success' : 'badge-neutral'}">
+						<td>
+							<div class="cell-primary">{rule.name}</div>
+							{#if rule.description}
+								<div class="cell-secondary">{rule.description}</div>
+							{/if}
+						</td>
+						<td>
+							<code class="condition-code">{formatCondition(rule.condition)}</code>
+						</td>
+						<td class="mono">{rule.role_id}</td>
+						<td>
+							<span class={getScopeBadgeClass(rule.scope_type)}>
+								{formatScope(rule.scope_type, $LL)}
+							</span>
+						</td>
+						<td>
+							{rule.priority}
+							{#if rule.stop_processing}
+								<span class="stop-indicator">{$LL.admin_roles_rules_stops()}</span>
+							{/if}
+						</td>
+						<td>
+							<span class="badge {rule.is_active ? 'badge-success' : 'badge-neutral'}">
+								{rule.is_active ? $LL.admin_roles_rules_active() : $LL.admin_roles_rules_inactive()}
+							</span>
+						</td>
+						<td class="text-right">
+							<div class="action-buttons">
+								<button class="btn btn-secondary btn-sm" onclick={(e) => openTestDialog(rule, e)}>
+									{$LL.admin_roles_rules_test()}
+								</button>
+								<button class="btn btn-secondary btn-sm" onclick={(e) => toggleActive(rule, e)}>
 									{rule.is_active
-										? $LL.admin_roles_rules_active()
-										: $LL.admin_roles_rules_inactive()}
-								</span>
-							</td>
-							<td class="text-right">
-								<div class="action-buttons">
-									<button class="btn btn-secondary btn-sm" onclick={(e) => openTestDialog(rule, e)}>
-										{$LL.admin_roles_rules_test()}
-									</button>
-									<button class="btn btn-secondary btn-sm" onclick={(e) => toggleActive(rule, e)}>
-										{rule.is_active
-											? $LL.admin_roles_rules_disable()
-											: $LL.admin_roles_rules_enable()}
-									</button>
-									<button class="btn btn-danger btn-sm" onclick={(e) => openDeleteDialog(rule, e)}>
-										{$LL.admin_roles_delete()}
-									</button>
-								</div>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+										? $LL.admin_roles_rules_disable()
+										: $LL.admin_roles_rules_enable()}
+								</button>
+								<button class="btn btn-danger btn-sm" onclick={(e) => openDeleteDialog(rule, e)}>
+									{$LL.admin_roles_delete()}
+								</button>
+							</div>
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</AdminDataTable>
 	{/if}
 </div>
 
@@ -327,59 +332,65 @@
 		<div class="alert alert-error">{createError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="rule-name" class="form-label">{$LL.admin_roles_rules_name()}</label>
+	<div class="admin-field dialog-field">
+		<label for="rule-name" class="admin-field__label">{$LL.admin_roles_rules_name()}</label>
 		<input
 			type="text"
 			id="rule-name"
-			class="form-input"
+			class="admin-input"
 			bind:value={newName}
 			placeholder={$LL.admin_roles_rules_name_placeholder()}
 		/>
 	</div>
 
-	<div class="form-group">
-		<label for="rule-desc" class="form-label">{$LL.admin_roles_rules_description_optional()}</label>
+	<div class="admin-field dialog-field">
+		<label for="rule-desc" class="admin-field__label">
+			{$LL.admin_roles_rules_description_optional()}
+		</label>
 		<input
 			type="text"
 			id="rule-desc"
-			class="form-input"
+			class="admin-input"
 			bind:value={newDescription}
 			placeholder={$LL.admin_roles_rules_description_placeholder()}
 		/>
 	</div>
 
-	<div class="form-group">
-		<label for="role-id" class="form-label">{$LL.admin_roles_rules_role_id()}</label>
+	<div class="admin-field dialog-field">
+		<label for="role-id" class="admin-field__label">{$LL.admin_roles_rules_role_id()}</label>
 		<input
 			type="text"
 			id="role-id"
-			class="form-input"
+			class="admin-input"
 			bind:value={newRoleId}
 			placeholder={$LL.admin_roles_rules_role_id_placeholder()}
 		/>
 	</div>
 
-	<div class="panel" style="margin: 16px 0;">
-		<h3 class="form-label">{$LL.admin_roles_rules_condition_simple()}</h3>
+	<div class="rule-callout">
+		<h3 class="rule-callout-title">{$LL.admin_roles_rules_condition_simple()}</h3>
 
-		<div class="form-row">
-			<div class="form-group">
-				<label for="claim-name" class="form-label">{$LL.admin_roles_rules_claim_name()}</label>
+		<div class="dialog-grid">
+			<div class="admin-field dialog-field">
+				<label for="claim-name" class="admin-field__label">
+					{$LL.admin_roles_rules_claim_name()}
+				</label>
 				<input
 					type="text"
 					id="claim-name"
-					class="form-input"
+					class="admin-input"
 					bind:value={newClaimName}
 					placeholder={$LL.admin_roles_rules_claim_name_placeholder()}
 				/>
 			</div>
-			<div class="form-group">
-				<label for="claim-value" class="form-label">{$LL.admin_roles_rules_claim_value()}</label>
+			<div class="admin-field dialog-field">
+				<label for="claim-value" class="admin-field__label">
+					{$LL.admin_roles_rules_claim_value()}
+				</label>
 				<input
 					type="text"
 					id="claim-value"
-					class="form-input"
+					class="admin-input"
 					bind:value={newClaimValue}
 					placeholder={$LL.admin_roles_rules_claim_value_placeholder()}
 				/>
@@ -390,13 +401,13 @@
 		</p>
 	</div>
 
-	<div class="form-row">
-		<div class="form-group">
-			<label for="priority" class="form-label">{$LL.admin_roles_rules_priority()}</label>
+	<div class="dialog-grid">
+		<div class="admin-field dialog-field">
+			<label for="priority" class="admin-field__label">{$LL.admin_roles_rules_priority()}</label>
 			<input
 				type="number"
 				id="priority"
-				class="form-input"
+				class="admin-input"
 				bind:value={newPriority}
 				min="0"
 				max="1000"
@@ -405,7 +416,7 @@
 		</div>
 	</div>
 
-	<div class="form-group">
+	<div class="admin-field dialog-field">
 		<ToggleSwitch
 			bind:checked={newStopProcessing}
 			label={$LL.admin_roles_rules_stop_processing()}
@@ -434,23 +445,26 @@
 		<div class="alert alert-error">{testError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="test-claims" class="form-label">{$LL.admin_roles_rules_test_claims()}</label>
-		<textarea id="test-claims" class="form-input" bind:value={testClaims} rows="6"></textarea>
+	<div class="admin-field dialog-field">
+		<label for="test-claims" class="admin-field__label">
+			{$LL.admin_roles_rules_test_claims()}
+		</label>
+		<textarea id="test-claims" class="admin-input code-input" bind:value={testClaims} rows="6"
+		></textarea>
 		<span class="cell-secondary">{$LL.admin_roles_rules_test_claims_hint()}</span>
 	</div>
 
 	{#if testResult}
-		<div class="panel {testResult.matched ? 'panel-success' : 'panel-neutral'}">
+		<div class="test-result {testResult.matched ? 'test-result--matched' : 'test-result--neutral'}">
 			<div class="cell-primary">
 				{testResult.matched
 					? `✓ ${$LL.admin_roles_rules_matched()}`
 					: `✗ ${$LL.admin_roles_rules_not_matched()}`}
 			</div>
 			{#if testResult.matched && testResult.actions_applied.length > 0}
-				<div style="margin-top: 8px;">
+				<div class="test-result-actions">
 					<strong>{$LL.admin_roles_rules_actions_to_apply()}</strong>
-					<ul style="margin: 8px 0 0 20px;">
+					<ul>
 						{#each testResult.actions_applied as action, i (i)}
 							<li>{action.type}: {action.target}</li>
 						{/each}
@@ -486,7 +500,7 @@
 	</p>
 
 	{#if ruleToDelete}
-		<div class="panel" style="margin-top: 16px;">
+		<div class="rule-info-summary">
 			<p><strong>{$LL.admin_roles_rules_rule_label()}</strong> {ruleToDelete.name}</p>
 			<p><strong>{$LL.admin_roles_rules_role_label()}</strong> {ruleToDelete.role_id}</p>
 			<p>
@@ -521,7 +535,7 @@
 	}
 
 	.rules-description {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		max-width: 600px;
 		margin: 0;
@@ -529,66 +543,103 @@
 
 	.summary-bar {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.condition-code {
 		font-size: 0.8125rem;
-		background: var(--bg-tertiary);
-		padding: 2px 6px;
+		background: var(--color-surface-subtle);
+		padding: 0.18rem 0.4rem;
 		border-radius: var(--radius-sm);
+		color: var(--color-text);
 	}
 
 	.stop-indicator {
 		font-size: 0.75rem;
-		color: var(--text-tertiary);
-		margin-left: 4px;
+		color: var(--color-text-subtle);
+		margin-left: 0.25rem;
 	}
 
 	.badge-scope {
 		font-size: 0.75rem;
-		padding: 2px 8px;
+		padding: 0.16rem 0.5rem;
 		border-radius: var(--radius-sm);
-		background: var(--bg-tertiary);
-		color: var(--text-secondary);
+		background: var(--color-surface-subtle);
+		color: var(--color-text-muted);
 	}
 
 	.badge-scope.global {
-		background: rgba(139, 92, 246, 0.15);
-		color: var(--purple);
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		color: var(--color-accent);
 	}
 
 	.badge-scope.organization {
-		background: rgba(34, 197, 94, 0.15);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.badge-scope.client {
-		background: rgba(59, 130, 246, 0.15);
-		color: var(--primary);
+		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+		color: var(--color-primary);
 	}
 
-	.form-row {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 16px;
+	.rule-callout,
+	.rule-info-summary,
+	.test-result {
+		margin-block: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-surface-subtle);
+		padding: 1rem;
+	}
+
+	.rule-callout-title {
+		margin: 0 0 0.75rem;
+		color: var(--color-text);
+		font-size: 0.9rem;
+		font-weight: 700;
+	}
+
+	.dialog-field {
+		margin-bottom: 1rem;
+	}
+
+	.dialog-field :global(.admin-input) {
+		width: 100%;
+	}
+
+	.code-input {
+		font-family: var(--font-mono);
+	}
+
+	.test-result-actions {
+		margin-top: 0.5rem;
+	}
+
+	.test-result-actions ul {
+		margin: 0.5rem 0 0 1.25rem;
+	}
+
+	.test-result--matched {
+		border-left: 3px solid var(--color-success);
+	}
+
+	.test-result--neutral {
+		border-left: 3px solid var(--color-text-subtle);
+	}
+
+	.rule-info-summary p {
+		margin: 0 0 0.5rem;
+		color: var(--color-text);
+	}
+
+	.rule-info-summary p:last-child {
+		margin-bottom: 0;
 	}
 
 	@media (max-width: 600px) {
-		.form-row {
-			grid-template-columns: 1fr;
-		}
-
 		.rules-header {
 			flex-direction: column;
 		}
-	}
-
-	.panel-success {
-		border-left: 3px solid var(--success);
-	}
-
-	.panel-neutral {
-		border-left: 3px solid var(--text-tertiary);
 	}
 </style>

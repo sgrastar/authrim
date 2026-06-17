@@ -1018,6 +1018,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     if (metadata.code_challenge_method)
       params.set('code_challenge_method', metadata.code_challenge_method as string);
     if (metadata.claims) params.set('claims', metadata.claims as string);
+    if (metadata.authorization_details) {
+      params.set('authorization_details', metadata.authorization_details as string);
+    }
     if (metadata.response_mode) params.set('response_mode', metadata.response_mode as string);
     if (metadata.max_age) params.set('max_age', metadata.max_age as string);
     if (metadata.prompt) params.set('prompt', metadata.prompt as string);

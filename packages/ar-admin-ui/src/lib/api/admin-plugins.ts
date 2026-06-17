@@ -385,7 +385,7 @@ export const adminPluginsAPI = {
  * Helper: Get trust level badge color
  */
 export function getTrustLevelColor(trustLevel: PluginTrustLevel): string {
-	return trustLevel === 'official' ? '#22c55e' : '#f59e0b';
+	return trustLevel === 'official' ? 'var(--color-success)' : 'var(--color-warning)';
 }
 
 /**
@@ -394,15 +394,15 @@ export function getTrustLevelColor(trustLevel: PluginTrustLevel): string {
 export function getStabilityColor(stability?: PluginStability): string {
 	switch (stability) {
 		case 'stable':
-			return '#22c55e';
+			return 'var(--color-success)';
 		case 'beta':
-			return '#3b82f6';
+			return 'var(--color-info)';
 		case 'alpha':
-			return '#f59e0b';
+			return 'var(--color-warning)';
 		case 'deprecated':
-			return '#ef4444';
+			return 'var(--color-danger)';
 		default:
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 	}
 }
 
@@ -412,12 +412,12 @@ export function getStabilityColor(stability?: PluginStability): string {
 export function getHealthStatusColor(status?: 'healthy' | 'degraded' | 'unhealthy'): string {
 	switch (status) {
 		case 'healthy':
-			return '#22c55e';
+			return 'var(--color-success)';
 		case 'degraded':
-			return '#f59e0b';
+			return 'var(--color-warning)';
 		case 'unhealthy':
-			return '#ef4444';
+			return 'var(--color-danger)';
 		default:
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 	}
 }

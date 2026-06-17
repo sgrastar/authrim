@@ -4,6 +4,7 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingReviewTask
 	} from '$lib/api/admin-identity-mapping';
+	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type ResolutionCategory =
@@ -235,36 +236,34 @@
 	<title>{$LL.admin_identity_mapping_resolution_head_title()}</title>
 </svelte:head>
 
-<div class="resolution-page">
-	<div class="page-heading">
-		<div>
-			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
-			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
-			<h1>{$LL.admin_identity_mapping_resolution_title()}</h1>
-			<p class="summary">
-				{$LL.admin_identity_mapping_resolution_description()}
-			</p>
-		</div>
-		<div class="status-panel">
-			<strong>
-				{loadError
-					? $LL.admin_identity_mapping_editor_preview_fallback()
-					: $LL.admin_identity_mapping_resolution_feed()}
-			</strong>
-			<span>
-				{#if isLoading}
-					{$LL.admin_identity_mapping_resolution_loading_unresolved()}
-				{:else if loadError}
-					{loadError}. {$LL.admin_identity_mapping_resolution_fallback_suffix()}
-				{:else}
-					{$LL.admin_identity_mapping_resolution_loaded({
-						count: reviewTasks.length,
-						plural: reviewTasks.length === 1 ? '' : 's'
-					})}
-				{/if}
-			</span>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		eyebrow={$LL.admin_identity_mapping_title()}
+		title={$LL.admin_identity_mapping_resolution_title()}
+		description={$LL.admin_identity_mapping_resolution_description()}
+	>
+		{#snippet actions()}
+			<div class="status-panel">
+				<strong>
+					{loadError
+						? $LL.admin_identity_mapping_editor_preview_fallback()
+						: $LL.admin_identity_mapping_resolution_feed()}
+				</strong>
+				<span>
+					{#if isLoading}
+						{$LL.admin_identity_mapping_resolution_loading_unresolved()}
+					{:else if loadError}
+						{loadError}. {$LL.admin_identity_mapping_resolution_fallback_suffix()}
+					{:else}
+						{$LL.admin_identity_mapping_resolution_loaded({
+							count: reviewTasks.length,
+							plural: reviewTasks.length === 1 ? '' : 's'
+						})}
+					{/if}
+				</span>
+			</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	<div class="resolution-layout">
 		<nav class="category-list" aria-label={$LL.admin_identity_mapping_resolution_categories_aria()}>
@@ -338,15 +337,9 @@
 			{/if}
 		</section>
 	</div>
-</div>
+</AdminPageShell>
 
 <style>
-	.resolution-page {
-		display: grid;
-		gap: 18px;
-	}
-
-	.page-heading,
 	.panel-heading,
 	.resolution-item {
 		display: flex;
@@ -355,56 +348,33 @@
 		gap: 18px;
 	}
 
-	.back-link {
-		display: inline-flex;
-		margin-bottom: 12px;
-		color: var(--color-primary);
-		font-size: 13px;
-		font-weight: 700;
-		text-decoration: none;
-	}
-
 	.eyebrow {
 		margin: 0 0 4px;
-		color: var(--text-muted);
-		font-size: 12px;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
 		font-weight: 700;
-		letter-spacing: 0.08em;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
 		text-transform: uppercase;
 	}
 
-	h1,
 	h2,
 	h3,
 	p {
 		margin: 0;
 	}
 
-	h1 {
-		color: var(--text-primary);
-		font-size: 28px;
-		line-height: 1.2;
-	}
-
 	h2 {
 		max-width: 760px;
-		color: var(--text-primary);
-		font-size: 17px;
+		color: var(--color-text);
+		font-size: var(--section-title-size, 1rem);
 		line-height: 1.35;
 	}
 
 	h3 {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 16px;
 		line-height: 1.35;
-	}
-
-	.summary {
-		max-width: 760px;
-		margin-top: 8px;
-		color: var(--text-secondary);
-		font-size: 14px;
-		line-height: 1.5;
 	}
 
 	.status-panel,
@@ -412,9 +382,9 @@
 	.resolution-panel,
 	.empty-state,
 	.resolution-item {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	.status-panel {
@@ -426,14 +396,14 @@
 
 	.status-panel strong,
 	.empty-state strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 13px;
 	}
 
 	.status-panel span,
 	.empty-state span,
 	.resolution-item span {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 13px;
 		line-height: 1.45;
 	}
@@ -458,8 +428,8 @@
 		gap: 10px;
 		padding: 12px;
 		border: 0;
-		border-bottom: 1px solid var(--border-color);
-		color: var(--text-secondary);
+		border-bottom: 1px solid var(--color-border);
+		color: var(--color-text-muted);
 		background: transparent;
 		font-weight: 700;
 		text-align: left;
@@ -470,15 +440,15 @@
 	}
 
 	.category-list button.active {
-		color: var(--text-primary);
-		background: var(--bg-hover);
+		color: var(--color-text);
+		background: var(--color-surface-muted);
 	}
 
 	.category-list strong,
 	.item-meta strong {
 		padding: 3px 8px;
-		border-radius: 999px;
-		background: var(--bg-muted);
+		border-radius: var(--status-badge-radius, 999px);
+		background: var(--color-surface-muted);
 		font-size: 12px;
 	}
 
@@ -507,7 +477,7 @@
 
 	.resolution-item p {
 		margin-bottom: 4px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 12px;
 		font-weight: 700;
 		text-transform: uppercase;
@@ -532,14 +502,15 @@
 	}
 
 	.item-actions button {
-		min-height: 32px;
+		min-height: var(--control-height, 32px);
 		padding: 0 10px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-size: 12px;
 		font-weight: 800;
+		cursor: pointer;
 	}
 
 	.item-actions button:disabled {
@@ -554,19 +525,18 @@
 	}
 
 	.severity-low {
-		border-left-color: #22c55e;
+		border-left-color: var(--color-success);
 	}
 
 	.severity-medium {
-		border-left-color: #f59e0b;
+		border-left-color: var(--color-warning);
 	}
 
 	.severity-high {
-		border-left-color: #ef4444;
+		border-left-color: var(--color-danger);
 	}
 
 	@media (max-width: 900px) {
-		.page-heading,
 		.resolution-layout,
 		.resolution-item {
 			display: grid;

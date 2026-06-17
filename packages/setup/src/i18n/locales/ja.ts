@@ -1094,7 +1094,11 @@ const ja: Translations = {
   'web.envDetail.emailCloudflareRequirementManual':
     'Cloudflare ダッシュボードでのドメイン設定は引き続き手動です',
   'web.envDetail.emailCloudflareFromHint':
-    'Cloudflare Email Service にオンボード済みのドメインのアドレスである必要があります。',
+    'Cloudflare Email Service を使用する場合、オンボード済みのドメインのアドレスである必要があります。',
+  'web.envDetail.emailCloudflareSettingsLink': 'Cloudflare Email Routing 設定',
+  'web.envDetail.emailResendFromHint':
+    'Resendを使用する場合、Resendにドメインを登録する必要があります。',
+  'web.envDetail.emailResendDomainsLink': 'Resend Domains',
   'web.envDetail.emailFromAddress': '送信元メールアドレス',
   'web.envDetail.emailFromName': '送信者表示名（オプション）',
   'web.envDetail.emailEnableCloudflare': 'Cloudflare Email Service を有効化',
@@ -1107,6 +1111,10 @@ const ja: Translations = {
   'web.envDetail.emailSwitchProviderConfirm':
     'この環境には別のメールプロバイダー設定があります。Cloudflare Email Service に切り替えますか？',
   'web.envDetail.emailStarting': 'Cloudflare Email 設定を開始しています...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'この環境には別のメールプロバイダー設定があります。Resend に切り替えますか？',
+  'web.envDetail.emailResendStarting': 'Resend メール設定を保存しています...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Resend メール設定を保存しました。',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '全てのWorkerを更新',

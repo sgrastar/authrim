@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminAdminAbacAPI, type AdminAttribute } from '$lib/api/admin-admin-abac';
+	import {
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 	import { Modal } from '$lib/components';
 
@@ -247,39 +253,41 @@
 	<title>{$LL.admin_admin_abac_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_admin_abac_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_admin_abac_description()}
-			</p>
-		</div>
-		<div class="page-actions">
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admin_abac_title()}
+		description={$LL.admin_admin_abac_description()}
+	>
+		{#snippet actions()}
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
 				{$LL.admin_admin_abac_create_attribute()}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	<!-- Filters -->
-	<div class="filters-bar">
-		<div class="search-box">
-			<i class="i-ph-magnifying-glass"></i>
-			<input
-				type="text"
-				class="search-input"
-				placeholder={$LL.admin_admin_abac_search_placeholder()}
-				bind:value={searchQuery}
-			/>
+	<AdminToolbar>
+		<div class="admin-field admin-field--search">
+			<label class="admin-field__label" for="admin-abac-search"
+				>{$LL.admin_admin_abac_search_placeholder()}</label
+			>
+			<div class="search-box">
+				<i class="i-ph-magnifying-glass"></i>
+				<input
+					id="admin-abac-search"
+					type="text"
+					class="admin-input search-input"
+					placeholder={$LL.admin_admin_abac_search_placeholder()}
+					bind:value={searchQuery}
+				/>
+			</div>
 		</div>
 		<label class="checkbox-label">
 			<input type="checkbox" checked={includeSystem} onchange={toggleIncludeSystem} />
 			<span>{$LL.admin_admin_abac_include_system()}</span>
 		</label>
-	</div>
+	</AdminToolbar>
 
 	<!-- Content -->
 	{#if loading}
@@ -295,75 +303,80 @@
 			</button>
 		</div>
 	{:else if filteredAttributes().length === 0}
-		<div class="empty-state">
-			<i class="i-ph-file-dashed empty-icon"></i>
-			<p>{$LL.admin_admin_abac_empty()}</p>
-			{#if searchQuery}
-				<button class="btn btn-secondary" onclick={() => (searchQuery = '')}>
-					{$LL.admin_admin_abac_clear_search()}
-				</button>
-			{/if}
-		</div>
+		<AdminSection>
+			<div class="empty-state">
+				<i class="i-ph-file-dashed empty-icon"></i>
+				<p>{$LL.admin_admin_abac_empty()}</p>
+				{#if searchQuery}
+					<button class="btn btn-secondary" onclick={() => (searchQuery = '')}>
+						{$LL.admin_admin_abac_clear_search()}
+					</button>
+				{/if}
+			</div>
+		</AdminSection>
 	{:else}
-		<div class="attributes-grid">
-			{#each filteredAttributes() as attr (attr.id)}
-				<div class="attribute-card">
-					<div class="attribute-header">
-						<div class="attribute-title">
-							<h3>{attr.display_name || attr.name}</h3>
-							<span class="attribute-name">{attr.name}</span>
+		<AdminSection>
+			<div class="attributes-grid">
+				{#each filteredAttributes() as attr (attr.id)}
+					<div class="attribute-card">
+						<div class="attribute-header">
+							<div class="attribute-title">
+								<h3>{attr.display_name || attr.name}</h3>
+								<span class="attribute-name">{attr.name}</span>
+							</div>
+							<div class="attribute-badges">
+								<span class={getAttributeTypeBadgeClass(attr.attribute_type)}>
+									{formatAttributeType(attr.attribute_type)}
+								</span>
+								{#if attr.is_system}
+									<span class="badge badge-yellow">{$LL.admin_admin_abac_system()}</span>
+								{/if}
+							</div>
 						</div>
-						<div class="attribute-badges">
-							<span class={getAttributeTypeBadgeClass(attr.attribute_type)}>
-								{formatAttributeType(attr.attribute_type)}
-							</span>
-							{#if attr.is_system}
-								<span class="badge badge-yellow">{$LL.admin_admin_abac_system()}</span>
+						{#if attr.description}
+							<p class="attribute-description">{attr.description}</p>
+						{/if}
+						<div class="attribute-details">
+							{#if attr.attribute_type === 'enum' && attr.allowed_values}
+								<div class="detail-item">
+									<span class="detail-label">{$LL.admin_admin_abac_allowed_values()}</span>
+									<span class="detail-value">{attr.allowed_values.join(', ')}</span>
+								</div>
+							{/if}
+							{#if attr.attribute_type === 'number' && (attr.min_value !== null || attr.max_value !== null)}
+								<div class="detail-item">
+									<span class="detail-label">{$LL.admin_admin_abac_range()}</span>
+									<span class="detail-value">{attr.min_value ?? '∞'} - {attr.max_value ?? '∞'}</span
+									>
+								</div>
+							{/if}
+							{#if attr.is_required}
+								<div class="detail-item">
+									<span class="badge badge-red">{$LL.admin_admin_abac_required()}</span>
+								</div>
+							{/if}
+							{#if attr.is_multi_valued}
+								<div class="detail-item">
+									<span class="badge badge-blue">{$LL.admin_admin_abac_multi_valued()}</span>
+								</div>
+							{/if}
+						</div>
+						<div class="attribute-actions">
+							{#if !attr.is_system}
+								<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(attr)}>
+									{$LL.admin_admin_abac_edit()}
+								</button>
+								<button class="btn btn-sm btn-danger" onclick={() => handleDelete(attr)}>
+									{$LL.admin_admin_abac_delete()}
+								</button>
 							{/if}
 						</div>
 					</div>
-					{#if attr.description}
-						<p class="attribute-description">{attr.description}</p>
-					{/if}
-					<div class="attribute-details">
-						{#if attr.attribute_type === 'enum' && attr.allowed_values}
-							<div class="detail-item">
-								<span class="detail-label">{$LL.admin_admin_abac_allowed_values()}</span>
-								<span class="detail-value">{attr.allowed_values.join(', ')}</span>
-							</div>
-						{/if}
-						{#if attr.attribute_type === 'number' && (attr.min_value !== null || attr.max_value !== null)}
-							<div class="detail-item">
-								<span class="detail-label">{$LL.admin_admin_abac_range()}</span>
-								<span class="detail-value">{attr.min_value ?? '∞'} - {attr.max_value ?? '∞'}</span>
-							</div>
-						{/if}
-						{#if attr.is_required}
-							<div class="detail-item">
-								<span class="badge badge-red">{$LL.admin_admin_abac_required()}</span>
-							</div>
-						{/if}
-						{#if attr.is_multi_valued}
-							<div class="detail-item">
-								<span class="badge badge-blue">{$LL.admin_admin_abac_multi_valued()}</span>
-							</div>
-						{/if}
-					</div>
-					<div class="attribute-actions">
-						{#if !attr.is_system}
-							<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(attr)}>
-								{$LL.admin_admin_abac_edit()}
-							</button>
-							<button class="btn btn-sm btn-danger" onclick={() => handleDelete(attr)}>
-								{$LL.admin_admin_abac_delete()}
-							</button>
-						{/if}
-					</div>
-				</div>
-			{/each}
-		</div>
+				{/each}
+			</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Dialog -->
 <Modal
@@ -567,18 +580,8 @@
 </Modal>
 
 <style>
-	/* Filters Bar */
-	.filters-bar {
-		display: flex;
-		gap: 1rem;
-		align-items: center;
-		margin-bottom: 1.5rem;
-	}
-
 	.search-box {
-		flex: 1;
 		position: relative;
-		max-width: 400px;
 	}
 
 	.search-box :global(i) {
@@ -588,17 +591,11 @@
 		transform: translateY(-50%);
 		width: 18px;
 		height: 18px;
-		color: var(--text-tertiary);
+		color: var(--color-text-subtle);
 	}
 
 	.search-input {
-		width: 100%;
-		padding: 0.5rem 0.75rem 0.5rem 2.5rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font-size: 0.875rem;
+		padding-left: 2.5rem;
 	}
 
 	.checkbox-label {
@@ -607,7 +604,7 @@
 		gap: 0.5rem;
 		cursor: pointer;
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	/* Attributes Grid */
@@ -618,15 +615,16 @@
 	}
 
 	.attribute-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 1.25rem;
 		transition: all var(--transition-fast);
+		box-shadow: var(--card-shadow, var(--shadow-sm));
 	}
 
 	.attribute-card:hover {
-		border-color: var(--border-hover);
+		border-color: var(--color-accent);
 		box-shadow: var(--shadow-md);
 	}
 
@@ -641,12 +639,12 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.attribute-name {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.attribute-badges {
@@ -657,7 +655,7 @@
 
 	.attribute-description {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-bottom: 0.75rem;
 	}
 
@@ -667,7 +665,7 @@
 		gap: 0.5rem;
 		margin-bottom: 0.75rem;
 		padding-top: 0.75rem;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.detail-item {
@@ -677,11 +675,11 @@
 	}
 
 	.detail-label {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.detail-value {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-weight: 500;
 	}
 
@@ -689,7 +687,7 @@
 		display: flex;
 		gap: 0.5rem;
 		padding-top: 0.75rem;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	/* Badge Styles */
@@ -699,47 +697,47 @@
 		padding: 0.125rem 0.5rem;
 		font-size: 0.75rem;
 		font-weight: 500;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-control);
 	}
 
 	.badge-gray {
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.badge-blue {
-		background: rgba(59, 130, 246, 0.15);
-		color: #3b82f6;
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.badge-green {
-		background: rgba(34, 197, 94, 0.15);
-		color: #22c55e;
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.badge-purple {
-		background: rgba(139, 92, 246, 0.15);
-		color: #8b5cf6;
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.badge-orange {
-		background: rgba(249, 115, 22, 0.15);
-		color: #f97316;
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.badge-pink {
-		background: rgba(236, 72, 153, 0.15);
-		color: #ec4899;
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
 	}
 
 	.badge-yellow {
-		background: rgba(234, 179, 8, 0.15);
-		color: #eab308;
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.badge-red {
-		background: rgba(239, 68, 68, 0.15);
-		color: #ef4444;
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
 	}
 
 	/* Empty State */
@@ -750,14 +748,14 @@
 		justify-content: center;
 		padding: 48px 24px;
 		text-align: center;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.empty-icon {
 		width: 64px;
 		height: 64px;
 		margin-bottom: 1rem;
-		color: var(--text-tertiary);
+		color: var(--color-text-subtle);
 	}
 
 	/* Error State */
@@ -768,12 +766,12 @@
 		justify-content: center;
 		padding: 48px 24px;
 		text-align: center;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		gap: 1rem;
 	}
 
 	.error-text {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
 	/* Form Styles */
@@ -789,12 +787,12 @@
 		display: block;
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 0.5rem;
 	}
 
 	.required {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
 	.input,
@@ -802,10 +800,10 @@
 	select.input {
 		width: 100%;
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-family: inherit;
 	}
@@ -814,8 +812,8 @@
 	textarea.input:focus,
 	select.input:focus {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-subtle);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
 	.form-row {
@@ -825,10 +823,11 @@
 	}
 
 	.alert-error {
-		background: var(--danger-subtle);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+		color: var(--color-danger);
 		padding: 0.75rem 1rem;
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-control);
 		margin-bottom: 1rem;
 	}
 </style>

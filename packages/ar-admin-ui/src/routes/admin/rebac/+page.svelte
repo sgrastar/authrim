@@ -8,6 +8,7 @@
 	} from '$lib/api/admin-rebac';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// State
@@ -130,56 +131,48 @@
 	<title>{$LL.admin_rebac_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Info Banner -->
-	<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
-		<div class="flex items-start">
-			<span class="i-ph-info text-blue-600 text-xl mr-3 mt-0.5"></span>
-			<div>
-				<h3 class="font-semibold text-blue-900 mb-1">{$LL.admin_rebac_info_title()}</h3>
-				<p class="text-sm text-blue-800">
-					{$LL.admin_rebac_info_prefix()}<strong>End Users</strong
-					>{$LL.admin_rebac_info_middle()}<strong>Admin Operator</strong
-					>{$LL.admin_rebac_info_suffix()}
-					<a href="/admin/admin-rebac" class="underline hover:text-blue-900">Admin ReBAC</a>.
-				</p>
-			</div>
-		</div>
-	</div>
-
-	<div class="page-header">
+<AdminPageShell>
+	<div class="info-callout">
+		<i class="i-ph-info"></i>
 		<div>
-			<h1 class="page-title">{$LL.admin_rebac_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_rebac_description()}
+			<h2>{$LL.admin_rebac_info_title()}</h2>
+			<p>
+				{$LL.admin_rebac_info_prefix()}<strong>End Users</strong
+				>{$LL.admin_rebac_info_middle()}<strong>Admin Operator</strong
+				>{$LL.admin_rebac_info_suffix()}
+				<a href="/admin/admin-rebac">Admin ReBAC</a>.
 			</p>
 		</div>
 	</div>
 
+	<AdminPageHeader title={$LL.admin_rebac_title()} description={$LL.admin_rebac_description()} />
+
 	<!-- ReBAC Feature Flag Toggle -->
-	<div class="panel feature-toggle-panel">
-		<div class="feature-toggle-row">
-			<div class="feature-toggle-info">
-				<h3 class="feature-toggle-title">{$LL.admin_rebac_engine()}</h3>
-				<p class="feature-toggle-description">
-					{$LL.admin_rebac_engine_description()}
-				</p>
+	<AdminSection>
+		<div class="feature-toggle-panel">
+			<div class="feature-toggle-row">
+				<div class="feature-toggle-info">
+					<h3 class="feature-toggle-title">{$LL.admin_rebac_engine()}</h3>
+					<p class="feature-toggle-description">
+						{$LL.admin_rebac_engine_description()}
+					</p>
+				</div>
+				<div class="feature-toggle-control">
+					{#if rebacLoading}
+						<span class="loading-text">{$LL.admin_rebac_loading()}</span>
+					{:else}
+						<ToggleSwitch checked={rebacEnabled} disabled={rebacSaving} onchange={toggleRebac} />
+					{/if}
+				</div>
 			</div>
-			<div class="feature-toggle-control">
-				{#if rebacLoading}
-					<span class="loading-text">{$LL.admin_rebac_loading()}</span>
-				{:else}
-					<ToggleSwitch checked={rebacEnabled} disabled={rebacSaving} onchange={toggleRebac} />
-				{/if}
-			</div>
+			{#if rebacError}
+				<div class="alert alert-error alert-sm">{rebacError}</div>
+			{/if}
+			{#if rebacSaving}
+				<div class="saving-indicator">{$LL.admin_rebac_saving()}</div>
+			{/if}
 		</div>
-		{#if rebacError}
-			<div class="alert alert-error alert-sm">{rebacError}</div>
-		{/if}
-		{#if rebacSaving}
-			<div class="saving-indicator">{$LL.admin_rebac_saving()}</div>
-		{/if}
-	</div>
+	</AdminSection>
 
 	{#if !rebacEnabled && !rebacLoading}
 		<div class="alert alert-warning">
@@ -198,10 +191,8 @@
 	{/if}
 
 	<div class="rebac-content-grid">
-		<!-- Navigation Cards -->
-		<div class="section">
-			<h2 class="section-title">{$LL.admin_rebac_management()}</h2>
-			<div class="nav-cards">
+		<AdminSection title={$LL.admin_rebac_management()}>
+			<div class="admin-link-grid">
 				<a href="/admin/rebac/definitions" class="nav-card">
 					<div class="nav-card-icon">
 						<i class="i-ph-list-checks"></i>
@@ -230,24 +221,20 @@
 					</div>
 				</a>
 			</div>
-		</div>
+		</AdminSection>
 
-		<!-- Object Types Summary -->
-		<div class="section">
-			<h2 class="section-title">{$LL.admin_rebac_object_types()}</h2>
+		<AdminSection title={$LL.admin_rebac_object_types()}>
 			{#if loading}
 				<div class="loading-state">
 					<i class="i-ph-circle-notch loading-spinner"></i>
 					<p>{$LL.admin_rebac_loading()}</p>
 				</div>
 			{:else if objectTypes.length === 0}
-				<div class="panel">
-					<div class="empty-state">
-						<p class="empty-state-description">{$LL.admin_rebac_no_definitions()}</p>
-						<a href="/admin/rebac/definitions" class="btn btn-primary"
-							>{$LL.admin_rebac_create_definition()}</a
-						>
-					</div>
+				<div class="empty-state">
+					<p class="empty-state-description">{$LL.admin_rebac_no_definitions()}</p>
+					<a href="/admin/rebac/definitions" class="btn btn-primary">
+						{$LL.admin_rebac_create_definition()}
+					</a>
 				</div>
 			{:else}
 				<div class="object-types-grid">
@@ -261,42 +248,42 @@
 					{/each}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 
-		<!-- Permission Check Tool -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_rebac_permission_check()}</h2>
-			<p class="muted">{$LL.admin_rebac_permission_check_description()}</p>
-
+		<AdminSection
+			title={$LL.admin_rebac_permission_check()}
+			description={$LL.admin_rebac_permission_check_description()}
+		>
 			<div class="check-form">
-				<div class="form-group">
-					<label for="check-user" class="form-label">{$LL.admin_rebac_user_id()}</label>
+				<div class="admin-field">
+					<label for="check-user" class="admin-field__label">{$LL.admin_rebac_user_id()}</label>
 					<input
 						id="check-user"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						bind:value={checkUserId}
 						placeholder="user_123"
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="check-relation" class="form-label">{$LL.admin_rebac_relation()}</label>
+				<div class="admin-field">
+					<label for="check-relation" class="admin-field__label">{$LL.admin_rebac_relation()}</label
+					>
 					<input
 						id="check-relation"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						bind:value={checkRelation}
 						placeholder="viewer"
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="check-object" class="form-label">{$LL.admin_rebac_object()}</label>
+				<div class="admin-field">
+					<label for="check-object" class="admin-field__label">{$LL.admin_rebac_object()}</label>
 					<input
 						id="check-object"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						bind:value={checkObject}
 						placeholder="document:doc_456"
 					/>
@@ -339,15 +326,53 @@
 					{/if}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	</div>
-</div>
+</AdminPageShell>
 
 <style>
-	/* Feature Toggle Panel Styles */
+	.info-callout {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.875rem;
+		border: 1px solid color-mix(in srgb, var(--color-info) 24%, var(--color-border));
+		border-radius: var(--radius-panel);
+		background: color-mix(in srgb, var(--color-info) 8%, var(--color-surface));
+		padding: 1rem;
+		color: var(--color-text);
+	}
+
+	.info-callout > i {
+		color: var(--color-info);
+		font-size: 1.25rem;
+		line-height: 1;
+		margin-top: 0.1rem;
+	}
+
+	.info-callout h2 {
+		margin: 0 0 0.25rem;
+		font-size: 0.95rem;
+		font-weight: 700;
+	}
+
+	.info-callout p {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.875rem;
+		line-height: 1.55;
+	}
+
+	.info-callout a {
+		color: var(--color-accent);
+		font-weight: 700;
+		text-decoration: none;
+	}
+
 	.feature-toggle-panel {
-		margin-bottom: 1.5rem;
-		padding: 1rem 1.25rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		padding: 1rem;
 	}
 
 	.feature-toggle-row {
@@ -365,13 +390,13 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.feature-toggle-description {
 		margin: 0.25rem 0 0;
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.feature-toggle-control {
@@ -382,13 +407,13 @@
 
 	.loading-text {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.saving-indicator {
 		margin-top: 0.5rem;
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.alert-sm {
@@ -398,11 +423,169 @@
 	}
 
 	.alert-warning {
-		background-color: rgba(234, 179, 8, 0.1);
-		border: 1px solid rgba(234, 179, 8, 0.3);
-		border-radius: 0.375rem;
+		background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-warning) 28%, var(--color-border));
+		border-radius: var(--radius-md);
 		padding: 0.75rem 1rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 1rem;
+	}
+
+	.rebac-content-grid {
+		display: grid;
+		gap: 1.25rem;
+	}
+
+	.admin-link-grid,
+	.object-types-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+		gap: 0.875rem;
+	}
+
+	.nav-card,
+	.object-type-card {
+		display: flex;
+		align-items: center;
+		gap: 0.875rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		color: inherit;
+		padding: 1rem;
+		text-decoration: none;
+		transition:
+			background var(--transition-fast),
+			border-color var(--transition-fast),
+			transform var(--transition-fast);
+	}
+
+	.nav-card:hover,
+	.object-type-card:hover {
+		border-color: color-mix(in srgb, var(--color-accent) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-accent) 5%, var(--color-surface));
+		transform: translateY(-1px);
+	}
+
+	.nav-card-icon {
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: var(--radius-md);
+		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		color: var(--color-accent);
+		font-size: 1.2rem;
+		flex: 0 0 auto;
+	}
+
+	.nav-card-content {
+		min-width: 0;
+		flex: 1;
+	}
+
+	.nav-card-content h3,
+	.type-name {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.95rem;
+		font-weight: 700;
+	}
+
+	.nav-card-content p {
+		margin: 0.25rem 0 0;
+	}
+
+	.nav-card-arrow {
+		color: var(--color-text-subtle);
+		flex: 0 0 auto;
+	}
+
+	.object-type-card {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
+	.type-count,
+	.muted {
+		color: var(--color-text-muted);
+		font-size: 0.875rem;
+	}
+
+	.check-form {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+		align-items: end;
+		gap: 0.875rem;
+	}
+
+	.admin-field {
+		display: grid;
+		gap: 0.35rem;
+	}
+
+	.admin-field__label {
+		color: var(--color-text-subtle);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+
+	.admin-input {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		padding: var(--control-padding, 8px 12px);
+		outline: none;
+	}
+
+	.admin-input:focus {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.check-result {
+		margin-top: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-surface-subtle);
+		padding: 1rem;
+	}
+
+	.check-result-allowed {
+		border-left: 3px solid var(--color-success);
+	}
+
+	.check-result-denied {
+		border-left: 3px solid var(--color-danger);
+	}
+
+	.result-status {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		color: var(--color-text);
+		font-weight: 700;
+	}
+
+	.result-detail {
+		display: grid;
+		gap: 0.2rem;
+		margin-top: 0.75rem;
+		color: var(--color-text);
+	}
+
+	@media (max-width: 720px) {
+		.feature-toggle-row,
+		.info-callout {
+			flex-direction: column;
+		}
 	}
 </style>

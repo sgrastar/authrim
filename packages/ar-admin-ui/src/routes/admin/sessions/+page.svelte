@@ -9,6 +9,12 @@
 	} from '$lib/api/admin-sessions';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let sessions: Session[] = $state([]);
 	let pagination: Pagination | null = $state(null);
@@ -181,45 +187,39 @@
 	<title>{$LL.admin_sessions_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_sessions_title()}</h1>
-			<p class="page-description">{$LL.admin_sessions_description()}</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_sessions_title()}
+		description={$LL.admin_sessions_description()}
+	/>
 
-	<!-- Filters -->
-	<div class="panel">
-		<div class="filter-row">
-			<div class="form-group">
-				<label for="user_id" class="form-label">{$LL.admin_sessions_user_id()}</label>
-				<input
-					id="user_id"
-					type="text"
-					class="form-input"
-					placeholder={$LL.admin_sessions_user_id_placeholder()}
-					bind:value={userIdFilter}
-					oninput={handleUserIdSearch}
-				/>
-			</div>
-
-			<div class="form-group">
-				<label for="status" class="form-label">{$LL.admin_sessions_status()}</label>
-				<select
-					id="status"
-					class="form-select"
-					bind:value={statusFilter}
-					onchange={handleStatusChange}
-				>
-					<option value="">{$LL.admin_sessions_status_all()}</option>
-					<option value="active">{$LL.admin_sessions_status_active_only()}</option>
-					<option value="expired">{$LL.admin_sessions_status_expired_only()}</option>
-				</select>
-			</div>
+	<AdminToolbar>
+		<div class="admin-field admin-field--search">
+			<label for="user_id" class="admin-field__label">{$LL.admin_sessions_user_id()}</label>
+			<input
+				id="user_id"
+				type="text"
+				class="admin-input"
+				placeholder={$LL.admin_sessions_user_id_placeholder()}
+				bind:value={userIdFilter}
+				oninput={handleUserIdSearch}
+			/>
 		</div>
-	</div>
+
+		<div class="admin-field admin-field--compact">
+			<label for="status" class="admin-field__label">{$LL.admin_sessions_status()}</label>
+			<select
+				id="status"
+				class="admin-select"
+				bind:value={statusFilter}
+				onchange={handleStatusChange}
+			>
+				<option value="">{$LL.admin_sessions_status_all()}</option>
+				<option value="active">{$LL.admin_sessions_status_active_only()}</option>
+				<option value="expired">{$LL.admin_sessions_status_expired_only()}</option>
+			</select>
+		</div>
+	</AdminToolbar>
 
 	{#if loading}
 		<div class="loading-state">
@@ -229,15 +229,14 @@
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if sessions.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_sessions_empty()}</p>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<!-- Sessions Table -->
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection>
+			<AdminDataTable width="wide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_sessions_user()}</th>
@@ -287,39 +286,27 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
-		<!-- Pagination -->
 		{#if pagination && pagination.totalPages > 1}
-			<div class="pagination">
-				<p class="pagination-info">
-					{$LL.admin_sessions_pagination({
-						from: (pagination.page - 1) * pagination.limit + 1,
-						to: Math.min(pagination.page * pagination.limit, pagination.total),
-						total: pagination.total
-					})}
-				</p>
-				<div class="pagination-buttons">
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage - 1)}
-						disabled={!pagination.hasPrev}
-					>
-						{$LL.admin_sessions_previous()}
-					</button>
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage + 1)}
-						disabled={!pagination.hasNext}
-					>
-						{$LL.admin_sessions_next()}
-					</button>
-				</div>
-			</div>
+			<AdminPagination
+				label={$LL.admin_sessions_title()}
+				info={$LL.admin_sessions_pagination({
+					from: (pagination.page - 1) * pagination.limit + 1,
+					to: Math.min(pagination.page * pagination.limit, pagination.total),
+					total: pagination.total
+				})}
+				previousLabel={$LL.admin_sessions_previous()}
+				nextLabel={$LL.admin_sessions_next()}
+				hasPrevious={pagination.hasPrev}
+				hasNext={pagination.hasNext}
+				onPrevious={() => goToPage(currentPage - 1)}
+				onNext={() => goToPage(currentPage + 1)}
+			/>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Revoke Confirmation Dialog -->
 <Modal

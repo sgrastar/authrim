@@ -19,6 +19,8 @@
 	} from '$lib/api/admin-infrastructure';
 	import WorldMap from '$lib/components/WorldMap.svelte';
 	import { Modal } from '$lib/components';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// =========================================================================
@@ -392,326 +394,324 @@
 	<title>{$LL.admin_scale_head_title()}</title>
 </svelte:head>
 
-<div class="scale-page">
-	<!-- Header -->
-	<div class="page-header">
-		<h1 class="page-title">{$LL.admin_scale_title()}</h1>
-		<p class="page-description">
-			{$LL.admin_scale_description()}
-		</p>
-	</div>
+<AdminPageShell>
+	<div class="scale-page">
+		<AdminPageHeader title={$LL.admin_scale_title()} description={$LL.admin_scale_description()} />
 
-	<!-- Current Scale Summary - Shows saved server config, not live slider -->
-	<div class="current-badge-wrapper">
-		<div class="current-badge">
-			<i class="i-ph-gauge current-badge-icon"></i>
-			{#if loading}
-				<span class="loading-text">{$LL.admin_scale_loading()}</span>
-			{:else}
-				<span class="current-badge-label">{$LL.admin_scale_current()}</span>
-				<span class="current-badge-shards"
-					>{$LL.admin_scale_shards_unit_title({
-						count: initialScaleState.unifiedScale
-					})}</span
-				>
-				<span class="current-badge-lps">{$LL.admin_scale_login_per_sec({ count: initialLPS })}</span
-				>
-			{/if}
+		<!-- Current Scale Summary - Shows saved server config, not live slider -->
+		<div class="current-badge-wrapper">
+			<div class="current-badge">
+				<i class="i-ph-gauge current-badge-icon"></i>
+				{#if loading}
+					<span class="loading-text">{$LL.admin_scale_loading()}</span>
+				{:else}
+					<span class="current-badge-label">{$LL.admin_scale_current()}</span>
+					<span class="current-badge-shards"
+						>{$LL.admin_scale_shards_unit_title({
+							count: initialScaleState.unifiedScale
+						})}</span
+					>
+					<span class="current-badge-lps"
+						>{$LL.admin_scale_login_per_sec({ count: initialLPS })}</span
+					>
+				{/if}
+			</div>
 		</div>
-	</div>
 
-	<!-- Success/Error Messages -->
-	{#if successMessage}
-		<div class="alert alert-success">
-			<i class="i-ph-check-circle"></i>
-			<span>{successMessage}</span>
-		</div>
-	{/if}
-	{#if error}
-		<div class="alert alert-error">
-			<i class="i-ph-warning-circle"></i>
-			<span>{error}</span>
-		</div>
-	{/if}
+		<!-- Success/Error Messages -->
+		{#if successMessage}
+			<div class="alert alert-success">
+				<i class="i-ph-check-circle"></i>
+				<span>{successMessage}</span>
+			</div>
+		{/if}
+		{#if error}
+			<div class="alert alert-error">
+				<i class="i-ph-warning-circle"></i>
+				<span>{error}</span>
+			</div>
+		{/if}
 
-	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch animate-spin"></i>
-			<span>{$LL.admin_scale_load_configuration()}</span>
-		</div>
-	{:else}
-		<!-- Section 1: Scale Configuration (Compact Control Panel) -->
-		<section class="scale-control-panel">
-			<div class="scale-panel-header">
-				<div class="scale-panel-title">
-					<i class="i-ph-sliders-horizontal"></i>
-					<span>{$LL.admin_scale_system_scale()}</span>
-					<span class="help-tooltip scale-tooltip">
-						<i class="i-ph-question help-icon-cyber"></i>
-						<span class="tooltip-content tooltip-below">
-							{$LL.admin_scale_system_scale_help()}
+		{#if loading}
+			<div class="loading-state">
+				<i class="i-ph-circle-notch animate-spin"></i>
+				<span>{$LL.admin_scale_load_configuration()}</span>
+			</div>
+		{:else}
+			<!-- Section 1: Scale Configuration (Compact Control Panel) -->
+			<section class="scale-control-panel">
+				<div class="scale-panel-header">
+					<div class="scale-panel-title">
+						<i class="i-ph-sliders-horizontal"></i>
+						<span>{$LL.admin_scale_system_scale()}</span>
+						<span class="help-tooltip scale-tooltip">
+							<i class="i-ph-question help-icon-cyber"></i>
+							<span class="tooltip-content tooltip-below">
+								{$LL.admin_scale_system_scale_help()}
+							</span>
+						</span>
+					</div>
+					<div class="scale-panel-main">
+						<input
+							type="range"
+							min={minShardCount}
+							max={maxShardCount}
+							step={shardStep}
+							bind:value={scaleState.unifiedScale}
+							class="cyber-slider"
+						/>
+						<div class="scale-readout">
+							<span class="shard-count">{scaleState.unifiedScale}</span>
+							<span class="shard-label">{$LL.admin_scale_shards_unit()}</span>
+						</div>
+					</div>
+					<div class="scale-lps-badge">
+						<span class="lps-value">~{estimateLPS(scaleState.unifiedScale)}</span>
+						<span class="lps-unit">LPS</span>
+					</div>
+				</div>
+				<div class="rps-mini-grid">
+					<div class="rps-mini-item">
+						<span class="rps-mini-label">Auth</span>
+						<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.authCode)}</span>
+					</div>
+					<div class="rps-mini-item">
+						<span class="rps-mini-label">Token</span>
+						<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.refreshToken)}</span
+						>
+					</div>
+					<div class="rps-mini-item">
+						<span class="rps-mini-label">Session</span>
+						<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.session)}</span>
+					</div>
+					<div class="rps-mini-item">
+						<span class="rps-mini-label">Challenge</span>
+						<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.challenge)}</span>
+					</div>
+					<div class="rps-mini-item">
+						<span class="rps-mini-label">Revoke</span>
+						<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.revocation)}</span>
+					</div>
+				</div>
+			</section>
+
+			<!-- Section 2: World Map Visualization -->
+			<section class="map-section">
+				<WorldMap {selectedRegions} {regionDistribution} onRegionClick={toggleRegion} />
+			</section>
+
+			<!-- Section 3: Region Distribution -->
+			<section class="config-section">
+				<h2 class="section-title">
+					{$LL.admin_scale_region_distribution()}
+					<span class="help-tooltip">
+						<span class="help-icon-circle">
+							<i class="i-ph-question help-icon-inner"></i>
+						</span>
+						<span class="tooltip-content">
+							{$LL.admin_scale_region_distribution_help()}
 						</span>
 					</span>
-				</div>
-				<div class="scale-panel-main">
-					<input
-						type="range"
-						min={minShardCount}
-						max={maxShardCount}
-						step={shardStep}
-						bind:value={scaleState.unifiedScale}
-						class="cyber-slider"
-					/>
-					<div class="scale-readout">
-						<span class="shard-count">{scaleState.unifiedScale}</span>
-						<span class="shard-label">{$LL.admin_scale_shards_unit()}</span>
-					</div>
-				</div>
-				<div class="scale-lps-badge">
-					<span class="lps-value">~{estimateLPS(scaleState.unifiedScale)}</span>
-					<span class="lps-unit">LPS</span>
-				</div>
-			</div>
-			<div class="rps-mini-grid">
-				<div class="rps-mini-item">
-					<span class="rps-mini-label">Auth</span>
-					<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.authCode)}</span>
-				</div>
-				<div class="rps-mini-item">
-					<span class="rps-mini-label">Token</span>
-					<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.refreshToken)}</span>
-				</div>
-				<div class="rps-mini-item">
-					<span class="rps-mini-label">Session</span>
-					<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.session)}</span>
-				</div>
-				<div class="rps-mini-item">
-					<span class="rps-mini-label">Challenge</span>
-					<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.challenge)}</span>
-				</div>
-				<div class="rps-mini-item">
-					<span class="rps-mini-label">Revoke</span>
-					<span class="rps-mini-value">{estimateComponentRPS(calculatedShards.revocation)}</span>
-				</div>
-			</div>
-		</section>
+				</h2>
+				<p class="section-description">
+					<i class="i-ph-info info-icon"></i>
+					{$LL.admin_scale_region_distribution_description({
+						ratio: $LL.admin_scale_request_routing_ratio()
+					})}
+				</p>
 
-		<!-- Section 2: World Map Visualization -->
-		<section class="map-section">
-			<WorldMap {selectedRegions} {regionDistribution} onRegionClick={toggleRegion} />
-		</section>
+				<div class="region-distribution-list">
+					{#each ALL_REGIONS as region (region.key)}
+						{@const isSelected = selectedRegions.includes(region.key)}
+						{@const isLastSelected = selectedRegions.length === 1 && isSelected}
+						<div class="region-row" class:selected={isSelected}>
+							<label class="toggle-switch" class:disabled={isLastSelected}>
+								<input
+									type="checkbox"
+									checked={isSelected}
+									onchange={() => toggleRegion(region.key)}
+									disabled={isLastSelected}
+								/>
+								<span class="toggle-slider"></span>
+							</label>
+							<span class="region-label">{region.label}</span>
+							{#if isSelected && selectedRegions.length > 1}
+								<input
+									type="range"
+									min="0"
+									max="100"
+									value={regionDistribution[region.key] || 0}
+									oninput={(e) =>
+										adjustDistribution(region.key, parseInt((e.target as HTMLInputElement).value))}
+									class="region-slider"
+								/>
+								<span class="region-percent">{regionDistribution[region.key] || 0}%</span>
+							{:else if isSelected}
+								<span class="region-slider-placeholder"></span>
+								<span class="region-percent">100%</span>
+							{:else}
+								<span class="region-slider-placeholder"></span>
+								<span class="region-percent inactive">-</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+				{#if selectedRegions.length > 1}
+					<p class="slider-note">{$LL.admin_scale_slider_note()}</p>
+				{/if}
+			</section>
 
-		<!-- Section 3: Region Distribution -->
-		<section class="config-section">
-			<h2 class="section-title">
-				{$LL.admin_scale_region_distribution()}
-				<span class="help-tooltip">
-					<span class="help-icon-circle">
-						<i class="i-ph-question help-icon-inner"></i>
-					</span>
-					<span class="tooltip-content">
-						{$LL.admin_scale_region_distribution_help()}
-					</span>
-				</span>
-			</h2>
-			<p class="section-description">
-				<i class="i-ph-info info-icon"></i>
-				{$LL.admin_scale_region_distribution_description({
-					ratio: $LL.admin_scale_request_routing_ratio()
-				})}
-			</p>
+			<!-- Section 4: Advanced Settings -->
+			<section class="config-section advanced-section">
+				<button class="advanced-toggle" onclick={() => (advancedOpen = !advancedOpen)}>
+					<i class={advancedOpen ? 'i-ph-caret-down' : 'i-ph-caret-right'}></i>
+					<span>{$LL.admin_scale_advanced_settings()}</span>
+				</button>
 
-			<div class="region-distribution-list">
-				{#each ALL_REGIONS as region (region.key)}
-					{@const isSelected = selectedRegions.includes(region.key)}
-					{@const isLastSelected = selectedRegions.length === 1 && isSelected}
-					<div class="region-row" class:selected={isSelected}>
-						<label class="toggle-switch" class:disabled={isLastSelected}>
-							<input
-								type="checkbox"
-								checked={isSelected}
-								onchange={() => toggleRegion(region.key)}
-								disabled={isLastSelected}
-							/>
-							<span class="toggle-slider"></span>
-						</label>
-						<span class="region-label">{region.label}</span>
-						{#if isSelected && selectedRegions.length > 1}
-							<input
-								type="range"
-								min="0"
-								max="100"
-								value={regionDistribution[region.key] || 0}
-								oninput={(e) =>
-									adjustDistribution(region.key, parseInt((e.target as HTMLInputElement).value))}
-								class="region-slider"
-							/>
-							<span class="region-percent">{regionDistribution[region.key] || 0}%</span>
-						{:else if isSelected}
-							<span class="region-slider-placeholder"></span>
-							<span class="region-percent">100%</span>
-						{:else}
-							<span class="region-slider-placeholder"></span>
-							<span class="region-percent inactive">-</span>
-						{/if}
-					</div>
-				{/each}
-			</div>
-			{#if selectedRegions.length > 1}
-				<p class="slider-note">{$LL.admin_scale_slider_note()}</p>
-			{/if}
-		</section>
+				{#if advancedOpen}
+					<div class="advanced-content">
+						<!-- Estimation Model -->
+						<div class="advanced-group">
+							<h4>{$LL.admin_scale_estimation_model()}</h4>
+							<p class="advanced-description">
+								{#each $LL
+									.admin_scale_estimation_model_description()
+									.split('\n') as line, index (index)}
+									{#if index > 0}<br />{/if}{line}
+								{/each}
+							</p>
+						</div>
 
-		<!-- Section 4: Advanced Settings -->
-		<section class="config-section advanced-section">
-			<button class="advanced-toggle" onclick={() => (advancedOpen = !advancedOpen)}>
-				<i class={advancedOpen ? 'i-ph-caret-down' : 'i-ph-caret-right'}></i>
-				<span>{$LL.admin_scale_advanced_settings()}</span>
-			</button>
+						<!-- Client-based Coefficient -->
+						<div class="advanced-group">
+							<h4>{$LL.admin_scale_client_based_coefficient()}</h4>
+							<p class="advanced-description">{$LL.admin_scale_client_based_applies_to()}</p>
+							<select bind:value={scaleState.clientBasedCoeff} class="coeff-select">
+								<option value={0.25}>{$LL.admin_scale_coeff_low()}</option>
+								<option value={0.5}>{$LL.admin_scale_coeff_default()}</option>
+								<option value={1.0}>{$LL.admin_scale_coeff_high()}</option>
+							</select>
+							<p class="coeff-result">
+								{$LL.admin_scale_coeff_current({
+									shards: Math.max(
+										4,
+										Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff)
+									),
+									rps: estimateComponentRPS(
+										Math.max(4, Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff))
+									)
+								})}
+							</p>
+						</div>
 
-			{#if advancedOpen}
-				<div class="advanced-content">
-					<!-- Estimation Model -->
-					<div class="advanced-group">
-						<h4>{$LL.admin_scale_estimation_model()}</h4>
-						<p class="advanced-description">
-							{#each $LL
-								.admin_scale_estimation_model_description()
-								.split('\n') as line, index (index)}
-								{#if index > 0}<br />{/if}{line}
-							{/each}
-						</p>
-					</div>
-
-					<!-- Client-based Coefficient -->
-					<div class="advanced-group">
-						<h4>{$LL.admin_scale_client_based_coefficient()}</h4>
-						<p class="advanced-description">{$LL.admin_scale_client_based_applies_to()}</p>
-						<select bind:value={scaleState.clientBasedCoeff} class="coeff-select">
-							<option value={0.25}>{$LL.admin_scale_coeff_low()}</option>
-							<option value={0.5}>{$LL.admin_scale_coeff_default()}</option>
-							<option value={1.0}>{$LL.admin_scale_coeff_high()}</option>
-						</select>
-						<p class="coeff-result">
-							{$LL.admin_scale_coeff_current({
-								shards: Math.max(
-									4,
-									Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff)
-								),
-								rps: estimateComponentRPS(
-									Math.max(4, Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff))
-								)
-							})}
-						</p>
-					</div>
-
-					<!-- Individual Shard Settings -->
-					<div class="advanced-group">
-						<h4>{$LL.admin_scale_individual_shard_settings()}</h4>
-						<p class="advanced-description warning">
-							<i class="i-ph-warning"></i>
-							{$LL.admin_scale_auth_refresh_sync_warning()}
-						</p>
-						<div class="shard-grid">
-							<div class="shard-item">
-								<span class="shard-label">AuthCode</span>
-								<span class="shard-value">{calculatedShards.authCode}</span>
-								<i
-									class="i-ph-lock-simple lock-icon"
-									title={$LL.admin_scale_synced_with_refresh_token()}
-								></i>
-							</div>
-							<div class="shard-item">
-								<span class="shard-label">RefreshToken</span>
-								<span class="shard-value">{calculatedShards.refreshToken}</span>
-								<i
-									class="i-ph-lock-simple lock-icon"
-									title={$LL.admin_scale_synced_with_auth_code()}
-								></i>
-							</div>
-							<div class="shard-item">
-								<span class="shard-label">Revocation</span>
-								<span class="shard-value">{calculatedShards.revocation}</span>
-							</div>
-							<div class="shard-item">
-								<span class="shard-label">Session</span>
-								<span class="shard-value">{calculatedShards.session}</span>
-							</div>
-							<div class="shard-item">
-								<span class="shard-label">Challenge</span>
-								<span class="shard-value">{calculatedShards.challenge}</span>
-							</div>
-							<div class="shard-item client-based">
-								<span class="shard-label">PAR</span>
-								<span class="shard-value">{calculatedShards.par}</span>
-							</div>
-							<div class="shard-item client-based">
-								<span class="shard-label">DeviceCode</span>
-								<span class="shard-value">{calculatedShards.deviceCode}</span>
-							</div>
-							<div class="shard-item client-based">
-								<span class="shard-label">CIBA</span>
-								<span class="shard-value">{calculatedShards.ciba}</span>
-							</div>
-							<div class="shard-item client-based">
-								<span class="shard-label">DPoP</span>
-								<span class="shard-value">{calculatedShards.dpop}</span>
+						<!-- Individual Shard Settings -->
+						<div class="advanced-group">
+							<h4>{$LL.admin_scale_individual_shard_settings()}</h4>
+							<p class="advanced-description warning">
+								<i class="i-ph-warning"></i>
+								{$LL.admin_scale_auth_refresh_sync_warning()}
+							</p>
+							<div class="shard-grid">
+								<div class="shard-item">
+									<span class="shard-label">AuthCode</span>
+									<span class="shard-value">{calculatedShards.authCode}</span>
+									<i
+										class="i-ph-lock-simple lock-icon"
+										title={$LL.admin_scale_synced_with_refresh_token()}
+									></i>
+								</div>
+								<div class="shard-item">
+									<span class="shard-label">RefreshToken</span>
+									<span class="shard-value">{calculatedShards.refreshToken}</span>
+									<i
+										class="i-ph-lock-simple lock-icon"
+										title={$LL.admin_scale_synced_with_auth_code()}
+									></i>
+								</div>
+								<div class="shard-item">
+									<span class="shard-label">Revocation</span>
+									<span class="shard-value">{calculatedShards.revocation}</span>
+								</div>
+								<div class="shard-item">
+									<span class="shard-label">Session</span>
+									<span class="shard-value">{calculatedShards.session}</span>
+								</div>
+								<div class="shard-item">
+									<span class="shard-label">Challenge</span>
+									<span class="shard-value">{calculatedShards.challenge}</span>
+								</div>
+								<div class="shard-item client-based">
+									<span class="shard-label">PAR</span>
+									<span class="shard-value">{calculatedShards.par}</span>
+								</div>
+								<div class="shard-item client-based">
+									<span class="shard-label">DeviceCode</span>
+									<span class="shard-value">{calculatedShards.deviceCode}</span>
+								</div>
+								<div class="shard-item client-based">
+									<span class="shard-label">CIBA</span>
+									<span class="shard-value">{calculatedShards.ciba}</span>
+								</div>
+								<div class="shard-item client-based">
+									<span class="shard-label">DPoP</span>
+									<span class="shard-value">{calculatedShards.dpop}</span>
+								</div>
 							</div>
 						</div>
 					</div>
-				</div>
-			{/if}
-		</section>
-
-		<!-- Save Button -->
-		<div class="actions">
-			<button class="btn btn-primary" onclick={handleSaveClick} disabled={saving || !hasChanges}>
-				{#if saving}
-					<i class="i-ph-circle-notch animate-spin"></i>
-					<span>{$LL.admin_scale_saving()}</span>
-				{:else}
-					<i class="i-ph-floppy-disk"></i>
-					<span>{$LL.admin_scale_save_changes()}</span>
 				{/if}
-			</button>
-		</div>
-	{/if}
+			</section>
 
-	<!-- Diff Confirmation Dialog -->
-	<Modal
-		open={showDiffDialog}
-		onClose={() => (showDiffDialog = false)}
-		title={$LL.admin_scale_confirm_changes()}
-		size="sm"
-	>
-		<p class="dialog-subtitle">{$LL.admin_scale_dialog_subtitle()}</p>
+			<!-- Save Button -->
+			<div class="actions">
+				<button class="btn btn-primary" onclick={handleSaveClick} disabled={saving || !hasChanges}>
+					{#if saving}
+						<i class="i-ph-circle-notch animate-spin"></i>
+						<span>{$LL.admin_scale_saving()}</span>
+					{:else}
+						<i class="i-ph-floppy-disk"></i>
+						<span>{$LL.admin_scale_save_changes()}</span>
+					{/if}
+				</button>
+			</div>
+		{/if}
 
-		<ul class="diff-list">
-			{#each diffItems as item (item.label)}
-				<li>
-					<span class="diff-label">{item.label}:</span>
-					<span class="diff-old">{item.oldValue}</span>
-					<span class="diff-arrow">→</span>
-					<span class="diff-new">{item.newValue}</span>
-				</li>
-			{/each}
-		</ul>
+		<!-- Diff Confirmation Dialog -->
+		<Modal
+			open={showDiffDialog}
+			onClose={() => (showDiffDialog = false)}
+			title={$LL.admin_scale_confirm_changes()}
+			size="sm"
+		>
+			<p class="dialog-subtitle">{$LL.admin_scale_dialog_subtitle()}</p>
 
-		<p class="dialog-warning">
-			<i class="i-ph-warning"></i>
-			{$LL.admin_scale_changes_new_sessions_only()}
-		</p>
+			<ul class="diff-list">
+				{#each diffItems as item (item.label)}
+					<li>
+						<span class="diff-label">{item.label}:</span>
+						<span class="diff-old">{item.oldValue}</span>
+						<span class="diff-arrow">→</span>
+						<span class="diff-new">{item.newValue}</span>
+					</li>
+				{/each}
+			</ul>
 
-		{#snippet footer()}
-			<button class="btn btn-secondary" onclick={() => (showDiffDialog = false)}
-				>{$LL.admin_scale_cancel()}</button
-			>
-			<button class="btn btn-primary" onclick={saveAllChanges}
-				>{$LL.admin_scale_save_changes()}</button
-			>
-		{/snippet}
-	</Modal>
-</div>
+			<p class="dialog-warning">
+				<i class="i-ph-warning"></i>
+				{$LL.admin_scale_changes_new_sessions_only()}
+			</p>
+
+			{#snippet footer()}
+				<button class="btn btn-secondary" onclick={() => (showDiffDialog = false)}
+					>{$LL.admin_scale_cancel()}</button
+				>
+				<button class="btn btn-primary" onclick={saveAllChanges}
+					>{$LL.admin_scale_save_changes()}</button
+				>
+			{/snippet}
+		</Modal>
+	</div>
+</AdminPageShell>
 
 <style>
 	.scale-page {
@@ -735,8 +735,8 @@
 		align-items: center;
 		gap: 8px;
 		padding: 10px 20px;
-		background: var(--bg-card);
-		border: 1px solid var(--border-secondary);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-radius: 100px;
 		font-size: 0.875rem;
 	}
@@ -744,44 +744,26 @@
 	.current-badge-icon {
 		width: 16px;
 		height: 16px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.current-badge-label {
 		font-weight: 500;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.current-badge-shards {
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.current-badge-lps {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.loading-text {
-		color: var(--text-muted);
-	}
-
-	/* Page Header */
-	.page-header {
-		margin-bottom: 32px;
-	}
-
-	.page-title {
-		font-size: 1.75rem;
-		font-weight: 700;
-		color: var(--text-primary);
-		margin: 0 0 8px 0;
-	}
-
-	.page-description {
-		color: var(--text-secondary);
-		font-size: 0.9375rem;
-		margin: 0;
+		color: var(--color-text-muted);
 	}
 
 	/* Alerts */
@@ -796,15 +778,15 @@
 	}
 
 	.alert-success {
-		background: var(--success-bg);
-		color: var(--success);
-		border: 1px solid var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
+		border: 1px solid var(--color-success);
 	}
 
 	.alert-error {
-		background: var(--error-bg);
-		color: var(--error);
-		border: 1px solid var(--error);
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-danger);
+		border: 1px solid var(--color-danger);
 	}
 
 	.loading-state {
@@ -813,13 +795,13 @@
 		justify-content: center;
 		gap: 12px;
 		padding: 48px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	/* Sections */
 	.config-section {
-		background: var(--bg-card);
-		border: 1px solid var(--border-secondary);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		padding: 24px;
 		margin-bottom: 24px;
@@ -1103,7 +1085,7 @@
 	.section-title {
 		font-size: 1.125rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0 0 8px 0;
 		display: flex;
 		align-items: center;
@@ -1123,8 +1105,8 @@
 		justify-content: center;
 		width: 20px;
 		height: 20px;
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-secondary);
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
 		border-radius: 50%;
 		transition: all 0.2s ease;
 	}
@@ -1132,17 +1114,17 @@
 	.help-icon-inner {
 		width: 12px;
 		height: 12px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		transition: color 0.2s ease;
 	}
 
 	.help-tooltip:hover .help-icon-circle {
-		border-color: var(--primary);
-		background: var(--primary-bg);
+		border-color: var(--color-accent);
+		background: var(--color-accent-muted);
 	}
 
 	.help-tooltip:hover .help-icon-inner {
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	.tooltip-content {
@@ -1241,7 +1223,7 @@
 	}
 
 	.section-description {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		margin: 0 0 20px 0;
 		display: flex;
@@ -1250,7 +1232,7 @@
 	}
 
 	.info-icon {
-		color: var(--info);
+		color: var(--color-accent);
 	}
 
 	/* Region Distribution List (Combined Checkbox + Slider) */
@@ -1265,19 +1247,19 @@
 		align-items: center;
 		gap: 12px;
 		padding: 10px 14px;
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-secondary);
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		transition: all var(--transition-fast);
 	}
 
 	.region-row:hover {
-		border-color: var(--border-primary);
+		border-color: var(--color-border);
 	}
 
 	.region-row.selected {
-		background: var(--primary-bg);
-		border-color: var(--primary);
+		background: var(--color-accent-muted);
+		border-color: var(--color-accent);
 	}
 
 	/* Toggle Switch */
@@ -1308,8 +1290,8 @@
 		left: 0;
 		right: 0;
 		bottom: 0;
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-secondary);
+		background-color: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
 		transition: 0.3s;
 		border-radius: 24px;
 	}
@@ -1321,14 +1303,14 @@
 		width: 18px;
 		left: 2px;
 		bottom: 2px;
-		background-color: var(--text-muted);
+		background-color: var(--color-text-muted);
 		transition: 0.3s;
 		border-radius: 50%;
 	}
 
 	.toggle-switch input:checked + .toggle-slider {
-		background-color: var(--primary);
-		border-color: var(--primary);
+		background-color: var(--color-accent);
+		border-color: var(--color-accent);
 	}
 
 	.toggle-switch input:checked + .toggle-slider::before {
@@ -1337,7 +1319,7 @@
 	}
 
 	.toggle-switch input:focus + .toggle-slider {
-		box-shadow: 0 0 0 2px var(--primary-bg);
+		box-shadow: 0 0 0 2px var(--color-accent-muted);
 	}
 
 	.toggle-switch.disabled .toggle-slider {
@@ -1347,14 +1329,14 @@
 	.region-label {
 		width: 220px;
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-weight: 500;
 	}
 
 	.region-slider {
 		flex: 1;
 		height: 6px;
-		accent-color: var(--primary);
+		accent-color: var(--color-accent);
 		min-width: 100px;
 	}
 
@@ -1368,24 +1350,24 @@
 		text-align: right;
 		font-size: 0.875rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.region-percent.inactive {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-weight: 400;
 	}
 
 	.slider-note {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		margin: 12px 0 0;
 		font-style: italic;
 	}
 
 	/* Advanced Section */
 	.advanced-section {
-		background: var(--bg-secondary);
+		background: var(--color-surface-muted);
 	}
 
 	.advanced-toggle {
@@ -1394,7 +1376,7 @@
 		gap: 8px;
 		background: none;
 		border: none;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.9375rem;
 		font-weight: 600;
 		cursor: pointer;
@@ -1402,13 +1384,13 @@
 	}
 
 	.advanced-toggle:hover {
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	.advanced-content {
 		margin-top: 20px;
 		padding-top: 20px;
-		border-top: 1px solid var(--border-secondary);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.advanced-group {
@@ -1422,13 +1404,13 @@
 	.advanced-group h4 {
 		font-size: 0.875rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0 0 8px 0;
 	}
 
 	.advanced-description {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0 0 12px 0;
 		line-height: 1.6;
 	}
@@ -1437,24 +1419,24 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		color: var(--warning);
-		background: var(--warning-bg);
+		color: var(--color-warning);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 		padding: 8px 12px;
 		border-radius: var(--radius-sm);
 	}
 
 	.coeff-select {
 		padding: 8px 12px;
-		border: 1px solid var(--border-primary);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
+		background: var(--color-surface);
+		color: var(--color-text);
 		font-size: 0.875rem;
 	}
 
 	.coeff-result {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		margin: 8px 0 0;
 	}
 
@@ -1471,8 +1453,8 @@
 		justify-content: space-between;
 		gap: 8px;
 		padding: 10px 14px;
-		background: var(--bg-card);
-		border: 1px solid var(--border-secondary);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 	}
 
@@ -1483,17 +1465,17 @@
 
 	.shard-label {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.shard-value {
 		font-size: 0.9375rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.lock-icon {
-		color: var(--warning);
+		color: var(--color-warning);
 		font-size: 0.75rem;
 	}
 
@@ -1518,22 +1500,22 @@
 	}
 
 	.btn-primary {
-		background: var(--primary);
+		background: var(--color-accent);
 		color: white;
 	}
 
 	.btn-primary:hover:not(:disabled) {
-		background: var(--primary-dark);
+		background: var(--color-accent);
 	}
 
 	.btn-secondary {
-		background: var(--bg-tertiary);
-		color: var(--text-primary);
-		border: 1px solid var(--border-primary);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: var(--bg-secondary);
+		background: var(--color-surface-muted);
 	}
 
 	.btn:disabled {
@@ -1544,7 +1526,7 @@
 	/* Dialog */
 	.dialog-subtitle {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0 0 16px 0;
 	}
 
@@ -1560,7 +1542,7 @@
 		gap: 8px;
 		padding: 8px 0;
 		font-size: 0.875rem;
-		border-bottom: 1px solid var(--border-secondary);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.diff-list li:last-child {
@@ -1568,20 +1550,20 @@
 	}
 
 	.diff-label {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.diff-old {
-		color: var(--error);
+		color: var(--color-danger);
 		text-decoration: line-through;
 	}
 
 	.diff-arrow {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.diff-new {
-		color: var(--success);
+		color: var(--color-success);
 		font-weight: 600;
 	}
 
@@ -1590,8 +1572,8 @@
 		align-items: center;
 		gap: 8px;
 		font-size: 0.8125rem;
-		color: var(--warning);
-		background: var(--warning-bg);
+		color: var(--color-warning);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 		padding: 10px 12px;
 		border-radius: var(--radius-sm);
 		margin: 0 0 20px 0;

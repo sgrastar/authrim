@@ -8,6 +8,7 @@
 		type DatabaseConnectionProvider,
 		type ResourceStatus
 	} from '$lib/api/admin-database-connections';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const connectionId = $derived($page.params.id ?? 'new');
@@ -247,73 +248,79 @@
 	</title>
 </svelte:head>
 
-<div class="page-shell">
-	<header class="page-header">
-		<div class="page-title-group">
-			<button class="link-button" onclick={() => goto('/admin/database-connections')}
-				><i class="i-ph-arrow-left"></i>{$LL.admin_database_connections_back_connections()}</button
+{#snippet pageActions()}
+	{#if !isNew && connection}
+		<button class="btn btn-secondary" onclick={testConnection} disabled={saving}
+			>{$LL.admin_database_connections_test_connection()}</button
+		>
+	{/if}
+	{#if !readOnly}
+		<button class="btn btn-primary" onclick={save} disabled={saving || !name}>
+			{isNew
+				? $LL.admin_database_connections_create_connection()
+				: $LL.admin_database_connections_save_changes()}
+		</button>
+	{/if}
+{/snippet}
+
+{#snippet connectionActions()}
+	<div class="connection-actions">
+		{#if readOnly}<span class="badge badge-muted"
+				>{$LL.admin_database_connections_setup_managed()}</span
+			>{/if}
+		{#if connection}
+			<span class="badge {connection.status === 'active' ? 'badge-success' : 'badge-neutral'}"
+				>{connection.status}</span
 			>
-			<h1 class="page-title">
-				{isNew
-					? $LL.admin_database_connections_create_title()
-					: connection?.display_name || $LL.admin_database_connections_detail_title()}
-			</h1>
-			<p class="page-description">
-				{isNew
-					? $LL.admin_database_connections_create_description()
-					: $LL.admin_database_connections_detail_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			{#if !isNew && connection}
-				<button class="btn btn-secondary" onclick={testConnection} disabled={saving}
-					>{$LL.admin_database_connections_test_connection()}</button
-				>
-			{/if}
-			{#if !readOnly}
-				<button class="btn btn-primary" onclick={save} disabled={saving || !name}>
-					{isNew
-						? $LL.admin_database_connections_create_connection()
-						: $LL.admin_database_connections_save_changes()}
-				</button>
-			{/if}
-		</div>
-	</header>
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet metadataActions()}
+	{#if !readOnly}
+		<button class="btn btn-danger btn-sm" onclick={deleteConnection} disabled={saving}
+			>{$LL.admin_database_connections_delete()}</button
+		>
+	{/if}
+{/snippet}
+
+<AdminPageShell>
+	<button class="link-button" onclick={() => goto('/admin/database-connections')}
+		><i class="i-ph-arrow-left"></i>{$LL.admin_database_connections_back_connections()}</button
+	>
+	<AdminPageHeader
+		title={isNew
+			? $LL.admin_database_connections_create_title()
+			: connection?.display_name || $LL.admin_database_connections_detail_title()}
+		description={isNew
+			? $LL.admin_database_connections_create_description()
+			: $LL.admin_database_connections_detail_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}<div class="alert alert-error">{error}</div>{/if}
 	{#if success}<div class="alert alert-success">{success}</div>{/if}
 
 	{#if loading}
-		<div class="panel"><p class="text-muted">{$LL.admin_database_connections_loading()}</p></div>
+		<AdminSection><p class="text-muted">{$LL.admin_database_connections_loading()}</p></AdminSection
+		>
 	{:else if !isNew && !connection}
-		<div class="panel"><p class="text-muted">{$LL.admin_database_connections_not_found()}</p></div>
+		<AdminSection
+			><p class="text-muted">{$LL.admin_database_connections_not_found()}</p></AdminSection
+		>
 	{:else}
-		<div class="panel">
-			<div class="panel-header">
-				<h2 class="panel-title">{$LL.admin_database_connections_connection()}</h2>
-				<div class="header-actions">
-					{#if readOnly}<span class="badge badge-muted"
-							>{$LL.admin_database_connections_setup_managed()}</span
-						>{/if}
-					{#if connection}
-						<span class="badge {connection.status === 'active' ? 'badge-success' : 'badge-neutral'}"
-							>{connection.status}</span
-						>
-					{/if}
-				</div>
-			</div>
-
+		<AdminSection title={$LL.admin_database_connections_connection()} actions={connectionActions}>
 			<div class="form-grid">
-				<label class="form-label-group">
+				<label class="admin-field">
 					<span>{$LL.admin_database_connections_name()}</span>
 					<input bind:value={name} disabled={!isNew} />
 					<small>{$LL.admin_database_connections_name_help()}</small>
 				</label>
-				<label class="form-label-group">
+				<label class="admin-field">
 					<span>{$LL.admin_database_connections_display_name()}</span>
 					<input bind:value={displayName} disabled={readOnly} />
 				</label>
-				<label class="form-label-group">
+				<label class="admin-field">
 					<span>{$LL.admin_database_connections_provider()}</span>
 					<select bind:value={provider} disabled={!isNew}>
 						<option value="d1">D1</option>
@@ -323,36 +330,38 @@
 						<option value="custom">{$LL.admin_database_connections_custom_type()}</option>
 					</select>
 				</label>
-				<label class="form-label-group">
+				<label class="admin-field">
 					<span>{$LL.admin_database_connections_status()}</span>
 					<select bind:value={status} disabled={readOnly}>
 						<option value="active">{$LL.admin_database_connections_active()}</option>
 						<option value="disabled">{$LL.admin_database_connections_disabled()}</option>
 					</select>
 				</label>
-				<label class="form-label-group wide">
+				<label class="admin-field admin-field--wide">
 					<span>{$LL.admin_database_connections_description_label()}</span>
 					<input bind:value={description} disabled={readOnly} />
 				</label>
 
 				{#if isNew}
-					<div class="form-section wide">
-						<h3 class="form-section-title">{$LL.admin_database_connections_provider_settings()}</h3>
-						<p class="form-section-description">
+					<div class="form-subsection admin-field--wide">
+						<h3 class="form-subsection__title">
+							{$LL.admin_database_connections_provider_settings()}
+						</h3>
+						<p class="form-subsection__description">
 							{$LL.admin_database_connections_provider_settings_help()}
 						</p>
 						{#if provider === 'd1'}
-							<label class="form-label-group nested-single">
+							<label class="admin-field admin-field--single">
 								<span>{$LL.admin_database_connections_d1_binding_ref()}</span>
 								<input bind:value={d1BindingRef} />
 							</label>
 						{:else if provider === 'hyperdrive'}
-							<div class="form-grid nested">
-								<label class="form-label-group">
+							<div class="form-grid form-grid--nested">
+								<label class="admin-field">
 									<span>{$LL.admin_database_connections_hyperdrive_binding_ref()}</span>
 									<input bind:value={hyperdriveBindingRef} />
 								</label>
-								<label class="form-label-group">
+								<label class="admin-field">
 									<span>{$LL.admin_database_connections_sql_dialect()}</span>
 									<select bind:value={hyperdriveDialect}>
 										<option value="postgres">PostgreSQL</option>
@@ -361,23 +370,23 @@
 								</label>
 							</div>
 						{:else if provider === 'postgres' || provider === 'mysql'}
-							<div class="form-grid nested">
-								<label class="form-label-group">
+							<div class="form-grid form-grid--nested">
+								<label class="admin-field">
 									<span>{$LL.admin_database_connections_schema()}</span>
 									<input bind:value={sqlSchema} />
 								</label>
-								<label class="form-label-group">
+								<label class="admin-field">
 									<span>{$LL.admin_database_connections_pool_name()}</span>
 									<input bind:value={sqlPoolName} />
 								</label>
 							</div>
 						{:else}
-							<div class="form-grid nested">
-								<label class="form-label-group">
+							<div class="form-grid form-grid--nested">
+								<label class="admin-field">
 									<span>{$LL.admin_database_connections_custom_type()}</span>
 									<input bind:value={customType} />
 								</label>
-								<label class="form-label-group wide">
+								<label class="admin-field admin-field--wide">
 									<span>{$LL.admin_database_connections_advanced_fields()}</span>
 									<textarea rows="5" bind:value={customConfig}></textarea>
 								</label>
@@ -386,15 +395,15 @@
 					</div>
 
 					{#if provider === 'postgres' || provider === 'mysql' || provider === 'custom'}
-						<div class="form-section wide">
-							<h3 class="form-section-title">{$LL.admin_database_connections_credentials()}</h3>
+						<div class="form-subsection admin-field--wide">
+							<h3 class="form-subsection__title">{$LL.admin_database_connections_credentials()}</h3>
 							{#if provider === 'postgres' || provider === 'mysql'}
-								<label class="form-label-group nested-single">
+								<label class="admin-field admin-field--single">
 									<span>{$LL.admin_database_connections_connection_string()}</span>
 									<textarea rows="3" bind:value={sqlConnectionString} autocomplete="off"></textarea>
 								</label>
 							{:else}
-								<label class="form-label-group nested-single">
+								<label class="admin-field admin-field--single">
 									<span>{$LL.admin_database_connections_credential_object()}</span>
 									<textarea rows="5" bind:value={customCredential} autocomplete="off"></textarea>
 								</label>
@@ -402,24 +411,16 @@
 						</div>
 					{/if}
 				{:else}
-					<label class="form-label-group wide">
+					<label class="admin-field admin-field--wide">
 						<span>{$LL.admin_database_connections_config()}</span>
 						<textarea rows="8" bind:value={configJson} disabled={readOnly}></textarea>
 					</label>
 				{/if}
 			</div>
-		</div>
+		</AdminSection>
 
 		{#if connection}
-			<div class="panel">
-				<div class="panel-header">
-					<h2 class="panel-title">{$LL.admin_database_connections_metadata()}</h2>
-					{#if !readOnly}
-						<button class="btn btn-danger btn-sm" onclick={deleteConnection} disabled={saving}
-							>{$LL.admin_database_connections_delete()}</button
-						>
-					{/if}
-				</div>
+			<AdminSection title={$LL.admin_database_connections_metadata()} actions={metadataActions}>
 				<div class="stat-grid">
 					<div class="stat-card">
 						<span>{$LL.admin_database_connections_provider()}</span><strong
@@ -444,20 +445,17 @@
 						>
 					</div>
 				</div>
-			</div>
+			</AdminSection>
 		{/if}
 
 		{#if connection && !readOnly}
-			<div class="panel">
-				<div class="panel-header">
-					<h2 class="panel-title">{$LL.admin_database_connections_update_credential()}</h2>
-				</div>
+			<AdminSection title={$LL.admin_database_connections_update_credential()}>
 				<div class="form-grid">
-					<label class="form-label-group wide">
+					<label class="admin-field admin-field--wide">
 						<span>{$LL.admin_database_connections_elevation_grant_id()}</span>
 						<input bind:value={elevationGrantId} />
 					</label>
-					<label class="form-label-group wide">
+					<label class="admin-field admin-field--wide">
 						<span>{$LL.admin_database_connections_new_credential_object()}</span>
 						<textarea rows="4" bind:value={credentialJson}></textarea>
 					</label>
@@ -471,41 +469,16 @@
 						{$LL.admin_database_connections_update_credential_button()}
 					</button>
 				</div>
-			</div>
+			</AdminSection>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.page-shell {
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
-	}
-
-	.page-header,
-	.page-actions,
-	.panel-header,
-	.header-actions {
+	.connection-actions {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-	}
-
-	.page-header,
-	.panel-header {
-		justify-content: space-between;
-	}
-
-	.page-title {
-		margin: 0 0 0.25rem;
-		font-size: 1.5rem;
-	}
-
-	.page-description {
-		margin: 0;
-		color: var(--text-secondary);
-		font-size: 0.875rem;
 	}
 
 	.link-button {
@@ -516,7 +489,7 @@
 		padding: 0;
 		border: none;
 		background: transparent;
-		color: var(--primary);
+		color: var(--color-accent);
 		cursor: pointer;
 		font: inherit;
 		font-size: 0.875rem;
@@ -524,33 +497,20 @@
 
 	.alert {
 		padding: 0.75rem 1rem;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
 	}
 
 	.alert-error {
-		background: rgba(239, 68, 68, 0.08);
-		color: #991b1b;
-		border: 1px solid rgba(239, 68, 68, 0.2);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
 	}
 
 	.alert-success {
-		background: rgba(16, 185, 129, 0.08);
-		color: #065f46;
-		border: 1px solid rgba(16, 185, 129, 0.2);
-	}
-
-	.panel {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		padding: 1.5rem;
-	}
-
-	.panel-title {
-		margin: 0;
-		font-size: 1.05rem;
-		font-weight: 600;
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
+		color: var(--color-success);
+		border: 1px solid color-mix(in srgb, var(--color-success) 32%, var(--color-border));
 	}
 
 	.form-grid,
@@ -564,7 +524,7 @@
 		align-items: start;
 	}
 
-	.form-grid.nested {
+	.form-grid--nested {
 		margin-top: 1rem;
 	}
 
@@ -572,49 +532,49 @@
 		grid-template-columns: repeat(4, 1fr);
 	}
 
-	.form-label-group {
+	.admin-field {
 		display: flex;
 		flex-direction: column;
 		gap: 0.45rem;
 		font-size: 0.875rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
-	.form-label-group small,
-	.form-section-description,
+	.admin-field small,
+	.form-subsection__description,
 	.text-muted {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
-	.form-label-group small,
-	.form-section-description {
+	.admin-field small,
+	.form-subsection__description {
 		font-size: 0.8125rem;
 		line-height: 1.4;
 	}
 
-	.form-section {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+	.form-subsection {
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 		padding: 1rem;
 	}
 
-	.form-section-title {
+	.form-subsection__title {
 		margin: 0;
 		font-size: 0.9375rem;
 		font-weight: 600;
 	}
 
-	.form-section-description {
+	.form-subsection__description {
 		margin: 0.25rem 0 0;
 	}
 
-	.nested-single {
+	.admin-field--single {
 		margin-top: 1rem;
 	}
 
-	.wide {
+	.admin-field--wide {
 		grid-column: 1 / -1;
 	}
 
@@ -627,21 +587,29 @@
 	input,
 	select,
 	textarea {
-		min-height: 2.625rem;
+		min-height: var(--control-height, 2.625rem);
 		width: 100%;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		padding: 0.625rem 0.75rem;
-		background: var(--bg-input);
-		color: var(--text-primary);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		padding: var(--control-padding, 0.625rem 0.75rem);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font: inherit;
 		font-size: 0.875rem;
+	}
+
+	input:focus,
+	select:focus,
+	textarea:focus {
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+		outline-offset: 1px;
 	}
 
 	input:disabled,
 	select:disabled,
 	textarea:disabled {
 		opacity: 0.72;
+		cursor: not-allowed;
 	}
 
 	textarea {
@@ -663,40 +631,35 @@
 
 	.badge-neutral,
 	.badge-muted {
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.badge-success {
-		background: rgba(16, 185, 129, 0.1);
-		color: #065f46;
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
 	}
 
 	.stat-card {
 		padding: 0.875rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
 	.stat-card span {
 		display: block;
 		margin-bottom: 0.35rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 	}
 
 	.stat-card strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.875rem;
 	}
 
 	@media (max-width: 900px) {
-		.page-header {
-			align-items: flex-start;
-			flex-direction: column;
-		}
-
 		.form-grid,
 		.stat-grid {
 			grid-template-columns: 1fr;

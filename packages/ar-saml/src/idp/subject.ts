@@ -5,6 +5,11 @@ import {
   type SAMLAuthnRequest,
   type SAMLSPConfig,
 } from '@authrim/ar-lib-core';
+import {
+  generatePersistentIdentifier,
+  type PersistentIdentifierAlgorithm,
+  type PersistentIdentifierAudienceMode,
+} from '@authrim/ar-lib-core/services/persistent-identifiers';
 import { DEFAULTS, NAMEID_FORMATS } from '../common/constants';
 import { getKeyManagerSecret } from '../common/key-utils';
 
@@ -34,12 +39,17 @@ export interface SAMLNameIDContext {
   tenantId: string;
   spEntityId: string;
   pairwiseSalt?: string;
+  pairwiseAlgorithm?: SAMLPersistentIdentifierAlgorithm;
+  pairwiseAudienceMode?: PersistentIdentifierAudienceMode;
+  persistentProfileId?: string;
   persistentRegistry?: SAMLPersistentNameIDRegistryStore;
   allowCreate?: boolean;
   transientStore?: SAMLTransientNameIDStore;
   transientTtlSeconds?: number;
   sessionId?: string;
 }
+
+export type SAMLPersistentIdentifierAlgorithm = PersistentIdentifierAlgorithm;
 
 export interface SAMLPairwiseSaltSource {
   PAIRWISE_SALT?: string;
@@ -102,6 +112,16 @@ export async function resolveSAMLNameIDValue(
   }
 }
 
+export async function resolveSAMLEduPersonTargetedIDOpaque(
+  subject: SAMLSubjectInfo,
+  context: SAMLNameIDContext
+): Promise<string> {
+  return resolvePersistentNameID(subject, {
+    ...context,
+    allowCreate: true,
+  });
+}
+
 export function resolveSAMLPairwiseSalt(env: SAMLPairwiseSaltSource): string | undefined {
   return env.PAIRWISE_SALT;
 }
@@ -110,14 +130,24 @@ export async function resolveSAMLPairwiseSecret(
   env: SAMLPairwiseSaltSource,
   tenantId: string
 ): Promise<string | undefined> {
+  return resolveSAMLPairwiseSecretForRef(env, tenantId, buildSAMLPairwiseSecretRef(tenantId));
+}
+
+export async function resolveSAMLPairwiseSecretForRef(
+  env: SAMLPairwiseSaltSource,
+  tenantId: string,
+  secretRef: string
+): Promise<string | undefined> {
   if (env.KEY_MANAGER && env.KEY_MANAGER_SECRET) {
     const secret = await getKeyManagerSecret(env as Env, tenantId, {
-      secretRef: buildSAMLPairwiseSecretRef(tenantId),
+      secretRef,
     });
     return secret.active.value;
   }
 
-  return resolveSAMLPairwiseSalt(env);
+  return secretRef === buildSAMLPairwiseSecretRef(tenantId)
+    ? resolveSAMLPairwiseSalt(env)
+    : undefined;
 }
 
 export function resolveSAMLTransientNameIDStore(
@@ -252,10 +282,12 @@ async function resolvePersistentNameID(
     );
   }
 
-  const nameId = await generatePairwiseSubject(
+  const audience = buildSAMLPairwiseSectorIdentifier(context.tenantId, context.spEntityId);
+  const nameId = await generateSAMLPersistentIdentifier(
     subject.id,
-    buildSAMLPairwiseSectorIdentifier(context.tenantId, context.spEntityId),
-    context.pairwiseSalt
+    audience,
+    context.pairwiseSalt,
+    context.pairwiseAlgorithm
   );
   if (context.persistentRegistry && registryKey) {
     await context.persistentRegistry.put(
@@ -272,6 +304,18 @@ async function resolvePersistentNameID(
   }
 
   return nameId;
+}
+
+export async function generateSAMLPersistentIdentifier(
+  subjectId: string,
+  audience: string,
+  secret: string,
+  algorithm: SAMLPersistentIdentifierAlgorithm = 'authrim_sha256_base64url'
+): Promise<string> {
+  if (algorithm === 'authrim_sha256_base64url') {
+    return generatePairwiseSubject(subjectId, audience, secret);
+  }
+  return generatePersistentIdentifier({ algorithm, subject: subjectId, audience, secret });
 }
 
 async function resolveTransientNameID(

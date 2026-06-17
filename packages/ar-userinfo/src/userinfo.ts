@@ -267,8 +267,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const mapped = await applyOIDCIdentityMapping({
         adapter: authCtx.coreAdapter,
+        env: c.env,
         tenantId,
         clientId: client_id,
+        sectorIdentifier: clientMetadata.sector_identifier_uri,
         selector: clientMetadata.identity_mapping,
         claims: userClaims,
       });

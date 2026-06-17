@@ -433,7 +433,7 @@ describe('Check API Authentication Middleware', () => {
   });
 
   describe('Access Token (JWT) Authentication', () => {
-    it('should authenticate valid JWT', async () => {
+    it('should reject JWT access tokens when signature verification is not configured', async () => {
       const jwt = createJwt({
         sub: 'user_123',
         client_id: 'client_xyz',
@@ -444,14 +444,12 @@ describe('Check API Authentication Middleware', () => {
 
       const result = await authenticateCheckApiRequest(`Bearer ${jwt}`, ctx);
 
-      expect(result.authenticated).toBe(true);
-      expect(result.method).toBe('access_token');
-      expect(result.subjectId).toBe('user_123');
-      expect(result.clientId).toBe('client_xyz');
-      expect(result.tenantId).toBe('tenant_abc');
+      expect(result.authenticated).toBe(false);
+      expect(result.error).toBe('invalid_token');
+      expect(result.errorDescription).toBe('Access token verification is not configured');
     });
 
-    it('should use azp claim when client_id is missing', async () => {
+    it('should not trust unsigned JWT claims such as azp', async () => {
       const jwt = createJwt({
         sub: 'user_456',
         azp: 'client_from_azp',
@@ -462,12 +460,11 @@ describe('Check API Authentication Middleware', () => {
 
       const result = await authenticateCheckApiRequest(`Bearer ${jwt}`, ctx);
 
-      expect(result.authenticated).toBe(true);
-      expect(result.clientId).toBe('client_from_azp');
-      expect(result.tenantId).toBe('tenant_abc');
+      expect(result.authenticated).toBe(false);
+      expect(result.error).toBe('invalid_token');
     });
 
-    it('should reject access tokens that are missing tenant_id', async () => {
+    it('should reject access tokens before reading unsigned tenant claims', async () => {
       const jwt = createJwt({
         sub: 'user_789',
         client_id: 'client_test',
@@ -501,7 +498,7 @@ describe('Check API Authentication Middleware', () => {
       expect(result.error).toBe('invalid_token');
     });
 
-    it('should accept JWT with future expiration', async () => {
+    it('should reject future-expiring JWTs without signature verification', async () => {
       const now = Math.floor(Date.now() / 1000);
       const jwt = createJwt(
         {
@@ -516,7 +513,8 @@ describe('Check API Authentication Middleware', () => {
 
       const result = await authenticateCheckApiRequest(`Bearer ${jwt}`, ctx);
 
-      expect(result.authenticated).toBe(true);
+      expect(result.authenticated).toBe(false);
+      expect(result.error).toBe('invalid_token');
     });
 
     it('should reject malformed JWT', async () => {

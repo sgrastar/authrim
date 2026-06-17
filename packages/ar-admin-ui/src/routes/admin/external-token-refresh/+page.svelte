@@ -6,6 +6,10 @@
 		type ExternalTokenRefreshRunSummary
 	} from '$lib/api/admin-external-token-refresh';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let config: ExternalTokenRefreshConfig = $state({
 		enabled: true,
@@ -123,27 +127,25 @@
 	<title>{$LL.admin_external_token_refresh_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_external_token_refresh_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_external_token_refresh_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={load} disabled={loading || saving || running}>
-				<i class="i-ph-arrow-clockwise"></i>
-				{$LL.admin_external_token_refresh_refresh()}
-			</button>
-			<button class="btn btn-primary" onclick={runNow} disabled={loading || saving || running}>
-				<i class="i-ph-play"></i>
-				{running
-					? $LL.admin_external_token_refresh_running()
-					: $LL.admin_external_token_refresh_run_current_tenant()}
-			</button>
-		</div>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-secondary" onclick={load} disabled={loading || saving || running}>
+		<i class="i-ph-arrow-clockwise" aria-hidden="true"></i>
+		{$LL.admin_external_token_refresh_refresh()}
+	</button>
+	<button class="btn btn-primary" onclick={runNow} disabled={loading || saving || running}>
+		<i class="i-ph-play" aria-hidden="true"></i>
+		{running
+			? $LL.admin_external_token_refresh_running()
+			: $LL.admin_external_token_refresh_run_current_tenant()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_external_token_refresh_title()}
+		description={$LL.admin_external_token_refresh_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -158,10 +160,7 @@
 			<p>{$LL.admin_external_token_refresh_loading()}</p>
 		</div>
 	{:else}
-		<div class="panel">
-			<div class="panel-header">
-				<h2>{$LL.admin_external_token_refresh_settings()}</h2>
-			</div>
+		<AdminSection title={$LL.admin_external_token_refresh_settings()}>
 			<div class="settings-grid">
 				<label class="toggle-row">
 					<input type="checkbox" bind:checked={config.enabled} />
@@ -174,7 +173,7 @@
 						type="number"
 						min="1"
 						bind:value={config.refreshThresholdSeconds}
-						class="form-input"
+						class="admin-input"
 					/>
 				</label>
 
@@ -185,7 +184,7 @@
 						min="1"
 						max="1000"
 						bind:value={config.batchSize}
-						class="form-input"
+						class="admin-input"
 					/>
 				</label>
 
@@ -196,18 +195,18 @@
 						min="1"
 						max="100"
 						bind:value={config.scheduledTenantBatchSize}
-						class="form-input"
+						class="admin-input"
 					/>
 				</label>
 			</div>
-			<div class="panel-actions">
+			<div class="section-actions">
 				<button class="btn btn-primary" onclick={saveConfig} disabled={saving || running}>
 					{saving
 						? $LL.admin_external_token_refresh_saving()
 						: $LL.admin_external_token_refresh_save_settings()}
 				</button>
 			</div>
-		</div>
+		</AdminSection>
 
 		<div class="metrics-grid">
 			<div class="metric-card">
@@ -228,8 +227,8 @@
 			</div>
 		</div>
 
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection title={$LL.admin_external_token_refresh_recent_runs()}>
+			<AdminDataTable width="xwide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_external_token_refresh_started()}</th>
@@ -267,10 +266,10 @@
 						{/each}
 					{/if}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
 	.settings-grid {
@@ -285,16 +284,33 @@
 		flex-direction: column;
 		gap: 8px;
 		font-size: 14px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.toggle-row {
 		flex-direction: row;
 		align-items: center;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
-	.panel-actions {
+	.form-field :global(.admin-input) {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
+	}
+
+	.form-field :global(.admin-input:focus) {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.section-actions {
 		display: flex;
 		justify-content: flex-end;
 		margin-top: 20px;
@@ -308,16 +324,17 @@
 	}
 
 	.metric-card {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 16px;
-		background: var(--surface);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-sm);
 	}
 
 	.metric-label {
 		font-size: 12px;
 		text-transform: uppercase;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		letter-spacing: 0;
 	}
 
@@ -325,18 +342,18 @@
 		margin-top: 8px;
 		font-size: 24px;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.empty-cell {
 		text-align: center;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		padding: 32px;
 	}
 
 	.detail-row td {
-		color: var(--danger);
-		background: var(--danger-bg);
+		color: var(--color-danger);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 		font-size: 13px;
 	}
 </style>

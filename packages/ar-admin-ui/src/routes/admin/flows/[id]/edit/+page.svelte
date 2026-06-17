@@ -11,7 +11,9 @@
 		type GraphNodeType,
 		canEditFlow
 	} from '$lib/api/admin-flows';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import { FlowCanvas, NodePalette, NodeConfigModal } from '$lib/components/flow-designer';
+	import { getFlowNodeMetadata } from '$lib/components/flow-designer/flow-node-metadata';
 
 	// Product note: Flow may be omitted from Admin UI; keep new i18n work for this
 	// feature paused until product direction is confirmed.
@@ -109,7 +111,7 @@
 	}
 
 	function handleAddNode(type: GraphNodeType, position: { x: number; y: number }) {
-		const metadata = getNodeMetadata(type);
+		const metadata = getFlowNodeMetadata(type);
 		const newNode: GraphNode = {
 			id: `${type}-${Date.now()}`,
 			type,
@@ -324,75 +326,6 @@
 		}
 	}
 
-	// Get default icon and color for node type
-	function getNodeMetadata(type: GraphNodeType): { icon: string; color: string } {
-		const metadata: Partial<Record<GraphNodeType, { icon: string; color: string }>> = {
-			// 1. Control Nodes
-			start: { icon: '▶', color: '#22c55e' },
-			end: { icon: '●', color: '#10b981' },
-			goto: { icon: '↪', color: '#64748b' },
-			// 2. Check Nodes
-			check_session: { icon: '🔍', color: '#a855f7' },
-			check_auth_level: { icon: '📊', color: '#8b5cf6' },
-			check_first_login: { icon: '🆕', color: '#7c3aed' },
-			check_user_attribute: { icon: '👁️', color: '#6366f1' },
-			check_context: { icon: '📍', color: '#4f46e5' },
-			check_risk: { icon: '⚠️', color: '#dc2626' },
-			// 3. Selection Nodes
-			auth_method_select: { icon: '🔑', color: '#3b82f6' },
-			login_method_select: { icon: '🚪', color: '#0ea5e9' },
-			identifier: { icon: '👤', color: '#06b6d4' },
-			profile_input: { icon: '📋', color: '#0891b2' },
-			custom_form: { icon: '📄', color: '#0284c7' },
-			information: { icon: 'ℹ️', color: '#64748b' },
-			challenge: { icon: '🎯', color: '#f59e0b' },
-			// 4. Authentication Nodes
-			login: { icon: '🔐', color: '#6366f1' },
-			mfa: { icon: '🛡️', color: '#f59e0b' },
-			register: { icon: '📝', color: '#10b981' },
-			// 5. Consent Nodes
-			consent: { icon: '✓', color: '#06b6d4' },
-			check_consent_status: { icon: '✔️', color: '#0891b2' },
-			record_consent: { icon: '📜', color: '#0284c7' },
-			// 6. Resolve Nodes
-			resolve_tenant: { icon: '🏢', color: '#8b5cf6' },
-			resolve_org: { icon: '🏛️', color: '#7c3aed' },
-			resolve_policy: { icon: '📋', color: '#6366f1' },
-			// 7. Session Nodes
-			issue_tokens: { icon: '🎫', color: '#22c55e' },
-			refresh_session: { icon: '🔄', color: '#10b981' },
-			revoke_session: { icon: '🚫', color: '#ef4444' },
-			bind_device: { icon: '📱', color: '#f59e0b' },
-			link_account: { icon: '🔗', color: '#ec4899' },
-			// 8. Side Effect Nodes
-			redirect: { icon: '↗️', color: '#0891b2' },
-			webhook: { icon: '🌐', color: '#0284c7' },
-			event_emit: { icon: '📡', color: '#059669' },
-			email_send: { icon: '📧', color: '#7c3aed' },
-			sms_send: { icon: '💬', color: '#8b5cf6' },
-			push_notify: { icon: '🔔', color: '#a855f7' },
-			// 9. Logic Nodes
-			decision: { icon: '⋔', color: '#ec4899' },
-			switch: { icon: '🔀', color: '#f43f5e' },
-			// 10. Policy Nodes
-			policy_check: { icon: '🛡️', color: '#4f46e5' },
-			// 11. Error Nodes
-			error: { icon: '✕', color: '#ef4444' },
-			log: { icon: '📋', color: '#64748b' },
-			// Legacy (deprecated)
-			auth_method: { icon: '🔑', color: '#8b5cf6' },
-			user_input: { icon: '📋', color: '#0ea5e9' },
-			wait_input: { icon: '⏳', color: '#64748b' },
-			condition: { icon: '⋔', color: '#ec4899' },
-			check_user: { icon: '👁️', color: '#7c3aed' },
-			risk_check: { icon: '⚠️', color: '#dc2626' },
-			set_variable: { icon: '📝', color: '#059669' },
-			call_api: { icon: '🌐', color: '#0284c7' },
-			send_notification: { icon: '📧', color: '#7c3aed' }
-		};
-		return metadata[type] || { icon: '⚡', color: '#6b7280' };
-	}
-
 	async function handleSave() {
 		if (!flow || !canEditFlow(flow)) return;
 
@@ -466,74 +399,296 @@
 	}
 </script>
 
-<div class="flow-edit-page">
-	{#if loading}
-		<div class="loading-state">Loading flow...</div>
-	{:else if error && !flow}
-		<div class="flow-error-state">
-			<p>{error}</p>
-			<button class="btn btn-primary" onclick={loadFlow}>Retry</button>
-			<button class="btn btn-secondary" onclick={() => goto('/admin/flows')}>Back to Flows</button>
-		</div>
-	{:else if flow}
-		<div class="flow-edit-header">
-			<div class="flow-edit-header-left">
-				<button class="btn btn-ghost" onclick={handleBack}>← Back</button>
-				<div class="flow-edit-header-info">
-					<h1>Edit: {flow.name}</h1>
-					{#if hasChanges}
-						<span class="unsaved-badge">Unsaved changes</span>
-					{/if}
+<svelte:head>
+	<title>{flow ? `Edit ${flow.name} - Flows - Authrim` : 'Edit Flow - Authrim'}</title>
+</svelte:head>
+
+<AdminPageShell>
+	<div class="flow-edit-page">
+		{#if loading}
+			<div class="loading-state">Loading flow...</div>
+		{:else if error && !flow}
+			<div class="flow-error-state">
+				<p>{error}</p>
+				<button type="button" class="btn btn-primary" onclick={loadFlow}>Retry</button>
+				<button type="button" class="btn btn-secondary" onclick={() => goto('/admin/flows')}
+					>Back to Flows</button
+				>
+			</div>
+		{:else if flow}
+			<div class="flow-edit-header">
+				<div class="flow-edit-header-left">
+					<button type="button" class="btn btn-ghost" onclick={handleBack}>
+						<i class="i-ph-arrow-left" aria-hidden="true"></i>
+						<span>Back</span>
+					</button>
+					<div class="flow-edit-header-info">
+						<h1>Edit: {flow.name}</h1>
+						{#if hasChanges}
+							<span class="unsaved-badge">Unsaved changes</span>
+						{/if}
+					</div>
+				</div>
+				<div class="flow-edit-header-actions">
+					<button type="button" class="btn btn-secondary" onclick={handleValidate}>Validate</button>
+					<button
+						type="button"
+						class="btn btn-primary"
+						onclick={handleSave}
+						disabled={saving || !hasChanges || !canEditFlow(flow)}
+					>
+						{saving ? 'Saving...' : 'Save'}
+					</button>
 				</div>
 			</div>
-			<div class="flow-edit-header-actions">
-				<button class="btn btn-secondary" onclick={handleValidate}>Validate</button>
-				<button
-					class="btn btn-primary"
-					onclick={handleSave}
-					disabled={saving || !hasChanges || !canEditFlow(flow)}
-				>
-					{saving ? 'Saving...' : 'Save'}
-				</button>
-			</div>
-		</div>
 
-		{#if saveError}
-			<div class="error-banner">
-				<span>{saveError}</span>
-				<button onclick={() => (saveError = '')}>Dismiss</button>
+			{#if saveError}
+				<div class="error-banner">
+					<span>{saveError}</span>
+					<button type="button" onclick={() => (saveError = '')}>Dismiss</button>
+				</div>
+			{/if}
+
+			{#if !canEditFlow(flow)}
+				<div class="warning-banner">
+					<span>This flow is read-only because it is a builtin system flow.</span>
+				</div>
+			{/if}
+
+			<div class="designer-layout">
+				<div class="designer-left-panel">
+					<NodePalette onAddNode={handleAddNode} />
+				</div>
+
+				<div class="designer-canvas-container">
+					<FlowCanvas
+						{nodes}
+						{edges}
+						readonly={!canEditFlow(flow)}
+						onNodesChange={handleNodesChange}
+						onEdgesChange={handleEdgesChange}
+						onAddNode={handleAddNode}
+						onNodeConfig={handleNodeConfig}
+					/>
+				</div>
 			</div>
+
+			<NodeConfigModal
+				node={configModalNode}
+				onSave={handleConfigSave}
+				onClose={handleCloseConfigModal}
+				onDelete={handleDeleteNode}
+			/>
 		{/if}
+	</div>
+</AdminPageShell>
 
-		{#if !canEditFlow(flow)}
-			<div class="warning-banner">
-				<span>This flow is read-only because it is a builtin system flow.</span>
-			</div>
-		{/if}
+<style>
+	.flow-edit-page {
+		min-height: calc(100vh - var(--header-height, 64px));
+		display: flex;
+		flex-direction: column;
+		background: var(--color-page-bg, var(--color-surface-muted));
+		color: var(--color-text);
+	}
 
-		<div class="designer-layout">
-			<div class="designer-left-panel">
-				<NodePalette onAddNode={handleAddNode} />
-			</div>
+	.loading-state,
+	.flow-error-state {
+		min-height: 420px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--color-text-muted);
+	}
 
-			<div class="designer-canvas-container">
-				<FlowCanvas
-					{nodes}
-					{edges}
-					readonly={!canEditFlow(flow)}
-					onNodesChange={handleNodesChange}
-					onEdgesChange={handleEdgesChange}
-					onAddNode={handleAddNode}
-					onNodeConfig={handleNodeConfig}
-				/>
-			</div>
-		</div>
+	.flow-error-state {
+		flex-direction: column;
+		gap: 16px;
+		text-align: center;
+	}
 
-		<NodeConfigModal
-			node={configModalNode}
-			onSave={handleConfigSave}
-			onClose={handleCloseConfigModal}
-			onDelete={handleDeleteNode}
-		/>
-	{/if}
-</div>
+	.flow-error-state p {
+		margin: 0;
+		color: var(--color-danger);
+	}
+
+	.flow-edit-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 18px;
+		flex-shrink: 0;
+		padding: 14px 20px;
+		border-bottom: 1px solid var(--color-border);
+		background: var(--color-surface);
+		box-shadow: var(--flow-editor-header-shadow, var(--card-shadow, none));
+	}
+
+	.flow-edit-header-left,
+	.flow-edit-header-info,
+	.flow-edit-header-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-width: 0;
+	}
+
+	.flow-edit-header-info {
+		flex-wrap: wrap;
+	}
+
+	.flow-edit-header-info h1 {
+		margin: 0;
+		font-family: var(--font-display);
+		font-size: 1rem;
+		font-weight: 700;
+		line-height: 1.25;
+		color: var(--color-text);
+	}
+
+	.flow-edit-header-actions {
+		justify-content: flex-end;
+	}
+
+	.btn {
+		min-height: var(--control-height, 36px);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 0 13px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--toolbar-control-radius, var(--radius-control, 8px));
+		font: inherit;
+		font-weight: 800;
+		text-decoration: none;
+		cursor: pointer;
+		transition:
+			background 120ms ease,
+			border-color 120ms ease,
+			color 120ms ease,
+			transform 120ms ease;
+	}
+
+	.btn:hover:not(:disabled) {
+		transform: translateY(-1px);
+	}
+
+	.btn:disabled {
+		cursor: not-allowed;
+		opacity: 0.55;
+	}
+
+	.btn-primary {
+		border-color: var(--button-primary-bg, var(--color-accent));
+		background: var(--button-primary-bg, var(--color-accent));
+		color: var(--button-primary-color, var(--color-accent-contrast));
+	}
+
+	.btn-secondary,
+	.btn-ghost {
+		background: var(--color-surface);
+		color: var(--color-text);
+	}
+
+	.btn-secondary:hover:not(:disabled),
+	.btn-ghost:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		background: var(--color-surface-muted);
+		color: var(--color-accent);
+	}
+
+	.unsaved-badge {
+		display: inline-flex;
+		align-items: center;
+		min-height: 24px;
+		padding: 0 9px;
+		border-radius: var(--status-badge-radius, 999px);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
+		font-size: 0.75rem;
+		font-weight: 800;
+	}
+
+	.error-banner,
+	.warning-banner {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		flex-shrink: 0;
+		padding: 12px 20px;
+		border-bottom: 1px solid;
+		font-size: 0.875rem;
+	}
+
+	.error-banner {
+		border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
+	}
+
+	.warning-banner {
+		border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+		color: var(--color-warning);
+	}
+
+	.error-banner button {
+		min-height: 28px;
+		padding: 0 9px;
+		border: 1px solid currentColor;
+		border-radius: var(--toolbar-control-radius, var(--radius-control, 8px));
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-size: 0.75rem;
+		font-weight: 800;
+		cursor: pointer;
+	}
+
+	.designer-layout {
+		flex: 1;
+		min-height: 0;
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 14px;
+		padding: 14px;
+		background: var(--color-page-bg, var(--color-surface-muted));
+	}
+
+	.designer-left-panel,
+	.designer-canvas-container {
+		min-height: 0;
+	}
+
+	.designer-left-panel {
+		min-width: 0;
+	}
+
+	.designer-canvas-container {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, 8px);
+		background: var(--color-surface);
+		overflow: hidden;
+		box-shadow: var(--flow-editor-canvas-shadow, var(--card-shadow, none));
+	}
+
+	@media (max-width: 900px) {
+		.flow-edit-header,
+		.flow-edit-header-left,
+		.flow-edit-header-actions,
+		.designer-layout {
+			display: grid;
+			grid-template-columns: 1fr;
+		}
+
+		.flow-edit-header-actions {
+			justify-content: stretch;
+		}
+
+		.flow-edit-header-actions .btn {
+			width: 100%;
+		}
+	}
+</style>

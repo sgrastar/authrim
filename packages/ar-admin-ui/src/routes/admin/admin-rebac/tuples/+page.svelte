@@ -6,6 +6,14 @@
 		AdminRelationshipCreateInput,
 		AdminRebacDefinition
 	} from '$lib/api/admin-admin-rebac';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
+	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let relationships: AdminRelationship[] = [];
@@ -15,7 +23,6 @@
 	let searchQuery = '';
 	let filterType = '';
 
-	// Create dialog state
 	let showCreateDialog = false;
 	let createForm: AdminRelationshipCreateInput = {
 		relationship_type: '',
@@ -30,7 +37,6 @@
 	let createLoading = false;
 	let createError = '';
 
-	// Delete confirmation state
 	let showDeleteDialog = false;
 	let deletingRelationship: AdminRelationship | null = null;
 	let deleteLoading = false;
@@ -69,6 +75,7 @@
 	}
 
 	async function handleCreate() {
+		if (!createForm.relationship_type || !createForm.from_id || !createForm.to_id) return;
 		createLoading = true;
 		createError = '';
 		try {
@@ -106,25 +113,18 @@
 		}
 	}
 
-	function closeOnBackdropKeydown(event: KeyboardEvent, close: () => void) {
-		if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
-			event.preventDefault();
-			close();
-		}
-	}
-
 	onMount(() => {
 		loadData();
 	});
 
-	$: filteredRelationships = relationships.filter((r) => {
+	$: filteredRelationships = relationships.filter((relationship) => {
 		const matchesSearch =
 			!searchQuery ||
-			r.from_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			r.to_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			r.relationship_type.toLowerCase().includes(searchQuery.toLowerCase());
+			relationship.from_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			relationship.to_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			relationship.relationship_type.toLowerCase().includes(searchQuery.toLowerCase());
 
-		const matchesType = !filterType || r.relationship_type === filterType;
+		const matchesType = !filterType || relationship.relationship_type === filterType;
 
 		return matchesSearch && matchesType;
 	});
@@ -134,399 +134,514 @@
 	<title>{$LL.admin_admin_rebac_tuples_head_title()}</title>
 </svelte:head>
 
-<div class="container mx-auto px-4 py-8">
-	<!-- Breadcrumb -->
-	<nav class="mb-4 text-sm">
-		<a href="/admin/admin-rebac" class="text-blue-600 hover:text-blue-700">
-			{$LL.admin_admin_rebac_title()}
-		</a>
-		<span class="mx-2 text-gray-400">/</span>
-		<span class="text-gray-600">{$LL.admin_admin_rebac_tuples_breadcrumb()}</span>
-	</nav>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admin_rebac_tuples_title()}
+		description={$LL.admin_admin_rebac_tuples_description()}
+	>
+		{#snippet actions()}
+			<button class="btn btn-primary" onclick={openCreateDialog}>
+				<span class="i-ph-plus"></span>
+				{$LL.admin_admin_rebac_create_relationship()}
+			</button>
+		{/snippet}
+	</AdminPageHeader>
 
-	<!-- Header -->
-	<div class="flex items-center justify-between mb-6">
-		<div>
-			<h1 class="text-3xl font-bold mb-2">{$LL.admin_admin_rebac_tuples_title()}</h1>
-			<p class="text-gray-600">{$LL.admin_admin_rebac_tuples_description()}</p>
-		</div>
-		<button
-			on:click={openCreateDialog}
-			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center"
-		>
-			<span class="i-ph-plus mr-2"></span>
-			{$LL.admin_admin_rebac_create_relationship()}
-		</button>
-	</div>
-
-	<!-- Error Message -->
 	{#if error}
-		<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-			{error}
-		</div>
+		<div class="alert alert-error">{error}</div>
 	{/if}
 
-	<!-- Filter Bar -->
-	<div class="mb-6 flex gap-4">
-		<div class="flex-1 relative">
-			<span class="absolute left-3 top-3 i-ph-magnifying-glass text-gray-400"></span>
-			<input
-				type="text"
-				bind:value={searchQuery}
-				placeholder={$LL.admin_admin_rebac_search_relationships_placeholder()}
-				class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-			/>
+	<AdminToolbar>
+		<div class="admin-field admin-field--search">
+			<label class="admin-field__label" for="rebac-relationship-search">
+				{$LL.admin_admin_rebac_search_relationships_placeholder()}
+			</label>
+			<div class="search-box">
+				<span class="i-ph-magnifying-glass"></span>
+				<input
+					id="rebac-relationship-search"
+					class="admin-input search-input"
+					type="text"
+					bind:value={searchQuery}
+					placeholder={$LL.admin_admin_rebac_search_relationships_placeholder()}
+				/>
+			</div>
 		</div>
-		<select
-			bind:value={filterType}
-			class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-		>
-			<option value="">{$LL.admin_admin_rebac_all_types()}</option>
-			{#each definitions as definition (definition.id)}
-				<option value={definition.relation_name}>{definition.relation_name}</option>
-			{/each}
-		</select>
-	</div>
+		<div class="admin-field admin-field--compact">
+			<label class="admin-field__label" for="rebac-relationship-type">
+				{$LL.admin_admin_rebac_relationship_type()}
+			</label>
+			<select id="rebac-relationship-type" class="admin-select" bind:value={filterType}>
+				<option value="">{$LL.admin_admin_rebac_all_types()}</option>
+				{#each definitions as definition (definition.id)}
+					<option value={definition.relation_name}>{definition.relation_name}</option>
+				{/each}
+			</select>
+		</div>
+	</AdminToolbar>
 
-	<!-- Loading State -->
 	{#if loading}
-		<div class="flex justify-center py-12">
-			<div class="text-gray-500">{$LL.admin_admin_rebac_loading_relationships()}</div>
-		</div>
+		<AdminSection>
+			<div class="loading-state">{$LL.admin_admin_rebac_loading_relationships()}</div>
+		</AdminSection>
 	{:else if filteredRelationships.length === 0}
-		<div class="bg-white border border-gray-200 rounded-lg p-12 text-center">
-			<div class="text-gray-400 text-5xl mb-4 i-ph-link"></div>
-			<h3 class="text-xl font-semibold mb-2">
-				{$LL.admin_admin_rebac_no_relationships_found()}
-			</h3>
-			<p class="text-gray-600 mb-4">
-				{searchQuery || filterType
-					? $LL.admin_admin_rebac_try_adjusting_filters()
-					: $LL.admin_admin_rebac_create_relationship_empty()}
-			</p>
-			{#if !searchQuery && !filterType}
-				<button
-					on:click={openCreateDialog}
-					class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-				>
-					{$LL.admin_admin_rebac_create_relationship()}
-				</button>
-			{/if}
-		</div>
+		<AdminSection>
+			<div class="empty-state">
+				<span class="i-ph-link empty-state__icon"></span>
+				<h2>{$LL.admin_admin_rebac_no_relationships_found()}</h2>
+				<p>
+					{searchQuery || filterType
+						? $LL.admin_admin_rebac_try_adjusting_filters()
+						: $LL.admin_admin_rebac_create_relationship_empty()}
+				</p>
+				{#if !searchQuery && !filterType}
+					<button class="btn btn-primary" onclick={openCreateDialog}>
+						{$LL.admin_admin_rebac_create_relationship()}
+					</button>
+				{/if}
+			</div>
+		</AdminSection>
 	{:else}
-		<!-- Relationships Table -->
-		<div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
-			<table class="min-w-full divide-y divide-gray-200">
-				<thead class="bg-gray-50">
+		<AdminSection>
+			<AdminDataTable width="wide">
+				<thead>
 					<tr>
-						<th
-							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-						>
-							{$LL.admin_admin_rebac_from()}
-						</th>
-						<th
-							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-						>
-							{$LL.admin_admin_rebac_relationship()}
-						</th>
-						<th
-							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-						>
-							{$LL.admin_admin_rebac_to()}
-						</th>
-						<th
-							class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-						>
-							{$LL.admin_admin_rebac_details()}
-						</th>
-						<th
-							class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
-						>
-							{$LL.admin_admin_rebac_actions()}
-						</th>
+						<th>{$LL.admin_admin_rebac_from()}</th>
+						<th>{$LL.admin_admin_rebac_relationship()}</th>
+						<th>{$LL.admin_admin_rebac_to()}</th>
+						<th>{$LL.admin_admin_rebac_details()}</th>
+						<th class="text-right">{$LL.admin_admin_rebac_actions()}</th>
 					</tr>
 				</thead>
-				<tbody class="bg-white divide-y divide-gray-200">
+				<tbody>
 					{#each filteredRelationships as relationship (relationship.id)}
-						<tr class="hover:bg-gray-50">
-							<td class="px-6 py-4 whitespace-nowrap">
-								<div class="text-sm font-mono text-blue-600">{relationship.from_id}</div>
-								{#if relationship.from_type}
-									<div class="text-xs text-gray-500">{relationship.from_type}</div>
-								{/if}
-							</td>
-							<td class="px-6 py-4 whitespace-nowrap">
-								<div class="text-sm font-medium text-gray-900">
-									{relationship.relationship_type}
+						<tr>
+							<td>
+								<div class="identity-cell identity-cell--from">
+									<span>{relationship.from_id}</span>
+									{#if relationship.from_type}
+										<small>{relationship.from_type}</small>
+									{/if}
 								</div>
 							</td>
-							<td class="px-6 py-4 whitespace-nowrap">
-								<div class="text-sm font-mono text-purple-600">{relationship.to_id}</div>
-								{#if relationship.to_type}
-									<div class="text-xs text-gray-500">{relationship.to_type}</div>
-								{/if}
+							<td>
+								<span class="relation-name">{relationship.relationship_type}</span>
 							</td>
-							<td class="px-6 py-4">
-								<div class="flex flex-wrap gap-1">
+							<td>
+								<div class="identity-cell identity-cell--to">
+									<span>{relationship.to_id}</span>
+									{#if relationship.to_type}
+										<small>{relationship.to_type}</small>
+									{/if}
+								</div>
+							</td>
+							<td>
+								<div class="badge-list">
 									{#if relationship.permission_level}
-										<span class="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded-full">
+										<span class="mini-badge mini-badge--accent">
 											{relationship.permission_level}
 										</span>
 									{/if}
 									{#if relationship.is_transitive}
-										<span class="px-2 py-1 text-xs bg-purple-50 text-purple-700 rounded-full">
-											{$LL.admin_admin_rebac_transitive()}
-										</span>
+										<span class="mini-badge">{$LL.admin_admin_rebac_transitive()}</span>
 									{/if}
 									{#if relationship.is_bidirectional}
-										<span class="px-2 py-1 text-xs bg-green-50 text-green-700 rounded-full">
-											{$LL.admin_admin_rebac_bidirectional()}
-										</span>
+										<span class="mini-badge">{$LL.admin_admin_rebac_bidirectional()}</span>
 									{/if}
 									{#if relationship.expires_at}
-										<span class="px-2 py-1 text-xs bg-orange-50 text-orange-700 rounded-full">
-											{$LL.admin_admin_rebac_expires()}
-										</span>
+										<span class="mini-badge">{$LL.admin_admin_rebac_expires()}</span>
 									{/if}
 								</div>
 							</td>
-							<td class="px-6 py-4 whitespace-nowrap text-right">
+							<td class="text-right">
 								<button
-									on:click={() => openDeleteDialog(relationship)}
-									class="text-red-600 hover:text-red-700 transition-colors"
+									class="icon-action icon-action--danger"
+									onclick={() => openDeleteDialog(relationship)}
 									title={$LL.admin_admin_rebac_delete()}
+									aria-label={$LL.admin_admin_rebac_delete()}
 								>
-									<span class="i-ph-trash text-lg"></span>
+									<span class="i-ph-trash"></span>
 								</button>
 							</td>
 						</tr>
 					{/each}
 				</tbody>
-			</table>
+			</AdminDataTable>
+			<p class="result-count">
+				{$LL.admin_admin_rebac_relationships_showing({
+					shown: filteredRelationships.length,
+					total: relationships.length
+				})}
+			</p>
+		</AdminSection>
+	{/if}
+</AdminPageShell>
+
+<Modal
+	open={showCreateDialog}
+	onClose={() => (showCreateDialog = false)}
+	title={$LL.admin_admin_rebac_create_relationship()}
+	size="lg"
+>
+	{#if createError}
+		<div class="alert alert-error">{createError}</div>
+	{/if}
+	<div class="modal-form">
+		<label class="form-field" for="relationship_type">
+			<span>{$LL.admin_admin_rebac_relationship_type()} <b>*</b></span>
+			<select id="relationship_type" class="form-control" bind:value={createForm.relationship_type}>
+				{#each definitions as definition (definition.id)}
+					<option value={definition.relation_name}>
+						{definition.relation_name}
+						{#if definition.display_name}
+							- {definition.display_name}
+						{/if}
+					</option>
+				{/each}
+			</select>
+		</label>
+
+		<div class="form-grid">
+			<label class="form-field" for="from_id">
+				<span>{$LL.admin_admin_rebac_from_subject()} <b>*</b></span>
+				<input
+					id="from_id"
+					class="form-control form-control--mono"
+					type="text"
+					bind:value={createForm.from_id}
+					placeholder="admin_user_id"
+				/>
+			</label>
+			<label class="form-field" for="to_id">
+				<span>{$LL.admin_admin_rebac_to_object()} <b>*</b></span>
+				<input
+					id="to_id"
+					class="form-control form-control--mono"
+					type="text"
+					bind:value={createForm.to_id}
+					placeholder="admin_user_id"
+				/>
+			</label>
 		</div>
 
-		<!-- Results Count -->
-		<div class="mt-4 text-sm text-gray-600">
-			{$LL.admin_admin_rebac_relationships_showing({
-				shown: filteredRelationships.length,
-				total: relationships.length
-			})}
+		<div class="form-grid">
+			<label class="form-field" for="from_type">
+				<span>{$LL.admin_admin_rebac_from_type()}</span>
+				<input
+					id="from_type"
+					class="form-control"
+					type="text"
+					bind:value={createForm.from_type}
+					placeholder="admin_user"
+				/>
+			</label>
+			<label class="form-field" for="to_type">
+				<span>{$LL.admin_admin_rebac_to_type()}</span>
+				<input
+					id="to_type"
+					class="form-control"
+					type="text"
+					bind:value={createForm.to_type}
+					placeholder="admin_user"
+				/>
+			</label>
+		</div>
+
+		<label class="form-field" for="permission_level">
+			<span>{$LL.admin_admin_rebac_permission_level()}</span>
+			<select id="permission_level" class="form-control" bind:value={createForm.permission_level}>
+				<option value={undefined}>{$LL.admin_admin_rebac_permission_none()}</option>
+				<option value="full">{$LL.admin_admin_rebac_permission_full()}</option>
+				<option value="limited">{$LL.admin_admin_rebac_permission_limited()}</option>
+				<option value="read_only">{$LL.admin_admin_rebac_permission_read_only()}</option>
+			</select>
+		</label>
+
+		<div class="check-list">
+			<label>
+				<input type="checkbox" bind:checked={createForm.is_transitive} />
+				<span>{$LL.admin_admin_rebac_transitive_help()}</span>
+			</label>
+			<label>
+				<input type="checkbox" bind:checked={createForm.is_bidirectional} />
+				<span>{$LL.admin_admin_rebac_bidirectional_help()}</span>
+			</label>
+		</div>
+	</div>
+
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={() => (showCreateDialog = false)}
+			disabled={createLoading}
+		>
+			{$LL.admin_admin_rebac_cancel()}
+		</button>
+		<button
+			class="btn btn-primary"
+			onclick={handleCreate}
+			disabled={createLoading ||
+				!createForm.relationship_type ||
+				!createForm.from_id ||
+				!createForm.to_id}
+		>
+			{createLoading ? $LL.admin_admin_rebac_creating() : $LL.admin_admin_rebac_create()}
+		</button>
+	{/snippet}
+</Modal>
+
+<Modal
+	open={showDeleteDialog && !!deletingRelationship}
+	onClose={() => (showDeleteDialog = false)}
+	title={$LL.admin_admin_rebac_delete_relationship()}
+	size="md"
+>
+	{#if deleteError}
+		<div class="alert alert-error">{deleteError}</div>
+	{/if}
+	{#if deletingRelationship}
+		<p class="confirm-copy">{$LL.admin_admin_rebac_delete_relationship_confirm()}</p>
+		<div class="relationship-preview">
+			<span class="relationship-preview__from">{deletingRelationship.from_id}</span>
+			<span class="relationship-preview__type">{deletingRelationship.relationship_type}</span>
+			<span class="relationship-preview__to">{deletingRelationship.to_id}</span>
 		</div>
 	{/if}
-</div>
 
-<!-- Create Dialog -->
-{#if showCreateDialog}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		role="button"
-		tabindex="0"
-		aria-label={$LL.admin_admin_rebac_close_create_relationship_dialog()}
-		on:click|self={() => (showCreateDialog = false)}
-		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showCreateDialog = false))}
-	>
-		<div
-			class="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
-			role="dialog"
-			aria-modal="true"
+	{#snippet footer()}
+		<button
+			class="btn btn-secondary"
+			onclick={() => (showDeleteDialog = false)}
+			disabled={deleteLoading}
 		>
-			<h2 class="text-xl font-semibold mb-4">{$LL.admin_admin_rebac_create_relationship()}</h2>
+			{$LL.admin_admin_rebac_cancel()}
+		</button>
+		<button class="btn btn-danger" onclick={handleDelete} disabled={deleteLoading}>
+			{deleteLoading ? $LL.admin_admin_rebac_deleting() : $LL.admin_admin_rebac_delete()}
+		</button>
+	{/snippet}
+</Modal>
 
-			{#if createError}
-				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-					{createError}
-				</div>
-			{/if}
+<style>
+	.search-box {
+		position: relative;
+	}
 
-			<form on:submit|preventDefault={handleCreate}>
-				<div class="space-y-4">
-					<div>
-						<label for="relationship_type" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_relationship_type()} <span class="text-red-500">*</span>
-						</label>
-						<select
-							id="relationship_type"
-							bind:value={createForm.relationship_type}
-							required
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						>
-							{#each definitions as definition (definition.id)}
-								<option value={definition.relation_name}>
-									{definition.relation_name}
-									{#if definition.display_name}
-										- {definition.display_name}
-									{/if}
-								</option>
-							{/each}
-						</select>
-					</div>
+	.search-box :global(.i-ph-magnifying-glass) {
+		position: absolute;
+		left: 0.75rem;
+		top: 50%;
+		width: 18px;
+		height: 18px;
+		color: var(--color-text-subtle);
+		transform: translateY(-50%);
+	}
 
-					<div class="grid grid-cols-2 gap-4">
-						<div>
-							<label for="from_id" class="block text-sm font-medium text-gray-700 mb-1">
-								{$LL.admin_admin_rebac_from_subject()} <span class="text-red-500">*</span>
-							</label>
-							<input
-								id="from_id"
-								type="text"
-								bind:value={createForm.from_id}
-								required
-								placeholder="admin_user_id"
-								class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-							/>
-						</div>
+	.search-input {
+		padding-left: 2.5rem;
+	}
 
-						<div>
-							<label for="to_id" class="block text-sm font-medium text-gray-700 mb-1">
-								{$LL.admin_admin_rebac_to_object()} <span class="text-red-500">*</span>
-							</label>
-							<input
-								id="to_id"
-								type="text"
-								bind:value={createForm.to_id}
-								required
-								placeholder="admin_user_id"
-								class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-							/>
-						</div>
-					</div>
+	.alert {
+		padding: 12px 14px;
+		border-radius: var(--radius-control);
+		margin-bottom: 1rem;
+	}
 
-					<div class="grid grid-cols-2 gap-4">
-						<div>
-							<label for="from_type" class="block text-sm font-medium text-gray-700 mb-1">
-								{$LL.admin_admin_rebac_from_type()}
-							</label>
-							<input
-								id="from_type"
-								type="text"
-								bind:value={createForm.from_type}
-								placeholder="admin_user"
-								class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-							/>
-						</div>
+	.alert-error {
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+		color: var(--color-danger);
+	}
 
-						<div>
-							<label for="to_type" class="block text-sm font-medium text-gray-700 mb-1">
-								{$LL.admin_admin_rebac_to_type()}
-							</label>
-							<input
-								id="to_type"
-								type="text"
-								bind:value={createForm.to_type}
-								placeholder="admin_user"
-								class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-							/>
-						</div>
-					</div>
+	.loading-state,
+	.empty-state {
+		display: grid;
+		place-items: center;
+		gap: 12px;
+		min-height: 220px;
+		padding: 36px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		text-align: center;
+	}
 
-					<div>
-						<label for="permission_level" class="block text-sm font-medium text-gray-700 mb-1">
-							{$LL.admin_admin_rebac_permission_level()}
-						</label>
-						<select
-							id="permission_level"
-							bind:value={createForm.permission_level}
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-						>
-							<option value={undefined}>{$LL.admin_admin_rebac_permission_none()}</option>
-							<option value="full">{$LL.admin_admin_rebac_permission_full()}</option>
-							<option value="limited">{$LL.admin_admin_rebac_permission_limited()}</option>
-							<option value="read_only">{$LL.admin_admin_rebac_permission_read_only()}</option>
-						</select>
-					</div>
+	.empty-state h2,
+	.empty-state p {
+		margin: 0;
+	}
 
-					<div class="space-y-2">
-						<label class="flex items-center">
-							<input
-								type="checkbox"
-								bind:checked={createForm.is_transitive}
-								class="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-							/>
-							<span class="text-sm text-gray-700">{$LL.admin_admin_rebac_transitive_help()}</span>
-						</label>
+	.empty-state h2 {
+		color: var(--color-text);
+		font-size: 1.1rem;
+	}
 
-						<label class="flex items-center">
-							<input
-								type="checkbox"
-								bind:checked={createForm.is_bidirectional}
-								class="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-							/>
-							<span class="text-sm text-gray-700">
-								{$LL.admin_admin_rebac_bidirectional_help()}
-							</span>
-						</label>
-					</div>
-				</div>
+	.empty-state__icon {
+		color: var(--color-text-subtle);
+		font-size: 3rem;
+	}
 
-				<div class="mt-6 flex justify-end space-x-3">
-					<button
-						type="button"
-						on:click={() => (showCreateDialog = false)}
-						disabled={createLoading}
-						class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-					>
-						{$LL.admin_admin_rebac_cancel()}
-					</button>
-					<button
-						type="submit"
-						disabled={createLoading ||
-							!createForm.relationship_type ||
-							!createForm.from_id ||
-							!createForm.to_id}
-						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-					>
-						{createLoading ? $LL.admin_admin_rebac_creating() : $LL.admin_admin_rebac_create()}
-					</button>
-				</div>
-			</form>
-		</div>
-	</div>
-{/if}
+	.identity-cell {
+		display: grid;
+		gap: 3px;
+		min-width: 180px;
+		font-family: var(--font-mono);
+		font-size: 0.82rem;
+	}
 
-<!-- Delete Confirmation Dialog -->
-{#if showDeleteDialog && deletingRelationship}
-	<div
-		class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-		role="button"
-		tabindex="0"
-		aria-label={$LL.admin_admin_rebac_close_delete_relationship_dialog()}
-		on:click|self={() => (showDeleteDialog = false)}
-		on:keydown={(event) => closeOnBackdropKeydown(event, () => (showDeleteDialog = false))}
-	>
-		<div class="bg-white rounded-lg max-w-md w-full p-6" role="dialog" aria-modal="true">
-			<h2 class="text-xl font-semibold mb-4">{$LL.admin_admin_rebac_delete_relationship()}</h2>
+	.identity-cell--from {
+		color: var(--color-accent);
+	}
 
-			{#if deleteError}
-				<div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-					{deleteError}
-				</div>
-			{/if}
+	.identity-cell--to {
+		color: color-mix(in srgb, var(--color-accent) 76%, var(--color-text));
+	}
 
-			<p class="text-gray-700 mb-4">
-				{$LL.admin_admin_rebac_delete_relationship_confirm()}
-			</p>
-			<div class="bg-gray-50 p-4 rounded-lg mb-4 font-mono text-sm">
-				<div class="text-blue-600">{deletingRelationship.from_id}</div>
-				<div class="text-gray-500 my-1">{deletingRelationship.relationship_type}</div>
-				<div class="text-purple-600">{deletingRelationship.to_id}</div>
-			</div>
+	.identity-cell small {
+		color: var(--color-text-subtle);
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+	}
 
-			<div class="flex justify-end space-x-3">
-				<button
-					on:click={() => (showDeleteDialog = false)}
-					disabled={deleteLoading}
-					class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-				>
-					{$LL.admin_admin_rebac_cancel()}
-				</button>
-				<button
-					on:click={handleDelete}
-					disabled={deleteLoading}
-					class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-				>
-					{deleteLoading ? $LL.admin_admin_rebac_deleting() : $LL.admin_admin_rebac_delete()}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+	.relation-name {
+		color: var(--color-text);
+		font-weight: 650;
+	}
+
+	.badge-list {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
+	.mini-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 3px 8px;
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 600;
+	}
+
+	.mini-badge--accent {
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		color: var(--color-accent);
+	}
+
+	.icon-action {
+		display: inline-grid;
+		width: 34px;
+		height: 34px;
+		place-items: center;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+
+	.icon-action--danger:hover {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
+	}
+
+	.result-count {
+		margin: 14px 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.84rem;
+	}
+
+	.modal-form {
+		display: grid;
+		gap: 16px;
+	}
+
+	.form-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 14px;
+	}
+
+	.form-field {
+		display: grid;
+		gap: 6px;
+		color: var(--color-text);
+		font-size: 0.88rem;
+	}
+
+	.form-field b {
+		color: var(--color-danger);
+	}
+
+	.form-control {
+		width: 100%;
+		padding: 9px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+	}
+
+	.form-control--mono {
+		font-family: var(--font-mono);
+		font-size: 0.86rem;
+	}
+
+	.form-control:focus {
+		outline: none;
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.check-list {
+		display: grid;
+		gap: 10px;
+	}
+
+	.check-list label {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		color: var(--color-text-muted);
+		font-size: 0.86rem;
+	}
+
+	.confirm-copy {
+		margin: 0 0 12px;
+		color: var(--color-text-muted);
+		line-height: 1.7;
+	}
+
+	.relationship-preview {
+		display: grid;
+		gap: 5px;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
+		font-family: var(--font-mono);
+		font-size: 0.84rem;
+	}
+
+	.relationship-preview__from {
+		color: var(--color-accent);
+	}
+
+	.relationship-preview__type {
+		color: var(--color-text-muted);
+	}
+
+	.relationship-preview__to {
+		color: color-mix(in srgb, var(--color-accent) 76%, var(--color-text));
+	}
+
+	@media (max-width: 720px) {
+		.form-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

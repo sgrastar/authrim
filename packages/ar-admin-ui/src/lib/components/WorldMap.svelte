@@ -594,17 +594,17 @@
 
 			<!-- Cyan-blue gradient for active arcs (horizontal direction) - Dark theme -->
 			<linearGradient id="arc-gradient-active" x1="0%" y1="0%" x2="100%" y2="0%">
-				<stop offset="0%" stop-color="var(--arc-start, rgba(0, 255, 213, 0.15))" />
-				<stop offset="35%" stop-color="var(--arc-mid, rgba(59, 130, 246, 0.5))" />
-				<stop offset="70%" stop-color="var(--arc-end-mid, rgba(0, 200, 220, 0.7))" />
-				<stop offset="100%" stop-color="var(--arc-end, rgba(0, 255, 213, 0.95))" />
+				<stop offset="0%" stop-color="var(--arc-start)" />
+				<stop offset="35%" stop-color="var(--arc-mid)" />
+				<stop offset="70%" stop-color="var(--arc-end-mid)" />
+				<stop offset="100%" stop-color="var(--arc-end)" />
 			</linearGradient>
 
 			<!-- Subtle gray gradient for inactive arcs -->
 			<linearGradient id="arc-gradient-inactive" x1="0%" y1="0%" x2="100%" y2="0%">
-				<stop offset="0%" stop-color="var(--arc-inactive-start, rgba(100, 100, 140, 0.05))" />
-				<stop offset="50%" stop-color="var(--arc-inactive-mid, rgba(100, 100, 140, 0.12))" />
-				<stop offset="100%" stop-color="var(--arc-inactive-end, rgba(100, 100, 140, 0.2))" />
+				<stop offset="0%" stop-color="var(--arc-inactive-start)" />
+				<stop offset="50%" stop-color="var(--arc-inactive-mid)" />
+				<stop offset="100%" stop-color="var(--arc-inactive-end)" />
 			</linearGradient>
 		</defs>
 
@@ -729,10 +729,10 @@
 		position: relative;
 		width: 100%;
 		min-height: 300px;
-		background: var(--map-bg, #0a0a0f);
-		border-radius: var(--radius-lg, 12px);
+		background: var(--map-bg);
+		border-radius: var(--world-map-radius, var(--radius-lg, 12px));
 		overflow: hidden;
-		border: 1px solid var(--map-border, #1a1a2e);
+		border: 1px solid var(--map-border);
 	}
 
 	/* Grid overlay for cyberpunk effect */
@@ -740,8 +740,8 @@
 		position: absolute;
 		inset: 0;
 		background-image:
-			linear-gradient(rgba(0, 255, 213, 0.03) 1px, transparent 1px),
-			linear-gradient(90deg, rgba(0, 255, 213, 0.03) 1px, transparent 1px);
+			linear-gradient(var(--map-grid-line) 1px, transparent 1px),
+			linear-gradient(90deg, var(--map-grid-line) 1px, transparent 1px);
 		background-size: 40px 40px;
 		pointer-events: none;
 		z-index: 1;
@@ -766,8 +766,8 @@
 
 	/* Country paths */
 	.country-path {
-		fill: var(--map-land-inactive, #1a1a2e);
-		stroke: var(--map-border, #2a2a4e);
+		fill: var(--map-land-inactive);
+		stroke: var(--map-border);
 		stroke-width: 0.5px;
 		cursor: pointer;
 		transition:
@@ -776,11 +776,11 @@
 	}
 
 	.country-path:hover {
-		fill: var(--map-land-hover, #252540);
+		fill: var(--map-land-hover);
 	}
 
 	.country-path.selected {
-		fill: var(--map-land-active, #1e3a5f);
+		fill: var(--map-land-active);
 		filter: url(#glow-region);
 	}
 
@@ -791,7 +791,7 @@
 	}
 
 	.country-path.non-do-capable:hover {
-		fill: var(--map-land-inactive, #1a1a2e);
+		fill: var(--map-land-inactive);
 	}
 
 	/* Traffic arcs - gradient lines from all PoPs */
@@ -814,12 +814,12 @@
 
 	/* Cloudflare PoP points - small dots */
 	.pop-dot {
-		fill: var(--pop-color, rgba(100, 100, 140, 0.4));
+		fill: var(--pop-color);
 		transition: fill 0.3s ease;
 	}
 
 	.pop-dot.highlight {
-		fill: var(--pop-highlight, rgba(0, 255, 213, 0.6));
+		fill: var(--pop-highlight);
 	}
 
 	/* Primary DO Datacenter points */
@@ -828,19 +828,19 @@
 	}
 
 	.dc-point.inactive {
-		fill: var(--dc-inactive, #4a4a6a);
+		fill: var(--dc-inactive);
 		opacity: 0.5;
 	}
 
 	.dc-point.active {
-		fill: var(--dc-active, #00ffd5);
+		fill: var(--dc-active);
 		filter: url(#glow-dc);
 	}
 
 	/* Pulse animation for active datacenters */
 	.dc-pulse-ring {
 		fill: none;
-		stroke: var(--dc-active, #00ffd5);
+		stroke: var(--dc-active);
 		stroke-width: 1.5px;
 		opacity: 0;
 		animation: dcPulse 2s ease-out infinite;
@@ -876,11 +876,11 @@
 		display: flex;
 		gap: 16px;
 		padding: 8px 12px;
-		background: rgba(10, 10, 15, 0.85);
-		border-radius: var(--radius-sm, 6px);
-		border: 1px solid var(--map-border, #2a2a4e);
+		background: var(--map-legend-bg, var(--color-surface));
+		border-radius: var(--radius-control);
+		border: 1px solid var(--map-legend-border, var(--map-border, var(--color-border)));
 		font-size: 0.75rem;
-		color: var(--text-secondary, #9ca3af);
+		color: var(--map-legend-color, var(--color-text-muted));
 		z-index: 3;
 	}
 
@@ -893,79 +893,80 @@
 	.legend-dot {
 		width: 8px;
 		height: 8px;
-		border-radius: 50%;
+		border-radius: var(--map-dot-radius);
 	}
 
 	.legend-dot.active {
-		background: var(--dc-active, #00ffd5);
-		box-shadow: 0 0 8px var(--dc-active, #00ffd5);
+		background: var(--dc-active);
+		box-shadow: var(--map-dot-active-shadow);
 	}
 
 	.legend-dot.inactive {
-		background: var(--dc-inactive, #4a4a6a);
+		background: var(--dc-inactive);
 	}
 
 	.legend-line {
 		width: 20px;
 		height: 2px;
-		background: linear-gradient(90deg, transparent, var(--arc-color, #00ffd5), transparent);
+		background: linear-gradient(90deg, transparent, var(--arc-color), transparent);
 	}
 
 	/* CSS Variables for theming */
 	.world-map-container {
-		--map-bg: #0a0a0f;
-		--map-land-inactive: #1a1a2e;
-		--map-land-active: #1e3a5f;
-		--map-land-hover: #252540;
-		--map-border: #2a2a4e;
-		--dc-active: #00ffd5;
-		--dc-inactive: #4a4a6a;
-		--pop-color: rgba(100, 100, 140, 0.4);
-		--pop-highlight: rgba(0, 255, 213, 0.6);
-		--arc-color: rgba(0, 255, 213, 0.7);
-		--arc-color-inactive: rgba(100, 100, 140, 0.2);
+		--map-bg: var(--world-map-bg, #0a0a0f);
+		--map-legend-bg: color-mix(in srgb, var(--color-surface) 86%, transparent);
+		--map-legend-border: var(--world-map-legend-border, var(--map-border));
+		--map-legend-color: var(--color-text-muted);
+		--map-grid-line: var(--world-map-grid-line, rgba(0, 255, 213, 0.03));
+		--map-land-inactive: var(--world-map-land-inactive, #1a1a2e);
+		--map-land-active: var(--world-map-land-active, #1e3a5f);
+		--map-land-hover: var(--world-map-land-hover, #252540);
+		--map-border: var(--world-map-border, #2a2a4e);
+		--dc-active: var(--world-map-dc-active, #00ffd5);
+		--dc-inactive: var(--world-map-dc-inactive, #4a4a6a);
+		--pop-color: var(--world-map-pop-color, rgba(100, 100, 140, 0.4));
+		--pop-highlight: var(--world-map-pop-highlight, rgba(0, 255, 213, 0.6));
+		--arc-color: var(--world-map-arc-color, rgba(0, 255, 213, 0.7));
+		--arc-color-inactive: var(--world-map-arc-color-inactive, rgba(100, 100, 140, 0.2));
+		--map-dot-radius: var(--world-map-dot-radius, var(--status-dot-radius, 50%));
+		--map-dot-active-shadow: var(--world-map-dot-active-shadow, 0 0 8px var(--dc-active));
 		/* Arc gradient colors - dark theme */
-		--arc-start: rgba(0, 255, 213, 0.15);
-		--arc-mid: rgba(59, 130, 246, 0.5);
-		--arc-end-mid: rgba(0, 200, 220, 0.7);
-		--arc-end: rgba(0, 255, 213, 0.95);
-		--arc-inactive-start: rgba(100, 100, 140, 0.05);
-		--arc-inactive-mid: rgba(100, 100, 140, 0.12);
-		--arc-inactive-end: rgba(100, 100, 140, 0.2);
+		--arc-start: var(--world-map-arc-start, rgba(0, 255, 213, 0.15));
+		--arc-mid: var(--world-map-arc-mid, rgba(59, 130, 246, 0.5));
+		--arc-end-mid: var(--world-map-arc-end-mid, rgba(0, 200, 220, 0.7));
+		--arc-end: var(--world-map-arc-end, rgba(0, 255, 213, 0.95));
+		--arc-inactive-start: var(--world-map-arc-inactive-start, rgba(100, 100, 140, 0.05));
+		--arc-inactive-mid: var(--world-map-arc-inactive-mid, rgba(100, 100, 140, 0.12));
+		--arc-inactive-end: var(--world-map-arc-inactive-end, rgba(100, 100, 140, 0.2));
 	}
 
 	/* Light theme adjustments */
 	:global([data-theme='light']) .world-map-container {
-		--map-bg: #f0f4f8;
-		--map-land-inactive: #d1d5db;
-		--map-land-active: #93c5fd;
-		--map-land-hover: #bfdbfe;
-		--map-border: #9ca3af;
-		--dc-active: #0ea5e9;
-		--dc-inactive: #9ca3af;
-		--pop-color: rgba(100, 116, 139, 0.4);
-		--pop-highlight: rgba(14, 165, 233, 0.6);
-		--arc-color: rgba(14, 165, 233, 0.7);
-		--arc-color-inactive: rgba(100, 116, 139, 0.2);
+		--map-bg: var(--world-map-light-bg, #f0f4f8);
+		--map-grid-line: var(--world-map-light-grid-line, rgba(14, 165, 233, 0.05));
+		--map-land-inactive: var(--world-map-light-land-inactive, #d1d5db);
+		--map-land-active: var(--world-map-light-land-active, #93c5fd);
+		--map-land-hover: var(--world-map-light-land-hover, #bfdbfe);
+		--map-border: var(--world-map-light-border, #9ca3af);
+		--dc-active: var(--world-map-light-dc-active, #0ea5e9);
+		--dc-inactive: var(--world-map-light-dc-inactive, #9ca3af);
+		--pop-color: var(--world-map-light-pop-color, rgba(100, 116, 139, 0.4));
+		--pop-highlight: var(--world-map-light-pop-highlight, rgba(14, 165, 233, 0.6));
+		--arc-color: var(--world-map-light-arc-color, rgba(14, 165, 233, 0.7));
+		--arc-color-inactive: var(--world-map-light-arc-color-inactive, rgba(100, 116, 139, 0.2));
 		/* Arc gradient colors - light theme (blue tones) */
-		--arc-start: rgba(14, 165, 233, 0.15);
-		--arc-mid: rgba(59, 130, 246, 0.4);
-		--arc-end-mid: rgba(14, 165, 233, 0.6);
-		--arc-end: rgba(6, 182, 212, 0.9);
-		--arc-inactive-start: rgba(100, 116, 139, 0.05);
-		--arc-inactive-mid: rgba(100, 116, 139, 0.12);
-		--arc-inactive-end: rgba(100, 116, 139, 0.25);
+		--arc-start: var(--world-map-light-arc-start, rgba(14, 165, 233, 0.15));
+		--arc-mid: var(--world-map-light-arc-mid, rgba(59, 130, 246, 0.4));
+		--arc-end-mid: var(--world-map-light-arc-end-mid, rgba(14, 165, 233, 0.6));
+		--arc-end: var(--world-map-light-arc-end, rgba(6, 182, 212, 0.9));
+		--arc-inactive-start: var(--world-map-light-arc-inactive-start, rgba(100, 116, 139, 0.05));
+		--arc-inactive-mid: var(--world-map-light-arc-inactive-mid, rgba(100, 116, 139, 0.12));
+		--arc-inactive-end: var(--world-map-light-arc-inactive-end, rgba(100, 116, 139, 0.25));
 	}
 
 	:global([data-theme='light']) .map-legend {
-		background: rgba(255, 255, 255, 0.9);
-		color: #374151;
-	}
-
-	:global([data-theme='light']) .grid-overlay {
-		background-image:
-			linear-gradient(rgba(14, 165, 233, 0.05) 1px, transparent 1px),
-			linear-gradient(90deg, rgba(14, 165, 233, 0.05) 1px, transparent 1px);
+		background: var(--map-legend-bg, var(--color-surface));
+		color: var(--map-legend-color, var(--color-text));
 	}
 
 	/* Responsive adjustments */

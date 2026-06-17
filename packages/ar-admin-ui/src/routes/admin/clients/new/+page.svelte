@@ -17,6 +17,7 @@
 	} from '$lib/admin/client-downstream-grant';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { onMount } from 'svelte';
 
 	// Preset configuration
@@ -554,19 +555,31 @@
 	<title>{$LL.admin_clients_new_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/clients" class="back-link">← {$LL.admin_clients_new_back()}</a>
+{#snippet pageActions()}
+	<a href="/admin/clients" class="btn btn-secondary">{$LL.admin_clients_new_back()}</a>
+{/snippet}
 
-	<h1 class="page-title">{$LL.admin_clients_new_title()}</h1>
+{#snippet changeTypeActions()}
+	<button
+		class="btn btn-secondary btn-sm"
+		onclick={() => {
+			step = 1;
+			selectedPreset = null;
+		}}
+	>
+		{$LL.admin_clients_new_change_type()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader title={$LL.admin_clients_new_title()} actions={pageActions} />
 
 	{#if step === 1}
 		<!-- Step 1: Preset Selection -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_clients_new_step1_title()}</h2>
-			<p class="modal-description">
-				{$LL.admin_clients_new_step1_desc()}
-			</p>
-
+		<AdminSection
+			title={$LL.admin_clients_new_step1_title()}
+			description={$LL.admin_clients_new_step1_desc()}
+		>
 			<div class="preset-grid">
 				{#each PRESET_CONFIGS as preset (preset.id)}
 					<button class="preset-card" onclick={() => selectPreset(preset)}>
@@ -588,30 +601,14 @@
 					</button>
 				{/each}
 			</div>
-		</div>
+		</AdminSection>
 	{:else if step === 2}
 		<!-- Step 2: Configuration -->
-		<div class="panel">
-			<div class="panel-header">
-				<div>
-					<h2 class="panel-title">
-						{$LL.admin_clients_new_step2_title({ name: selectedPreset?.name ?? '' })}
-					</h2>
-					<p class="modal-description">
-						{selectedPreset ? presetDescription(selectedPreset.id) : ''}
-					</p>
-				</div>
-				<button
-					class="btn btn-secondary btn-sm"
-					onclick={() => {
-						step = 1;
-						selectedPreset = null;
-					}}
-				>
-					{$LL.admin_clients_new_change_type()}
-				</button>
-			</div>
-
+		<AdminSection
+			title={$LL.admin_clients_new_step2_title({ name: selectedPreset?.name ?? '' })}
+			description={selectedPreset ? presetDescription(selectedPreset.id) : ''}
+			actions={changeTypeActions}
+		>
 			{#if error}
 				<div class="alert alert-error">{error}</div>
 			{/if}
@@ -623,48 +620,48 @@
 				}}
 			>
 				<!-- Client Name -->
-				<div class="form-group">
-					<label for="clientName" class="form-label">
+				<div class="admin-field">
+					<label for="clientName" class="admin-field__label">
 						{$LL.admin_clients_new_client_name_required()}
 					</label>
 					<input
 						id="clientName"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						bind:value={clientName}
 						placeholder={$LL.admin_clients_new_client_name_placeholder()}
 						required
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="clientDescription" class="form-label">
+				<div class="admin-field">
+					<label for="clientDescription" class="admin-field__label">
 						{$LL.admin_clients_new_description()}
 					</label>
 					<textarea
 						id="clientDescription"
-						class="form-input textarea-input"
+						class="admin-input textarea-input"
 						bind:value={clientDescription}
 						placeholder={$LL.admin_clients_new_description_placeholder()}
 					></textarea>
-					<p class="form-hint">{$LL.admin_clients_new_description_hint()}</p>
+					<p class="field-hint">{$LL.admin_clients_new_description_hint()}</p>
 				</div>
 
 				<!-- Redirect URIs -->
 				{#if selectedPreset?.requiresRedirectUri}
-					<div class="form-group">
+					<div class="admin-field">
 						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="form-label">
+						<label class="admin-field__label">
 							{$LL.admin_clients_new_redirect_uris_required()}
 						</label>
-						<p class="form-hint" style="margin-bottom: 8px;">
+						<p class="field-hint field-hint--spaced">
 							{$LL.admin_clients_new_redirect_hint()}
 						</p>
 						{#each redirectUris as uri, index (index)}
-							<div class="input-copy-group" style="margin-bottom: 8px;">
+							<div class="input-copy-group input-copy-group--spaced">
 								<input
 									type="url"
-									class="form-input"
+									class="admin-input"
 									value={uri}
 									oninput={(e) => updateRedirectUri(index, e.currentTarget.value)}
 									placeholder="https://example.com/callback"
@@ -745,7 +742,7 @@
 				</div>
 
 				<!-- Advanced Settings -->
-				<div class="form-group">
+				<div class="admin-field">
 					<button
 						type="button"
 						class="advanced-toggle"
@@ -756,11 +753,11 @@
 					</button>
 
 					{#if showAdvanced}
-						<div class="advanced-panel">
+						<div class="client-subsection">
 							<!-- Grant Types -->
-							<div class="form-group">
+							<div class="admin-field">
 								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">{$LL.admin_client_detail_grantTypes()}</label>
+								<label class="admin-field__label">{$LL.admin_client_detail_grantTypes()}</label>
 								<div class="checkbox-list">
 									{#each [{ id: 'authorization_code' }, { id: 'refresh_token' }, { id: 'client_credentials' }, { id: 'urn:ietf:params:oauth:grant-type:device_code' }] as grant (grant.id)}
 										<label class="checkbox-list-item">
@@ -777,9 +774,9 @@
 
 							<!-- Response Types (with warning for implicit) -->
 							{#if selectedPreset?.id === 'custom'}
-								<div class="form-group">
+								<div class="admin-field">
 									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">{$LL.admin_clients_new_response_types()}</label>
+									<label class="admin-field__label">{$LL.admin_clients_new_response_types()}</label>
 									<div class="warning-box">
 										<p>
 											{$LL.admin_clients_new_response_implicit_warning()}
@@ -808,7 +805,7 @@
 
 							<!-- PKCE -->
 							{#if grantTypes.includes('authorization_code')}
-								<div class="form-group">
+								<div class="admin-field">
 									<ToggleSwitch
 										bind:checked={requirePkce}
 										label={$LL.admin_clients_new_require_pkce()}
@@ -819,13 +816,13 @@
 
 							{#if tokenEndpointAuthMethod === 'none'}
 								<div class="form-grid">
-									<div class="form-group">
-										<label for="browserPublicClientMode" class="form-label">
+									<div class="admin-field">
+										<label for="browserPublicClientMode" class="admin-field__label">
 											{$LL.admin_clients_new_browser_public_mode()}
 										</label>
 										<select
 											id="browserPublicClientMode"
-											class="form-select"
+											class="admin-input"
 											bind:value={browserPublicClientMode}
 										>
 											<option value="">{$LL.admin_clients_new_server_default()}</option>
@@ -834,17 +831,17 @@
 												{$LL.admin_clients_new_cookie_fallback()}
 											</option>
 										</select>
-										<p class="form-hint">
+										<p class="field-hint">
 											{$LL.admin_clients_new_browser_public_mode_hint()}
 										</p>
 									</div>
-									<div class="form-group">
-										<label for="browserRefreshTokenPolicy" class="form-label">
+									<div class="admin-field">
+										<label for="browserRefreshTokenPolicy" class="admin-field__label">
 											{$LL.admin_clients_new_browser_refresh_policy()}
 										</label>
 										<select
 											id="browserRefreshTokenPolicy"
-											class="form-select"
+											class="admin-input"
 											bind:value={browserRefreshTokenPolicy}
 										>
 											<option value="disabled">{$LL.admin_clients_new_disabled()}</option>
@@ -852,7 +849,7 @@
 												{$LL.admin_clients_new_dpop_refresh_tokens()}
 											</option>
 										</select>
-										<p class="form-hint">
+										<p class="field-hint">
 											{$LL.admin_clients_new_browser_refresh_hint()}
 										</p>
 									</div>
@@ -860,13 +857,14 @@
 							{/if}
 
 							<!-- Scope -->
-							<div class="form-group">
-								<label for="scope" class="form-label">{$LL.admin_clients_new_default_scope()}</label
+							<div class="admin-field">
+								<label for="scope" class="admin-field__label"
+									>{$LL.admin_clients_new_default_scope()}</label
 								>
 								<input
 									id="scope"
 									type="text"
-									class="form-input"
+									class="admin-input"
 									bind:value={scope}
 									placeholder="openid profile email"
 								/>
@@ -874,14 +872,14 @@
 
 							<div class="settings-summary settings-summary-subsection">
 								<h3 class="settings-summary-title">{$LL.admin_clients_new_oidc_claims_asc()}</h3>
-								<div class="advanced-panel" style="padding: 0; border: none;">
-									<div class="form-group">
-										<label for="identityMappingFieldMapping" class="form-label">
+								<div class="client-subsection client-subsection--plain">
+									<div class="admin-field">
+										<label for="identityMappingFieldMapping" class="admin-field__label">
 											OIDC claims field mapping set
 										</label>
 										<select
 											id="identityMappingFieldMapping"
-											class="form-select"
+											class="admin-input"
 											bind:value={identityMappingFieldMappingSetId}
 										>
 											<option value="">Tenant default / no client override</option>
@@ -891,13 +889,13 @@
 												</option>
 											{/each}
 										</select>
-										<p class="form-hint">
+										<p class="field-hint">
 											Selects the active Field Mapping Set used for OIDC UserInfo and token claims
 											for this client.
 										</p>
 									</div>
 
-									<div class="form-group">
+									<div class="admin-field">
 										<ToggleSwitch
 											bind:checked={allowClaimsWithoutScope}
 											label={$LL.admin_clients_new_allow_claims_without_scope()}
@@ -905,24 +903,24 @@
 										/>
 									</div>
 
-									<div class="form-group">
-										<label class="form-label" for="claimsParameterPolicy">
+									<div class="admin-field">
+										<label class="admin-field__label" for="claimsParameterPolicy">
 											{$LL.admin_clients_new_claims_policy()}
 										</label>
 										<textarea
 											id="claimsParameterPolicy"
-											class="form-input textarea-input"
+											class="admin-input textarea-input"
 											rows="5"
 											bind:value={claimsParameterPolicyText}
 											placeholder="email: claims_allowed&#10;birthdate: claims_allowed"
 										></textarea>
-										<p class="form-hint">
+										<p class="field-hint">
 											{$LL.admin_clients_new_claims_policy_hint()}
 										</p>
 									</div>
 
 									<div class="form-grid">
-										<div class="form-group">
+										<div class="admin-field">
 											<ToggleSwitch
 												bind:checked={ascEnabled}
 												label={$LL.admin_clients_new_enable_asc()}
@@ -930,7 +928,7 @@
 											/>
 										</div>
 
-										<div class="form-group">
+										<div class="admin-field">
 											<ToggleSwitch
 												bind:checked={ascProtectedRequestRequired}
 												label={$LL.admin_clients_new_require_protected_asc()}
@@ -938,7 +936,7 @@
 											/>
 										</div>
 
-										<div class="form-group">
+										<div class="admin-field">
 											<ToggleSwitch
 												bind:checked={ascSaoEnabled}
 												label={$LL.admin_clients_new_enable_sao()}
@@ -946,7 +944,7 @@
 											/>
 										</div>
 
-										<div class="form-group">
+										<div class="admin-field">
 											<ToggleSwitch
 												bind:checked={ascTransformedClaimsEnabled}
 												label={$LL.admin_clients_new_enable_transformed_claims()}
@@ -955,9 +953,9 @@
 										</div>
 									</div>
 
-									<div class="form-group">
+									<div class="admin-field">
 										<!-- svelte-ignore a11y_label_has_associated_control -->
-										<label class="form-label">
+										<label class="admin-field__label">
 											{$LL.admin_clients_new_allowed_transformed_claims()}
 										</label>
 										<div class="checkbox-list">
@@ -980,13 +978,13 @@
 								<h3 class="settings-summary-title">
 									{$LL.admin_clients_new_service_downstream_grant()}
 								</h3>
-								<p class="form-hint" style="margin-bottom: 12px;">
+								<p class="field-hint field-hint--spaced">
 									{$LL.admin_clients_new_service_downstream_hint({
 										resource: 'svc://op-userinfo/customer-profile'
 									})}
 								</p>
-								<div class="advanced-panel" style="padding: 0; border: none;">
-									<div class="form-group">
+								<div class="client-subsection client-subsection--plain">
+									<div class="admin-field">
 										<ToggleSwitch
 											bind:checked={downstreamGrantForm.token_exchange_allowed}
 											label={$LL.admin_clients_new_enable_token_exchange()}
@@ -994,7 +992,7 @@
 										/>
 									</div>
 
-									<div class="form-group">
+									<div class="admin-field">
 										<ToggleSwitch
 											bind:checked={downstreamGrantForm.client_credentials_allowed}
 											label={$LL.admin_clients_new_allow_client_credentials()}
@@ -1002,101 +1000,101 @@
 										/>
 									</div>
 
-									<div class="form-group">
-										<label class="form-label" for="delegationMode">
+									<div class="admin-field">
+										<label class="admin-field__label" for="delegationMode">
 											{$LL.admin_clients_new_delegation_mode()}
 										</label>
 										<select
 											id="delegationMode"
-											class="form-select"
+											class="admin-input"
 											bind:value={downstreamGrantForm.delegation_mode}
 										>
 											<option value="none">{$LL.admin_clients_new_delegation_none()}</option>
 											<option value="delegation">{$LL.admin_clients_new_delegation()}</option>
 											<option value="impersonation">{$LL.admin_clients_new_impersonation()}</option>
 										</select>
-										<p class="form-hint">{$LL.admin_clients_new_delegation_hint()}</p>
+										<p class="field-hint">{$LL.admin_clients_new_delegation_hint()}</p>
 									</div>
 
 									<div class="form-grid">
-										<div class="form-group">
-											<label class="form-label" for="downstreamDefaultAudience">
+										<div class="admin-field">
+											<label class="admin-field__label" for="downstreamDefaultAudience">
 												{$LL.admin_clients_new_default_audience()}
 											</label>
 											<input
 												id="downstreamDefaultAudience"
 												type="text"
-												class="form-input"
+												class="admin-input"
 												bind:value={downstreamGrantForm.default_audience}
 												placeholder="svc://op-userinfo/customer-profile"
 											/>
-											<p class="form-hint">
+											<p class="field-hint">
 												{$LL.admin_clients_new_default_audience_hint()}
 											</p>
 										</div>
 
-										<div class="form-group">
-											<label class="form-label" for="downstreamDefaultScope">
+										<div class="admin-field">
+											<label class="admin-field__label" for="downstreamDefaultScope">
 												{$LL.admin_clients_new_default_scope()}
 											</label>
 											<input
 												id="downstreamDefaultScope"
 												type="text"
-												class="form-input"
+												class="admin-input"
 												bind:value={downstreamGrantForm.default_scope}
 												placeholder="openid profile"
 											/>
-											<p class="form-hint">
+											<p class="field-hint">
 												{$LL.admin_clients_new_default_scope_hint()}
 											</p>
 										</div>
 									</div>
 
-									<div class="form-group">
-										<label class="form-label" for="allowedScopes">
+									<div class="admin-field">
+										<label class="admin-field__label" for="allowedScopes">
 											{$LL.admin_clients_new_allowed_scopes()}
 										</label>
 										<input
 											id="allowedScopes"
 											type="text"
-											class="form-input"
+											class="admin-input"
 											bind:value={downstreamGrantForm.allowed_scopes}
 											placeholder="openid profile profile_export"
 										/>
-										<p class="form-hint">
+										<p class="field-hint">
 											{$LL.admin_clients_new_allowed_scopes_hint()}
 										</p>
 									</div>
 
 									<div class="form-grid">
-										<div class="form-group">
-											<label class="form-label" for="allowedSubjectTokenClients">
+										<div class="admin-field">
+											<label class="admin-field__label" for="allowedSubjectTokenClients">
 												{$LL.admin_clients_new_allowed_subject_token_clients()}
 											</label>
 											<textarea
 												id="allowedSubjectTokenClients"
-												class="form-input textarea-input"
+												class="admin-input textarea-input"
 												rows="4"
 												bind:value={downstreamGrantForm.allowed_subject_token_clients}
 												placeholder="svc-client-a&#10;svc-client-b"
 											></textarea>
-											<p class="form-hint">
+											<p class="field-hint">
 												{$LL.admin_clients_new_allowed_subject_token_clients_hint()}
 											</p>
 										</div>
 
-										<div class="form-group">
-											<label class="form-label" for="allowedTokenExchangeResources">
+										<div class="admin-field">
+											<label class="admin-field__label" for="allowedTokenExchangeResources">
 												{$LL.admin_clients_new_allowed_token_exchange_resources()}
 											</label>
 											<textarea
 												id="allowedTokenExchangeResources"
-												class="form-input textarea-input"
+												class="admin-input textarea-input"
 												rows="4"
 												bind:value={downstreamGrantForm.allowed_token_exchange_resources}
 												placeholder="svc://op-userinfo/customer-profile&#10;svc://op-userinfo/customer-export"
 											></textarea>
-											<p class="form-hint">
+											<p class="field-hint">
 												{$LL.admin_clients_new_allowed_token_exchange_resources_hint()}
 											</p>
 										</div>
@@ -1115,10 +1113,10 @@
 					</button>
 				</div>
 			</form>
-		</div>
+		</AdminSection>
 	{:else if step === 3 && createdClient}
 		<!-- Step 3: Success -->
-		<div class="panel">
+		<AdminSection>
 			<div class="success-center">
 				<div class="success-icon">✅</div>
 				<h2 class="success-title">{$LL.admin_clients_new_success_title()}</h2>
@@ -1128,11 +1126,16 @@
 			</div>
 
 			<!-- Client ID -->
-			<div class="form-group">
+			<div class="admin-field">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
-				<label class="form-label">{$LL.admin_clients_clientId()}</label>
+				<label class="admin-field__label">{$LL.admin_clients_clientId()}</label>
 				<div class="input-copy-group">
-					<input type="text" value={createdClient.client_id} readonly class="input-readonly" />
+					<input
+						type="text"
+						value={createdClient.client_id}
+						readonly
+						class="admin-input input-readonly"
+					/>
 					<button
 						class="btn btn-secondary btn-sm"
 						onclick={() => copyToClipboard(createdClient!.client_id)}
@@ -1144,9 +1147,9 @@
 
 			<!-- Client Secret -->
 			{#if createdClient.client_secret}
-				<div class="form-group">
+				<div class="admin-field">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
-					<label class="form-label">{$LL.admin_clients_new_client_secret()}</label>
+					<label class="admin-field__label">{$LL.admin_clients_new_client_secret()}</label>
 					<div class="warning-box">
 						<p>
 							<strong>{$LL.admin_clients_new_secret_warning()}</strong>
@@ -1158,7 +1161,7 @@
 							type="text"
 							value={createdClient.client_secret}
 							readonly
-							class="input-readonly"
+							class="admin-input input-readonly"
 						/>
 						<button
 							class="btn btn-secondary btn-sm"
@@ -1172,9 +1175,9 @@
 
 			<!-- Redirect URIs with CORS Status -->
 			{#if createdClient.redirect_uris.length > 0}
-				<div class="form-group">
+				<div class="admin-field">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
-					<label class="form-label">{$LL.admin_clients_new_redirect_origin_status()}</label>
+					<label class="admin-field__label">{$LL.admin_clients_new_redirect_origin_status()}</label>
 					<ul class="uri-list">
 						{#each createdClient.redirect_uris as uri (uri)}
 							<li class="uri-item uri-item-with-cors">
@@ -1200,7 +1203,7 @@
 						{/each}
 					</ul>
 					{#if tenantSettings && createdClient.redirect_uris.some((uri) => !isOriginInCors(uri))}
-						<p class="form-hint cors-hint">
+						<p class="field-hint cors-hint">
 							{$LL.admin_clients_new_cors_hint()}
 						</p>
 					{/if}
@@ -1216,11 +1219,285 @@
 					{$LL.admin_clients_new_view_details()}
 				</a>
 			</div>
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
+	form,
+	.admin-field,
+	.client-subsection,
+	.settings-summary {
+		display: grid;
+		gap: 1rem;
+	}
+
+	form {
+		gap: 1.25rem;
+	}
+
+	.admin-field__label {
+		display: block;
+		margin-bottom: 0.45rem;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		font-weight: 700;
+	}
+
+	.admin-input {
+		width: 100%;
+		min-width: 0;
+		padding: 0.62rem 0.78rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, var(--radius-sm));
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		font-size: 0.875rem;
+	}
+
+	.admin-input:focus {
+		outline: none;
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.input-readonly {
+		font-family: var(--font-mono);
+		background: var(--color-surface-muted);
+	}
+
+	.textarea-input {
+		min-height: 112px;
+		resize: vertical;
+	}
+
+	.field-hint {
+		display: block;
+		margin: 0.35rem 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		line-height: 1.55;
+	}
+
+	.field-hint--spaced {
+		margin-bottom: 0.65rem;
+	}
+
+	.preset-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+		gap: 14px;
+	}
+
+	.preset-card {
+		display: grid;
+		gap: 0.55rem;
+		padding: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-md));
+		background: var(--color-surface);
+		color: var(--color-text);
+		text-align: left;
+		cursor: pointer;
+		box-shadow: var(--shadow-panel, none);
+		transition:
+			border-color var(--transition-fast),
+			background var(--transition-fast);
+	}
+
+	.preset-card:hover {
+		border-color: var(--color-accent);
+		background: var(--color-surface-muted);
+	}
+
+	.preset-icon {
+		font-size: 1.7rem;
+		line-height: 1;
+	}
+
+	.preset-name {
+		color: var(--color-text);
+		font-weight: 800;
+	}
+
+	.preset-description {
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
+		line-height: 1.5;
+	}
+
+	.preset-type-badge,
+	.preset-badge,
+	.badge {
+		display: inline-flex;
+		align-items: center;
+		width: fit-content;
+		border-radius: var(--radius-full);
+		padding: 0.14rem 0.5rem;
+		font-size: 0.7rem;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	.preset-type-confidential {
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
+	}
+
+	.preset-type-public {
+		background: color-mix(in srgb, var(--color-warning) 13%, transparent);
+		color: var(--color-warning);
+	}
+
+	.preset-badge,
+	.badge-success {
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
+	}
+
+	.badge-neutral {
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+	}
+
+	.input-copy-group {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.input-copy-group--spaced {
+		margin-bottom: 8px;
+	}
+
+	.settings-summary,
+	.info-box,
+	.warning-box,
+	.client-subsection {
+		padding: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-md));
+		background: var(--color-surface-muted);
+	}
+
+	.settings-summary-subsection {
+		margin-top: 1rem;
+	}
+
+	.settings-summary-title {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.92rem;
+		font-weight: 800;
+	}
+
+	.settings-summary-grid,
+	.form-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 0.9rem;
+	}
+
+	.settings-summary-item {
+		display: grid;
+		gap: 0.2rem;
+		min-width: 0;
+	}
+
+	.settings-summary-label {
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		font-weight: 700;
+	}
+
+	.settings-summary-value {
+		color: var(--color-text);
+		font-size: 0.85rem;
+		overflow-wrap: anywhere;
+	}
+
+	.advanced-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		width: fit-content;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: var(--color-accent);
+		font: inherit;
+		font-size: 0.875rem;
+		font-weight: 800;
+		cursor: pointer;
+	}
+
+	.advanced-toggle-arrow {
+		transition: transform var(--transition-fast);
+	}
+
+	.advanced-toggle-arrow.open {
+		transform: rotate(90deg);
+	}
+
+	.client-subsection {
+		margin-top: 1rem;
+	}
+
+	.client-subsection--plain {
+		padding: 0;
+		border: 0;
+		background: transparent;
+	}
+
+	.info-box p,
+	.warning-box p {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.875rem;
+		line-height: 1.6;
+	}
+
+	.warning-box {
+		border-color: color-mix(in srgb, var(--color-warning) 42%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+	}
+
+	.checkbox-list {
+		display: grid;
+		gap: 0.45rem;
+	}
+
+	.checkbox-list-item {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		cursor: pointer;
+	}
+
+	.checkbox-list-item input[type='checkbox'] {
+		accent-color: var(--color-accent);
+	}
+
+	.btn-add {
+		width: 100%;
+		padding: 0.62rem 1rem;
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-control, var(--radius-sm));
+		background: transparent;
+		color: var(--color-accent);
+		font: inherit;
+		font-weight: 800;
+		cursor: pointer;
+	}
+
+	.btn-add:hover {
+		background: var(--color-accent-muted);
+		border-color: var(--color-accent);
+	}
+
 	.uri-list {
 		list-style: none;
 		padding: 0;
@@ -1233,7 +1510,7 @@
 		justify-content: space-between;
 		gap: 12px;
 		padding: 8px 0;
-		border-bottom: 1px solid var(--border-color, #e5e7eb);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.uri-item-with-cors:last-child {
@@ -1243,41 +1520,51 @@
 	.uri-text {
 		flex: 1;
 		word-break: break-all;
-		font-family: monospace;
+		font-family: var(--font-mono);
 		font-size: 0.875rem;
-	}
-
-	.badge-success {
-		background-color: var(--success, #10b981);
-		color: white;
-		padding: 2px 8px;
-		border-radius: 4px;
-		font-size: 0.75rem;
-		font-weight: 500;
-		white-space: nowrap;
-	}
-
-	.badge-neutral {
-		background-color: var(--neutral, #9ca3af);
-		color: white;
-		padding: 2px 8px;
-		border-radius: 4px;
-		font-size: 0.75rem;
-		font-weight: 500;
-		white-space: nowrap;
 	}
 
 	.cors-hint {
 		margin-top: 8px;
-		color: var(--warning, #f59e0b);
+		color: var(--color-warning);
 	}
 
-	.settings-summary-subsection {
-		margin-top: 1rem;
+	.success-center {
+		display: grid;
+		justify-items: center;
+		gap: 0.7rem;
+		margin-bottom: 1.5rem;
+		text-align: center;
 	}
 
-	.textarea-input {
-		min-height: 112px;
-		resize: vertical;
+	.success-icon {
+		font-size: 2.4rem;
+		line-height: 1;
+	}
+
+	.success-title {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 1.2rem;
+	}
+
+	.success-description {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.9rem;
+	}
+
+	.form-actions,
+	.center-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 12px;
+		flex-wrap: wrap;
+		padding-top: 1rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.center-actions {
+		justify-content: center;
 	}
 </style>

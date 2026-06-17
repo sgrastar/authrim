@@ -5,6 +5,7 @@
 		adminDatabaseConnectionsAPI,
 		type DatabaseConnection
 	} from '$lib/api/admin-database-connections';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let items = $state<DatabaseConnection[]>([]);
@@ -52,29 +53,28 @@
 	<title>{$LL.admin_database_connections_page_title()}</title>
 </svelte:head>
 
-<div class="page-shell">
-	<header class="page-header">
-		<div class="page-title-group">
-			<h1 class="page-title">{$LL.admin_database_connections_title()}</h1>
-			<p class="page-description">{$LL.admin_database_connections_description()}</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={load} disabled={loading}>
-				{$LL.admin_database_connections_refresh()}
-			</button>
-			<button class="btn btn-primary" onclick={createConnection}>
-				{$LL.admin_database_connections_create_connection()}
-			</button>
-		</div>
-	</header>
+{#snippet pageActions()}
+	<button class="btn btn-secondary" onclick={load} disabled={loading}>
+		{$LL.admin_database_connections_refresh()}
+	</button>
+	<button class="btn btn-primary" onclick={createConnection}>
+		{$LL.admin_database_connections_create_connection()}
+	</button>
+{/snippet}
 
+{#snippet connectionsActions()}
+	<span class="badge badge-neutral">{items.length}</span>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_database_connections_title()}
+		description={$LL.admin_database_connections_description()}
+		actions={pageActions}
+	/>
 	{#if error}<div class="alert alert-error">{error}</div>{/if}
 
-	<div class="panel">
-		<div class="panel-header">
-			<h2 class="panel-title">{$LL.admin_database_connections_connections()}</h2>
-			<span class="badge badge-neutral">{items.length}</span>
-		</div>
+	<AdminSection title={$LL.admin_database_connections_connections()} actions={connectionsActions}>
 		{#if loading}
 			<p class="text-muted">{$LL.admin_database_connections_loading()}</p>
 		{:else if items.length === 0}
@@ -87,13 +87,13 @@
 							<strong>{item.display_name}</strong>
 							<small>{item.name}</small>
 						</div>
-						<span class="text-muted text-sm">{formatConfigSummary(item)}</span>
+						<span class="text-muted meta-text">{formatConfigSummary(item)}</span>
 						<div
 							class="tenant-badges"
 							aria-label={$LL.admin_database_connections_tenant_assignments_aria()}
 						>
 							{#if tenantAssignments(item).length === 0}
-								<span class="text-muted text-sm">-</span>
+								<span class="text-muted meta-text">-</span>
 							{:else}
 								{#each tenantAssignments(item) as tenant (`${tenant.kind}:${tenant.id}`)}
 									<span
@@ -118,74 +118,29 @@
 				{/each}
 			</div>
 		{/if}
-	</div>
-</div>
+	</AdminSection>
+</AdminPageShell>
 
 <style>
-	.page-shell {
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
-	}
-
-	.page-header,
-	.page-actions,
-	.panel-header {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-	}
-
-	.page-header,
-	.panel-header {
-		justify-content: space-between;
-	}
-
-	.page-actions {
-		gap: 0.5rem;
-	}
-
-	.page-title {
-		margin: 0 0 0.25rem;
-		font-size: 1.5rem;
-	}
-
-	.page-description {
-		margin: 0;
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-	}
-
 	.alert {
 		padding: 0.75rem 1rem;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
 	}
 
 	.alert-error {
-		background: rgba(239, 68, 68, 0.08);
-		color: #991b1b;
-		border: 1px solid rgba(239, 68, 68, 0.2);
-	}
-
-	.panel {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		padding: 1.5rem;
-	}
-
-	.panel-title {
-		margin: 0;
-		font-size: 1.05rem;
-		font-weight: 600;
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
 	}
 
 	.item-list {
 		display: flex;
 		flex-direction: column;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-panel);
 		overflow: hidden;
 	}
 
@@ -196,8 +151,9 @@
 		gap: 0.75rem;
 		padding: 0.8rem 1rem;
 		border: none;
-		border-bottom: 1px solid var(--border);
-		background: var(--bg-card);
+		border-bottom: 1px solid var(--color-border);
+		background: transparent;
+		color: var(--color-text);
 		text-align: left;
 		cursor: pointer;
 		transition: background var(--transition-fast);
@@ -208,27 +164,27 @@
 	}
 
 	.item-row:hover {
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 	}
 
 	.item-name strong {
 		display: block;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.item-name small,
 	.text-muted {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.item-name small,
-	.text-sm {
+	.meta-text {
 		font-size: 0.75rem;
 	}
 
 	.row-chevron {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 1.25rem;
 		line-height: 1;
 	}
@@ -253,26 +209,21 @@
 
 	.badge-neutral,
 	.badge-muted {
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.badge-info {
-		background: rgba(59, 130, 246, 0.1);
-		color: #1d4ed8;
+		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		color: var(--color-accent);
 	}
 
 	.badge-success {
-		background: rgba(16, 185, 129, 0.1);
-		color: #065f46;
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
 	}
 
 	@media (max-width: 900px) {
-		.page-header {
-			align-items: flex-start;
-			flex-direction: column;
-		}
-
 		.item-row {
 			grid-template-columns: 1fr auto;
 		}

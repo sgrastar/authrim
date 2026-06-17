@@ -12,9 +12,30 @@
 	} from '$lib/api/admin-organizations';
 	import OrganizationTree from '$lib/components/OrganizationTree.svelte';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	// Tab state
-	let activeTab = $state<'hierarchy' | 'mappings'>('hierarchy');
+	type OrganizationTab = 'hierarchy' | 'mappings';
+	let activeTab = $state<OrganizationTab>('hierarchy');
+	const organizationTabs = $derived<AdminTabItem[]>([
+		{
+			id: 'hierarchy',
+			label: $LL.admin_org_hierarchy(),
+			icon: 'i-ph-tree-structure',
+			panelId: 'organization-hierarchy-panel'
+		},
+		{
+			id: 'mappings',
+			label: $LL.admin_org_domain_mappings(),
+			icon: 'i-ph-globe',
+			panelId: 'organization-mappings-panel'
+		}
+	]);
 
 	// Hierarchy view state
 	let organizations: Organization[] = $state([]);
@@ -197,7 +218,7 @@
 		}
 	});
 
-	function handleTabChange(tab: 'hierarchy' | 'mappings') {
+	function handleTabChange(tab: OrganizationTab) {
 		activeTab = tab;
 		if (tab === 'mappings' && mappings.length === 0) {
 			loadMappings();
@@ -358,44 +379,29 @@
 	<title>{$LL.admin_org_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_org_title()}</h1>
-			<p class="page-description">{$LL.admin_org_description()}</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader title={$LL.admin_org_title()} description={$LL.admin_org_description()} />
 
-	<!-- Tabs -->
-	<div class="tabs">
-		<button
-			class="tab"
-			class:active={activeTab === 'hierarchy'}
-			onclick={() => handleTabChange('hierarchy')}
-		>
-			<i class="i-ph-tree-structure"></i>
-			{$LL.admin_org_hierarchy()}
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'mappings'}
-			onclick={() => handleTabChange('mappings')}
-		>
-			<i class="i-ph-globe"></i>
-			{$LL.admin_org_domain_mappings()}
-		</button>
-	</div>
+	<AdminTabs
+		items={organizationTabs}
+		active={activeTab}
+		onChange={(tab) => handleTabChange(tab as OrganizationTab)}
+		ariaLabel={$LL.admin_org_title()}
+	/>
 
 	<!-- Hierarchy Tab -->
 	{#if activeTab === 'hierarchy'}
-		<div class="panel">
+		<AdminSection>
 			<!-- Search and Actions -->
-			<div class="filter-row">
-				<div class="form-group" style="flex: 1;">
+			<AdminToolbar>
+				<div class="admin-field admin-field--search">
+					<label for="organization-search" class="admin-field__label">
+						{$LL.admin_org_search()}
+					</label>
 					<input
+						id="organization-search"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						bind:value={searchQuery}
 						placeholder={$LL.admin_org_search_placeholder()}
 						onkeydown={(e) => e.key === 'Enter' && handleSearch()}
@@ -408,10 +414,10 @@
 				<button class="btn btn-secondary" onclick={collapseAll} disabled={!hierarchyData}>
 					{$LL.admin_org_collapse_all()}
 				</button>
-			</div>
+			</AdminToolbar>
 
 			{#if hierarchyError}
-				<div class="alert alert-error" style="margin-bottom: 16px;">
+				<div class="alert alert-error organization-alert">
 					{hierarchyError}
 					<button class="btn btn-secondary btn-sm" onclick={loadOrganizations}>
 						{$LL.admin_org_retry()}
@@ -462,20 +468,23 @@
 					<p class="empty-state-description">{$LL.admin_org_empty()}</p>
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
 
 	<!-- Domain Mappings Tab -->
 	{#if activeTab === 'mappings'}
-		<div class="panel">
-			<div class="section-header">
-				<p class="section-description">{$LL.admin_org_mappings_description()}</p>
-				<button class="btn btn-primary" onclick={openCreateDialog}>
-					<i class="i-ph-plus"></i>
-					{$LL.admin_org_add_mapping()}
-				</button>
-			</div>
+		{#snippet mappingActions()}
+			<button class="btn btn-primary" onclick={openCreateDialog}>
+				<i class="i-ph-plus"></i>
+				{$LL.admin_org_add_mapping()}
+			</button>
+		{/snippet}
 
+		<AdminSection
+			title={$LL.admin_org_domain_mappings()}
+			description={$LL.admin_org_mappings_description()}
+			actions={mappingActions}
+		>
 			{#if error}
 				<div class="alert alert-error">{error}</div>
 			{/if}
@@ -500,77 +509,75 @@
 					{$LL.admin_org_result_count({ shown: mappings.length, total })}
 				</p>
 
-				<div class="data-table-container">
-					<table class="data-table">
-						<thead>
+				<AdminDataTable width="wide">
+					<thead>
+						<tr>
+							<th>{$LL.admin_org_organization_id()}</th>
+							<th>{$LL.admin_org_verification()}</th>
+							<th>{$LL.admin_org_status()}</th>
+							<th>{$LL.admin_org_auto_join()}</th>
+							<th>{$LL.admin_org_membership()}</th>
+							<th class="text-right">{$LL.admin_org_actions()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each mappings as mapping (mapping.id)}
 							<tr>
-								<th>{$LL.admin_org_organization_id()}</th>
-								<th>{$LL.admin_org_verification()}</th>
-								<th>{$LL.admin_org_status()}</th>
-								<th>{$LL.admin_org_auto_join()}</th>
-								<th>{$LL.admin_org_membership()}</th>
-								<th class="text-right">{$LL.admin_org_actions()}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each mappings as mapping (mapping.id)}
-								<tr>
-									<td>
-										<div class="mono cell-primary">{mapping.org_id}</div>
-										<div class="cell-secondary">
-											{$LL.admin_org_hash()}
-											{mapping.domain_hash.substring(0, 16)}...
-										</div>
-									</td>
-									<td>
-										<span class={mapping.verified ? 'badge badge-success' : 'badge badge-warning'}>
-											{mapping.verified ? $LL.admin_org_verified() : $LL.admin_org_pending()}
-										</span>
-									</td>
-									<td>
-										<span class={mapping.is_active ? 'badge badge-info' : 'badge badge-neutral'}>
-											{mapping.is_active ? $LL.admin_org_active() : $LL.admin_org_inactive()}
-										</span>
-									</td>
-									<td>{mapping.auto_join_enabled ? $LL.admin_org_yes() : $LL.admin_org_no()}</td>
-									<td>
-										<span class="badge badge-neutral"
-											>{formatMembershipType(mapping.membership_type)}</span
+								<td>
+									<div class="mono cell-primary">{mapping.org_id}</div>
+									<div class="cell-secondary">
+										{$LL.admin_org_hash()}
+										{mapping.domain_hash.substring(0, 16)}...
+									</div>
+								</td>
+								<td>
+									<span class={mapping.verified ? 'badge badge-success' : 'badge badge-warning'}>
+										{mapping.verified ? $LL.admin_org_verified() : $LL.admin_org_pending()}
+									</span>
+								</td>
+								<td>
+									<span class={mapping.is_active ? 'badge badge-info' : 'badge badge-neutral'}>
+										{mapping.is_active ? $LL.admin_org_active() : $LL.admin_org_inactive()}
+									</span>
+								</td>
+								<td>{mapping.auto_join_enabled ? $LL.admin_org_yes() : $LL.admin_org_no()}</td>
+								<td>
+									<span class="badge badge-neutral"
+										>{formatMembershipType(mapping.membership_type)}</span
+									>
+								</td>
+								<td class="text-right">
+									<div class="admin-row-actions">
+										{#if !mapping.verified}
+											<button
+												class="btn btn-warning btn-sm"
+												onclick={(e) => openVerifyDialog(mapping, e)}
+											>
+												{$LL.admin_org_verify()}
+											</button>
+										{/if}
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={(e) => toggleActive(mapping, e)}
 										>
-									</td>
-									<td class="text-right">
-										<div class="action-buttons">
-											{#if !mapping.verified}
-												<button
-													class="btn btn-warning btn-sm"
-													onclick={(e) => openVerifyDialog(mapping, e)}
-												>
-													{$LL.admin_org_verify()}
-												</button>
-											{/if}
-											<button
-												class="btn btn-secondary btn-sm"
-												onclick={(e) => toggleActive(mapping, e)}
-											>
-												{mapping.is_active ? $LL.admin_org_disable() : $LL.admin_org_enable()}
-											</button>
-											<button
-												class="btn btn-danger btn-sm"
-												onclick={(e) => openDeleteDialog(mapping, e)}
-											>
-												{$LL.admin_org_delete()}
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+											{mapping.is_active ? $LL.admin_org_disable() : $LL.admin_org_enable()}
+										</button>
+										<button
+											class="btn btn-danger btn-sm"
+											onclick={(e) => openDeleteDialog(mapping, e)}
+										>
+											{$LL.admin_org_delete()}
+										</button>
+									</div>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Dialog -->
 <Modal

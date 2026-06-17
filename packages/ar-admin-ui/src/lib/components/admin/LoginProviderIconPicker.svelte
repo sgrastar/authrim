@@ -83,8 +83,8 @@
 <div class="icon-picker" class:icon-picker--open={open}>
 	<div class="icon-picker__header">
 		<div>
-			<span class="form-label">{label}</span>
-			<p class="form-hint">{description}</p>
+			<span class="icon-picker__label">{label}</span>
+			<p class="icon-picker__description">{description}</p>
 		</div>
 		<button type="button" class="icon-picker__trigger" onclick={() => (open = !open)}>
 			<span class="icon-picker__preview" aria-hidden="true">
@@ -151,7 +151,7 @@
 		position: relative;
 	}
 
-	:global(.panel:has(.icon-picker--open)) {
+	:global(.admin-section:has(.icon-picker--open)) {
 		position: relative;
 		z-index: 1000;
 		overflow: visible;
@@ -164,17 +164,32 @@
 		gap: 16px;
 	}
 
+	.icon-picker__label {
+		display: block;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		font-weight: 600;
+		line-height: 1.4;
+	}
+
+	.icon-picker__description {
+		margin: 4px 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+		line-height: 1.5;
+	}
+
 	.icon-picker__trigger {
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
 		min-width: 180px;
-		height: 40px;
+		min-height: var(--control-height-md);
 		padding: 0 12px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		background: var(--bg-input);
-		color: var(--text-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface);
+		color: var(--color-text);
 		font-weight: 600;
 		cursor: pointer;
 	}
@@ -186,7 +201,7 @@
 		height: 24px;
 		flex: 0 0 24px;
 		place-items: center;
-		color: var(--text-secondary);
+		color: var(--color-text-subtle);
 	}
 
 	.icon-picker__preview i,
@@ -197,15 +212,15 @@
 
 	.icon-picker__none,
 	.icon-picker__option-icon--none {
-		border: 1px dashed var(--border);
-		border-radius: 6px;
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-xs);
 	}
 
 	.icon-picker__chevron {
 		margin-left: auto;
 		width: 16px;
 		height: 16px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.icon-picker__panel {
@@ -220,10 +235,10 @@
 		max-width: 100%;
 		gap: 8px;
 		padding: 12px;
-		border: 1px solid var(--border);
-		border-radius: 10px;
-		background: color-mix(in srgb, var(--bg-card) 96%, black 4%);
-		box-shadow: 0 18px 48px rgb(0 0 0 / 0.34);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--popover-tint-bg, var(--color-surface-elevated));
+		box-shadow: var(--shadow-popover);
 		backdrop-filter: none;
 		-webkit-backdrop-filter: none;
 	}
@@ -237,10 +252,10 @@
 		min-width: 44px;
 		min-height: 44px;
 		padding: 0;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		background: var(--bg-input);
-		color: var(--text-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface);
+		color: var(--color-text);
 		cursor: pointer;
 	}
 
@@ -256,9 +271,9 @@
 
 	.icon-picker__option:hover,
 	.icon-picker__option--selected {
-		border-color: var(--primary);
-		color: var(--primary);
-		background: var(--primary-light);
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+		background: var(--color-accent-soft);
 	}
 
 	@media (max-width: 640px) {

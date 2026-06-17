@@ -13,6 +13,13 @@ export type MappingDecisionAction =
 
 export type TransformOperation =
   | 'copy'
+  | 'as_array'
+  | 'split'
+  | 'join'
+  | 'first'
+  | 'oidc_pairwise_sub'
+  | 'saml_edu_person_targeted_id'
+  | 'affix_text'
   | 'concat'
   | 'fallback'
   | 'normalize'
@@ -138,6 +145,7 @@ export interface FieldRef {
   namespace: string;
   path: string;
   catalogEntryId?: string;
+  valueType?: string;
 }
 
 export type TargetType = 'canonical' | 'custom' | 'derived' | 'destination-only' | 'review-only';
@@ -274,6 +282,7 @@ export interface RuleTraceEntry extends TraceBuilderInput {
 export interface TransformExecutionInput {
   step: MappingTransformStep;
   edgeValues: Map<string, SourceValueEnvelope>;
+  runtimeContext?: Record<string, unknown>;
 }
 
 export interface TransformExecutionResult {
@@ -325,6 +334,7 @@ export interface MappingInput {
   validationRules?: ValidationRule[];
   fieldMappingSet?: FieldMappingSet;
   fingerprintProvider?: FingerprintProvider;
+  runtimeContext?: Record<string, unknown>;
 }
 
 export interface BatchMappingInput {

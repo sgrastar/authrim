@@ -91,9 +91,9 @@
 		flex-direction: column;
 		align-items: center;
 		padding: 5px 10px;
-		background: #ef4444;
-		color: white;
-		border-radius: 16px;
+		background: var(--color-danger);
+		color: var(--color-accent-contrast);
+		border-radius: var(--flow-node-error-radius, var(--flow-node-pill-radius, 16px));
 		font-weight: 500;
 		font-size: 10px;
 		border: none;
@@ -101,12 +101,12 @@
 	}
 
 	.error-node.has-retry {
-		border-radius: 12px;
+		border-radius: var(--flow-node-error-retry-radius, var(--flow-node-radius, 12px));
 		padding-right: 20px;
 	}
 
 	.error-node.selected {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -119,11 +119,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 50%;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--flow-node-error-action-radius, var(--flow-node-pill-radius, 50%));
 		cursor: pointer;
-		color: #ef4444;
+		color: var(--color-danger);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -134,7 +134,7 @@
 	}
 
 	.config-btn:hover {
-		background: #fef2f2;
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
 	}
 
 	.node-content {
@@ -154,8 +154,8 @@
 	.reason-badge {
 		margin-top: 4px;
 		padding: 2px 8px;
-		background: rgba(255, 255, 255, 0.2);
-		border-radius: 10px;
+		background: color-mix(in srgb, var(--color-accent-contrast) 20%, transparent);
+		border-radius: var(--flow-node-pill-radius, 10px);
 		font-size: 9px;
 		font-weight: 400;
 	}
@@ -177,13 +177,13 @@
 		font-size: 10px;
 		font-weight: 600;
 		padding: 2px 4px;
-		border-radius: 4px;
+		border-radius: var(--flow-node-badge-radius, var(--radius-xs, 4px));
 		pointer-events: none;
 	}
 
 	.handle-label.retry {
-		background: white;
-		color: #ef4444;
+		background: var(--color-surface);
+		color: var(--color-danger);
 		margin-left: 10px;
 	}
 </style>

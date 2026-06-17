@@ -7,6 +7,13 @@
 		adminStorageDestinationsAPI,
 		type StorageDestination
 	} from '$lib/api/admin-storage-destinations';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminTabs,
+		type AdminTabItem
+	} from '$lib/components/admin';
 	import { adminFetch } from '$lib/api/admin-request';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
@@ -25,6 +32,13 @@
 		{ id: 'export', getLabel: () => $LL.admin_diagnostic_logging_tab_export() },
 		{ id: 'storage', getLabel: () => $LL.admin_diagnostic_logging_tab_storage() }
 	];
+	const adminTabs = $derived<AdminTabItem[]>(
+		TAB_DEFINITIONS.map((tab) => ({
+			id: tab.id,
+			label: tab.getLabel(),
+			panelId: `diagnostic-logging-${tab.id}-panel`
+		}))
+	);
 
 	// Export form state
 	let tenantId = $state('');
@@ -147,6 +161,12 @@
 		}
 
 		activeTab = newTab;
+	}
+
+	function handleAdminTabChange(newTab: string) {
+		if (newTab === 'settings' || newTab === 'export' || newTab === 'storage') {
+			handleTabChange(newTab);
+		}
 	}
 
 	onMount(async () => {
@@ -728,13 +748,11 @@
 	<title>{$LL.admin_diagnostic_logging_page_title()}</title>
 </svelte:head>
 
-<div class="diagnostic-logging-page">
-	<div class="page-header">
-		<h1 class="page-title">{$LL.admin_diagnostic_logging_title()}</h1>
-		<p class="page-description">
-			{$LL.admin_diagnostic_logging_description()}
-		</p>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_diagnostic_logging_title()}
+		description={$LL.admin_diagnostic_logging_description()}
+	/>
 
 	{#if error}
 		<Alert variant="error" dismissible onDismiss={() => (error = '')}>
@@ -754,24 +772,18 @@
 		</Alert>
 	{/if}
 
-	<!-- Tab Navigation -->
-	<div class="tabs-nav">
-		{#each TAB_DEFINITIONS as tab (tab.id)}
-			<button
-				class="tab-button"
-				class:active={activeTab === tab.id}
-				onclick={() => handleTabChange(tab.id)}
-			>
-				{tab.getLabel()}
-			</button>
-		{/each}
-	</div>
+	<AdminTabs
+		items={adminTabs}
+		active={activeTab}
+		onChange={handleAdminTabChange}
+		ariaLabel={$LL.admin_diagnostic_logging_title()}
+	/>
 
 	<!-- Tab Content -->
-	<div class="tab-content">
+	<div class="diagnostic-logging-page">
 		{#if activeTab === 'settings'}
 			<!-- Settings Tab -->
-			<div class="settings-form-card">
+			<div class="settings-form-card" id="diagnostic-logging-settings-panel" role="tabpanel">
 				<div class="card-section">
 					<h2 class="card-title">{$LL.admin_diagnostic_logging_logging_status()}</h2>
 					<p class="card-subtitle">{$LL.admin_diagnostic_logging_logging_status_desc()}</p>
@@ -871,230 +883,238 @@
 			</div>
 		{:else if activeTab === 'export'}
 			<!-- Export Tab -->
-			<form class="settings-form-card" onsubmit={handleExport}>
-				<div class="card-section">
-					<h2 class="card-title">{$LL.admin_diagnostic_logging_export_filters()}</h2>
-					<p class="card-subtitle">{$LL.admin_diagnostic_logging_export_filters_desc()}</p>
-				</div>
-
-				<div class="card-section">
-					<div class="form-grid">
-						<div class="form-group">
-							<label for="tenantId">{$LL.admin_diagnostic_logging_tenant_id()}</label>
-							<input
-								id="tenantId"
-								class="settings-input"
-								type="text"
-								bind:value={tenantId}
-								onchange={(event) => handleTenantChange(event.currentTarget.value)}
-							/>
-						</div>
+			<div id="diagnostic-logging-export-panel" role="tabpanel">
+				<form class="settings-form-card" onsubmit={handleExport}>
+					<div class="card-section">
+						<h2 class="card-title">{$LL.admin_diagnostic_logging_export_filters()}</h2>
+						<p class="card-subtitle">{$LL.admin_diagnostic_logging_export_filters_desc()}</p>
 					</div>
-				</div>
 
-				<div class="card-section">
-					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_date_range()}</h3>
-					<p class="form-hint">{$LL.admin_diagnostic_logging_date_range_hint()}</p>
-					<div class="date-time-grid">
-						<div class="date-time-group">
-							<label for="startDate">{$LL.admin_diagnostic_logging_start_datetime()}</label>
-							<div class="date-time-row">
-								<input id="startDate" class="settings-input" type="date" bind:value={startDate} />
+					<div class="card-section">
+						<div class="form-grid">
+							<div class="form-group">
+								<label for="tenantId">{$LL.admin_diagnostic_logging_tenant_id()}</label>
 								<input
-									id="startTime"
+									id="tenantId"
 									class="settings-input"
-									type="time"
-									bind:value={startTime}
-									step="1"
+									type="text"
+									bind:value={tenantId}
+									onchange={(event) => handleTenantChange(event.currentTarget.value)}
 								/>
 							</div>
-							{#if startDateTimeDisplay}
-								<div class="datetime-preview">
-									<div class="datetime-preview-line">{startDateTimeDisplay.utc}</div>
-									<div class="datetime-preview-line">{startDateTimeDisplay.local}</div>
-								</div>
-							{/if}
-						</div>
-						<div class="date-time-group">
-							<label for="endDate">{$LL.admin_diagnostic_logging_end_datetime()}</label>
-							<div class="date-time-row">
-								<input id="endDate" class="settings-input" type="date" bind:value={endDate} />
-								<input
-									id="endTime"
-									class="settings-input"
-									type="time"
-									bind:value={endTime}
-									step="1"
-								/>
-							</div>
-							{#if endDateTimeDisplay}
-								<div class="datetime-preview">
-									<div class="datetime-preview-line">{endDateTimeDisplay.utc}</div>
-									<div class="datetime-preview-line">{endDateTimeDisplay.local}</div>
-								</div>
-							{/if}
 						</div>
 					</div>
-				</div>
 
-				<div class="card-section">
-					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_clients()}</h3>
-					<p class="form-hint">
-						{$LL.admin_diagnostic_logging_clients_hint()}
-					</p>
-					{#if clientsLoading}
-						<p class="empty-state">{$LL.admin_diagnostic_logging_loading_clients()}</p>
-					{:else if clientsError}
-						<p class="empty-state">{clientsError}</p>
-					{:else if clientOptions.length === 0}
-						<p class="empty-state">{$LL.admin_diagnostic_logging_no_clients()}</p>
-					{:else}
-						<div class="checkbox-grid">
-							{#each clientOptions as client (client.id)}
-								<label class="settings-checkbox-label">
+					<div class="card-section">
+						<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_date_range()}</h3>
+						<p class="form-hint">{$LL.admin_diagnostic_logging_date_range_hint()}</p>
+						<div class="date-time-grid">
+							<div class="date-time-group">
+								<label for="startDate">{$LL.admin_diagnostic_logging_start_datetime()}</label>
+								<div class="date-time-row">
+									<input id="startDate" class="settings-input" type="date" bind:value={startDate} />
 									<input
-										class="settings-checkbox"
-										type="checkbox"
-										checked={selectedClientIds.includes(client.id)}
-										onchange={(event) =>
-											toggleClientSelection(client.id, event.currentTarget.checked)}
+										id="startTime"
+										class="settings-input"
+										type="time"
+										bind:value={startTime}
+										step="1"
 									/>
-									<span class="settings-checkbox-text">{client.name}</span>
-								</label>
-							{/each}
+								</div>
+								{#if startDateTimeDisplay}
+									<div class="datetime-preview">
+										<div class="datetime-preview-line">{startDateTimeDisplay.utc}</div>
+										<div class="datetime-preview-line">{startDateTimeDisplay.local}</div>
+									</div>
+								{/if}
+							</div>
+							<div class="date-time-group">
+								<label for="endDate">{$LL.admin_diagnostic_logging_end_datetime()}</label>
+								<div class="date-time-row">
+									<input id="endDate" class="settings-input" type="date" bind:value={endDate} />
+									<input
+										id="endTime"
+										class="settings-input"
+										type="time"
+										bind:value={endTime}
+										step="1"
+									/>
+								</div>
+								{#if endDateTimeDisplay}
+									<div class="datetime-preview">
+										<div class="datetime-preview-line">{endDateTimeDisplay.utc}</div>
+										<div class="datetime-preview-line">{endDateTimeDisplay.local}</div>
+									</div>
+								{/if}
+							</div>
 						</div>
-					{/if}
-				</div>
-
-				<div class="card-section">
-					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_session_ids()}</h3>
-					<p class="form-hint">{$LL.admin_diagnostic_logging_session_ids_hint()}</p>
-					<textarea
-						class="settings-textarea"
-						rows="3"
-						placeholder="session-123, session-456"
-						bind:value={sessionIds}
-					></textarea>
-				</div>
-
-				<div class="card-section">
-					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_categories()}</h3>
-					<div class="categories-container">
-						<label class="category-checkbox-card" class:checked={categories['http-request']}>
-							<input
-								class="settings-checkbox"
-								type="checkbox"
-								bind:checked={categories['http-request']}
-							/>
-							<div class="category-content">
-								<span class="category-checkbox-text"
-									>{$LL.admin_diagnostic_logging_category_http_request()}</span
-								>
-								<span class="category-description"
-									>{$LL.admin_diagnostic_logging_category_http_request_desc()}</span
-								>
-							</div>
-						</label>
-						<label class="category-checkbox-card" class:checked={categories['http-response']}>
-							<input
-								class="settings-checkbox"
-								type="checkbox"
-								bind:checked={categories['http-response']}
-							/>
-							<div class="category-content">
-								<span class="category-checkbox-text"
-									>{$LL.admin_diagnostic_logging_category_http_response()}</span
-								>
-								<span class="category-description"
-									>{$LL.admin_diagnostic_logging_category_http_response_desc()}</span
-								>
-							</div>
-						</label>
-						<label class="category-checkbox-card" class:checked={categories['token-validation']}>
-							<input
-								class="settings-checkbox"
-								type="checkbox"
-								bind:checked={categories['token-validation']}
-							/>
-							<div class="category-content">
-								<span class="category-checkbox-text"
-									>{$LL.admin_diagnostic_logging_category_token_validation()}</span
-								>
-								<span class="category-description"
-									>{$LL.admin_diagnostic_logging_category_token_validation_desc()}</span
-								>
-							</div>
-						</label>
-						<label class="category-checkbox-card" class:checked={categories['auth-decision']}>
-							<input
-								class="settings-checkbox"
-								type="checkbox"
-								bind:checked={categories['auth-decision']}
-							/>
-							<div class="category-content">
-								<span class="category-checkbox-text"
-									>{$LL.admin_diagnostic_logging_category_auth_decision()}</span
-								>
-								<span class="category-description"
-									>{$LL.admin_diagnostic_logging_category_auth_decision_desc()}</span
-								>
-							</div>
-						</label>
 					</div>
-				</div>
 
-				<div class="card-section">
-					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_format()}</h3>
-					<div class="form-grid format-grid">
-						<div class="form-group">
-							<label for="format">{$LL.admin_diagnostic_logging_export_format()}</label>
-							<select id="format" class="settings-select" bind:value={format}>
-								<option value="json">{$LL.admin_diagnostic_logging_json_pretty()}</option>
-								<option value="jsonl">{$LL.admin_diagnostic_logging_jsonl_streaming()}</option>
-								<option value="text">{$LL.admin_diagnostic_logging_text_grouped()}</option>
-							</select>
-						</div>
-						<div class="form-group">
-							<label for="sortMode">{$LL.admin_diagnostic_logging_sort_mode()}</label>
-							<select id="sortMode" class="settings-select" bind:value={sortMode}>
-								<option value="timeline">{$LL.admin_diagnostic_logging_sort_timeline()}</option>
-								<option value="category">{$LL.admin_diagnostic_logging_sort_category()}</option>
-								<option value="session">{$LL.admin_diagnostic_logging_sort_session()}</option>
-							</select>
-						</div>
-						<div class="form-group">
-							<label for="exportMode">{$LL.admin_diagnostic_logging_export_privacy()}</label>
-							<select id="exportMode" class="settings-select" bind:value={exportMode}>
-								<option value="full">{$LL.admin_diagnostic_logging_privacy_full_if_stored()}</option
-								>
-								<option value="masked">{$LL.admin_diagnostic_logging_privacy_masked()}</option>
-								<option value="minimal">{$LL.admin_diagnostic_logging_privacy_minimal()}</option>
-							</select>
-						</div>
-						<div class="form-group checkbox-group">
-							<label class="settings-checkbox-label">
-								<input class="settings-checkbox" type="checkbox" bind:checked={includeStats} />
-								<span class="settings-checkbox-text"
-									>{$LL.admin_diagnostic_logging_include_stats()}</span
-								>
+					<div class="card-section">
+						<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_clients()}</h3>
+						<p class="form-hint">
+							{$LL.admin_diagnostic_logging_clients_hint()}
+						</p>
+						{#if clientsLoading}
+							<p class="empty-state">{$LL.admin_diagnostic_logging_loading_clients()}</p>
+						{:else if clientsError}
+							<p class="empty-state">{clientsError}</p>
+						{:else if clientOptions.length === 0}
+							<p class="empty-state">{$LL.admin_diagnostic_logging_no_clients()}</p>
+						{:else}
+							<div class="checkbox-grid">
+								{#each clientOptions as client (client.id)}
+									<label class="settings-checkbox-label">
+										<input
+											class="settings-checkbox"
+											type="checkbox"
+											checked={selectedClientIds.includes(client.id)}
+											onchange={(event) =>
+												toggleClientSelection(client.id, event.currentTarget.checked)}
+										/>
+										<span class="settings-checkbox-text">{client.name}</span>
+									</label>
+								{/each}
+							</div>
+						{/if}
+					</div>
+
+					<div class="card-section">
+						<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_session_ids()}</h3>
+						<p class="form-hint">{$LL.admin_diagnostic_logging_session_ids_hint()}</p>
+						<textarea
+							class="settings-textarea"
+							rows="3"
+							placeholder="session-123, session-456"
+							bind:value={sessionIds}
+						></textarea>
+					</div>
+
+					<div class="card-section">
+						<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_categories()}</h3>
+						<div class="categories-container">
+							<label class="category-checkbox-card" class:checked={categories['http-request']}>
+								<input
+									class="settings-checkbox"
+									type="checkbox"
+									bind:checked={categories['http-request']}
+								/>
+								<div class="category-content">
+									<span class="category-checkbox-text"
+										>{$LL.admin_diagnostic_logging_category_http_request()}</span
+									>
+									<span class="category-description"
+										>{$LL.admin_diagnostic_logging_category_http_request_desc()}</span
+									>
+								</div>
+							</label>
+							<label class="category-checkbox-card" class:checked={categories['http-response']}>
+								<input
+									class="settings-checkbox"
+									type="checkbox"
+									bind:checked={categories['http-response']}
+								/>
+								<div class="category-content">
+									<span class="category-checkbox-text"
+										>{$LL.admin_diagnostic_logging_category_http_response()}</span
+									>
+									<span class="category-description"
+										>{$LL.admin_diagnostic_logging_category_http_response_desc()}</span
+									>
+								</div>
+							</label>
+							<label class="category-checkbox-card" class:checked={categories['token-validation']}>
+								<input
+									class="settings-checkbox"
+									type="checkbox"
+									bind:checked={categories['token-validation']}
+								/>
+								<div class="category-content">
+									<span class="category-checkbox-text"
+										>{$LL.admin_diagnostic_logging_category_token_validation()}</span
+									>
+									<span class="category-description"
+										>{$LL.admin_diagnostic_logging_category_token_validation_desc()}</span
+									>
+								</div>
+							</label>
+							<label class="category-checkbox-card" class:checked={categories['auth-decision']}>
+								<input
+									class="settings-checkbox"
+									type="checkbox"
+									bind:checked={categories['auth-decision']}
+								/>
+								<div class="category-content">
+									<span class="category-checkbox-text"
+										>{$LL.admin_diagnostic_logging_category_auth_decision()}</span
+									>
+									<span class="category-description"
+										>{$LL.admin_diagnostic_logging_category_auth_decision_desc()}</span
+									>
+								</div>
 							</label>
 						</div>
 					</div>
-				</div>
 
-				<div class="settings-actions">
-					<button class="btn btn-secondary" type="button" onclick={handleReset} disabled={loading}>
-						{$LL.admin_diagnostic_logging_reset()}
-					</button>
-					<button class="btn btn-primary" type="submit" disabled={loading}>
-						{#if loading}
-							{$LL.admin_diagnostic_logging_exporting()}
-						{:else}
-							{$LL.admin_diagnostic_logging_export_logs()}
-						{/if}
-					</button>
-				</div>
-			</form>
+					<div class="card-section">
+						<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_format()}</h3>
+						<div class="form-grid format-grid">
+							<div class="form-group">
+								<label for="format">{$LL.admin_diagnostic_logging_export_format()}</label>
+								<select id="format" class="settings-select" bind:value={format}>
+									<option value="json">{$LL.admin_diagnostic_logging_json_pretty()}</option>
+									<option value="jsonl">{$LL.admin_diagnostic_logging_jsonl_streaming()}</option>
+									<option value="text">{$LL.admin_diagnostic_logging_text_grouped()}</option>
+								</select>
+							</div>
+							<div class="form-group">
+								<label for="sortMode">{$LL.admin_diagnostic_logging_sort_mode()}</label>
+								<select id="sortMode" class="settings-select" bind:value={sortMode}>
+									<option value="timeline">{$LL.admin_diagnostic_logging_sort_timeline()}</option>
+									<option value="category">{$LL.admin_diagnostic_logging_sort_category()}</option>
+									<option value="session">{$LL.admin_diagnostic_logging_sort_session()}</option>
+								</select>
+							</div>
+							<div class="form-group">
+								<label for="exportMode">{$LL.admin_diagnostic_logging_export_privacy()}</label>
+								<select id="exportMode" class="settings-select" bind:value={exportMode}>
+									<option value="full"
+										>{$LL.admin_diagnostic_logging_privacy_full_if_stored()}</option
+									>
+									<option value="masked">{$LL.admin_diagnostic_logging_privacy_masked()}</option>
+									<option value="minimal">{$LL.admin_diagnostic_logging_privacy_minimal()}</option>
+								</select>
+							</div>
+							<div class="form-group checkbox-group">
+								<label class="settings-checkbox-label">
+									<input class="settings-checkbox" type="checkbox" bind:checked={includeStats} />
+									<span class="settings-checkbox-text"
+										>{$LL.admin_diagnostic_logging_include_stats()}</span
+									>
+								</label>
+							</div>
+						</div>
+					</div>
+
+					<div class="settings-actions">
+						<button
+							class="btn btn-secondary"
+							type="button"
+							onclick={handleReset}
+							disabled={loading}
+						>
+							{$LL.admin_diagnostic_logging_reset()}
+						</button>
+						<button class="btn btn-primary" type="submit" disabled={loading}>
+							{#if loading}
+								{$LL.admin_diagnostic_logging_exporting()}
+							{:else}
+								{$LL.admin_diagnostic_logging_export_logs()}
+							{/if}
+						</button>
+					</div>
+				</form>
+			</div>
 
 			<div class="settings-form-card">
 				<div class="card-section">
@@ -1108,7 +1128,7 @@
 			</div>
 		{:else if activeTab === 'storage'}
 			<!-- Storage Tab -->
-			<div class="settings-form-card">
+			<div class="settings-form-card" id="diagnostic-logging-storage-panel" role="tabpanel">
 				<div class="card-section">
 					<h3 class="card-title-sm">{$LL.admin_diagnostic_logging_storage_mode()}</h3>
 					<p class="card-subtitle">
@@ -1136,7 +1156,7 @@
 						</div>
 					</div>
 
-					<h4 class="card-title-sm" style="margin-top: 16px;">
+					<h4 class="card-title-sm card-title-spaced">
 						{$LL.admin_diagnostic_logging_client_overrides()}
 					</h4>
 					{#if clientsLoading}
@@ -1156,50 +1176,47 @@
 								/>
 							</div>
 
-							<div class="overrides-table-wrapper">
-								<table class="overrides-table">
-									<thead>
+							<AdminDataTable compact>
+								<thead>
+									<tr>
+										<th>{$LL.admin_diagnostic_logging_client()}</th>
+										<th>{$LL.admin_diagnostic_logging_storage_mode_column()}</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each filteredClientOptions as client (client.id)}
 										<tr>
-											<th>{$LL.admin_diagnostic_logging_client()}</th>
-											<th>{$LL.admin_diagnostic_logging_storage_mode_column()}</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each filteredClientOptions as client (client.id)}
-											<tr>
-												<td>
-													<div class="client-info">
-														<span class="client-name">{client.name}</span>
-														<span class="client-id">{client.id}</span>
-													</div>
-												</td>
-												<td>
-													<select
-														class="settings-select compact"
-														value={getClientStorageMode(client.id)}
-														onchange={(event) =>
-															setClientStorageMode(client.id, event.currentTarget.value)}
-														disabled={!canEdit || settingsLoading || settingsSaving}
+											<td>
+												<div class="client-info">
+													<span class="client-name">{client.name}</span>
+													<span class="client-id">{client.id}</span>
+												</div>
+											</td>
+											<td>
+												<select
+													class="settings-select compact"
+													value={getClientStorageMode(client.id)}
+													onchange={(event) =>
+														setClientStorageMode(client.id, event.currentTarget.value)}
+													disabled={!canEdit || settingsLoading || settingsSaving}
+												>
+													<option value="inherit"
+														>{$LL.admin_diagnostic_logging_inherit_default()}</option
 													>
-														<option value="inherit"
-															>{$LL.admin_diagnostic_logging_inherit_default()}</option
-														>
-														<option value="full"
-															>{$LL.admin_diagnostic_logging_storage_full()}</option
-														>
-														<option value="masked"
-															>{$LL.admin_diagnostic_logging_storage_masked()}</option
-														>
-														<option value="minimal"
-															>{$LL.admin_diagnostic_logging_storage_minimal()}</option
-														>
-													</select>
-												</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
+													<option value="full">{$LL.admin_diagnostic_logging_storage_full()}</option
+													>
+													<option value="masked"
+														>{$LL.admin_diagnostic_logging_storage_masked()}</option
+													>
+													<option value="minimal"
+														>{$LL.admin_diagnostic_logging_storage_minimal()}</option
+													>
+												</select>
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</AdminDataTable>
 						</div>
 					{/if}
 
@@ -1319,7 +1336,7 @@
 			</div>
 		{/if}
 	</div>
-</div>
+</AdminPageShell>
 
 <style>
 	.diagnostic-logging-page {
@@ -1328,64 +1345,69 @@
 		gap: 20px;
 	}
 
-	.page-header {
-		margin-bottom: 8px;
+	.settings-form-card {
+		background: var(--settings-panel-bg, var(--color-surface));
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		overflow: hidden;
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
 	}
 
-	.page-title {
-		margin: 0 0 8px 0;
-		font-size: 1.75rem;
-		font-weight: 600;
-		color: var(--text-primary);
+	.settings-input,
+	.settings-select {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
 	}
 
-	.page-description {
-		margin: 0;
-		color: var(--text-secondary);
-		font-size: 0.9375rem;
+	.settings-input:focus,
+	.settings-select:focus {
+		border-color: var(--color-accent);
+		box-shadow: var(--toolbar-control-focus-shadow, 0 0 0 3px var(--color-accent-muted));
 	}
 
-	/* Tabs Navigation */
-	.tabs-nav {
+	.settings-input:disabled,
+	.settings-select:disabled {
+		cursor: not-allowed;
+		opacity: 0.58;
+	}
+
+	.settings-actions {
 		display: flex;
-		gap: 4px;
-		border-bottom: 2px solid var(--border);
-		margin-bottom: 20px;
+		justify-content: flex-end;
+		gap: 12px;
+		padding: var(--settings-row-padding, 16px 20px);
+		border-top: var(--settings-actions-border-top, 1px solid var(--color-border));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
-	.tab-button {
-		padding: 12px 20px;
-		background: none;
-		border: none;
-		border-bottom: 2px solid transparent;
-		margin-bottom: -2px;
-		font-size: 0.9375rem;
-		font-weight: 500;
-		color: var(--text-secondary);
+	.settings-checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 		cursor: pointer;
-		transition: all 0.2s ease;
 	}
 
-	.tab-button:hover {
-		color: var(--text-primary);
-		background-color: var(--bg-hover);
+	.settings-checkbox-text {
+		color: var(--color-text-muted);
+		font-size: var(--settings-description-size, 0.875rem);
 	}
 
-	.tab-button.active {
-		color: var(--primary);
-		border-bottom-color: var(--primary);
-	}
-
-	/* Tab Content */
-	.tab-content {
-		display: flex;
-		flex-direction: column;
-		gap: 20px;
+	.field-error {
+		margin: 6px 0 0;
+		color: var(--color-danger);
+		font-size: 0.8125rem;
 	}
 
 	.card-section {
-		padding: 16px 20px;
-		border-top: 1px solid var(--border);
+		padding: var(--settings-row-padding, 16px 20px);
+		border-top: var(--settings-row-border-bottom, 1px solid var(--color-border));
 	}
 
 	.card-section:first-child {
@@ -1394,26 +1416,30 @@
 
 	.card-title {
 		margin: 0 0 4px 0;
-		font-size: 1rem;
-		color: var(--text-primary);
+		font-size: var(--settings-section-title-size, 1rem);
+		color: var(--color-text);
 	}
 
 	.card-title-sm {
 		margin: 0 0 6px 0;
-		font-size: 0.9rem;
-		color: var(--text-primary);
+		font-size: var(--settings-group-title-size, 0.9rem);
+		color: var(--color-text);
+	}
+
+	.card-title-spaced {
+		margin-top: 16px;
 	}
 
 	.card-subtitle {
 		margin: 0;
-		color: var(--text-secondary);
-		font-size: 0.875rem;
+		color: var(--color-text-muted);
+		font-size: var(--settings-description-size, 0.875rem);
 	}
 
 	.toggle-item {
 		margin-top: 24px;
 		padding-top: 24px;
-		border-top: 1px solid var(--border);
+		border-top: var(--settings-row-border-bottom, 1px solid var(--color-border));
 	}
 
 	.toggle-item:first-child {
@@ -1426,13 +1452,13 @@
 		margin: 0 0 6px 0;
 		font-size: 0.9rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.toggle-item-description {
 		margin: 0 0 12px 0;
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		line-height: 1.5;
 	}
 
@@ -1469,33 +1495,33 @@
 	}
 
 	.form-group label {
-		font-size: 0.875rem;
+		font-size: var(--settings-label-size, 0.875rem);
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.form-hint {
 		margin: 0 0 12px 0;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		font-size: 0.8125rem;
 	}
 
 	.settings-textarea {
 		width: 100%;
-		padding: 10px 12px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		font-size: 0.875rem;
-		background-color: var(--bg-card);
-		color: var(--text-primary);
-		resize: vertical;
 		min-height: 90px;
+		padding: var(--control-padding, 10px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, var(--radius-sm));
+		font-size: 0.875rem;
+		background-color: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		resize: vertical;
 	}
 
 	.settings-textarea:focus {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-light);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
 	.checkbox-grid {
@@ -1506,19 +1532,19 @@
 
 	.empty-state {
 		margin: 0;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		font-size: 0.875rem;
 	}
 
 	.inline-muted {
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		margin-left: 6px;
 	}
 
 	.info-list {
 		margin: 0;
 		padding-left: 18px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		line-height: 1.6;
 	}
 
@@ -1549,10 +1575,11 @@
 	.datetime-preview {
 		margin-top: 8px;
 		padding: 8px 12px;
-		background-color: var(--bg-subtle);
-		border-radius: var(--radius-sm);
+		background-color: var(--settings-card-bg, var(--color-surface-muted));
+		border: var(--settings-card-border, none);
+		border-radius: var(--radius-control, var(--radius-sm));
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-family: var(--font-mono);
 	}
 
@@ -1575,9 +1602,9 @@
 	}
 
 	.category-checkbox-card {
-		background-color: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		background-color: var(--settings-card-bg, var(--color-surface-muted));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control, var(--radius-sm)));
 		padding: 12px 16px;
 		transition: all var(--transition-fast);
 		cursor: pointer;
@@ -1587,13 +1614,13 @@
 	}
 
 	.category-checkbox-card:hover {
-		background-color: var(--bg-card);
-		border-color: var(--primary-light);
+		background-color: var(--color-surface);
+		border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
 	}
 
 	.category-checkbox-card.checked {
-		background-color: var(--primary-light);
-		border-color: var(--primary);
+		background-color: var(--color-accent-muted);
+		border-color: var(--color-accent);
 	}
 
 	.category-content {
@@ -1606,12 +1633,12 @@
 	.category-checkbox-text {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.category-description {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		line-height: 1.4;
 	}
 
@@ -1629,41 +1656,9 @@
 		margin-bottom: 12px;
 	}
 
-	.overrides-table-wrapper {
+	.client-overrides-section :global(.admin-data-table-wrap) {
 		max-height: 400px;
-		overflow-y: auto;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-	}
-
-	.overrides-table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.overrides-table thead {
-		position: sticky;
-		top: 0;
-		background-color: var(--bg-subtle);
-		z-index: 1;
-	}
-
-	.overrides-table th {
-		padding: 12px 16px;
-		text-align: left;
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--text-secondary);
-		border-bottom: 1px solid var(--border);
-	}
-
-	.overrides-table td {
-		padding: 12px 16px;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.overrides-table tbody tr:hover {
-		background-color: var(--bg-hover);
+		overflow: auto;
 	}
 
 	.client-info {
@@ -1674,13 +1669,13 @@
 
 	.client-name {
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-weight: 500;
 	}
 
 	.client-id {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		font-family: var(--font-mono);
 	}
 

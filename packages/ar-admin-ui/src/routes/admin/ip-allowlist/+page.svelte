@@ -6,6 +6,12 @@
 		validateIpRange
 	} from '$lib/api/admin-ip-allowlist';
 	import { Modal } from '$lib/components';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let entries: IpAllowlistEntry[] = $state([]);
@@ -199,38 +205,30 @@
 	<title>{$LL.admin_ip_allowlist_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_ip_allowlist_title()}</h1>
-			<p class="page-description">{$LL.admin_ip_allowlist_description()}</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={openCheckDialog}
-				>{$LL.admin_ip_allowlist_check_ip()}</button
-			>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_ip_allowlist_title()}
+		description={$LL.admin_ip_allowlist_description()}
+	>
+		{#snippet actions()}
+			<button class="btn btn-secondary" onclick={openCheckDialog}>
+				{$LL.admin_ip_allowlist_check_ip()}
+			</button>
 			<button class="btn btn-primary" onclick={openCreateDialog}>
 				<i class="i-ph-plus"></i>
 				{$LL.admin_ip_allowlist_add_ip()}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	<!-- Status Banner -->
 	<div class="status-banner {restrictionActive ? 'active' : 'inactive'}">
-		<div class="status-icon">
-			{#if restrictionActive}
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-				</svg>
-			{:else}
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<circle cx="12" cy="12" r="10" />
-					<path d="M12 8v4M12 16h.01" />
-				</svg>
-			{/if}
-		</div>
+		<span
+			class={restrictionActive
+				? 'status-icon i-ph-shield-check'
+				: 'status-icon i-ph-warning-circle'}
+			aria-hidden="true"
+		></span>
 		<div class="status-text">
 			{#if restrictionActive}
 				<strong>{$LL.admin_ip_allowlist_restriction_active()}</strong>
@@ -246,12 +244,12 @@
 	</div>
 
 	<!-- Filters -->
-	<div class="filters-bar">
+	<AdminToolbar>
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={includeDisabled} onchange={() => loadEntries()} />
 			{$LL.admin_ip_allowlist_show_disabled_entries()}
 		</label>
-	</div>
+	</AdminToolbar>
 
 	<!-- Content -->
 	{#if loading}
@@ -272,59 +270,54 @@
 			<p class="text-secondary">{$LL.admin_ip_allowlist_empty_description()}</p>
 		</div>
 	{:else}
-		<div class="table-container">
-			<table class="table">
-				<thead>
-					<tr>
-						<th>{$LL.admin_ip_allowlist_ip_range()}</th>
-						<th>{$LL.admin_ip_allowlist_description_label()}</th>
-						<th>{$LL.admin_ip_allowlist_version()}</th>
-						<th>{$LL.admin_ip_allowlist_status()}</th>
-						<th>{$LL.admin_ip_allowlist_created()}</th>
-						<th>{$LL.admin_ip_allowlist_actions()}</th>
+		<AdminDataTable width="wide">
+			<thead>
+				<tr>
+					<th>{$LL.admin_ip_allowlist_ip_range()}</th>
+					<th>{$LL.admin_ip_allowlist_description_label()}</th>
+					<th>{$LL.admin_ip_allowlist_version()}</th>
+					<th>{$LL.admin_ip_allowlist_status()}</th>
+					<th>{$LL.admin_ip_allowlist_created()}</th>
+					<th>{$LL.admin_ip_allowlist_actions()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each entries as entry (entry.id)}
+					<tr class:disabled={!entry.enabled}>
+						<td>
+							<code class="ip-code">{entry.ip_range}</code>
+						</td>
+						<td>{entry.description || '-'}</td>
+						<td>IPv{entry.ip_version || '?'}</td>
+						<td>
+							{#if entry.enabled}
+								<span class="badge badge-success">{$LL.admin_ip_allowlist_enabled()}</span>
+							{:else}
+								<span class="badge badge-neutral">{$LL.admin_ip_allowlist_disabled()}</span>
+							{/if}
+						</td>
+						<td>{formatDate(entry.created_at)}</td>
+						<td>
+							<div class="action-buttons">
+								<button class="btn btn-sm btn-secondary" onclick={() => handleToggleEnabled(entry)}>
+									{entry.enabled
+										? $LL.admin_ip_allowlist_disable()
+										: $LL.admin_ip_allowlist_enable()}
+								</button>
+								<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(entry)}>
+									{$LL.admin_ip_allowlist_edit()}
+								</button>
+								<button class="btn btn-sm btn-danger" onclick={() => handleDelete(entry)}>
+									{$LL.admin_ip_allowlist_delete()}
+								</button>
+							</div>
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					{#each entries as entry (entry.id)}
-						<tr class:disabled={!entry.enabled}>
-							<td>
-								<code class="ip-code">{entry.ip_range}</code>
-							</td>
-							<td>{entry.description || '-'}</td>
-							<td>IPv{entry.ip_version || '?'}</td>
-							<td>
-								{#if entry.enabled}
-									<span class="badge badge-success">{$LL.admin_ip_allowlist_enabled()}</span>
-								{:else}
-									<span class="badge badge-neutral">{$LL.admin_ip_allowlist_disabled()}</span>
-								{/if}
-							</td>
-							<td>{formatDate(entry.created_at)}</td>
-							<td>
-								<div class="action-buttons">
-									<button
-										class="btn btn-sm btn-secondary"
-										onclick={() => handleToggleEnabled(entry)}
-									>
-										{entry.enabled
-											? $LL.admin_ip_allowlist_disable()
-											: $LL.admin_ip_allowlist_enable()}
-									</button>
-									<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(entry)}>
-										{$LL.admin_ip_allowlist_edit()}
-									</button>
-									<button class="btn btn-sm btn-danger" onclick={() => handleDelete(entry)}>
-										{$LL.admin_ip_allowlist_delete()}
-									</button>
-								</div>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+				{/each}
+			</tbody>
+		</AdminDataTable>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Dialog -->
 <Modal
@@ -336,23 +329,27 @@
 	{#if createError}
 		<div class="alert alert-danger">{createError}</div>
 	{/if}
-	<div class="form-group">
-		<label for="ipRange">{$LL.admin_ip_allowlist_ip_range_required()}</label>
+	<div class="admin-field modal-field">
+		<label class="admin-field__label" for="ipRange">
+			{$LL.admin_ip_allowlist_ip_range_required()}
+		</label>
 		<input
 			type="text"
 			id="ipRange"
-			class="input"
+			class="admin-input"
 			bind:value={newIpRange}
 			placeholder={$LL.admin_ip_allowlist_ip_range_placeholder()}
 		/>
-		<p class="help-text">{$LL.admin_ip_allowlist_ip_range_help()}</p>
+		<p class="field-hint">{$LL.admin_ip_allowlist_ip_range_help()}</p>
 	</div>
-	<div class="form-group">
-		<label for="description">{$LL.admin_ip_allowlist_description_label()}</label>
+	<div class="admin-field modal-field">
+		<label class="admin-field__label" for="description">
+			{$LL.admin_ip_allowlist_description_label()}
+		</label>
 		<input
 			type="text"
 			id="description"
-			class="input"
+			class="admin-input"
 			bind:value={newDescription}
 			placeholder={$LL.admin_ip_allowlist_description_placeholder()}
 		/>
@@ -375,13 +372,17 @@
 	title={$LL.admin_ip_allowlist_edit_entry()}
 	size="md"
 >
-	<div class="form-group">
-		<label for="editIpRange">{$LL.admin_ip_allowlist_ip_range_label()}</label>
-		<input type="text" id="editIpRange" class="input" bind:value={editIpRange} />
+	<div class="admin-field modal-field">
+		<label class="admin-field__label" for="editIpRange">
+			{$LL.admin_ip_allowlist_ip_range_label()}
+		</label>
+		<input type="text" id="editIpRange" class="admin-input" bind:value={editIpRange} />
 	</div>
-	<div class="form-group">
-		<label for="editDescription">{$LL.admin_ip_allowlist_description_label()}</label>
-		<input type="text" id="editDescription" class="input" bind:value={editDescription} />
+	<div class="admin-field modal-field">
+		<label class="admin-field__label" for="editDescription">
+			{$LL.admin_ip_allowlist_description_label()}
+		</label>
+		<input type="text" id="editDescription" class="admin-input" bind:value={editDescription} />
 	</div>
 
 	{#snippet footer()}
@@ -401,12 +402,14 @@
 	title={$LL.admin_ip_allowlist_check_address()}
 	size="md"
 >
-	<div class="form-group">
-		<label for="checkIpInput">{$LL.admin_ip_allowlist_ip_address()}</label>
+	<div class="admin-field modal-field">
+		<label class="admin-field__label" for="checkIpInput">
+			{$LL.admin_ip_allowlist_ip_address()}
+		</label>
 		<input
 			type="text"
 			id="checkIpInput"
-			class="input"
+			class="admin-input"
 			bind:value={checkIp}
 			placeholder={$LL.admin_ip_allowlist_check_placeholder()}
 		/>
@@ -439,39 +442,40 @@
 </Modal>
 
 <style>
-	/* Page-specific styles for IP Allowlist */
-
-	/* Status Banner */
 	.status-banner {
 		display: flex;
 		align-items: center;
 		gap: 1rem;
 		padding: 1rem 1.5rem;
-		border-radius: var(--radius-lg);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		margin-bottom: 1.5rem;
+		background: var(--color-surface);
+		box-shadow: var(--card-shadow, var(--shadow-panel, none));
 	}
 
 	.status-banner.active {
-		background: var(--success-subtle);
-		border: 1px solid var(--success);
+		background: color-mix(in srgb, var(--color-success) 10%, var(--color-surface));
+		border-color: color-mix(in srgb, var(--color-success) 36%, var(--color-border));
 	}
 
 	.status-banner.inactive {
-		background: var(--warning-subtle);
-		border: 1px solid var(--warning);
+		background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
+		border-color: color-mix(in srgb, var(--color-warning) 36%, var(--color-border));
 	}
 
-	.status-icon svg {
+	.status-icon {
+		flex: none;
 		width: 2rem;
 		height: 2rem;
 	}
 
 	.status-banner.active .status-icon {
-		color: var(--success);
+		color: var(--color-success);
 	}
 
 	.status-banner.inactive .status-icon {
-		color: var(--warning);
+		color: var(--color-warning);
 	}
 
 	.status-text {
@@ -480,28 +484,24 @@
 
 	.status-text strong {
 		display: block;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.status-text span {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.current-ip {
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.current-ip code {
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		padding: 0.25rem 0.5rem;
-		border-radius: var(--radius-sm);
-	}
-
-	/* Filters */
-	.filters-bar {
-		margin-bottom: 1rem;
+		border-radius: var(--radius-control);
+		font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 	}
 
 	.checkbox-label {
@@ -510,55 +510,27 @@
 		gap: 0.5rem;
 		cursor: pointer;
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
-	/* Table */
-	.table-container {
-		overflow-x: auto;
-		background: var(--bg-card);
-		border-radius: var(--radius-lg);
-		border: 1px solid var(--border);
-	}
-
-	.table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.table th,
-	.table td {
-		padding: 0.75rem 1rem;
-		text-align: left;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.table th {
-		font-weight: 600;
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		color: var(--text-secondary);
-		background: var(--bg-subtle);
-	}
-
-	.table tr.disabled {
+	tr.disabled {
 		opacity: 0.6;
 	}
 
 	.ip-code {
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		padding: 0.25rem 0.5rem;
-		border-radius: var(--radius-sm);
-		font-family: var(--font-mono);
-		color: var(--text-primary);
+		border-radius: var(--radius-control);
+		font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+		color: var(--color-text);
 	}
 
 	.action-buttons {
 		display: flex;
 		gap: 0.5rem;
+		flex-wrap: wrap;
 	}
 
-	/* Error state */
 	.error-state {
 		display: flex;
 		flex-direction: column;
@@ -566,66 +538,46 @@
 		justify-content: center;
 		padding: 48px 24px;
 		text-align: center;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.error-text {
-		color: var(--danger);
+		color: var(--color-danger);
 		margin-bottom: 1rem;
 	}
 
 	.text-secondary {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
-	/* Form */
-	.input {
-		width: 100%;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font-size: 0.875rem;
+	.modal-field + .modal-field {
+		margin-top: 1rem;
 	}
 
-	.input:focus {
-		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-subtle);
-	}
-
-	.help-text {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-		margin-top: 0.25rem;
-	}
-
-	/* Alert */
 	.alert-danger {
-		background: var(--danger-subtle);
-		color: var(--danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
 	}
 
-	/* Check Result */
 	.check-result {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
 		padding: 1rem;
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-control);
 		margin-top: 1rem;
 	}
 
 	.check-result.allowed {
-		background: var(--success-subtle);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
+		color: var(--color-success);
 	}
 
 	.check-result.denied {
-		background: var(--danger-subtle);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
 	}
 
 	.result-icon {

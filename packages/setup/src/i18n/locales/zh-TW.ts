@@ -1060,7 +1060,11 @@ const zhTW: Translations = {
   'web.envDetail.emailCloudflareRequirementDns': '需要完成 Cloudflare DNS / 網域接入',
   'web.envDetail.emailCloudflareRequirementManual':
     '網域設定仍需在 Cloudflare Dashboard 中手動完成',
-  'web.envDetail.emailCloudflareFromHint': '必須使用已接入 Cloudflare Email Service 的網域地址。',
+  'web.envDetail.emailCloudflareFromHint':
+    '使用 Cloudflare Email Service 時，必須使用已接入 Cloudflare 的網域地址。',
+  'web.envDetail.emailCloudflareSettingsLink': 'Cloudflare Email Routing 設定',
+  'web.envDetail.emailResendFromHint': '使用 Resend 時，必須在 Resend 中新增並驗證網域。',
+  'web.envDetail.emailResendDomainsLink': 'Resend Domains',
   'web.envDetail.emailFromAddress': '寄件電子郵件地址',
   'web.envDetail.emailFromName': '寄件者顯示名稱（選填）',
   'web.envDetail.emailEnableCloudflare': '啟用 Cloudflare Email Service',
@@ -1073,6 +1077,10 @@ const zhTW: Translations = {
   'web.envDetail.emailSwitchProviderConfirm':
     '此環境已設定其他郵件提供者。要切換到 Cloudflare Email Service 嗎？',
   'web.envDetail.emailStarting': '正在開始 Cloudflare Email 設定...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    '此環境已設定其他郵件提供者。要切換到 Resend 嗎？',
+  'web.envDetail.emailResendStarting': '正在儲存 Resend 郵件設定...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Resend 郵件設定已儲存。',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': '更新所有 Workers',

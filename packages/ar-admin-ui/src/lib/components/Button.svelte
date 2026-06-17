@@ -44,13 +44,13 @@
 		justify-content: center;
 		gap: 8px;
 		padding: 12px 20px;
-		border-radius: var(--radius-lg);
-		font-family: var(--font-display);
+		border-radius: var(--radius-control, var(--radius-lg));
+		font-family: var(--button-font, var(--font-display));
 		font-size: 0.9375rem;
 		font-weight: 600;
 		border: none;
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		transition: var(--button-transition, all var(--transition-fast));
 		white-space: nowrap;
 		position: relative;
 		overflow: hidden;
@@ -64,68 +64,74 @@
 
 	/* Primary variant - gradient with glow */
 	.btn-primary {
-		background: var(--gradient-primary);
-		color: white;
-		box-shadow: 0 4px 16px rgba(51, 51, 51, 0.3);
+		background: var(--button-primary-bg, var(--color-accent));
+		color: var(--button-primary-color, var(--color-accent-contrast));
+		box-shadow: var(--button-primary-shadow, none);
 	}
 
 	.btn-primary:hover:not(:disabled) {
-		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(51, 51, 51, 0.4);
+		transform: var(--button-hover-transform, translateY(-2px));
+		background: var(
+			--button-primary-hover-bg,
+			color-mix(in srgb, var(--color-accent) 88%, var(--color-text))
+		);
 	}
 
 	.btn-primary::after {
 		content: '';
 		position: absolute;
 		inset: 0;
-		background: linear-gradient(rgba(255, 255, 255, 0.2), transparent);
+		background: var(
+			--button-primary-overlay-bg,
+			linear-gradient(
+				color-mix(in srgb, var(--color-accent-contrast) 20%, transparent),
+				transparent
+			)
+		);
 		opacity: 0;
 		transition: opacity var(--transition-fast);
 	}
 
 	.btn-primary:hover::after {
-		opacity: 1;
+		opacity: var(--button-primary-overlay-hover-opacity, 1);
 	}
 
 	/* Secondary variant - glass effect */
 	.btn-secondary {
-		background: var(--bg-glass);
-		color: var(--text-primary);
-		border: 1px solid var(--border);
-		backdrop-filter: var(--blur-sm);
-		-webkit-backdrop-filter: var(--blur-sm);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: white;
-		border-color: var(--primary);
-		color: var(--primary);
-		transform: translateY(-2px);
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+		transform: var(--button-hover-transform, translateY(-2px));
 	}
 
 	/* Ghost variant */
 	.btn-ghost {
 		background: transparent;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		box-shadow: none;
 	}
 
 	.btn-ghost:hover:not(:disabled) {
-		background: var(--primary-light);
-		color: var(--primary);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	/* Danger variant */
 	.btn-danger {
-		background: var(--danger);
-		color: white;
-		box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+		background: var(--color-danger);
+		color: var(--color-accent-contrast);
+		box-shadow: none;
 	}
 
 	.btn-danger:hover:not(:disabled) {
-		background: #dc2626;
-		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(239, 68, 68, 0.4);
+		background: color-mix(in srgb, var(--color-danger) 88%, var(--color-text));
+		transform: var(--button-hover-transform, translateY(-2px));
 	}
 
 	/* Size variants */
@@ -163,7 +169,10 @@
 	/* Focus state */
 	.btn:focus {
 		outline: none;
-		box-shadow: 0 0 0 3px var(--primary-light);
+		box-shadow: var(
+			--button-focus-shadow,
+			var(--control-focus-shadow, 0 0 0 3px var(--color-accent-muted))
+		);
 	}
 
 	/* Disabled state */

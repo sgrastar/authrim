@@ -8,6 +8,9 @@
 		type CacheModeInfoResponse
 	} from '$lib/api/admin-cache-mode';
 	import Alert from '$lib/components/Alert.svelte';
+	import { AdminDataTable } from '$lib/components/admin';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 
 	// State
 	let platformMode = $state<PlatformCacheModeResponse | null>(null);
@@ -77,168 +80,168 @@
 	<title>Cache Mode Settings - Admin Dashboard - Authrim</title>
 </svelte:head>
 
-<div class="cache-mode-page">
-	<!-- Header -->
-	<div class="settings-detail-header">
-		<a href="/admin/settings" class="back-link">
-			<i class="i-ph-arrow-left"></i>
-			Back to Settings
-		</a>
-		<h1 class="page-title">Cache Mode Settings</h1>
-		<p class="page-description">
-			Configure caching behavior for client metadata and related data. Maintenance mode uses shorter
-			TTLs for development and testing.
-		</p>
-	</div>
+{#snippet headerActions()}
+	<a href="/admin/settings" class="back-link">
+		<i class="i-ph-arrow-left"></i>
+		Back to Settings
+	</a>
+{/snippet}
 
-	<!-- Warning banner for maintenance mode -->
-	{#if isMaintenanceMode && !loading}
-		<Alert variant="warning" title="Maintenance Mode Active">
-			Cache TTL is set to 30 seconds. This may impact performance in production environments.
-			Consider switching to Fixed mode for production use.
-		</Alert>
-	{/if}
+<AdminPageShell>
+	<div class="cache-mode-page">
+		<AdminPageHeader
+			title="Cache Mode Settings"
+			description="Configure caching behavior for client metadata and related data. Maintenance mode uses shorter TTLs for development and testing."
+			actions={headerActions}
+		/>
 
-	<!-- Success/Error messages -->
-	{#if successMessage}
-		<Alert variant="success" dismissible onDismiss={() => (successMessage = '')}>
-			{successMessage}
-		</Alert>
-	{/if}
+		<!-- Warning banner for maintenance mode -->
+		{#if isMaintenanceMode && !loading}
+			<Alert variant="warning" title="Maintenance Mode Active">
+				Cache TTL is set to 30 seconds. This may impact performance in production environments.
+				Consider switching to Fixed mode for production use.
+			</Alert>
+		{/if}
 
-	{#if error}
-		<Alert variant="error" dismissible onDismiss={() => (error = '')}>
-			{error}
-		</Alert>
-	{/if}
+		<!-- Success/Error messages -->
+		{#if successMessage}
+			<Alert variant="success" dismissible onDismiss={() => (successMessage = '')}>
+				{successMessage}
+			</Alert>
+		{/if}
 
-	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch animate-spin"></i>
-			<p>Loading cache settings...</p>
-		</div>
-	{:else if platformMode && modeInfo}
-		<!-- Current Status Card -->
-		<div class="status-card">
-			<div class="status-header">
-				<div class="status-icon" class:maintenance={isMaintenanceMode}>
-					<i class={isMaintenanceMode ? 'i-ph-wrench' : 'i-ph-database'}></i>
+		{#if error}
+			<Alert variant="error" dismissible onDismiss={() => (error = '')}>
+				{error}
+			</Alert>
+		{/if}
+
+		{#if loading}
+			<div class="loading-state">
+				<i class="i-ph-circle-notch animate-spin"></i>
+				<p>Loading cache settings...</p>
+			</div>
+		{:else if platformMode && modeInfo}
+			<!-- Current Status Card -->
+			<div class="status-card">
+				<div class="status-header">
+					<div class="status-icon" class:maintenance={isMaintenanceMode}>
+						<i class={isMaintenanceMode ? 'i-ph-wrench' : 'i-ph-database'}></i>
+					</div>
+					<div class="status-info">
+						<h2>Current Mode: <span class="mode-name">{platformMode.effective}</span></h2>
+						<p class="status-description">
+							{#if platformMode.mode === null}
+								Using default mode (no custom setting)
+							{:else}
+								Custom mode set via Admin API
+							{/if}
+						</p>
+					</div>
 				</div>
-				<div class="status-info">
-					<h2>Current Mode: <span class="mode-name">{platformMode.effective}</span></h2>
-					<p class="status-description">
-						{#if platformMode.mode === null}
-							Using default mode (no custom setting)
+			</div>
+
+			<!-- Mode Selection -->
+			<div class="mode-selection-card">
+				<h3 class="card-section-title">Select Cache Mode</h3>
+
+				<div class="mode-options">
+					<!-- Maintenance Mode -->
+					<label class="mode-option" class:selected={selectedMode === 'maintenance'}>
+						<input
+							type="radio"
+							name="cacheMode"
+							value="maintenance"
+							bind:group={selectedMode}
+							disabled={saving}
+						/>
+						<div class="mode-option-content">
+							<div class="mode-option-header">
+								<div class="mode-option-icon maintenance">
+									<i class="i-ph-wrench"></i>
+								</div>
+								<div>
+									<h4>Maintenance Mode</h4>
+									<span class="mode-badge maintenance">Development / Testing</span>
+								</div>
+							</div>
+							<p class="mode-option-description">
+								{modeInfo.modes.maintenance.description}
+							</p>
+							<div class="mode-use-cases">
+								<strong>Use cases:</strong>
+								<ul>
+									{#each modeInfo.modes.maintenance.use_cases as useCase (useCase)}
+										<li>{useCase}</li>
+									{/each}
+								</ul>
+							</div>
+						</div>
+					</label>
+
+					<!-- Fixed Mode -->
+					<label class="mode-option" class:selected={selectedMode === 'fixed'}>
+						<input
+							type="radio"
+							name="cacheMode"
+							value="fixed"
+							bind:group={selectedMode}
+							disabled={saving}
+						/>
+						<div class="mode-option-content">
+							<div class="mode-option-header">
+								<div class="mode-option-icon mode-option-icon--fixed">
+									<i class="i-ph-database"></i>
+								</div>
+								<div>
+									<h4>Fixed Mode</h4>
+									<span class="mode-badge mode-badge--fixed">Production</span>
+								</div>
+							</div>
+							<p class="mode-option-description">
+								{modeInfo.modes.fixed.description}
+							</p>
+							<div class="mode-use-cases">
+								<strong>Use cases:</strong>
+								<ul>
+									{#each modeInfo.modes.fixed.use_cases as useCase (useCase)}
+										<li>{useCase}</li>
+									{/each}
+								</ul>
+							</div>
+						</div>
+					</label>
+				</div>
+
+				<!-- Save Button -->
+				<div class="save-section">
+					<button
+						class="btn btn-primary"
+						onclick={saveCacheMode}
+						disabled={saving || selectedMode === platformMode.effective}
+					>
+						{#if saving}
+							<i class="i-ph-circle-notch animate-spin"></i>
+							Saving...
 						{:else}
-							Custom mode set via Admin API
+							<i class="i-ph-floppy-disk"></i>
+							Save Changes
 						{/if}
-					</p>
+					</button>
+					{#if selectedMode !== platformMode.effective}
+						<span class="unsaved-indicator">Unsaved changes</span>
+					{/if}
 				</div>
 			</div>
-		</div>
 
-		<!-- Mode Selection -->
-		<div class="mode-selection-card">
-			<h3 class="card-section-title">Select Cache Mode</h3>
+			<!-- TTL Comparison Table -->
+			<div class="ttl-comparison-card">
+				<h3 class="card-section-title">TTL Configuration Comparison</h3>
+				<p class="card-section-description">
+					Cache TTL (Time To Live) values for each data type in different modes.
+				</p>
 
-			<div class="mode-options">
-				<!-- Maintenance Mode -->
-				<label class="mode-option" class:selected={selectedMode === 'maintenance'}>
-					<input
-						type="radio"
-						name="cacheMode"
-						value="maintenance"
-						bind:group={selectedMode}
-						disabled={saving}
-					/>
-					<div class="mode-option-content">
-						<div class="mode-option-header">
-							<div class="mode-option-icon maintenance">
-								<i class="i-ph-wrench"></i>
-							</div>
-							<div>
-								<h4>Maintenance Mode</h4>
-								<span class="mode-badge maintenance">Development / Testing</span>
-							</div>
-						</div>
-						<p class="mode-option-description">
-							{modeInfo.modes.maintenance.description}
-						</p>
-						<div class="mode-use-cases">
-							<strong>Use cases:</strong>
-							<ul>
-								{#each modeInfo.modes.maintenance.use_cases as useCase (useCase)}
-									<li>{useCase}</li>
-								{/each}
-							</ul>
-						</div>
-					</div>
-				</label>
-
-				<!-- Fixed Mode -->
-				<label class="mode-option" class:selected={selectedMode === 'fixed'}>
-					<input
-						type="radio"
-						name="cacheMode"
-						value="fixed"
-						bind:group={selectedMode}
-						disabled={saving}
-					/>
-					<div class="mode-option-content">
-						<div class="mode-option-header">
-							<div class="mode-option-icon fixed">
-								<i class="i-ph-database"></i>
-							</div>
-							<div>
-								<h4>Fixed Mode</h4>
-								<span class="mode-badge fixed">Production</span>
-							</div>
-						</div>
-						<p class="mode-option-description">
-							{modeInfo.modes.fixed.description}
-						</p>
-						<div class="mode-use-cases">
-							<strong>Use cases:</strong>
-							<ul>
-								{#each modeInfo.modes.fixed.use_cases as useCase (useCase)}
-									<li>{useCase}</li>
-								{/each}
-							</ul>
-						</div>
-					</div>
-				</label>
-			</div>
-
-			<!-- Save Button -->
-			<div class="save-section">
-				<button
-					class="btn btn-primary"
-					onclick={saveCacheMode}
-					disabled={saving || selectedMode === platformMode.effective}
-				>
-					{#if saving}
-						<i class="i-ph-circle-notch animate-spin"></i>
-						Saving...
-					{:else}
-						<i class="i-ph-floppy-disk"></i>
-						Save Changes
-					{/if}
-				</button>
-				{#if selectedMode !== platformMode.effective}
-					<span class="unsaved-indicator">Unsaved changes</span>
-				{/if}
-			</div>
-		</div>
-
-		<!-- TTL Comparison Table -->
-		<div class="ttl-comparison-card">
-			<h3 class="card-section-title">TTL Configuration Comparison</h3>
-			<p class="card-section-description">
-				Cache TTL (Time To Live) values for each data type in different modes.
-			</p>
-
-			<div class="ttl-table-wrapper">
-				<table class="ttl-table">
+				<AdminDataTable>
 					<thead>
 						<tr>
 							<th>Data Type</th>
@@ -246,7 +249,7 @@
 								<i class="i-ph-wrench"></i>
 								Maintenance
 							</th>
-							<th class="mode-header fixed">
+							<th class="mode-header mode-header--fixed">
 								<i class="i-ph-database"></i>
 								Fixed
 							</th>
@@ -342,72 +345,59 @@
 							<td class="ttl-value">{formatTTL(modeInfo.modes.fixed.ttl_config.policy)}</td>
 						</tr>
 					</tbody>
-				</table>
+				</AdminDataTable>
 			</div>
-		</div>
 
-		<!-- Info box -->
-		<div class="info-box">
-			<div class="info-box-icon">
-				<i class="i-ph-info"></i>
+			<!-- Info box -->
+			<div class="info-box">
+				<div class="info-box-icon">
+					<i class="i-ph-info"></i>
+				</div>
+				<div class="info-box-content">
+					<h4>About Cache Modes</h4>
+					<p>{modeInfo.hierarchy.description}</p>
+					<p class="info-box-note">
+						<strong>Evaluation order:</strong>
+						{modeInfo.hierarchy.order.join(' → ')}
+					</p>
+					<p class="info-box-note">
+						<strong>KV Key Version:</strong>
+						{modeInfo.kv_key_version}
+					</p>
+				</div>
 			</div>
-			<div class="info-box-content">
-				<h4>About Cache Modes</h4>
-				<p>{modeInfo.hierarchy.description}</p>
-				<p class="info-box-note">
-					<strong>Evaluation order:</strong>
-					{modeInfo.hierarchy.order.join(' → ')}
-				</p>
-				<p class="info-box-note">
-					<strong>KV Key Version:</strong>
-					{modeInfo.kv_key_version}
-				</p>
-			</div>
-		</div>
-	{/if}
-</div>
+		{/if}
+	</div>
+</AdminPageShell>
 
 <style>
 	.cache-mode-page {
 		max-width: 900px;
 	}
 
-	/* Header */
-	.settings-detail-header {
-		margin-bottom: 32px;
-	}
-
 	.back-link {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		color: var(--text-muted);
+		min-height: var(--control-height, 36px);
+		padding: var(--button-padding, 8px 14px);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 		text-decoration: none;
 		font-size: 0.875rem;
-		margin-bottom: 16px;
+		font-weight: 600;
 		transition: color var(--transition-fast);
 	}
 
 	.back-link:hover {
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	.back-link :global(i) {
 		width: 16px;
 		height: 16px;
-	}
-
-	.page-title {
-		font-size: 1.75rem;
-		font-weight: 700;
-		color: var(--text-primary);
-		margin: 0 0 8px 0;
-	}
-
-	.page-description {
-		color: var(--text-secondary);
-		font-size: 0.9375rem;
-		margin: 0;
 	}
 
 	/* Loading State */
@@ -417,21 +407,21 @@
 		align-items: center;
 		justify-content: center;
 		padding: 64px;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		gap: 16px;
 	}
 
 	.loading-state :global(i) {
 		width: 32px;
 		height: 32px;
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	/* Status Card */
 	.status-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-xl);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-xl));
 		padding: 24px;
 		margin-bottom: 24px;
 	}
@@ -445,8 +435,8 @@
 	.status-icon {
 		width: 56px;
 		height: 56px;
-		background: var(--primary-light);
-		border-radius: var(--radius-lg);
+		background: var(--color-accent-muted);
+		border-radius: var(--radius-control, var(--radius-lg));
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -454,42 +444,42 @@
 	}
 
 	.status-icon.maintenance {
-		background: var(--warning-light);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 	}
 
 	.status-icon :global(i) {
 		width: 28px;
 		height: 28px;
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	.status-icon.maintenance :global(i) {
-		color: var(--warning);
+		color: var(--color-warning);
 	}
 
 	.status-info h2 {
 		font-size: 1.25rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0 0 4px 0;
 	}
 
 	.mode-name {
 		text-transform: capitalize;
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	.status-description {
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		font-size: 0.875rem;
 		margin: 0;
 	}
 
 	/* Mode Selection Card */
 	.mode-selection-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-xl);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-xl));
 		padding: 24px;
 		margin-bottom: 24px;
 	}
@@ -497,12 +487,12 @@
 	.card-section-title {
 		font-size: 1.125rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0 0 16px 0;
 	}
 
 	.card-section-description {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		margin: 0 0 20px 0;
 	}
@@ -515,21 +505,21 @@
 
 	.mode-option {
 		display: flex;
-		border: 2px solid var(--border);
-		border-radius: var(--radius-lg);
+		border: 2px solid var(--color-border);
+		border-radius: var(--radius-control, var(--radius-lg));
 		padding: 20px;
 		cursor: pointer;
 		transition: all var(--transition-fast);
 	}
 
 	.mode-option:hover {
-		border-color: var(--primary);
-		background: var(--bg-glass);
+		border-color: var(--color-accent);
+		background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface));
 	}
 
 	.mode-option.selected {
-		border-color: var(--primary);
-		background: var(--primary-light);
+		border-color: var(--color-accent);
+		background: var(--color-accent-muted);
 	}
 
 	.mode-option input[type='radio'] {
@@ -550,8 +540,8 @@
 	.mode-option-icon {
 		width: 44px;
 		height: 44px;
-		background: var(--bg-glass);
-		border-radius: var(--radius-md);
+		background: var(--color-surface-muted);
+		border-radius: var(--radius-control, var(--radius-md));
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -559,11 +549,11 @@
 	}
 
 	.mode-option-icon.maintenance {
-		background: rgba(245, 158, 11, 0.15);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 	}
 
-	.mode-option-icon.fixed {
-		background: rgba(34, 197, 94, 0.15);
+	.mode-option-icon--fixed {
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
 	}
 
 	.mode-option-icon :global(i) {
@@ -572,40 +562,40 @@
 	}
 
 	.mode-option-icon.maintenance :global(i) {
-		color: #f59e0b;
+		color: var(--color-warning);
 	}
 
-	.mode-option-icon.fixed :global(i) {
-		color: #22c55e;
+	.mode-option-icon--fixed :global(i) {
+		color: var(--color-success);
 	}
 
 	.mode-option-header h4 {
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0 0 4px 0;
 	}
 
 	.mode-badge {
 		display: inline-block;
 		padding: 2px 8px;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-control, var(--radius-sm));
 		font-size: 0.75rem;
 		font-weight: 500;
 	}
 
 	.mode-badge.maintenance {
-		background: rgba(245, 158, 11, 0.15);
-		color: #f59e0b;
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
-	.mode-badge.fixed {
-		background: rgba(34, 197, 94, 0.15);
-		color: #22c55e;
+	.mode-badge--fixed {
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.mode-option-description {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		margin: 0 0 12px 0;
 		line-height: 1.5;
@@ -613,11 +603,11 @@
 
 	.mode-use-cases {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 	}
 
 	.mode-use-cases strong {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.mode-use-cases ul {
@@ -636,7 +626,7 @@
 		gap: 16px;
 		margin-top: 24px;
 		padding-top: 24px;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.btn {
@@ -644,7 +634,7 @@
 		align-items: center;
 		gap: 8px;
 		padding: 12px 24px;
-		border-radius: var(--radius-lg);
+		border-radius: var(--radius-control, var(--radius-lg));
 		font-size: 0.9375rem;
 		font-weight: 600;
 		cursor: pointer;
@@ -658,12 +648,15 @@
 	}
 
 	.btn-primary {
-		background: var(--primary);
-		color: white;
+		background: var(--button-primary-bg, var(--color-accent));
+		color: var(--button-primary-color, var(--color-accent-contrast));
 	}
 
 	.btn-primary:hover:not(:disabled) {
-		background: var(--primary-hover);
+		background: var(
+			--button-primary-hover-bg,
+			color-mix(in srgb, var(--color-accent) 88%, var(--color-text))
+		);
 		transform: translateY(-1px);
 	}
 
@@ -673,42 +666,18 @@
 	}
 
 	.unsaved-indicator {
-		color: var(--warning);
+		color: var(--color-warning);
 		font-size: 0.875rem;
 		font-weight: 500;
 	}
 
 	/* TTL Comparison Card */
 	.ttl-comparison-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-xl);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-xl));
 		padding: 24px;
 		margin-bottom: 24px;
-	}
-
-	.ttl-table-wrapper {
-		overflow-x: auto;
-	}
-
-	.ttl-table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.ttl-table th,
-	.ttl-table td {
-		padding: 12px 16px;
-		text-align: left;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.ttl-table th {
-		font-weight: 600;
-		color: var(--text-secondary);
-		font-size: 0.8125rem;
-		text-transform: uppercase;
-		letter-spacing: 0.025em;
 	}
 
 	.mode-header {
@@ -723,11 +692,11 @@
 	}
 
 	.mode-header.maintenance :global(i) {
-		color: #f59e0b;
+		color: var(--color-warning);
 	}
 
-	.mode-header.fixed :global(i) {
-		color: #22c55e;
+	.mode-header--fixed :global(i) {
+		color: var(--color-success);
 	}
 
 	.data-type {
@@ -737,19 +706,19 @@
 
 	.data-type-name {
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.9375rem;
 	}
 
 	.data-type-desc {
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		font-size: 0.75rem;
 	}
 
 	.ttl-value {
 		font-family: var(--font-mono, monospace);
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-weight: 500;
 	}
 
@@ -757,17 +726,17 @@
 	.info-box {
 		display: flex;
 		gap: 16px;
-		background: var(--primary-light);
-		border: 1px solid rgba(var(--primary-rgb), 0.2);
-		border-radius: var(--radius-lg);
+		background: var(--color-accent-muted);
+		border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
+		border-radius: var(--radius-panel, var(--radius-lg));
 		padding: 20px;
 	}
 
 	.info-box-icon {
 		width: 40px;
 		height: 40px;
-		background: var(--primary);
-		border-radius: var(--radius-md);
+		background: var(--color-accent);
+		border-radius: var(--radius-control, var(--radius-md));
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -777,18 +746,18 @@
 	.info-box-icon :global(i) {
 		width: 20px;
 		height: 20px;
-		color: white;
+		color: var(--color-accent-contrast);
 	}
 
 	.info-box-content h4 {
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0 0 8px 0;
 	}
 
 	.info-box-content p {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		margin: 0;
 		line-height: 1.5;
@@ -797,7 +766,7 @@
 	.info-box-note {
 		margin-top: 8px !important;
 		font-size: 0.8125rem !important;
-		color: var(--text-muted) !important;
+		color: var(--color-text-subtle) !important;
 	}
 
 	/* Responsive */
@@ -811,11 +780,6 @@
 		.mode-option-header {
 			flex-direction: column;
 			align-items: flex-start;
-		}
-
-		.ttl-table th,
-		.ttl-table td {
-			padding: 8px 12px;
 		}
 
 		.info-box {

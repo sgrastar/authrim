@@ -17,6 +17,7 @@
 		formatPermissionDescription,
 		formatPermissionLabel
 	} from '$lib/admin/roles-i18n';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 
 	// Role data
 	let role: RoleDetail | null = $state(null);
@@ -166,11 +167,7 @@
 	</title>
 </svelte:head>
 
-<div class="admin-page">
-	<a href={role ? `/admin/roles/${role.id}` : '/admin/roles'} class="back-link">
-		← {$LL.admin_roles_back_to_role()}
-	</a>
-
+<AdminPageShell width="narrow">
 	{#if loading}
 		<div class="loading-state">{$LL.admin_roles_edit_loading()}</div>
 	{:else if loadError}
@@ -179,10 +176,17 @@
 			<button class="btn btn-secondary btn-sm" onclick={loadRole}>{$LL.admin_roles_retry()}</button>
 		</div>
 	{:else if role}
-		<h1 class="page-title">
-			{$LL.admin_roles_edit_title({ role: role.display_name || role.name })}
-		</h1>
-		<p class="modal-description">{$LL.admin_roles_edit_description()}</p>
+		<AdminPageHeader
+			title={$LL.admin_roles_edit_title({ role: role.display_name || role.name })}
+			description={$LL.admin_roles_edit_description()}
+		>
+			{#snippet actions()}
+				<button type="button" class="btn btn-secondary" onclick={navigateBack}>
+					<i class="i-ph-arrow-left"></i>
+					{$LL.admin_roles_back_to_role()}
+				</button>
+			{/snippet}
+		</AdminPageHeader>
 
 		{#if error}
 			<div class="alert alert-error">{error}</div>
@@ -195,9 +199,7 @@
 			}}
 		>
 			<!-- Basic Info Section -->
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_roles_basic_information()}</h2>
-
+			<AdminSection title={$LL.admin_roles_basic_information()}>
 				<div class="form-group">
 					<label for="name" class="form-label">{$LL.admin_roles_role_name()}</label>
 					<input
@@ -220,15 +222,11 @@
 						class="form-input"
 					></textarea>
 				</div>
-			</div>
+			</AdminSection>
 
 			<!-- Permissions Section -->
-			<div class="panel">
-				<h2 class="panel-title">
-					{$LL.admin_roles_permissions()}
-					<span class="text-danger">{$LL.admin_roles_required()}</span>
-				</h2>
-				<p class="form-hint" style="margin-bottom: 16px;">
+			<AdminSection title={$LL.admin_roles_permissions()}>
+				<p class="form-hint form-hint--stacked">
 					{$LL.admin_roles_permissions_hint()}
 				</p>
 
@@ -276,7 +274,7 @@
 						{$LL.admin_roles_selected_count({ count: selectedPermissions.size })}
 					</div>
 				{/if}
-			</div>
+			</AdminSection>
 
 			<!-- Actions -->
 			<div class="form-actions">
@@ -298,4 +296,4 @@
 			</div>
 		</form>
 	{/if}
-</div>
+</AdminPageShell>

@@ -1,6 +1,6 @@
 const adminAccount = {
-	admin_account_page_title: 'アカウント設定 - 管理ダッシュボード - Authrim',
-	admin_account_heading: 'アカウント設定',
+	admin_account_page_title: '環境設定 - 管理ダッシュボード - Authrim',
+	admin_account_heading: '環境設定',
 	admin_account_description: '管理ダッシュボードの利用環境をカスタマイズします',
 	admin_account_security: 'セキュリティ',
 	admin_account_passkeys: 'PassKey',
@@ -29,9 +29,21 @@ const adminAccount = {
 	admin_account_theme_mode_desc: 'ライトモードまたはダークモードを選択します',
 	admin_account_light: 'ライト',
 	admin_account_dark: 'ダーク',
-	admin_account_theme_color: 'テーマカラー',
-	admin_account_light_theme_color_desc: 'ライトテーマの色を選択します',
-	admin_account_dark_theme_color_desc: 'ダークテーマの色を選択します',
+	admin_account_theme_color: 'Admin UIスキン',
+	admin_account_light_theme_color_desc:
+		'Admin UIのスキンを選択します。各スキンはライト/ダークモードに対応しています',
+	admin_account_dark_theme_color_desc:
+		'Admin UIのスキンを選択します。各スキンはライト/ダークモードに対応しています',
+	admin_account_skin_classic: 'Classic',
+	admin_account_skin_classic_desc: 'アイボリー、ネイビー、真鍮を基調にした堅実な管理画面です。',
+	admin_account_skin_swiss_grid: 'Swiss Grid',
+	admin_account_skin_swiss_grid_desc:
+		'強い罫線、グリッド、モノスペースのラベルで運用情報を整理します。',
+	admin_account_skin_paper_beige: 'Paper Beige',
+	admin_account_skin_paper_beige_desc:
+		'温かい紙面、やわらかな操作部品、ダークナビとエメラルドのアクセントです。',
+	admin_account_skin_frosted: 'Frosted',
+	admin_account_skin_frosted_desc: '透過パネル、blur、落ち着いたインディゴの操作体系です。',
 	admin_account_theme_warm_beige: 'ウォームベージュ',
 	admin_account_theme_blue_gray: 'ブルーグレー',
 	admin_account_theme_fresh_green: 'フレッシュグリーン',

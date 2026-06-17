@@ -16,6 +16,7 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
@@ -486,24 +487,25 @@
 	</div>
 {/snippet}
 
-<div class="admin-page">
-	<a href="/admin/saml" class="back-link">← {$LL.admin_saml_detail_back()}</a>
+{#snippet pageActions()}
+	<a href="/admin/saml" class="btn btn-secondary">{$LL.admin_saml_detail_back()}</a>
+	{#if provider}
+		<button class="btn btn-danger" onclick={deleteProvider} disabled={busyAction === 'delete'}>
+			{$LL.admin_saml_detail_delete()}
+		</button>
+	{/if}
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={provider?.name ?? $LL.admin_saml_detail_loading()}
+		description={provider ? providerTypeLabel(provider.providerType) : undefined}
+		actions={pageActions}
+	/>
 
 	{#if loading}
 		<div class="loading-state">{$LL.admin_saml_detail_loading()}</div>
 	{:else if provider}
-		<div class="page-header">
-			<div>
-				<h1 class="page-title">{provider.name}</h1>
-				<p class="page-description">{providerTypeLabel(provider.providerType)}</p>
-			</div>
-			<div class="page-actions">
-				<button class="btn btn-danger" onclick={deleteProvider} disabled={busyAction === 'delete'}>
-					{$LL.admin_saml_detail_delete()}
-				</button>
-			</div>
-		</div>
-
 		<form
 			onsubmit={(event) => {
 				event.preventDefault();
@@ -522,28 +524,28 @@
 				<div class={providerCertificateMessageClass()}>{providerCertificateMessage()}</div>
 			{/if}
 
-			<div class="panel">
+			<AdminSection>
 				<ToggleSwitch
 					bind:checked={enabled}
 					label={$LL.admin_saml_detail_provider_status()}
 					description={$LL.admin_saml_detail_provider_status_desc()}
 				/>
-			</div>
+			</AdminSection>
 
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_saml_detail_basic_information()}</h2>
-
+			<AdminSection title={$LL.admin_saml_detail_basic_information()}>
 				<div class="form-grid">
-					<div class="form-group">
-						<label for="name" class="form-label">{$LL.admin_saml_detail_name_required()}</label>
-						<input id="name" type="text" bind:value={name} class="form-input" required />
+					<div class="admin-field">
+						<label for="name" class="admin-field__label"
+							>{$LL.admin_saml_detail_name_required()}</label
+						>
+						<input id="name" type="text" bind:value={name} class="admin-input" required />
 					</div>
 
-					<div class="form-group">
-						<label for="nameIdFormat" class="form-label"
+					<div class="admin-field">
+						<label for="nameIdFormat" class="admin-field__label"
 							>{$LL.admin_saml_detail_nameid_format()}</label
 						>
-						<select id="nameIdFormat" bind:value={nameIdFormat} class="form-select">
+						<select id="nameIdFormat" bind:value={nameIdFormat} class="admin-select">
 							{#each nameIdFormats as format (format.value)}
 								<option value={format.value}>{format.label}</option>
 							{/each}
@@ -558,25 +560,28 @@
 						</div>
 					</div>
 
-					<div class="form-group form-group-full">
-						<label for="description" class="form-label">{$LL.admin_saml_detail_description()}</label
+					<div class="admin-field admin-field--full">
+						<label for="description" class="admin-field__label"
+							>{$LL.admin_saml_detail_description()}</label
 						>
 						<textarea
 							id="description"
 							bind:value={description}
-							class="form-input form-textarea"
+							class="admin-input form-textarea"
 							rows="3"
 						></textarea>
 					</div>
 
-					<div class="form-group form-group-full">
-						<label for="logoUrl" class="form-label">{$LL.admin_saml_detail_logo_url()}</label>
+					<div class="admin-field admin-field--full">
+						<label for="logoUrl" class="admin-field__label"
+							>{$LL.admin_saml_detail_logo_url()}</label
+						>
 						<div class="logo-url-field">
 							<input
 								id="logoUrl"
 								type="url"
 								bind:value={logoUrl}
-								class="form-input"
+								class="admin-input"
 								placeholder="https://example.com/logo.png"
 							/>
 							{#if logoUrl}
@@ -585,12 +590,12 @@
 								</div>
 							{/if}
 						</div>
-						<p class="form-hint">
+						<p class="field-hint">
 							{$LL.admin_saml_detail_logo_hint()}
 						</p>
 					</div>
 
-					<div class="form-group form-group-full">
+					<div class="admin-field admin-field--full">
 						<LoginProviderIconPicker
 							bind:value={iconName}
 							defaultIcon="buildings"
@@ -599,45 +604,48 @@
 						/>
 					</div>
 				</div>
-			</div>
+			</AdminSection>
 
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_saml_detail_saml_configuration()}</h2>
-
+			<AdminSection title={$LL.admin_saml_detail_saml_configuration()}>
 				<div class="form-grid">
-					<div class="form-group form-group-full">
-						<label for="entityId" class="form-label">{$LL.admin_saml_entity_id()} *</label>
-						<input id="entityId" type="text" bind:value={entityId} class="form-input" />
+					<div class="admin-field admin-field--full">
+						<label for="entityId" class="admin-field__label">{$LL.admin_saml_entity_id()} *</label>
+						<input id="entityId" type="text" bind:value={entityId} class="admin-input" />
 					</div>
 
 					{#if provider.providerType === 'saml_idp'}
-						<div class="form-group">
-							<label for="ssoUrl" class="form-label">{$LL.admin_saml_sso_url_required()}</label>
-							<input id="ssoUrl" type="url" bind:value={ssoUrl} class="form-input" />
+						<div class="admin-field">
+							<label for="ssoUrl" class="admin-field__label"
+								>{$LL.admin_saml_sso_url_required()}</label
+							>
+							<input id="ssoUrl" type="url" bind:value={ssoUrl} class="admin-input" />
 						</div>
 					{:else}
-						<div class="form-group">
-							<label for="acsUrl" class="form-label">{$LL.admin_saml_acs_url_required()}</label>
-							<input id="acsUrl" type="url" bind:value={acsUrl} class="form-input" />
+						<div class="admin-field">
+							<label for="acsUrl" class="admin-field__label"
+								>{$LL.admin_saml_acs_url_required()}</label
+							>
+							<input id="acsUrl" type="url" bind:value={acsUrl} class="admin-input" />
 						</div>
 					{/if}
 
-					<div class="form-group">
-						<label for="sloUrl" class="form-label">{$LL.admin_saml_slo_url()}</label>
-						<input id="sloUrl" type="url" bind:value={sloUrl} class="form-input" />
+					<div class="admin-field">
+						<label for="sloUrl" class="admin-field__label">{$LL.admin_saml_slo_url()}</label>
+						<input id="sloUrl" type="url" bind:value={sloUrl} class="admin-input" />
 					</div>
 
-					<div class="form-group form-group-full">
-						<label for="metadataUrl" class="form-label">{$LL.admin_saml_local_metadata_url()}</label
+					<div class="admin-field admin-field--full">
+						<label for="metadataUrl" class="admin-field__label"
+							>{$LL.admin_saml_local_metadata_url()}</label
 						>
-						<input id="metadataUrl" type="url" bind:value={metadataUrl} class="form-input" />
-						<p class="form-hint">
+						<input id="metadataUrl" type="url" bind:value={metadataUrl} class="admin-input" />
+						<p class="field-hint">
 							{$LL.admin_saml_detail_metadata_source_hint()}
 						</p>
 					</div>
 
-					<div class="form-group form-group-full">
-						<label for="certificate" class="form-label">
+					<div class="admin-field admin-field--full">
+						<label for="certificate" class="admin-field__label">
 							{provider.providerType === 'saml_idp'
 								? $LL.admin_saml_detail_signing_certificate_required()
 								: $LL.admin_saml_detail_sp_certificate()}
@@ -649,10 +657,10 @@
 								certificatePreview = null;
 								certificatePreviewError = '';
 							}}
-							class="form-input form-textarea monospace"
+							class="admin-input form-textarea monospace"
 							rows="8"
 						></textarea>
-						<p class="form-hint">
+						<p class="field-hint">
 							{$LL.admin_saml_detail_certificate_hint()}
 						</p>
 						<div class="certificate-actions">
@@ -675,14 +683,14 @@
 						{/if}
 					</div>
 
-					<div class="form-group form-group-full">
-						<label for="attributeMapping" class="form-label"
+					<div class="admin-field admin-field--full">
+						<label for="attributeMapping" class="admin-field__label"
 							>{$LL.admin_saml_detail_attribute_mapping_json()}</label
 						>
 						<textarea
 							id="attributeMapping"
 							bind:value={attributeMappingJson}
-							class="form-input form-textarea monospace"
+							class="admin-input form-textarea monospace"
 							rows="6"
 						></textarea>
 					</div>
@@ -690,7 +698,7 @@
 
 				<div class="binding-section">
 					<h3 class="section-subtitle">{$LL.admin_saml_detail_allowed_bindings()}</h3>
-					<p class="form-hint">
+					<p class="field-hint">
 						{$LL.admin_saml_detail_allowed_bindings_hint()}
 					</p>
 				</div>
@@ -704,28 +712,26 @@
 						HTTP-Redirect
 					</label>
 				</div>
-			</div>
+			</AdminSection>
 
 			{#if provider.providerType === 'saml_idp'}
-				<div class="panel">
-					<h2 class="panel-title">{$LL.admin_saml_detail_sp_login_policy()}</h2>
-
+				<AdminSection title={$LL.admin_saml_detail_sp_login_policy()}>
 					<div class="form-grid">
-						<div class="form-group">
-							<label for="providerName" class="form-label"
+						<div class="admin-field">
+							<label for="providerName" class="admin-field__label"
 								>{$LL.admin_saml_detail_sp_display_name()}</label
 							>
-							<input id="providerName" type="text" bind:value={providerName} class="form-input" />
+							<input id="providerName" type="text" bind:value={providerName} class="admin-input" />
 						</div>
 
-						<div class="form-group">
-							<label for="jitEmailLinkingPolicy" class="form-label"
+						<div class="admin-field">
+							<label for="jitEmailLinkingPolicy" class="admin-field__label"
 								>{$LL.admin_saml_detail_jit_linking_policy()}</label
 							>
 							<select
 								id="jitEmailLinkingPolicy"
 								bind:value={jitEmailLinkingPolicy}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="email_linking"
 									>{$LL.admin_saml_detail_jit_existing_or_create()}</option
@@ -738,7 +744,7 @@
 							</p>
 						</div>
 
-						<div class="form-group form-group-full">
+						<div class="admin-field admin-field--full">
 							<label class="form-checkbox-label">
 								<input
 									type="checkbox"
@@ -752,14 +758,14 @@
 							</p>
 						</div>
 
-						<div class="form-group">
-							<label for="logoutRequestSignaturePolicy" class="form-label">
+						<div class="admin-field">
+							<label for="logoutRequestSignaturePolicy" class="admin-field__label">
 								{$LL.admin_saml_detail_idp_logout_signature()}
 							</label>
 							<select
 								id="logoutRequestSignaturePolicy"
 								bind:value={logoutRequestSignaturePolicy}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="required">{$LL.admin_saml_detail_required()}</option>
 								<option value="optional">{$LL.admin_saml_detail_optional()}</option>
@@ -770,43 +776,43 @@
 							</p>
 						</div>
 
-						<div class="form-group">
-							<label for="authnContextPolicyMode" class="form-label"
+						<div class="admin-field">
+							<label for="authnContextPolicyMode" class="admin-field__label"
 								>{$LL.admin_saml_detail_authn_context_policy()}</label
 							>
 							<select
 								id="authnContextPolicyMode"
 								bind:value={authnContextPolicyMode}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="observe">{$LL.admin_saml_detail_observe()}</option>
 								<option value="require_any">{$LL.admin_saml_detail_require_allowed()}</option>
 							</select>
 						</div>
 
-						<div class="form-group form-group-full">
-							<label for="allowedAuthnContextClassRefs" class="form-label">
+						<div class="admin-field admin-field--full">
+							<label for="allowedAuthnContextClassRefs" class="admin-field__label">
 								{$LL.admin_saml_detail_allowed_authn_context()}
 							</label>
 							<textarea
 								id="allowedAuthnContextClassRefs"
 								bind:value={allowedAuthnContextClassRefs}
-								class="form-input form-textarea monospace"
+								class="admin-input form-textarea monospace"
 								rows="3"
 							></textarea>
 						</div>
 					</div>
-				</div>
+				</AdminSection>
 			{/if}
 
 			{#if provider.providerType === 'saml_sp'}
-				<div class="panel">
-					<h2 class="panel-title">{$LL.admin_saml_detail_sp_policy()}</h2>
-
+				<AdminSection title={$LL.admin_saml_detail_sp_policy()}>
 					<div class="form-grid">
-						<div class="form-group">
-							<label for="samlProfile" class="form-label">{$LL.admin_saml_detail_profile()}</label>
-							<select id="samlProfile" bind:value={samlProfile} class="form-select">
+						<div class="admin-field">
+							<label for="samlProfile" class="admin-field__label"
+								>{$LL.admin_saml_detail_profile()}</label
+							>
+							<select id="samlProfile" bind:value={samlProfile} class="admin-select">
 								<option value="baseline">Baseline</option>
 								<option value="strict">Strict</option>
 								<option value="academic_publisher">Academic Publisher</option>
@@ -814,11 +820,11 @@
 							</select>
 						</div>
 
-						<div class="form-group">
-							<label for="attributePreset" class="form-label"
+						<div class="admin-field">
+							<label for="attributePreset" class="admin-field__label"
 								>{$LL.admin_saml_detail_attribute_preset()}</label
 							>
-							<select id="attributePreset" bind:value={attributePresetId} class="form-select">
+							<select id="attributePreset" bind:value={attributePresetId} class="admin-select">
 								<option value="">{$LL.admin_saml_detail_none()}</option>
 								{#each presets as preset (preset.id)}
 									<option value={preset.id}>{preset.label}</option>
@@ -826,14 +832,14 @@
 							</select>
 						</div>
 
-						<div class="form-group">
-							<label for="identityMappingFieldMapping" class="form-label"
+						<div class="admin-field">
+							<label for="identityMappingFieldMapping" class="admin-field__label"
 								>{$LL.admin_saml_detail_identity_mapping_policy()}</label
 							>
 							<select
 								id="identityMappingFieldMapping"
 								bind:value={identityMappingFieldMappingSetId}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
 								{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
@@ -847,14 +853,14 @@
 							</p>
 						</div>
 
-						<div class="form-group">
-							<label for="attributeReleaseConsent" class="form-label"
+						<div class="admin-field">
+							<label for="attributeReleaseConsent" class="admin-field__label"
 								>{$LL.admin_saml_detail_attribute_release_consent()}</label
 							>
 							<select
 								id="attributeReleaseConsent"
 								bind:value={attributeReleaseConsentSetting}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="disabled"
 									>{$LL.admin_saml_detail_attribute_release_consent_disabled()}</option
@@ -874,14 +880,14 @@
 							</p>
 						</div>
 
-						<div class="form-group">
-							<label for="authnRequestSignaturePolicy" class="form-label">
+						<div class="admin-field">
+							<label for="authnRequestSignaturePolicy" class="admin-field__label">
 								{$LL.admin_saml_detail_authn_request_signature()}
 							</label>
 							<select
 								id="authnRequestSignaturePolicy"
 								bind:value={authnRequestSignaturePolicy}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="optional">{$LL.admin_saml_detail_optional()}</option>
 								<option value="required">{$LL.admin_saml_detail_required()}</option>
@@ -889,14 +895,14 @@
 							</select>
 						</div>
 
-						<div class="form-group">
-							<label for="spLogoutRequestSignaturePolicy" class="form-label">
+						<div class="admin-field">
+							<label for="spLogoutRequestSignaturePolicy" class="admin-field__label">
 								{$LL.admin_saml_detail_logout_request_signature()}
 							</label>
 							<select
 								id="spLogoutRequestSignaturePolicy"
 								bind:value={logoutRequestSignaturePolicy}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="required">{$LL.admin_saml_detail_required()}</option>
 								<option value="optional">{$LL.admin_saml_detail_optional()}</option>
@@ -907,41 +913,41 @@
 							</p>
 						</div>
 
-						<div class="form-group">
-							<label for="authnContextClassRefMode" class="form-label"
+						<div class="admin-field">
+							<label for="authnContextClassRefMode" class="admin-field__label"
 								>{$LL.admin_saml_detail_authn_context_mode()}</label
 							>
 							<select
 								id="authnContextClassRefMode"
 								bind:value={authnContextClassRefMode}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="session">{$LL.admin_saml_detail_session_aware()}</option>
 								<option value="legacy_static">{$LL.admin_saml_detail_legacy_static()}</option>
 							</select>
 						</div>
 
-						<div class="form-group">
-							<label for="defaultAuthnContextClassRef" class="form-label">
+						<div class="admin-field">
+							<label for="defaultAuthnContextClassRef" class="admin-field__label">
 								{$LL.admin_saml_detail_default_authn_context()}
 							</label>
 							<input
 								id="defaultAuthnContextClassRef"
 								type="text"
 								bind:value={defaultAuthnContextClassRef}
-								class="form-input"
+								class="admin-input"
 							/>
 						</div>
 
-						<div class="form-group">
-							<label for="passkeyAuthnContextClassRef" class="form-label">
+						<div class="admin-field">
+							<label for="passkeyAuthnContextClassRef" class="admin-field__label">
 								{$LL.admin_saml_detail_passkey_authn_context()}
 							</label>
 							<input
 								id="passkeyAuthnContextClassRef"
 								type="text"
 								bind:value={passkeyAuthnContextClassRef}
-								class="form-input"
+								class="admin-input"
 							/>
 						</div>
 					</div>
@@ -958,26 +964,21 @@
 							description={$LL.admin_saml_detail_sign_responses_desc()}
 						/>
 					</div>
-				</div>
+				</AdminSection>
 			{/if}
 		</form>
 
-		<div class="panel">
-			<div class="panel-header">
-				<div>
-					<h2 class="panel-title">{$LL.admin_saml_local_signing_rollover()}</h2>
-					<p class="form-hint">
-						{$LL.admin_saml_detail_rollover_desc()}
-					</p>
-				</div>
-				<div class="key-state">
-					<span class:enabled={Boolean(provider.config.signingKeyPolicy?.active)}>active</span>
-					<span class:enabled={Boolean(provider.config.signingKeyPolicy?.next)}>next</span>
-					<span class:enabled={Boolean(provider.config.signingKeyPolicy?.backup)}>backup</span>
-				</div>
+		<AdminSection
+			title={$LL.admin_saml_local_signing_rollover()}
+			description={$LL.admin_saml_detail_rollover_desc()}
+		>
+			<div class="key-state">
+				<span class:enabled={Boolean(provider.config.signingKeyPolicy?.active)}>active</span>
+				<span class:enabled={Boolean(provider.config.signingKeyPolicy?.next)}>next</span>
+				<span class:enabled={Boolean(provider.config.signingKeyPolicy?.backup)}>backup</span>
 			</div>
 
-			<div class="panel-actions">
+			<div class="section-actions">
 				<button
 					class="btn btn-secondary"
 					onclick={promoteNext}
@@ -997,7 +998,7 @@
 						: $LL.admin_saml_detail_retire_backup()}
 				</button>
 			</div>
-		</div>
+		</AdminSection>
 
 		<div class="form-actions page-bottom-actions">
 			<button class="btn btn-primary" type="button" onclick={handleSave} disabled={saving}>
@@ -1007,9 +1008,67 @@
 	{:else}
 		<div class="alert alert-error">{error || $LL.admin_saml_detail_not_found()}</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
+	form {
+		display: grid;
+		gap: 18px;
+	}
+
+	.form-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 16px;
+	}
+
+	.admin-field {
+		display: grid;
+		gap: 6px;
+	}
+
+	.admin-field--full {
+		grid-column: 1 / -1;
+	}
+
+	.admin-field__label {
+		color: var(--color-text);
+		font-size: 0.84rem;
+		font-weight: 700;
+	}
+
+	.admin-input,
+	.admin-select {
+		width: 100%;
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
+	}
+
+	.admin-input:focus,
+	.admin-select:focus {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.field-hint {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		line-height: 1.5;
+	}
+
+	.form-error {
+		margin: 4px 0 0;
+		color: var(--color-danger);
+		font-size: 0.78rem;
+	}
+
 	.form-textarea {
 		min-height: auto;
 		resize: vertical;
@@ -1022,7 +1081,7 @@
 		gap: 12px;
 	}
 
-	.logo-url-field .form-input {
+	.logo-url-field .admin-input {
 		flex: 1;
 	}
 
@@ -1032,9 +1091,9 @@
 		height: 40px;
 		flex: 0 0 40px;
 		place-items: center;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 8px;
-		background: var(--color-surface-subtle, #f8fafc);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-subtle);
 	}
 
 	.logo-url-preview img {
@@ -1053,20 +1112,20 @@
 		gap: 4px;
 		margin-top: 8px;
 		padding: 10px 12px;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 8px;
-		background: var(--color-surface-subtle, #f8fafc);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-subtle);
 	}
 
 	.inline-help p {
 		margin: 0;
-		color: var(--color-text-muted, #657083);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.45;
 	}
 
 	.inline-help code {
-		color: var(--color-text, #111827);
+		color: var(--color-text);
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		overflow-wrap: anywhere;
@@ -1078,7 +1137,7 @@
 
 	.section-subtitle {
 		margin: 0 0 4px;
-		color: var(--color-text, #111827);
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-weight: 700;
 	}
@@ -1099,9 +1158,9 @@
 		gap: 10px;
 		margin-top: 12px;
 		padding: 12px;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 8px;
-		background: var(--color-surface-subtle, #f8fafc);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-subtle);
 	}
 
 	.certificate-preview-header {
@@ -1119,13 +1178,13 @@
 	}
 
 	.certificate-preview-grid span {
-		color: var(--color-text-muted, #657083);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		font-weight: 600;
 	}
 
 	.certificate-preview-grid code {
-		color: var(--color-text, #111827);
+		color: var(--color-text);
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		overflow-wrap: anywhere;
@@ -1135,11 +1194,18 @@
 	.certificate-warnings {
 		display: grid;
 		gap: 6px;
-		color: var(--color-danger, #dc2626);
+		color: var(--color-danger);
 		font-size: 0.8125rem;
 	}
 
-	.panel-actions {
+	.behavior-settings-list {
+		display: grid;
+		gap: 14px;
+		margin-top: 16px;
+	}
+
+	.form-actions,
+	.section-actions {
 		display: flex;
 		justify-content: flex-end;
 		gap: 12px;
@@ -1149,7 +1215,7 @@
 	.page-bottom-actions {
 		margin-top: 16px;
 		padding-top: 16px;
-		border-top: 1px solid var(--color-border, #d8dde6);
+		border-top: 1px solid var(--color-border);
 		justify-content: flex-end;
 	}
 
@@ -1162,16 +1228,32 @@
 	.key-state span {
 		border-radius: var(--radius-full);
 		padding: 2px 10px;
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 500;
 		opacity: 0.55;
 	}
 
 	.key-state span.enabled {
-		background: var(--success-light);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 		opacity: 1;
+	}
+
+	@media (max-width: 720px) {
+		.form-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.admin-field--full {
+			grid-column: auto;
+		}
+
+		.form-actions,
+		.section-actions {
+			align-items: stretch;
+			flex-direction: column;
+		}
 	}
 </style>

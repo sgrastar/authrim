@@ -1103,7 +1103,11 @@ const ru: Translations = {
   'web.envDetail.emailCloudflareRequirementManual':
     'Настройка домена в Cloudflare Dashboard пока выполняется вручную',
   'web.envDetail.emailCloudflareFromHint':
-    'Адрес должен принадлежать домену, подключенному к Cloudflare Email Service.',
+    'При использовании Cloudflare Email Service адрес должен принадлежать домену, подключенному в Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Настройки Cloudflare Email Routing',
+  'web.envDetail.emailResendFromHint':
+    'При использовании Resend домен должен быть добавлен и проверен в Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Домены Resend',
   'web.envDetail.emailFromAddress': 'Email-адрес From',
   'web.envDetail.emailFromName': 'Отображаемое имя отправителя (необязательно)',
   'web.envDetail.emailEnableCloudflare': 'Включить Cloudflare Email Service',
@@ -1116,6 +1120,10 @@ const ru: Translations = {
   'web.envDetail.emailSwitchProviderConfirm':
     'В этой среде уже настроен другой email-провайдер. Переключиться на Cloudflare Email Service?',
   'web.envDetail.emailStarting': 'Запуск настройки Cloudflare Email...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'В этой среде уже настроен другой email-провайдер. Переключиться на Resend?',
+  'web.envDetail.emailResendStarting': 'Сохранение настроек email Resend...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Настройки email Resend сохранены.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Обновить все Workers',

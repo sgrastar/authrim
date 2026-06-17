@@ -12,13 +12,20 @@ import {
   type LegacyPaths,
 } from '../packages/setup/src/core/paths.js';
 import {
+  cleanupSetupMachineAccessInD1,
+  ensureSetupMachineAccessInD1,
+} from '../packages/setup/src/core/cloudflare.js';
+import {
   UI_WORKER_COMPONENTS,
   deployUiWorkerComponent,
   type UiWorkerComponent,
 } from '../packages/setup/src/core/deploy.js';
 import { ensureLoginUiClient } from '../packages/setup/src/core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../packages/setup/src/core/ui-deployment.js';
-import { resolveApiBaseUrlCandidates } from '../packages/setup/src/core/url-config.js';
+import {
+  resolveApiBaseUrlCandidates,
+  resolveIssuerUrl,
+} from '../packages/setup/src/core/url-config.js';
 
 interface CliOptions {
   env: string;
@@ -84,11 +91,7 @@ async function loadConfig(
 }
 
 function getApiBaseUrl(config: AuthrimConfig): string {
-  return (
-    config.urls?.api?.custom ||
-    config.urls?.api?.auto ||
-    `https://${config.environment.prefix}-ar-router.workers.dev`
-  );
+  return resolveIssuerUrl(config, { env: config.environment.prefix });
 }
 
 async function resolveLoginUiClientId(
@@ -123,18 +126,32 @@ async function resolveLoginUiClientId(
     : (resolved.paths as EnvironmentPaths).keyFiles.adminApiSecret;
   const keysDir = foundKeys ? foundKeys.path : (resolved.paths as EnvironmentPaths).keys;
 
-  const clientResult = await ensureLoginUiClient({
-    apiBaseUrl,
-    apiBaseUrls: resolveApiBaseUrlCandidates(config, {
-      env,
-      purpose: 'tenant-scoped-admin',
-    }),
-    loginUiUrl,
-    adminApiSecretPath,
-    keysDir,
-    tenantId: config.tenant?.name,
-    onProgress: (message) => console.log(message),
-  });
+  const setupMachineResult = await ensureSetupMachineAccessInD1(env, config, keysDir, (message) =>
+    console.log(message)
+  );
+  if (!setupMachineResult.success) {
+    throw new Error(
+      `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
+    );
+  }
+
+  let clientResult: Awaited<ReturnType<typeof ensureLoginUiClient>>;
+  try {
+    clientResult = await ensureLoginUiClient({
+      apiBaseUrl,
+      apiBaseUrls: resolveApiBaseUrlCandidates(config, {
+        env,
+        purpose: 'tenant-scoped-admin',
+      }),
+      loginUiUrl,
+      adminApiSecretPath,
+      keysDir,
+      tenantId: config.tenant?.name,
+      onProgress: (message) => console.log(message),
+    });
+  } finally {
+    await cleanupSetupMachineAccessInD1(env, keysDir, (message) => console.log(message));
+  }
 
   if (!clientResult.success) {
     throw new Error(`Login UI client resolution failed: ${clientResult.error || 'unknown error'}`);

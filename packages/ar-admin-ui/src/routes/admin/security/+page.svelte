@@ -14,6 +14,7 @@
 		type AlertSeverity
 	} from '$lib/api/admin-security';
 	import { formatDate, DEFAULT_PAGE_SIZE, sanitizeText } from '$lib/utils';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// State
@@ -507,24 +508,23 @@
 	});
 </script>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div class="page-header-info">
-			<h1 class="page-title">{$LL.admin_security_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_security_description()}
-			</p>
-		</div>
-		<button class="btn btn-secondary" onclick={loadData} disabled={loading}>
-			{$LL.admin_security_refresh()}
-		</button>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-secondary" onclick={loadData} disabled={loading}>
+		{$LL.admin_security_refresh()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_security_title()}
+		description={$LL.admin_security_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
 
-	<!-- Tabs -->
 	<div class="security-tabs" role="tablist">
 		{#each TAB_DEFINITIONS as tab (tab.id)}
 			{@const tabCount = tab.getCount()}
@@ -554,15 +554,16 @@
 	</div>
 
 	{#if loading}
-		<div class="loading-state">{$LL.admin_security_loading()}</div>
+		<AdminSection>
+			<div class="loading-state">{$LL.admin_security_loading()}</div>
+		</AdminSection>
 	{:else if activeTab === 'alerts'}
-		<!-- Alerts Tab -->
-		<div>
-			<!-- Filters -->
+		<AdminSection>
 			<div class="security-filter-bar">
-				<div class="filter-group">
-					<label for="status-filter" class="filter-label">{$LL.admin_security_status()}</label>
-					<select id="status-filter" class="filter-select" bind:value={statusFilter}>
+				<div class="admin-field filter-group">
+					<label for="status-filter" class="admin-field__label">{$LL.admin_security_status()}</label
+					>
+					<select id="status-filter" class="admin-input" bind:value={statusFilter}>
 						<option value="">{$LL.admin_security_all_status()}</option>
 						<option value="open">{$LL.admin_security_status_open()}</option>
 						<option value="acknowledged">{$LL.admin_security_status_acknowledged()}</option>
@@ -570,9 +571,11 @@
 						<option value="dismissed">{$LL.admin_security_status_dismissed()}</option>
 					</select>
 				</div>
-				<div class="filter-group">
-					<label for="severity-filter" class="filter-label">{$LL.admin_security_severity()}</label>
-					<select id="severity-filter" class="filter-select" bind:value={severityFilter}>
+				<div class="admin-field filter-group">
+					<label for="severity-filter" class="admin-field__label">
+						{$LL.admin_security_severity()}
+					</label>
+					<select id="severity-filter" class="admin-input" bind:value={severityFilter}>
 						<option value="">{$LL.admin_security_all_severities()}</option>
 						<option value="critical">{$LL.admin_security_severity_critical()}</option>
 						<option value="high">{$LL.admin_security_severity_high()}</option>
@@ -634,10 +637,9 @@
 					{/each}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	{:else if activeTab === 'activities'}
-		<!-- Suspicious Activities Tab -->
-		<div>
+		<AdminSection>
 			{#if suspiciousActivities.length === 0}
 				<div class="empty-state">
 					<p>{$LL.admin_security_no_activities()}</p>
@@ -677,10 +679,9 @@
 					{/each}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	{:else if activeTab === 'threats'}
-		<!-- Threats Tab -->
-		<div>
+		<AdminSection>
 			{#if threats.length === 0}
 				<div class="empty-state">
 					<p>{$LL.admin_security_no_threats()}</p>
@@ -723,17 +724,16 @@
 					{/each}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	{:else if activeTab === 'ip-check'}
-		<!-- IP Check Tab -->
-		<div class="ip-check-section">
-			<h2 class="ip-check-title">{$LL.admin_security_ip_check_title()}</h2>
-			<p class="ip-check-description">{$LL.admin_security_ip_check_description()}</p>
-
+		<AdminSection
+			title={$LL.admin_security_ip_check_title()}
+			description={$LL.admin_security_ip_check_description()}
+		>
 			<div class="ip-check-form">
 				<input
 					type="text"
-					class="ip-check-input"
+					class="admin-input ip-check-input"
 					bind:value={ipToCheck}
 					placeholder={$LL.admin_security_ip_placeholder()}
 					onkeydown={(e) => e.key === 'Enter' && checkIPReputation()}
@@ -798,6 +798,141 @@
 					</div>
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
+
+<style>
+	.security-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 6px;
+		margin-bottom: 18px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--tabs-radius, var(--radius-control));
+		border-color: var(--color-border);
+		background: var(--color-surface-raised, var(--color-surface));
+	}
+
+	.security-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		min-height: var(--control-height, 38px);
+		padding: 8px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--tabs-tab-radius, var(--radius-control));
+		border-color: var(--color-border);
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		font: inherit;
+		font-size: 0.86rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.security-tab:hover,
+	.security-tab.active {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+		background: var(--color-accent-muted);
+	}
+
+	.security-tab:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
+
+	.tab-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.35rem;
+		height: 1.35rem;
+		padding: 0 6px;
+		border-radius: var(--radius-full);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 700;
+	}
+
+	.tab-count.alert-count {
+		background: var(--color-danger);
+		color: var(--color-accent-contrast);
+	}
+
+	.security-filter-bar {
+		border-color: var(--color-border);
+		background: var(--color-surface-muted);
+	}
+
+	.filter-group {
+		display: grid;
+		gap: 5px;
+		min-width: 180px;
+	}
+
+	.filter-group :global(.admin-field__label) {
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+		color: var(--color-text-subtle);
+	}
+
+	.filter-group :global(.admin-input),
+	.ip-check-input {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+	}
+
+	.filter-group :global(.admin-input:focus),
+	.ip-check-input:focus {
+		outline: none;
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.security-card {
+		background: var(--color-surface);
+		border-color: var(--color-border);
+		border-radius: var(--card-radius);
+	}
+
+	.security-card-title {
+		color: var(--color-text);
+	}
+
+	.security-card-description,
+	.security-card-meta,
+	.security-card-date,
+	.alert-type-label,
+	.risk-score-label {
+		color: var(--color-text-muted);
+	}
+
+	.ip-result-card {
+		background: var(--color-surface);
+		border-color: var(--color-border);
+		border-radius: var(--card-radius);
+	}
+
+	.ip-result-body {
+		background: var(--color-surface);
+		color: var(--color-text);
+	}
+
+	.ip-stat {
+		background: var(--color-surface-muted);
+		border-color: var(--color-border);
+	}
+</style>

@@ -15,6 +15,7 @@ const {
   };
   return {
     mockCoreAdapter: {
+      queryOne: vi.fn(),
       query: vi.fn(),
       execute: vi.fn(),
     },
@@ -77,6 +78,7 @@ function createContext() {
 describe('admin user session revocation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCoreAdapter.queryOne.mockResolvedValue(null);
     mockCoreAdapter.query.mockResolvedValue([
       { id: 'g1:apac:3:session_one' },
       { id: 'legacy-session' },
@@ -102,6 +104,10 @@ describe('admin user session revocation', () => {
       'tenant-1'
     );
     expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:session_one');
+    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
+      'INSERT INTO session_revocation_epochs (tenant_id, user_id, revoked_after_ms, updated_at) VALUES (?, ?, ?, ?)',
+      ['tenant-1', 'user-1', expect.any(Number), expect.any(Number)]
+    );
     expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
       'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?',
       ['tenant-1', 'user-1']

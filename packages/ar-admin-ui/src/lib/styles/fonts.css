@@ -1,0 +1,263 @@
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/archivo-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/archivo-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('/fonts/admin-ui/archivo-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/admin-ui/archivo-700.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Archivo';
+	font-style: normal;
+	font-weight: 800;
+	font-display: swap;
+	src: url('/fonts/admin-ui/archivo-800.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Cinzel';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/cinzel-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Lora';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/lora-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Lora';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/lora-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Lora';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('/fonts/admin-ui/lora-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Lora';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/admin-ui/lora-700.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Public Sans';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/public-sans-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Public Sans';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/public-sans-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Public Sans';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('/fonts/admin-ui/public-sans-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Public Sans';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/admin-ui/public-sans-700.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Public Sans';
+	font-style: normal;
+	font-weight: 800;
+	font-display: swap;
+	src: url('/fonts/admin-ui/public-sans-800.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Figtree';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/figtree-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Figtree';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/figtree-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Figtree';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('/fonts/admin-ui/figtree-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Figtree';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/admin-ui/figtree-700.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Figtree';
+	font-style: normal;
+	font-weight: 800;
+	font-display: swap;
+	src: url('/fonts/admin-ui/figtree-800.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/schibsted-grotesk-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/schibsted-grotesk-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('/fonts/admin-ui/schibsted-grotesk-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Schibsted Grotesk';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/admin-ui/schibsted-grotesk-700.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Spline Sans Mono';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/spline-sans-mono-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Spline Sans Mono';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/spline-sans-mono-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Spline Sans Mono';
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url('/fonts/admin-ui/spline-sans-mono-600.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Zen Kaku Gothic New';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/zen-kaku-gothic-new-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Zen Kaku Gothic New';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/zen-kaku-gothic-new-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Zen Kaku Gothic New';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/admin-ui/zen-kaku-gothic-new-700.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Zen Maru Gothic';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/admin-ui/zen-maru-gothic-400.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Zen Maru Gothic';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/admin-ui/zen-maru-gothic-500.ttf') format('truetype');
+}
+
+@font-face {
+	font-family: 'Zen Maru Gothic';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/admin-ui/zen-maru-gothic-700.ttf') format('truetype');
+}

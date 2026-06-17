@@ -15,6 +15,7 @@
 		formatPermissionDescription,
 		formatPermissionLabel
 	} from '$lib/admin/roles-i18n';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 
 	// Form state
 	let name = $state('');
@@ -131,11 +132,18 @@
 	<title>{$LL.admin_roles_create_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/roles" class="back-link">← {$LL.admin_roles_back_to_roles()}</a>
-
-	<h1 class="page-title">{$LL.admin_roles_create_title()}</h1>
-	<p class="modal-description">{$LL.admin_roles_create_description()}</p>
+<AdminPageShell width="narrow">
+	<AdminPageHeader
+		title={$LL.admin_roles_create_title()}
+		description={$LL.admin_roles_create_description()}
+	>
+		{#snippet actions()}
+			<button type="button" class="btn btn-secondary" onclick={navigateBack}>
+				<i class="i-ph-arrow-left"></i>
+				{$LL.admin_roles_back_to_roles()}
+			</button>
+		{/snippet}
+	</AdminPageHeader>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -148,9 +156,7 @@
 		}}
 	>
 		<!-- Basic Info Section -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_roles_basic_information()}</h2>
-
+		<AdminSection title={$LL.admin_roles_basic_information()}>
 			<div class="form-group">
 				<label for="name" class="form-label">
 					{$LL.admin_roles_role_name()}
@@ -196,15 +202,11 @@
 				</select>
 				<span class="form-hint">{$LL.admin_roles_inherit_hint()}</span>
 			</div>
-		</div>
+		</AdminSection>
 
 		<!-- Permissions Section -->
-		<div class="panel">
-			<h2 class="panel-title">
-				{$LL.admin_roles_permissions()}
-				<span class="text-danger">{$LL.admin_roles_required()}</span>
-			</h2>
-			<p class="form-hint" style="margin-bottom: 16px;">
+		<AdminSection title={$LL.admin_roles_permissions()}>
+			<p class="form-hint form-hint--stacked">
 				{$LL.admin_roles_permissions_hint()}
 			</p>
 
@@ -252,7 +254,7 @@
 					{$LL.admin_roles_selected_count({ count: selectedPermissions.size })}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 
 		<!-- Actions -->
 		<div class="form-actions">
@@ -264,4 +266,4 @@
 			</button>
 		</div>
 	</form>
-</div>
+</AdminPageShell>

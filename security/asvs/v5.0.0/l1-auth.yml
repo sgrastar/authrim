@@ -1,0 +1,420 @@
+asvs_version: 5.0.0
+source_url: https://github.com/OWASP/ASVS/raw/v5.0.0/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv
+scope:
+  level: 1
+  chapters:
+    - V6
+    - V7
+    - V10.4
+  description: Initial ASVS v5.0.0 Level 1 Authentication, Session Management, and OAuth Authorization Server coverage trial.
+status_definitions:
+  covered: Automated or code/document evidence is present in this repository.
+  manual: Evidence exists but requires human review before it should be treated as covered.
+  not_applicable: The requirement does not apply to Authrim's current product scope.
+  gap: The requirement applies, but coverage or evidence is missing.
+controls:
+  - id: v5.0.0-V6.1.1
+    chapter: V6
+    section: V6.1
+    title: Authentication Documentation
+    level: 1
+    requirement: Verify that application documentation defines how controls such as rate limiting, anti-automation, and adaptive response, are used to defend against attacks such as credential stuffing and password brute force. The documentation must make clear how these controls are configured and prevent malicious account lockout.
+    status: manual
+    rationale: Rate limiting is implemented for reusable directory-password credentials, but the ASVS-specific documentation set should be reviewed before marking this covered.
+    evidence:
+      - check: asvs.v6_1_1.documentation_keywords
+        note: ASVS documentation notes include the required topics.
+      - path: packages/ar-auth/src/index.ts
+        line: 255
+        note: Directory password login uses the strict rate-limit profile.
+      - path: docs/ENVIRONMENT_VARIABLES.md
+        line: 104
+        note: Rate limiting is documented as enabled by default.
+
+  - id: v5.0.0-V6.2.1
+    chapter: V6
+    section: V6.2
+    title: Password minimum length
+    level: 1
+    requirement: Verify that user set passwords are at least 8 characters in length although a minimum of 15 characters is strongly recommended.
+    status: not_applicable
+    rationale: Authrim does not currently provide an Authrim-managed end-user password registration or password-setting flow; directory password verification is delegated to an external connector.
+    evidence:
+      - path: docs/getting-started/deployment.md
+        line: 403
+        note: Initial admin setup is documented as passwordless passkey/WebAuthn.
+      - path: docs/testing/asvs-v5-l1-auth-notes.md
+        line: 11
+        note: Current scope notes document the absence of Authrim-managed password lifecycle flows.
+
+  - id: v5.0.0-V6.2.2
+    chapter: V6
+    section: V6.2
+    title: Password change
+    level: 1
+    requirement: Verify that users can change their password.
+    status: not_applicable
+    rationale: Authrim does not own user-set passwords in the current passwordless and external-directory-password model.
+    evidence:
+      - path: docs/testing/asvs-v5-l1-auth-notes.md
+        line: 11
+        note: Self-managed password change/reset endpoints are absent.
+
+  - id: v5.0.0-V6.2.3
+    chapter: V6
+    section: V6.2
+    title: Password change requires current password
+    level: 1
+    requirement: Verify that password change functionality requires the user's current and new password.
+    status: not_applicable
+    rationale: Authrim does not expose password change functionality for Authrim-managed end-user passwords.
+    evidence:
+      - path: docs/testing/asvs-v5-l1-auth-notes.md
+        line: 11
+        note: Self-managed password change/reset endpoints are absent.
+
+  - id: v5.0.0-V6.2.4
+    chapter: V6
+    section: V6.2
+    title: Common password blocklist
+    level: 1
+    requirement: Verify that passwords submitted during account registration or password change are checked against an available set of, at least, the top 3000 passwords which match the application's password policy, e.g. minimum length.
+    status: not_applicable
+    rationale: Authrim does not collect new user-set passwords during account registration or password change.
+    evidence:
+      - path: docs/getting-started/deployment.md
+        line: 403
+        note: Initial admin setup is passwordless.
+      - path: docs/testing/asvs-v5-l1-auth-notes.md
+        line: 11
+        note: Password change/reset endpoints are absent.
+
+  - id: v5.0.0-V6.2.5
+    chapter: V6
+    section: V6.2
+    title: Password composition
+    level: 1
+    requirement: Verify that passwords of any composition can be used, without rules limiting the type of characters permitted. There must be no requirement for a minimum number of upper or lower case characters, numbers, or special characters.
+    status: not_applicable
+    rationale: Authrim does not define or enforce Authrim-managed user password composition rules in the current scope.
+    evidence:
+      - path: docs/testing/asvs-v5-l1-auth-notes.md
+        line: 11
+        note: Authrim is currently passwordless plus external directory password verification.
+
+  - id: v5.0.0-V6.2.6
+    chapter: V6
+    section: V6.2
+    title: Password field masking
+    level: 1
+    requirement: Verify that password input fields use type=password to mask the entry. Applications may allow the user to temporarily view the entire masked password, or the last typed character of the password.
+    status: covered
+    rationale: The Login UI directory password field is rendered with type=password.
+    evidence:
+      - path: packages/ar-login-ui/src/routes/login/+page.svelte
+        line: 640
+        note: Directory password input is configured with type=password.
+
+  - id: v5.0.0-V6.2.7
+    chapter: V6
+    section: V6.2
+    title: Password paste and managers
+    level: 1
+    requirement: Verify that "paste" functionality, browser password helpers, and external password managers are permitted.
+    status: covered
+    rationale: The Login UI directory password input does not block paste and advertises current-password autocomplete.
+    evidence:
+      - path: packages/ar-login-ui/src/routes/login/+page.svelte
+        line: 640
+        note: Directory password input has autocomplete=current-password and no paste blocker.
+
+  - id: v5.0.0-V6.2.8
+    chapter: V6
+    section: V6.2
+    title: Exact password verification
+    level: 1
+    requirement: Verify that the application verifies the user's password exactly as received from the user, without any modifications such as truncation or case transformation.
+    status: covered
+    rationale: Directory password login preserves the password string without trimming or case conversion before forwarding it to the connector.
+    evidence:
+      - path: packages/ar-auth/src/directory-password-login.ts
+        line: 84
+        note: Username is trimmed, but password is preserved as the received string.
+      - path: packages/ar-auth/src/directory-password.ts
+        line: 107
+        note: Connector request body uses input.password directly.
+
+  - id: v5.0.0-V6.3.1
+    chapter: V6
+    section: V6.3
+    title: Credential attack controls
+    level: 1
+    requirement: Verify that controls to prevent attacks such as credential stuffing and password brute force are implemented according to the application's security documentation.
+    status: covered
+    rationale: Reusable directory-password credentials are protected by the strict rate-limit profile.
+    evidence:
+      - path: packages/ar-auth/src/index.ts
+        line: 255
+        note: Directory password login applies strict rate limiting.
+      - path: packages/ar-lib-core/src/middleware/__tests__/rate-limit.test.ts
+        line: 712
+        note: Rate-limit tests cover the strict profile.
+
+  - id: v5.0.0-V6.3.2
+    chapter: V6
+    section: V6.3
+    title: Default accounts
+    level: 1
+    requirement: Verify that default user accounts (e.g., "root", "admin", or "sa") are not present in the application or are disabled.
+    status: covered
+    rationale: Independent ASVS checks verify that setup/migration paths do not seed default accounts and that first-admin creation requires setup-token flow which is disabled after completion.
+    evidence:
+      - check: asvs.v6_3_2.no_seeded_default_admin_accounts
+        note: Scan migrations and setup source for seeded root/admin/sa accounts.
+      - check: asvs.v6_3_2.setup_requires_token_and_disables_after_first_admin
+        note: Verify initial setup requires token validation and permanent completion.
+      - path: docs/getting-started/deployment.md
+        line: 403
+        note: First administrator is created during deployment setup with passkey registration.
+      - path: packages/ar-auth/src/index.ts
+        line: 548
+        note: Setup API is permanently disabled after the first admin account is created.
+
+  - id: v5.0.0-V6.4.1
+    chapter: V6
+    section: V6.4
+    title: Initial passwords and activation codes
+    level: 1
+    requirement: Verify that system generated initial passwords or activation codes are securely randomly generated, follow the existing password policy, and expire after a short period of time or after they are initially used. These initial secrets must not be permitted to become the long term password.
+    status: covered
+    rationale: Independent ASVS checks verify setup-token entropy, TTL, status, expiry, and usage tracking; Authrim uses passkey setup rather than long-term initial passwords.
+    evidence:
+      - check: asvs.v6_4_1.setup_token_entropy_and_ttl
+        note: Verify setup token generation and storage TTL across setup paths.
+      - check: asvs.v6_4_1.admin_ui_setup_token_lifecycle
+        note: Verify Admin UI passkey setup token lifecycle fields and expiry.
+      - path: docs/getting-started/deployment.md
+        line: 403
+        note: Initial administrator setup uses passkey/WebAuthn rather than a long-term initial password.
+
+  - id: v5.0.0-V6.4.2
+    chapter: V6
+    section: V6.4
+    title: Password hints and knowledge-based authentication
+    level: 1
+    requirement: Verify that password hints or knowledge-based authentication (so-called "secret questions") are not present.
+    status: covered
+    rationale: Independent ASVS checks scan runtime authentication, management API, login UI, and migrations for password-hint and knowledge-based authentication surfaces.
+    evidence:
+      - check: asvs.v6_4_2.no_password_hints_or_kba_surfaces
+        note: Scan runtime/schema surfaces for password hints and knowledge-based authentication.
+      - path: docs/getting-started/deployment.md
+        line: 403
+        note: Initial admin setup is passwordless and does not describe password hints or knowledge-based authentication.
+
+  - id: v5.0.0-V7.2.1
+    chapter: V7
+    section: V7.2
+    title: Backend session token verification
+    level: 1
+    requirement: Verify that the application performs all session token verification using a trusted, backend service.
+    status: covered
+    rationale: Runtime session validation routes sharded session identifiers to the backend SessionStore and enforces server-side existence, expiration, and revocation checks.
+    evidence:
+      - check: asvs.v7_2_1.backend_session_verification
+        note: Verify that session verification depends on backend SessionStore lookup, expiration, and revocation checks.
+      - path: packages/ar-auth/src/direct-auth.ts
+        line: 607
+        note: validateSession rejects invalid session identifiers and loads session state from SessionStore.
+      - path: packages/ar-lib-core/src/durable-objects/SessionStore.ts
+        line: 551
+        note: SessionStore getSession enforces expiration and user-level revocation.
+
+  - id: v5.0.0-V7.2.2
+    chapter: V7
+    section: V7.2
+    title: Dynamic session tokens
+    level: 1
+    requirement: Verify that the application uses either self-contained or reference tokens that are dynamically generated for session management, i.e. not using static API secrets and keys.
+    status: covered
+    rationale: Authrim uses dynamically generated reference session identifiers which route to SessionStore state instead of using static API keys or shared secrets as sessions.
+    evidence:
+      - check: asvs.v7_2_2.dynamic_reference_session_tokens
+        note: Verify authentication handlers create sessions through getSessionStoreForNewSession and do not assign static secrets to authrim_session.
+      - path: packages/ar-lib-core/src/utils/session-helper.ts
+        line: 65
+        note: generateRegionShardedSessionId creates a new sharded reference session identifier.
+      - path: packages/ar-auth/src/direct-auth.ts
+        line: 2161
+        note: Direct authentication creates sessions through getSessionStoreForNewSession.
+
+  - id: v5.0.0-V7.2.3
+    chapter: V7
+    section: V7.2
+    title: Reference token entropy
+    level: 1
+    requirement: Verify that if reference tokens are used to represent user sessions, they are unique and generated using a cryptographically secure pseudo-random number generator (CSPRNG) and possess at least 128 bits of entropy.
+    status: covered
+    rationale: Session identifiers use a 16-byte CSPRNG random component, yielding 128 bits of entropy, before adding routing metadata.
+    evidence:
+      - check: asvs.v7_2_3.session_token_entropy
+        note: Verify session IDs use generateSecureSessionId backed by crypto.getRandomValues over 16 bytes.
+      - path: packages/ar-lib-core/src/utils/crypto.ts
+        line: 347
+        note: generateSecureSessionId uses 16 random bytes from crypto.getRandomValues.
+      - path: packages/ar-lib-core/src/utils/session-helper.ts
+        line: 77
+        note: Region-sharded session IDs embed the CSPRNG random part.
+
+  - id: v5.0.0-V7.2.4
+    chapter: V7
+    section: V7.2
+    title: New session token after authentication
+    level: 1
+    requirement: Verify that the application generates a new session token on user authentication, including re-authentication, and terminates the current session token.
+    status: gap
+    rationale: Standard authentication handlers create a new session token, but anonymous upgrade flows update an existing session instead of always issuing a new session token and terminating the old token.
+    remediation: Rotate the session identifier on anonymous upgrade and any re-authentication path, persist the upgraded state on the new session, and invalidate the previous SessionStore entry before marking this covered.
+    evidence:
+      - path: packages/ar-auth/src/email-code.ts
+        line: 550
+        note: Anonymous upgrade intentionally reuses the existing session identifier.
+      - path: packages/ar-auth/src/upgrade.ts
+        line: 451
+        note: Upgrade completion updates the existing session data and user ID.
+      - path: packages/ar-auth/src/direct-auth.ts
+        line: 2161
+        note: Standard direct authentication creates a new session through getSessionStoreForNewSession.
+
+  - id: v5.0.0-V7.4.1
+    chapter: V7
+    section: V7.4
+    title: Session termination invalidates further use
+    level: 1
+    requirement: Verify that when session termination is triggered (such as logout or expiration), the application disallows any further use of the session. For reference tokens or stateful sessions, this means invalidating the session data at the application backend. Applications using self-contained tokens will need a solution such as maintaining a list of terminated tokens, disallowing tokens produced before a per-user date and time or rotating a per-user signing key.
+    status: covered
+    rationale: Logout invalidates backend SessionStore state, expiration is enforced during backend lookup, and persistence tombstones prevent stale deleted sessions from being resurrected.
+    evidence:
+      - check: asvs.v7_4_1.logout_and_expiration_invalidate_backend_session
+        note: Verify logout calls invalidateSessionRpc and SessionStore deletes hot, durable, and cold persistence state.
+      - path: packages/ar-auth/src/logout.ts
+        line: 381
+        note: RP-initiated logout invalidates the current sharded session in SessionStore.
+      - path: packages/ar-lib-core/src/durable-objects/SessionStore.ts
+        line: 680
+        note: invalidateSession deletes cache, Durable Object storage, and cold persistence, creating tombstones on persistence-delete failure.
+
+  - id: v5.0.0-V7.4.2
+    chapter: V7
+    section: V7.4
+    title: Account disable or deletion terminates sessions
+    level: 1
+    requirement: Verify that the application terminates all active sessions when a user account is disabled or deleted (such as an employee leaving the company).
+    status: gap
+    rationale: Authrim has an explicit admin endpoint to revoke all sessions for a user, but the user deletion/update handlers do not currently show an automatic call to that revocation path when an account is disabled or deleted.
+    remediation: Invoke the user session revocation service from account disable and deletion paths, including canonical runtime-user deletion, then add an independent regression test or ASVS check that confirms the call path.
+    evidence:
+      - path: packages/ar-management/src/admin-user-sessions.ts
+        line: 571
+        note: adminUserRevokeAllSessionsHandler records a revocation epoch, invalidates located SessionStore sessions, and deletes persisted sessions.
+      - path: packages/ar-management/src/admin-users.ts
+        line: 1010
+        note: Admin user deletion deletes the user and invalidates cache, but does not show automatic all-session revocation.
+
+  - id: v5.0.0-V10.4.1
+    chapter: V10
+    section: V10.4
+    title: Redirect URI exact allowlist
+    level: 1
+    requirement: Verify that the authorization server validates redirect URIs based on a client-specific allowlist of pre-registered URIs using exact string comparison.
+    status: covered
+    rationale: Authorization and token endpoints validate redirect URI format, require client-specific registered redirect URI matches, and compare the token request redirect URI with the value bound to the authorization code.
+    evidence:
+      - check: asvs.v10_4_1.redirect_uri_exact_allowlist
+        note: Verify exact redirect_uri matching and token-request redirect_uri binding.
+      - path: packages/ar-auth/src/authorize.ts
+        line: 2027
+        note: Authorization endpoint checks redirect_uri against registered client redirect URIs.
+      - path: packages/ar-lib-core/src/utils/validation.ts
+        line: 911
+        note: isRedirectUriRegistered uses exact string comparison.
+      - path: packages/ar-token/src/token.ts
+        line: 1656
+        note: Token endpoint rejects redirect_uri values that differ from the authorization code binding.
+
+  - id: v5.0.0-V10.4.2
+    chapter: V10
+    section: V10.4
+    title: Authorization code single use
+    level: 1
+    requirement: Verify that, if the authorization server returns the authorization code in the authorization response, it can be used only once for a token request. For the second valid request with an authorization code that has already been used to issue an access token, the authorization server must reject a token request and revoke any issued tokens related to the authorization code.
+    status: covered
+    rationale: AuthorizationCodeStore atomically marks codes as used, detects replay, and the token endpoint revokes previously issued token JTIs where recorded.
+    evidence:
+      - check: asvs.v10_4_2.authorization_code_single_use_and_expiry
+        note: Verify atomic authorization-code consumption, replay detection, and short TTL defaults.
+      - path: packages/ar-lib-core/src/durable-objects/AuthorizationCodeStore.ts
+        line: 558
+        note: consumeCode checks expiration and replay before atomically marking the code used.
+      - path: packages/ar-token/src/token.ts
+        line: 1564
+        note: Token endpoint handles authorization-code replay and revokes issued tokens where possible.
+
+  - id: v5.0.0-V10.4.3
+    chapter: V10
+    section: V10.4
+    title: Authorization code lifetime
+    level: 1
+    requirement: Verify that the authorization code is short-lived. The maximum lifetime can be up to 10 minutes for L1 and L2 applications and up to 1 minute for L3 applications.
+    status: covered
+    rationale: Authorization code TTL defaults to 60 seconds, below the ASVS L1 10-minute maximum, and expiration is enforced during code consumption.
+    evidence:
+      - check: asvs.v10_4_2.authorization_code_single_use_and_expiry
+        note: Verify authorization-code TTL default and expiration enforcement.
+      - path: packages/ar-lib-core/src/utils/oauth-config.ts
+        line: 85
+        note: AUTH_CODE_TTL defaults to 60 seconds.
+      - path: packages/ar-lib-core/src/durable-objects/AuthorizationCodeStore.ts
+        line: 536
+        note: Stored authorization codes receive expiresAt based on CODE_TTL.
+
+  - id: v5.0.0-V10.4.4
+    chapter: V10
+    section: V10.4
+    title: Client-specific grant restrictions
+    level: 1
+    requirement: Verify that for a given client, the authorization server only allows the usage of grants that this client needs to use. Note that the grants 'token' (Implicit flow) and 'password' (Resource Owner Password Credentials flow) must no longer be used.
+    status: gap
+    rationale: Authrim validates response_type against client response_types and has profile/client flags for some grants, but authorization_code and refresh_token token endpoint paths do not consistently enforce client-specific grant_types.
+    remediation: Enforce clientMetadata.grant_types for authorization_code and refresh_token token endpoint handlers, reject token/password grants globally, and add ASVS checks or regression tests for disallowed client grant attempts.
+    evidence:
+      - path: packages/ar-auth/src/authorize.ts
+        line: 1722
+        note: Authorization endpoint validates response_type against client response_types.
+      - path: packages/ar-token/src/token.ts
+        line: 1187
+        note: Token endpoint routes supported grant_type values, but authorization_code dispatch is not gated by client grant_types.
+      - path: packages/ar-token/src/token.ts
+        line: 2772
+        note: refresh_token grant has tenant-profile validation, but no client grant_types check is visible here.
+
+  - id: v5.0.0-V10.4.5
+    chapter: V10
+    section: V10.4
+    title: Public client refresh token replay protection
+    level: 1
+    requirement: Verify that the authorization server mitigates refresh token replay attacks for public clients, preferably using sender-constrained refresh tokens, i.e., Demonstrating Proof of Possession (DPoP) or Certificate-Bound Access Tokens using mutual TLS (mTLS). For L1 and L2 applications, refresh token rotation may be used. If refresh token rotation is used, the authorization server must invalidate the refresh token after usage, and revoke all refresh tokens for that authorization if an already used and invalidated refresh token is provided.
+    status: covered
+    rationale: Public-client refresh token use requires DPoP binding, refresh token rotation is enabled by default, and replay/theft detection revokes the refresh token family.
+    evidence:
+      - check: asvs.v10_4_5.public_refresh_token_replay_protection
+        note: Verify DPoP-bound public refresh tokens and default refresh-token rotation with family revocation on replay/theft.
+      - path: packages/ar-token/src/token.ts
+        line: 3004
+        note: Public client refresh tokens must be DPoP-bound.
+      - path: packages/ar-token/src/token.ts
+        line: 3183
+        note: Refresh token rotation is enabled by default and uses RefreshTokenRotator.
+      - path: packages/ar-lib-core/src/durable-objects/RefreshTokenRotator.ts
+        line: 512
+        note: RefreshTokenRotator rejects expired/revoked families and detects stale token versions.

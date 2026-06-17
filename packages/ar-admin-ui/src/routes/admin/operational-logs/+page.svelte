@@ -2,6 +2,13 @@
 	import { onMount } from 'svelte';
 	import { Modal } from '$lib/components';
 	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
+	import {
 		adminOperationalLogsAPI,
 		type OperationalLogDetail,
 		type OperationalLogSummary
@@ -78,30 +85,32 @@
 	<title>{$LL.admin_operational_logs_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_operational_logs_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_operational_logs_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={loadLogs} disabled={loading}
-				>{$LL.admin_operational_logs_refresh()}</button
-			>
-		</div>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-secondary" onclick={loadLogs} disabled={loading}>
+		{$LL.admin_operational_logs_refresh()}
+	</button>
+{/snippet}
 
-	<div class="panel">
-		<div class="filter-row">
-			<div class="form-group">
-				<label class="form-label" for="subject-type"
-					>{$LL.admin_operational_logs_subject_type()}</label
-				>
+{#snippet entriesActions()}
+	<span class="section-meta">{$LL.admin_operational_logs_total_count({ count: total })}</span>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_operational_logs_title()}
+		description={$LL.admin_operational_logs_description()}
+		actions={pageActions}
+	/>
+
+	<AdminSection>
+		<AdminToolbar>
+			<div class="admin-field admin-field--compact">
+				<label class="admin-field__label" for="subject-type">
+					{$LL.admin_operational_logs_subject_type()}
+				</label>
 				<select
 					id="subject-type"
-					class="form-select"
+					class="admin-input"
 					bind:value={subjectTypeFilter}
 					onchange={loadLogs}
 				>
@@ -111,77 +120,74 @@
 					<option value="session">{$LL.admin_operational_logs_subject_session()}</option>
 				</select>
 			</div>
-			<div class="form-group">
-				<label class="form-label" for="subject-id">{$LL.admin_operational_logs_subject_id()}</label>
+			<div class="admin-field admin-field--compact">
+				<label class="admin-field__label" for="subject-id">
+					{$LL.admin_operational_logs_subject_id()}
+				</label>
 				<input
 					id="subject-id"
-					class="form-input"
+					class="admin-input"
 					bind:value={subjectIdFilter}
 					onchange={loadLogs}
 				/>
 			</div>
-			<div class="form-group">
-				<label class="form-label" for="action">{$LL.admin_operational_logs_action()}</label>
-				<input id="action" class="form-input" bind:value={actionFilter} onchange={loadLogs} />
+			<div class="admin-field admin-field--compact">
+				<label class="admin-field__label" for="action">{$LL.admin_operational_logs_action()}</label>
+				<input id="action" class="admin-input" bind:value={actionFilter} onchange={loadLogs} />
 			</div>
-			<div class="form-group">
-				<label class="form-label" for="actor-id">{$LL.admin_operational_logs_actor_id()}</label>
-				<input id="actor-id" class="form-input" bind:value={actorIdFilter} onchange={loadLogs} />
+			<div class="admin-field admin-field--compact">
+				<label class="admin-field__label" for="actor-id">
+					{$LL.admin_operational_logs_actor_id()}
+				</label>
+				<input id="actor-id" class="admin-input" bind:value={actorIdFilter} onchange={loadLogs} />
 			</div>
-		</div>
-	</div>
+		</AdminToolbar>
+	</AdminSection>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
 
-	<div class="panel">
-		<div class="panel-header">
-			<h2 class="panel-title">{$LL.admin_operational_logs_entries()}</h2>
-			<span class="panel-meta">{$LL.admin_operational_logs_total_count({ count: total })}</span>
-		</div>
-
+	<AdminSection title={$LL.admin_operational_logs_entries()} actions={entriesActions}>
 		{#if loading}
 			<div class="empty-state">{$LL.admin_operational_logs_loading()}</div>
 		{:else if logs.length === 0}
 			<div class="empty-state">{$LL.admin_operational_logs_empty()}</div>
 		{:else}
-			<div class="table-wrapper">
-				<table class="data-table">
-					<thead>
+			<AdminDataTable width="wide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_operational_logs_action()}</th>
+						<th>{$LL.admin_operational_logs_subject()}</th>
+						<th>{$LL.admin_operational_logs_actor()}</th>
+						<th>{$LL.admin_operational_logs_created()}</th>
+						<th>{$LL.admin_operational_logs_expires()}</th>
+						<th class="text-right"></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each logs as log (log.id)}
 						<tr>
-							<th>{$LL.admin_operational_logs_action()}</th>
-							<th>{$LL.admin_operational_logs_subject()}</th>
-							<th>{$LL.admin_operational_logs_actor()}</th>
-							<th>{$LL.admin_operational_logs_created()}</th>
-							<th>{$LL.admin_operational_logs_expires()}</th>
-							<th></th>
+							<td>{log.action}</td>
+							<td>
+								<div class="cell-primary">{log.subject_type}</div>
+								<div class="cell-secondary">{log.subject_id}</div>
+							</td>
+							<td>{log.actor_id}</td>
+							<td>{formatDateTime(log.created_at)}</td>
+							<td>{formatDateTime(log.expires_at)}</td>
+							<td class="text-right">
+								<button class="btn btn-sm btn-secondary" onclick={() => openDetail(log)}>
+									{$LL.admin_operational_logs_view_detail()}
+								</button>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each logs as log (log.id)}
-							<tr>
-								<td>{log.action}</td>
-								<td>
-									<div class="cell-primary">{log.subject_type}</div>
-									<div class="cell-secondary">{log.subject_id}</div>
-								</td>
-								<td>{log.actor_id}</td>
-								<td>{formatDateTime(log.created_at)}</td>
-								<td>{formatDateTime(log.expires_at)}</td>
-								<td class="row-actions">
-									<button class="btn btn-sm btn-secondary" onclick={() => openDetail(log)}>
-										{$LL.admin_operational_logs_view_detail()}
-									</button>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
-	</div>
-</div>
+	</AdminSection>
+</AdminPageShell>
 
 <Modal
 	open={showDetailModal}
@@ -221,46 +227,15 @@
 			</div>
 		</div>
 
-		<div class="panel detail-panel">
-			<h3 class="panel-title">{$LL.admin_operational_logs_reason_detail()}</h3>
+		<div class="detail-section">
+			<h3 class="detail-section-title">{$LL.admin_operational_logs_reason_detail()}</h3>
 			<pre class="detail-block">{selectedLog.reason_detail}</pre>
 		</div>
 	{/if}
 </Modal>
 
 <style>
-	.filter-row {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-		gap: 1rem;
-	}
-
-	.table-wrapper {
-		overflow-x: auto;
-	}
-
-	.data-table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.data-table th,
-	.data-table td {
-		padding: 0.75rem;
-		border-bottom: 1px solid var(--color-border-subtle);
-		text-align: left;
-		vertical-align: top;
-	}
-
-	.panel-header,
-	.page-actions {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-	}
-
-	.panel-meta,
+	.section-meta,
 	.cell-secondary {
 		color: var(--color-text-secondary);
 		font-size: 0.875rem;
@@ -283,11 +258,24 @@
 		margin-bottom: 1rem;
 	}
 
+	.detail-section {
+		border-top: 1px solid var(--color-border);
+		padding-top: 1rem;
+	}
+
+	.detail-section-title {
+		margin: 0 0 0.75rem;
+		color: var(--color-text);
+		font-size: 0.95rem;
+		font-weight: 700;
+	}
+
 	.detail-block {
 		margin: 0;
 		padding: 1rem;
 		background: var(--color-surface-subtle);
-		border-radius: 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
 		white-space: pre-wrap;
 	}
 </style>

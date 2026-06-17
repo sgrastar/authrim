@@ -68,9 +68,9 @@
 <style>
 	.guide-card {
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 12px;
+		border-radius: var(--guide-card-radius, var(--radius-panel, 12px));
 		padding: 0.85rem;
-		background: color-mix(in srgb, var(--color-surface-elevated) 70%, white);
+		background: color-mix(in srgb, var(--color-surface-elevated) 70%, var(--color-surface));
 	}
 
 	.guide-header {
@@ -93,7 +93,7 @@
 	}
 
 	.guide-badge {
-		border-radius: 999px;
+		border-radius: var(--guide-badge-radius, var(--status-badge-radius, 999px));
 		padding: 0.25rem 0.6rem;
 		background: var(--color-surface-default);
 		color: var(--color-text-primary);
@@ -124,8 +124,8 @@
 	.guide-note {
 		margin-top: 0.75rem;
 		padding: 0.65rem 0.75rem;
-		border-radius: 10px;
-		background: color-mix(in srgb, var(--color-warning-50) 65%, white);
+		border-radius: var(--guide-note-radius, var(--radius-control, 10px));
+		background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
 		color: var(--color-warning-800);
 		font-size: 0.87rem;
 	}
@@ -146,7 +146,7 @@
 		border: 1px solid var(--color-border-default);
 		background: var(--color-surface-default);
 		color: var(--color-text-primary);
-		border-radius: 999px;
+		border-radius: var(--guide-badge-radius, var(--status-badge-radius, 999px));
 		padding: 0.45rem 0.8rem;
 		font-weight: 700;
 		cursor: pointer;

@@ -10,28 +10,27 @@
 
 <style>
 	.nav-group-label {
-		padding: 8px 12px 8px 12px;
-		font-size: 0.625rem;
-		font-weight: 700;
+		padding: var(--nav-group-label-padding, 8px 20px 4px);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--nav-group-label-font-size, 0.65rem);
+		font-weight: var(--nav-group-label-font-weight, 700);
 		text-transform: uppercase;
-		letter-spacing: 0.1em;
-		color: rgba(255, 255, 255, 0.4);
+		letter-spacing: var(--nav-group-label-letter-spacing, 0.1em);
+		color: var(--nav-group-label-color, var(--color-text-subtle));
 		white-space: nowrap;
 		overflow: hidden;
-		margin-top: 8px;
+		margin-top: var(--nav-group-label-margin-top, 8px);
+	}
+
+	.nav-group-label::after {
+		content: '';
+		display: var(--nav-group-rule-display, none);
+		height: 1px;
+		margin-top: var(--nav-group-rule-margin-top, 5px);
+		background: var(--nav-group-rule-bg, var(--color-border));
 	}
 
 	.nav-group-label:first-of-type {
 		margin-top: 0;
-	}
-
-	/* Visibility control - hidden when collapsed */
-	:global(.nav-floating:not(.expanded):not(.open)) .nav-group-label {
-		opacity: 0;
-	}
-
-	:global(.nav-floating.expanded) .nav-group-label,
-	:global(.nav-floating.open) .nav-group-label {
-		opacity: 1;
 	}
 </style>

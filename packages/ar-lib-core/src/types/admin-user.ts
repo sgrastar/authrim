@@ -698,6 +698,11 @@ export const ADMIN_PERMISSIONS = {
   SECURITY_WRITE: 'admin:security:write',
   SECURITY_ALL: 'admin:security:*',
 
+  // Policy control plane
+  POLICY_SIMULATE: 'admin:policy:simulate',
+  POLICY_REBAC_WRITE: 'admin:policy:rebac:write',
+  POLICY_ALL: 'admin:policy:*',
+
   // IP allowlist
   IP_ALLOWLIST_READ: 'admin:ip_allowlist:read',
   IP_ALLOWLIST_WRITE: 'admin:ip_allowlist:write',

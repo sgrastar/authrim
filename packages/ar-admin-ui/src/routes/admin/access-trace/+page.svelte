@@ -11,6 +11,13 @@
 		formatPermission,
 		formatTimestamp
 	} from '$lib/api/admin-access-trace';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	// =============================================================================
 	// State
@@ -23,10 +30,17 @@
 	let error = $state('');
 
 	// Filters
-	let selectedPeriod = $state<'1h' | '6h' | '24h' | '7d' | '30d'>('24h');
+	type TracePeriod = '1h' | '6h' | '24h' | '7d' | '30d';
+	let selectedPeriod = $state<TracePeriod>('24h');
 	let filterDecision = $state<'' | 'allow' | 'deny'>('');
 	let filterSubject = $state('');
 	let filterPermission = $state('');
+	const periodTabs = $derived<AdminTabItem[]>(
+		(['1h', '6h', '24h', '7d', '30d'] as const).map((period) => ({
+			id: period,
+			label: formatPeriod(period)
+		}))
+	);
 
 	// Pagination
 	let currentPage = $state(1);
@@ -116,7 +130,7 @@
 		loadData();
 	}
 
-	function handlePeriodChange(period: '1h' | '6h' | '24h' | '7d' | '30d') {
+	function handlePeriodChange(period: TracePeriod) {
 		selectedPeriod = period;
 		currentPage = 1;
 	}
@@ -129,12 +143,6 @@
 	function closeDetail() {
 		showDetailDialog = false;
 		selectedEntry = null;
-	}
-
-	// Calculate simple timeline chart bars
-	function getTimelineBarHeight(value: number, max: number): number {
-		if (max === 0) return 0;
-		return Math.max(2, (value / max) * 100);
 	}
 
 	function getTimelineMax(): number {
@@ -192,14 +200,15 @@
 	<title>{$LL.admin_access_trace_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_access_trace_title()}</h1>
-			<p class="page-description">{$LL.admin_access_trace_description()}</p>
-		</div>
-	</div>
+{#snippet decisionActions()}
+	<span class="entry-count">{$LL.admin_access_trace_entries({ count: total })}</span>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_access_trace_title()}
+		description={$LL.admin_access_trace_description()}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -228,19 +237,29 @@
 
 	<!-- Timeline Chart -->
 	{#if timeline.length > 0}
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_access_trace_timeline()}</h2>
-			<div class="timeline-chart">
+		<AdminSection title={$LL.admin_access_trace_timeline()}>
+			<div class="timeline-list">
 				{#each timeline as point (point.timestamp)}
-					<div class="timeline-bar-group" title={formatTimestamp(point.timestamp)}>
-						<div
-							class="timeline-bar timeline-bar-allowed"
-							style="height: {getTimelineBarHeight(point.allowed, getTimelineMax())}%"
-						></div>
-						<div
-							class="timeline-bar timeline-bar-denied"
-							style="height: {getTimelineBarHeight(point.denied, getTimelineMax())}%"
-						></div>
+					<div class="timeline-row">
+						<time class="timeline-label" datetime={new Date(point.timestamp * 1000).toISOString()}>
+							{formatTimestamp(point.timestamp)}
+						</time>
+						<div class="timeline-meters">
+							<progress
+								class="timeline-meter timeline-meter--allowed"
+								value={point.allowed}
+								max={getTimelineMax()}
+							>
+								{point.allowed}
+							</progress>
+							<progress
+								class="timeline-meter timeline-meter--denied"
+								value={point.denied}
+								max={getTimelineMax()}
+							>
+								{point.denied}
+							</progress>
+						</div>
 					</div>
 				{/each}
 			</div>
@@ -248,29 +267,26 @@
 				<span class="legend-item legend-allowed">{$LL.admin_access_trace_allowed()}</span>
 				<span class="legend-item legend-denied">{$LL.admin_access_trace_denied()}</span>
 			</div>
-		</div>
+		</AdminSection>
 	{/if}
 
 	<!-- Filters -->
-	<div class="panel">
-		<div class="period-tabs">
-			{#each ['1h', '6h', '24h', '7d', '30d'] as period (period)}
-				<button
-					class="period-tab"
-					class:active={selectedPeriod === period}
-					onclick={() => handlePeriodChange(period as '1h' | '6h' | '24h' | '7d' | '30d')}
-				>
-					{formatPeriod(period)}
-				</button>
-			{/each}
-		</div>
+	<AdminSection>
+		<AdminTabs
+			items={periodTabs}
+			active={selectedPeriod}
+			onChange={(period) => handlePeriodChange(period as TracePeriod)}
+			ariaLabel={$LL.admin_access_trace_timeline()}
+		/>
 
-		<div class="filter-row">
-			<div class="form-group">
-				<label for="filter-decision" class="form-label">{$LL.admin_access_trace_decision()}</label>
+		<AdminToolbar>
+			<div class="admin-field admin-field--compact">
+				<label for="filter-decision" class="admin-field__label">
+					{$LL.admin_access_trace_decision()}
+				</label>
 				<select
 					id="filter-decision"
-					class="form-select"
+					class="admin-select"
 					bind:value={filterDecision}
 					onchange={handleSearch}
 				>
@@ -280,62 +296,57 @@
 				</select>
 			</div>
 
-			<div class="form-group">
-				<label for="filter-subject" class="form-label">{$LL.admin_access_trace_subject_id()}</label>
+			<div class="admin-field admin-field--search">
+				<label for="filter-subject" class="admin-field__label">
+					{$LL.admin_access_trace_subject_id()}
+				</label>
 				<input
 					id="filter-subject"
 					type="text"
-					class="form-input"
+					class="admin-input"
 					placeholder={$LL.admin_access_trace_subject_placeholder()}
 					bind:value={filterSubject}
 					onkeyup={(e) => e.key === 'Enter' && handleSearch()}
 				/>
 			</div>
 
-			<div class="form-group">
-				<label for="filter-permission" class="form-label"
+			<div class="admin-field admin-field--search">
+				<label for="filter-permission" class="admin-field__label"
 					>{$LL.admin_access_trace_permission()}</label
 				>
 				<input
 					id="filter-permission"
 					type="text"
-					class="form-input"
+					class="admin-input"
 					placeholder={$LL.admin_access_trace_permission_placeholder()}
 					bind:value={filterPermission}
 					onkeyup={(e) => e.key === 'Enter' && handleSearch()}
 				/>
 			</div>
 
-			<div class="form-group form-group-action">
-				<button class="btn btn-primary" onclick={handleSearch}>
-					{$LL.admin_access_trace_search()}
-				</button>
-			</div>
-		</div>
-	</div>
+			<button class="btn btn-primary" onclick={handleSearch}>
+				{$LL.admin_access_trace_search()}
+			</button>
+		</AdminToolbar>
+	</AdminSection>
 
 	<!-- Entries Table -->
-	<div class="section-header">
-		<h2 class="section-title">{$LL.admin_access_trace_decisions()}</h2>
-		<span class="entry-count">{$LL.admin_access_trace_entries({ count: total })}</span>
-	</div>
-
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
 			<p>{$LL.admin_access_trace_loading()}</p>
 		</div>
 	{:else if entries.length === 0}
-		<div class="panel">
+		<AdminSection title={$LL.admin_access_trace_decisions()} actions={decisionActions}>
 			<div class="empty-state">
 				<p class="empty-state-description">
 					{$LL.admin_access_trace_empty()}
 				</p>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection title={$LL.admin_access_trace_decisions()} actions={decisionActions}>
+			<AdminDataTable width="xwide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_access_trace_time()}</th>
@@ -366,37 +377,27 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
 		<!-- Pagination -->
 		{#if totalPages > 1}
-			<div class="pagination">
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={currentPage <= 1}
-					onclick={() => (currentPage = currentPage - 1)}
-				>
-					{$LL.admin_access_trace_previous()}
-				</button>
-				<span class="pagination-info">
-					{$LL.admin_access_trace_page_of({ page: currentPage, totalPages })}
-				</span>
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={currentPage >= totalPages}
-					onclick={() => (currentPage = currentPage + 1)}
-				>
-					{$LL.admin_access_trace_next()}
-				</button>
-			</div>
+			<AdminPagination
+				label={$LL.admin_access_trace_decisions()}
+				info={$LL.admin_access_trace_page_of({ page: currentPage, totalPages })}
+				previousLabel={$LL.admin_access_trace_previous()}
+				nextLabel={$LL.admin_access_trace_next()}
+				hasPrevious={currentPage > 1}
+				hasNext={currentPage < totalPages}
+				onPrevious={() => (currentPage = currentPage - 1)}
+				onNext={() => (currentPage = currentPage + 1)}
+			/>
 		{/if}
 	{/if}
 
 	<!-- Top Denied Section -->
 	{#if stats && stats.top_denied_permissions.length > 0}
-		<div class="panel">
-			<h3 class="panel-title">{$LL.admin_access_trace_top_denied_permissions()}</h3>
+		<AdminSection title={$LL.admin_access_trace_top_denied_permissions()}>
 			<ul class="top-list">
 				{#each stats.top_denied_permissions.slice(0, 5) as item (item.permission)}
 					<li class="top-list-item">
@@ -407,7 +408,7 @@
 			</ul>
 
 			{#if stats.top_denied_subjects.length > 0}
-				<h3 class="panel-title">{$LL.admin_access_trace_top_denied_subjects()}</h3>
+				<h3 class="top-list-title">{$LL.admin_access_trace_top_denied_subjects()}</h3>
 				<ul class="top-list">
 					{#each stats.top_denied_subjects.slice(0, 5) as item (item.subject_id)}
 						<li class="top-list-item">
@@ -417,9 +418,9 @@
 					{/each}
 				</ul>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Detail Dialog -->
 <Modal

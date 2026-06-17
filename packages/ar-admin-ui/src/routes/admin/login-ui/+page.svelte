@@ -19,6 +19,8 @@
 	} from '$lib/api/admin-settings';
 	import { InheritanceIndicator } from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -444,123 +446,95 @@
 	<title>{$LL.admin_login_ui_page_title()}</title>
 </svelte:head>
 
-<div class="settings-detail-page">
-	<!-- Header -->
-	<div class="settings-detail-header">
-		<div class="settings-header-row">
-			<h1 class="page-title">{$LL.admin_login_ui_title()}</h1>
-			<!-- Scope Badge -->
-			<span class="scope-badge {currentLevel}">
-				{currentLevel === 'platform'
-					? $LL.admin_login_ui_scope_platform()
-					: currentLevel === 'tenant'
-						? $LL.admin_login_ui_scope_tenant()
-						: $LL.admin_login_ui_scope_client()}
-			</span>
-			{#if !canEditGlobalUiConfig && !canEditLoginUiSettings}
-				<span class="readonly-badge">{$LL.admin_login_ui_readonly()}</span>
-			{/if}
-		</div>
-		<p class="page-description">{$LL.admin_login_ui_description()}</p>
-	</div>
-
-	{#if !loginUiAvailable && !loading}
-		<div class="alert alert-warning">
-			{loginUiStatusMessage}
-		</div>
-	{:else if !loginUiConfigured && !loading}
-		<div class="alert alert-warning">
-			{loginUiStatusMessage}
-		</div>
+{#snippet titleAccessory()}
+	<span class="scope-badge {currentLevel}">
+		{currentLevel === 'platform'
+			? $LL.admin_login_ui_scope_platform()
+			: currentLevel === 'tenant'
+				? $LL.admin_login_ui_scope_tenant()
+				: $LL.admin_login_ui_scope_client()}
+	</span>
+	{#if !canEditGlobalUiConfig && !canEditLoginUiSettings}
+		<span class="readonly-badge">{$LL.admin_login_ui_readonly()}</span>
 	{/if}
+{/snippet}
 
-	{#if uiConfigError}
-		<div class="alert alert-error">{uiConfigError}</div>
-	{/if}
+<AdminPageShell>
+	<div class="settings-detail-page">
+		<AdminPageHeader
+			title={$LL.admin_login_ui_title()}
+			description={$LL.admin_login_ui_description()}
+			{titleAccessory}
+		/>
 
-	{#if uiConfigSuccessMessage}
-		<div class="alert alert-success">{uiConfigSuccessMessage}</div>
-	{/if}
-
-	{#if trustedOriginsError}
-		<div class="alert alert-error">{trustedOriginsError}</div>
-	{/if}
-
-	{#if trustedOriginsSuccessMessage}
-		<div class="alert alert-success">{trustedOriginsSuccessMessage}</div>
-	{/if}
-
-	{#if !loading && uiConfig}
-		<section class="panel">
-			<div class="section-header">
-				<div>
-					<h2 class="section-title">{$LL.admin_login_ui_global_config_title()}</h2>
-					<p class="section-description">
-						{$LL.admin_login_ui_global_config_description()}
-					</p>
-				</div>
-				<span class="config-source-badge"
-					>{$LL.admin_login_ui_source({ source: uiConfig.source })}</span
-				>
+		{#if !loginUiAvailable && !loading}
+			<div class="alert alert-warning">
+				{loginUiStatusMessage}
 			</div>
+		{:else if !loginUiConfigured && !loading}
+			<div class="alert alert-warning">
+				{loginUiStatusMessage}
+			</div>
+		{/if}
 
-			<div class="settings-form-card">
-				<div class="setting-item" class:modified={hasUiConfigChanges}>
-					<div class="setting-item-content">
-						<div class="setting-info">
-							<div class="setting-label-row">
-								<label for="ui-config-base-url" class="setting-label"
-									>{$LL.admin_login_ui_global_base_url()}</label
-								>
-								{#if hasUiConfigChanges}
-									<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
-								{/if}
-							</div>
-							<p class="setting-description">
-								{$LL.admin_login_ui_global_base_url_description()}
-							</p>
-						</div>
+		{#if uiConfigError}
+			<div class="alert alert-error">{uiConfigError}</div>
+		{/if}
 
-						<div class="setting-control">
-							<input
-								type="url"
-								id="ui-config-base-url"
-								value={uiConfigForm.baseUrl}
-								disabled={!canEditGlobalUiConfig}
-								placeholder="https://single-ar-login-ui.pages.dev"
-								oninput={(e) => {
-									uiConfigForm = {
-										...uiConfigForm,
-										baseUrl: e.currentTarget.value
-									};
-								}}
-								class="settings-input"
-							/>
-						</div>
+		{#if uiConfigSuccessMessage}
+			<div class="alert alert-success">{uiConfigSuccessMessage}</div>
+		{/if}
+
+		{#if trustedOriginsError}
+			<div class="alert alert-error">{trustedOriginsError}</div>
+		{/if}
+
+		{#if trustedOriginsSuccessMessage}
+			<div class="alert alert-success">{trustedOriginsSuccessMessage}</div>
+		{/if}
+
+		{#if !loading && uiConfig}
+			<section class="panel">
+				<div class="section-header">
+					<div>
+						<h2 class="section-title">{$LL.admin_login_ui_global_config_title()}</h2>
+						<p class="section-description">
+							{$LL.admin_login_ui_global_config_description()}
+						</p>
 					</div>
+					<span class="config-source-badge"
+						>{$LL.admin_login_ui_source({ source: uiConfig.source })}</span
+					>
 				</div>
 
-				{#each Object.entries(uiConfig.metadata) as [key, metaItem] (key)}
+				<div class="settings-form-card">
 					<div class="setting-item" class:modified={hasUiConfigChanges}>
 						<div class="setting-item-content">
 							<div class="setting-info">
-								<label for={`ui-path-${key}`} class="setting-label">{metaItem.label}</label>
-								<p class="setting-description">{metaItem.description}</p>
+								<div class="setting-label-row">
+									<label for="ui-config-base-url" class="setting-label"
+										>{$LL.admin_login_ui_global_base_url()}</label
+									>
+									{#if hasUiConfigChanges}
+										<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
+									{/if}
+								</div>
+								<p class="setting-description">
+									{$LL.admin_login_ui_global_base_url_description()}
+								</p>
 							</div>
 
 							<div class="setting-control">
 								<input
-									type="text"
-									id={`ui-path-${key}`}
-									value={uiConfigForm.paths[key as UIPathKey]}
+									type="url"
+									id="ui-config-base-url"
+									value={uiConfigForm.baseUrl}
 									disabled={!canEditGlobalUiConfig}
+									placeholder="https://single-ar-login-ui.pages.dev"
 									oninput={(e) => {
 										uiConfigForm = {
 											...uiConfigForm,
-											paths: {
-												...uiConfigForm.paths,
-												[key]: e.currentTarget.value
-											}
+											baseUrl: e.currentTarget.value
 										};
 									}}
 									class="settings-input"
@@ -568,278 +542,346 @@
 							</div>
 						</div>
 					</div>
+
+					{#each Object.entries(uiConfig.metadata) as [key, metaItem] (key)}
+						<div class="setting-item" class:modified={hasUiConfigChanges}>
+							<div class="setting-item-content">
+								<div class="setting-info">
+									<label for={`ui-path-${key}`} class="setting-label">{metaItem.label}</label>
+									<p class="setting-description">{metaItem.description}</p>
+								</div>
+
+								<div class="setting-control">
+									<input
+										type="text"
+										id={`ui-path-${key}`}
+										value={uiConfigForm.paths[key as UIPathKey]}
+										disabled={!canEditGlobalUiConfig}
+										oninput={(e) => {
+											uiConfigForm = {
+												...uiConfigForm,
+												paths: {
+													...uiConfigForm.paths,
+													[key]: e.currentTarget.value
+												}
+											};
+										}}
+										class="settings-input"
+									/>
+								</div>
+							</div>
+						</div>
+					{/each}
+				</div>
+
+				<div class="form-actions">
+					<button
+						onclick={discardUiConfigChanges}
+						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+						class="btn btn-secondary"
+					>
+						{$LL.admin_login_ui_discard_changes()}
+					</button>
+					<button
+						onclick={saveUiConfig}
+						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+						class="btn btn-primary"
+					>
+						{uiConfigSaving ? $LL.admin_login_ui_saving() : $LL.admin_login_ui_save_global_config()}
+					</button>
+				</div>
+			</section>
+		{/if}
+
+		{#if !loading && tenantSettings}
+			<section class="panel">
+				<div class="section-header">
+					<div>
+						<h2 class="section-title">{$LL.admin_login_ui_trusted_origins_title()}</h2>
+						<p class="section-description">
+							{$LL.admin_login_ui_trusted_origins_description()}
+						</p>
+					</div>
+					<span class="config-source-badge">{$LL.admin_login_ui_tenant_setting()}</span>
+				</div>
+
+				<div class="textarea-setting" class:modified={hasTrustedOriginsChanges}>
+					<div class="setting-label-row">
+						<label for="trusted-origins" class="setting-label"
+							>{$LL.admin_login_ui_allowed_browser_origins()}</label
+						>
+						{#if hasTrustedOriginsChanges}
+							<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
+						{/if}
+					</div>
+					<p class="setting-description">
+						{$LL.admin_login_ui_allowed_browser_origins_description()}
+					</p>
+					<textarea
+						id="trusted-origins"
+						class="settings-textarea"
+						rows="6"
+						disabled={!canEditTrustedOrigins}
+						placeholder="https://first.multi-tenant.authrim.com\nhttps://*.example.com"
+						value={trustedOriginsInput}
+						oninput={(e) => {
+							trustedOriginsInput = e.currentTarget.value;
+						}}
+					></textarea>
+					<p class="settings-range-hint">
+						{$LL.admin_login_ui_allowed_browser_origins_hint()}
+					</p>
+					{#if trustedOriginsDraft.error}
+						<p class="trusted-origins-validation">{trustedOriginsDraft.error}</p>
+					{/if}
+				</div>
+
+				{#if trustedOriginsDraft.origins.length > 0}
+					<div class="trusted-origins-preview">
+						<p class="trusted-origins-preview-label">{$LL.admin_login_ui_normalized_entries()}</p>
+						<div class="trusted-origins-list">
+							{#each trustedOriginsDraft.origins as origin (origin)}
+								<span class="trusted-origin-chip">{origin}</span>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				<div class="form-actions">
+					<button
+						onclick={discardTrustedOriginsChanges}
+						disabled={!hasTrustedOriginsChanges || trustedOriginsSaving || !canEditTrustedOrigins}
+						class="btn btn-secondary"
+					>
+						{$LL.admin_login_ui_discard_changes()}
+					</button>
+					<button
+						onclick={saveTrustedOrigins}
+						disabled={!hasTrustedOriginsChanges ||
+							trustedOriginsSaving ||
+							!canEditTrustedOrigins ||
+							Boolean(trustedOriginsDraft.error)}
+						class="btn btn-primary"
+					>
+						{trustedOriginsSaving
+							? $LL.admin_login_ui_saving()
+							: $LL.admin_login_ui_save_trusted_origins()}
+					</button>
+				</div>
+			</section>
+		{/if}
+
+		<!-- Error message -->
+		{#if error}
+			<div class="alert alert-error">
+				{error}
+				{#if error === $LL.admin_login_ui_settings_conflict()}
+					<button onclick={loadData} class="btn btn-sm btn-danger reload-action">
+						{$LL.admin_login_ui_reload()}
+					</button>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Success message -->
+		{#if successMessage}
+			<div class="alert alert-success">{successMessage}</div>
+		{/if}
+
+		{#if loading}
+			<div class="loading-state">
+				<p class="text-secondary">{$LL.admin_login_ui_loading_settings()}</p>
+			</div>
+		{:else if meta && settings}
+			<!-- Settings form -->
+			<div class="settings-form-card">
+				{#each Object.entries(meta.settings).filter(([_key, s]) => !shouldHideSetting(s)) as [key, settingMeta] (key)}
+					{@const value = getCurrentValue(key)}
+					{@const locked = isSettingLocked(key, settingMeta)}
+					{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}
+					<div class="setting-item" class:modified={hasPendingChange}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<div class="setting-label-row">
+									<label for={key} class="setting-label">{settingMeta.label}</label>
+									<InheritanceIndicator
+										source={(settings?.sources[key] as SettingSource) || 'default'}
+										currentScope={currentLevel}
+										{canEdit}
+										compact={true}
+									/>
+									{#if locked && !isLockedByEnv(key)}
+										<span class="setting-locked">{$LL.admin_login_ui_locked()}</span>
+									{/if}
+									{#if hasPendingChange}
+										<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
+									{/if}
+								</div>
+								<p class="setting-description">
+									{settingMeta.description}
+									{#if settingMeta.unit}
+										<span class="setting-unit">({settingMeta.unit})</span>
+									{/if}
+								</p>
+							</div>
+
+							<div class="setting-control">
+								{#if settingMeta.type === 'boolean'}
+									<ToggleSwitch
+										checked={Boolean(value)}
+										disabled={locked}
+										id={key}
+										onchange={(newValue) => handleChange(key, newValue)}
+									/>
+								{:else if settingMeta.type === 'enum' && settingMeta.enum}
+									<select
+										id={key}
+										value={String(value)}
+										disabled={locked}
+										onchange={(e) => handleChange(key, e.currentTarget.value)}
+										class="settings-select"
+									>
+										{#each settingMeta.enum as option (option)}
+											<option value={option}>{option}</option>
+										{/each}
+									</select>
+								{:else}
+									<input
+										type={getInputType(settingMeta)}
+										id={key}
+										value={String(value ?? '')}
+										disabled={locked}
+										min={settingMeta.min}
+										max={settingMeta.max}
+										oninput={(e) => {
+											const inputValue =
+												settingMeta.type === 'number' || settingMeta.type === 'duration'
+													? Number(e.currentTarget.value)
+													: e.currentTarget.value;
+											handleChange(key, inputValue);
+										}}
+										class="settings-input"
+									/>
+								{/if}
+								{#if settingMeta.min !== undefined || settingMeta.max !== undefined}
+									<p class="settings-range-hint">
+										{#if settingMeta.min !== undefined && settingMeta.max !== undefined}
+											{$LL.admin_login_ui_range({
+												min: settingMeta.min,
+												max: settingMeta.max
+											})}
+										{:else if settingMeta.min !== undefined}
+											{$LL.admin_login_ui_min({ min: settingMeta.min })}
+										{:else if settingMeta.max !== undefined}
+											{$LL.admin_login_ui_max({ max: settingMeta.max })}
+										{/if}
+									</p>
+								{/if}
+							</div>
+						</div>
+					</div>
 				{/each}
 			</div>
 
-			<div class="form-actions">
+			<!-- Action buttons -->
+			<div class="settings-actions">
 				<button
-					onclick={discardUiConfigChanges}
-					disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+					onclick={discardChanges}
+					disabled={!hasChanges || saving || !canEditLoginUiSettings}
 					class="btn btn-secondary"
 				>
 					{$LL.admin_login_ui_discard_changes()}
 				</button>
 				<button
-					onclick={saveUiConfig}
-					disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+					onclick={saveChanges}
+					disabled={!hasChanges || saving || !canEditLoginUiSettings}
 					class="btn btn-primary"
 				>
-					{uiConfigSaving ? $LL.admin_login_ui_saving() : $LL.admin_login_ui_save_global_config()}
-				</button>
-			</div>
-		</section>
-	{/if}
-
-	{#if !loading && tenantSettings}
-		<section class="panel">
-			<div class="section-header">
-				<div>
-					<h2 class="section-title">{$LL.admin_login_ui_trusted_origins_title()}</h2>
-					<p class="section-description">
-						{$LL.admin_login_ui_trusted_origins_description()}
-					</p>
-				</div>
-				<span class="config-source-badge">{$LL.admin_login_ui_tenant_setting()}</span>
-			</div>
-
-			<div class="textarea-setting" class:modified={hasTrustedOriginsChanges}>
-				<div class="setting-label-row">
-					<label for="trusted-origins" class="setting-label"
-						>{$LL.admin_login_ui_allowed_browser_origins()}</label
-					>
-					{#if hasTrustedOriginsChanges}
-						<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
-					{/if}
-				</div>
-				<p class="setting-description">
-					{$LL.admin_login_ui_allowed_browser_origins_description()}
-				</p>
-				<textarea
-					id="trusted-origins"
-					class="settings-textarea"
-					rows="6"
-					disabled={!canEditTrustedOrigins}
-					placeholder="https://first.multi-tenant.authrim.com\nhttps://*.example.com"
-					value={trustedOriginsInput}
-					oninput={(e) => {
-						trustedOriginsInput = e.currentTarget.value;
-					}}
-				></textarea>
-				<p class="settings-range-hint">
-					{$LL.admin_login_ui_allowed_browser_origins_hint()}
-				</p>
-				{#if trustedOriginsDraft.error}
-					<p class="trusted-origins-validation">{trustedOriginsDraft.error}</p>
-				{/if}
-			</div>
-
-			{#if trustedOriginsDraft.origins.length > 0}
-				<div class="trusted-origins-preview">
-					<p class="trusted-origins-preview-label">{$LL.admin_login_ui_normalized_entries()}</p>
-					<div class="trusted-origins-list">
-						{#each trustedOriginsDraft.origins as origin (origin)}
-							<span class="trusted-origin-chip">{origin}</span>
-						{/each}
-					</div>
-				</div>
-			{/if}
-
-			<div class="form-actions">
-				<button
-					onclick={discardTrustedOriginsChanges}
-					disabled={!hasTrustedOriginsChanges || trustedOriginsSaving || !canEditTrustedOrigins}
-					class="btn btn-secondary"
-				>
-					{$LL.admin_login_ui_discard_changes()}
-				</button>
-				<button
-					onclick={saveTrustedOrigins}
-					disabled={!hasTrustedOriginsChanges ||
-						trustedOriginsSaving ||
-						!canEditTrustedOrigins ||
-						Boolean(trustedOriginsDraft.error)}
-					class="btn btn-primary"
-				>
-					{trustedOriginsSaving
+					{saving
 						? $LL.admin_login_ui_saving()
-						: $LL.admin_login_ui_save_trusted_origins()}
+						: `${$LL.admin_login_ui_save_changes()}${hasChanges ? ` (${pendingPatches.length})` : ''}`}
 				</button>
 			</div>
-		</section>
-	{/if}
 
-	<!-- Error message -->
-	{#if error}
-		<div class="alert alert-error">
-			{error}
-			{#if error === $LL.admin_login_ui_settings_conflict()}
-				<button onclick={loadData} class="btn btn-sm btn-danger" style="margin-left: 12px;">
-					{$LL.admin_login_ui_reload()}
-				</button>
-			{/if}
-		</div>
-	{/if}
-
-	<!-- Success message -->
-	{#if successMessage}
-		<div class="alert alert-success">{successMessage}</div>
-	{/if}
-
-	{#if loading}
-		<div class="loading-state">
-			<p class="text-secondary">{$LL.admin_login_ui_loading_settings()}</p>
-		</div>
-	{:else if meta && settings}
-		<!-- Settings form -->
-		<div class="settings-form-card">
-			{#each Object.entries(meta.settings).filter(([_key, s]) => !shouldHideSetting(s)) as [key, settingMeta] (key)}
-				{@const value = getCurrentValue(key)}
-				{@const locked = isSettingLocked(key, settingMeta)}
-				{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}
-				<div class="setting-item" class:modified={hasPendingChange}>
-					<div class="setting-item-content">
-						<div class="setting-info">
-							<div class="setting-label-row">
-								<label for={key} class="setting-label">{settingMeta.label}</label>
-								<InheritanceIndicator
-									source={(settings?.sources[key] as SettingSource) || 'default'}
-									currentScope={currentLevel}
-									{canEdit}
-									compact={true}
-								/>
-								{#if locked && !isLockedByEnv(key)}
-									<span class="setting-locked">{$LL.admin_login_ui_locked()}</span>
-								{/if}
-								{#if hasPendingChange}
-									<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
-								{/if}
-							</div>
-							<p class="setting-description">
-								{settingMeta.description}
-								{#if settingMeta.unit}
-									<span class="setting-unit">({settingMeta.unit})</span>
-								{/if}
-							</p>
-						</div>
-
-						<div class="setting-control">
-							{#if settingMeta.type === 'boolean'}
-								<ToggleSwitch
-									checked={Boolean(value)}
-									disabled={locked}
-									id={key}
-									onchange={(newValue) => handleChange(key, newValue)}
-								/>
-							{:else if settingMeta.type === 'enum' && settingMeta.enum}
-								<select
-									id={key}
-									value={String(value)}
-									disabled={locked}
-									onchange={(e) => handleChange(key, e.currentTarget.value)}
-									class="settings-select"
-								>
-									{#each settingMeta.enum as option (option)}
-										<option value={option}>{option}</option>
-									{/each}
-								</select>
-							{:else}
-								<input
-									type={getInputType(settingMeta)}
-									id={key}
-									value={String(value ?? '')}
-									disabled={locked}
-									min={settingMeta.min}
-									max={settingMeta.max}
-									oninput={(e) => {
-										const inputValue =
-											settingMeta.type === 'number' || settingMeta.type === 'duration'
-												? Number(e.currentTarget.value)
-												: e.currentTarget.value;
-										handleChange(key, inputValue);
-									}}
-									class="settings-input"
-								/>
-							{/if}
-							{#if settingMeta.min !== undefined || settingMeta.max !== undefined}
-								<p class="settings-range-hint">
-									{#if settingMeta.min !== undefined && settingMeta.max !== undefined}
-										{$LL.admin_login_ui_range({
-											min: settingMeta.min,
-											max: settingMeta.max
-										})}
-									{:else if settingMeta.min !== undefined}
-										{$LL.admin_login_ui_min({ min: settingMeta.min })}
-									{:else if settingMeta.max !== undefined}
-										{$LL.admin_login_ui_max({ max: settingMeta.max })}
-									{/if}
-								</p>
-							{/if}
-						</div>
+			<!-- Coming Soon Section -->
+			<div class="coming-soon-section">
+				<h2 class="coming-soon-title">{$LL.admin_login_ui_coming_soon_title()}</h2>
+				<p class="coming-soon-description">{$LL.admin_login_ui_coming_soon_description()}</p>
+				<div class="coming-soon-list">
+					<div class="coming-soon-item">
+						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_favicon()}</span>
+						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_favicon_desc()}</span>
+					</div>
+					<div class="coming-soon-item">
+						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_background()}</span>
+						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_background_desc()}</span>
+					</div>
+					<div class="coming-soon-item">
+						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_css()}</span>
+						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_custom_css_desc()}</span>
+					</div>
+					<div class="coming-soon-item">
+						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_header()}</span>
+						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_header_desc()}</span>
+					</div>
+					<div class="coming-soon-item">
+						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer()}</span>
+						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_footer_desc()}</span>
+					</div>
+					<div class="coming-soon-item">
+						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer_links()}</span>
+						<span class="coming-soon-desc"
+							>{$LL.admin_login_ui_coming_soon_footer_links_desc()}</span
+						>
+					</div>
+					<div class="coming-soon-item">
+						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_blocks()}</span>
+						<span class="coming-soon-desc"
+							>{$LL.admin_login_ui_coming_soon_custom_blocks_desc()}</span
+						>
 					</div>
 				</div>
-			{/each}
-		</div>
-
-		<!-- Action buttons -->
-		<div class="settings-actions">
-			<button
-				onclick={discardChanges}
-				disabled={!hasChanges || saving || !canEditLoginUiSettings}
-				class="btn btn-secondary"
-			>
-				{$LL.admin_login_ui_discard_changes()}
-			</button>
-			<button
-				onclick={saveChanges}
-				disabled={!hasChanges || saving || !canEditLoginUiSettings}
-				class="btn btn-primary"
-			>
-				{saving
-					? $LL.admin_login_ui_saving()
-					: `${$LL.admin_login_ui_save_changes()}${hasChanges ? ` (${pendingPatches.length})` : ''}`}
-			</button>
-		</div>
-
-		<!-- Coming Soon Section -->
-		<div class="coming-soon-section">
-			<h2 class="coming-soon-title">{$LL.admin_login_ui_coming_soon_title()}</h2>
-			<p class="coming-soon-description">{$LL.admin_login_ui_coming_soon_description()}</p>
-			<div class="coming-soon-list">
-				<div class="coming-soon-item">
-					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_favicon()}</span>
-					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_favicon_desc()}</span>
-				</div>
-				<div class="coming-soon-item">
-					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_background()}</span>
-					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_background_desc()}</span>
-				</div>
-				<div class="coming-soon-item">
-					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_css()}</span>
-					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_custom_css_desc()}</span>
-				</div>
-				<div class="coming-soon-item">
-					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_header()}</span>
-					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_header_desc()}</span>
-				</div>
-				<div class="coming-soon-item">
-					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer()}</span>
-					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_footer_desc()}</span>
-				</div>
-				<div class="coming-soon-item">
-					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer_links()}</span>
-					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_footer_links_desc()}</span>
-				</div>
-				<div class="coming-soon-item">
-					<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_blocks()}</span>
-					<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_custom_blocks_desc()}</span
-					>
-				</div>
 			</div>
-		</div>
-	{/if}
-</div>
+		{/if}
+	</div>
+</AdminPageShell>
 
 <style>
+	.settings-detail-page {
+		max-width: 980px;
+	}
+
+	.scope-badge,
+	.readonly-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 4px 9px;
+		border-radius: var(--radius-full);
+		font-size: 0.75rem;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	.scope-badge {
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
+	}
+
+	.scope-badge.tenant {
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
+	}
+
+	.scope-badge.client {
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
+	}
+
+	.readonly-badge {
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-danger);
+	}
+
 	.section-title {
 		font-size: 18px;
 		font-weight: 600;
@@ -848,7 +890,7 @@
 
 	.section-description {
 		font-size: 14px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0;
 	}
 
@@ -856,10 +898,10 @@
 		display: inline-flex;
 		align-items: center;
 		padding: 3px 10px;
-		border-radius: 6px;
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		color: var(--text-secondary);
+		border-radius: var(--radius-control, 6px);
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-muted);
 		font-size: 11px;
 		font-weight: 600;
 		text-transform: uppercase;
@@ -874,12 +916,16 @@
 		margin-top: 16px;
 	}
 
+	.reload-action {
+		margin-left: 12px;
+	}
+
 	.textarea-setting {
 		margin-top: 4px;
 	}
 
 	.textarea-setting.modified {
-		background: color-mix(in srgb, var(--warning) 5%, transparent);
+		background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 		border-radius: var(--radius-sm);
 		padding: 8px;
 		margin: -8px;
@@ -889,10 +935,10 @@
 		width: 100%;
 		min-height: 140px;
 		padding: 12px 14px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		background: var(--bg-card);
-		color: var(--text-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font: inherit;
 		line-height: 1.5;
 		resize: vertical;
@@ -900,33 +946,33 @@
 
 	.settings-textarea:focus {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
 	.settings-textarea:disabled {
-		background: var(--bg-subtle);
-		color: var(--text-muted);
+		background: var(--color-surface-muted);
+		color: var(--color-text-subtle);
 		cursor: not-allowed;
 	}
 
 	.trusted-origins-validation {
 		margin: 8px 0 0;
 		font-size: 13px;
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
 	.trusted-origins-preview {
 		margin-top: 16px;
 		padding-top: 16px;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.trusted-origins-preview-label {
 		margin: 0 0 10px;
 		font-size: 13px;
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 	}
@@ -942,30 +988,30 @@
 		align-items: center;
 		padding: 6px 10px;
 		border-radius: 999px;
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		color: var(--text-primary);
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
 		font-size: 13px;
 	}
 
 	.coming-soon-section {
 		margin-top: 32px;
 		padding: 20px;
-		background: var(--bg-subtle);
-		border-radius: 8px;
-		border: 1px dashed var(--border);
+		background: var(--color-surface-muted);
+		border-radius: var(--radius-panel, 8px);
+		border: 1px dashed var(--color-border);
 	}
 
 	.coming-soon-title {
 		font-size: 16px;
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0 0 8px 0;
 	}
 
 	.coming-soon-description {
 		font-size: 14px;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		margin: 0 0 16px 0;
 	}
 
@@ -980,19 +1026,19 @@
 		flex-direction: column;
 		gap: 2px;
 		padding: 12px;
-		background: var(--bg-card);
-		border-radius: 6px;
-		border: 1px solid var(--border);
+		background: var(--color-surface);
+		border-radius: var(--radius-control, 6px);
+		border: 1px solid var(--color-border);
 	}
 
 	.coming-soon-label {
 		font-size: 14px;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.coming-soon-desc {
 		font-size: 13px;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 	}
 </style>

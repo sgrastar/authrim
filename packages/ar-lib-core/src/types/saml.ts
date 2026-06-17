@@ -167,7 +167,8 @@ export type SAMLAttributeValueType =
   | 'xs:boolean'
   | 'xs:integer'
   | 'xs:dateTime'
-  | 'xs:anyURI';
+  | 'xs:anyURI'
+  | 'saml:persistent-nameid';
 
 /**
  * SAML attribute release policy.

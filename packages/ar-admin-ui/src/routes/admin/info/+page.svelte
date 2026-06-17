@@ -6,6 +6,8 @@
 	import { adminSAMLAPI, type SAMLSettings } from '$lib/api/admin-saml';
 	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 
 	type LoginEntryMode = 'tenant_only' | 'discovery_optional' | 'discovery_required';
 
@@ -219,13 +221,8 @@
 	</div>
 {/snippet}
 
-<div class="page-container">
-	<div class="page-header">
-		<h1 class="page-title">{$LL.admin_info_title()}</h1>
-		<p class="page-description">
-			{$LL.admin_info_description()}
-		</p>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader title={$LL.admin_info_title()} description={$LL.admin_info_description()} />
 
 	{#if loading}
 		<div class="loading-state">
@@ -233,7 +230,7 @@
 			<span>{$LL.admin_info_loading()}</span>
 		</div>
 	{:else if error}
-		<div class="error-banner">
+		<div class="alert alert-error info-alert">
 			<i class="i-ph-warning-circle w-5 h-5"></i>
 			{error}
 		</div>
@@ -609,55 +606,28 @@
 			</div>
 		</section>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.page-container {
-		max-width: 900px;
-	}
-
-	.page-header {
-		margin-bottom: 28px;
-	}
-
-	.page-title {
-		font-size: 1.5rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0 0 4px 0;
-	}
-
-	.page-description {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		margin: 0;
-	}
-
 	.loading-state {
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		padding: 40px 0;
 	}
 
-	.error-banner {
+	.info-alert {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		background: color-mix(in srgb, var(--danger, #dc2626) 8%, var(--bg-subtle, #f8fafc));
-		border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 30%, var(--border, #e5e7eb));
-		color: var(--danger, #dc2626);
-		border-radius: 8px;
-		padding: 12px 16px;
-		font-size: 0.875rem;
 	}
 
 	/* Sections */
 	.info-section {
-		background: var(--bg-card, #fff);
-		border: 1px solid var(--border, #e5e7eb);
-		border-radius: 10px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 20px 24px;
 		margin-bottom: 16px;
 	}
@@ -668,14 +638,14 @@
 		gap: 8px;
 		font-size: 0.9375rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0 0 16px 0;
 	}
 
 	.subsection-title {
 		font-size: 0.8125rem;
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 20px 0 12px 0;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
@@ -694,7 +664,7 @@
 		align-items: center;
 		gap: 12px;
 		padding: 7px 0;
-		border-bottom: 1px solid var(--border-subtle, var(--border, #e5e7eb));
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.url-row:last-child {
@@ -703,7 +673,7 @@
 
 	.url-label {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-weight: 500;
 		white-space: nowrap;
 	}
@@ -717,7 +687,7 @@
 
 	.url-value {
 		font-size: 0.8125rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -726,14 +696,14 @@
 	}
 
 	.url-value.monospace {
-		font-family: var(--font-mono, monospace);
+		font-family: var(--font-mono);
 	}
 
 	.url-link {
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		color: var(--primary, #2563eb);
+		color: var(--color-accent);
 		text-decoration: none;
 	}
 
@@ -748,10 +718,10 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border: 1px solid var(--border, #e5e7eb);
-		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		background: transparent;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
@@ -761,14 +731,14 @@
 	}
 
 	.copy-btn:hover {
-		background: var(--bg-subtle, #f8fafc);
-		color: var(--text-primary);
+		background: var(--color-surface-raised);
+		color: var(--color-text);
 	}
 
 	.copy-btn.copied {
-		background: color-mix(in srgb, var(--success, #16a34a) 10%, var(--bg-card, #fff));
-		border-color: color-mix(in srgb, var(--success, #16a34a) 40%, var(--border, #e5e7eb));
-		color: var(--success, #16a34a);
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
+		border-color: color-mix(in srgb, var(--color-success) 40%, var(--color-border));
+		color: var(--color-success);
 	}
 
 	@media (max-width: 640px) {

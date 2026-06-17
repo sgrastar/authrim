@@ -11,6 +11,13 @@
 		type ValidationRules,
 		type OperationStatus
 	} from '$lib/api/admin-custom-claims';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -548,45 +555,38 @@
 	<title>{$LL.admin_custom_claims_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
+{#snippet pageActions()}
+	<button class="btn btn-secondary" onclick={openPresetDialog}>
+		<i class="i-ph-list-plus"></i>
+		{$LL.admin_custom_claims_add_from_preset()}
+	</button>
+	<button class="btn btn-primary" onclick={openCreateDialog}>
+		<i class="i-ph-plus"></i>
+		{$LL.admin_custom_claims_add_schema()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
 	<!-- Error State Banner -->
 	{#if stats && stats.error_count > 0}
-		<div class="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
-			<div class="flex items-start">
-				<span class="i-ph-warning text-red-600 text-xl mr-3 mt-0.5"></span>
-				<div class="flex-1">
-					<h3 class="font-semibold text-red-900 mb-1">
-						{$LL.admin_custom_claims_operation_errors_title()}
-					</h3>
-					<p class="text-sm text-red-800">
-						{$LL.admin_custom_claims_operation_errors_description({
-							count: stats.error_count
-						})}
-					</p>
-				</div>
+		<div class="operation-error-banner">
+			<span class="i-ph-warning" aria-hidden="true"></span>
+			<div>
+				<h3>{$LL.admin_custom_claims_operation_errors_title()}</h3>
+				<p>
+					{$LL.admin_custom_claims_operation_errors_description({
+						count: stats.error_count
+					})}
+				</p>
 			</div>
 		</div>
 	{/if}
 
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_custom_claims_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_custom_claims_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={openPresetDialog}>
-				<i class="i-ph-list-plus"></i>
-				{$LL.admin_custom_claims_add_from_preset()}
-			</button>
-			<button class="btn btn-primary" onclick={openCreateDialog}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_custom_claims_add_schema()}
-			</button>
-		</div>
-	</div>
+	<AdminPageHeader
+		title={$LL.admin_custom_claims_title()}
+		description={$LL.admin_custom_claims_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">
@@ -626,7 +626,7 @@
 	{/if}
 
 	<!-- Filters -->
-	<div class="panel">
+	<AdminSection>
 		<div class="schema-note">
 			<div>
 				<strong>{$LL.admin_custom_claims_system_note_title()}</strong>
@@ -635,18 +635,18 @@
 				</p>
 			</div>
 		</div>
-		<div class="filter-row">
-			<div class="form-group">
+		<AdminToolbar>
+			<div class="admin-field admin-field--search">
 				<input
 					type="text"
-					class="form-input"
+					class="admin-input"
 					placeholder={$LL.admin_custom_claims_search_placeholder()}
 					bind:value={filterSearch}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
 			</div>
-			<div class="form-group">
-				<select class="form-select" bind:value={filterFieldType} onchange={applyFilters}>
+			<div class="admin-field admin-field--compact">
+				<select class="admin-select" bind:value={filterFieldType} onchange={applyFilters}>
 					<option value="">{$LL.admin_custom_claims_all_types()}</option>
 					<option value="string">{$LL.admin_custom_claims_field_type_string()}</option>
 					<option value="number">{$LL.admin_custom_claims_field_type_number()}</option>
@@ -655,28 +655,28 @@
 					<option value="enum">{$LL.admin_custom_claims_field_type_enum()}</option>
 				</select>
 			</div>
-			<div class="form-group">
-				<select class="form-select" bind:value={filterIsPii} onchange={applyFilters}>
+			<div class="admin-field admin-field--compact">
+				<select class="admin-select" bind:value={filterIsPii} onchange={applyFilters}>
 					<option value="">{$LL.admin_custom_claims_all_pii()}</option>
 					<option value="0">Non-PII</option>
 					<option value="1">PII</option>
 				</select>
 			</div>
-			<div class="form-group">
-				<select class="form-select" bind:value={filterIsActive} onchange={applyFilters}>
+			<div class="admin-field admin-field--compact">
+				<select class="admin-select" bind:value={filterIsActive} onchange={applyFilters}>
 					<option value="">{$LL.admin_custom_claims_all_status()}</option>
 					<option value="1">{$LL.admin_custom_claims_active()}</option>
 					<option value="0">{$LL.admin_custom_claims_inactive()}</option>
 				</select>
 			</div>
-			<div class="form-group">
-				<select class="form-select" bind:value={filterIsSystem} onchange={applyFilters}>
+			<div class="admin-field admin-field--compact">
+				<select class="admin-select" bind:value={filterIsSystem} onchange={applyFilters}>
 					<option value="">{$LL.admin_custom_claims_all()}</option>
 					<option value="0">{$LL.admin_custom_claims_custom()}</option>
 					<option value="1">{$LL.admin_custom_claims_system()}</option>
 				</select>
 			</div>
-			<div class="form-group">
+			<div class="filter-actions">
 				<button class="btn btn-primary" onclick={applyFilters}
 					>{$LL.admin_custom_claims_apply()}</button
 				>
@@ -684,17 +684,19 @@
 					>{$LL.admin_custom_claims_clear()}</button
 				>
 			</div>
-		</div>
-	</div>
+		</AdminToolbar>
+	</AdminSection>
 
 	<!-- Schemas Table -->
 	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>{$LL.admin_custom_claims_loading()}</p>
-		</div>
+		<AdminSection>
+			<div class="loading-state">
+				<i class="i-ph-circle-notch loading-spinner"></i>
+				<p>{$LL.admin_custom_claims_loading()}</p>
+			</div>
+		</AdminSection>
 	{:else if schemas.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_custom_claims_empty()}</p>
 				<button class="btn btn-secondary" onclick={openPresetDialog}
@@ -704,129 +706,119 @@
 					>{$LL.admin_custom_claims_add_schema()}</button
 				>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="data-table-container">
-			<table class="data-table schema-table">
-				<thead>
-					<tr>
-						<th>{$LL.admin_custom_claims_field_key()}</th>
-						<th>{$LL.admin_custom_claims_label()}</th>
-						<th>{$LL.admin_custom_claims_type()}</th>
-						<th>PII</th>
-						<th>{$LL.admin_custom_claims_token()}</th>
-						<th>{$LL.admin_custom_claims_required()}</th>
-						<th>{$LL.admin_custom_claims_status()}</th>
+		<AdminDataTable compact width="xwide">
+			<thead>
+				<tr>
+					<th>{$LL.admin_custom_claims_field_key()}</th>
+					<th>{$LL.admin_custom_claims_label()}</th>
+					<th>{$LL.admin_custom_claims_type()}</th>
+					<th>PII</th>
+					<th>{$LL.admin_custom_claims_token()}</th>
+					<th>{$LL.admin_custom_claims_required()}</th>
+					<th>{$LL.admin_custom_claims_status()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each groupedSchemas as group (group.key)}
+					<tr class="schema-group-row">
+						<td colspan="7">
+							<button
+								type="button"
+								class="schema-group-toggle"
+								aria-expanded={!isSchemaGroupCollapsed(group.key)}
+								onclick={() => toggleSchemaGroup(group.key)}
+							>
+								<span>{group.label}</span>
+								<span class="schema-group-count">{group.schemas.length}</span>
+								<i
+									class={isSchemaGroupCollapsed(group.key) ? 'i-ph-caret-right' : 'i-ph-caret-down'}
+									aria-hidden="true"
+								></i>
+							</button>
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					{#each groupedSchemas as group (group.key)}
-						<tr class="schema-group-row">
-							<td colspan="7">
-								<button
-									type="button"
-									class="schema-group-toggle"
-									aria-expanded={!isSchemaGroupCollapsed(group.key)}
-									onclick={() => toggleSchemaGroup(group.key)}
-								>
-									<span>{group.label}</span>
-									<span class="schema-group-count">{group.schemas.length}</span>
-									<i
-										class={isSchemaGroupCollapsed(group.key)
-											? 'i-ph-caret-right'
-											: 'i-ph-caret-down'}
-										aria-hidden="true"
-									></i>
-								</button>
-							</td>
-						</tr>
-						{#if !isSchemaGroupCollapsed(group.key)}
-							{#each group.schemas as schema (schema.id)}
-								{@const tokenBadges = getTokenBadges(schema)}
-								<tr
-									class="cursor-pointer hover:bg-gray-50"
-									class:opacity-50={!schema.is_active}
-									onclick={() => goto(`/admin/custom-claims/${schema.id}`)}
-								>
-									<td>
-										<div class="flex items-center gap-2">
-											<code class="text-sm font-mono">{schema.field_key}</code>
-											{#if schema.is_system}
-												<span class="badge badge-neutral text-xs"
-													>{$LL.admin_custom_claims_system()}</span
-												>
-											{/if}
-											{#if schema.claim_namespace}
-												<span class="badge badge-neutral text-xs" title={schema.claim_namespace}
-													>NS</span
-												>
-											{/if}
+					{#if !isSchemaGroupCollapsed(group.key)}
+						{#each group.schemas as schema (schema.id)}
+							{@const tokenBadges = getTokenBadges(schema)}
+							<tr
+								data-clickable="true"
+								class:schema-row--inactive={!schema.is_active}
+								onclick={() => goto(`/admin/custom-claims/${schema.id}`)}
+							>
+								<td>
+									<div class="field-key-cell">
+										<code>{schema.field_key}</code>
+										{#if schema.is_system}
+											<span class="badge badge-neutral">{$LL.admin_custom_claims_system()}</span>
+										{/if}
+										{#if schema.claim_namespace}
+											<span class="badge badge-neutral" title={schema.claim_namespace}>NS</span>
+										{/if}
+									</div>
+								</td>
+								<td>{schema.display_label}</td>
+								<td>
+									<span class="badge badge-neutral">{fieldTypeLabel(schema.field_type)}</span>
+								</td>
+								<td>
+									{#if schema.is_pii}
+										<span class="badge badge-warning">PII</span>
+									{:else}
+										<span class="badge badge-success">Non-PII</span>
+									{/if}
+								</td>
+								<td>
+									{#if tokenBadges.length > 0}
+										<div class="token-badges">
+											{#each tokenBadges as badge (badge)}
+												<span class="badge badge-info">{badge}</span>
+											{/each}
 										</div>
-									</td>
-									<td>{schema.display_label}</td>
-									<td>
-										<span class="badge badge-neutral">{fieldTypeLabel(schema.field_type)}</span>
-									</td>
-									<td>
-										{#if schema.is_pii}
-											<span class="badge badge-warning">PII</span>
-										{:else}
-											<span class="badge badge-success">Non-PII</span>
-										{/if}
-									</td>
-									<td>
-										{#if tokenBadges.length > 0}
-											<div class="flex flex-wrap gap-1">
-												{#each tokenBadges as badge (badge)}
-													<span class="badge badge-info text-xs">{badge}</span>
-												{/each}
-											</div>
-										{:else}
-											<span class="text-gray-400">-</span>
-										{/if}
-									</td>
-									<td>
-										{#if schema.is_required}
-											<span class="badge badge-error"
-												>{$LL.admin_custom_claims_required_badge()}</span
-											>
-										{:else}
-											<span class="text-gray-400">{$LL.admin_custom_claims_optional()}</span>
-										{/if}
-									</td>
-									<td>
-										{#if schema.operation_status === 'error'}
-											<span class="badge badge-error"
-												>{operationStatusLabel(schema.operation_status)}</span
-											>
-											<button
-												class="btn btn-secondary btn-xs ml-1"
-												onclick={(e) => {
-													e.stopPropagation();
-													retryOperation(schema);
-												}}
-												title={$LL.admin_custom_claims_retry_failed_operation()}
-											>
-												<i class="i-ph-arrow-clockwise"></i>
-											</button>
-										{:else if schema.operation_status !== 'active'}
-											<span class="badge badge-warning"
-												>{operationStatusLabel(schema.operation_status)}</span
-											>
-										{:else if !schema.is_active}
-											<span class="badge badge-neutral">{$LL.admin_custom_claims_inactive()}</span>
-										{:else}
-											<span class="badge badge-success">{$LL.admin_custom_claims_active()}</span>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						{/if}
-					{/each}
-				</tbody>
-			</table>
-		</div>
-
+									{:else}
+										<span class="muted-text">-</span>
+									{/if}
+								</td>
+								<td>
+									{#if schema.is_required}
+										<span class="badge badge-error">{$LL.admin_custom_claims_required_badge()}</span
+										>
+									{:else}
+										<span class="muted-text">{$LL.admin_custom_claims_optional()}</span>
+									{/if}
+								</td>
+								<td>
+									{#if schema.operation_status === 'error'}
+										<span class="badge badge-error"
+											>{operationStatusLabel(schema.operation_status)}</span
+										>
+										<button
+											class="btn btn-secondary btn-xs ml-1"
+											onclick={(e) => {
+												e.stopPropagation();
+												retryOperation(schema);
+											}}
+											title={$LL.admin_custom_claims_retry_failed_operation()}
+										>
+											<i class="i-ph-arrow-clockwise"></i>
+										</button>
+									{:else if schema.operation_status !== 'active'}
+										<span class="badge badge-warning"
+											>{operationStatusLabel(schema.operation_status)}</span
+										>
+									{:else if !schema.is_active}
+										<span class="badge badge-neutral">{$LL.admin_custom_claims_inactive()}</span>
+									{:else}
+										<span class="badge badge-success">{$LL.admin_custom_claims_active()}</span>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					{/if}
+				{/each}
+			</tbody>
+		</AdminDataTable>
 		<!-- Pagination -->
 		{#if pagination.total_pages > 1}
 			<div class="pagination">
@@ -854,7 +846,7 @@
 			</div>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Preset Modal -->
 <Modal
@@ -867,7 +859,7 @@
 	size="lg"
 >
 	{#if presetError}
-		<div class="alert alert-error alert-sm mb-4">{presetError}</div>
+		<div class="alert alert-error alert-sm modal-alert">{presetError}</div>
 	{/if}
 
 	{#if loadingPresets}
@@ -967,7 +959,7 @@
 	size="lg"
 >
 	{#if createError}
-		<div class="alert alert-error alert-sm mb-4">{createError}</div>
+		<div class="alert alert-error alert-sm modal-alert">{createError}</div>
 	{/if}
 
 	<div class="form-grid">
@@ -1018,7 +1010,7 @@
 				<input type="checkbox" bind:checked={createForm.is_pii} />
 				{$LL.admin_custom_claims_pii_full()}
 			</label>
-			<p class="form-hint text-amber-600">
+			<p class="form-hint form-hint--warning">
 				{$LL.admin_custom_claims_pii_hint()}
 			</p>
 		</div>
@@ -1049,7 +1041,7 @@
 			>
 			<textarea
 				id="create-validation"
-				class="form-input font-mono text-sm"
+				class="form-input form-input--mono"
 				rows="3"
 				placeholder={$LL.admin_custom_claims_validation_placeholder()}
 				bind:value={createForm.validation_rules_json}
@@ -1061,10 +1053,10 @@
 
 		<!-- Token Integration -->
 		<div class="form-group col-span-2">
-			<h4 class="font-semibold text-sm mb-2">
+			<h4 class="token-section-title">
 				{$LL.admin_custom_claims_token_integration()}
 			</h4>
-			<div class="flex gap-4 flex-wrap">
+			<div class="token-checkbox-grid">
 				<label class="form-label">
 					<input type="checkbox" bind:checked={createForm.include_in_id_token} />
 					ID Token
@@ -1076,7 +1068,7 @@
 				<label class="form-label">
 					<input type="checkbox" bind:checked={createForm.include_in_introspection} />
 					Introspection
-					<small style="color: var(--color-warning, #b08800); display: block; font-size: 0.75rem;"
+					<small class="token-checkbox-warning"
 						>{$LL.admin_custom_claims_introspection_disabled_use_userinfo()}</small
 					>
 				</label>
@@ -1145,16 +1137,16 @@
 	size="md"
 >
 	{#if deleteError}
-		<div class="alert alert-error alert-sm mb-4">{deleteError}</div>
+		<div class="alert alert-error alert-sm modal-alert">{deleteError}</div>
 	{/if}
 
 	{#if schemaToDelete}
-		<div class="alert alert-warning mb-4">
+		<div class="alert alert-warning modal-alert">
 			<strong>{$LL.admin_custom_claims_warning_label()}</strong>
 			{$LL.admin_custom_claims_delete_warning()}
 		</div>
 
-		<div class="bg-gray-50 rounded-lg p-3 mb-4">
+		<div class="modal-summary">
 			<p>
 				<strong>{$LL.admin_custom_claims_field_key()}:</strong>
 				<code>{schemaToDelete.field_key}</code>
@@ -1171,7 +1163,7 @@
 					: $LL.admin_custom_claims_core_database()}
 			</p>
 			{#if deleteUserCount > 0}
-				<p class="text-red-600 font-semibold mt-2">
+				<p class="modal-impact modal-impact--danger modal-impact--spaced">
 					{$LL.admin_custom_claims_affected_users({
 						prefix: deleteUserCountApproximate ? '~' : '',
 						count: deleteUserCount,
@@ -1179,7 +1171,7 @@
 					})}
 				</p>
 			{:else if deleteUserCount < 0}
-				<p class="text-amber-600 font-semibold mt-2">
+				<p class="modal-impact modal-impact--warning modal-impact--spaced">
 					{$LL.admin_custom_claims_fetch_user_count_failed()}
 				</p>
 			{/if}
@@ -1211,16 +1203,16 @@
 	size="md"
 >
 	{#if renameError}
-		<div class="alert alert-error alert-sm mb-4">{renameError}</div>
+		<div class="alert alert-error alert-sm modal-alert">{renameError}</div>
 	{/if}
 
 	{#if schemaToRename}
 		<!-- Recommended approach -->
-		<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
-			<h4 class="font-semibold text-blue-900 text-sm mb-1">
+		<div class="recommended-approach">
+			<h4>
 				{$LL.admin_custom_claims_recommended_approach()}
 			</h4>
-			<ol class="text-sm text-blue-800 list-decimal list-inside space-y-1">
+			<ol>
 				<li>{$LL.admin_custom_claims_rename_step_deactivate()}</li>
 				<li>{$LL.admin_custom_claims_rename_step_create()}</li>
 				<li>{$LL.admin_custom_claims_rename_step_migrate()}</li>
@@ -1229,18 +1221,18 @@
 		</div>
 
 		<!-- Direct rename warning -->
-		<div class="alert alert-warning mb-4">
+		<div class="alert alert-warning modal-alert">
 			<strong>{$LL.admin_custom_claims_direct_rename_warning_label()}</strong>
 			{$LL.admin_custom_claims_direct_rename_warning()}
 		</div>
 
-		<div class="bg-gray-50 rounded-lg p-3 mb-4">
+		<div class="modal-summary">
 			<p>
 				<strong>{$LL.admin_custom_claims_current_field_key()}:</strong>
 				<code>{schemaToRename.field_key}</code>
 			</p>
 			{#if renameUserCount > 0}
-				<p class="text-amber-600 font-semibold mt-1">
+				<p class="modal-impact modal-impact--warning">
 					{$LL.admin_custom_claims_affected_users({
 						prefix: renameUserCountApproximate ? '~' : '',
 						count: renameUserCount,
@@ -1248,7 +1240,7 @@
 					})}
 				</p>
 			{:else if renameUserCount < 0}
-				<p class="text-amber-600 font-semibold mt-1">
+				<p class="modal-impact modal-impact--warning">
 					{$LL.admin_custom_claims_fetch_user_count_failed()}
 				</p>
 			{/if}
@@ -1280,26 +1272,100 @@
 </Modal>
 
 <style>
+	.operation-error-banner {
+		display: flex;
+		gap: 12px;
+		align-items: flex-start;
+		padding: 14px 16px;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		border-radius: var(--radius-card);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+	}
+
+	.operation-error-banner h3,
+	.operation-error-banner p {
+		margin: 0;
+	}
+
+	.operation-error-banner h3 {
+		font-size: 0.92rem;
+		font-weight: 700;
+	}
+
+	.operation-error-banner p {
+		margin-top: 4px;
+		font-size: 0.84rem;
+		line-height: 1.55;
+	}
+
+	.modal-alert {
+		margin-bottom: 1rem;
+	}
+
+	.filter-actions,
+	.field-key-cell,
+	.token-badges {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.filter-actions {
+		align-self: flex-end;
+	}
+
 	.schema-note {
 		margin-bottom: 1rem;
 		padding: 0.875rem 1rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-card);
+		background: var(--color-surface-muted);
 	}
 
 	.schema-note strong {
 		display: block;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-weight: 600;
 	}
 
 	.schema-note p {
 		margin: 0.25rem 0 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.45;
+	}
+
+	.stats-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 12px;
+		margin-bottom: 18px;
+	}
+
+	.stat-card {
+		display: grid;
+		gap: 4px;
+		padding: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-card);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-panel);
+	}
+
+	.stat-value {
+		color: var(--color-text);
+		font-family: var(--font-display);
+		font-size: 1.45rem;
+		font-weight: 700;
+		line-height: 1.15;
+	}
+
+	.stat-label {
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
 	}
 
 	.form-grid {
@@ -1314,8 +1380,95 @@
 
 	.form-hint {
 		font-size: 0.75rem;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		margin-top: 0.25rem;
+	}
+
+	.form-hint--warning {
+		color: var(--color-warning);
+	}
+
+	.form-input--mono {
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+	}
+
+	.token-section-title {
+		margin: 0 0 0.5rem;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		font-weight: 700;
+		line-height: 1.35;
+	}
+
+	.token-checkbox-grid {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+	}
+
+	.token-checkbox-warning {
+		display: block;
+		color: var(--color-warning);
+		font-size: 0.75rem;
+	}
+
+	.recommended-approach,
+	.modal-summary {
+		margin-bottom: 1rem;
+		padding: 0.75rem;
+		border-radius: var(--radius-card);
+	}
+
+	.recommended-approach {
+		border: 1px solid color-mix(in srgb, var(--color-info) 28%, var(--color-border));
+		background: color-mix(in srgb, var(--color-info) 10%, var(--color-surface));
+	}
+
+	.recommended-approach h4 {
+		margin: 0 0 0.25rem;
+		color: var(--color-info-700);
+		font-size: 0.875rem;
+		font-weight: 700;
+	}
+
+	.recommended-approach ol {
+		margin: 0;
+		padding-left: 1.25rem;
+		color: var(--color-info-700);
+		font-size: 0.875rem;
+		line-height: 1.55;
+	}
+
+	.modal-summary {
+		background: var(--color-surface-muted);
+	}
+
+	.modal-summary p {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		line-height: 1.55;
+	}
+
+	.modal-summary p + p {
+		margin-top: 0.25rem;
+	}
+
+	.modal-impact {
+		font-weight: 700;
+	}
+
+	.modal-impact--spaced {
+		margin-top: 0.5rem;
+	}
+
+	.modal-impact--warning {
+		color: var(--color-warning);
+	}
+
+	.modal-impact--danger {
+		color: var(--color-danger);
 	}
 
 	.loading-state.compact {
@@ -1336,9 +1489,9 @@
 		gap: 0.75rem;
 		align-items: center;
 		padding: 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-card);
+		background: var(--color-surface);
 		cursor: pointer;
 	}
 
@@ -1356,12 +1509,12 @@
 	.preset-field code {
 		margin-top: 0.125rem;
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.preset-field small {
 		margin-top: 0.25rem;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		font-size: 0.75rem;
 	}
 
@@ -1372,20 +1525,19 @@
 		gap: 0.375rem;
 	}
 
-	/* Compact row spacing for schema list */
-	:global(.schema-table td) {
+	:global(.admin-data-table td) {
 		padding: 6px 16px;
 	}
 
-	:global(.schema-table th) {
+	:global(.admin-data-table th) {
 		padding: 8px 16px;
 	}
 
-	:global(.schema-table .schema-group-row td) {
+	:global(.admin-data-table .schema-group-row td) {
 		padding: 0;
-		background: color-mix(in srgb, var(--bg-subtle) 92%, var(--bg-card));
-		border-top: 1px solid var(--border);
-		border-bottom: 1px solid var(--border);
+		background: var(--color-surface-muted);
+		border-top: 1px solid var(--color-border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.schema-group-toggle {
@@ -1395,7 +1547,7 @@
 		gap: 0.5rem;
 		padding: 0.5rem 1rem;
 		border: 0;
-		color: var(--text-primary);
+		color: var(--color-text);
 		background: transparent;
 		font-size: 0.8125rem;
 		font-weight: 700;
@@ -1405,7 +1557,7 @@
 
 	.schema-group-toggle:hover,
 	.schema-group-toggle:focus-visible {
-		background: color-mix(in srgb, var(--primary) 6%, transparent);
+		background: color-mix(in srgb, var(--color-accent) 7%, transparent);
 		outline: none;
 	}
 
@@ -1413,10 +1565,66 @@
 		min-width: 1.5rem;
 		padding: 0.0625rem 0.375rem;
 		border-radius: 999px;
-		color: var(--primary);
-		background: color-mix(in srgb, var(--primary) 10%, transparent);
+		color: var(--color-accent);
+		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
 		font-size: 0.6875rem;
 		font-weight: 700;
 		text-align: center;
+	}
+
+	.schema-row--inactive {
+		opacity: 0.56;
+	}
+
+	.field-key-cell code {
+		color: var(--color-text);
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+	}
+
+	.muted-text {
+		color: var(--color-text-subtle);
+	}
+
+	.badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2px 8px;
+		border-radius: var(--radius-full);
+		font-size: 0.72rem;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	.badge-neutral {
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+	}
+
+	.badge-success {
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
+	}
+
+	.badge-warning {
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
+	}
+
+	.badge-error {
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-danger);
+	}
+
+	.badge-info {
+		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		color: var(--color-accent);
+	}
+
+	@media (max-width: 720px) {
+		.filter-actions {
+			width: 100%;
+		}
 	}
 </style>

@@ -393,26 +393,6 @@ CREATE TABLE roles (
   UNIQUE(tenant_id, name)
 );
 
-CREATE TABLE schema_migrations (
-  -- Migration version (from filename: 001_core_foundation.sql -> version = 1)
-  version INTEGER PRIMARY KEY,
-
-  -- Human-readable migration name (from filename: 001_core_foundation.sql -> name = "core_foundation")
-  name TEXT NOT NULL,
-
-  -- When the migration was applied (Unix timestamp in seconds)
-  applied_at INTEGER NOT NULL,
-
-  -- SHA-256 checksum of the migration SQL file (detects file modifications)
-  checksum TEXT NOT NULL,
-
-  -- How long the migration took to execute (milliseconds)
-  execution_time_ms INTEGER,
-
-  -- Optional: SQL for rolling back this migration
-  rollback_sql TEXT
-);
-
 CREATE TABLE scope_mappings (
   scope TEXT NOT NULL,
   claim_name TEXT NOT NULL,

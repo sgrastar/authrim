@@ -302,29 +302,13 @@ async function validateAccessToken(
       return { valid: false, error: 'invalid_jwt_format' };
     }
 
-    // If JWKS is not configured, fall back to basic validation with warning
+    // Access tokens are bearer credentials for authorization decisions. Never
+    // accept JWT-looking input unless signature and issuer validation are wired.
     if (!ctx.jwks || !ctx.issuerUrl) {
-      log.warn('JWKS or issuerUrl not configured - falling back to expiration-only validation', {
+      log.warn('JWKS or issuerUrl not configured - rejecting access token authentication', {
         hint: 'Configure JWKS for production security',
       });
-
-      // Decode payload for basic validation
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-
-      // Check expiration
-      if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-        return { valid: false, error: 'token_expired' };
-      }
-
-      return {
-        valid: true,
-        clientId: payload.client_id || payload.azp,
-        subjectId: payload.sub,
-        tenantId:
-          typeof payload.tenant_id === 'string' && payload.tenant_id.trim()
-            ? payload.tenant_id.trim()
-            : undefined,
-      };
+      return { valid: false, error: 'jwt_verification_not_configured' };
     }
 
     // Full JWT verification with signature check
@@ -534,6 +518,11 @@ export async function authenticateCheckApiRequest(
         invalid_token: {
           error: 'invalid_token',
           description: 'Invalid access token',
+          status: 401,
+        },
+        jwt_verification_not_configured: {
+          error: 'invalid_token',
+          description: 'Access token verification is not configured',
           status: 401,
         },
       };

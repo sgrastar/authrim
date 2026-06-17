@@ -9,6 +9,10 @@
 	} from '$lib/api/admin-webhooks';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let webhooks: Webhook[] = $state([]);
 	let loading = $state(true);
@@ -239,22 +243,25 @@
 	<title>{$LL.admin_webhooks_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_webhooks_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_webhooks_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-primary" onclick={openCreateDialog}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_webhooks_add()}
-			</button>
-		</div>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-primary" onclick={openCreateDialog}>
+		<i class="i-ph-plus" aria-hidden="true"></i>
+		{$LL.admin_webhooks_add()}
+	</button>
+{/snippet}
+
+{#snippet resultActions()}
+	<p class="result-count">
+		{$LL.admin_webhooks_result_count({ shown: webhooks.length, total })}
+	</p>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_webhooks_title()}
+		description={$LL.admin_webhooks_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -266,7 +273,7 @@
 			<p>{$LL.admin_webhooks_loading()}</p>
 		</div>
 	{:else if webhooks.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_webhooks_empty()}</p>
 				<p class="empty-state-hint">{$LL.admin_webhooks_empty_hint()}</p>
@@ -274,14 +281,10 @@
 					>{$LL.admin_webhooks_add_first()}</button
 				>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<p class="result-count">
-			{$LL.admin_webhooks_result_count({ shown: webhooks.length, total })}
-		</p>
-
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection title={$LL.admin_webhooks_title()} actions={resultActions}>
+			<AdminDataTable>
 				<thead>
 					<tr>
 						<th>{$LL.admin_webhooks_name()}</th>
@@ -298,7 +301,10 @@
 							<td>
 								<div class="cell-primary">{webhook.name}</div>
 								{#if webhook.has_secret}
-									<div class="cell-secondary success">🔒 {$LL.admin_webhooks_signed()}</div>
+									<div class="cell-secondary success">
+										<i class="i-ph-lock-key" aria-hidden="true"></i>
+										{$LL.admin_webhooks_signed()}
+									</div>
 								{/if}
 							</td>
 							<td>
@@ -358,10 +364,10 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Dialog -->
 <Modal
@@ -374,34 +380,36 @@
 		<div class="alert alert-error">{createError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="webhook-name" class="form-label">{$LL.admin_webhooks_name_label()}</label>
+	<div class="admin-field dialog-field">
+		<label for="webhook-name" class="admin-field__label">{$LL.admin_webhooks_name_label()}</label>
 		<input
 			id="webhook-name"
 			type="text"
-			class="form-input"
+			class="admin-input"
 			bind:value={newName}
 			placeholder={$LL.admin_webhooks_name_placeholder()}
 		/>
 	</div>
 
-	<div class="form-group">
-		<label for="webhook-url" class="form-label">{$LL.admin_webhooks_endpoint_url()}</label>
+	<div class="admin-field dialog-field">
+		<label for="webhook-url" class="admin-field__label">{$LL.admin_webhooks_endpoint_url()}</label>
 		<input
 			id="webhook-url"
 			type="url"
-			class="form-input"
+			class="admin-input"
 			bind:value={newUrl}
 			placeholder={$LL.admin_webhooks_endpoint_placeholder()}
 		/>
 	</div>
 
-	<div class="form-group">
-		<label for="webhook-secret" class="form-label">{$LL.admin_webhooks_secret_label()}</label>
+	<div class="admin-field dialog-field">
+		<label for="webhook-secret" class="admin-field__label"
+			>{$LL.admin_webhooks_secret_label()}</label
+		>
 		<input
 			id="webhook-secret"
 			type="password"
-			class="form-input"
+			class="admin-input"
 			bind:value={newSecret}
 			placeholder={$LL.admin_webhooks_secret_placeholder()}
 		/>
@@ -410,9 +418,9 @@
 		</p>
 	</div>
 
-	<div class="form-group">
+	<div class="admin-field dialog-field">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">{$LL.admin_webhooks_events_to_subscribe()}</label>
+		<label class="admin-field__label">{$LL.admin_webhooks_events_to_subscribe()}</label>
 		<div class="event-selector">
 			{#each COMMON_EVENT_PATTERNS as eventPattern (eventPattern.pattern)}
 				<button
@@ -430,7 +438,7 @@
 		<div class="custom-event-row">
 			<input
 				type="text"
-				class="form-input"
+				class="admin-input"
 				bind:value={customEvent}
 				placeholder={$LL.admin_webhooks_custom_event_placeholder()}
 				onkeydown={(e) => e.key === 'Enter' && addCustomEvent()}
@@ -573,3 +581,62 @@
 		</button>
 	{/snippet}
 </Modal>
+
+<style>
+	.result-count {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.85rem;
+	}
+
+	.cell-secondary.success {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-top: 4px;
+	}
+
+	.dialog-field {
+		display: grid;
+		gap: 6px;
+		margin-bottom: 16px;
+	}
+
+	.dialog-field :global(.admin-field__label) {
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+		color: var(--color-text-subtle);
+	}
+
+	.dialog-field :global(.admin-input) {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
+	}
+
+	.dialog-field :global(.admin-input:focus) {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.custom-event-row {
+		display: flex;
+		gap: 10px;
+		margin-top: 12px;
+	}
+
+	@media (max-width: 640px) {
+		.custom-event-row {
+			flex-direction: column;
+		}
+	}
+</style>

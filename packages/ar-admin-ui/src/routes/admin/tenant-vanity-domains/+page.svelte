@@ -4,6 +4,13 @@
 		platformTenantVanityDomainsAPI,
 		type TenantVanityDomain
 	} from '$lib/api/admin-tenant-vanity-domains';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 
 	let domains = $state<TenantVanityDomain[]>([]);
@@ -98,31 +105,24 @@
 	<title>Tenant Vanity Domains — Admin Dashboard</title>
 </svelte:head>
 
+{#snippet headerActions()}
+	<button class="btn btn-secondary" onclick={loadDomains} disabled={loading || singleTenantMode}>
+		{#if loading}
+			<i class="i-ph-circle-notch animate-spin"></i>
+		{/if}
+		Refresh
+	</button>
+{/snippet}
+
 {#if accessReady}
-	<div class="page">
-		<div class="page-header">
-			<div>
-				<h1>Tenant Vanity Domains</h1>
-				<p>
-					{#if singleTenantMode}
-						Available after enabling multi-tenant mode. Use this page to manage cross-tenant vanity
-						domains.
-					{:else}
-						Cross-tenant vanity domain status and Cloudflare refresh controls.
-					{/if}
-				</p>
-			</div>
-			<button
-				class="btn btn-secondary"
-				onclick={loadDomains}
-				disabled={loading || singleTenantMode}
-			>
-				{#if loading}
-					<i class="i-ph-circle-notch animate-spin"></i>
-				{/if}
-				Refresh
-			</button>
-		</div>
+	<AdminPageShell>
+		<AdminPageHeader
+			title="Tenant Vanity Domains"
+			description={singleTenantMode
+				? 'Available after enabling multi-tenant mode. Use this page to manage cross-tenant vanity domains.'
+				: 'Cross-tenant vanity domain status and Cloudflare refresh controls.'}
+			actions={headerActions}
+		/>
 
 		{#if error}
 			<div class="alert alert-error">{error}</div>
@@ -143,19 +143,23 @@
 			</div>
 		{/if}
 
-		<section class="card">
-			<div class="filter-row">
-				<input
-					class="form-input"
-					type="text"
-					bind:value={tenantFilter}
-					placeholder="Filter by tenant ID"
-					disabled={singleTenantMode}
-				/>
+		<AdminSection>
+			<AdminToolbar>
+				<div class="admin-field admin-field--search">
+					<label class="admin-field__label" for="tenant-filter">Tenant filter</label>
+					<input
+						id="tenant-filter"
+						class="admin-input"
+						type="text"
+						bind:value={tenantFilter}
+						placeholder="Filter by tenant ID"
+						disabled={singleTenantMode}
+					/>
+				</div>
 				<button class="btn btn-primary" onclick={loadDomains} disabled={singleTenantMode}
 					>Apply</button
 				>
-			</div>
+			</AdminToolbar>
 
 			{#if singleTenantMode}
 				<p class="empty-text">
@@ -166,144 +170,76 @@
 			{:else if domains.length === 0}
 				<p class="empty-text">No vanity domains found.</p>
 			{:else}
-				<div class="table-wrap">
-					<table>
-						<thead>
+				<AdminDataTable width="xwide">
+					<thead>
+						<tr>
+							<th>Hostname</th>
+							<th>Tenant</th>
+							<th>Status</th>
+							<th>SSL</th>
+							<th>Primary</th>
+							<th>Last Sync</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each domains as domain (domain.id)}
 							<tr>
-								<th>Hostname</th>
-								<th>Tenant</th>
-								<th>Status</th>
-								<th>SSL</th>
-								<th>Primary</th>
-								<th>Last Sync</th>
-								<th>Actions</th>
+								<td class="mono">{domain.hostname}</td>
+								<td class="mono">{domain.tenant_id}</td>
+								<td>{domain.status}</td>
+								<td>{domain.ssl_status ?? 'pending'}</td>
+								<td>{domain.is_primary ? 'Yes' : 'No'}</td>
+								<td>
+									{domain.last_sync_at
+										? new Date(domain.last_sync_at * 1000).toLocaleString()
+										: 'Never'}
+								</td>
+								<td>
+									<div class="actions">
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={() => handleSync(domain.id)}
+											disabled={syncingId === domain.id}
+										>
+											Sync
+										</button>
+										{#if domain.status !== 'active'}
+											<button
+												class="btn btn-secondary btn-sm"
+												onclick={() => handleVerify(domain.id)}
+												disabled={verifyingId === domain.id}
+											>
+												Verify
+											</button>
+										{/if}
+										<button
+											class="btn btn-danger btn-sm"
+											onclick={() => handleDelete(domain.id)}
+											disabled={deletingId === domain.id}
+										>
+											Delete
+										</button>
+									</div>
+								</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each domains as domain (domain.id)}
-								<tr>
-									<td class="mono">{domain.hostname}</td>
-									<td class="mono">{domain.tenant_id}</td>
-									<td>{domain.status}</td>
-									<td>{domain.ssl_status ?? 'pending'}</td>
-									<td>{domain.is_primary ? 'Yes' : 'No'}</td>
-									<td>
-										{domain.last_sync_at
-											? new Date(domain.last_sync_at * 1000).toLocaleString()
-											: 'Never'}
-									</td>
-									<td>
-										<div class="actions">
-											<button
-												class="btn btn-secondary"
-												onclick={() => handleSync(domain.id)}
-												disabled={syncingId === domain.id}
-											>
-												Sync
-											</button>
-											{#if domain.status !== 'active'}
-												<button
-													class="btn btn-secondary"
-													onclick={() => handleVerify(domain.id)}
-													disabled={verifyingId === domain.id}
-												>
-													Verify
-												</button>
-											{/if}
-											<button
-												class="btn btn-danger-outline"
-												onclick={() => handleDelete(domain.id)}
-												disabled={deletingId === domain.id}
-											>
-												Delete
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
-		</section>
-	</div>
+		</AdminSection>
+	</AdminPageShell>
 {/if}
 
 <style>
-	.page {
-		display: flex;
-		flex-direction: column;
-		gap: 20px;
-		max-width: 1100px;
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 16px;
-	}
-
-	h1 {
-		margin: 0 0 4px;
-		font-size: 1.5rem;
-		color: var(--text-primary);
-	}
-
-	.page-header p,
 	.empty-text {
 		margin: 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
-	}
-
-	.card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		padding: 20px;
-	}
-
-	.filter-row {
-		display: flex;
-		gap: 12px;
-		margin-bottom: 16px;
-	}
-
-	.form-input {
-		padding: 8px 12px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-		color: var(--text-primary);
-		font-size: 0.875rem;
-	}
-
-	.table-wrap {
-		overflow: auto;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-	}
-
-	th,
-	td {
-		padding: 10px 12px;
-		border-bottom: 1px solid var(--border-subtle, var(--border));
-		text-align: left;
-		white-space: nowrap;
-	}
-
-	th {
-		color: var(--text-secondary);
-		font-weight: 600;
 	}
 
 	.mono {
-		font-family: var(--font-mono);
+		font-family: var(--font-meta, var(--font-mono));
 		font-size: 0.8125rem;
 	}
 
@@ -312,70 +248,11 @@
 		gap: 8px;
 	}
 
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 8px 14px;
-		border: none;
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		text-decoration: none;
-	}
-
-	.btn:disabled {
-		cursor: not-allowed;
-		opacity: 0.5;
-	}
-
-	.btn-primary {
-		background: var(--primary);
-		color: white;
-	}
-
-	.btn-secondary {
-		background: var(--bg-subtle);
-		color: var(--text-primary);
-		border: 1px solid var(--border);
-	}
-
-	.btn-danger-outline {
-		background: transparent;
-		color: var(--danger);
-		border: 1px solid var(--danger);
-	}
-
-	.alert {
-		padding: 12px 16px;
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-	}
-
-	.alert-error {
-		background: var(--danger-subtle);
-		color: var(--danger);
-		border: 1px solid var(--danger-border);
-	}
-
-	.alert-warning {
-		background: var(--warning-subtle);
-		color: var(--warning-dark);
-		border: 1px solid var(--warning-border);
-	}
-
-	.alert-success {
-		background: var(--success-subtle);
-		color: var(--success);
-		border: 1px solid color-mix(in srgb, var(--success) 30%, var(--border));
-	}
-
 	.loading-state {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 </style>

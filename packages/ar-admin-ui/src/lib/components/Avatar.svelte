@@ -80,7 +80,7 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 50%;
-		background: var(--gradient-accent, linear-gradient(135deg, #6366f1, #8b5cf6));
+		background: var(--avatar-bg, var(--gradient-accent, var(--color-accent)));
 		overflow: hidden;
 		flex-shrink: 0;
 		transition: box-shadow 0.2s ease;
@@ -88,8 +88,8 @@
 
 	.avatar.ring {
 		box-shadow:
-			0 0 0 2px var(--color-bg-primary, #fff),
-			0 0 0 4px var(--color-accent, #6366f1);
+			0 0 0 2px var(--color-bg-page),
+			0 0 0 4px var(--color-accent);
 	}
 
 	/* Sizes */
@@ -140,7 +140,7 @@
 
 	/* Initials fallback */
 	.initials {
-		color: white;
+		color: var(--avatar-text, var(--color-accent-contrast));
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.02em;

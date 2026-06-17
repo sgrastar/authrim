@@ -44,6 +44,20 @@ export interface User {
 		created_at: number;
 		last_used_at: number | null;
 	}>;
+	customFields?: UserCustomField[];
+	missing_required_fields?: UserMissingRequiredField[];
+}
+
+export interface UserCustomField {
+	field_name: string;
+	field_value: string;
+	field_type: string;
+}
+
+export interface UserMissingRequiredField {
+	field_key: string;
+	label: string;
+	field_type: string;
 }
 
 /**
@@ -101,6 +115,7 @@ export interface UpdateUserInput {
 	phone_number?: string;
 	email_verified?: boolean;
 	phone_number_verified?: boolean;
+	[key: string]: string | boolean | number | null | undefined;
 }
 
 /**
@@ -146,10 +161,18 @@ export const adminUsersAPI = {
 			throw new Error('Failed to fetch user');
 		}
 
-		const data = (await response.json()) as { user: User; passkeys?: User['passkeys'] };
+		const data = (await response.json()) as {
+			user: User;
+			passkeys?: User['passkeys'];
+			customFields?: UserCustomField[];
+			missing_required_fields?: UserMissingRequiredField[];
+		};
 		return {
 			...data.user,
-			passkeys: data.user.passkeys ?? data.passkeys
+			passkeys: data.user.passkeys ?? data.passkeys,
+			customFields: data.user.customFields ?? data.customFields ?? [],
+			missing_required_fields:
+				data.user.missing_required_fields ?? data.missing_required_fields ?? []
 		};
 	},
 

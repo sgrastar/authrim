@@ -1011,6 +1011,56 @@ describe('Authorization Handler', () => {
       });
     });
 
+    it('preserves authorization_details when redirecting authenticated users to consent', async () => {
+      env.ENABLE_RAR = 'true';
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+      });
+      seedSession(env);
+
+      const authorizationDetails = encodeURIComponent(
+        JSON.stringify([
+          {
+            type: 'payment_initiation',
+            instructedAmount: { amount: '100.00', currency: 'EUR' },
+            creditorAccount: { iban: 'DE89370400440532013000' },
+          },
+        ])
+      );
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20email&state=rar-needs-consent&authorization_details=${authorizationDetails}`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toContain('/auth/consent');
+      const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
+        'challenge_id'
+      );
+      expect(challengeId).toBeTruthy();
+      expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+        type: 'consent',
+        metadata: expect.objectContaining({
+          state: 'rar-needs-consent',
+          authorization_details: JSON.stringify([
+            {
+              type: 'payment_initiation',
+              instructedAmount: { amount: '100.00', currency: 'EUR' },
+              creditorAccount: { iban: 'DE89370400440532013000' },
+            },
+          ]),
+        }),
+      });
+    });
+
     it('rejects clients that require DPoP binding when no proof is supplied', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
