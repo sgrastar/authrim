@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
@@ -492,7 +493,7 @@
 	}
 
 	function userSchemaFieldsFor(target: User): UserSchemaField[] {
-		const fields = new Map<string, UserSchemaField>();
+		const fields = new SvelteMap<string, UserSchemaField>();
 		for (const field of target.customFields ?? []) {
 			fields.set(field.field_name, {
 				key: field.field_name,

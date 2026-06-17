@@ -34,7 +34,6 @@
 		userEmail,
 		userName,
 		userPicture,
-		userId,
 		hideTenantSelector = false
 	}: Props = $props();
 
