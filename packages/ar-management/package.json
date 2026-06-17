@@ -20,7 +20,7 @@
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
     "@authrim/ar-lib-scim": "workspace:*",
-    "hono": "4.12.21",
+    "hono": "4.12.25",
     "jose": "^6.1.2"
   },
   "devDependencies": {

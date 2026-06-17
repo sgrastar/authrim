@@ -80,7 +80,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "hono": "4.12.21",
+    "hono": "4.12.25",
     "jose": "^6.1.2"
   },
   "devDependencies": {
@@ -135,7 +135,7 @@
       "vite": ">=7.3.2",
       "@sveltejs/kit": ">=2.57.1",
       "rollup": ">=4.59.0",
-      "hono": "4.12.21",
+      "hono": "4.12.25",
       "@hono/node-server": "^1.19.13",
       "tar": "^7.5.14",
       "devalue": "^5.8.1",

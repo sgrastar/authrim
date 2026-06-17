@@ -2225,7 +2225,9 @@ async function recordMigration(
   }
 }
 
-function countMigrationStates(migrations: D1MigrationFileState[]): D1MigrationDatabaseStatus['counts'] {
+function countMigrationStates(
+  migrations: D1MigrationFileState[]
+): D1MigrationDatabaseStatus['counts'] {
   return {
     total: migrations.length,
     applied: migrations.filter((item) => item.status === 'applied').length,
@@ -3665,13 +3667,10 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
 
   for (const role of roles) {
     const dbName = getD1DatabaseName(input.env, `${role}-db`);
-    const migrationsDir =
-      role === 'core' ? root.migrationsRoot : join(root.migrationsRoot, role);
+    const migrationsDir = role === 'core' ? root.migrationsRoot : join(root.migrationsRoot, role);
     const options: RunD1MigrationOptions = {
       onlyFiles,
-      ...(role === 'core'
-        ? { excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS }
-        : {}),
+      ...(role === 'core' ? { excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS } : {}),
     };
 
     if (!existsSync(migrationsDir)) {

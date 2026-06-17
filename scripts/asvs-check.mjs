@@ -63,6 +63,7 @@ function shortRequirementId(id) {
 function escapeMarkdownTable(value) {
   return String(value ?? '')
     .replace(/\r?\n/g, '<br>')
+    .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|');
 }
 

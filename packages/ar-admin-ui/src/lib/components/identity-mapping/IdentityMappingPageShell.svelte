@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { adminCustomClaimsAPI } from '$lib/api/admin-custom-claims';
 	import { adminIdentityMappingAPI } from '$lib/api/admin-identity-mapping';
 	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
@@ -273,7 +274,7 @@
 	}
 
 	function mergeProfileOptions(options: ProfileSelectorOption[]): ProfileSelectorOption[] {
-		const seen = new Set<string>();
+		const seen = new SvelteSet<string>();
 		return options.filter((option) => {
 			if (seen.has(option.id)) return false;
 			seen.add(option.id);

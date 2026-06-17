@@ -61,7 +61,7 @@
   "dependencies": {
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-logging": "workspace:*",
-    "hono": "4.12.21",
+    "hono": "4.12.25",
     "jose": "^6.1.2",
     "mysql2": "^3.15.3",
     "pg": "^8.16.3"
